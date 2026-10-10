@@ -113,7 +113,14 @@ function serveStatic(res: ServerResponse, webDir: string, urlPath: string): void
     res.writeHead(404).end('web UI not built');
     return;
   }
-  res.writeHead(200, { 'Content-Type': MIME[extname(file)] ?? 'application/octet-stream' });
+  // The build gives files under assets/ content-hashed names, so they are safe to cache forever.
+  // Everything else — index.html above all — must be revalidated, or a phone keeps running the
+  // build it loaded and never even hears about a newer one.
+  const immutable = file.startsWith(join(webDir, 'assets') + sep);
+  res.writeHead(200, {
+    'Content-Type': MIME[extname(file)] ?? 'application/octet-stream',
+    'Cache-Control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
+  });
   createReadStream(file).pipe(res);
 }
 

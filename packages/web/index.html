@@ -2,7 +2,10 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+    <!-- No interactive-widget=resizes-content: on iOS 26 Safari the layout viewport then resizes
+         for the keyboard while visualViewport.height subtracts the keyboard again, so the app sized
+         to --vvh shrinks twice and the page background shows below the composer. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#f7f7f8" />
     <title>Agent Hub</title>

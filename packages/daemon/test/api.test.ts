@@ -79,6 +79,29 @@ test('tokenMatches compares in constant time and rejects wrong or missing tokens
   assert.equal(tokenMatches('', TOKEN), false);
 });
 
+test('static files: hashed assets cache immutably, everything else revalidates', async () => {
+  const webDir = mkdtempSync(join(tmpdir(), 'rah-test-web-'));
+  mkdirSync(join(webDir, 'assets'));
+  writeFileSync(join(webDir, 'index.html'), '<!doctype html><script type="module" src="/assets/index-abc123.js"></script>');
+  writeFileSync(join(webDir, 'assets', 'index-abc123.js'), 'console.log(1)');
+  writeFileSync(join(webDir, 'favicon.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+  const staticServer = createHttpServer({ manager, token: TOKEN, webDir, version: 'test' });
+  await new Promise<void>((r) => staticServer.listen(0, '127.0.0.1', () => r()));
+  const root = `http://127.0.0.1:${(staticServer.address() as AddressInfo).port}`;
+  try {
+    const revalidate = 'no-cache';
+    const immutable = 'public, max-age=31536000, immutable';
+    assert.equal((await fetch(root + '/')).headers.get('cache-control'), revalidate);
+    assert.equal((await fetch(root + '/favicon.svg')).headers.get('cache-control'), revalidate);
+    // A deep link falls back to index.html, which must revalidate like the root does.
+    assert.equal((await fetch(root + '/thread/abc')).headers.get('cache-control'), revalidate);
+    assert.equal((await fetch(root + '/assets/index-abc123.js')).headers.get('cache-control'), immutable);
+  } finally {
+    staticServer.close();
+    rmSync(webDir, { recursive: true, force: true });
+  }
+});
+
 test('health is open, other API routes need the bearer token', async () => {
   const health = await api('/api/health', {}, false);
   assert.equal(health.status, 200);

@@ -325,6 +325,11 @@ export function App() {
   // Phone keyboards shrink the visual viewport instead of the layout; sizing the app to it keeps
   // the composer visible without Safari scrolling the page (which pushed the top bar off screen).
   // Pinch zoom shrinks the visual viewport too, and that is not room the layout has lost.
+  //
+  // This is the one keyboard mechanism: never add interactive-widget=resizes-content to the
+  // viewport meta as well. Where that meta is honoured the layout viewport also shrinks, and
+  // visualViewport.height then subtracts the keyboard a second time — the app ends up half-size
+  // at the top of the screen with the page background filling the rest.
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
