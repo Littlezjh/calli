@@ -896,6 +896,11 @@ test('parseUnifiedDiff turns a Codex patch into old and new region text', () => 
     oldText: 'const a = 1;\nconst b = 2;',
     newText: 'const a = 1;\nconst b = 3;',
   });
+  // An added or deleted file is not a patch: it is the file's plain content, told apart by kind.
+  assert.deepEqual(parseUnifiedDiff('patched\n', 'add'), { oldText: null, newText: 'patched\n' });
+  assert.deepEqual(parseUnifiedDiff('gone\n', 'delete'), { oldText: 'gone\n', newText: '' });
+  // Content that happens to look like a patch is still parsed as one.
+  assert.deepEqual(parseUnifiedDiff('@@ -1 +1 @@\n-a\n+b\n', 'add'), { oldText: 'a', newText: 'b' });
 });
 
 test('mapCodexItemStart/End map commands, file changes and the rest of the step items', () => {
@@ -1026,7 +1031,7 @@ test('CodexAppServerAdapter: file changes stream their patch and carry diffs', a
   // The patch grew while it ran: the update carries both files, the end keeps them.
   const update = events.find((e) => e.type === 'tool.update');
   assert.equal((update?.data.content as any[]).length, 2);
-  assert.deepEqual((update?.data.content as any[])[1], { type: 'diff', path: '/tmp/one/src/new.ts', oldText: null, newText: 'export const x = 1;' });
+  assert.deepEqual((update?.data.content as any[])[1], { type: 'diff', path: '/tmp/one/src/new.ts', oldText: null, newText: 'export const x = 1;\n' });
   const end = events.find((e) => e.type === 'tool.end');
   assert.equal(end?.data.status, 'completed');
   assert.equal((end?.data.content as any[]).length, 2);

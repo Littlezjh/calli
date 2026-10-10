@@ -55,22 +55,32 @@ function stopReasonOf(status: string): string {
 }
 
 /**
- * Turns a unified diff, which is how Codex reports file changes, into the old and new text of the
+ * Turns a unified diff, which is how Codex reports file updates, into the old and new text of the
  * changed region. Context lines belong to both sides; the file's untouched parts are not in the
  * diff, but the hub only shows the region, so the lines it has are all it needs.
+ *
+ * An added or deleted file is not a patch at all: Codex sends the file's plain content. That is
+ * told apart by no line carrying a diff marker.
  */
-export function parseUnifiedDiff(diff: string): { oldText: string | null; newText: string } {
-  const lines = String(diff ?? '').split('\n');
+export function parseUnifiedDiff(diff: string, kind?: string): { oldText: string | null; newText: string } {
+  const text = String(diff ?? '');
+  const looksLikePatch = /^(@@|--- |\+\+\+ |[-+ \\])/m.test(text);
+  // An added or deleted file is not a patch at all: Codex sends the file's plain content, which
+  // no line of carries a diff marker. An update always comes as a real patch.
+  if ((kind === 'add' || kind === 'delete') && !looksLikePatch) {
+    return kind === 'delete' ? { oldText: text, newText: '' } : { oldText: null, newText: text };
+  }
+  const lines = text.split('\n');
   // A trailing newline ends the last line; it is not an extra empty line.
   if (lines[lines.length - 1] === '') lines.pop();
   const oldLines: string[] = [];
   const newLines: string[] = [];
   for (const line of lines) {
-    if (line.startsWith('@@') || line.startsWith('--- ') || line.startsWith('+++ ')) continue;
-    if (line.startsWith('\\')) continue; // "\ No newline at end of file"
+    // File headers (@@, ---, +++) and markers ("\ No newline") are not content.
+    if (line.startsWith('@@') || line.startsWith('--- ') || line.startsWith('+++ ') || line.startsWith('\\')) continue;
     if (line.startsWith('-')) oldLines.push(line.slice(1));
     else if (line.startsWith('+')) newLines.push(line.slice(1));
-    else {
+    else if (line.startsWith(' ')) {
       oldLines.push(line.slice(1));
       newLines.push(line.slice(1));
     }
@@ -82,7 +92,7 @@ export function parseUnifiedDiff(diff: string): { oldText: string | null; newTex
 /** A Codex file change, as the hub's diff cards expect it. */
 export function codexDiff(change: any): { type: 'diff'; path: string; oldText: string | null; newText: string } | null {
   if (typeof change?.path !== 'string' || typeof change?.diff !== 'string') return null;
-  const { oldText, newText } = parseUnifiedDiff(change.diff);
+  const { oldText, newText } = parseUnifiedDiff(change.diff, change?.kind?.type);
   return { type: 'diff', path: change.path, oldText, newText };
 }
 
@@ -561,8 +571,11 @@ export class CodexAppServerAdapter implements AgentAdapter {
     return this.withServer(async (peer) => {
       const out: AgentSessionSummary[] = [];
       let cursor: string | undefined;
+      // Without sourceKinds, Codex hides sessions that did not come from its own UIs; `codex exec`
+      // runs are conversations too. Sub-agent scratch threads stay out.
+      const sourceKinds = ['cli', 'vscode', 'exec', 'appServer', 'unknown'];
       for (let page = 0; page < 50; page++) {
-        const res = await peer.request('thread/list', cursor ? { cursor } : { limit: 100 });
+        const res = await peer.request('thread/list', { limit: 100, sourceKinds, ...(cursor ? { cursor } : {}) });
         for (const t of res?.data ?? []) {
           const title = [t?.name, t?.preview].find((s: unknown): s is string => typeof s === 'string' && s.trim().length > 0);
           out.push({

@@ -115,7 +115,8 @@ const runTurn = (text, turnId, done) => {
     const id = 'fc-1';
     const changes = [{ path: '/tmp/one/src/app.ts', kind: { type: 'update' }, diff: '@@ -1,2 +1,2 @@\n const a = 1;\n-const b = 2;\n+const b = 3;\n' }];
     notify('item/started', { turnId, item: { type: 'fileChange', id, status: 'inProgress', changes: [changes[0]] } });
-    changes.push({ path: '/tmp/one/src/new.ts', kind: { type: 'add' }, diff: '+export const x = 1;\n' });
+    // Like the real server: an added file arrives as its plain content, without + markers.
+    changes.push({ path: '/tmp/one/src/new.ts', kind: { type: 'add' }, diff: 'export const x = 1;\n' });
     notify('item/fileChange/patchUpdated', { turnId, itemId: id, changes });
     notify('item/completed', { turnId, item: { type: 'fileChange', id, status: 'completed', changes } });
   }
