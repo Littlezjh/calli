@@ -270,16 +270,12 @@ export function createHttpServer(deps: HttpDeps): Server {
       }
 
       if (method === 'GET' && sub === 'events') {
-        // ?tail=N: the newest N events (a reopened page renders these first, older history is
-        // paged in). ?before=S&limit=N: one page of history older than what the page has.
-        // Plain ?after=S stays the resume path: everything after a sequence number.
-        const tail = Number(url.searchParams.get('tail') ?? 0) || 0;
+        // ?tail: the newest turns, what a reopened page renders first. ?before=S: the turns just
+        // before what the page has. Both begin at a turn's start and merge streamed fragments.
+        // Plain ?after=S is the log as stored, one page at a time.
+        if (url.searchParams.has('tail')) return sendJson(res, 200, manager.listEventsPage(threadId));
         const before = Number(url.searchParams.get('before') ?? 0) || 0;
-        if (tail > 0) return sendJson(res, 200, manager.listLastEvents(threadId, Math.min(tail, 5000)));
-        if (before > 0) {
-          const limit = Math.min(Number(url.searchParams.get('limit') ?? 0) || 2000, 5000);
-          return sendJson(res, 200, manager.listEventsBefore(threadId, before, limit));
-        }
+        if (before > 0) return sendJson(res, 200, manager.listEventsPage(threadId, before));
         const after = Number(url.searchParams.get('after') ?? 0) || 0;
         return sendJson(res, 200, manager.listEvents(threadId, after));
       }
@@ -289,7 +285,7 @@ export function createHttpServer(deps: HttpDeps): Server {
         manager.getThread(threadId); // 404 before opening the stream
         openSse(res);
         // Synchronous: no event can slip in between the backlog and the subscription.
-        for (const ev of manager.listEvents(threadId, after)) writeEvent(res, ev);
+        for (const ev of manager.listEventsSince(threadId, after)) writeEvent(res, ev);
         const off = manager.subscribe((ev) => {
           if (ev.threadId === threadId) writeEvent(res, ev);
         });

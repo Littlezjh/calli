@@ -1427,7 +1427,8 @@ test('agents: instances beyond the built-ins are listed, and PATH discovery offe
     ],
     null,
   );
-  const withRegistry = createHttpServer({ manager: new ThreadManager(store, registry.adapters, [workdir], new AttachmentStore(dataDir)), registry, token: TOKEN, webDir: null, version: 'test' });
+  const withRegistryManager = new ThreadManager(store, registry.adapters, [workdir], new AttachmentStore(dataDir));
+  const withRegistry = createHttpServer({ manager: withRegistryManager, registry, token: TOKEN, webDir: null, version: 'test' });
   await new Promise<void>((r) => withRegistry.listen(0, '127.0.0.1', () => r()));
   const { port } = withRegistry.address() as AddressInfo;
   const regBase = `http://127.0.0.1:${port}`;
@@ -1472,27 +1473,167 @@ test('agents: instances beyond the built-ins are listed, and PATH discovery offe
     process.env.PATH = oldPath;
   }
   withRegistry.close();
+  await withRegistryManager.shutdown();
 });
 
-test('events endpoint: tail loads the newest stretch, before pages older history', async () => {
-  const thread = await (await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: workdir }) })).json();
-  for (let i = 1; i <= 30; i++) store.appendEvent(thread.id, null, 'thread.updated', { i });
-  // Creating the thread itself wrote seq 1 (thread.created); the 30 appended ones follow.
-  const all = (await (await api(`/api/threads/${thread.id}/events?after=0`)).json()) as Array<{ seq: number }>;
-  assert.equal(all.length, 31);
+/** Appends events straight to the log, the way a turn would have, without running an agent. */
+function writeLog(threadId: string, turnId: string | null, entries: Array<[type: Parameters<Store['appendEvent']>[2], data: Record<string, unknown>]>) {
+  store.transaction(() => {
+    for (const [type, data] of entries) store.appendEvent(threadId, turnId, type, data);
+  });
+}
 
-  // The tail is the END of the log, in order — what a reopened page renders first.
-  const tail = (await (await api(`/api/threads/${thread.id}/events?tail=10`)).json()) as Array<{ seq: number }>;
-  assert.deepEqual(tail.map((e) => e.seq), [22, 23, 24, 25, 26, 27, 28, 29, 30, 31]);
+type Logged = { seq: number; type: string; turnId: string | null; data: Record<string, any> };
 
-  // Paging walks backwards from the oldest seq the page already has, staying in order.
-  const page = (await (await api(`/api/threads/${thread.id}/events?before=22&limit=10`)).json()) as Array<{ seq: number }>;
-  assert.deepEqual(page.map((e) => e.seq), [12, 13, 14, 15, 16, 17, 18, 19, 20, 21]);
-  const page2 = (await (await api(`/api/threads/${thread.id}/events?before=12&limit=10`)).json()) as Array<{ seq: number }>;
-  assert.deepEqual(page2.map((e) => e.seq), [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
-  // Fewer events than the page size: just what exists.
-  const page3 = (await (await api(`/api/threads/${thread.id}/events?before=4&limit=10`)).json()) as Array<{ seq: number }>;
-  assert.deepEqual(page3.map((e) => e.seq), [1, 2, 3]);
-  // Unknown thread still 404s.
-  assert.equal((await api('/api/threads/nope/events?tail=10')).status, 404);
+test('events endpoint: a page begins where a turn begins, and streamed fragments come merged', async () => {
+  const thread = await newThread({ agent: 'pi', cwd: workdir });
+  const page = async (query: string) => (await (await api(`/api/threads/${thread.id}/events?${query}`)).json()) as Logged[];
+
+  // A short turn, then one far longer than a page reaches back.
+  writeLog(thread.id, 'a', [
+    ['turn.started', { text: 'first' }],
+    ['reasoning.delta', { text: 'th' }],
+    ['reasoning.delta', { text: 'ink' }],
+    ['reasoning.delta', { text: 'ing' }],
+    ['tool.start', { id: 't1', title: 'ls', kind: 'execute' }],
+    ['tool.end', { id: 't1', status: 'completed' }],
+    ['message.delta', { text: 'one ' }],
+    ['message.delta', { text: 'two' }],
+    ['turn.done', { stopReason: 'end_turn' }],
+  ]);
+  writeLog(thread.id, 'b', [
+    ['turn.started', { text: 'second' }],
+    ...Array.from({ length: 21_000 }, (_, i): ['reasoning.delta', { text: string }] => ['reasoning.delta', { text: i % 2 ? 'b' : 'a' }]),
+  ]);
+
+  // The newest turn is longer than the budget and still running: it comes whole, from its
+  // question, and its fragments come as the first one plus the rest.
+  const running = await page('tail=1');
+  assert.deepEqual(running.map((e) => e.type), ['turn.started', 'reasoning.delta', 'reasoning.delta']);
+  assert.equal(running[0].data.text, 'second');
+  assert.equal(running.slice(1).map((e) => e.data.text).join(''), 'ab'.repeat(10_500));
+  const all = (await (await api(`/api/threads/${thread.id}/events?after=${running[0].seq}`)).json()) as Logged[];
+  assert.equal(running[1].seq, all[0].seq, 'the first fragment keeps its own seq and time');
+  assert.equal(running.at(-1)!.seq, running[0].seq + 21_000, 'the merged rest carries the last seq, so a stream can resume after it');
+
+  writeLog(thread.id, 'b', [['turn.done', { stopReason: 'end_turn' }]]);
+  writeLog(thread.id, 'c', [
+    ['turn.started', { text: 'third' }],
+    ['message.delta', { text: 'short' }],
+    ['turn.done', { stopReason: 'end_turn' }],
+  ]);
+
+  // Now the long turn is out of reach of the tail: the page is the last turn alone.
+  const tail = await page('tail=1');
+  assert.deepEqual(tail.map((e) => [e.type, e.turnId]), [['turn.started', 'c'], ['message.delta', 'c'], ['turn.done', 'c']]);
+
+  // Paging back gives the turn before, whole.
+  const second = await page(`before=${tail[0].seq}`);
+  assert.deepEqual(second.map((e) => e.type), ['turn.started', 'reasoning.delta', 'reasoning.delta', 'turn.done']);
+  assert.equal(second.at(-1)!.seq, tail[0].seq - 1, 'pages meet without a gap');
+
+  // The first turn brings what precedes it, back to the start of the log; fragments of
+  // different kinds, or with something between them, are not merged into each other.
+  const first = await page(`before=${second[0].seq}`);
+  assert.equal(first[0].seq, 1);
+  assert.deepEqual(
+    first.filter((e) => e.turnId === 'a').map((e) => [e.type, e.data.text ?? e.data.id ?? null]),
+    [
+      ['turn.started', 'first'],
+      ['reasoning.delta', 'th'],
+      ['reasoning.delta', 'inking'],
+      ['tool.start', 't1'],
+      ['tool.end', 't1'],
+      ['message.delta', 'one '],
+      ['message.delta', 'two'],
+      ['turn.done', null],
+    ],
+  );
+  assert.deepEqual(await page(`before=${first[0].seq}`), [], 'nothing before the start');
+  assert.equal((await api('/api/threads/nope/events?tail=1')).status, 404);
+});
+
+test('SSE stream replays everything after the cursor, however long, before going live', async () => {
+  const thread = await newThread({ agent: 'pi', cwd: workdir });
+  // More than one page of the stored log, none of it mergeable.
+  writeLog(thread.id, 'a', [
+    ['turn.started', { text: 'long' }],
+    ...Array.from({ length: 6000 }, (_, i): ['tool.update', { id: string }] => ['tool.update', { id: `u${i}` }]),
+    ['turn.done', { stopReason: 'end_turn' }],
+  ]);
+  const res = await api(`/api/threads/${thread.id}/stream?after=1`);
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let text = '';
+  const deadline = Date.now() + 10_000;
+  while (!text.includes('event: turn.done') && Date.now() < deadline) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    text += decoder.decode(value, { stream: true });
+  }
+  await reader.cancel();
+  assert.equal(text.split('event: tool.update').length - 1, 6000, 'no hole between the replay and the live events');
+  assert.ok(text.includes('event: turn.done'));
+});
+
+test('sync: a hub turn deep in a long log is still known, and is not appended again', async () => {
+  const messagesFile = join(dataDir, 'pi-terminal-messages.json');
+  process.env.FAKE_PI_MESSAGES_FILE = messagesFile;
+  try {
+    const thread = await newThread({ agent: 'pi', cwd: workdir });
+    await post(`/api/threads/${thread.id}/turns`, { text: 'hello' });
+    await untilIdle(thread.id);
+    // A long stretch of output, then a second turn far past the first page of the log.
+    writeLog(thread.id, null, Array.from({ length: 6000 }, (): ['thread.updated', {}] => ['thread.updated', {}]));
+    await post(`/api/threads/${thread.id}/turns`, { text: 'much later' });
+    await untilIdle(thread.id);
+    const sessionId = (await viewOf(thread.id)).agentSessionId!;
+
+    writeFileSync(
+      messagesFile,
+      JSON.stringify({
+        [sessionId]: [
+          { role: 'user', content: 'hello' },
+          { role: 'assistant', content: [{ type: 'text', text: 'hi there hello' }] },
+          { role: 'user', content: 'much later' },
+          { role: 'assistant', content: [{ type: 'text', text: 'hi there much later' }] },
+        ],
+      }),
+    );
+    const { added } = (await (await api(`/api/threads/${thread.id}/sync`, { method: 'POST' })).json()) as { added: number };
+    assert.equal(added, 0, 'both turns are the hub\'s own');
+    assert.equal(store.listEventsOfType(thread.id, 'turn.started').length, 2);
+  } finally {
+    delete process.env.FAKE_PI_MESSAGES_FILE;
+  }
+});
+
+test('restart: a turn the last daemon left running is ended as interrupted', async () => {
+  const cut = await newThread({ agent: 'pi', cwd: workdir });
+  writeLog(cut.id, 'open', [
+    ['turn.started', { text: 'never finished' }],
+    ['message.delta', { text: 'half an ans' }],
+  ]);
+  store.updateThread(cut.id, { status: 'running' });
+  // Marked running, but its turn did end: only the mark is stale.
+  const stale = await newThread({ agent: 'pi', cwd: workdir });
+  writeLog(stale.id, 'closed', [
+    ['turn.started', { text: 'finished' }],
+    ['turn.done', { stopReason: 'end_turn' }],
+  ]);
+  store.updateThread(stale.id, { status: 'running' });
+  const before = (await events(stale.id)).length;
+
+  manager.recoverInterrupted();
+
+  const last = (await events(cut.id)).at(-1)!;
+  assert.deepEqual([last.type, last.turnId, last.data.code], ['turn.error', 'open', 'interrupted']);
+  assert.equal((await viewOf(cut.id)).status, 'error');
+  assert.equal((await viewOf(stale.id)).status, 'idle');
+  assert.equal((await events(stale.id)).length, before, 'a turn that ended gets no second ending');
+
+  // The thread works again afterwards.
+  await post(`/api/threads/${cut.id}/turns`, { text: 'carry on' });
+  await untilIdle(cut.id);
+  assert.equal((await viewOf(cut.id)).status, 'idle');
 });

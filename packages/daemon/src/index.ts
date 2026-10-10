@@ -38,6 +38,7 @@ async function main(): Promise<void> {
 
   const store = new Store(config.dataDir);
   const manager = new ThreadManager(store, adapters, workdirs, new AttachmentStore(config.dataDir));
+  manager.recoverInterrupted();
   const server = createHttpServer({ manager, registry, token: config.token, webDir: config.webDir, version: VERSION });
 
   server.listen(config.port, config.host, () => {

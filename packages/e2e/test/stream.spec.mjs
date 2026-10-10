@@ -104,9 +104,11 @@ test('scrolling up hands the position to the user; jumping back re-pins for the 
   assert.ok(back.dist < 60, 'jump returns to the bottom');
   assert.equal(back.jump, false);
 
-  // A second slow turn while pinned: still glued to the bottom as it streams.
+  // A second slow turn while pinned: still glued to the bottom as it streams. A gesture that
+  // scrolls nothing here (a sideways swipe, as over a code block) must not let go of the bottom.
   await api(daemon, `/api/threads/${threadId}/turns`, { method: 'POST', body: JSON.stringify({ text: 'slowthink two' }) });
   for (let i = 0; i < 9; i++) {
+    await page.mouse.wheel(120, 0);
     await page.waitForTimeout(300);
     const state = await scrollState();
     assert.equal(state.dist, 0, `sample ${i}: pinned through the second turn`);

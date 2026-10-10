@@ -210,14 +210,17 @@ export class Api {
     return this.request('GET', `/api/threads/${id}/events?after=${after}`);
   }
 
-  /** The newest events of a thread: what a reopened page renders before any history is paged in. */
-  eventsTail(id: string, limit: number): Promise<StoredEvent[]> {
-    return this.request('GET', `/api/threads/${id}/events?tail=${limit}`);
+  /**
+   * The newest turns of a thread: what a reopened page renders before any history is paged in.
+   * Pages begin where a turn begins, and streamed fragments come merged.
+   */
+  eventsTail(id: string): Promise<StoredEvent[]> {
+    return this.request('GET', `/api/threads/${id}/events?tail=1`);
   }
 
-  /** One page of history older than the given sequence number. */
-  eventsBefore(id: string, before: number, limit: number): Promise<StoredEvent[]> {
-    return this.request('GET', `/api/threads/${id}/events?before=${before}&limit=${limit}`);
+  /** The page of turns just before the given sequence number. */
+  eventsBefore(id: string, before: number): Promise<StoredEvent[]> {
+    return this.request('GET', `/api/threads/${id}/events?before=${before}`);
   }
 
   createThread(input: {

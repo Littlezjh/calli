@@ -380,12 +380,14 @@ const THINKING_VISIBLE = 4;
  */
 function ThinkingBlock({ item }: { item: Extract<Item, { kind: 'work' }> }) {
   const paragraphs = useMemo(() => splitThinking(item.reasoning), [item.reasoning]);
-  const [open, setOpen] = useState(!item.done);
+  // Thinking is over once the turn ends, or earlier, when the group has handed over to the answer.
+  const settled = item.done || item.active === false;
+  const [open, setOpen] = useState(!settled);
   const [showAll, setShowAll] = useState(false);
   useEffect(() => {
-    if (item.done) setOpen(false);
+    if (settled) setOpen(false);
     else setShowAll(false);
-  }, [item.done]);
+  }, [settled]);
   if (paragraphs.length === 0) return null;
 
   const hidden = showAll ? 0 : Math.max(0, paragraphs.length - THINKING_VISIBLE);
@@ -395,7 +397,7 @@ function ThinkingBlock({ item }: { item: Extract<Item, { kind: 'work' }> }) {
   return (
     <div className="thinking">
       <button className="thinking-toggle" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-        <span>{item.done ? `思考${secs ? ` · ${secs}` : ''}` : '思考中'}</span>
+        <span>{settled ? `思考${secs ? ` · ${secs}` : ''}` : '思考中'}</span>
         <IconChevron size={13} open={open} />
       </button>
       {open && (

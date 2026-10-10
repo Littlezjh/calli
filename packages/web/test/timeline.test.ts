@@ -455,3 +455,56 @@ test('while a turn runs, the newest work group is the active one and earlier one
   assert.equal(w2.kind === 'work' && w2.active, true, 'the group being written to is the working one');
   assert.equal(tl.items.some((i) => i.kind === 'actions'), false);
 });
+
+test('a tool that finishes after text began still updates the row it started in', () => {
+  seq = 0;
+  const tl = buildTimeline([
+    ev('turn.started', { text: 'q' }),
+    ev('tool.start', { id: 'a', title: 'npm test', kind: 'execute', status: 'in_progress' }),
+    ev('message.delta', { text: '测试在跑，' }),
+    ev('tool.update', { id: 'a', output: 'half' }),
+    ev('tool.end', { id: 'a', status: 'completed', output: '12 passed' }, 't1', '2026-10-10T00:00:09Z'),
+    ev('message.delta', { text: '跑完了。' }),
+    ev('turn.done'),
+  ]);
+  // The late result opens no group of its own and does not cut the text in two.
+  assert.deepEqual(tl.items.map((i) => i.kind), ['user', 'work', 'assistant', 'actions']);
+  const [, work, text] = tl.items;
+  assert.ok(work.kind === 'work');
+  assert.deepEqual([work.steps[0].status, work.steps[0].output, work.steps[0].endedAt], ['completed', '12 passed', '2026-10-10T00:00:09Z']);
+  assert.equal(text.kind === 'assistant' && text.text, '测试在跑，跑完了。');
+});
+
+test('a tool result whose call is not in the loaded events is left out', () => {
+  seq = 0;
+  const tl = buildTimeline([ev('turn.started', { text: 'q' }), ev('tool.end', { id: 'gone', status: 'completed' }), ev('message.delta', { text: 'ok' })]);
+  assert.deepEqual(tl.items.map((i) => i.kind), ['user', 'assistant']);
+});
+
+test('a turn that never got its ending is closed where the next one starts', () => {
+  seq = 0;
+  const tl = buildTimeline([
+    ev('turn.started', { text: 'cut off' }, 't1'),
+    ev('tool.start', { id: 'a', title: 'ls', kind: 'execute', status: 'in_progress' }, 't1'),
+    ev('message.delta', { text: 'half' }, 't1'),
+    ev('turn.started', { text: 'next' }, 't2'),
+    ev('message.delta', { text: 'answer' }, 't2'),
+    ev('turn.done', {}, 't2'),
+  ]);
+  assert.equal(tl.running, false);
+  const cut = tl.items.filter((i) => i.turnId === 't1' && (i.kind === 'work' || i.kind === 'assistant'));
+  assert.equal(cut.length, 2);
+  assert.ok(cut.every((i) => (i.kind === 'work' || i.kind === 'assistant') && i.done), 'nothing of the cut-off turn still reads as working');
+  assert.equal(tl.items.some((i) => i.kind === 'actions' && i.turnId === 't1'), false, 'it did not finish, so it gets no action row');
+});
+
+test('a turn the hub restart interrupted says so in plain words', () => {
+  seq = 0;
+  const tl = buildTimeline([
+    ev('turn.started', { text: 'q' }),
+    ev('turn.error', { message: 'The hub restarted while this turn was running.', code: 'interrupted' }),
+  ]);
+  const error = tl.items.find((i) => i.kind === 'error');
+  assert.match(error?.kind === 'error' ? error.message : '', /重启.*中断/);
+  assert.equal(tl.running, false);
+});

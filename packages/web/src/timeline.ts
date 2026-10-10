@@ -116,6 +116,7 @@ export type Item =
  * way out; anything else is shown as the agent reported it.
  */
 export function errorText(data: Record<string, any>): string {
+  if (data.code === 'interrupted') return 'hub 重启时这一轮还在运行，被中断了。再发一条消息可以接着做。';
   if (data.code === 'permission_refused') {
     const what = Array.isArray(data.refused) && data.refused.length ? `（${data.refused.join('、')}）` : '';
     return `这一步需要批准${what}，但这个 agent 在后台运行时没法询问，所以拒绝后停下了。把输入框下方的权限切到"完全访问"，再发一次。`;
@@ -197,6 +198,8 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
   let openAssistant = -1;
   let openWork = -1;
   let openPlan = -1;
+  // The turn that has started and not ended yet, if any.
+  let openTurn: string | null = null;
 
   const closeTurnItems = (turnId: string, endedAt?: string) => {
     let firstWork = true;
@@ -225,6 +228,10 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
 
     switch (ev.type) {
       case 'turn.started':
+        // A turn that never got its ending (the daemon died under it) ends where the next begins,
+        // or its groups would read as working for the rest of the thread.
+        if (openTurn !== null) closeTurnItems(openTurn);
+        openTurn = turn;
         running = true;
         openAssistant = -1;
         openWork = -1;
@@ -275,10 +282,26 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
         }
         break;
 
-      case 'reasoning.delta':
-      case 'tool.start':
       case 'tool.update':
       case 'tool.end': {
+        // A call can outlive its group: text may start while it still runs. Its result belongs
+        // to the row it started in, wherever in the turn that is. A result whose call is not
+        // here has nothing to update.
+        const id = String(ev.data.id);
+        for (let i = items.length - 1; i >= 0 && items[i].turnId === turn; i--) {
+          const it = items[i];
+          const step = it.kind === 'work' ? it.steps.find((s) => s.id === id) : undefined;
+          if (it.kind !== 'work' || !step) continue;
+          applyToolData(step, ev.data);
+          if (ev.type === 'tool.end') step.endedAt = ev.ts;
+          it.endedAt = ev.ts;
+          break;
+        }
+        break;
+      }
+
+      case 'reasoning.delta':
+      case 'tool.start': {
         if (openWork < 0 || items[openWork].kind !== 'work') {
           items.push({
             kind: 'work',
@@ -303,8 +326,7 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
           work.reasoning += String(ev.data.text ?? '');
           work.thinkStart ??= ev.ts;
           work.thinkEnd = ev.ts;
-        }
-        if (ev.type === 'tool.start') {
+        } else {
           const step: Step = {
             id: String(ev.data.id),
             title: String(ev.data.title ?? ''),
@@ -316,11 +338,6 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
           };
           applyToolData(step, { content: ev.data.content });
           work.steps.push(step);
-        }
-        if (ev.type === 'tool.update' || ev.type === 'tool.end') {
-          const step = work.steps.find((s) => s.id === String(ev.data.id));
-          if (step) applyToolData(step, ev.data);
-          if (step && ev.type === 'tool.end') step.endedAt = ev.ts;
         }
         break;
       }
@@ -352,6 +369,7 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
       case 'turn.done':
         closeTurnItems(turn, ev.ts);
         finished.add(turn);
+        openTurn = null;
         running = false;
         openAssistant = -1;
         openWork = -1;
@@ -360,6 +378,7 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
       case 'turn.error':
         closeTurnItems(turn, ev.ts);
         items.push({ kind: 'error', key, turnId: turn, message: errorText(ev.data) });
+        openTurn = null;
         running = false;
         openAssistant = -1;
         openWork = -1;
