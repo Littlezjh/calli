@@ -172,6 +172,26 @@ test('edits that failed, were refused, or are still pending are not counted as c
   assert.equal(tl.items.some((i) => i.kind === 'changes'), false);
 });
 
+test('completed edits are not summed into a changes item until the turn has finished', () => {
+  seq = 0;
+  const events = [
+    ev('turn.started', { text: 'edit then keep going' }),
+    ev('tool.start', { id: 'a', kind: 'edit', content: [diff('/w/a.ts', 'x', 'y')] }),
+    ev('tool.end', { id: 'a', status: 'completed' }),
+    ev('message.delta', { text: 'on the way' }),
+    ev('tool.start', { id: 'b', title: 'Bash', kind: 'other' }),
+  ];
+  // Still running: the edit is done, but the turn has not ended — no summary card, no actions row.
+  const running = buildTimeline(events);
+  assert.equal(running.running, true);
+  assert.deepEqual(running.items.map((i) => i.kind), ['user', 'work']);
+  // The same turn, ended: the card and the answer row appear.
+  const done = buildTimeline([...events, ev('turn.done', {})]);
+  assert.deepEqual(done.items.map((i) => i.kind), ['user', 'work', 'assistant', 'changes', 'actions']);
+  const changes = done.items[3];
+  assert.equal(changes.kind === 'changes' && changes.files.length, 1);
+});
+
 test('each turn gets its own changes item, placed before the next user message', () => {
   seq = 0;
   const tl = buildTimeline([

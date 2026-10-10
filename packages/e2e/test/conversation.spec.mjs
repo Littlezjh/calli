@@ -58,3 +58,29 @@ test('a turn shows thinking, verb-first tool rows, and folds its work away when 
   await page.locator('.thinking-para').first().waitFor({ state: 'visible' });
   assert.match(await page.locator('.thinking-para').first().innerText(), /hmm/);
 });
+
+test('while a turn runs its steps stay the story: no changes card until it ends', async () => {
+  await page.locator('.new-thread').click();
+  await page.locator('.composer .context-btn').first().click();
+  await page.getByRole('menuitemradio', { name: /^pi/ }).click();
+  await page.locator('.composer textarea').click();
+  await page.keyboard.type('forkflow');
+  await page.keyboard.press('Enter');
+
+  // Mid-run: the edit has landed and the long command is in flight. The steps stay visible and
+  // nothing reads as an ending the turn has not had — in particular no card of changed files.
+  const longRun = page.locator('.step', { hasText: 'npm test' });
+  await longRun.waitFor({ timeout: 10_000 });
+  await page.waitForTimeout(300);
+  assert.equal(await page.locator('.working').count(), 1);
+  assert.equal(await page.locator('.changes').count(), 0, 'no changes card while the turn runs');
+  assert.equal((await longRun.locator('.step-status').innerText()).trim(), '运行中');
+
+  // Ended: the work folds to its duration, the answer stands after it, and the card appears.
+  await page.locator('.work-toggle', { hasText: '用时' }).first().waitFor({ timeout: 15_000 });
+  await page.getByText('now the long run').waitFor({ timeout: 5_000 });
+  const card = page.locator('.changes');
+  await card.waitFor({ timeout: 5_000 });
+  assert.match(await card.locator('.changes-head').innerText(), /已更改 1 个文件/);
+  assert.match(await card.innerText(), /demo\.ts/);
+});

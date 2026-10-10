@@ -139,6 +139,28 @@ rl.on('line', (line) => {
         }, 2900);
         return;
       }
+      // "forkflow" is the shape of a turn watched on a phone: an edit lands (so the turn has
+      // diffs), the agent says something on the way, and then a long command runs. While that
+      // command is still running the turn is not finished — a summary of changed files must not
+      // show yet, and the live steps must stay visible.
+      if (cmd.message.includes('forkflow')) {
+        setTimeout(() => {
+          out({ type: 'tool_execution_start', toolCallId: 'w1', toolName: 'write', args: { path: 'demo.ts', content: 'export const one = 1;\n' } });
+          out({ type: 'tool_execution_end', toolCallId: 'w1', toolName: 'write', result: { content: [{ type: 'text', text: 'ok' }] }, isError: false });
+        }, 200);
+        setTimeout(() => {
+          out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'files done, now the long run: ' } });
+        }, 1000);
+        setTimeout(() => {
+          out({ type: 'tool_execution_start', toolCallId: 'c9', toolName: 'bash', args: { command: 'npm test' } });
+        }, 1800);
+        setTimeout(() => {
+          out({ type: 'tool_execution_end', toolCallId: 'c9', toolName: 'bash', result: { content: [{ type: 'text', text: '12 passed' }] }, isError: false });
+          running = false;
+          out({ type: 'agent_settled', aborted: false });
+        }, 6000);
+        return;
+      }
       out({ type: 'tool_execution_start', toolCallId: 'c1', toolName: 'bash', args: { command: 'ls' } });
       out({ type: 'tool_execution_update', toolCallId: 'c1', toolName: 'bash', partialResult: { content: [{ type: 'text', text: 'partial' }] } });
       out({ type: 'tool_execution_end', toolCallId: 'c1', toolName: 'bash', result: { content: [{ type: 'text', text: 'a.txt' }] }, isError: false });

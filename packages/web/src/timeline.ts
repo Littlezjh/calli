@@ -441,8 +441,9 @@ export function imagePathsIn(text: string): string[] {
 }
 
 /**
- * Appends, at the end of each turn, the files it changed and (once it has finished with an answer)
- * the action row. Turns never overlap in a thread, so a turn ends where the next user item begins.
+ * Appends, once a turn has finished, the files it changed and the action row for its answer.
+ * A turn still running gets neither: its live steps are the story on screen. Turns never overlap
+ * in a thread, so a turn ends where the next user item begins.
  */
 function addTurnSummaries(items: Item[], finished: Set<string>): Item[] {
   const out: Item[] = [];
@@ -468,7 +469,9 @@ function addTurnSummaries(items: Item[], finished: Set<string>): Item[] {
         }
       }
     }
-    if (files.size > 0) {
+    // The summary belongs to the finished turn, not to the work in flight: while the turn runs,
+    // the live steps are the story, and a card of totals would read as an ending it has not had.
+    if (files.size > 0 && finished.has(turnId)) {
       const list = [...files.values()];
       out.push({
         kind: 'changes',
