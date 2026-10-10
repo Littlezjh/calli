@@ -210,6 +210,16 @@ export class Api {
     return this.request('GET', `/api/threads/${id}/events?after=${after}`);
   }
 
+  /** The newest events of a thread: what a reopened page renders before any history is paged in. */
+  eventsTail(id: string, limit: number): Promise<StoredEvent[]> {
+    return this.request('GET', `/api/threads/${id}/events?tail=${limit}`);
+  }
+
+  /** One page of history older than the given sequence number. */
+  eventsBefore(id: string, before: number, limit: number): Promise<StoredEvent[]> {
+    return this.request('GET', `/api/threads/${id}/events?before=${before}&limit=${limit}`);
+  }
+
   createThread(input: {
     agent: string;
     cwd: string;

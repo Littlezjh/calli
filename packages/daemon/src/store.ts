@@ -351,4 +351,20 @@ export class Store {
       .all(threadId, afterSeq, limit) as unknown as EventRow[];
     return rows.map(toEvent);
   }
+
+  /** The newest `limit` events, in order — what a reopened page should render first. */
+  listLastEvents(threadId: string, limit: number): StoredEvent[] {
+    const rows = this.db
+      .prepare('SELECT * FROM events WHERE thread_id = ? ORDER BY seq DESC LIMIT ?')
+      .all(threadId, limit) as unknown as EventRow[];
+    return rows.reverse().map(toEvent);
+  }
+
+  /** Up to `limit` events immediately older than `beforeSeq`, in order — one page of history. */
+  listEventsBefore(threadId: string, beforeSeq: number, limit: number): StoredEvent[] {
+    const rows = this.db
+      .prepare('SELECT * FROM events WHERE thread_id = ? AND seq < ? ORDER BY seq DESC LIMIT ?')
+      .all(threadId, beforeSeq, limit) as unknown as EventRow[];
+    return rows.reverse().map(toEvent);
+  }
 }

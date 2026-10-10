@@ -410,3 +410,48 @@ test('turnPreviews pairs each turn with the start of its answer', () => {
   assert.equal(previews.get('t1')?.answer, 'an agent CLI');
   assert.equal(previews.get('t2')?.answer, 'a browser UI');
 });
+
+test('a tool call after text opens a new work group below it, in stream order', () => {
+  seq = 0;
+  const tl = buildTimeline([
+    ev('turn.started', { text: 'q' }, 't1', '2026-10-10T00:00:00Z'),
+    ev('message.delta', { text: '先看文件，' }, 't1', '2026-10-10T00:00:01Z'),
+    ev('tool.start', { id: 'a', title: 'ls', kind: 'execute', status: 'in_progress' }, 't1', '2026-10-10T00:00:02Z'),
+    ev('tool.end', { id: 'a', status: 'completed' }, 't1', '2026-10-10T00:00:03Z'),
+    ev('message.delta', { text: '再跑测试，' }, 't1', '2026-10-10T00:00:04Z'),
+    ev('tool.start', { id: 'b', title: 'npm test', kind: 'execute', status: 'in_progress' }, 't1', '2026-10-10T00:00:05Z'),
+    ev('tool.end', { id: 'b', status: 'completed' }, 't1', '2026-10-10T00:00:06Z'),
+    ev('message.delta', { text: '都好。' }, 't1', '2026-10-10T00:00:07Z'),
+    ev('turn.done', {}, 't1', '2026-10-10T00:00:08Z'),
+  ]);
+  assert.deepEqual(tl.items.map((i) => i.kind), ['user', 'assistant', 'work', 'assistant', 'work', 'assistant', 'actions']);
+  const [, t1, w1, t2, w2, t3] = tl.items;
+  assert.equal(t1.kind === 'assistant' && t1.text, '先看文件，');
+  assert.equal(w1.kind === 'work' && w1.steps[0].title, 'ls');
+  assert.equal(t2.kind === 'assistant' && t2.text, '再跑测试，');
+  assert.equal(w2.kind === 'work' && w2.steps[0].title, 'npm test');
+  assert.equal(t3.kind === 'assistant' && t3.text, '都好。');
+  // Finished turn: the first group carries the whole turn's duration, later ones are just done.
+  assert.equal(w1.kind === 'work' && w1.firstInTurn, true);
+  assert.equal(w1.kind === 'work' && w1.endedAt, '2026-10-10T00:00:08Z');
+  assert.equal(w2.kind === 'work' && !w2.firstInTurn, true);
+  assert.equal(w1.kind === 'work' && w1.active, false);
+});
+
+test('while a turn runs, the newest work group is the active one and earlier ones hand over', () => {
+  seq = 0;
+  const tl = buildTimeline([
+    ev('turn.started', { text: 'q' }),
+    ev('message.delta', { text: '先看文件，' }),
+    ev('tool.start', { id: 'a', title: 'ls', kind: 'execute', status: 'in_progress' }),
+    ev('tool.end', { id: 'a', status: 'completed' }),
+    ev('message.delta', { text: '再跑测试，' }),
+    ev('tool.start', { id: 'b', title: 'npm test', kind: 'execute', status: 'in_progress' }),
+  ]);
+  assert.equal(tl.running, true);
+  const [, , w1, , w2] = tl.items;
+  assert.equal(w1.kind === 'work' && w1.active, false, 'the group before the text is done being written');
+  assert.equal(w1.kind === 'work' && w1.done, false, 'it only collapses when the whole turn ends');
+  assert.equal(w2.kind === 'work' && w2.active, true, 'the group being written to is the working one');
+  assert.equal(tl.items.some((i) => i.kind === 'actions'), false);
+});

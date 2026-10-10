@@ -1473,3 +1473,26 @@ test('agents: instances beyond the built-ins are listed, and PATH discovery offe
   }
   withRegistry.close();
 });
+
+test('events endpoint: tail loads the newest stretch, before pages older history', async () => {
+  const thread = await (await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: workdir }) })).json();
+  for (let i = 1; i <= 30; i++) store.appendEvent(thread.id, null, 'thread.updated', { i });
+  // Creating the thread itself wrote seq 1 (thread.created); the 30 appended ones follow.
+  const all = (await (await api(`/api/threads/${thread.id}/events?after=0`)).json()) as Array<{ seq: number }>;
+  assert.equal(all.length, 31);
+
+  // The tail is the END of the log, in order — what a reopened page renders first.
+  const tail = (await (await api(`/api/threads/${thread.id}/events?tail=10`)).json()) as Array<{ seq: number }>;
+  assert.deepEqual(tail.map((e) => e.seq), [22, 23, 24, 25, 26, 27, 28, 29, 30, 31]);
+
+  // Paging walks backwards from the oldest seq the page already has, staying in order.
+  const page = (await (await api(`/api/threads/${thread.id}/events?before=22&limit=10`)).json()) as Array<{ seq: number }>;
+  assert.deepEqual(page.map((e) => e.seq), [12, 13, 14, 15, 16, 17, 18, 19, 20, 21]);
+  const page2 = (await (await api(`/api/threads/${thread.id}/events?before=12&limit=10`)).json()) as Array<{ seq: number }>;
+  assert.deepEqual(page2.map((e) => e.seq), [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+  // Fewer events than the page size: just what exists.
+  const page3 = (await (await api(`/api/threads/${thread.id}/events?before=4&limit=10`)).json()) as Array<{ seq: number }>;
+  assert.deepEqual(page3.map((e) => e.seq), [1, 2, 3]);
+  // Unknown thread still 404s.
+  assert.equal((await api('/api/threads/nope/events?tail=10')).status, 404);
+});

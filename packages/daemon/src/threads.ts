@@ -563,6 +563,18 @@ export class ThreadManager {
     return this.store.listEvents(threadId, afterSeq);
   }
 
+  /** The newest events of a thread, for the view a reopened page renders first. */
+  listLastEvents(threadId: string, limit: number): StoredEvent[] {
+    this.getThread(threadId);
+    return this.store.listLastEvents(threadId, limit);
+  }
+
+  /** One page of history older than what the page already has. */
+  listEventsBefore(threadId: string, beforeSeq: number, limit: number): StoredEvent[] {
+    this.getThread(threadId);
+    return this.store.listEventsBefore(threadId, beforeSeq, limit);
+  }
+
   /** How many hub-only turns may be skipped while matching the agent's history. See syncThread. */
   private static readonly SYNC_SKIP_TOLERANCE = 3;
 

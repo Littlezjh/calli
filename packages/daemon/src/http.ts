@@ -270,6 +270,16 @@ export function createHttpServer(deps: HttpDeps): Server {
       }
 
       if (method === 'GET' && sub === 'events') {
+        // ?tail=N: the newest N events (a reopened page renders these first, older history is
+        // paged in). ?before=S&limit=N: one page of history older than what the page has.
+        // Plain ?after=S stays the resume path: everything after a sequence number.
+        const tail = Number(url.searchParams.get('tail') ?? 0) || 0;
+        const before = Number(url.searchParams.get('before') ?? 0) || 0;
+        if (tail > 0) return sendJson(res, 200, manager.listLastEvents(threadId, Math.min(tail, 5000)));
+        if (before > 0) {
+          const limit = Math.min(Number(url.searchParams.get('limit') ?? 0) || 2000, 5000);
+          return sendJson(res, 200, manager.listEventsBefore(threadId, before, limit));
+        }
         const after = Number(url.searchParams.get('after') ?? 0) || 0;
         return sendJson(res, 200, manager.listEvents(threadId, after));
       }

@@ -83,6 +83,10 @@ export type Item =
       startedAt: string;
       endedAt: string | null;
       done: boolean;
+      /** False once a newer group or a message has taken over mid-turn, or the turn ended. */
+      active?: boolean;
+      /** True on the first work group of a finished turn: it shows the whole turn's duration. */
+      firstInTurn?: boolean;
       /** False for turns imported from the agent's history: their events were all written at once. */
       timed: boolean;
     }
@@ -194,9 +198,22 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
   let openWork = -1;
   let openPlan = -1;
 
-  const closeTurnItems = (turnId: string) => {
+  const closeTurnItems = (turnId: string, endedAt?: string) => {
+    let firstWork = true;
     for (const it of items) {
-      if ((it.kind === 'assistant' || it.kind === 'work' || it.kind === 'plan') && it.turnId === turnId) it.done = true;
+      if (it.turnId !== turnId) continue;
+      if (it.kind === 'assistant' || it.kind === 'work' || it.kind === 'plan') {
+        it.done = true;
+      }
+      if (it.kind === 'work') {
+        it.active = false;
+        if (firstWork) {
+          firstWork = false;
+          // The turn's first group carries its whole duration, from first activity to the end.
+          it.firstInTurn = true;
+          if (endedAt) it.endedAt = endedAt;
+        }
+      }
     }
     openPlan = -1;
   };
@@ -226,6 +243,11 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
       case 'message.delta': {
         const text = String(ev.data.text ?? '');
         if (openAssistant < 0 || items[openAssistant].kind !== 'assistant') {
+          // Text ends the open work group: whatever the agent does next starts a new group below
+          // this text, so a turn reads top-down like a conversation instead of one hoisted block.
+          const open = items[openWork];
+          if (open && open.kind === 'work') open.active = false;
+          openWork = -1;
           items.push({ kind: 'assistant', key, turnId: turn, text: '', done: false });
           openAssistant = items.length - 1;
         }
@@ -269,6 +291,7 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
             startedAt: ev.ts,
             endedAt: null,
             done: false,
+            active: true,
             timed: !imported.has(turn),
           });
           openWork = items.length - 1;
@@ -327,7 +350,7 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
       }
 
       case 'turn.done':
-        closeTurnItems(turn);
+        closeTurnItems(turn, ev.ts);
         finished.add(turn);
         running = false;
         openAssistant = -1;
@@ -335,7 +358,7 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
         break;
 
       case 'turn.error':
-        closeTurnItems(turn);
+        closeTurnItems(turn, ev.ts);
         items.push({ kind: 'error', key, turnId: turn, message: errorText(ev.data) });
         running = false;
         openAssistant = -1;

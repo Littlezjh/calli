@@ -55,7 +55,9 @@ function piToolTitle(name: string, args: any): string {
     case 'read':
     case 'edit':
     case 'write':
-      return `${name[0].toUpperCase()}${name.slice(1)} ${args?.path ?? ''}`.trim();
+      // The row already gets its verb from the kind ("读取了 …"), so the title is just the path;
+      // keeping the English verb here read as "读取了 Read x".
+      return String(args?.path ?? '').trim();
     default: {
       const target = args?.pattern ?? args?.path ?? args?.query;
       return target ? `${name} ${target}` : name;

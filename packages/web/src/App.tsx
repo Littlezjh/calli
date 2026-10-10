@@ -170,9 +170,13 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api]);
 
-  // Event log for the selected thread: backlog first, then a live stream that resumes from the last seq.
+  // Event log for the selected thread: the newest stretch first (a long thread's full log can be
+  // tens of thousands of events), then a live stream that resumes from the last seq. Older
+  // history is paged in on demand from the fold at the top.
   useEffect(() => {
     setEvents([]);
+    setHasOlder(false);
+    setLoadingOlder(false);
     if (!api || !selectedId) return;
     const ctrl = new AbortController();
     const id = selectedId;
@@ -198,9 +202,11 @@ export function App() {
     (async () => {
       let after = 0;
       try {
-        const initial = await api.events(id, 0);
+        const initial = await api.eventsTail(id, TAIL_EVENTS);
         if (ctrl.signal.aborted) return;
         setEvents(initial);
+        // The tail ends at the log's end; when it is full, the log continues below seq 1.
+        setHasOlder(initial.length > 0 && initial[0].seq > 1);
         after = initial.at(-1)?.seq ?? 0;
       } catch (e) {
         if (!ctrl.signal.aborted) handleError(e);
@@ -230,6 +236,34 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, selectedId]);
 
+  /** How many events a reopened thread loads up front; older history is fetched page by page. */
+  const TAIL_EVENTS = 4000;
+  const [hasOlder, setHasOlder] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+
+  /** Prepends one page of older events, keeping the scroll position on the same content. */
+  const loadOlder = async () => {
+    const el = scrollerRef.current;
+    const first = events[0]?.seq ?? 0;
+    if (!api || !selectedId || loadingOlder || first <= 1) return;
+    setLoadingOlder(true);
+    try {
+      const older = await api.eventsBefore(selectedId, first, TAIL_EVENTS);
+      setHasOlder(older.length > 0 && older[0].seq > 1);
+      const distanceFromBottom = el ? el.scrollHeight - el.scrollTop : 0;
+      setEvents((prev) => [...older, ...prev]);
+      // New content lands above the viewport; stay on the same row while it inserts.
+      requestAnimationFrame(() => {
+        const el2 = scrollerRef.current;
+        if (el2 && !stickToBottom.current) el2.scrollTop = el2.scrollHeight - distanceFromBottom;
+      });
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setLoadingOlder(false);
+    }
+  };
+
   // Keep the view pinned to the bottom while the user has not scrolled up.
   useEffect(() => {
     const el = scrollerRef.current;
@@ -249,11 +283,39 @@ export function App() {
     return () => ro.disconnect();
   }, [selectedId]);
 
+  // Only a hand gesture hands the scroll position over to the user. Plain scroll events also
+  // fire for the pin itself, for browser scroll anchoring and for keyboard shifts, and none of
+  // those should unpin the view. Scrolling back near the bottom pins again.
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const release = () => {
+      stickToBottom.current = false;
+    };
+    el.addEventListener('wheel', release, { passive: true });
+    el.addEventListener('touchmove', release, { passive: true });
+    return () => {
+      el.removeEventListener('wheel', release);
+      el.removeEventListener('touchmove', release);
+    };
+  }, []);
+
+  // Phone keyboards shrink the visual viewport instead of the layout; sizing the app to it keeps
+  // the composer visible without Safari scrolling the page (which pushed the top bar off screen).
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const apply = () => document.documentElement.style.setProperty('--vvh', `${vv.height}px`);
+    apply();
+    vv.addEventListener('resize', apply);
+    return () => vv.removeEventListener('resize', apply);
+  }, []);
+
   const onScroll = () => {
     const el = scrollerRef.current;
     if (!el) return;
     const near = el.scrollHeight - el.scrollTop - el.clientHeight < 160;
-    stickToBottom.current = near;
+    if (near) stickToBottom.current = true;
     setAtBottom(near);
   };
 
@@ -734,6 +796,9 @@ export function App() {
               loadImage={loadImage}
               loadFile={loadFile}
               onDecide={decide}
+              hasOlder={hasOlder}
+              loadingOlder={loadingOlder}
+              onLoadOlder={loadOlder}
             />
           ) : (
             <div className="empty">

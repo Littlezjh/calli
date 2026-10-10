@@ -30,6 +30,10 @@ interface Props {
   /** Fetches an image file from the thread's directory by path; rejects when there is no such image. Same identity rule. */
   loadFile: (path: string) => Promise<Blob>;
   onDecide: (approvalId: string, optionId: string | null) => void;
+  /** The thread's log continues below what is in memory: one more history page can be fetched. */
+  hasOlder?: boolean;
+  loadingOlder?: boolean;
+  onLoadOlder?: () => void;
 }
 
 /** Lines of one diff shown before the rest is folded away. */
@@ -38,7 +42,7 @@ const MAX_DIFF_LINES = 400;
 /** How many turns stay rendered before the rest folds into "上 N 条消息". */
 const RECENT_TURNS = 30;
 
-export function ThreadView({ items, running, roots, loadImage, loadFile, onDecide }: Props) {
+export function ThreadView({ items, running, roots, loadImage, loadFile, onDecide, hasOlder, loadingOlder, onLoadOlder }: Props) {
   const [lightbox, setLightbox] = useState<string | null>(null);
   const groups = useMemo(() => groupByTurn(items), [items]);
   // "Show everything" is remembered per thread; switching threads starts folded again.
@@ -108,6 +112,13 @@ export function ThreadView({ items, running, roots, loadImage, loadFile, onDecid
         <div className="row">
           <button className="older-messages" onClick={() => setExpandedFor({ key: threadKey, value: true })}>
             上 {hiddenMessages} 条消息
+          </button>
+        </div>
+      )}
+      {!folded && hasOlder && (
+        <div className="row">
+          <button className="older-messages" disabled={loadingOlder} onClick={onLoadOlder}>
+            {loadingOlder ? '加载中…' : '加载更早的消息'}
           </button>
         </div>
       )}
@@ -322,13 +333,23 @@ function Lightbox({ url, onClose }: { url: string; onClose: () => void }) {
 }
 
 function WorkGroup({ item, roots }: { item: Extract<Item, { kind: 'work' }>; roots: string[] }) {
-  // Open while the turn is running so progress is visible; collapsed once it finishes.
+  // Open while the turn runs so progress is visible; collapsed once it finishes.
   const [open, setOpen] = useState(!item.done);
   // Collapse once the turn finishes; the user can still expand it afterwards.
   useEffect(() => {
     if (item.done) setOpen(false);
   }, [item.done]);
-  const label = !item.done ? '工作中' : item.timed ? `用时 ${durationLabel(item.startedAt, item.endedAt)}` : '已处理';
+  // The turn's first group shows the whole turn's duration; groups that handed over to text
+  // mid-turn (or came after it) just say they are done. While a group is being written to, it is
+  // the working one.
+  const turnTime = item.timed && item.firstInTurn ? durationLabel(item.startedAt, item.endedAt) : '';
+  const label = !item.done
+    ? item.active === false
+      ? '已处理'
+      : '工作中'
+    : turnTime
+      ? `用时 ${turnTime}`
+      : '已处理';
   const count = item.steps.length;
   return (
     <div className="row work">
