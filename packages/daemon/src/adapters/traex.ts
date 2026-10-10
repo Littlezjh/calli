@@ -1,0 +1,100 @@
+import { execFile } from 'node:child_process';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { readdirSync } from 'node:fs';
+import { promisify } from 'node:util';
+import { AcpAdapter } from './acp.js';
+import type { PermissionMode } from './types.js';
+
+const execFileAsync = promisify(execFile);
+
+/**
+ * TRAE CLI ("traex", the command-line agent of Trae X), through its own ACP server
+ * (`traex acp serve`). The protocol handling lives in acp.ts; what is TRAE-specific:
+ *
+ * - it has no mode that asks before every action. "Workspace Edit" (its default) already approves
+ *   edits in the workspace and asks only for what leaves it, which is what the hub calls
+ *   auto_edit; "Full Access" approves everything. So the hub offers those two levels only;
+ * - the effort config option is called `reasoning_effort` and offers low..xhigh. The shared code
+ *   finds it by its category, so nothing here has to know the id;
+ * - its ACP server cannot delete a session, but its CLI can (`traex delete --force`);
+ * - it keeps a per-session folder of files it generated, next to its session log.
+ */
+
+const TRAEX_MODE_IDS: Record<PermissionMode, readonly string[]> = {
+  ask: ['default'], // never offered to the UI; a safe answer if an old thread still says "ask"
+  auto_edit: ['default'],
+  full_access: ['bypass_permissions'],
+};
+
+/** Effort levels TRAE CLI accepts through the `reasoning_effort` config option. */
+const TRAEX_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const;
+
+export class TraexAcpAdapter extends AcpAdapter {
+  readonly id = 'traex';
+  readonly label = 'TRAE CLI';
+  readonly capabilities = {
+    resume: true,
+    approvals: true,
+    permissionModes: ['auto_edit', 'full_access'] as const,
+    effortLevels: TRAEX_EFFORTS,
+    images: true,
+    deleteSession: true,
+    history: true,
+    fork: true,
+  };
+
+  protected readonly modeIds = TRAEX_MODE_IDS;
+
+  /** The plain CLI, for the one job its ACP server cannot do: `traex delete --force`. */
+  private readonly cli: string[];
+
+  constructor(
+    command: string[],
+    env: Record<string, string> = {},
+    /** Defaults to the ACP command without the `acp serve` part. */
+    cli?: string[],
+  ) {
+    super(command, env);
+    const endsWithServe = command.length > 2 && command.at(-2) === 'acp' && command.at(-1) === 'serve';
+    this.cli = cli ?? (endsWithServe ? command.slice(0, -2) : command);
+  }
+
+  resumeCommand(agentSessionId: string): string {
+    return `traex resume ${agentSessionId}`;
+  }
+
+  /** The ACP server has no session/delete; the CLI does it in one short run. */
+  async deleteSession(agentSessionId: string, _cwd: string): Promise<void> {
+    await execFileAsync(this.cli[0], [...this.cli.slice(1), 'delete', '--force', agentSessionId], {
+      env: { ...process.env, ...this.env },
+    });
+  }
+
+  /**
+   * Files TRAE CLI generated for a session live in a folder of its own next to the session log:
+   * ~/.trae/cli/sessions/<year>/<month>/<day>/rollout-<timestamp>-<session id>.artifacts
+   */
+  artifactDirs(agentSessionId: string): string[] {
+    if (!/^[0-9a-f-]{8,64}$/i.test(agentSessionId)) return [];
+    const home = this.env.RAH_TRAEX_HOME || process.env.RAH_TRAEX_HOME || join(homedir(), '.trae', 'cli');
+    const sessions = join(home, 'sessions');
+    try {
+      const years = readdirSync(sessions).filter((d) => /^\d{4}$/.test(d));
+      return years.flatMap((year) => {
+        const months = readdirSync(join(sessions, year)).filter((d) => /^\d{1,2}$/.test(d));
+        return months.flatMap((month) =>
+          readdirSync(join(sessions, year, month))
+            .filter((d) => /^\d{1,2}$/.test(d))
+            .flatMap((day) =>
+              readdirSync(join(sessions, year, month, day))
+                .filter((d) => d.endsWith(`-${agentSessionId}.artifacts`))
+                .map((d) => join(sessions, year, month, day, d)),
+            ),
+        );
+      });
+    } catch {
+      return []; // no sessions yet, or the folder layout changed
+    }
+  }
+}

@@ -1,0 +1,586 @@
+/**
+ * Turns the daemon's event log into the items the thread view renders.
+ * Pure: no React, no I/O, so it can be unit-tested directly.
+ */
+import { diffStats } from './diff';
+
+export interface StoredEvent {
+  threadId: string;
+  seq: number;
+  turnId: string | null;
+  type: string;
+  ts: string;
+  data: Record<string, any>;
+}
+
+/** One edited region of a file, as the agent reported it, with its line counts. */
+export interface FileDiff {
+  path: string;
+  oldText: string | null;
+  newText: string;
+  added: number;
+  removed: number;
+}
+
+export interface Step {
+  id: string;
+  title: string;
+  kind: string;
+  status: string;
+  input?: unknown;
+  output?: string;
+  diffs: FileDiff[];
+  /** When the agent started and finished this call, from the event log's timestamps. */
+  startedAt?: string;
+  endedAt?: string;
+}
+
+export interface ImageRef {
+  id: string;
+  mimeType: string;
+}
+
+/** Everything a turn did to one file. */
+export interface FileChange {
+  path: string;
+  added: number;
+  removed: number;
+  diffs: FileDiff[];
+}
+
+/** One task in the agent's own to-do list for a turn. */
+export interface PlanEntry {
+  content: string;
+  /** pending | in_progress | completed */
+  status: string;
+}
+
+/** How full the agent's context window is, as it last reported. */
+export interface Usage {
+  used: number;
+  size: number;
+  cost?: { amount: number; currency: string };
+}
+
+export interface ApprovalOption {
+  optionId: string;
+  name: string;
+  kind: string;
+}
+
+export type Item =
+  | { kind: 'user'; key: string; turnId: string; text: string; images: ImageRef[]; fromTerminal?: boolean }
+  | { kind: 'assistant'; key: string; turnId: string; text: string; done: boolean }
+  | {
+      kind: 'work';
+      key: string;
+      turnId: string;
+      steps: Step[];
+      reasoning: string;
+      /** First and last thinking event of the group, for the "已思考 X" label. */
+      thinkStart: string | null;
+      thinkEnd: string | null;
+      startedAt: string;
+      endedAt: string | null;
+      done: boolean;
+      /** False for turns imported from the agent's history: their events were all written at once. */
+      timed: boolean;
+    }
+  | {
+      kind: 'approval';
+      key: string;
+      turnId: string;
+      approvalId: string;
+      title: string;
+      options: ApprovalOption[];
+      decision: { optionId: string } | { cancelled: true } | null;
+      /** What is about to be written, when the agent says. */
+      diffs: FileDiff[];
+      /** The shell command about to run, when the request is for one. */
+      command: string | null;
+    }
+  /** The agent's task list for a turn. Later updates replace the entries in place. */
+  | { kind: 'plan'; key: string; turnId: string; entries: PlanEntry[]; done: boolean }
+  /** Files a turn changed, shown once after everything else in the turn. */
+  | { kind: 'changes'; key: string; turnId: string; files: FileChange[]; added: number; removed: number }
+  /** The row under a finished answer. `text` is what "copy" copies. */
+  | { kind: 'actions'; key: string; turnId: string; text: string }
+  | { kind: 'error'; key: string; turnId: string | null; message: string };
+
+/**
+ * What to show for a failed turn. Failures the daemon marks with a code get an explanation and a
+ * way out; anything else is shown as the agent reported it.
+ */
+export function errorText(data: Record<string, any>): string {
+  if (data.code === 'permission_refused') {
+    const what = Array.isArray(data.refused) && data.refused.length ? `（${data.refused.join('、')}）` : '';
+    return `这一步需要批准${what}，但这个 agent 在后台运行时没法询问，所以拒绝后停下了。把输入框下方的权限切到"完全访问"，再发一次。`;
+  }
+  return String(data.message ?? 'error');
+}
+
+export interface Timeline {
+  items: Item[];
+  lastSeq: number;
+  /** A turn has started and not yet finished (turn.done or turn.error). */
+  running: boolean;
+  /** An approval is waiting for the user. */
+  awaitingApproval: boolean;
+  /** The latest context usage the agent reported, if it reports any. */
+  usage: Usage | null;
+}
+
+// The timeline is rebuilt on every new event. Line counts are the costly part, and the raw
+// diff objects in the event log never change, so each one is measured only once.
+const diffCache = new WeakMap<object, FileDiff>();
+
+function diffsOf(content: unknown): FileDiff[] {
+  if (!Array.isArray(content)) return [];
+  const out: FileDiff[] = [];
+  for (const part of content) {
+    if (!part || typeof part !== 'object' || (part as any).type !== 'diff') continue;
+    let diff = diffCache.get(part);
+    if (!diff) {
+      const raw = part as { path?: unknown; oldText?: unknown; newText?: unknown };
+      const oldText = typeof raw.oldText === 'string' ? raw.oldText : null;
+      const newText = typeof raw.newText === 'string' ? raw.newText : '';
+      diff = { path: String(raw.path ?? ''), oldText, newText, ...diffStats(oldText, newText) };
+      diffCache.set(part, diff);
+    }
+    out.push(diff);
+  }
+  return out;
+}
+
+/** The readable text in a tool's content, leaving out diffs (those are shown as diffs). */
+function textOfContent(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((part: any) => {
+      if (part?.type === 'diff') return '';
+      if (part?.type === 'content' && part.content?.type === 'text') return String(part.content.text);
+      if (part?.type === 'text' && typeof part.text === 'string') return part.text;
+      return '';
+    })
+    .filter(Boolean)
+    .join('\n');
+}
+
+function outputText(output: unknown): string {
+  if (output === undefined || output === null || output === '') return '';
+  return typeof output === 'string' ? output : JSON.stringify(output, null, 2);
+}
+
+function applyToolData(step: Step, data: Record<string, any>): void {
+  if (data.status) step.status = String(data.status);
+  if (data.title) step.title = String(data.title);
+  const diffs = diffsOf(data.content);
+  if (diffs.length) step.diffs = diffs;
+  const text = outputText(data.output) || textOfContent(data.content);
+  if (text) step.output = text;
+}
+
+export function buildTimeline(events: StoredEvent[]): Timeline {
+  const items: Item[] = [];
+  const finished = new Set<string>();
+  const imported = new Set<string>();
+  let lastSeq = 0;
+  let running = false;
+  let usage: Usage | null = null;
+
+  // Index of the open item for each kind within the current turn, so deltas attach to it.
+  let openAssistant = -1;
+  let openWork = -1;
+  let openPlan = -1;
+
+  const closeTurnItems = (turnId: string) => {
+    for (const it of items) {
+      if ((it.kind === 'assistant' || it.kind === 'work' || it.kind === 'plan') && it.turnId === turnId) it.done = true;
+    }
+    openPlan = -1;
+  };
+
+  for (const ev of events) {
+    lastSeq = Math.max(lastSeq, ev.seq);
+    const key = `e${ev.seq}`;
+    const turn = ev.turnId ?? '';
+
+    switch (ev.type) {
+      case 'turn.started':
+        running = true;
+        openAssistant = -1;
+        openWork = -1;
+        openPlan = -1;
+        if (ev.data.imported) imported.add(turn);
+        items.push({
+          kind: 'user',
+          key,
+          turnId: turn,
+          text: String(ev.data.text ?? ''),
+          images: Array.isArray(ev.data.images) ? ev.data.images : [],
+          ...(ev.data.fromTerminal ? { fromTerminal: true } : {}),
+        });
+        break;
+
+      case 'message.delta': {
+        const text = String(ev.data.text ?? '');
+        if (openAssistant < 0 || items[openAssistant].kind !== 'assistant') {
+          items.push({ kind: 'assistant', key, turnId: turn, text: '', done: false });
+          openAssistant = items.length - 1;
+        }
+        (items[openAssistant] as Extract<Item, { kind: 'assistant' }>).text += text;
+        break;
+      }
+
+      case 'plan.updated': {
+        const entries: PlanEntry[] = (Array.isArray(ev.data.entries) ? ev.data.entries : [])
+          .filter((e: any) => e && typeof e.content === 'string' && e.content.trim())
+          .map((e: any) => ({ content: String(e.content), status: String(e.status ?? 'pending') }));
+        if (openPlan < 0) {
+          if (entries.length === 0) break;
+          items.push({ kind: 'plan', key, turnId: turn, entries, done: false });
+          openPlan = items.length - 1;
+        } else {
+          (items[openPlan] as Extract<Item, { kind: 'plan' }>).entries = entries;
+        }
+        break;
+      }
+
+      case 'usage.updated':
+        if (typeof ev.data.used === 'number' && typeof ev.data.size === 'number' && ev.data.size > 0) {
+          usage = { used: ev.data.used, size: ev.data.size, ...(ev.data.cost ? { cost: ev.data.cost } : {}) };
+        }
+        break;
+
+      case 'reasoning.delta':
+      case 'tool.start':
+      case 'tool.update':
+      case 'tool.end': {
+        if (openWork < 0 || items[openWork].kind !== 'work') {
+          items.push({
+            kind: 'work',
+            key,
+            turnId: turn,
+            steps: [],
+            reasoning: '',
+            thinkStart: null,
+            thinkEnd: null,
+            startedAt: ev.ts,
+            endedAt: null,
+            done: false,
+            timed: !imported.has(turn),
+          });
+          openWork = items.length - 1;
+          openAssistant = -1; // text after tools starts a new assistant item
+        }
+        const work = items[openWork] as Extract<Item, { kind: 'work' }>;
+        work.endedAt = ev.ts;
+        if (ev.type === 'reasoning.delta') {
+          work.reasoning += String(ev.data.text ?? '');
+          work.thinkStart ??= ev.ts;
+          work.thinkEnd = ev.ts;
+        }
+        if (ev.type === 'tool.start') {
+          const step: Step = {
+            id: String(ev.data.id),
+            title: String(ev.data.title ?? ''),
+            kind: String(ev.data.kind ?? 'other'),
+            status: String(ev.data.status ?? 'in_progress'),
+            input: ev.data.input,
+            diffs: [],
+            startedAt: ev.ts,
+          };
+          applyToolData(step, { content: ev.data.content });
+          work.steps.push(step);
+        }
+        if (ev.type === 'tool.update' || ev.type === 'tool.end') {
+          const step = work.steps.find((s) => s.id === String(ev.data.id));
+          if (step) applyToolData(step, ev.data);
+          if (step && ev.type === 'tool.end') step.endedAt = ev.ts;
+        }
+        break;
+      }
+
+      case 'approval.request': {
+        const toolCall = (ev.data.toolCall ?? {}) as { content?: unknown; rawInput?: { command?: unknown } };
+        items.push({
+          kind: 'approval',
+          key,
+          turnId: turn,
+          approvalId: String(ev.data.approvalId),
+          title: String(ev.data.title ?? 'Permission requested'),
+          options: (ev.data.options ?? []) as ApprovalOption[],
+          decision: null,
+          diffs: diffsOf(toolCall.content),
+          command: typeof toolCall.rawInput?.command === 'string' ? toolCall.rawInput.command : null,
+        });
+        break;
+      }
+
+      case 'approval.resolved': {
+        const id = String(ev.data.approvalId);
+        for (const it of items) {
+          if (it.kind === 'approval' && it.approvalId === id) it.decision = ev.data.decision ?? null;
+        }
+        break;
+      }
+
+      case 'turn.done':
+        closeTurnItems(turn);
+        finished.add(turn);
+        running = false;
+        openAssistant = -1;
+        openWork = -1;
+        break;
+
+      case 'turn.error':
+        closeTurnItems(turn);
+        items.push({ kind: 'error', key, turnId: turn, message: errorText(ev.data) });
+        running = false;
+        openAssistant = -1;
+        openWork = -1;
+        break;
+
+      default:
+        break; // thread.created, thread.updated: not rendered in the thread view
+    }
+  }
+
+  const withSummaries = addTurnSummaries(items, finished);
+  const awaitingApproval = running && items.some((it) => it.kind === 'approval' && it.decision === null);
+  return { items: withSummaries, lastSeq, running, awaitingApproval, usage };
+}
+
+const compactTokens = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));
+
+/** What the context meter shows: a whole percentage, whether it is getting full, and the detail behind it. */
+export function usageSummary(usage: Usage): { percent: number; high: boolean; detail: string } {
+  const percent = Math.min(100, Math.max(0, Math.round((usage.used / usage.size) * 100)));
+  const cost = usage.cost && usage.cost.amount > 0 ? ` · ${usage.cost.currency === 'USD' ? '$' : `${usage.cost.currency} `}${usage.cost.amount.toFixed(2)}` : '';
+  return { percent, high: percent >= 80, detail: `上下文已用 ${compactTokens(usage.used)} / ${compactTokens(usage.size)}${cost}` };
+}
+
+const IMAGE_FILE = /\.(?:png|jpe?g|gif|webp)$/i;
+const MAX_IMAGE_PATHS = 6;
+
+/**
+ * Local image files an answer points at: Markdown images, and paths written out in the text.
+ * Web addresses are left alone. Whether a file really exists and is an image is for the daemon to say.
+ */
+export function imagePathsIn(text: string): string[] {
+  const found: string[] = [];
+  const add = (raw: string) => {
+    const path = raw.replace(/^file:\/\//, '');
+    if (/^[a-z][a-z0-9+.-]*:/i.test(path) || path.startsWith('//')) return; // http:, data:, …
+    if (!IMAGE_FILE.test(path) || found.includes(path) || found.length >= MAX_IMAGE_PATHS) return;
+    found.push(path);
+  };
+  for (const m of text.matchAll(/!\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/g)) add(m[1]);
+  // A path stands on its own: after a space, a quote, a bracket or CJK punctuation, never mid-word or inside a URL.
+  for (const m of text.matchAll(/(?<=^|[\s`'"(（：，。])((?:file:\/\/)?[\p{L}\p{N}_@%+.~\-/]+\.(?:png|jpe?g|gif|webp))(?=$|[\s`'")）：，。,;；!?]|[.:](?:\s|$))/gimu)) {
+    add(m[1]);
+  }
+  return found;
+}
+
+/**
+ * Appends, at the end of each turn, the files it changed and (once it has finished with an answer)
+ * the action row. Turns never overlap in a thread, so a turn ends where the next user item begins.
+ */
+function addTurnSummaries(items: Item[], finished: Set<string>): Item[] {
+  const out: Item[] = [];
+  let turnItems: Item[] = [];
+
+  const flush = () => {
+    if (turnItems.length === 0) return;
+    const turnId = (turnItems[0] as { turnId: string }).turnId;
+    out.push(...turnItems);
+
+    // Only edits that went through count; a refused or failed edit changed nothing.
+    const files = new Map<string, FileChange>();
+    for (const it of turnItems) {
+      if (it.kind !== 'work') continue;
+      for (const step of it.steps) {
+        if (step.status !== 'completed') continue;
+        for (const diff of step.diffs) {
+          const file = files.get(diff.path) ?? { path: diff.path, added: 0, removed: 0, diffs: [] };
+          file.added += diff.added;
+          file.removed += diff.removed;
+          file.diffs.push(diff);
+          files.set(diff.path, file);
+        }
+      }
+    }
+    if (files.size > 0) {
+      const list = [...files.values()];
+      out.push({
+        kind: 'changes',
+        key: `changes-${turnId}`,
+        turnId,
+        files: list,
+        added: list.reduce((n, f) => n + f.added, 0),
+        removed: list.reduce((n, f) => n + f.removed, 0),
+      });
+    }
+
+    if (finished.has(turnId)) {
+      const answers = turnItems.filter((it): it is Extract<Item, { kind: 'assistant' }> => it.kind === 'assistant' && it.text.trim() !== '');
+      const last = answers[answers.length - 1];
+      if (last) out.push({ kind: 'actions', key: `actions-${turnId}`, turnId, text: last.text });
+    }
+    turnItems = [];
+  };
+
+  for (const it of items) {
+    if (it.kind === 'user') flush();
+    turnItems.push(it);
+  }
+  flush();
+  return out;
+}
+
+/** Seconds between the first and last event of a work group, for the "用时 X" label. */
+export function durationLabel(startedAt: string, endedAt: string | null): string {
+  if (!endedAt) return '';
+  const secs = Math.max(0, Math.round((Date.parse(endedAt) - Date.parse(startedAt)) / 1000));
+  if (secs < 60) return `${secs} 秒`;
+  return `${Math.floor(secs / 60)} 分 ${secs % 60} 秒`;
+}
+
+/** A tool call's own duration. Short calls keep one decimal, so instant calls do not all read "0 秒". */
+export function stepDurationLabel(startedAt?: string, endedAt?: string): string {
+  if (!startedAt || !endedAt) return '';
+  const secs = Math.max(0, (Date.parse(endedAt) - Date.parse(startedAt)) / 1000);
+  if (secs < 10) return `${secs.toFixed(1)} 秒`;
+  if (secs < 60) return `${Math.round(secs)} 秒`;
+  return `${Math.floor(secs / 60)} 分 ${Math.round(secs % 60)} 秒`;
+}
+
+/** Verbs for the tool kinds the adapters report. `other` gets none: the title already speaks. */
+const STEP_VERBS: Record<string, string> = {
+  execute: '运行了',
+  read: '读取了',
+  edit: '编辑了',
+  write: '写入了',
+  create: '创建了',
+  delete: '删除了',
+  fetch: '抓取了',
+  search: '搜索了',
+  move: '移动了',
+  switch: '切换了',
+};
+
+/** The step's one line, verb first: "运行了 npm test". */
+export function stepTitle(step: Step): string {
+  const verb = STEP_VERBS[step.kind] ?? '';
+  return verb ? `${verb} ${step.title}` : step.title;
+}
+
+/** What the right side of a step row says: the duration when done, the state otherwise. */
+export function stepStatusLabel(step: Step): string {
+  if (step.status === 'failed') return '失败';
+  if (step.status === 'in_progress' || step.status === 'pending') return '运行中';
+  return stepDurationLabel(step.startedAt, step.endedAt) || '完成';
+}
+
+/** Thinking text the model wrote as one stream is shown as short paragraphs. */
+const ABBREV_END = /(?:e\.g|i\.e|etc|vs|Fig|Eq|No)\.$/i;
+
+/**
+ * Splits a thinking stream into readable paragraphs. Paragraph breaks the model did write are
+ * kept; sentences that were concatenated without a space ("codebase.Let me") are split apart so
+ * the stream does not read as one jammed line. Common abbreviations are left alone.
+ */
+export function splitThinking(text: string): string[] {
+  const out: string[] = [];
+  for (const paragraph of text.split(/\n{2,}/)) {
+    const trimmed = paragraph.replace(/\s+/g, ' ').trim();
+    if (!trimmed) continue;
+    const sentences: string[] = [];
+    let start = 0;
+    for (let i = 0; i < trimmed.length; i++) {
+      const ch = trimmed[i];
+      if (ch !== '.' && ch !== '。' && ch !== '！' && ch !== '？' && ch !== '!' && ch !== '?') continue;
+      const after = trimmed[i + 1];
+      // A sentence ends where the next word starts a fresh one: a capital, a digit or CJK. Quotes
+      // and brackets let ".)Next" style endings through.
+      if (!after || !/[A-Z0-9\u4e00-\u9fff""'(（]/.test(after)) continue;
+      const soFar = trimmed.slice(start, i + 1);
+      if (ABBREV_END.test(soFar.trimEnd())) continue;
+      sentences.push(soFar.trim());
+      start = i + 1;
+    }
+    sentences.push(trimmed.slice(start).trim());
+    out.push(...sentences.filter(Boolean));
+  }
+  return out;
+}
+
+/** Items of one turn, in order. A turn starts at its user item; stray items share the '' group. */
+export interface TurnGroup {
+  turnId: string;
+  items: Item[];
+}
+
+/** Groups a timeline into turns, for the "render only the recent turns" collapse. */
+export function groupByTurn(items: Item[]): TurnGroup[] {
+  const groups: TurnGroup[] = [];
+  for (const it of items) {
+    const last = groups[groups.length - 1];
+    if (it.kind === 'user' || !last) groups.push({ turnId: it.turnId ?? '', items: [it] });
+    else last.items.push(it);
+  }
+  return groups;
+}
+
+/** What the ruler's preview popup shows for one turn: the question and how the answer starts. */
+export interface TurnPreview {
+  question: string;
+  answer: string;
+}
+
+/** Previews keyed by turn id, built from the same items the ruler marks. */
+export function turnPreviews(items: Item[]): Map<string, TurnPreview> {
+  const out = new Map<string, TurnPreview>();
+  for (const group of groupByTurn(items)) {
+    const question = group.items.find((it): it is Extract<Item, { kind: 'user' }> => it.kind === 'user');
+    if (!question) continue;
+    const answer = group.items
+      .filter((it): it is Extract<Item, { kind: 'assistant' }> => it.kind === 'assistant')
+      .map((it) => it.text.trim())
+      .filter(Boolean)
+      .join('\n')
+      .slice(0, 140);
+    out.set(group.turnId, { question: question.text.trim(), answer });
+  }
+  return out;
+}
+
+/** The conversation as Markdown, for "copy conversation". Tool output is left out; file changes are listed. */
+export function toMarkdown(title: string, items: Item[]): string {
+  const parts: string[] = [`# ${title}`];
+  for (const it of items) {
+    switch (it.kind) {
+      case 'user': {
+        const images = it.images.length ? `\n\n（附 ${it.images.length} 张图片）` : '';
+        parts.push(`## 你\n\n${it.text}${images}`.trimEnd());
+        break;
+      }
+      case 'assistant':
+        if (it.text.trim()) parts.push(it.text.trim());
+        break;
+      case 'changes':
+        parts.push(
+          [`**已更改 ${it.files.length} 个文件** (+${it.added} −${it.removed})`, ...it.files.map((f) => `- \`${f.path}\` +${f.added} −${f.removed}`)].join('\n'),
+        );
+        break;
+      case 'error':
+        parts.push(`> 出错：${it.message}`);
+        break;
+      default:
+        break;
+    }
+  }
+  return parts.join('\n\n') + '\n';
+}

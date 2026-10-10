@@ -1,0 +1,185 @@
+import type { ReactNode } from 'react';
+
+interface IconProps {
+  size?: number;
+  children: ReactNode;
+}
+
+function Svg({ size = 18, children }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {children}
+    </svg>
+  );
+}
+
+export const IconMenu = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M4 7h16M4 12h16M4 17h10" />
+  </Svg>
+);
+export const IconPlus = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M12 5v14M5 12h14" />
+  </Svg>
+);
+export const IconSend = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M12 19V5M6 11l6-6 6 6" />
+  </Svg>
+);
+export const IconStop = (p: { size?: number }) => (
+  <Svg {...p}>
+    <rect x="7" y="7" width="10" height="10" rx="2" />
+  </Svg>
+);
+export const IconChevron = (p: { size?: number; open?: boolean }) => (
+  <Svg {...p}>
+    <path d={p.open ? 'M6 9l6 6 6-6' : 'M9 6l6 6-6 6'} />
+  </Svg>
+);
+export const IconTerminal = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M5 7l4 4-4 4M12 17h7" />
+  </Svg>
+);
+export const IconFile = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M7 3h7l5 5v13H7zM14 3v5h5" />
+  </Svg>
+);
+export const IconSearch = (p: { size?: number }) => (
+  <Svg {...p}>
+    <circle cx="11" cy="11" r="6" />
+    <path d="M20 20l-4.5-4.5" />
+  </Svg>
+);
+export const IconEdit = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M4 20h4L19 9l-4-4L4 16zM14 6l4 4" />
+  </Svg>
+);
+export const IconFolder = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M3 6h6l2 2h10v11H3z" />
+  </Svg>
+);
+export const IconShield = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M12 3l7 3v5c0 4.5-3 8.2-7 10-4-1.8-7-5.5-7-10V6z" />
+  </Svg>
+);
+export const IconShieldAlert = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M12 3l7 3v5c0 4.5-3 8.2-7 10-4-1.8-7-5.5-7-10V6z" />
+    <path d="M12 8.5v4M12 15.5v.01" />
+  </Svg>
+);
+export const IconHand = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M8 12V6.5a1.5 1.5 0 013 0V11M11 11V5a1.5 1.5 0 013 0v6M14 11V6.5a1.5 1.5 0 013 0V14a6 6 0 01-6 6h-.5a5 5 0 01-4.2-2.3L4.6 14a1.4 1.4 0 012.3-1.6L8 13.6" />
+  </Svg>
+);
+export const IconCheck = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M5 12.5l4.5 4.5L19 7.5" />
+  </Svg>
+);
+export const IconPin = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M9 4h6l-1 6 3 3H7l3-3zM12 13v7" />
+  </Svg>
+);
+export const IconClose = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M6 6l12 12M18 6L6 18" />
+  </Svg>
+);
+export const IconArchive = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M4 5h16v4H4zM6 9v10h12V9M10 13h4" />
+  </Svg>
+);
+export const IconTrash = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13M10 11v6M14 11v6" />
+  </Svg>
+);
+export const IconCopy = (p: { size?: number }) => (
+  <Svg {...p}>
+    <rect x="9" y="9" width="11" height="11" rx="2.5" />
+    <path d="M5.5 15H5a1 1 0 01-1-1V5a1 1 0 011-1h9a1 1 0 011 1v.5" />
+  </Svg>
+);
+export const IconFork = (p: { size?: number }) => (
+  <Svg {...p}>
+    <circle cx="7" cy="5.5" r="2" />
+    <circle cx="7" cy="18.5" r="2" />
+    <circle cx="17" cy="8.5" r="2" />
+    <path d="M7 7.5v9M17 10.5c0 3-3.5 3.5-10 4" />
+  </Svg>
+);
+export const IconImport = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M12 4v10M8 10.5l4 4 4-4M5 15v3.5A1.5 1.5 0 006.5 20h11a1.5 1.5 0 001.5-1.5V15" />
+  </Svg>
+);
+export const IconInfo = (p: { size?: number }) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="M12 11v5.5M12 7.8v.01" />
+  </Svg>
+);
+export const IconHelp = (p: { size?: number }) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="M9.6 9.5a2.5 2.5 0 014.8 1c0 1.7-2.4 2-2.4 3.5M12 16.8v.01" />
+  </Svg>
+);
+export const IconDot = (p: { size?: number }) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="4" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="12" r="8" />
+  </Svg>
+);
+export const IconPaperclip = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M19 11.5l-7.2 7.2a4.5 4.5 0 01-6.4-6.4l7.6-7.6a3 3 0 014.3 4.3l-7.5 7.5a1.5 1.5 0 01-2.2-2.1l6.9-6.9" />
+  </Svg>
+);
+export const IconArrowDown = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M12 5v14M6 13l6 6 6-6" />
+  </Svg>
+);
+export const IconMore = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M6 12h.01M12 12h.01M18 12h.01" strokeWidth={2.6} />
+  </Svg>
+);
+export const IconList = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M9 7h11M9 12h11M9 17h11M4.5 7h.01M4.5 12h.01M4.5 17h.01" />
+  </Svg>
+);
+export const IconSparkle = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M12 4l1.8 4.7L18.5 10.5l-4.7 1.8L12 17l-1.8-4.7L5.5 10.5l4.7-1.8zM18.5 15.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z" />
+  </Svg>
+);
+export const IconRestore = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M4 8v5h5M4.6 13a8 8 0 101.9-6.2L4 9" />
+  </Svg>
+);
+export const IconCube = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9zM4 7.5l8 4.5 8-4.5M12 12v9" />
+  </Svg>
+);
+export const IconSlash = (p: { size?: number }) => (
+  <Svg {...p}>
+    <rect x="4" y="4" width="16" height="16" rx="4" />
+    <path d="M10 16l4-8" />
+  </Svg>
+);

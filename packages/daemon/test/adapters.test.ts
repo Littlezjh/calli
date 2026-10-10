@@ -1,0 +1,829 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { effortsFromConfig, mapAcpUpdate, modelsFromConfig } from '../src/adapters/acp.js';
+import { ClaudeAcpAdapter } from '../src/adapters/claude.js';
+import { TraexAcpAdapter } from '../src/adapters/traex.js';
+import { mapPiEvent, piEfforts, PiRpcAdapter } from '../src/adapters/pi.js';
+import type { EmittedEvent } from '../src/events.js';
+import type { ApprovalDecision, TurnHooks, TurnInput } from '../src/adapters/types.js';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const fakeAcp = join(here, 'fixtures', 'fake-acp.mjs');
+const fakePi = join(here, 'fixtures', 'fake-pi.mjs');
+
+/** A 1x1 PNG. Real image bytes, since the daemon decides the type from the data. */
+const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+
+const turn = (text: string, images: TurnInput['images'] = []): TurnInput => ({ text, images });
+
+function collectingHooks(decide: (id: string) => ApprovalDecision = () => ({ optionId: 'allow' })) {
+  const events: EmittedEvent[] = [];
+  const approvals: string[] = [];
+  const hooks: TurnHooks = {
+    emit: (e) => events.push(e),
+    requestApproval: async (req) => {
+      approvals.push(req.title);
+      return decide(req.title);
+    },
+  };
+  return { hooks, events, approvals };
+}
+
+test('mapAcpUpdate maps message, thought, tool and plan updates', () => {
+  assert.deepEqual(mapAcpUpdate({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'hi' } }), {
+    type: 'message.delta',
+    data: { text: 'hi' },
+  });
+  assert.equal(mapAcpUpdate({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'x' } })?.type, 'reasoning.delta');
+  assert.equal(mapAcpUpdate({ sessionUpdate: 'tool_call', toolCallId: 'a', title: 'ls', status: 'pending' })?.type, 'tool.start');
+  assert.equal(mapAcpUpdate({ sessionUpdate: 'tool_call_update', toolCallId: 'a', status: 'in_progress' })?.type, 'tool.update');
+  assert.equal(mapAcpUpdate({ sessionUpdate: 'tool_call_update', toolCallId: 'a', status: 'failed' })?.type, 'tool.end');
+  assert.equal(mapAcpUpdate({ sessionUpdate: 'plan', entries: [] })?.type, 'plan.updated');
+  assert.equal(mapAcpUpdate({ sessionUpdate: 'usage_update' }), null);
+  assert.equal(mapAcpUpdate({ sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'echo' } }), null);
+});
+
+test('mapPiEvent maps text, thinking and tool execution records', () => {
+  assert.equal(mapPiEvent({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'a' } })?.type, 'message.delta');
+  assert.equal(mapPiEvent({ type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', delta: 'b' } })?.type, 'reasoning.delta');
+  assert.equal(mapPiEvent({ type: 'message_update', assistantMessageEvent: { type: 'toolcall_delta' } }), null);
+  const end = mapPiEvent({ type: 'tool_execution_end', toolCallId: 'c', result: { content: [{ type: 'text', text: 'out' }] }, isError: true });
+  assert.deepEqual(end, { type: 'tool.end', data: { id: 'c', status: 'failed', output: 'out' } });
+  assert.equal(mapPiEvent({ type: 'queue_update' }), null);
+});
+
+test('ClaudeAcpAdapter: prompt streams events and returns end_turn', async () => {
+  const adapter = new ClaudeAcpAdapter([process.execPath, fakeAcp]);
+  assert.equal(await adapter.available(), true);
+  const session = await adapter.start({ cwd: here });
+  assert.equal(session.agentSessionId, 'acp-session-1');
+
+  const { hooks, events } = collectingHooks();
+  const result = await session.prompt(turn('hello'), hooks);
+  assert.deepEqual(result, { stopReason: 'end_turn' });
+  const types = events.map((e) => e.type);
+  assert.deepEqual(types, ['reasoning.delta', 'tool.start', 'tool.end', 'message.delta']);
+  assert.equal(events.at(-1)?.data.text, 'echo:hello');
+  await session.close();
+});
+
+test('ClaudeAcpAdapter: permission request is routed to the hook and answered', async () => {
+  const adapter = new ClaudeAcpAdapter([process.execPath, fakeAcp]);
+  const session = await adapter.start({ cwd: here });
+  const { hooks, events, approvals } = collectingHooks(() => ({ optionId: 'allow' }));
+  const result = await session.prompt(turn('please approve this'), hooks);
+  assert.equal(result.stopReason, 'end_turn');
+  assert.deepEqual(approvals, ['Edit file']);
+  const last = events.at(-1);
+  assert.equal(last?.type, 'message.delta');
+  assert.equal(last?.data.text, 'approved:allow');
+  await session.close();
+});
+
+test('ClaudeAcpAdapter: cancel resolves a slow prompt as cancelled', async () => {
+  const adapter = new ClaudeAcpAdapter([process.execPath, fakeAcp]);
+  const session = await adapter.start({ cwd: here });
+  const { hooks } = collectingHooks();
+  const pending = session.prompt(turn('slow task'), hooks);
+  await new Promise((r) => setTimeout(r, 50));
+  await session.cancel();
+  const result = await pending;
+  assert.equal(result.stopReason, 'cancelled');
+  await session.close();
+});
+
+test('ClaudeAcpAdapter: resume uses session/load and keeps the same id', async () => {
+  const adapter = new ClaudeAcpAdapter([process.execPath, fakeAcp]);
+  const session = await adapter.start({ cwd: here, resumeId: 'previous-session' });
+  assert.equal(session.agentSessionId, 'previous-session');
+  const { hooks, events } = collectingHooks();
+  await session.prompt(turn('hi'), hooks);
+  // The replayed text sent during session/load must not leak into this turn.
+  assert.ok(!events.some((e) => String(e.data.text ?? '').includes('replayed')));
+  await session.close();
+});
+
+test('PiRpcAdapter: prompt streams events and settles', async () => {
+  const adapter = new PiRpcAdapter([process.execPath, fakePi]);
+  assert.equal(await adapter.available(), true);
+  const session = await adapter.start({ cwd: here });
+  assert.equal(session.agentSessionId, 'pi-session-1');
+
+  const { hooks, events } = collectingHooks();
+  const result = await session.prompt(turn('yo'), hooks);
+  assert.deepEqual(result, { stopReason: 'end_turn', error: undefined });
+  assert.deepEqual(
+    events.map((e) => e.type),
+    ['reasoning.delta', 'tool.start', 'tool.update', 'tool.end', 'message.delta', 'message.delta', 'usage.updated'],
+  );
+  // After the turn pi is asked how full its context is.
+  assert.deepEqual(events.at(-1)!.data, { used: 1200, size: 200000, cost: { amount: 0.02, currency: 'USD' } });
+  await session.close();
+});
+
+test('PiRpcAdapter: resume passes --session and reports the given id', async () => {
+  const adapter = new PiRpcAdapter([process.execPath, fakePi]);
+  const session = await adapter.start({ cwd: here, resumeId: 'old-pi' });
+  assert.equal(session.agentSessionId, 'old-pi');
+  await session.close();
+});
+
+test('PiRpcAdapter: model error ends the turn as error', async () => {
+  const adapter = new PiRpcAdapter([process.execPath, fakePi]);
+  const session = await adapter.start({ cwd: here });
+  const { hooks } = collectingHooks();
+  const result = await session.prompt(turn('please fail'), hooks);
+  assert.equal(result.stopReason, 'error');
+  assert.equal(result.error, 'provider exploded');
+  await session.close();
+});
+
+test('PiRpcAdapter: abort ends a slow turn as cancelled', async () => {
+  const adapter = new PiRpcAdapter([process.execPath, fakePi]);
+  const session = await adapter.start({ cwd: here });
+  const { hooks } = collectingHooks();
+  const pending = session.prompt(turn('slow'), hooks);
+  await new Promise((r) => setTimeout(r, 50));
+  await session.cancel();
+  assert.equal((await pending).stopReason, 'cancelled');
+  await session.close();
+});
+
+test('modelsFromConfig reads the model option and keeps the description', () => {
+  const models = modelsFromConfig([
+    { id: 'mode', category: 'mode', options: [{ value: 'default', name: 'Manual' }] },
+    { id: 'model', category: 'model', options: [{ value: 'opus', name: 'Opus 5.5', description: 'For complex work' }, { value: 'haiku', name: 'Haiku 5.5', description: '' }] },
+  ]);
+  assert.deepEqual(models, [
+    { id: 'opus', label: 'Opus 5.5', description: 'For complex work' },
+    { id: 'haiku', label: 'Haiku 5.5', description: undefined },
+  ]);
+  assert.deepEqual(modelsFromConfig(undefined), []);
+});
+
+test('ClaudeAcpAdapter: model list and slash commands come from the agent', async () => {
+  const adapter = new ClaudeAcpAdapter([process.execPath, fakeAcp]);
+  const models = await adapter.models(); // no session yet: the adapter probes one
+  // "broken" is refused by the agent, so it is hidden rather than offered and failing later.
+  assert.deepEqual(models.map((m) => m.id), ['default', 'big', 'small']);
+  assert.equal(models[1].description, 'For hard work');
+  // Effort levels are per model: one model lacks "max", another has no effort setting at all.
+  assert.deepEqual(models.map((m) => m.efforts), [['low', 'high', 'max'], ['low', 'high'], []]);
+  assert.equal(await adapter.models(), models, 'the probe runs once and is cached');
+  // What the agent announced, then the commands it answers without announcing them.
+  assert.deepEqual((await adapter.commands()).map((c) => c.name), ['compact', 'review', 'cost', 'stats']);
+});
+
+test('ClaudeAcpAdapter: permission mode, model and effort are applied at start', async () => {
+  const adapter = new ClaudeAcpAdapter([process.execPath, fakeAcp]);
+  const session = await adapter.start({ cwd: here, permissionMode: 'auto_edit', model: 'big', effort: 'high' });
+  const { hooks, events } = collectingHooks();
+  await session.prompt(turn('model?'), hooks);
+  // The fake has no "auto" mode, so auto_edit falls back to acceptEdits.
+  assert.equal(events.at(-1)?.data.text, 'model:big;mode:acceptEdits;effort:high');
+  await session.close();
+});
+
+test('ClaudeAcpAdapter: full_access skips the approval prompt, and settings change on a live session', async () => {
+  const adapter = new ClaudeAcpAdapter([process.execPath, fakeAcp]);
+  const session = await adapter.start({ cwd: here, permissionMode: 'full_access' });
+  const first = collectingHooks();
+  await session.prompt(turn('please approve this'), first.hooks);
+  assert.deepEqual(first.approvals, [], 'no approval should be requested in full_access');
+
+  await session.setPermissionMode!('ask');
+  assert.equal(await session.setModel!('small'), true);
+  assert.equal(await session.setEffort!('low'), true);
+  const second = collectingHooks();
+  await session.prompt(turn('model?'), second.hooks);
+  assert.equal(second.events.at(-1)?.data.text, 'model:small;mode:default;effort:low');
+  await session.close();
+});
+
+test('effortsFromConfig lists real levels only, and is empty when the option is missing', () => {
+  assert.deepEqual(
+    effortsFromConfig([{ id: 'effort', category: 'thought_level', options: [{ value: 'default', name: 'Default' }, { value: 'low', name: 'Low' }, { value: 'max', name: 'Max' }] }]),
+    ['low', 'max'],
+  );
+  assert.deepEqual(effortsFromConfig([{ id: 'model', category: 'model', options: [] }]), []);
+  assert.deepEqual(effortsFromConfig(undefined), []);
+});
+
+test('piEfforts follows pi\'s own rule for which thinking levels a model takes', () => {
+  assert.deepEqual(piEfforts({ reasoning: false }), []);
+  // null is unsupported; xhigh and max need an explicit mapping; everything else is allowed.
+  assert.deepEqual(
+    piEfforts({ reasoning: true, thinkingLevelMap: { off: null, minimal: null, low: 'low', medium: null, high: 'high', xhigh: null, max: 'max' } }),
+    ['low', 'high', 'max'],
+  );
+  assert.deepEqual(piEfforts({ reasoning: true }), ['off', 'minimal', 'low', 'medium', 'high']);
+  assert.deepEqual(piEfforts({ reasoning: true, thinkingLevelMap: { xhigh: 'xhigh' } }), ['off', 'minimal', 'low', 'medium', 'high', 'xhigh']);
+});
+
+test('PiRpcAdapter: models report efforts, image support and which one is pi\'s default', async () => {
+  const adapter = new PiRpcAdapter([process.execPath, fakePi]);
+  const models = await adapter.models(); // fails in the fake if the probe forgets --no-session
+  assert.deepEqual(models.map((m) => m.id), ['fake/think', 'fake/plain', 'fake/loose']);
+  assert.deepEqual(models.map((m) => m.efforts), [['low', 'high', 'max'], [], ['off', 'minimal', 'low', 'medium', 'high']]);
+  assert.deepEqual(models.map((m) => m.images), [true, false, false]);
+  assert.deepEqual(models.map((m) => m.isDefault ?? false), [true, false, false]);
+  assert.equal(models[0].label, 'Think');
+  assert.equal(await adapter.models(), models, 'a fresh result is reused');
+});
+
+test('PiRpcAdapter: commands carry their kind and have no leading slash', async () => {
+  const adapter = new PiRpcAdapter([process.execPath, fakePi]);
+  assert.deepEqual((await adapter.commands(here)).slice(PI_LOCAL_COMMANDS.length), [
+    { name: 'fix-tests', description: 'Fix failing tests', kind: 'prompt' },
+    { name: 'skill:pdf', description: 'Work with PDF files', kind: 'skill' },
+    { name: 'deploy', description: '', kind: 'command' },
+  ]);
+});
+
+test('mapPiEvent gives tools a readable title, a kind, and file changes for edit and write', () => {
+  const bash = mapPiEvent({ type: 'tool_execution_start', toolCallId: 'a', toolName: 'bash', args: { command: 'npm test\necho done' } });
+  assert.deepEqual([bash?.data.title, bash?.data.kind, bash?.data.content], ['npm test', 'execute', undefined]);
+
+  const edit = mapPiEvent({
+    type: 'tool_execution_start',
+    toolCallId: 'b',
+    toolName: 'edit',
+    args: { path: 'src/a.ts', edits: [{ oldText: 'x', newText: 'y' }, { oldText: 'p', newText: 'q' }] },
+  });
+  assert.deepEqual([edit?.data.title, edit?.data.kind], ['Edit src/a.ts', 'edit']);
+  assert.deepEqual(edit?.data.content, [
+    { type: 'diff', path: 'src/a.ts', oldText: 'x', newText: 'y' },
+    { type: 'diff', path: 'src/a.ts', oldText: 'p', newText: 'q' },
+  ]);
+
+  const write = mapPiEvent({ type: 'tool_execution_start', toolCallId: 'c', toolName: 'write', args: { path: 'new.txt', content: 'hi' } });
+  assert.deepEqual(write?.data.content, [{ type: 'diff', path: 'new.txt', oldText: null, newText: 'hi' }]);
+
+  const grep = mapPiEvent({ type: 'tool_execution_start', toolCallId: 'd', toolName: 'grep', args: { pattern: 'TODO' } });
+  assert.deepEqual([grep?.data.title, grep?.data.kind], ['grep TODO', 'search']);
+});
+
+test('images reach both agents as image blocks, before the text', async () => {
+  const image = { data: PNG, mimeType: 'image/png' };
+  const claude = await new ClaudeAcpAdapter([process.execPath, fakeAcp]).start({ cwd: here });
+  const a = collectingHooks();
+  await claude.prompt(turn('what is this', [image, image]), a.hooks);
+  const claudeText = a.events.filter((e) => e.type === 'message.delta').map((e) => e.data.text).join('');
+  assert.ok(claudeText.startsWith('images:2:image/png,image/png;'), claudeText);
+  assert.ok(claudeText.endsWith('echo:what is this'), claudeText);
+  // An image with no text is a valid turn.
+  const only = collectingHooks();
+  assert.equal((await claude.prompt(turn('', [image]), only.hooks)).stopReason, 'end_turn');
+  await claude.close();
+
+  const pi = await new PiRpcAdapter([process.execPath, fakePi]).start({ cwd: here });
+  const b = collectingHooks();
+  await pi.prompt(turn('look', [image]), b.hooks);
+  const piText = b.events.filter((e) => e.type === 'message.delta').map((e) => e.data.text).join('');
+  assert.ok(piText.startsWith('images:1:image/png;'), piText);
+  await pi.close();
+});
+
+test('ClaudeAcpAdapter: commands keep the argument hint and are tracked per directory', async () => {
+  const adapter = new ClaudeAcpAdapter([process.execPath, fakeAcp]);
+  const session = await adapter.start({ cwd: here });
+  const commands = await adapter.commands(here);
+  assert.deepEqual(commands[0], { name: 'compact', description: 'Summarise the conversation', hint: '<instructions>' });
+  assert.equal('hint' in commands[1], false);
+  // A directory with no session yet falls back to a known list instead of nothing.
+  assert.deepEqual((await adapter.commands('/somewhere/else')).map((c) => c.name), ['compact', 'review', 'cost', 'stats']);
+  await session.close();
+});
+
+import { turnsFromAcpReplay } from '../src/adapters/acp.js';
+import { summarisePiSession, turnsFromPiMessages } from '../src/adapters/pi.js';
+import { mkdirSync as mkdir, mkdtempSync as mkdtemp, rmSync as rm, writeFileSync as writeFile } from 'node:fs';
+import { tmpdir as osTmpdir } from 'node:os';
+
+test('turnsFromAcpReplay groups a replayed session into turns', () => {
+  const chunk = (kind: string, text: string, messageId?: string) => ({ sessionUpdate: kind, messageId, content: { type: 'text', text } });
+  const turns = turnsFromAcpReplay([
+    { sessionUpdate: 'available_commands_update', availableCommands: [] },
+    chunk('agent_message_chunk', 'stray text before any user message'),
+    chunk('user_message_chunk', 'first ', 'u1'),
+    chunk('user_message_chunk', 'question', 'u1'),
+    chunk('agent_thought_chunk', 'thinking'),
+    { sessionUpdate: 'tool_call', toolCallId: 't', title: 'ls', kind: 'execute', status: 'pending' },
+    { sessionUpdate: 'tool_call_update', toolCallId: 't', status: 'completed', rawOutput: 'a.txt' },
+    chunk('agent_message_chunk', 'answer one'),
+    chunk('user_message_chunk', 'second', 'u2'),
+    { sessionUpdate: 'user_message_chunk', messageId: 'u2', content: { type: 'image', mimeType: 'image/png', data: PNG } },
+    { sessionUpdate: 'usage_update' },
+    chunk('agent_message_chunk', 'answer two'),
+  ]);
+  assert.equal(turns.length, 2);
+  assert.equal(turns[0].text, 'first question', 'chunks of one message are joined');
+  assert.deepEqual(turns[0].events.map((e) => e.type), ['reasoning.delta', 'tool.start', 'tool.end', 'message.delta']);
+  assert.equal(turns[1].text, 'second');
+  assert.deepEqual(turns[1].images, [{ data: PNG, mimeType: 'image/png' }]);
+  assert.deepEqual(turns[1].events.map((e) => e.data.text), ['answer two']);
+  assert.deepEqual(turnsFromAcpReplay([]), []);
+});
+
+test('turnsFromAcpReplay keeps two user messages in a row as one turn with both texts', () => {
+  const turns = turnsFromAcpReplay([
+    { sessionUpdate: 'user_message_chunk', messageId: 'a', content: { type: 'text', text: 'one' } },
+    { sessionUpdate: 'user_message_chunk', messageId: 'b', content: { type: 'text', text: 'two' } },
+    { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'ok' } },
+  ]);
+  assert.equal(turns.length, 1);
+  assert.equal(turns[0].text, 'one\n\ntwo');
+});
+
+test('turnsFromPiMessages maps user, assistant and tool result messages to turns', () => {
+  const turns = turnsFromPiMessages([
+    { role: 'system', content: '' },
+    { role: 'assistant', content: [{ type: 'text', text: 'before any user message' }] },
+    { role: 'user', content: 'run the tests' },
+    { role: 'assistant', content: [{ type: 'thinking', thinking: 'hmm' }, { type: 'toolCall', id: 'c1', name: 'edit', arguments: { path: 'a.ts', edits: [{ oldText: 'x', newText: 'y' }] } }] },
+    { role: 'toolResult', toolCallId: 'c1', content: [{ type: 'text', text: 'edited' }], isError: false },
+    { role: 'assistant', content: [{ type: 'text', text: 'Done.' }] },
+    { role: 'user', content: [{ type: 'text', text: 'look' }, { type: 'image', data: PNG, mimeType: 'image/png' }] },
+    { role: 'toolResult', toolCallId: 'c2', content: [{ type: 'text', text: 'boom' }], isError: true },
+  ]);
+  assert.equal(turns.length, 2);
+  assert.equal(turns[0].text, 'run the tests');
+  assert.deepEqual(turns[0].events.map((e) => e.type), ['reasoning.delta', 'tool.start', 'tool.end', 'message.delta']);
+  const start = turns[0].events[1];
+  assert.equal(start.data.title, 'Edit a.ts');
+  assert.deepEqual(start.data.content, [{ type: 'diff', path: 'a.ts', oldText: 'x', newText: 'y' }], 'edits come across as diffs');
+  assert.equal(turns[0].events[2].data.output, 'edited');
+  assert.equal(turns[1].text, 'look');
+  assert.equal(turns[1].images.length, 1);
+  assert.equal(turns[1].events[0].data.status, 'failed');
+  assert.deepEqual(turnsFromPiMessages([]), []);
+});
+
+test('summarisePiSession reads id and directory from the header and picks a title', () => {
+  const header = JSON.stringify({ type: 'session', version: 3, id: 'abc', timestamp: '2026-01-01T00:00:00Z', cwd: '/work/app' });
+  const user = (text: string) => JSON.stringify({ type: 'message', id: 'm', message: { role: 'user', content: [{ type: 'text', text }] } });
+  const system = JSON.stringify({ type: 'message', id: 's', message: { role: 'system', content: '' } });
+  const named = (name: string) => JSON.stringify({ type: 'session_info', id: 'n', name });
+
+  const plain = summarisePiSession([header, system, user('Fix the login bug\nmore detail'), user('later message')].join('\n'), '2026-02-02T00:00:00.000Z');
+  assert.deepEqual(plain, { id: 'abc', cwd: '/work/app', title: 'Fix the login bug', updatedAt: '2026-02-02T00:00:00.000Z' });
+
+  // A name set by the user wins over the first message, and the latest name wins.
+  assert.equal(summarisePiSession([header, user('first words'), named('Old name'), named('Auth refactor')].join('\n'), null)?.title, 'Auth refactor');
+  // No messages yet, and a last line cut off mid-way by the read limit.
+  assert.equal(summarisePiSession([header, '{"type":"message","id":"x","message":{"role":"user","content":"cut of'].join('\n'), null)?.title, '');
+  assert.equal(summarisePiSession('not json', null), null);
+  assert.equal(summarisePiSession(JSON.stringify({ type: 'message' }), null), null);
+});
+
+test('PiRpcAdapter: sessions are discovered from pi\'s session files, newest first', async () => {
+  const agentDir = mkdtemp(join(osTmpdir(), 'rah-pi-agent-'));
+  const previous = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+  try {
+    const adapter = new PiRpcAdapter([process.execPath, fakePi]);
+    assert.deepEqual(await adapter.listSessions(), [], 'no sessions directory yet');
+
+    const write = (dir: string, file: string, lines: unknown[]) => {
+      mkdir(join(agentDir, 'sessions', dir), { recursive: true });
+      writeFile(join(agentDir, 'sessions', dir, file), lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+    };
+    write('--work-app--', 'a.jsonl', [
+      { type: 'session', id: 'hist-old', cwd: '/work/app' },
+      { type: 'message', message: { role: 'user', content: 'older one' } },
+    ]);
+    await new Promise((r) => setTimeout(r, 20));
+    write('--work-lib--', 'b.jsonl', [
+      { type: 'session', id: 'hist-new', cwd: '/work/lib' },
+      { type: 'session_info', name: 'Named session' },
+    ]);
+    writeFile(join(agentDir, 'sessions', '--work-app--', 'notes.txt'), 'not a session');
+    writeFile(join(agentDir, 'sessions', '--work-app--', 'broken.jsonl'), 'garbage');
+
+    const list = await adapter.listSessions();
+    assert.deepEqual(list.map((s) => [s.id, s.cwd, s.title]), [
+      ['hist-new', '/work/lib', 'Named session'],
+      ['hist-old', '/work/app', 'older one'],
+    ]);
+    assert.ok(list.every((s) => typeof s.updatedAt === 'string'));
+  } finally {
+    if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previous;
+    rm(agentDir, { recursive: true, force: true });
+  }
+});
+
+test('both agents list, replay and fork sessions through their own means', async () => {
+  const claude = new ClaudeAcpAdapter([process.execPath, fakeAcp]);
+  const turns = await claude.loadHistory('hist-x', here);
+  assert.deepEqual(turns.map((t) => t.text), ['first question', 'second question']);
+  assert.equal(turns[1].images.length, 1);
+  assert.equal(await claude.forkSession('hist-x', here), 'hist-x-fork');
+  await assert.rejects(claude.forkSession('unforkable', here), /cannot fork/);
+
+  const pi = new PiRpcAdapter([process.execPath, fakePi]);
+  const piTurns = await pi.loadHistory('hist-p', here);
+  assert.deepEqual(piTurns.map((t) => t.text), ['run the tests', 'and this picture?']);
+  assert.deepEqual(piTurns[0].events.map((e) => e.type), ['reasoning.delta', 'tool.start', 'tool.end', 'message.delta']);
+  assert.equal(await pi.forkSession('hist-p', here), 'hist-p-clone');
+  await assert.rejects(pi.forkSession('uncloneable', here), /cancelled/);
+});
+
+import { AgyAdapter, agyArgs, agyTurnResult, mapAgyStep, parseAgyModels } from '../src/adapters/agy.js';
+
+const fakeAgy = join(here, 'fixtures', 'fake-agy.mjs');
+const textFrom = (events: EmittedEvent[]) => events.filter((e) => e.type === 'message.delta').map((e) => e.data.text).join('');
+
+test('mapAgyStep maps reply text and tool steps, and ignores bookkeeping steps', () => {
+  const started = new Set<number>();
+  assert.deepEqual(mapAgyStep({ step_index: 0, state: 'DONE', step_type: 'user_input' }, started), []);
+  assert.deepEqual(mapAgyStep({ step_index: 3, state: 'DONE', step_type: 'system_message' }, started), []);
+  // A reply step with no text is the model deciding to call a tool.
+  assert.deepEqual(mapAgyStep({ step_index: 1, state: 'DONE', step_type: 'agent_response', usage: {} }, started), []);
+  assert.deepEqual(mapAgyStep({ step_index: 1, state: 'ACTIVE', step_type: 'agent_response', text_delta: 'Hel' }, started), [
+    { type: 'message.delta', data: { text: 'Hel' } },
+  ]);
+
+  const info = { name: 'run_command', parameters: { CommandLine: 'npm test\necho done' } };
+  assert.deepEqual(mapAgyStep({ step_index: 2, state: 'ACTIVE', step_type: 'tool', tool_name: 'run_command', tool_info: info }, started), [
+    { type: 'tool.start', data: { id: 'agy-step-2', title: 'npm test', kind: 'execute', status: 'in_progress', input: info.parameters } },
+  ]);
+  assert.deepEqual(
+    mapAgyStep({ step_index: 2, state: 'DONE', step_type: 'tool', tool_name: 'run_command', tool_info: { ...info, output: '12 passed' } }, started),
+    [{ type: 'tool.end', data: { id: 'agy-step-2', status: 'completed', output: '12 passed' } }],
+  );
+
+  // A refused command arrives as an error with the reason.
+  const refused = mapAgyStep(
+    { step_index: 5, state: 'ERROR', step_type: 'tool', tool_name: 'run_command', tool_info: { ...info, error: { type: 'TOOL_ERROR', message: 'user denied permission' } } },
+    started,
+  );
+  assert.deepEqual(refused.map((e) => [e.type, e.data.status]), [['tool.start', 'in_progress'], ['tool.end', 'failed']], 'a step never seen active still gets its start');
+  assert.equal(refused[1].data.output, 'user denied permission');
+});
+
+test('mapAgyStep names file tools by what they do, and shows a subagent by its role and task', () => {
+  const start = (tool_name: string, parameters: Record<string, unknown>, index: number) =>
+    mapAgyStep({ step_index: index, state: 'ACTIVE', step_type: 'tool', tool_name, tool_info: { name: tool_name, parameters } }, new Set())[0].data;
+  assert.deepEqual([start('write_to_file', { TargetFile: '/w/a.txt' }, 1).title, start('write_to_file', { TargetFile: '/w/a.txt' }, 1).kind], ['Write /w/a.txt', 'edit']);
+  assert.equal(start('replace_file_content', { TargetFile: '/w/a.txt' }, 2).title, 'Edit /w/a.txt');
+  assert.deepEqual([start('view_file', { AbsolutePath: '/w/a.txt' }, 3).title, start('view_file', { AbsolutePath: '/w/a.txt' }, 3).kind], ['Read /w/a.txt', 'read']);
+  assert.deepEqual([start('grep_search', { Query: 'TODO' }, 4).title, start('grep_search', { Query: 'TODO' }, 4).kind], ['grep_search TODO', 'search']);
+  assert.deepEqual([start('manage_task', {}, 5).title, start('manage_task', {}, 5).kind], ['manage_task', 'other']);
+
+  const [sub] = mapAgyStep(
+    {
+      step_index: 6,
+      state: 'ACTIVE',
+      step_type: 'subagent',
+      tool_name: 'invoke_subagent',
+      subagent_info: { subagents: [{ type_name: 'image-generator', role: 'Image Generator', initial_prompt: 'An orange circle.\nKeep it flat.' }] },
+    },
+    new Set(),
+  );
+  assert.equal(sub.data.title, 'Image Generator: An orange circle.');
+});
+
+test('agyTurnResult: success, interruption, errors, and actions refused for lack of a prompt', () => {
+  assert.deepEqual(agyTurnResult({ status: 'SUCCESS', response: 'ok' }, false), { stopReason: 'end_turn' });
+  assert.deepEqual(agyTurnResult({ status: 'ERROR', error: 'interrupted' }, true), { stopReason: 'cancelled' });
+  assert.deepEqual(agyTurnResult({ status: 'ERROR', error: 'quota exceeded' }, false), { stopReason: 'error', error: 'quota exceeded' });
+  const denied = agyTurnResult(
+    { status: 'SUCCESS', response: '', denied_actions: [{ action: 'command', display_name: 'RunCommand' }, { action: 'command', display_name: 'RunCommand' }] },
+    false,
+  );
+  assert.equal(denied.stopReason, 'error');
+  assert.equal(denied.errorCode, 'permission_refused');
+  assert.deepEqual(denied.refused, ['RunCommand'], 'each kind of action is named once');
+  assert.match(denied.error!, /refused RunCommand:/);
+  assert.match(denied.error!, /full access/);
+});
+
+test('parseAgyModels reads id and label pairs and skips everything else', () => {
+  const models = parseAgyModels('Fetching available models...\nfast-low\tFast (Low)\n\nbroken line\nbig\tBig (Thinking)\n\tno id\n');
+  assert.deepEqual(models.map((m) => [m.id, m.label]), [['fast-low', 'Fast (Low)'], ['big', 'Big (Thinking)']]);
+  assert.ok(models.every((m) => m.efforts?.length === 0 && m.images === undefined), 'no effort setting; images go in as paths');
+  assert.deepEqual(parseAgyModels(''), []);
+});
+
+test('agyArgs turns the permission level, model and conversation into flags', () => {
+  const base = ['--input-format', 'stream-json', '--output-format', 'stream-json'];
+  assert.deepEqual(agyArgs({}), [...base, '--mode', 'accept-edits', '-p=']);
+  assert.deepEqual(agyArgs({ permissionMode: 'auto_edit', model: 'fast-low' }), [...base, '--mode', 'accept-edits', '--model', 'fast-low', '-p=']);
+  assert.deepEqual(agyArgs({ permissionMode: 'full_access', conversationId: 'c1' }), [...base, '--dangerously-skip-permissions', '--conversation', 'c1', '-p=']);
+  assert.equal(agyArgs({ permissionMode: 'full_access' }).includes('--mode'), false);
+});
+
+test('AgyAdapter: models, a turn with a tool, and several turns in one process', async () => {
+  const adapter = new AgyAdapter([process.execPath, fakeAgy]);
+  assert.equal(await adapter.available(), true);
+  assert.equal(await new AgyAdapter(['definitely-not-installed-agy']).available(), false);
+  assert.deepEqual((await adapter.models()).map((m) => m.id), ['fast-low', 'fast-high', 'big-thinking']);
+  assert.ok((await adapter.commands()).some((c) => c.name === 'usage'));
+  assert.equal(adapter.resumeCommand('abc'), 'agy --conversation abc');
+
+  const session = await adapter.start({ cwd: here, model: 'fast-low' });
+  try {
+    assert.equal(session.agentSessionId, 'agy-conv-1', 'the conversation id is known before the first message');
+    const first = collectingHooks();
+    assert.deepEqual(await session.prompt(turn('use a tool'), first.hooks), { stopReason: 'end_turn' });
+    assert.deepEqual(first.events.map((e) => e.type), ['tool.start', 'tool.end', 'message.delta', 'message.delta']);
+    assert.equal(first.events[1].data.output, 'hi\r\n');
+    assert.equal(textFrom(first.events).trim(), 'echo:use a tool;model:fast-low;mode:accept-edits;conv:agy-conv-1');
+
+    const second = collectingHooks();
+    await session.prompt(turn('again'), second.hooks);
+    assert.match(textFrom(second.events), /^echo:again;/);
+    assert.deepEqual(second.events.map((e) => e.type), ['message.delta', 'message.delta'], 'steps of the first turn are not repeated');
+  } finally {
+    await session.close();
+  }
+});
+
+test('AgyAdapter: a permission change restarts the process on the same conversation', async () => {
+  const adapter = new AgyAdapter([process.execPath, fakeAgy]);
+  const session = await adapter.start({ cwd: here, resumeId: 'conv-kept', permissionMode: 'auto_edit' });
+  try {
+    assert.equal(session.agentSessionId, 'conv-kept');
+    const refused = collectingHooks();
+    const result = await session.prompt(turn('run a command'), refused.hooks);
+    assert.equal(result.stopReason, 'error');
+    assert.match(result.error!, /refused RunCommand/);
+    assert.deepEqual(refused.events.map((e) => [e.type, e.data.status]), [['tool.start', 'in_progress'], ['tool.end', 'failed']]);
+
+    await session.setPermissionMode!('full_access');
+    const allowed = collectingHooks();
+    assert.deepEqual(await session.prompt(turn('run a command'), allowed.hooks), { stopReason: 'end_turn' });
+    assert.match(textFrom(allowed.events), /mode:always-proceed;conv:conv-kept/);
+    assert.equal(session.agentSessionId, 'conv-kept');
+  } finally {
+    await session.close();
+  }
+});
+
+test('AgyAdapter: cancelling stops the turn, and the next message carries on in the same conversation', async () => {
+  const adapter = new AgyAdapter([process.execPath, fakeAgy]);
+  const session = await adapter.start({ cwd: here });
+  try {
+    const slow = collectingHooks();
+    const running = session.prompt(turn('slow'), slow.hooks);
+    await new Promise((r) => setTimeout(r, 150));
+    await session.cancel();
+    assert.deepEqual(await running, { stopReason: 'cancelled' });
+    assert.equal(textFrom(slow.events), 'working', 'what was said before the cancel is kept');
+
+    const next = collectingHooks();
+    assert.deepEqual(await session.prompt(turn('hello'), next.hooks), { stopReason: 'end_turn' });
+    assert.match(textFrom(next.events), /^echo:hello;.*conv:agy-conv-1/);
+    await session.cancel(); // nothing running: a no-op
+  } finally {
+    await session.close();
+  }
+});
+
+test('AgyAdapter: a process that dies mid-turn is reported with what it said, and the session recovers', async () => {
+  const adapter = new AgyAdapter([process.execPath, fakeAgy]);
+  const session = await adapter.start({ cwd: here });
+  try {
+    const result = await session.prompt(turn('crash'), collectingHooks().hooks);
+    assert.equal(result.stopReason, 'error');
+    assert.match(result.error!, /code=7.*something broke/);
+    const after = collectingHooks();
+    assert.deepEqual(await session.prompt(turn('still there?'), after.hooks), { stopReason: 'end_turn' });
+  } finally {
+    await session.close();
+  }
+  await assert.rejects(new AgyAdapter(['definitely-not-installed-agy']).start({ cwd: here }), /could not be started/);
+  // Something that is not agy exits without announcing a conversation; its complaint is passed on.
+  await assert.rejects(new AgyAdapter([process.execPath, '--no-such-flag']).start({ cwd: here }), /agy exited \(code=\d+.*bad option/);
+});
+
+import { formatAgyOutput, parseAgyHelp, parseAgySkills } from '../src/adapters/agy.js';
+import { formatPiCompact, formatPiStats, PI_LOCAL_COMMANDS } from '../src/adapters/pi.js';
+import { withUnlistedCommands } from '../src/adapters/claude.js';
+test('parseAgyHelp reads names, aliases and descriptions; parseAgySkills reads skills', () => {
+  const help = '/config (settings)\tOpen settings panel\n/usage (quota)\tView model quota usage\n/help\tShow available commands\nnot a command\n\tno name\n';
+  assert.deepEqual(parseAgyHelp(help), [
+    { name: 'config', aliases: ['settings'], description: 'Open settings panel' },
+    { name: 'usage', aliases: ['quota'], description: 'View model quota usage' },
+    { name: 'help', aliases: [], description: 'Show available commands' },
+  ]);
+  assert.deepEqual(parseAgySkills('make-video\tTurn a brief into a video\nbad name here\tx\n\n'), [
+    { name: 'make-video', description: 'Turn a brief into a video', kind: 'skill' },
+  ]);
+});
+
+test('formatAgyOutput turns tab-separated listings into a table and passes other text through', () => {
+  assert.equal(
+    formatAgyOutput('Gemini\tWeekly\t97%\nClaude | GPT\tFive Hour\t100%\n'),
+    ['| | | |', '|---|---|---|', '|Gemini|Weekly|97%|', '|Claude \\| GPT|Five Hour|100%|'].join('\n'),
+  );
+  assert.equal(formatAgyOutput('a\tb\nc\n'), 'a\tb\nc', 'a mix is not a table');
+  assert.equal(formatAgyOutput('# Changelog\n\n## 1.3.3\n'), '# Changelog\n\n## 1.3.3');
+  assert.equal(formatAgyOutput('\n'), '（没有输出）');
+  assert.equal(formatAgyOutput('one\ttwo\tthree\nfour\n'.replace('four', 'four\tfive')), ['| | | |', '|---|---|---|', '|one|two|three|', '|four|five| |'].join('\n'));
+});
+
+test('AgyAdapter: lists what agy answers itself plus its skills, and answers those commands without the model', async () => {
+  const adapter = new AgyAdapter([process.execPath, fakeAgy]);
+  const commands = await adapter.commands(here);
+  assert.deepEqual(
+    commands.map((c) => [c.name, c.kind]),
+    [['config', 'command'], ['skills', 'command'], ['usage', 'command'], ['broken', 'command'], ['make-video', 'skill'], ['review', 'skill']],
+    'model and effort are left out: they are set by the hub, per session',
+  );
+
+  const session = await adapter.start({ cwd: here });
+  try {
+    const usage = collectingHooks();
+    assert.deepEqual(await session.prompt(turn('/usage'), usage.hooks), { stopReason: 'end_turn' });
+    assert.match(textFrom(usage.events), /^\| \| \| \|\n\|---\|---\|---\|\n\|Fast models\|Weekly Limit Remaining\|97%\|/);
+    const alias = collectingHooks();
+    await session.prompt(turn('/quota'), alias.hooks);
+    assert.match(textFrom(alias.events), /Weekly Limit Remaining/, 'aliases work too');
+
+    const broken = await session.prompt(turn('/broken'), collectingHooks().hooks);
+    assert.deepEqual(broken, { stopReason: 'error', error: 'agy /broken failed: /broken failed: not available here' });
+
+    // Skills and unknown commands go to the model as text, through the session's process.
+    const skill = collectingHooks();
+    await session.prompt(turn('/make-video a cat'), skill.hooks);
+    assert.match(textFrom(skill.events), /^echo:\/make-video a cat;/);
+    const plain = collectingHooks();
+    await session.prompt(turn('/unknown-thing'), plain.hooks);
+    assert.match(textFrom(plain.events), /^echo:\/unknown-thing;/);
+  } finally {
+    await session.close();
+  }
+  assert.deepEqual(await new AgyAdapter(['definitely-not-installed-agy']).commands(here), []);
+});
+
+test('pi: /compact and /session are answered through its requests, and listed first', async () => {
+  const adapter = new PiRpcAdapter([process.execPath, fakePi]);
+  const commands = await adapter.commands(here);
+  assert.deepEqual(commands.slice(0, 2).map((c) => c.name), PI_LOCAL_COMMANDS.map((c) => c.name));
+  assert.ok(commands.some((c) => c.name === 'fix-tests'), "pi's own list follows");
+
+  const session = await adapter.start({ cwd: here });
+  try {
+    const compact = collectingHooks();
+    assert.deepEqual(await session.prompt(turn('/compact keep the API notes'), compact.hooks), { stopReason: 'end_turn' });
+    assert.deepEqual(compact.events.map((e) => e.type), ['message.delta', 'usage.updated']);
+    assert.equal(compact.events[0].data.text, '已压缩上下文：150.0k → 约 32.0k tokens。');
+
+    const stats = collectingHooks();
+    await session.prompt(turn('/session'), stats.hooks);
+    assert.match(String(stats.events[0].data.text), /\| 上下文 \| 1\.2k \/ 200\.0k（0\.6%） \|/);
+
+    const failed = await session.prompt(turn('/compact explode'), collectingHooks().hooks);
+    assert.deepEqual(failed, { stopReason: 'error', error: 'nothing to compact' });
+
+    // Anything else is a normal prompt.
+    const normal = collectingHooks();
+    await session.prompt(turn('/compacted is not a command'), normal.hooks);
+    assert.ok(normal.events.some((e) => e.type === 'tool.start'));
+  } finally {
+    await session.close();
+  }
+});
+
+test('formatPiCompact and formatPiStats cope with partial answers', () => {
+  assert.equal(formatPiCompact({ tokensBefore: 1500 }), '已压缩上下文（压缩前 1.5k tokens）。');
+  assert.equal(formatPiCompact({ tokensBefore: 2_500_000, estimatedTokensAfter: 900 }), '已压缩上下文：2.5M → 约 900 tokens。');
+  const table = formatPiStats({});
+  assert.match(table, /\| 消息 \| 你 0 · 助手 0 · 工具调用 0 \|/);
+  assert.doesNotMatch(table, /上下文|费用|会话 ID/);
+});
+
+test('Claude: commands it answers but does not announce are added, once', () => {
+  assert.deepEqual(withUnlistedCommands([]), [], 'nothing known yet');
+  const listed = [{ name: 'compact', description: '' }, { name: 'stats', description: 'already there' }];
+  assert.deepEqual(withUnlistedCommands(listed).map((c) => c.name), ['compact', 'stats', 'cost']);
+});
+
+// TRAE CLI speaks ACP too (see acp.ts); these tests cover what is its own. The fake agent takes
+// a flavour that answers the way TRAE CLI does: no modes announced, the effort option named
+// reasoning_effort, and deletion happening through its CLI rather than the protocol.
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+
+const traexEnv = { FAKE_ACP_FLAVOR: 'traex' };
+
+
+test('TraexAcpAdapter: two permission levels mapped to its own mode ids, effort through reasoning_effort', async () => {
+  const adapter = new TraexAcpAdapter([process.execPath, fakeAcp], traexEnv);
+  assert.deepEqual(adapter.capabilities.permissionModes, ['auto_edit', 'full_access']);
+  assert.deepEqual(adapter.capabilities.effortLevels, ['low', 'medium', 'high', 'xhigh']);
+  assert.equal(adapter.resumeCommand('s1'), 'traex resume s1');
+
+  // session/new reports no modes at all; the adapter still switches, to TRAE CLI's own ids.
+  const session = await adapter.start({ cwd: here, permissionMode: 'auto_edit', model: 'big', effort: 'high' });
+  const { hooks, events } = collectingHooks();
+  await session.prompt(turn('model?'), hooks);
+  assert.equal(events.at(-1)?.data.text, 'model:big;mode:default;effort:high');
+  await session.setPermissionMode!('full_access');
+  await session.setEffort!('low');
+  const second = collectingHooks();
+  await session.prompt(turn('model?'), second.hooks);
+  assert.equal(second.events.at(-1)?.data.text, 'model:big;mode:bypass_permissions;effort:low');
+  await session.close();
+});
+
+test('TraexAcpAdapter: the model list is taken as reported, with the current pick marked', async () => {
+  const adapter = new TraexAcpAdapter([process.execPath, fakeAcp], traexEnv);
+  const models = await adapter.models();
+  // Unlike Claude, nothing is probed: every reported model is offered as is, including "broken".
+  assert.deepEqual(models.map((m) => m.id), ['default', 'big', 'small', 'broken']);
+  assert.deepEqual(
+    models.filter((m) => m.isDefault).map((m) => m.id),
+    ['default'],
+    'the model the agent is on is marked',
+  );
+  assert.deepEqual((await adapter.commands()).map((c) => c.name), ['compact', 'review'], 'no unlisted commands added');
+});
+
+test('TraexAcpAdapter: sessions are deleted through the CLI, not the protocol', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rah-traex-del-'));
+  const log = join(dir, 'deleted.log');
+  // The full form of the command, as the daemon configures it; the adapter strips "acp serve".
+  const adapter = new TraexAcpAdapter([process.execPath, fakeAcp, 'acp', 'serve'], { ...traexEnv, FAKE_ACP_DELETE_LOG: log });
+  await adapter.deleteSession('sid-123', here);
+  assert.equal(readFileSync(log, 'utf8'), 'sid-123\n');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('TraexAcpAdapter: artifactDirs finds the session folder under .trae/cli/sessions', () => {
+  const home = mkdtempSync(join(tmpdir(), 'rah-traex-home-'));
+  const id = '01a1255b-b666-7820-8ae3-0842196c13b4';
+  const artifacts = join(home, 'sessions', '2026', '10', '10', `rollout-2026-10-10T10-28-49-${id}.artifacts`);
+  mkdirSync(artifacts, { recursive: true });
+  const adapter = new TraexAcpAdapter([process.execPath, fakeAcp], { RAH_TRAEX_HOME: home });
+  assert.deepEqual(adapter.artifactDirs!(id), [artifacts]);
+  assert.deepEqual(adapter.artifactDirs!('not an id'), [], 'junk ids are not looked up');
+  rmSync(home, { recursive: true, force: true });
+});
+
+import { imagePathNote } from '../src/attachments.js';
+
+test('imagePathNote lists the stored files of a message, and nothing for images without a file', () => {
+  assert.equal(imagePathNote([]), '');
+  assert.equal(imagePathNote([{ data: PNG, mimeType: 'image/png' }]), '', 'an image read from history has no file');
+  assert.equal(imagePathNote([{ data: PNG, mimeType: 'image/png', path: '/d/a.png' }]), '\n\nThe user attached an image. Look at it before answering:\n- /d/a.png');
+  assert.match(imagePathNote([{ data: PNG, mimeType: 'image/png', path: '/d/a.png' }, { data: PNG, mimeType: 'image/jpeg', path: '/d/b.jpg' }]), /attached 2 images\. Look at them[\s\S]*- \/d\/a\.png\n- \/d\/b\.jpg$/);
+});
+
+test('agy gets the pictures of a message as file paths', async () => {
+  const adapter = new AgyAdapter([process.execPath, fakeAgy]);
+  assert.equal(adapter.capabilities.images, true);
+  const session = await adapter.start({ cwd: here });
+  try {
+    const { hooks, events } = collectingHooks();
+    await session.prompt(turn('what is this', [{ data: PNG, mimeType: 'image/png', path: '/data/attachments/t/1.png' }]), hooks);
+    assert.match(textFrom(events), /^echo:what is this\n\nThe user attached an image\. Look at it before answering:\n- \/data\/attachments\/t\/1\.png;/);
+  } finally {
+    await session.close();
+  }
+});
+
+test('pi: a model that cannot see gets paths for describe_image, when that extension is installed', async () => {
+  const plain = new PiRpcAdapter([process.execPath, fakePi]);
+  assert.equal((await plain.models()).find((m) => m.id === 'fake/plain')?.imagesVia, undefined, 'no extension, no way in');
+
+  process.env.FAKE_PI_VISION = '1';
+  const adapter = new PiRpcAdapter([process.execPath, fakePi]);
+  let models;
+  try {
+    models = await adapter.models();
+  } finally {
+    delete process.env.FAKE_PI_VISION;
+  }
+  assert.deepEqual(models.map((m) => [m.id, m.images, m.imagesVia]), [
+    ['fake/think', true, undefined],
+    ['fake/plain', false, 'describe_image'],
+    ['fake/loose', false, 'describe_image'],
+  ]);
+
+  const image = { data: PNG, mimeType: 'image/png', path: '/data/attachments/t/1.png' };
+  const blind = await adapter.start({ cwd: here, model: 'fake/plain' });
+  try {
+    const { hooks, events } = collectingHooks();
+    await blind.prompt(turn('what is this', [image]), hooks);
+    const text = textFrom(events);
+    assert.doesNotMatch(text, /images:/, 'no image blocks: pi would drop them');
+    assert.match(text, /there what is this\n\nThe user attached an image\. Look at it before answering:\n- \/data\/attachments\/t\/1\.png/);
+  } finally {
+    await blind.close();
+  }
+
+  // A model that sees gets the picture itself, as before.
+  const seeing = await adapter.start({ cwd: here, model: 'fake/think' });
+  try {
+    const { hooks, events } = collectingHooks();
+    await seeing.prompt(turn('what is this', [image]), hooks);
+    assert.match(textFrom(events), /^images:1:image\/png;hi there what is this$/);
+  } finally {
+    await seeing.close();
+  }
+});

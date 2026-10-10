@@ -1,0 +1,21 @@
+{
+  "name": "remote-agent-hub",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Run coding agents on a remote host and drive them from a browser.",
+  "license": "MIT",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:daemon": "npm run dev -w @rah/daemon",
+    "dev:web": "npm run dev -w @rah/web",
+    "build": "npm run build -w @rah/daemon && npm run build -w @rah/web",
+    "test": "npm test -w @rah/daemon && npm test -w @rah/web",
+    "typecheck": "npm run typecheck -w @rah/daemon && npm run typecheck -w @rah/web",
+    "check:publish": "node scripts/check-publish.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.58.0"
+  }
+}

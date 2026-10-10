@@ -1,0 +1,354 @@
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import type { EventType, StoredEvent } from './events.js';
+
+export interface ThreadRecord {
+  id: string;
+  agent: string;
+  cwd: string;
+  title: string;
+  agentSessionId: string | null;
+  status: 'idle' | 'running' | 'error';
+  pinned: boolean;
+  permissionMode: string;
+  model: string | null;
+  effort: string | null;
+  /** Set when the thread is archived: hidden from the sidebar, kept on disk, restorable. */
+  archivedAt: string | null;
+  /** The user-made section this thread is filed under, if any. */
+  sectionId: string | null;
+  /** The thread this one was forked from. Kept even if that thread is later deleted. */
+  forkedFrom: string | null;
+  /** A turn finished and nobody has looked at the result yet. */
+  unread: boolean;
+  /** When the hub last started a turn here. Compared with `externalAt` for the terminal warning. */
+  hubTurnAt: string | null;
+  /** When syncing last found turns the terminal added to this session. */
+  externalAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SectionRecord {
+  id: string;
+  name: string;
+  position: number;
+}
+
+interface ThreadRow {
+  id: string;
+  agent: string;
+  cwd: string;
+  title: string;
+  agent_session_id: string | null;
+  status: string;
+  pinned: number;
+  permission_mode: string;
+  model: string | null;
+  effort: string | null;
+  archived_at: string | null;
+  section_id: string | null;
+  forked_from: string | null;
+  unread: number;
+  hub_turn_at: string | null;
+  external_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface EventRow {
+  thread_id: string;
+  seq: number;
+  turn_id: string | null;
+  type: string;
+  ts: string;
+  data: string;
+}
+
+const toThread = (r: ThreadRow): ThreadRecord => ({
+  id: r.id,
+  agent: r.agent,
+  cwd: r.cwd,
+  title: r.title,
+  agentSessionId: r.agent_session_id,
+  status: r.status as ThreadRecord['status'],
+  pinned: r.pinned === 1,
+  permissionMode: r.permission_mode,
+  model: r.model,
+  effort: r.effort,
+  archivedAt: r.archived_at,
+  sectionId: r.section_id,
+  forkedFrom: r.forked_from,
+  unread: r.unread === 1,
+  hubTurnAt: r.hub_turn_at,
+  externalAt: r.external_at,
+  createdAt: r.created_at,
+  updatedAt: r.updated_at,
+});
+
+const toEvent = (r: EventRow): StoredEvent => ({
+  threadId: r.thread_id,
+  seq: r.seq,
+  turnId: r.turn_id,
+  type: r.type as EventType,
+  ts: r.ts,
+  data: JSON.parse(r.data) as Record<string, unknown>,
+});
+
+/** SQLite-backed store for threads and their event logs. Uses node:sqlite (no native build). */
+export class Store {
+  private readonly db: DatabaseSync;
+
+  constructor(dataDir: string) {
+    mkdirSync(dataDir, { recursive: true });
+    this.db = new DatabaseSync(join(dataDir, 'hub.db'));
+    this.db.exec('PRAGMA journal_mode = WAL;');
+    this.db.exec('PRAGMA foreign_keys = ON;');
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS threads (
+        id TEXT PRIMARY KEY,
+        agent TEXT NOT NULL,
+        cwd TEXT NOT NULL,
+        title TEXT NOT NULL,
+        agent_session_id TEXT,
+        status TEXT NOT NULL DEFAULT 'idle',
+        pinned INTEGER NOT NULL DEFAULT 0,
+        permission_mode TEXT NOT NULL DEFAULT 'auto_edit',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS events (
+        thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+        seq INTEGER NOT NULL,
+        turn_id TEXT,
+        type TEXT NOT NULL,
+        ts TEXT NOT NULL,
+        data TEXT NOT NULL,
+        PRIMARY KEY (thread_id, seq)
+      );
+    `);
+    // Migration: add pinned column if it doesn't exist
+    try {
+      this.db.prepare('ALTER TABLE threads ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0').run();
+    } catch {
+      // Column already exists
+    }
+    // Migration: threads created before permission modes existed get the default level.
+    const cols = this.db.prepare('PRAGMA table_info(threads)').all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === 'permission_mode')) {
+      this.db.exec("ALTER TABLE threads ADD COLUMN permission_mode TEXT NOT NULL DEFAULT 'auto_edit'");
+    }
+    // Migration: model and thinking effort. NULL means the agent's default.
+    if (!cols.some((c) => c.name === 'model')) this.db.exec('ALTER TABLE threads ADD COLUMN model TEXT');
+    if (!cols.some((c) => c.name === 'effort')) this.db.exec('ALTER TABLE threads ADD COLUMN effort TEXT');
+    // Migration: archive and sections.
+    if (!cols.some((c) => c.name === 'archived_at')) this.db.exec('ALTER TABLE threads ADD COLUMN archived_at TEXT');
+    if (!cols.some((c) => c.name === 'section_id')) this.db.exec('ALTER TABLE threads ADD COLUMN section_id TEXT');
+    // Migration: terminal-activity tracking (turns the terminal added, hub turns).
+    if (!cols.some((c) => c.name === 'hub_turn_at')) this.db.exec('ALTER TABLE threads ADD COLUMN hub_turn_at TEXT');
+    if (!cols.some((c) => c.name === 'external_at')) this.db.exec('ALTER TABLE threads ADD COLUMN external_at TEXT');
+    // Migration: forks.
+    if (!cols.some((c) => c.name === 'forked_from')) this.db.exec('ALTER TABLE threads ADD COLUMN forked_from TEXT');
+    // Migration: unread marker.
+    if (!cols.some((c) => c.name === 'unread')) this.db.exec('ALTER TABLE threads ADD COLUMN unread INTEGER NOT NULL DEFAULT 0');
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS sections (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        position INTEGER NOT NULL,
+        created_at TEXT NOT NULL
+      );
+    `);
+    // Ensure index exists for sorting
+    try {
+      this.db.exec('CREATE INDEX idx_threads_pinned_updated ON threads(pinned DESC, updated_at DESC)');
+    } catch {
+      // Index already exists
+    }
+  }
+
+  close(): void {
+    this.db.close();
+  }
+
+  createThread(
+    t: Omit<
+      ThreadRecord,
+      | 'status'
+      | 'createdAt'
+      | 'updatedAt'
+      | 'agentSessionId'
+      | 'pinned'
+      | 'archivedAt'
+      | 'sectionId'
+      | 'forkedFrom'
+      | 'unread'
+      | 'hubTurnAt'
+      | 'externalAt'
+    > & {
+      forkedFrom?: string | null;
+      sectionId?: string | null;
+    },
+  ): ThreadRecord {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        'INSERT INTO threads (id, agent, cwd, title, status, pinned, permission_mode, model, effort, forked_from, section_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      )
+      .run(t.id, t.agent, t.cwd, t.title, 'idle', 0, t.permissionMode, t.model, t.effort, t.forkedFrom ?? null, t.sectionId ?? null, now, now);
+    return this.getThread(t.id)!;
+  }
+
+  getThread(id: string): ThreadRecord | null {
+    const row = this.db.prepare('SELECT * FROM threads WHERE id = ?').get(id) as ThreadRow | undefined;
+    return row ? toThread(row) : null;
+  }
+
+  /** The thread tied to an agent-side session, archived or not. Used to avoid importing one twice. */
+  findThreadByAgentSession(agent: string, agentSessionId: string): ThreadRecord | null {
+    const row = this.db
+      .prepare('SELECT * FROM threads WHERE agent = ? AND agent_session_id = ? LIMIT 1')
+      .get(agent, agentSessionId) as ThreadRow | undefined;
+    return row ? toThread(row) : null;
+  }
+
+  /** Copies a thread's whole event log to another thread, keeping order and timestamps. */
+  copyEvents(fromThreadId: string, toThreadId: string): void {
+    this.db
+      .prepare(
+        'INSERT INTO events (thread_id, seq, turn_id, type, ts, data) SELECT ?, seq, turn_id, type, ts, data FROM events WHERE thread_id = ?',
+      )
+      .run(toThreadId, fromThreadId);
+  }
+
+  /** Runs several writes as one: all of them happen, or none. Also much faster for bulk inserts. */
+  transaction<T>(work: () => T): T {
+    this.db.exec('BEGIN');
+    try {
+      const result = work();
+      this.db.exec('COMMIT');
+      return result;
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  /** Removes a thread and, through the foreign key, its event log. */
+  deleteThread(id: string): void {
+    this.db.prepare('DELETE FROM threads WHERE id = ?').run(id);
+  }
+
+  /** Active threads by default; pass `archived: true` for the archive instead. */
+  listThreads(opts: { archived?: boolean } = {}): ThreadRecord[] {
+    const where = opts.archived ? 'archived_at IS NOT NULL' : 'archived_at IS NULL';
+    const order = opts.archived ? 'archived_at DESC' : 'pinned DESC, updated_at DESC';
+    const rows = this.db.prepare(`SELECT * FROM threads WHERE ${where} ORDER BY ${order}`).all() as unknown as ThreadRow[];
+    return rows.map(toThread);
+  }
+
+  updateThread(
+    id: string,
+    patch: Partial<
+      Pick<
+        ThreadRecord,
+        | 'title'
+        | 'status'
+        | 'agentSessionId'
+        | 'pinned'
+        | 'permissionMode'
+        | 'model'
+        | 'effort'
+        | 'archivedAt'
+        | 'sectionId'
+        | 'unread'
+        | 'hubTurnAt'
+        | 'externalAt'
+      >
+    >,
+    /**
+     * `touch` moves the thread to the top of "recent". Only conversation activity should do that;
+     * renaming, pinning, filing or changing a setting must not reorder the list.
+     */
+    opts: { touch?: boolean } = {},
+  ): void {
+    const current = this.getThread(id);
+    if (!current) return;
+    const next = { ...current, ...patch, updatedAt: opts.touch ? new Date().toISOString() : current.updatedAt };
+    this.db
+      .prepare(
+        'UPDATE threads SET title = ?, status = ?, agent_session_id = ?, pinned = ?, permission_mode = ?, model = ?, effort = ?, archived_at = ?, section_id = ?, unread = ?, hub_turn_at = ?, external_at = ?, updated_at = ? WHERE id = ?',
+      )
+      .run(
+        next.title,
+        next.status,
+        next.agentSessionId,
+        next.pinned ? 1 : 0,
+        next.permissionMode,
+        next.model,
+        next.effort,
+        next.archivedAt,
+        next.sectionId,
+        next.unread ? 1 : 0,
+        next.hubTurnAt,
+        next.externalAt,
+        next.updatedAt,
+        id,
+      );
+  }
+
+  listSections(): SectionRecord[] {
+    return this.db.prepare('SELECT id, name, position FROM sections ORDER BY position ASC').all() as unknown as SectionRecord[];
+  }
+
+  getSection(id: string): SectionRecord | null {
+    const row = this.db.prepare('SELECT id, name, position FROM sections WHERE id = ?').get(id) as SectionRecord | undefined;
+    return row ?? null;
+  }
+
+  /** New sections go to the end. */
+  createSection(id: string, name: string): SectionRecord {
+    const row = this.db.prepare('SELECT COALESCE(MAX(position), 0) + 1 AS next FROM sections').get() as { next: number };
+    this.db
+      .prepare('INSERT INTO sections (id, name, position, created_at) VALUES (?, ?, ?, ?)')
+      .run(id, name, row.next, new Date().toISOString());
+    return { id, name, position: row.next };
+  }
+
+  renameSection(id: string, name: string): void {
+    this.db.prepare('UPDATE sections SET name = ? WHERE id = ?').run(name, id);
+  }
+
+  /** Removes the section. Its threads are kept and go back to being listed under their project. */
+  deleteSection(id: string): void {
+    this.db.exec('BEGIN');
+    try {
+      this.db.prepare('UPDATE threads SET section_id = NULL WHERE section_id = ?').run(id);
+      this.db.prepare('DELETE FROM sections WHERE id = ?').run(id);
+      this.db.exec('COMMIT');
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  appendEvent(threadId: string, turnId: string | null, type: EventType, data: Record<string, unknown>): StoredEvent {
+    const ts = new Date().toISOString();
+    const row = this.db
+      .prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM events WHERE thread_id = ?')
+      .get(threadId) as { next: number };
+    const seq = row.next;
+    this.db
+      .prepare('INSERT INTO events (thread_id, seq, turn_id, type, ts, data) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(threadId, seq, turnId, type, ts, JSON.stringify(data));
+    return { threadId, seq, turnId, type, ts, data };
+  }
+
+  listEvents(threadId: string, afterSeq = 0, limit = 5000): StoredEvent[] {
+    const rows = this.db
+      .prepare('SELECT * FROM events WHERE thread_id = ? AND seq > ? ORDER BY seq ASC LIMIT ?')
+      .all(threadId, afterSeq, limit) as unknown as EventRow[];
+    return rows.map(toEvent);
+  }
+}
