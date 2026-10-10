@@ -12,6 +12,7 @@
     "dev:web": "npm run dev -w @rah/web",
     "build": "npm run build -w @rah/daemon && npm run build -w @rah/web",
     "test": "npm test -w @rah/daemon && npm test -w @rah/web",
+    "test:e2e": "npm run build && cd packages/e2e && node --test test/*.spec.mjs",
     "typecheck": "npm run typecheck -w @rah/daemon && npm run typecheck -w @rah/web",
     "check:publish": "node scripts/check-publish.mjs"
   },

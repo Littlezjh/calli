@@ -181,7 +181,15 @@ export class AgentRegistry {
         ? Object.fromEntries(Object.entries(input.env as Record<string, unknown>).map(([k, v]) => [String(k), String(v)]))
         : undefined;
 
-    const instance: AgentInstance = { id, adapter: adapter as AgentInstance['adapter'], ...(label ? { label } : {}), ...(command ? { command } : {}), ...(env ? { env } : {}) };
+    const instance: AgentInstance = {
+      id,
+      adapter: adapter as AgentInstance['adapter'],
+      // Without a name it would inherit the adapter's own ("Antigravity"), which every copy of
+      // that CLI would share. The id is what the user typed or what PATH had, so it reads better.
+      label: label ?? id,
+      ...(command ? { command } : {}),
+      ...(env ? { env } : {}),
+    };
     this.register(instance);
     await this.persist();
     return instance;

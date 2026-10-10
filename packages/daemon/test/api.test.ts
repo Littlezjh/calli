@@ -1427,7 +1427,8 @@ test('agents: instances beyond the built-ins are listed, and PATH discovery offe
     ],
     null,
   );
-  const withRegistry = createHttpServer({ manager: new ThreadManager(store, registry.adapters, [workdir], new AttachmentStore(dataDir)), registry, token: TOKEN, webDir: null, version: 'test' });
+  const withRegistryManager = new ThreadManager(store, registry.adapters, [workdir], new AttachmentStore(dataDir));
+  const withRegistry = createHttpServer({ manager: withRegistryManager, registry, token: TOKEN, webDir: null, version: 'test' });
   await new Promise<void>((r) => withRegistry.listen(0, '127.0.0.1', () => r()));
   const { port } = withRegistry.address() as AddressInfo;
   const regBase = `http://127.0.0.1:${port}`;
@@ -1472,4 +1473,5 @@ test('agents: instances beyond the built-ins are listed, and PATH discovery offe
     process.env.PATH = oldPath;
   }
   withRegistry.close();
+  await withRegistryManager.shutdown();
 });

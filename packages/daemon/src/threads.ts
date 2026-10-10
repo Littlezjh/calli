@@ -98,6 +98,8 @@ export class ThreadManager {
   private readonly listeners = new Set<Listener>();
   /** Agent sessions being imported right now, so the same one is not imported twice in parallel. */
   private readonly importing = new Set<string>();
+  /** Threads whose session is being synced right now, for the same reason. */
+  private readonly syncing = new Set<string>();
   /** Messages waiting for the running turn of their thread to finish. Kept in memory only. */
   private readonly queues = new Map<string, QueuedTurn[]>();
 
@@ -584,6 +586,22 @@ export class ThreadManager {
     }
     // A running turn is writing to the same session; syncing now would race it.
     if (this.running.has(id)) return { added: 0, terminalActivity: this.view(thread).terminalActivity };
+    // The UI polls and anything else may sync too; two readers would both append the same turns.
+    if (this.syncing.has(id)) return { added: 0, terminalActivity: this.view(thread).terminalActivity };
+    this.syncing.add(id);
+    try {
+      return await this.doSync(thread);
+    } finally {
+      this.syncing.delete(id);
+    }
+  }
+
+  private async doSync(thread: ThreadRecord): Promise<{ added: number; terminalActivity: boolean }> {
+    const { id } = thread;
+    const adapter = this.adapters.get(thread.agent);
+    if (!thread.agentSessionId || !adapter?.capabilities.history || !adapter.loadHistory) {
+      throw new HttpError(400, `this thread's session cannot be read back`);
+    }
 
     const [agentTurns, hubTexts] = await Promise.all([
       adapter.loadHistory(thread.agentSessionId, thread.cwd),

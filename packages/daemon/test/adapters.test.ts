@@ -827,3 +827,47 @@ test('pi: a model that cannot see gets paths for describe_image, when that exten
     await seeing.close();
   }
 });
+
+test('pi: the zai vision MCP server also gives a text-only model sight, when it is connected', async () => {
+  const plain = new PiRpcAdapter([process.execPath, fakePi]);
+  assert.equal((await plain.models()).find((m) => m.id === 'fake/plain')?.imagesVia, undefined, 'no MCP, no way in');
+
+  process.env.FAKE_PI_MCP = '1';
+  const adapter = new PiRpcAdapter([process.execPath, fakePi]);
+  let models;
+  try {
+    models = await adapter.models();
+  } finally {
+    delete process.env.FAKE_PI_MCP;
+  }
+  assert.deepEqual(models.map((m) => [m.id, m.images, m.imagesVia]), [
+    ['fake/think', true, undefined],
+    ['fake/plain', false, 'analyze_image'],
+    ['fake/loose', false, 'analyze_image'],
+  ]);
+
+  // The extension, when present too, still wins: it needs no extra key.
+  process.env.FAKE_PI_MCP = '1';
+  process.env.FAKE_PI_VISION = '1';
+  const both = new PiRpcAdapter([process.execPath, fakePi]);
+  try {
+    models = await both.models();
+  } finally {
+    delete process.env.FAKE_PI_MCP;
+    delete process.env.FAKE_PI_VISION;
+  }
+  assert.equal(models.find((m) => m.id === 'fake/plain')?.imagesVia, 'describe_image');
+
+  // And the pictures travel as paths, like with the extension.
+  const image = { data: PNG, mimeType: 'image/png', path: '/data/attachments/t/1.png' };
+  const blind = await adapter.start({ cwd: here, model: 'fake/plain' });
+  try {
+    const { hooks, events } = collectingHooks();
+    await blind.prompt(turn('what is this', [image]), hooks);
+    const text = textFrom(events);
+    assert.doesNotMatch(text, /images:/, 'no image blocks: pi would drop them');
+    assert.match(text, /The user attached an image\. Look at it before answering:\n- \/data\/attachments\/t\/1\.png/);
+  } finally {
+    await blind.close();
+  }
+});

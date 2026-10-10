@@ -24,6 +24,9 @@ const PI_EFFORTS: EffortLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'x
 /** How long probe results (models, commands) are reused. They can change when the user edits pi's config. */
 const PROBE_TTL_MS = 60_000;
 
+/** How long `pi mcp list` may take to connect every server before the probe gives up. */
+const MCP_LIST_TIMEOUT_MS = 30_000;
+
 /**
  * Thinking levels a pi model accepts, by pi's own rule: a level mapped to null is unsupported,
  * and xhigh/max count only when the model maps them explicitly. Models without reasoning have none.
@@ -253,6 +256,60 @@ export function formatPiStats(stats: any): string {
  */
 export const PI_VISION_TOOL = 'describe_image';
 const PI_VISION_EXTENSION_COMMAND = 'vision';
+
+/**
+ * The zhipu vision MCP server (`@z_ai/mcp-server`): like the extension above, it gives a text-only
+ * model tools that hand a picture to a vision model, but the picture goes through zhipu's API with
+ * its own key. Any of its tools grants sight, and they take a file path, which is how the hub sends
+ * pictures anyway. Detected through `pi mcp list --json`.
+ */
+const PI_VISION_MCP_SERVER = 'zai-mcp-server';
+// The docs call it image_analysis; version 0.1.5 actually ships analyze_image. This string is only
+// what the UI shows when a model sees pictures through the server, so it names the general tool.
+export const PI_MCP_VISION_TOOL = 'analyze_image';
+
+/**
+ * Runs `pi mcp list --json` and returns every tool of every connected server, qualified as the
+ * model sees them: `mcp__<server>__<tool>`. A server that never finishes the MCP handshake makes
+ * the command hang, so it runs under a timeout, and any failure is an empty list — which only
+ * means no MCP vision, never a broken hub.
+ */
+function mcpToolNames(command: string[], env: Record<string, string>): Promise<string[]> {
+  const child = spawn(command[0], [...command.slice(1), 'mcp', 'list', '--json'], {
+    cwd: process.cwd(),
+    stdio: ['ignore', 'pipe', 'ignore'],
+    env: { ...process.env, ...env },
+  });
+  return new Promise((resolve) => {
+    let out = '';
+    let settled = false;
+    const done = (names: string[]) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.kill();
+      resolve(names);
+    };
+    const timer = setTimeout(() => done([]), MCP_LIST_TIMEOUT_MS);
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      out += chunk;
+    });
+    child.on('error', () => done([]));
+    child.on('exit', () => {
+      try {
+        const parsed = JSON.parse(out);
+        done(
+          (parsed?.servers ?? [])
+            .filter((s: any) => s?.enabled && s?.state === 'connected')
+            .flatMap((s: any) => (Array.isArray(s?.tools) ? s.tools : []).map((t: unknown) => `mcp__${s.name}__${t}`)),
+        );
+      } catch {
+        done([]);
+      }
+    });
+  });
+}
 
 class PiSession implements AgentSession {
   agentSessionId = '';
@@ -523,6 +580,7 @@ export class PiRpcAdapter implements AgentAdapter {
   };
 
   private modelCache: Cached<ModelOption[]> | null = null;
+  private mcpCache: Cached<string[]> | null = null;
   private readonly commandCache = new Map<string, Cached<SlashCommand[]>>();
 
   constructor(
@@ -567,6 +625,9 @@ export class PiRpcAdapter implements AgentAdapter {
           const vision = (commands?.commands ?? []).some(
             (c: any) => String(c.name).replace(/^\//, '') === PI_VISION_EXTENSION_COMMAND && c.source === 'extension',
           );
+          // The vision MCP is the fallback: describe_image goes through pi's own login, so prefer it.
+          const mcpTools = await this.mcpTools();
+          const visionMcp = !vision && mcpTools.some((t) => t.startsWith(`mcp__${PI_VISION_MCP_SERVER}__`));
           return (list?.models ?? []).map((m: any): ModelOption => {
             const id = `${m.provider}/${m.id}`;
             const images = Array.isArray(m.input) ? m.input.includes('image') : undefined;
@@ -576,13 +637,24 @@ export class PiRpcAdapter implements AgentAdapter {
               description: m.provider,
               efforts: piEfforts(m),
               images,
-              ...(images === false && vision ? { imagesVia: PI_VISION_TOOL } : {}),
+              ...(images === false && (vision || visionMcp) ? { imagesVia: vision ? PI_VISION_TOOL : PI_MCP_VISION_TOOL } : {}),
               ...(id === current ? { isDefault: true } : {}),
             };
           });
         }),
       (c) => {
         this.modelCache = c;
+      },
+    );
+  }
+
+  /** Qualified names of every tool a connected MCP server serves, from `pi mcp list --json`. */
+  private mcpTools(): Promise<string[]> {
+    return this.cached(
+      this.mcpCache,
+      () => mcpToolNames(this.command, this.env),
+      (c) => {
+        this.mcpCache = c;
       },
     );
   }

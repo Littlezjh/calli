@@ -4,6 +4,16 @@ import { readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 
 const args = process.argv.slice(2);
+// `pi mcp list --json` is a shell command, not an RPC session: FAKE_PI_MCP=1 reports the zai vision
+// MCP server as connected, anything else no servers at all.
+if (args[0] === 'mcp' && args[1] === 'list' && args.includes('--json')) {
+  const servers =
+    process.env.FAKE_PI_MCP === '1'
+      ? [{ name: 'zai-mcp-server', enabled: true, state: 'connected', tools: ['image_analysis', 'ui_diff_check'] }]
+      : [];
+  process.stdout.write(JSON.stringify({ servers, errors: [] }) + '\n');
+  process.exit(0);
+}
 if (!args.includes('--mode') || args[args.indexOf('--mode') + 1] !== 'rpc') {
   console.error('fake-pi: expected --mode rpc');
   process.exit(2);
@@ -108,6 +118,19 @@ rl.on('line', (line) => {
       reply({ disposition: 'started' });
       out({ type: 'agent_start' });
       out({ type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', contentIndex: 0, delta: 'hmm' } });
+      // "slowthink" spaces the turn out, so a UI test can watch it run.
+      if (cmd.message.includes('slowthink')) {
+        setTimeout(() => {
+          out({ type: 'tool_execution_start', toolCallId: 'c1', toolName: 'bash', args: { command: 'ls' } });
+          out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'hi there ' + cmd.message } });
+        }, 800);
+        setTimeout(() => {
+          out({ type: 'tool_execution_end', toolCallId: 'c1', toolName: 'bash', result: { content: [{ type: 'text', text: 'a.txt' }] }, isError: false });
+          running = false;
+          out({ type: 'agent_settled', aborted: false });
+        }, 2500);
+        return;
+      }
       out({ type: 'tool_execution_start', toolCallId: 'c1', toolName: 'bash', args: { command: 'ls' } });
       out({ type: 'tool_execution_update', toolCallId: 'c1', toolName: 'bash', partialResult: { content: [{ type: 'text', text: 'partial' }] } });
       out({ type: 'tool_execution_end', toolCallId: 'c1', toolName: 'bash', result: { content: [{ type: 'text', text: 'a.txt' }] }, isError: false });
