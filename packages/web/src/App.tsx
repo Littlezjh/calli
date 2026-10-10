@@ -22,7 +22,7 @@ import { DirectoryPicker } from './components/DirectoryPicker';
 import { Dialog } from './components/Dialog';
 import { ImportPanel } from './components/ImportPanel';
 import { StatusPanel } from './components/StatusPanel';
-import { AgentPicker, effortsForModel, imagesBlocked, imagesNote, modelName, ModelPicker, PermissionPicker, UsageMeter } from './components/Pickers';
+import { AgentPicker, type DiscoveredAgent, effortsForModel, imagesBlocked, imagesNote, modelName, ModelPicker, PermissionPicker, UsageMeter } from './components/Pickers';
 import { Sidebar } from './components/Sidebar';
 import { forkBlocked, useThreadActions } from './components/ThreadActions';
 import { ThreadView } from './components/ThreadView';
@@ -51,6 +51,8 @@ export function App() {
   const api = useMemo(() => (token ? new Api(token) : null), [token]);
 
   const [agents, setAgents] = useState<AgentInfo[]>([]);
+  /** CLIs on PATH that look like extra agents, offered in the picker. */
+  const [discovered, setDiscovered] = useState<DiscoveredAgent[]>([]);
   const [workdirs, setWorkdirs] = useState<string[]>([]);
   const [threads, setThreads] = useState<Thread[]>([]);
   const [sections, setSections] = useState<Section[]>([]);
@@ -78,6 +80,8 @@ export function App() {
   const [atBottom, setAtBottom] = useState(true);
   // Text handed back to the composer: messages that were waiting when the user pressed stop.
   const [restore, setRestore] = useState<{ text: string; nonce: number } | null>(null);
+  // A message waiting for the user to confirm sending into a session the terminal also used.
+  const [pendingSend, setPendingSend] = useState<{ text: string; images: PreparedImage[] } | null>(null);
   const [pageHidden, setPageHidden] = useState(() => document.hidden);
   const baseTitle = useRef(document.title);
   const seenThreads = useRef<Thread[] | null>(null);
@@ -122,6 +126,11 @@ export function App() {
         setSections(s);
         setDraftCwd((cur) => cur || c.workdirs[0] || '');
         setDraftAgent(a.find((x) => x.available)?.id ?? 'claude');
+        // Cheap enough to do once: PATH scan for other copies of known CLIs.
+        api
+          .discoverAgents()
+          .then(setDiscovered)
+          .catch(() => undefined);
       } catch (e) {
         if (!cancelled) handleError(e);
       }
@@ -226,6 +235,19 @@ export function App() {
     const el = scrollerRef.current;
     if (el && stickToBottom.current) el.scrollTop = el.scrollHeight;
   }, [events]);
+
+  // Screenshots and slow-rendering blocks grow the thread after the scroll above, which used to
+  // leave a reopened thread parked at the top. Watching the thread's height keeps it pinned.
+  useEffect(() => {
+    const el = scrollerRef.current;
+    const content = el?.querySelector('.thread');
+    if (!el || !content) return;
+    const ro = new ResizeObserver(() => {
+      if (stickToBottom.current) el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, [selectedId]);
 
   const onScroll = () => {
     const el = scrollerRef.current;
@@ -401,9 +423,6 @@ export function App() {
     );
   }
 
-  // A message waiting for the user to confirm sending into a session the terminal also used.
-  const [pendingSend, setPendingSend] = useState<{ text: string; images: PreparedImage[] } | null>(null);
-
   const performSend = async (text: string, images: PreparedImage[], isNewThread: boolean) => {
     setError(null);
     try {
@@ -529,6 +548,15 @@ export function App() {
     }
   };
 
+  // Adds a discovered CLI as its own instance and selects it for the new thread.
+  const addDiscoveredAgent = async (found: DiscoveredAgent) => {
+    if (!api) return;
+    await api.addAgent({ id: found.id, adapter: found.adapter, command: [found.command] });
+    const [list, more] = await Promise.all([api.agents(), api.discoverAgents()]);
+    setAgents(list);
+    setDiscovered(more);
+  };
+
   // What the slash menu offers besides the agent's own commands. The keywords include the names
   // these have in the agents' terminals (/clear, /resume, /export, /status), so habits still work.
   const hubActions: HubAction[] = [
@@ -581,7 +609,7 @@ export function App() {
     </>
   ) : (
     <>
-      <AgentPicker agents={agents} value={draftAgent} onChange={pickAgent} />
+      <AgentPicker agents={agents} value={draftAgent} onChange={pickAgent} discovered={discovered} onAdd={addDiscoveredAgent} />
       <button className="context-btn" onClick={() => setShowDirPicker(true)} title={draftCwd}>
         <IconFolder size={14} />
         <span>{folderName(draftCwd) || '选择目录'}</span>
