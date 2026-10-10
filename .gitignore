@@ -28,3 +28,6 @@ data/
 .DS_Store
 .idea/
 .vscode/
+
+# git worktrees
+.worktrees/

@@ -23,6 +23,7 @@
 - [x] 未读：线程在后台跑完后标为未读，打开即已读（各设备同步）；右键可手动"标记为未读"
 - [x] 复制子菜单：会话 ID、终端恢复命令、工作目录、整段对话的 Markdown
 - [x] 侧边栏分组的折叠状态记在本机
+- [ ] **P0** 手机上侧边栏顶部被安全区截断：`.sidebar` 在手机上是 `position: fixed; inset: 0`，但 `.sidebar-inner` 的 padding 没算 `env(safe-area-inset-top)`（styles.css 里其他 fixed 元素都加了）；顺手全面检查一遍 fixed 元素
 - [ ] **P2** 搜索对话内容（现在只搜标题）
 - [ ] **P1** 项目和分区的分组头直接建会话：项目组的"+"预填该目录；分区组的"+"创建时归入该分区（`createThread` 加 `sectionId`）
 - [ ] **P2** 排序切换：按最近更新 / 按项目
@@ -90,9 +91,40 @@
 - [ ] **P2** 状态订阅：扩展能收到线程事件（开始、等待审批、结束、出错），比如让一只宠物跟着状态变化
 - [ ] **P2** 后端 hook 与路由注册（设计见 `PLAN.md`），第一个扩展做 git worktree
 
-## 7. 工程
+## 7. 计划页（TODO 清单）
 
-- [ ] **P0** 第一次 git 提交
+自己的长期计划总清单，做完划掉；计划可关联线程（跟着线程推进去更新），可拆子项。存 daemon SQLite，多设备同步。设计决定：子项只允许一层（计划 → 子项），不做无限嵌套；不做拖拽排序、截止时间、提醒、让 agent 改清单（以后走扩展机制，不进核心）。
+
+- [ ] **P0** 数据：`todos(id, text, done, parent_id, position, created_at, done_at)`、`todo_threads(todo_id, thread_id)` 两张表；线程永久删除时关联随外键级联消失，归档的关联保留
+- [ ] **P0** 接口：`GET/POST /api/todos`、`PATCH/DELETE /api/todos/:id`、`POST/DELETE /api/todos/:id/threads`；GET 返回全部（含关联线程的标题、agent、状态）；变更走全局 SSE 广播（`todo.updated`），多设备实时更新
+- [ ] **P0** 界面：全屏面板（复用已归档面板的模式），入口在侧边栏底部「已归档 / 导入历史」旁边；标题 + 底部输入行，回车添加
+- [ ] **P0** 主项：圆圈 checkbox + 文字，点圈划掉（划线置灰）；未完成的在上，已完成折叠成「已完成 N」可展开
+- [ ] **P0** 子项：缩进一级、小一号，同样可划掉
+- [ ] **P0** 关联线程：项下面一排线程 chip（状态点 + 标题），点 chip 跳进线程，状态点跟线程实时变
+- [ ] **P0** 两个关联入口：计划项菜单「关联线程」（Popover 线程选择器）；线程右键菜单加「关联到计划」（选计划项）
+- [ ] **P1** 行内点文字编辑；菜单：加子项、关联线程、删除
+- [ ] **P2** 拖拽排序
+
+## 8. 额度与速度
+
+看各 agent 实例的套餐额度（照池子面板的样子：每条窗口一根进度条），和全局 TPM（tokens per minute）消耗速率。差异只在 `adapters/`，前端只认统一形状。已实测的数据源：
+
+| Agent | 额度 | 速度 |
+|---|---|---|
+| Claude | `claude -p "/usage"` 约 3 秒，文本可解析（Current session / Current week + 重置时间）；⚠️ 待验证 `-p` 是否落盘会话 | ACP 拿不到每轮输出 token，`message.delta` 字符数估算 |
+| agy | `agy -p /usage`，TSV（模型组 / 五小时 / 每周 / 剩余% / 重置 ISO），剩余换算已用 | 流里 usage 为空，同上估算 |
+| pi | 无套餐概念，capability 不开 | `get_session_stats` 差分，精确 |
+
+- [ ] **P0** 类型与能力：`PlanQuota { plan?, windows: [{ label, usedPercent, resetsAt? }], checkedAt }`、`capabilities.quota`、适配器方法 `fetchQuota?()`
+- [ ] **P0** daemon：`GET /api/agents/:id/quota`，60s TTL 缓存 + in-flight 去重（几个浏览器同时开只跑一次命令；Claude 要 3 秒，异步 + loading 态）
+- [ ] **P0** 界面：额度弹窗（现有 panel/Dialog 样式），每条窗口一行——标签胶囊（5H / 7D）+ 进度条 + 百分比 + 重置时间；颜色按 50% / 80% 分三档，只用 styles.css 变量；失败显示上次数据 +「检查于 xx:xx」（Stale）；入口：状态面板按钮（替换现在跳命令的那条）+ 斜杠面板 `/usage`
+- [ ] **P1** 全局 TPM：daemon 跨线程滚动窗口（60s / 5min）汇总每轮 token，pi 精确、其余估算（UI 标「估算」）；数据并入额度接口，面板顶部显示
+- [ ] **P1** 单轮实时速度：纯前端，`message.delta` 字符数 ÷ 经过时间 ≈ tokens/s，输入框上方小字，运行中实时更新
+- [ ] **P0** 适配器测试 + `test/fixtures/` 假 agent 补对应实现
+
+## 9. 工程
+
+- [x] 第一次 git 提交；并行开发用 git worktree，工作树放在被 ignore 的 `.worktrees/` 目录（`todo` → feature/todo-page，`quota` → feature/quota-tpm）
 - [~] 开机自启：`scripts/install-service.sh` 装成 systemd 用户服务，通过登录 shell 启动以带上 API key。*脚本和生成的配置已验证，等你运行安装*
 - [x] 发布前检查：`npm run check:publish`，私人词表放在仓库外
 - [ ] **P2** 英文 README
