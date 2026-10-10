@@ -144,7 +144,13 @@ export function App() {
     let cancelled = false;
     (async () => {
       try {
-        const [a, c, t, s, td] = await Promise.all([api.agents(), api.workdirs(), api.threads(), api.sections(), api.todos()]);
+        const [a, c, t, s, td] = await Promise.all([
+          api.agents(),
+          api.workdirs(),
+          api.threads(),
+          api.sections(),
+          api.todos().catch(() => []),
+        ]);
         if (cancelled) return;
         setAgents(a);
         setWorkdirs(c.workdirs);
