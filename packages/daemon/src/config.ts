@@ -18,6 +18,8 @@ export interface Config {
   agyCommand: string[];
   /** argv that starts TRAE CLI as an ACP server. */
   traexCommand: string[];
+  /** argv that starts Codex's app server. */
+  codexCommand: string[];
   /** Directory of the built web UI, served at `/` when present. */
   webDir: string | null;
 }
@@ -74,6 +76,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const piCommand = [env.RAH_PI_BIN || 'pi'];
   const agyCommand = [env.RAH_AGY_BIN || 'agy'];
   const traexCommand = [env.RAH_TRAEX_BIN || 'traex', 'acp', 'serve'];
+  const codexCommand = [env.RAH_CODEX_BIN || 'codex', 'app-server'];
 
   // Serve the built UI from the sibling web package when it exists; RAH_WEB_DIR overrides.
   const bundledWebDir = fileURLToPath(new URL('../../web/dist', import.meta.url));
@@ -90,6 +93,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     piCommand,
     agyCommand,
     traexCommand,
+    codexCommand,
     webDir,
   };
 }

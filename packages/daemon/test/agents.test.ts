@@ -14,6 +14,7 @@ const defaults = defaultInstances({
   piCommand: ['node', join(here, 'fixtures', 'fake-pi.mjs')],
   agyCommand: ['node', join(here, 'fixtures', 'fake-agy.mjs')],
   traexCommand: ['node', join(here, 'fixtures', 'fake-acp.mjs'), 'acp', 'serve'],
+  codexCommand: ['node', join(here, 'fixtures', 'fake-codex.mjs')],
 });
 
 let dir: string;
@@ -28,7 +29,7 @@ after(() => {
 
 test('the built-in instances are one adapter each, keyed by instance id', () => {
   const registry = new AgentRegistry(defaults, null);
-  assert.deepEqual([...registry.adapters.keys()].sort(), ['agy', 'claude', 'pi', 'traex']);
+  assert.deepEqual([...registry.adapters.keys()].sort(), ['agy', 'claude', 'codex', 'pi', 'traex']);
   assert.equal(registry.adapters.get('claude')!.capabilities.approvals, true);
   // The traex default command carries "acp serve"; the adapter keeps the plain CLI for deletions.
   assert.equal(registry.adapters.get('traex')!.label, 'TRAE CLI');
@@ -52,12 +53,12 @@ test('add persists to agents.json and a later fromEnv reads it back', async () =
   const reloaded = AgentRegistry.fromEnv({
     dataDir,
     env: {},
-    defaults: defaultInstances({ claudeCommand: ['claude-agent-acp'], piCommand: ['pi'], agyCommand: ['agy'], traexCommand: ['traex', 'acp', 'serve'] }),
+    defaults: defaultInstances({ claudeCommand: ['claude-agent-acp'], piCommand: ['pi'], agyCommand: ['agy'], traexCommand: ['traex', 'acp', 'serve'], codexCommand: ['codex', 'app-server'] }),
   });
   // The file holds every instance, including the built-ins it was seeded with.
   assert.deepEqual(
     reloaded.list().map((i) => i.id),
-    ['claude', 'pi', 'agy', 'traex', 'agy2'],
+    ['claude', 'pi', 'agy', 'traex', 'codex', 'agy2'],
   );
   rmSync(dataDir, { recursive: true, force: true });
 });

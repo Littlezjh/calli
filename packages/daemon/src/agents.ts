@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { delimiter } from 'node:path';
 import { AgyAdapter } from './adapters/agy.js';
 import { ClaudeAcpAdapter } from './adapters/claude.js';
+import { CodexAppServerAdapter } from './adapters/codex.js';
 import { PiRpcAdapter } from './adapters/pi.js';
 import { TraexAcpAdapter } from './adapters/traex.js';
 import type { AgentAdapter } from './adapters/types.js';
@@ -16,7 +17,7 @@ import { HttpError } from './errors.js';
 export interface AgentInstance {
   /** What threads store; also the key in the adapter map. */
   id: string;
-  adapter: 'claude' | 'pi' | 'agy' | 'traex';
+  adapter: 'claude' | 'pi' | 'agy' | 'traex' | 'codex';
   label?: string;
   /** Full argv. Defaults to the adapter's own default command. */
   command?: string[];
@@ -33,6 +34,7 @@ const ADAPTER_LABELS: Record<AgentInstance['adapter'], string> = {
   pi: 'pi',
   agy: 'Antigravity',
   traex: 'TRAE CLI',
+  codex: 'Codex',
 };
 
 /** How each adapter is built. One line per protocol; instances differ only in command and env. */
@@ -57,6 +59,9 @@ function buildAdapter(
     case 'traex':
       adapter = new TraexAcpAdapter(command, env);
       break;
+    case 'codex':
+      adapter = new CodexAppServerAdapter(command, env);
+      break;
   }
   // An instance may carry its own name ("Claude 工作号"); otherwise the adapter's own label stands.
   if (instance.label) (adapter as { label: string }).label = instance.label;
@@ -69,12 +74,14 @@ export function defaultInstances(opts: {
   piCommand: string[];
   agyCommand: string[];
   traexCommand: string[];
+  codexCommand: string[];
 }): AgentInstance[] {
   return [
     { id: 'claude', adapter: 'claude', command: opts.claudeCommand },
     { id: 'pi', adapter: 'pi', command: opts.piCommand },
     { id: 'agy', adapter: 'agy', command: opts.agyCommand },
     { id: 'traex', adapter: 'traex', command: opts.traexCommand },
+    { id: 'codex', adapter: 'codex', command: opts.codexCommand },
   ];
 }
 
@@ -92,6 +99,7 @@ const KNOWN_PREFIXES: Array<[AgentInstance['adapter'], RegExp]> = [
   ['claude', /^claude(?=$|[0-9]|[-_.])/],
   ['pi', /^pi(?=$|[0-9]|[-_.])/],
   ['agy', /^agy(?=$|[0-9]|[-_.])/],
+  ['codex', /^codex(?=$|[0-9]|[-_.])/],
   // traex and the compatibility names its installer creates for the same CLI
   ['traex', /^traex(?=$|[0-9]|[-_.])/],
   ['traex', /^traecli(?=$|[0-9]|[-_.])/],

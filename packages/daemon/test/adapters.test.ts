@@ -871,3 +871,307 @@ test('pi: the zai vision MCP server also gives a text-only model sight, when it 
     await blind.close();
   }
 });
+
+import {
+  CODEX_LOCAL_COMMANDS,
+  CodexAppServerAdapter,
+  codexApprovalDecision,
+  codexApprovalOptions,
+  codexModelOptions,
+  mapCodexItemEnd,
+  mapCodexItemStart,
+  parseUnifiedDiff,
+  turnsFromCodexHistory,
+} from '../src/adapters/codex.js';
+
+const fakeCodex = join(here, 'fixtures', 'fake-codex.mjs');
+
+test('parseUnifiedDiff turns a Codex patch into old and new region text', () => {
+  // Added file: no old lines at all reads as a new file (oldText null).
+  assert.deepEqual(parseUnifiedDiff('@@ -0,0 +1 @@\n+hello\n'), { oldText: null, newText: 'hello' });
+  // Deleted file: nothing new remains.
+  assert.deepEqual(parseUnifiedDiff('@@ -1 +0,0 @@\n-hello\n\\ No newline at end of file\n'), { oldText: 'hello', newText: '' });
+  // Context lines belong to both sides; headers and markers are dropped.
+  assert.deepEqual(parseUnifiedDiff('--- a/x\n+++ b/x\n@@ -1,2 +1,2 @@\n const a = 1;\n-const b = 2;\n+const b = 3;\n'), {
+    oldText: 'const a = 1;\nconst b = 2;',
+    newText: 'const a = 1;\nconst b = 3;',
+  });
+  // An added or deleted file is not a patch: it is the file's plain content, told apart by kind.
+  assert.deepEqual(parseUnifiedDiff('patched\n', 'add'), { oldText: null, newText: 'patched\n' });
+  assert.deepEqual(parseUnifiedDiff('gone\n', 'delete'), { oldText: 'gone\n', newText: '' });
+  // Content that happens to look like a patch is still parsed as one.
+  assert.deepEqual(parseUnifiedDiff('@@ -1 +1 @@\n-a\n+b\n', 'add'), { oldText: 'a', newText: 'b' });
+});
+
+test('mapCodexItemStart/End map commands, file changes and the rest of the step items', () => {
+  const start = mapCodexItemStart({ type: 'commandExecution', id: 'e1', command: 'npm test\nci', cwd: '/tmp/x' });
+  assert.deepEqual(start, { type: 'tool.start', data: { id: 'e1', title: 'npm test', kind: 'execute', status: 'in_progress', input: { command: 'npm test\nci', cwd: '/tmp/x' } } });
+
+  const failed = mapCodexItemEnd({ type: 'commandExecution', id: 'e1', status: 'completed', exitCode: 1, aggregatedOutput: 'boom' });
+  assert.equal(failed?.type, 'tool.end');
+  assert.equal(failed?.data.status, 'failed');
+  assert.equal(failed?.data.output, 'boom\n(exit 1)');
+
+  const edit = mapCodexItemStart({ type: 'fileChange', id: 'f1', changes: [{ path: '/tmp/x/a.ts', diff: '-a\n+b\n', kind: { type: 'update' } }] });
+  assert.equal(edit?.data.kind, 'edit');
+  assert.deepEqual(edit?.data.content, [{ type: 'diff', path: '/tmp/x/a.ts', oldText: 'a', newText: 'b' }]);
+  assert.deepEqual(mapCodexItemEnd({ type: 'fileChange', id: 'f1', status: 'completed', changes: [{ path: '/tmp/x/a.ts', diff: '+x\n' }] })?.data.content, [
+    { type: 'diff', path: '/tmp/x/a.ts', oldText: null, newText: 'x' },
+  ]);
+
+  assert.equal(mapCodexItemStart({ type: 'userMessage', id: 'u' }), null);
+  assert.equal(mapCodexItemStart({ type: 'agentMessage', id: 'm' }), null);
+  assert.equal(mapCodexItemEnd({ type: 'agentMessage', id: 'm' }), null);
+  assert.equal(mapCodexItemStart({ type: 'contextCompaction', id: 'c' }), null);
+  assert.deepEqual(mapCodexItemStart({ type: 'webSearch', id: 'w1', query: 'rust async' })?.data, {
+    id: 'w1',
+    title: 'rust async',
+    kind: 'search',
+    status: 'in_progress',
+  });
+});
+
+test('codexModelOptions keeps hidden models out and efforts to the known levels', () => {
+  const models = codexModelOptions([
+    {
+      id: 'gpt-big',
+      displayName: 'GPT Big',
+      description: 'For hard work',
+      isDefault: true,
+      inputModalities: ['text', 'image'],
+      supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'high' }, { reasoningEffort: 'max' }, { reasoningEffort: 'ultra' }],
+    },
+    { id: 'gpt-small', displayName: 'GPT Small', inputModalities: ['text'], supportedReasoningEfforts: [{ reasoningEffort: 'low' }] },
+    { id: 'gpt-hidden', displayName: 'Hidden', hidden: true },
+  ]);
+  assert.deepEqual(models, [
+    { id: 'gpt-big', label: 'GPT Big', description: 'For hard work', efforts: ['low', 'high', 'max'], images: true, isDefault: true },
+    { id: 'gpt-small', label: 'GPT Small', efforts: ['low'], images: false },
+  ]);
+});
+
+test('codex approval options come from the decisions Codex offers, and map back to one', () => {
+  const amendment = { acceptWithExecpolicyAmendment: { execpolicy_amendment: ['rm'] } };
+  assert.deepEqual(codexApprovalOptions(['accept', amendment, 'cancel']), [
+    { optionId: 'accept', name: '允许这一次', kind: 'allow_once' },
+    { optionId: 'acceptWithExecpolicyAmendment', name: '允许，同类命令不再询问', kind: 'allow_always' },
+  ]);
+  assert.deepEqual(codexApprovalOptions(['accept', 'acceptForSession', 'decline', 'cancel']), [
+    { optionId: 'accept', name: '允许这一次', kind: 'allow_once' },
+    { optionId: 'acceptForSession', name: '本会话内不再询问', kind: 'allow_always' },
+    { optionId: 'decline', name: '拒绝', kind: 'reject_once' },
+  ]);
+  // No list (an older server): the two basic answers.
+  assert.deepEqual(codexApprovalOptions(undefined).map((o) => o.optionId), ['accept']);
+
+  const params = { proposedExecpolicyAmendment: ['rm'] };
+  assert.deepEqual(codexApprovalDecision({ optionId: 'accept' }, params), { decision: 'accept' });
+  assert.deepEqual(codexApprovalDecision({ optionId: 'acceptWithExecpolicyAmendment' }, params), { decision: { acceptWithExecpolicyAmendment: { execpolicy_amendment: ['rm'] } } });
+  assert.deepEqual(codexApprovalDecision({ cancelled: true }, params), { decision: 'cancel' });
+  assert.deepEqual(codexApprovalDecision({ optionId: 'decline' }, params), { decision: 'decline' });
+});
+
+test('turnsFromCodexHistory reads a conversation back as turns', () => {
+  const turns = turnsFromCodexHistory([
+    {
+      id: 't1',
+      status: 'completed',
+      items: [
+        { type: 'userMessage', id: 'u1', content: [{ type: 'text', text: 'first question' }] },
+        { type: 'reasoning', id: 'r1', summary: [{ type: 'summaryText', text: 'let me look' }] },
+        { type: 'commandExecution', id: 'e1', command: 'ls', status: 'completed', exitCode: 0, aggregatedOutput: 'a.txt' },
+        { type: 'agentMessage', id: 'm1', text: 'first answer' },
+      ],
+    },
+    {
+      id: 't2',
+      status: 'completed',
+      items: [
+        { type: 'userMessage', id: 'u2', content: [{ type: 'text', text: 'second' }] },
+        { type: 'plan', id: 'p1', text: '- [x] Read\n- [ ] Write\n' },
+        { type: 'agentMessage', id: 'm2', text: 'second answer' },
+      ],
+    },
+  ]);
+  assert.deepEqual(turns.map((t) => t.text), ['first question', 'second']);
+  assert.deepEqual(turns[0].events.map((e) => e.type), ['reasoning.delta', 'tool.start', 'tool.end', 'message.delta']);
+  assert.deepEqual(turns[1].events.find((e) => e.type === 'plan.updated')?.data.entries, [
+    { content: 'Read', status: 'completed' },
+    { content: 'Write', status: 'pending' },
+  ]);
+});
+
+test('CodexAppServerAdapter: prompt streams steps and text, then ends the turn', async () => {
+  const adapter = new CodexAppServerAdapter([process.execPath, fakeCodex]);
+  assert.equal(await adapter.available(), true);
+  const session = await adapter.start({ cwd: here });
+  assert.equal(session.agentSessionId, 'codex-thread-1');
+
+  const { hooks, events } = collectingHooks();
+  const result = await session.prompt(turn('tool and reason please'), hooks);
+  assert.deepEqual(result, { stopReason: 'end_turn' });
+  assert.deepEqual(
+    events.map((e) => e.type),
+    ['tool.start', 'tool.update', 'tool.update', 'tool.end', 'reasoning.delta', 'reasoning.delta', ...Array(7).fill('message.delta'), 'usage.updated'],
+  );
+  // Streamed command output accumulates, so an update carries the whole text so far.
+  assert.deepEqual(events.find((e) => e.type === 'tool.update')?.data, { id: 'exec-1', status: 'in_progress', output: 'par' });
+  assert.equal(textFrom(events), 'echo:tool and reason please');
+  assert.deepEqual(events.at(-1)?.data, { used: 500, size: 100000 });
+  await session.close();
+});
+
+test('CodexAppServerAdapter: file changes stream their patch and carry diffs', async () => {
+  const adapter = new CodexAppServerAdapter([process.execPath, fakeCodex]);
+  const session = await adapter.start({ cwd: here });
+  const { hooks, events } = collectingHooks();
+  await session.prompt(turn('edit it'), hooks);
+  const types = events.map((e) => e.type);
+  assert.deepEqual(types, ['tool.start', 'tool.update', 'tool.end', ...Array(3).fill('message.delta'), 'usage.updated']);
+  // The patch grew while it ran: the update carries both files, the end keeps them.
+  const update = events.find((e) => e.type === 'tool.update');
+  assert.equal((update?.data.content as any[]).length, 2);
+  assert.deepEqual((update?.data.content as any[])[1], { type: 'diff', path: '/tmp/one/src/new.ts', oldText: null, newText: 'export const x = 1;\n' });
+  const end = events.find((e) => e.type === 'tool.end');
+  assert.equal(end?.data.status, 'completed');
+  assert.equal((end?.data.content as any[]).length, 2);
+  await session.close();
+});
+
+test('CodexAppServerAdapter: an approval goes to the hook and its answer is sent back', async () => {
+  const adapter = new CodexAppServerAdapter([process.execPath, fakeCodex]);
+  const session = await adapter.start({ cwd: here });
+  const { hooks, events, approvals } = collectingHooks(() => ({ optionId: 'accept' }));
+  const result = await session.prompt(turn('approve this'), hooks);
+  assert.equal(result.stopReason, 'end_turn');
+  assert.deepEqual(approvals, ['运行命令']);
+  assert.match(textFrom(events), /approved:accept/);
+  await session.close();
+});
+
+test('CodexAppServerAdapter: declining keeps the turn going, cancelling interrupts it', async () => {
+  const adapter = new CodexAppServerAdapter([process.execPath, fakeCodex]);
+  const session = await adapter.start({ cwd: here });
+  const denied = collectingHooks(() => ({ optionId: 'decline' }));
+  const deniedResult = await session.prompt(turn('deny this'), denied.hooks);
+  assert.equal(deniedResult.stopReason, 'end_turn');
+  assert.match(textFrom(denied.events), /denied/);
+
+  const cancelled = collectingHooks(() => ({ cancelled: true }));
+  const cancelledResult = await session.prompt(turn('approve again'), cancelled.hooks);
+  assert.equal(cancelledResult.stopReason, 'cancelled');
+  await session.close();
+});
+
+test('CodexAppServerAdapter: a failed command ends as failed, an interrupted one as cancelled', async () => {
+  const adapter = new CodexAppServerAdapter([process.execPath, fakeCodex]);
+  const session = await adapter.start({ cwd: here });
+  const failing = collectingHooks();
+  await session.prompt(turn('fail it'), failing.hooks);
+  const failed = failing.events.find((e) => e.type === 'tool.end');
+  assert.equal(failed?.data.status, 'failed');
+  assert.equal(failed?.data.output, 'boom\n(exit 1)');
+
+  const { hooks } = collectingHooks();
+  const pending = session.prompt(turn('slow one'), hooks);
+  await new Promise((r) => setTimeout(r, 60));
+  await session.cancel();
+  assert.equal((await pending).stopReason, 'cancelled');
+  await session.close();
+});
+
+test('CodexAppServerAdapter: a server that dies mid-turn ends it as an error', async () => {
+  const adapter = new CodexAppServerAdapter([process.execPath, fakeCodex]);
+  const session = await adapter.start({ cwd: here });
+  const { hooks } = collectingHooks();
+  const result = await session.prompt(turn('crash now'), hooks);
+  assert.equal(result.stopReason, 'error');
+  assert.match(result.error ?? '', /exited|codex/);
+});
+
+test('CodexAppServerAdapter: permission level, model and effort ride with the turns', async () => {
+  const adapter = new CodexAppServerAdapter([process.execPath, fakeCodex]);
+  const session = await adapter.start({ cwd: here, permissionMode: 'auto_edit', model: 'gpt-big', effort: 'low' });
+  const { hooks, events } = collectingHooks();
+  await session.prompt(turn('model?'), hooks);
+  assert.equal(textFrom(events), 'model:gpt-big;effort:low;sandbox:workspace-write;approval:on-request');
+
+  // Changing them on the live session applies from the next turn, without a restart.
+  await session.setPermissionMode!('full_access');
+  assert.equal(await session.setModel!('gpt-small'), true);
+  assert.equal(await session.setEffort!('high'), true);
+  const second = collectingHooks();
+  await session.prompt(turn('model?'), second.hooks);
+  assert.equal(textFrom(second.events), 'model:gpt-small;effort:high;sandbox:danger-full-access;approval:never');
+  // full_access answers nothing: the approval that would have been asked is skipped.
+  const third = collectingHooks();
+  await session.prompt(turn('approve this'), third.hooks);
+  assert.deepEqual(third.approvals, []);
+  await session.close();
+});
+
+test('CodexAppServerAdapter: resume keeps the thread id, /compact is answered locally', async () => {
+  const adapter = new CodexAppServerAdapter([process.execPath, fakeCodex]);
+  const session = await adapter.start({ cwd: here, resumeId: 'previous-thread' });
+  assert.equal(session.agentSessionId, 'previous-thread');
+
+  const { hooks, events } = collectingHooks();
+  const result = await session.prompt(turn('/compact'), hooks);
+  assert.deepEqual(result, { stopReason: 'end_turn' });
+  assert.equal(textFrom(events), '已开始压缩上下文。');
+  await session.close();
+});
+
+test('CodexAppServerAdapter: models come from the agent, commands are the local ones', async () => {
+  const adapter = new CodexAppServerAdapter([process.execPath, fakeCodex]);
+  const models = await adapter.models();
+  assert.deepEqual(models.map((m) => [m.id, m.label, m.images]), [
+    ['gpt-big', 'GPT Big', true],
+    ['gpt-small', 'GPT Small', false],
+  ]);
+  assert.deepEqual(models[0].efforts, ['low', 'high', 'max']);
+  assert.equal(await adapter.models(), models, 'the probe runs once and is cached');
+  assert.deepEqual(await adapter.commands(), CODEX_LOCAL_COMMANDS);
+  assert.deepEqual(CODEX_LOCAL_COMMANDS.map((c) => c.name), ['compact']);
+});
+
+test('CodexAppServerAdapter: listing, history, forking and deleting go through one-off servers', async () => {
+  const adapter = new CodexAppServerAdapter([process.execPath, fakeCodex]);
+  // Three sessions, paged two at a time.
+  const sessions = await adapter.listSessions();
+  assert.deepEqual(sessions.map((s) => [s.id, s.title]), [
+    ['codex-thread-1', 'Named chat'],
+    ['codex-thread-2', 'How do I…'],
+    ['codex-thread-3', 'Third'],
+  ]);
+  assert.equal(sessions[0].updatedAt, new Date(1791648439 * 1000).toISOString());
+
+  const history = await adapter.loadHistory('hist-thread', here);
+  assert.deepEqual(history.map((t) => t.text), ['first question', 'second question']);
+  assert.deepEqual(history[0].events.map((e) => e.type), ['reasoning.delta', 'tool.start', 'tool.end', 'tool.start', 'tool.end', 'message.delta']);
+  assert.equal(textFrom(history[0].events), 'first answer');
+  const historyDiff = history[0].events.flatMap((e) => (e.type === 'tool.end' ? (e.data.content as any[]) ?? [] : []));
+  assert.deepEqual(historyDiff, [{ type: 'diff', path: '/tmp/one/notes.md', oldText: 'a', newText: 'b' }]);
+
+  assert.equal(await adapter.forkSession('codex-thread-1'), 'codex-thread-1-fork');
+
+  const log = join(tmpdir(), `fake-codex-delete-${process.pid}.log`);
+  process.env.FAKE_CODEX_DELETE_LOG = log;
+  try {
+    await adapter.deleteSession('codex-thread-1');
+    assert.equal(readFileSync(log, 'utf8').trim(), 'codex-thread-1');
+  } finally {
+    delete process.env.FAKE_CODEX_DELETE_LOG;
+    rmSync(log, { force: true });
+  }
+});
+
+test('CodexAppServerAdapter: pictures go as file paths', async () => {
+  const adapter = new CodexAppServerAdapter([process.execPath, fakeCodex]);
+  const session = await adapter.start({ cwd: here });
+  const image = { data: PNG, mimeType: 'image/png', path: '/data/attachments/t/1.png' };
+  const { hooks, events } = collectingHooks();
+  await session.prompt(turn('what is this', [image]), hooks);
+  assert.match(textFrom(events), /images:\/data\/attachments\/t\/1\.png/);
+  await session.close();
+});

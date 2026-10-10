@@ -72,7 +72,7 @@
 - [x] pi（RPC）
 - [x] Antigravity `agy`：无界面 stream-json 模式。流式、工具步骤、停止、恢复、切模型、两档权限
 - [ ] **P2** agy 导入历史（`brain/<会话>/.system_generated/logs/transcript.jsonl`）和文件改动 diff（流里只有路径，没有内容）
-- [ ] **P2** Codex：`codex app-server`
+- [x] Codex：`codex app-server`（v2 线程协议）。流式、审批（命令/文件改动）、切模型和强度、三档权限、图片按路径发、导入历史、分叉、`/compact`
 - [ ] **P3** zcode：`zcode app-server`
 [x] 多账号：一个适配器可配多个实例（`data/agents.json` 或 `RAH_AGENTS_JSON`：id、adapter、label、command、env），线程存实例 id，默认实例沿用原名不迁移；实例 env 合并进它起的所有进程（如第二个 Claude 账号带自己的 `CLAUDE_CONFIG_DIR`）；扫描 PATH 发现同类 CLI（`agy2` 这类，`ping`/`pix` 不算），Agent picker 里一键添加，添加后立刻可用并写回 agents.json
 
