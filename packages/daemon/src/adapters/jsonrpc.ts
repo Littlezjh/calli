@@ -3,6 +3,8 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 export interface RpcHandlers {
   onNotification(method: string, params: unknown): void;
   onRequest(method: string, params: unknown): Promise<unknown> | unknown;
+  /** Called once after the process is gone and pending requests have failed. */
+  onClosed?(): void;
 }
 
 interface Pending {
@@ -138,5 +140,6 @@ export class JsonRpcPeer {
     this.closed = true;
     for (const [, p] of this.pending) p.reject(err);
     this.pending.clear();
+    this.handlers.onClosed?.();
   }
 }

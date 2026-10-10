@@ -24,6 +24,7 @@ async function main(): Promise<void> {
       piCommand: config.piCommand,
       agyCommand: config.agyCommand,
       traexCommand: config.traexCommand,
+      codexCommand: config.codexCommand,
     }),
   });
   const adapters = registry.adapters;
