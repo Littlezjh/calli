@@ -32,3 +32,6 @@ data/
 # git worktrees
 .worktrees/
 packages/e2e/shots/
+
+# playwright MCP artifacts when e2e testing from the repo root
+.playwright-mcp/
