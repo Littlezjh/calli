@@ -68,25 +68,40 @@ export interface ApprovalOption {
   kind: string;
 }
 
+/** One stretch of the agent's thinking, between two things it did or said. */
+export interface Thought {
+  key: string;
+  text: string;
+  startedAt: string;
+  endedAt: string;
+}
+
+/** What a turn's work is made of, in the order it happened. */
+export type WorkEntry =
+  | { kind: 'thought'; thought: Thought }
+  | { kind: 'step'; step: Step }
+  /** Something the agent said on the way, before going on to do more. */
+  | { kind: 'note'; key: string; text: string };
+
 export type Item =
   | { kind: 'user'; key: string; turnId: string; text: string; images: ImageRef[]; fromTerminal?: boolean }
+  /** The turn's answer: the text after everything the agent did. */
   | { kind: 'assistant'; key: string; turnId: string; text: string; done: boolean }
+  /**
+   * Everything a turn did on the way to its answer, as one block: thinking, tool calls and the
+   * remarks in between, in order. Open while the turn runs, folded to one line once it is done.
+   */
   | {
       kind: 'work';
       key: string;
       turnId: string;
+      entries: WorkEntry[];
+      /** The tool calls among the entries, for counting and for the files they changed. */
       steps: Step[];
-      reasoning: string;
-      /** First and last thinking event of the group, for the "已思考 X" label. */
-      thinkStart: string | null;
-      thinkEnd: string | null;
+      /** From the turn's start to its end; until it ends, to the last thing that happened. */
       startedAt: string;
       endedAt: string | null;
       done: boolean;
-      /** False once a newer group or a message has taken over mid-turn, or the turn ended. */
-      active?: boolean;
-      /** True on the first work group of a finished turn: it shows the whole turn's duration. */
-      firstInTurn?: boolean;
       /** False for turns imported from the agent's history: their events were all written at once. */
       timed: boolean;
     }
@@ -194,31 +209,62 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
   let running = false;
   let usage: Usage | null = null;
 
-  // Index of the open item for each kind within the current turn, so deltas attach to it.
-  let openAssistant = -1;
-  let openWork = -1;
-  let openPlan = -1;
-  // The turn that has started and not ended yet, if any.
-  let openTurn: string | null = null;
+  type Work = Extract<Item, { kind: 'work' }>;
+  type Answer = Extract<Item, { kind: 'assistant' }>;
+  type Plan = Extract<Item, { kind: 'plan' }>;
 
-  const closeTurnItems = (turnId: string, endedAt?: string) => {
-    let firstWork = true;
-    for (const it of items) {
-      if (it.turnId !== turnId) continue;
-      if (it.kind === 'assistant' || it.kind === 'work' || it.kind === 'plan') {
-        it.done = true;
-      }
-      if (it.kind === 'work') {
-        it.active = false;
-        if (firstWork) {
-          firstWork = false;
-          // The turn's first group carries its whole duration, from first activity to the end.
-          it.firstInTurn = true;
-          if (endedAt) it.endedAt = endedAt;
-        }
+  // The turn that has started and not ended yet, with the items of it that are still being written.
+  const open: { turn: string | null; startedAt: string; work: Work | null; answer: Answer | null; plan: Plan | null } = {
+    turn: null,
+    startedAt: '',
+    work: null,
+    answer: null,
+    plan: null,
+  };
+
+  /**
+   * The work block of the open turn, made on first use. Text the agent has said so far turns out
+   * to have been a remark on the way, not the answer, so it moves into the block as a note: the
+   * block reads top-down in the order things happened, and the answer is what comes after it all.
+   */
+  const workBlock = (key: string, ts: string): Work => {
+    const turnId = open.turn ?? '';
+    const { answer } = open;
+    if (!open.work) {
+      open.work = { kind: 'work', key, turnId, entries: [], steps: [], startedAt: open.startedAt || ts, endedAt: null, done: false, timed: !imported.has(turnId) };
+      // Before the remark if there is one, so the note keeps its place on screen.
+      const at = answer ? items.indexOf(answer) : -1;
+      if (at >= 0) items.splice(at, 0, open.work);
+      else items.push(open.work);
+    }
+    if (answer) {
+      if (answer.text.trim()) open.work.entries.push({ kind: 'note', key: answer.key, text: answer.text });
+      items.splice(items.indexOf(answer), 1);
+      open.answer = null;
+    }
+    open.work.endedAt = ts;
+    return open.work;
+  };
+
+  /** Ends the open turn's items. A turn that ended gets its duration; one that was cut off keeps its last sign of life. */
+  const closeTurn = (endedAt?: string) => {
+    const { work, answer, plan } = open;
+    if (work) {
+      work.done = true;
+      if (endedAt) work.endedAt = endedAt;
+      // A turn whose last act was a tool call still said something: its last remark is the answer.
+      const last = answer ? -1 : work.entries.map((e) => e.kind).lastIndexOf('note');
+      if (last >= 0) {
+        const [note] = work.entries.splice(last, 1);
+        if (note.kind === 'note') items.splice(items.indexOf(work) + 1, 0, { kind: 'assistant', key: note.key, turnId: work.turnId, text: note.text, done: true });
       }
     }
-    openPlan = -1;
+    if (answer) answer.done = true;
+    if (plan) plan.done = true;
+    open.turn = null;
+    open.work = null;
+    open.answer = null;
+    open.plan = null;
   };
 
   for (const ev of events) {
@@ -229,13 +275,11 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
     switch (ev.type) {
       case 'turn.started':
         // A turn that never got its ending (the daemon died under it) ends where the next begins,
-        // or its groups would read as working for the rest of the thread.
-        if (openTurn !== null) closeTurnItems(openTurn);
-        openTurn = turn;
+        // or it would read as working for the rest of the thread.
+        if (open.turn !== null) closeTurn();
+        open.turn = turn;
+        open.startedAt = ev.ts;
         running = true;
-        openAssistant = -1;
-        openWork = -1;
-        openPlan = -1;
         if (ev.data.imported) imported.add(turn);
         items.push({
           kind: 'user',
@@ -247,31 +291,24 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
         });
         break;
 
-      case 'message.delta': {
-        const text = String(ev.data.text ?? '');
-        if (openAssistant < 0 || items[openAssistant].kind !== 'assistant') {
-          // Text ends the open work group: whatever the agent does next starts a new group below
-          // this text, so a turn reads top-down like a conversation instead of one hoisted block.
-          const open = items[openWork];
-          if (open && open.kind === 'work') open.active = false;
-          openWork = -1;
-          items.push({ kind: 'assistant', key, turnId: turn, text: '', done: false });
-          openAssistant = items.length - 1;
+      case 'message.delta':
+        if (!open.answer) {
+          open.answer = { kind: 'assistant', key, turnId: turn, text: '', done: false };
+          items.push(open.answer);
         }
-        (items[openAssistant] as Extract<Item, { kind: 'assistant' }>).text += text;
+        open.answer.text += String(ev.data.text ?? '');
         break;
-      }
 
       case 'plan.updated': {
         const entries: PlanEntry[] = (Array.isArray(ev.data.entries) ? ev.data.entries : [])
           .filter((e: any) => e && typeof e.content === 'string' && e.content.trim())
           .map((e: any) => ({ content: String(e.content), status: String(e.status ?? 'pending') }));
-        if (openPlan < 0) {
+        if (!open.plan) {
           if (entries.length === 0) break;
-          items.push({ kind: 'plan', key, turnId: turn, entries, done: false });
-          openPlan = items.length - 1;
+          open.plan = { kind: 'plan', key, turnId: turn, entries, done: false };
+          items.push(open.plan);
         } else {
-          (items[openPlan] as Extract<Item, { kind: 'plan' }>).entries = entries;
+          open.plan.entries = entries;
         }
         break;
       }
@@ -282,63 +319,46 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
         }
         break;
 
-      case 'tool.update':
-      case 'tool.end': {
-        // A call can outlive its group: text may start while it still runs. Its result belongs
-        // to the row it started in, wherever in the turn that is. A result whose call is not
-        // here has nothing to update.
-        const id = String(ev.data.id);
-        for (let i = items.length - 1; i >= 0 && items[i].turnId === turn; i--) {
-          const it = items[i];
-          const step = it.kind === 'work' ? it.steps.find((s) => s.id === id) : undefined;
-          if (it.kind !== 'work' || !step) continue;
-          applyToolData(step, ev.data);
-          if (ev.type === 'tool.end') step.endedAt = ev.ts;
-          it.endedAt = ev.ts;
-          break;
+      case 'reasoning.delta': {
+        const block = workBlock(key, ev.ts);
+        const last = block.entries.at(-1);
+        // Thinking carries on in the same stretch until the agent does or says something.
+        if (last?.kind === 'thought') {
+          last.thought.text += String(ev.data.text ?? '');
+          last.thought.endedAt = ev.ts;
+        } else {
+          block.entries.push({ kind: 'thought', thought: { key, text: String(ev.data.text ?? ''), startedAt: ev.ts, endedAt: ev.ts } });
         }
         break;
       }
 
-      case 'reasoning.delta':
       case 'tool.start': {
-        if (openWork < 0 || items[openWork].kind !== 'work') {
-          items.push({
-            kind: 'work',
-            key,
-            turnId: turn,
-            steps: [],
-            reasoning: '',
-            thinkStart: null,
-            thinkEnd: null,
-            startedAt: ev.ts,
-            endedAt: null,
-            done: false,
-            active: true,
-            timed: !imported.has(turn),
-          });
-          openWork = items.length - 1;
-          openAssistant = -1; // text after tools starts a new assistant item
-        }
-        const work = items[openWork] as Extract<Item, { kind: 'work' }>;
+        const block = workBlock(key, ev.ts);
+        const step: Step = {
+          id: String(ev.data.id),
+          title: String(ev.data.title ?? ''),
+          kind: String(ev.data.kind ?? 'other'),
+          status: String(ev.data.status ?? 'in_progress'),
+          input: ev.data.input,
+          diffs: [],
+          startedAt: ev.ts,
+        };
+        applyToolData(step, { content: ev.data.content });
+        block.entries.push({ kind: 'step', step });
+        block.steps.push(step);
+        break;
+      }
+
+      case 'tool.update':
+      case 'tool.end': {
+        // A result goes to the row its call started in. Text may have begun meanwhile; that does
+        // not make the result a new piece of work. A result whose call is not here updates nothing.
+        const { work } = open;
+        const step = work?.turnId === turn ? work.steps.find((s) => s.id === String(ev.data.id)) : undefined;
+        if (!work || !step) break;
+        applyToolData(step, ev.data);
+        if (ev.type === 'tool.end') step.endedAt = ev.ts;
         work.endedAt = ev.ts;
-        if (ev.type === 'reasoning.delta') {
-          work.reasoning += String(ev.data.text ?? '');
-          work.thinkStart ??= ev.ts;
-          work.thinkEnd = ev.ts;
-        } else {
-          const step: Step = {
-            id: String(ev.data.id),
-            title: String(ev.data.title ?? ''),
-            kind: String(ev.data.kind ?? 'other'),
-            status: String(ev.data.status ?? 'in_progress'),
-            input: ev.data.input,
-            diffs: [],
-            startedAt: ev.ts,
-          };
-          applyToolData(step, { content: ev.data.content });
-          work.steps.push(step);
-        }
         break;
       }
 
@@ -367,21 +387,15 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
       }
 
       case 'turn.done':
-        closeTurnItems(turn, ev.ts);
+        closeTurn(ev.ts);
         finished.add(turn);
-        openTurn = null;
         running = false;
-        openAssistant = -1;
-        openWork = -1;
         break;
 
       case 'turn.error':
-        closeTurnItems(turn, ev.ts);
+        closeTurn(ev.ts);
         items.push({ kind: 'error', key, turnId: turn, message: errorText(ev.data) });
-        openTurn = null;
         running = false;
-        openAssistant = -1;
-        openWork = -1;
         break;
 
       default:
@@ -513,10 +527,14 @@ const STEP_VERBS: Record<string, string> = {
   switch: '切换了',
 };
 
-/** The step's one line, verb first: "运行了 npm test". */
+/** `cd <dir> && …` at the start of a command: where it ran, which the row's detail still shows. */
+const LEADING_CD = /^cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*(?:&&|;)\s*(?=\S)/;
+
+/** The step's one line, verb first: "运行了 npm test". A command is named by what it runs, not by the directory it first steps into. */
 export function stepTitle(step: Step): string {
   const verb = STEP_VERBS[step.kind] ?? '';
-  return verb ? `${verb} ${step.title}` : step.title;
+  const title = step.kind === 'execute' ? step.title.replace(LEADING_CD, '') : step.title;
+  return verb ? `${verb} ${title}` : title;
 }
 
 /** What the right side of a step row says: the duration when done, the state otherwise. */
@@ -557,6 +575,22 @@ export function splitThinking(text: string): string[] {
     out.push(...sentences.filter(Boolean));
   }
   return out;
+}
+
+/** How much of the thinking in progress is shown under "思考中". */
+const THINKING_PREVIEW_CHARS = 140;
+
+/**
+ * The latest of a thinking stream in progress: the end of its last paragraph, cut to a few lines.
+ * It is the end that is shown, because that is where the stream is being written.
+ */
+export function thinkingPreview(paragraphs: string[]): string {
+  const last = paragraphs.at(-1) ?? '';
+  if (last.length <= THINKING_PREVIEW_CHARS) return last;
+  const tail = last.slice(-THINKING_PREVIEW_CHARS);
+  // Start at a word where there is one to start at; CJK text has no spaces and is cut as it is.
+  const space = tail.indexOf(' ');
+  return `…${space >= 0 && space < 24 ? tail.slice(space + 1) : tail}`;
 }
 
 /** Items of one turn, in order. A turn starts at its user item; stray items share the '' group. */

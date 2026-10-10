@@ -5,6 +5,7 @@ import {
   durationLabel,
   groupByTurn,
   splitThinking,
+  thinkingPreview,
   stepDurationLabel,
   stepStatusLabel,
   stepTitle,
@@ -51,7 +52,8 @@ test('tool steps are grouped in a work item and text after tools starts a new as
   const work = tl.items[1];
   assert.equal(work.kind, 'work');
   if (work.kind !== 'work') return;
-  assert.equal(work.reasoning, 'thinking');
+  assert.deepEqual(work.entries.map((e) => e.kind), ['thought', 'step'], 'what the turn did, in the order it happened');
+  assert.equal(work.entries[0].kind === 'thought' && work.entries[0].thought.text, 'thinking');
   assert.equal(work.steps.length, 1);
   assert.equal(work.steps[0].status, 'completed');
   assert.equal(work.steps[0].output, 'a.txt');
@@ -323,9 +325,10 @@ test('thinking timing is tracked for the "思考 · X 秒" label', () => {
   ]);
   const work = tl.items[1];
   if (work.kind !== 'work') return assert.fail('expected work');
-  assert.equal(work.thinkStart, '2026-10-10T00:00:01.000Z');
-  assert.equal(work.thinkEnd, '2026-10-10T00:00:04.000Z');
-  assert.equal(durationLabel(work.thinkStart!, work.thinkEnd!), '3 秒');
+  const [entry] = work.entries;
+  if (entry.kind !== 'thought') return assert.fail('expected a thought');
+  assert.equal(entry.thought.text, 'hmm more');
+  assert.equal(durationLabel(entry.thought.startedAt, entry.thought.endedAt), '3 秒');
 });
 
 test('steps carry their own timing for the duration label', () => {
@@ -368,6 +371,10 @@ test('stepTitle puts a verb first and stepStatusLabel shows the state', () => {
   assert.equal(stepStatusLabel({ ...base, kind: 'read', status: 'in_progress' }), '运行中');
   assert.equal(stepStatusLabel({ ...base, kind: 'other', status: 'failed' }), '失败');
   assert.equal(stepTitle({ ...base, kind: 'other', status: 'completed' }), 'npm test');
+  // A command is named by what it runs; the directory it steps into first says nothing in one line.
+  assert.equal(stepTitle({ ...base, kind: 'execute', status: 'completed', title: 'cd /srv/app && git status --short' }), '运行了 git status --short');
+  assert.equal(stepTitle({ ...base, kind: 'execute', status: 'completed', title: 'cd "/srv/my app"; ls' }), '运行了 ls');
+  assert.equal(stepTitle({ ...base, kind: 'execute', status: 'completed', title: 'cd /srv/app' }), '运行了 cd /srv/app');
 });
 
 test('stepDurationLabel keeps one decimal for short calls', () => {
@@ -411,49 +418,83 @@ test('turnPreviews pairs each turn with the start of its answer', () => {
   assert.equal(previews.get('t2')?.answer, 'a browser UI');
 });
 
-test('a tool call after text opens a new work group below it, in stream order', () => {
+test('a turn is one work block in the order things happened, and the answer is what follows it', () => {
   seq = 0;
   const tl = buildTimeline([
     ev('turn.started', { text: 'q' }, 't1', '2026-10-10T00:00:00Z'),
-    ev('message.delta', { text: '先看文件，' }, 't1', '2026-10-10T00:00:01Z'),
-    ev('tool.start', { id: 'a', title: 'ls', kind: 'execute', status: 'in_progress' }, 't1', '2026-10-10T00:00:02Z'),
-    ev('tool.end', { id: 'a', status: 'completed' }, 't1', '2026-10-10T00:00:03Z'),
-    ev('message.delta', { text: '再跑测试，' }, 't1', '2026-10-10T00:00:04Z'),
-    ev('tool.start', { id: 'b', title: 'npm test', kind: 'execute', status: 'in_progress' }, 't1', '2026-10-10T00:00:05Z'),
-    ev('tool.end', { id: 'b', status: 'completed' }, 't1', '2026-10-10T00:00:06Z'),
-    ev('message.delta', { text: '都好。' }, 't1', '2026-10-10T00:00:07Z'),
-    ev('turn.done', {}, 't1', '2026-10-10T00:00:08Z'),
+    ev('reasoning.delta', { text: 'plan' }, 't1', '2026-10-10T00:00:01Z'),
+    ev('message.delta', { text: '先看文件，' }, 't1', '2026-10-10T00:00:02Z'),
+    ev('tool.start', { id: 'a', title: 'ls', kind: 'execute', status: 'in_progress' }, 't1', '2026-10-10T00:00:03Z'),
+    ev('tool.end', { id: 'a', status: 'completed' }, 't1', '2026-10-10T00:00:04Z'),
+    ev('reasoning.delta', { text: 'next' }, 't1', '2026-10-10T00:00:05Z'),
+    ev('message.delta', { text: '再跑测试，' }, 't1', '2026-10-10T00:00:06Z'),
+    ev('tool.start', { id: 'b', title: 'npm test', kind: 'execute', status: 'in_progress' }, 't1', '2026-10-10T00:00:07Z'),
+    ev('tool.end', { id: 'b', status: 'completed' }, 't1', '2026-10-10T00:00:08Z'),
+    ev('message.delta', { text: '都好。' }, 't1', '2026-10-10T00:00:09Z'),
+    ev('turn.done', {}, 't1', '2026-10-10T00:00:10Z'),
   ]);
-  assert.deepEqual(tl.items.map((i) => i.kind), ['user', 'assistant', 'work', 'assistant', 'work', 'assistant', 'actions']);
-  const [, t1, w1, t2, w2, t3] = tl.items;
-  assert.equal(t1.kind === 'assistant' && t1.text, '先看文件，');
-  assert.equal(w1.kind === 'work' && w1.steps[0].title, 'ls');
-  assert.equal(t2.kind === 'assistant' && t2.text, '再跑测试，');
-  assert.equal(w2.kind === 'work' && w2.steps[0].title, 'npm test');
-  assert.equal(t3.kind === 'assistant' && t3.text, '都好。');
-  // Finished turn: the first group carries the whole turn's duration, later ones are just done.
-  assert.equal(w1.kind === 'work' && w1.firstInTurn, true);
-  assert.equal(w1.kind === 'work' && w1.endedAt, '2026-10-10T00:00:08Z');
-  assert.equal(w2.kind === 'work' && !w2.firstInTurn, true);
-  assert.equal(w1.kind === 'work' && w1.active, false);
+  assert.deepEqual(tl.items.map((i) => i.kind), ['user', 'work', 'assistant', 'actions']);
+  const [, work, answer] = tl.items;
+  if (work.kind !== 'work') return assert.fail('expected work');
+  // Thinking after a tool call comes after it, and what was said on the way sits where it was said.
+  assert.deepEqual(
+    work.entries.map((e) => (e.kind === 'thought' ? `thought:${e.thought.text}` : e.kind === 'step' ? `step:${e.step.title}` : `note:${e.text}`)),
+    ['thought:plan', 'note:先看文件，', 'step:ls', 'thought:next', 'note:再跑测试，', 'step:npm test'],
+  );
+  assert.deepEqual(work.steps.map((s) => s.title), ['ls', 'npm test']);
+  assert.equal(answer.kind === 'assistant' && answer.text, '都好。');
+  // The block's time is the turn's: from the question to the end.
+  assert.deepEqual([work.startedAt, work.endedAt, work.done], ['2026-10-10T00:00:00Z', '2026-10-10T00:00:10Z', true]);
 });
 
-test('while a turn runs, the newest work group is the active one and earlier ones hand over', () => {
+test('while a turn runs, the text being written is outside the block until the agent does more', () => {
   seq = 0;
-  const tl = buildTimeline([
+  const events = [
     ev('turn.started', { text: 'q' }),
-    ev('message.delta', { text: '先看文件，' }),
     ev('tool.start', { id: 'a', title: 'ls', kind: 'execute', status: 'in_progress' }),
     ev('tool.end', { id: 'a', status: 'completed' }),
     ev('message.delta', { text: '再跑测试，' }),
-    ev('tool.start', { id: 'b', title: 'npm test', kind: 'execute', status: 'in_progress' }),
+  ];
+  const writing = buildTimeline(events);
+  assert.equal(writing.running, true);
+  assert.deepEqual(writing.items.map((i) => i.kind), ['user', 'work', 'assistant'], 'it may be the answer');
+  assert.equal(writing.items.some((i) => i.kind === 'actions'), false);
+
+  // It was a remark on the way: it becomes the block's latest entry, under the same key, so the
+  // view moves the text instead of writing it again.
+  const more = buildTimeline([...events, ev('tool.start', { id: 'b', title: 'npm test', kind: 'execute', status: 'in_progress' })]);
+  assert.deepEqual(more.items.map((i) => i.kind), ['user', 'work']);
+  const work = more.items[1];
+  if (work.kind !== 'work') return assert.fail('expected work');
+  assert.deepEqual(work.entries.map((e) => e.kind), ['step', 'note', 'step']);
+  const said = writing.items[2];
+  assert.equal(work.entries[1].kind === 'note' && work.entries[1].key, said.key);
+  assert.equal(work.done, false);
+});
+
+test('a turn that says something and ends on a tool call still has an answer: its last remark', () => {
+  seq = 0;
+  const tl = buildTimeline([
+    ev('turn.started', { text: 'q' }),
+    ev('message.delta', { text: '我来写文件。' }),
+    ev('tool.start', { id: 'a', title: 'a.ts', kind: 'edit', status: 'in_progress' }),
+    ev('tool.end', { id: 'a', status: 'completed' }),
+    ev('turn.done'),
   ]);
-  assert.equal(tl.running, true);
-  const [, , w1, , w2] = tl.items;
-  assert.equal(w1.kind === 'work' && w1.active, false, 'the group before the text is done being written');
-  assert.equal(w1.kind === 'work' && w1.done, false, 'it only collapses when the whole turn ends');
-  assert.equal(w2.kind === 'work' && w2.active, true, 'the group being written to is the working one');
-  assert.equal(tl.items.some((i) => i.kind === 'actions'), false);
+  assert.deepEqual(tl.items.map((i) => i.kind), ['user', 'work', 'assistant', 'actions']);
+  const [, work, answer] = tl.items;
+  assert.deepEqual(work.kind === 'work' && work.entries.map((e) => e.kind), ['step']);
+  assert.equal(answer.kind === 'assistant' && answer.text, '我来写文件。');
+});
+
+test('thinkingPreview shows where a long thought has got to, not where it began', () => {
+  assert.equal(thinkingPreview([]), '');
+  assert.equal(thinkingPreview(['first.', 'short last.']), 'short last.');
+  const long = `${'start of a long plan '.repeat(20)}and this is the end of it.`;
+  const preview = thinkingPreview(['earlier', long]);
+  assert.ok(preview.startsWith('…') && preview.endsWith('and this is the end of it.'));
+  assert.ok(preview.length < 160);
+  assert.ok(thinkingPreview(['思'.repeat(300)]).length <= 141, 'text without spaces is cut as it is');
 });
 
 test('a tool that finishes after text began still updates the row it started in', () => {

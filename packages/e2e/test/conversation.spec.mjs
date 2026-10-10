@@ -45,7 +45,7 @@ test('a turn shows thinking, verb-first tool rows, and folds its work away when 
   await page.locator('.work-toggle', { hasText: '用时' }).first().waitFor({ timeout: 10_000 });
   const toggle = await page.locator('.work-toggle').first().innerText();
   assert.match(toggle, /用时/);
-  assert.match(toggle, /1 步/);
+  assert.match(toggle, /2 步/);
 
   // Expanding the work group again: thinking is one collapsed line, the step is there.
   await page.locator('.work-toggle').first().click();

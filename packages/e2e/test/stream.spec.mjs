@@ -1,6 +1,6 @@
-// Stream order and pinning: a tool call made after text must render below that text (like
-// Codex), the newest content stays pinned to the bottom while a turn runs, and scrolling up
-// hands the position to the user until they jump back.
+// Stream order and pinning: a turn's work reads top-down in the order it happened (like Codex),
+// the newest content stays pinned to the bottom while a turn runs, and scrolling up hands the
+// position to the user until they jump back.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildOnce, startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
@@ -48,19 +48,21 @@ test('a slow turn keeps stream order and stays pinned to the bottom', async () =
   // Start the slow turn with the thread open, so the interleaved events can be watched live.
   await api(daemon, `/api/threads/${threadId}/turns`, { method: 'POST', body: JSON.stringify({ text: 'slowthink one' }) });
 
-  // The turn interleaves group → text → group; the DOM must keep that order, newest at the end.
-  // Checked while it still runs, so the step rows are on screen.
-  await page.waitForFunction(() => document.querySelectorAll('.thread .work').length >= 2, undefined, { timeout: 20_000 });
+  // The turn goes tool → text → tool. Its work block must keep that order, newest at the end:
+  // what the agent said on the way sits between the two calls, not hoisted out or left behind.
+  await page.locator('.thread .work-body .step', { hasText: 'npm test' }).waitFor({ timeout: 20_000 });
   const order = await page.evaluate(() => {
-    const kids = Array.from(document.querySelector('.thread').children);
-    const works = kids.map((k, i) => (k.classList.contains('work') ? i : -1)).filter((i) => i >= 0);
-    const text = kids.findIndex((k) => k.querySelector('.markdown')?.textContent?.includes('hi there slowthink one'));
-    const titles = kids.flatMap((k) => [...k.querySelectorAll('.step-title')].map((s) => s.textContent));
-    return { first: works[0], text, last: works[works.length - 1], titles };
+    const kids = Array.from(document.querySelector('.thread .work-body').children);
+    const at = (pick) => kids.findIndex(pick);
+    return {
+      blocks: document.querySelectorAll('.thread .work').length,
+      first: at((k) => k.classList.contains('step') && k.textContent.includes('ls')),
+      text: at((k) => k.classList.contains('work-note') && k.textContent.includes('hi there slowthink one')),
+      last: at((k) => k.classList.contains('step') && k.textContent.includes('npm test')),
+    };
   });
-  assert.ok(order.first < order.text && order.text < order.last, `text must sit between the two groups: ${JSON.stringify(order)}`);
-  assert.equal(order.titles.filter((t) => t?.includes('npm test')).length, 1, 'the second group renders its step row');
-  assert.equal(order.titles.filter((t) => t?.includes('ls')).length, 1, 'the first group renders its step row');
+  assert.equal(order.blocks, 1, 'one work block for the turn');
+  assert.ok(order.first >= 0 && order.first < order.text && order.text < order.last, `text must sit between the two calls: ${JSON.stringify(order)}`);
 
   // Through the rest of the run: the view never leaves the bottom, the jump button stays hidden.
   for (let i = 0; i < 6; i++) {
@@ -70,16 +72,12 @@ test('a slow turn keeps stream order and stays pinned to the bottom', async () =
     assert.equal(state.jump, false, `sample ${i}: no jump button while pinned`);
   }
 
-  // Done: the first group carries the turn duration, later groups read as handled, both collapse.
-  await page.waitForFunction(
-    () => {
-      const heads = [...document.querySelectorAll('.thread .work-toggle')].map((b) => b.textContent ?? '');
-      return heads.some((h) => h.includes('用时')) && heads.filter((h) => h.includes('已处理')).length >= 1;
-    },
-    undefined,
-    { timeout: 20_000 },
-  );
-  assert.equal(await page.locator('.thread .work-body').count(), 0, 'finished groups collapse');
+  // Done: the block folds to one line with the turn's duration, and the last thing said stands
+  // below it as the answer.
+  await page.locator('.thread .work-toggle', { hasText: '用时' }).waitFor({ timeout: 20_000 });
+  assert.match(await page.locator('.thread .work-toggle').first().innerText(), /2 步/);
+  assert.equal(await page.locator('.thread .work-body').count(), 0, 'a finished block is folded');
+  await page.locator('.thread .row.assistant', { hasText: 'hi there slowthink one' }).waitFor({ timeout: 5000 });
 });
 
 test('scrolling up hands the position to the user; jumping back re-pins for the next turn', async () => {

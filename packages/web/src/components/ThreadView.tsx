@@ -9,6 +9,7 @@ import {
   groupByTurn,
   imagePathsIn,
   splitThinking,
+  thinkingPreview,
   stepTitle,
   stepStatusLabel,
   type ApprovalOption,
@@ -17,6 +18,7 @@ import {
   type ImageRef,
   type Item,
   type Step,
+  type Thought,
 } from '../timeline';
 import { IconCheck, IconChevron, IconClose, IconCopy, IconFile, IconSearch, IconTerminal } from './icons';
 
@@ -339,18 +341,10 @@ function WorkGroup({ item, roots }: { item: Extract<Item, { kind: 'work' }>; roo
   useEffect(() => {
     if (item.done) setOpen(false);
   }, [item.done]);
-  // The turn's first group shows the whole turn's duration; groups that handed over to text
-  // mid-turn (or came after it) just say they are done. While a group is being written to, it is
-  // the working one.
-  const turnTime = item.timed && item.firstInTurn ? durationLabel(item.startedAt, item.endedAt) : '';
-  const label = !item.done
-    ? item.active === false
-      ? '已处理'
-      : '工作中'
-    : turnTime
-      ? `用时 ${turnTime}`
-      : '已处理';
+  const time = item.done && item.timed ? durationLabel(item.startedAt, item.endedAt) : '';
+  const label = !item.done ? '工作中' : time ? `用时 ${time}` : '已处理';
   const count = item.steps.length;
+  const last = item.entries.length - 1;
   return (
     <div className="row work">
       <button className="work-toggle" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
@@ -360,63 +354,80 @@ function WorkGroup({ item, roots }: { item: Extract<Item, { kind: 'work' }>; roo
       </button>
       {open && (
         <div className="work-body">
-          <ThinkingBlock item={item} />
-          {item.steps.map((s) => (
-            <StepRow key={s.id} step={s} roots={roots} />
-          ))}
+          {item.entries.map((entry, i) => {
+            switch (entry.kind) {
+              case 'thought':
+                // Only the stretch at the end of a running turn is still being thought.
+                return <ThinkingBlock key={entry.thought.key} thought={entry.thought} live={!item.done && i === last} />;
+              case 'step':
+                return <StepRow key={entry.step.id} step={entry.step} roots={roots} />;
+              case 'note':
+                return <WorkNote key={entry.key} text={entry.text} />;
+            }
+          })}
         </div>
       )}
     </div>
   );
 }
 
-/** While running: how many thinking paragraphs stay visible before the rest folds away. */
+/** Something the agent said between two things it did. Memoised like an answer: Markdown is costly to parse. */
+const WorkNote = memo(function WorkNote({ text }: { text: string }) {
+  return (
+    <div className="work-note markdown">
+      <Markdown remarkPlugins={MARKDOWN_PLUGINS} components={MARKDOWN_COMPONENTS}>
+        {text}
+      </Markdown>
+    </div>
+  );
+});
+
+/** Once thinking is over and opened up: how many of its paragraphs show before the rest folds away. */
 const THINKING_VISIBLE = 4;
 
 /**
- * The agent's thinking for one work group, as its own collapsible section: expanded with the last
- * few paragraphs while the turn runs, folded to one "思考 · X 秒" line afterwards. That way a long
- * stream never pushes the step list off screen.
+ * One stretch of the agent's thinking, kept small: while it is being thought, a line or two of
+ * where it has got to; afterwards a single "思考 · X 秒" line. Either opens up to the whole text.
+ * A model can think for minutes before it acts, and that must not fill the screen.
  */
-function ThinkingBlock({ item }: { item: Extract<Item, { kind: 'work' }> }) {
-  const paragraphs = useMemo(() => splitThinking(item.reasoning), [item.reasoning]);
-  // Thinking is over once the turn ends, or earlier, when the group has handed over to the answer.
-  const settled = item.done || item.active === false;
-  const [open, setOpen] = useState(!settled);
+const ThinkingBlock = memo(function ThinkingBlock({ thought, live }: { thought: Thought; live: boolean }) {
+  const paragraphs = useMemo(() => splitThinking(thought.text), [thought.text]);
+  const [open, setOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
-  useEffect(() => {
-    if (settled) setOpen(false);
-    else setShowAll(false);
-  }, [settled]);
   if (paragraphs.length === 0) return null;
 
   const hidden = showAll ? 0 : Math.max(0, paragraphs.length - THINKING_VISIBLE);
-  const visible = paragraphs.slice(hidden);
-  const secs = item.thinkStart && item.thinkEnd ? durationLabel(item.thinkStart, item.thinkEnd) : '';
+  const secs = durationLabel(thought.startedAt, thought.endedAt);
 
   return (
     <div className="thinking">
       <button className="thinking-toggle" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-        <span>{settled ? `思考${secs ? ` · ${secs}` : ''}` : '思考中'}</span>
+        <span>{live ? '思考中' : `思考 · ${secs}`}</span>
         <IconChevron size={13} open={open} />
       </button>
-      {open && (
-        <>
+      {open ? (
+        <div className="thinking-body">
           {hidden > 0 && (
             <button className="thinking-more" onClick={() => setShowAll(true)}>
               更早的 {hidden} 段
             </button>
           )}
-          {visible.map((p, i) => (
+          {paragraphs.slice(hidden).map((p, i) => (
             <p key={i} className="thinking-para">
               {p}
             </p>
           ))}
-        </>
+        </div>
+      ) : (
+        live && (
+          <div className="thinking-body">
+            <p className="thinking-para thinking-live">{thinkingPreview(paragraphs)}</p>
+          </div>
+        )
       )}
     </div>
   );
-}
+});
 
 const STEP_ICONS: Record<string, (p: { size?: number }) => JSX.Element> = {
   execute: IconTerminal,
