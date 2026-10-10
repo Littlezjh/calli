@@ -30,7 +30,7 @@ import { ThreadView } from './components/ThreadView';
 import { TurnRuler } from './components/TurnRuler';
 import { Toast, type ToastState } from './components/Toast';
 import { TokenGate } from './components/TokenGate';
-import { IconArrowDown, IconChevron, IconClose, IconFolder, IconList, IconMenu, IconMore } from './components/icons';
+import { IconArrowDown, IconChevron, IconClose, IconFolder, IconFork, IconList, IconMenu, IconMore } from './components/icons';
 
 const sleep = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve) => {
@@ -745,13 +745,28 @@ export function App() {
   );
 
   const left = (
-    <PermissionPicker
-      modes={permissionModes}
-      value={permission}
-      canAsk={activeCaps?.approvals ?? true}
-      openSignal={permissionSignal}
-      onChange={(m) => (selected ? updateSelected({ permissionMode: m }) : setDraftPermission(m))}
-    />
+    <>
+      {/* Fork, like Codex's bottom-left button: one click copies the thread and opens the copy.
+          Only once there is a conversation to fork; a click while it cannot run says why. */}
+      {selected && selected.agentSessionId && activeCaps?.fork && (
+        <button
+          type="button"
+          className="tool-btn icon-only"
+          aria-label="分叉"
+          title="分叉：复制这个线程，从这里另走一条路"
+          onClick={() => threadActions.run('fork', selected)}
+        >
+          <IconFork size={17} />
+        </button>
+      )}
+      <PermissionPicker
+        modes={permissionModes}
+        value={permission}
+        canAsk={activeCaps?.approvals ?? true}
+        openSignal={permissionSignal}
+        onChange={(m) => (selected ? updateSelected({ permissionMode: m }) : setDraftPermission(m))}
+      />
+    </>
   );
 
   const right = (
