@@ -19,7 +19,7 @@ import {
 import { MAX_IMAGES, sniffImageType, type AttachmentStore, type StoredAttachment } from './attachments.js';
 import { HttpError } from './errors.js';
 import { isWithinWorkdirs } from './workdirs.js';
-import type { EmittedEvent, EventType, StoredEvent } from './events.js';
+import { compactDeltas, type EmittedEvent, type EventType, type StoredEvent } from './events.js';
 import type { SectionRecord, Store, ThreadRecord } from './store.js';
 
 /** A thread as the API returns it: the stored record plus values worked out from it. */
@@ -565,6 +565,47 @@ export class ThreadManager {
     return this.store.listEvents(threadId, afterSeq);
   }
 
+  /**
+   * Everything after a sequence number, however much that is: what a stream replays before it
+   * goes live. Stopping at a page size here would leave a hole between the replay and the live
+   * events that nothing fills in later.
+   */
+  listEventsSince(threadId: string, afterSeq: number): StoredEvent[] {
+    this.getThread(threadId);
+    return compactDeltas(this.store.listEvents(threadId, afterSeq, -1));
+  }
+
+  /** How far back, in stored events, one page of history reaches before stopping at a turn's start. */
+  private static readonly PAGE_BUDGET = 20_000;
+
+  /**
+   * One page of a thread's history for the view: the newest turns, or the ones just before
+   * `beforeSeq`. Pages begin where a turn begins; see Store.listEventsPage.
+   */
+  listEventsPage(threadId: string, beforeSeq?: number): StoredEvent[] {
+    this.getThread(threadId);
+    return compactDeltas(this.store.listEventsPage(threadId, ThreadManager.PAGE_BUDGET, beforeSeq));
+  }
+
+  /**
+   * Run once when the daemon starts. A thread still marked running was cut off when the last
+   * daemon stopped without ending its turn; nothing is running now. The open turn gets an ending,
+   * so the thread reads as interrupted instead of working forever.
+   */
+  recoverInterrupted(): void {
+    for (const thread of [...this.store.listThreads(), ...this.store.listThreads({ archived: true })]) {
+      if (thread.status !== 'running') continue;
+      const turnId = this.store.openTurn(thread.id);
+      if (turnId) {
+        this.emitThreadEvent(thread.id, turnId, 'turn.error', {
+          message: 'The hub restarted while this turn was running.',
+          code: 'interrupted',
+        });
+      }
+      this.store.updateThread(thread.id, { status: turnId ? 'error' : 'idle' });
+    }
+  }
+
   /** How many hub-only turns may be skipped while matching the agent's history. See syncThread. */
   private static readonly SYNC_SKIP_TOLERANCE = 3;
 
@@ -606,10 +647,9 @@ export class ThreadManager {
     const [agentTurns, hubTexts] = await Promise.all([
       adapter.loadHistory(thread.agentSessionId, thread.cwd),
       Promise.resolve(
-        this.store
-          .listEvents(id, 0)
-          .filter((ev) => ev.type === 'turn.started')
-          .map((ev) => turnKey(String(ev.data.text ?? ''))),
+        // Every turn the hub has, not one page of the log: a turn missing from this list would
+        // look new on the agent's side and be appended again on every sync.
+        this.store.listEventsOfType(id, 'turn.started').map((ev) => turnKey(String(ev.data.text ?? ''))),
       ),
     ]);
 

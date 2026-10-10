@@ -345,10 +345,58 @@ export class Store {
     return { threadId, seq, turnId, type, ts, data };
   }
 
+  /** Events after a sequence number, oldest first. A negative limit means all of them. */
   listEvents(threadId: string, afterSeq = 0, limit = 5000): StoredEvent[] {
     const rows = this.db
       .prepare('SELECT * FROM events WHERE thread_id = ? AND seq > ? ORDER BY seq ASC LIMIT ?')
       .all(threadId, afterSeq, limit) as unknown as EventRow[];
     return rows.map(toEvent);
+  }
+
+  /** Every event of one type in a thread, oldest first. There are few of the types this is asked for. */
+  listEventsOfType(threadId: string, type: EventType): StoredEvent[] {
+    const rows = this.db
+      .prepare('SELECT * FROM events WHERE thread_id = ? AND type = ? ORDER BY seq ASC')
+      .all(threadId, type) as unknown as EventRow[];
+    return rows.map(toEvent);
+  }
+
+  /**
+   * One page of a thread's history: the events just before `beforeSeq`, or the end of the log
+   * when that is left out. A page begins where a turn begins, so the reader never gets an answer
+   * without its question or a tool result without its call. It reaches back to the earliest turn
+   * that starts within `budget` events of the page's end; a single turn longer than that still
+   * comes whole. Whatever precedes the first turn rides along with it.
+   */
+  listEventsPage(threadId: string, budget: number, beforeSeq?: number): StoredEvent[] {
+    const end =
+      beforeSeq ??
+      (this.db.prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM events WHERE thread_id = ?').get(threadId) as { next: number }).next;
+    const turnStart = (where: string, order: 'ASC' | 'DESC', ...args: number[]) =>
+      (
+        this.db
+          .prepare(`SELECT seq FROM events WHERE thread_id = ? AND type = 'turn.started' AND ${where} ORDER BY seq ${order} LIMIT 1`)
+          .get(threadId, ...args) as { seq: number } | undefined
+      )?.seq;
+    let start = turnStart('seq < ? AND seq >= ?', 'ASC', end, end - budget) ?? turnStart('seq < ?', 'DESC', end) ?? 1;
+    if (turnStart('seq < ?', 'DESC', start) === undefined) start = 1;
+    const rows = this.db
+      .prepare('SELECT * FROM events WHERE thread_id = ? AND seq >= ? AND seq < ? ORDER BY seq ASC')
+      .all(threadId, start, end) as unknown as EventRow[];
+    return rows.map(toEvent);
+  }
+
+  /**
+   * The id of the thread's last turn when it never ended (no turn.done or turn.error), else null.
+   */
+  openTurn(threadId: string): string | null {
+    const last = this.db
+      .prepare("SELECT seq, turn_id FROM events WHERE thread_id = ? AND type = 'turn.started' ORDER BY seq DESC LIMIT 1")
+      .get(threadId) as { seq: number; turn_id: string | null } | undefined;
+    if (!last?.turn_id) return null;
+    const ended = this.db
+      .prepare("SELECT 1 AS yes FROM events WHERE thread_id = ? AND seq > ? AND turn_id = ? AND type IN ('turn.done', 'turn.error') LIMIT 1")
+      .get(threadId, last.seq, last.turn_id);
+    return ended ? null : last.turn_id;
   }
 }

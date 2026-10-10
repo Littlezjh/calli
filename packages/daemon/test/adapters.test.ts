@@ -252,7 +252,7 @@ test('mapPiEvent gives tools a readable title, a kind, and file changes for edit
     toolName: 'edit',
     args: { path: 'src/a.ts', edits: [{ oldText: 'x', newText: 'y' }, { oldText: 'p', newText: 'q' }] },
   });
-  assert.deepEqual([edit?.data.title, edit?.data.kind], ['Edit src/a.ts', 'edit']);
+  assert.deepEqual([edit?.data.title, edit?.data.kind], ['src/a.ts', 'edit']);
   assert.deepEqual(edit?.data.content, [
     { type: 'diff', path: 'src/a.ts', oldText: 'x', newText: 'y' },
     { type: 'diff', path: 'src/a.ts', oldText: 'p', newText: 'q' },
@@ -352,7 +352,7 @@ test('turnsFromPiMessages maps user, assistant and tool result messages to turns
   assert.equal(turns[0].text, 'run the tests');
   assert.deepEqual(turns[0].events.map((e) => e.type), ['reasoning.delta', 'tool.start', 'tool.end', 'message.delta']);
   const start = turns[0].events[1];
-  assert.equal(start.data.title, 'Edit a.ts');
+  assert.equal(start.data.title, 'a.ts', 'the verb comes from the kind, the title is just the path');
   assert.deepEqual(start.data.content, [{ type: 'diff', path: 'a.ts', oldText: 'x', newText: 'y' }], 'edits come across as diffs');
   assert.equal(turns[0].events[2].data.output, 'edited');
   assert.equal(turns[1].text, 'look');

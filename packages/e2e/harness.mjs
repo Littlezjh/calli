@@ -76,6 +76,8 @@ export async function startDaemon(env = {}) {
     RAH_PORT: String(port),
     RAH_DATA_DIR: dataDir,
     RAH_WORKDIRS: workdir,
+    // Serve this repo's own build, never a dist inherited from the ambient environment.
+    RAH_WEB_DIR: join(repoRoot, 'web', 'dist'),
     RAH_PI_BIN: 'fake-pi',
     RAH_CLAUDE_ACP_BIN: 'fake-claude',
     RAH_AGY_BIN: 'fake-agy',

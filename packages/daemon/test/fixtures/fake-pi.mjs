@@ -118,17 +118,25 @@ rl.on('line', (line) => {
       reply({ disposition: 'started' });
       out({ type: 'agent_start' });
       out({ type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', contentIndex: 0, delta: 'hmm' } });
-      // "slowthink" spaces the turn out, so a UI test can watch it run.
+      // "slowthink" spaces the turn out, so a UI test can watch it run. It interleaves tool calls
+      // with text on purpose: a group, then text, then another group — the order the view must
+      // keep instead of hoisting every step above the answer.
       if (cmd.message.includes('slowthink')) {
         setTimeout(() => {
           out({ type: 'tool_execution_start', toolCallId: 'c1', toolName: 'bash', args: { command: 'ls' } });
-          out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'hi there ' + cmd.message } });
-        }, 800);
-        setTimeout(() => {
           out({ type: 'tool_execution_end', toolCallId: 'c1', toolName: 'bash', result: { content: [{ type: 'text', text: 'a.txt' }] }, isError: false });
+        }, 500);
+        setTimeout(() => {
+          out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'hi there ' + cmd.message } });
+        }, 1300);
+        setTimeout(() => {
+          out({ type: 'tool_execution_start', toolCallId: 'c2', toolName: 'bash', args: { command: 'npm test' } });
+        }, 2100);
+        setTimeout(() => {
+          out({ type: 'tool_execution_end', toolCallId: 'c2', toolName: 'bash', result: { content: [{ type: 'text', text: '12 passed' }] }, isError: false });
           running = false;
           out({ type: 'agent_settled', aborted: false });
-        }, 2500);
+        }, 2900);
         return;
       }
       out({ type: 'tool_execution_start', toolCallId: 'c1', toolName: 'bash', args: { command: 'ls' } });

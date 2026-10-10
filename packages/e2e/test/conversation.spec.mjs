@@ -33,10 +33,12 @@ test('a turn shows thinking, verb-first tool rows, and folds its work away when 
   await page.locator('.thinking').waitFor({ timeout: 10_000 });
   assert.match(await page.locator('.thinking-toggle').innerText(), /思考中/);
 
-  // The tool row appears while the turn is still running, verb first.
+  // Tool rows appear while the turn is still running, verb first; the one in flight says so.
   await page.locator('.step').first().waitFor({ timeout: 10_000 });
   assert.match(await page.locator('.step-title').first().innerText(), /^运行了\s+ls/);
-  assert.equal((await page.locator('.step-status').first().innerText()).trim(), '运行中');
+  const inFlight = page.locator('.step', { hasText: 'npm test' });
+  await inFlight.waitFor({ timeout: 10_000 });
+  assert.equal((await inFlight.locator('.step-status').innerText()).trim(), '运行中');
 
   // Once the turn is done the work folds to one line and thinking collapses with a duration.
   await page.getByText('hi there slowthink').waitFor({ timeout: 15_000 });

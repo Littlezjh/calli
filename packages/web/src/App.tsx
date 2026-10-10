@@ -45,6 +45,13 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 /** How long streamed events are collected before the view updates. Keeps long, fast streams smooth. */
 const FLUSH_MS = 40;
 
+/** How close to the end of the thread still counts as being at the bottom. */
+const NEAR_BOTTOM_PX = 160;
+/** Momentum keeps a list scrolling for a while after the hand that flicked it has lifted. */
+const GESTURE_GRACE_MS = 1500;
+
+const isNearBottom = (el: HTMLElement) => el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
+
 export function App() {
   const [token, setToken] = useState(loadToken);
   const [authMessage, setAuthMessage] = useState<string | undefined>();
@@ -78,6 +85,9 @@ export function App() {
   const [permissionSignal, setPermissionSignal] = useState(0);
   const [modelSignal, setModelSignal] = useState(0);
   const [atBottom, setAtBottom] = useState(true);
+  // The thread has turns older than the ones loaded; they are fetched a page at a time.
+  const [hasOlder, setHasOlder] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   // Text handed back to the composer: messages that were waiting when the user pressed stop.
   const [restore, setRestore] = useState<{ text: string; nonce: number } | null>(null);
   // A message waiting for the user to confirm sending into a session the terminal also used.
@@ -95,6 +105,11 @@ export function App() {
 
   const scrollerRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
+  // The thread on screen, for answers that arrive after the user has moved on.
+  const shownThread = useRef<string | null>(null);
+  shownThread.current = selectedId;
+  // Whether the user has a hand on the scroller, and when they last did.
+  const gesture = useRef({ held: false, at: 0 });
 
   const signOut = (msg?: string) => {
     saveToken('');
@@ -170,9 +185,13 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api]);
 
-  // Event log for the selected thread: backlog first, then a live stream that resumes from the last seq.
+  // Event log for the selected thread: the newest turns first (a long thread's full log can be
+  // tens of thousands of events), then a live stream that resumes from the last seq. Older
+  // turns are paged in on demand from the top.
   useEffect(() => {
     setEvents([]);
+    setHasOlder(false);
+    setLoadingOlder(false);
     if (!api || !selectedId) return;
     const ctrl = new AbortController();
     const id = selectedId;
@@ -198,9 +217,11 @@ export function App() {
     (async () => {
       let after = 0;
       try {
-        const initial = await api.events(id, 0);
+        const initial = await api.eventsTail(id);
         if (ctrl.signal.aborted) return;
         setEvents(initial);
+        // A thread's log starts at seq 1; a page that starts later has turns before it.
+        setHasOlder(initial.length > 0 && initial[0].seq > 1);
         after = initial.at(-1)?.seq ?? 0;
       } catch (e) {
         if (!ctrl.signal.aborted) handleError(e);
@@ -230,6 +251,31 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, selectedId]);
 
+  /** Prepends the page of turns before the loaded ones, keeping the scroll position on the same content. */
+  const loadOlder = async () => {
+    const id = selectedId;
+    const first = events[0]?.seq ?? 0;
+    if (!api || !id || loadingOlder || first <= 1) return;
+    setLoadingOlder(true);
+    try {
+      const older = await api.eventsBefore(id, first);
+      // The answer is for the thread that asked; another one may be open by now.
+      if (shownThread.current !== id) return;
+      setHasOlder(older.length > 0 && older[0].seq > 1);
+      const el = scrollerRef.current;
+      const fromBottom = el ? el.scrollHeight - el.scrollTop : 0;
+      setEvents((prev) => (prev[0]?.seq === first ? [...older, ...prev] : prev));
+      // New content lands above the viewport; stay on the same row while it inserts.
+      requestAnimationFrame(() => {
+        if (el && !stickToBottom.current) el.scrollTop = el.scrollHeight - fromBottom;
+      });
+    } catch (e) {
+      handleError(e);
+    } finally {
+      setLoadingOlder(false);
+    }
+  };
+
   // Keep the view pinned to the bottom while the user has not scrolled up.
   useEffect(() => {
     const el = scrollerRef.current;
@@ -237,23 +283,58 @@ export function App() {
   }, [events]);
 
   // Screenshots and slow-rendering blocks grow the thread after the scroll above, which used to
-  // leave a reopened thread parked at the top. Watching the thread's height keeps it pinned.
+  // leave a reopened thread parked at the top. Watching the thread's height keeps it pinned. The
+  // scroller is watched too: a phone keyboard shrinks it and would hide the newest lines.
   useEffect(() => {
     const el = scrollerRef.current;
     const content = el?.querySelector('.thread');
     if (!el || !content) return;
     const ro = new ResizeObserver(() => {
       if (stickToBottom.current) el.scrollTop = el.scrollHeight;
+      // Growth below an unpinned view moves nothing, so no scroll event reports that the view
+      // has fallen behind; the jump button has to learn it here.
+      else setAtBottom(isNearBottom(el));
     });
     ro.observe(content);
+    ro.observe(el);
     return () => ro.disconnect();
   }, [selectedId]);
+
+  // Phone keyboards shrink the visual viewport instead of the layout; sizing the app to it keeps
+  // the composer visible without Safari scrolling the page (which pushed the top bar off screen).
+  // Pinch zoom shrinks the visual viewport too, and that is not room the layout has lost.
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const apply = () => {
+      if (Math.abs(vv.scale - 1) < 0.01) document.documentElement.style.setProperty('--vvh', `${vv.height}px`);
+    };
+    apply();
+    vv.addEventListener('resize', apply);
+    return () => vv.removeEventListener('resize', apply);
+  }, []);
+
+  // A scroll hands the position over to the user only when their hand caused it. Scroll events
+  // also come from the pin itself, from the keyboard resizing the page and from content changing
+  // height, and none of those may unpin the view. A gesture that scrolls nothing here (a sideways
+  // swipe over a code block) unpins nothing either. Scrolling back near the bottom pins again.
+  const gestureProps = {
+    onWheel: () => void (gesture.current.at = Date.now()),
+    onTouchMove: () => void (gesture.current.at = Date.now()),
+    onTouchEnd: () => void (gesture.current.at = Date.now()),
+    onKeyDown: () => void (gesture.current.at = Date.now()),
+    onPointerDown: () => void (gesture.current = { held: true, at: Date.now() }),
+    onPointerUp: () => void (gesture.current = { held: false, at: Date.now() }),
+    onPointerCancel: () => void (gesture.current = { held: false, at: Date.now() }),
+  };
 
   const onScroll = () => {
     const el = scrollerRef.current;
     if (!el) return;
-    const near = el.scrollHeight - el.scrollTop - el.clientHeight < 160;
-    stickToBottom.current = near;
+    const near = isNearBottom(el);
+    const byHand = gesture.current.held || Date.now() - gesture.current.at < GESTURE_GRACE_MS;
+    if (near) stickToBottom.current = true;
+    else if (byHand) stickToBottom.current = false;
     setAtBottom(near);
   };
 
@@ -723,7 +804,7 @@ export function App() {
           </div>
         )}
 
-        <div className="scroller" ref={scrollerRef} onScroll={onScroll}>
+        <div className="scroller" ref={scrollerRef} onScroll={onScroll} {...gestureProps}>
           {selected && <TurnRuler scrollerRef={scrollerRef} previews={turnPreviewMap} />}
           {selected ? (
             <ThreadView
@@ -734,6 +815,9 @@ export function App() {
               loadImage={loadImage}
               loadFile={loadFile}
               onDecide={decide}
+              hasOlder={hasOlder}
+              loadingOlder={loadingOlder}
+              onLoadOlder={loadOlder}
             />
           ) : (
             <div className="empty">

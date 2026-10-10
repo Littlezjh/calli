@@ -112,6 +112,14 @@ body,
   margin: 0;
 }
 
+/* The app fills the viewport itself; the page behind it must never scroll, or a phone keyboard
+   pushes the whole layout up and the top bar ends up under the status bar. */
+html,
+body {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 body {
   background: var(--bg);
   color: var(--text);
@@ -169,7 +177,9 @@ button:disabled {
   position: relative;
   display: flex;
   height: 100%;
-  height: 100dvh;
+  /* --vvh tracks the visual viewport, so a phone keyboard shrinks the app instead of being
+     overlaid on top of it. Falls back to dynamic viewport height where it is not set. */
+  height: var(--vvh, 100dvh);
   overflow: hidden;
 }
 
@@ -218,8 +228,8 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 52px;
-  padding: 0 12px;
+  height: calc(52px + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) 12px 0;
 }
 
 .topbar-title {
@@ -236,6 +246,9 @@ button:disabled {
   flex: 1;
   overflow-y: auto;
   overscroll-behavior: contain;
+  /* The app does its own pin-to-bottom; browser scroll anchoring would fight it when content
+     grows above the viewport. */
+  overflow-anchor: none;
   padding: 4px 16px 28px;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: thin;
@@ -331,7 +344,7 @@ button:disabled {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  padding: 14px 10px 10px;
+  padding: calc(14px + env(safe-area-inset-top)) 10px 10px;
 }
 
 .sidebar-top {
