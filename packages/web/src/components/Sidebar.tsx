@@ -3,7 +3,7 @@ import type { Section, Thread } from '../api';
 import { useStoredSet } from '../hooks';
 import { threadMark } from '../notices';
 import { buildSidebar } from '../sidebar';
-import { IconArchive, IconChevron, IconEdit, IconFolder, IconFork, IconImport, IconMore, IconPin, IconPlus, IconSearch } from './icons';
+import { IconArchive, IconChevron, IconEdit, IconFolder, IconFork, IconImport, IconList, IconMore, IconPin, IconPlus, IconSearch } from './icons';
 
 export { folderName } from '../paths';
 
@@ -20,6 +20,7 @@ interface Props {
   onSectionMenu: (section: Section, x: number, y: number) => void;
   onNewSection: () => void;
   onOpenArchive: () => void;
+  onOpenTodos: () => void;
   /** Missing when no agent can list its past sessions. */
   onOpenImport?: () => void;
 }
@@ -54,6 +55,7 @@ export function Sidebar({
   onSectionMenu,
   onNewSection,
   onOpenArchive,
+  onOpenTodos,
   onOpenImport,
 }: Props) {
   const [search, setSearch] = useState('');
@@ -189,6 +191,9 @@ export function Sidebar({
       </nav>
 
       <div className="sidebar-foot">
+        <button className="foot-link" onClick={onOpenTodos}>
+          <IconList size={16} /> 计划
+        </button>
         <button className="foot-link" onClick={onOpenArchive}>
           <IconArchive size={16} /> 已归档
         </button>

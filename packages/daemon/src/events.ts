@@ -16,7 +16,9 @@ export type EventType =
   | 'plan.updated'
   | 'usage.updated'
   | 'approval.request'
-  | 'approval.resolved';
+  | 'approval.resolved'
+  /** Something on the plan page changed. Broadcast only, never stored in an event log. */
+  | 'todo.updated';
 
 export interface StoredEvent {
   threadId: string;

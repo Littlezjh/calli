@@ -36,6 +36,37 @@ export interface SectionRecord {
   position: number;
 }
 
+/** One entry on the plan page. `parentId` is only ever a top-level todo: one level of nesting. */
+export interface TodoRecord {
+  id: string;
+  text: string;
+  done: boolean;
+  parentId: string | null;
+  position: number;
+  createdAt: string;
+  doneAt: string | null;
+}
+
+interface TodoRow {
+  id: string;
+  text: string;
+  done: number;
+  parent_id: string | null;
+  position: number;
+  created_at: string;
+  done_at: string | null;
+}
+
+const toTodo = (r: TodoRow): TodoRecord => ({
+  id: r.id,
+  text: r.text,
+  done: r.done === 1,
+  parentId: r.parent_id,
+  position: r.position,
+  createdAt: r.created_at,
+  doneAt: r.done_at,
+});
+
 interface ThreadRow {
   id: string;
   agent: string;
@@ -166,6 +197,23 @@ export class Store {
     } catch {
       // Index already exists
     }
+    // The plan page: long-lived items the user ticks off, optionally linked to threads.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS todos (
+        id TEXT PRIMARY KEY,
+        text TEXT NOT NULL,
+        done INTEGER NOT NULL DEFAULT 0,
+        parent_id TEXT REFERENCES todos(id) ON DELETE CASCADE,
+        position INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        done_at TEXT
+      );
+      CREATE TABLE IF NOT EXISTS todo_threads (
+        todo_id TEXT NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
+        thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+        PRIMARY KEY (todo_id, thread_id)
+      );
+    `);
   }
 
   close(): void {
@@ -331,6 +379,57 @@ export class Store {
       this.db.exec('ROLLBACK');
       throw err;
     }
+  }
+
+  // ---------- Plan page (todos) ----------
+
+  listTodos(): TodoRecord[] {
+    return (this.db.prepare('SELECT * FROM todos ORDER BY position ASC, created_at ASC').all() as unknown as TodoRow[]).map(toTodo);
+  }
+
+  getTodo(id: string): TodoRecord | null {
+    const row = this.db.prepare('SELECT * FROM todos WHERE id = ?').get(id) as TodoRow | undefined;
+    return row ? toTodo(row) : null;
+  }
+
+  /** New items go to the end of their level: top level, or after their siblings under a parent. */
+  createTodo(id: string, text: string, parentId: string | null): TodoRecord {
+    const row = this.db
+      .prepare('SELECT COALESCE(MAX(position), 0) + 1 AS next FROM todos WHERE parent_id IS ?')
+      .get(parentId) as { next: number };
+    const now = new Date().toISOString();
+    this.db
+      .prepare('INSERT INTO todos (id, text, done, parent_id, position, created_at) VALUES (?, ?, 0, ?, ?, ?)')
+      .run(id, text, parentId, row.next, now);
+    return { id, text, done: false, parentId, position: row.next, createdAt: now, doneAt: null };
+  }
+
+  /** Text edits keep the item where it is; toggling done stamps `done_at` (or clears it). */
+  updateTodo(id: string, patch: { text?: string; done?: boolean }): TodoRecord {
+    const current = this.getTodo(id);
+    if (!current) throw new Error('todo not found');
+    const text = patch.text !== undefined ? patch.text : current.text;
+    const done = patch.done !== undefined ? patch.done : current.done;
+    const doneAt = patch.done === undefined ? current.doneAt : done ? new Date().toISOString() : null;
+    this.db.prepare('UPDATE todos SET text = ?, done = ?, done_at = ? WHERE id = ?').run(text, done ? 1 : 0, doneAt, id);
+    return { ...current, text, done, doneAt };
+  }
+
+  deleteTodo(id: string): void {
+    this.db.prepare('DELETE FROM todos WHERE id = ?').run(id);
+  }
+
+  todoThreadIds(todoId: string): string[] {
+    const rows = this.db.prepare('SELECT thread_id FROM todo_threads WHERE todo_id = ?').all(todoId) as Array<{ thread_id: string }>;
+    return rows.map((r) => r.thread_id);
+  }
+
+  linkTodoThread(todoId: string, threadId: string): void {
+    this.db.prepare('INSERT OR IGNORE INTO todo_threads (todo_id, thread_id) VALUES (?, ?)').run(todoId, threadId);
+  }
+
+  unlinkTodoThread(todoId: string, threadId: string): void {
+    this.db.prepare('DELETE FROM todo_threads WHERE todo_id = ? AND thread_id = ?').run(todoId, threadId);
   }
 
   appendEvent(threadId: string, turnId: string | null, type: EventType, data: Record<string, unknown>): StoredEvent {

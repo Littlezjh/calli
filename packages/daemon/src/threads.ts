@@ -20,7 +20,7 @@ import { MAX_IMAGES, sniffImageType, type AttachmentStore, type StoredAttachment
 import { HttpError } from './errors.js';
 import { isWithinWorkdirs } from './workdirs.js';
 import { compactDeltas, type EmittedEvent, type EventType, type StoredEvent } from './events.js';
-import type { SectionRecord, Store, ThreadRecord } from './store.js';
+import type { SectionRecord, Store, ThreadRecord, TodoRecord } from './store.js';
 
 /** A thread as the API returns it: the stored record plus values worked out from it. */
 export type ThreadView = ThreadRecord & {
@@ -369,6 +369,86 @@ export class ThreadManager {
     if (!value) throw new HttpError(400, 'section name is empty');
     if (value.length > 40) throw new HttpError(400, 'section name is longer than 40 characters');
     return value;
+  }
+
+  // ---------- Plan page (todos) ----------
+
+  /** Todos with their linked threads as full views, so chips can show agent, title and state. */
+  listTodos(): Array<TodoRecord & { threads: ThreadView[] }> {
+    return this.store.listTodos().map((todo) => ({
+      ...todo,
+      threads: this.store
+        .todoThreadIds(todo.id)
+        .map((id) => this.store.getThread(id))
+        .filter((t): t is ThreadRecord => t !== null)
+        .map((t) => this.view(t)),
+    }));
+  }
+
+  createTodo(text: unknown, parentId?: unknown): TodoRecord {
+    const parent = parentId == null ? null : this.todoParent(parentId);
+    const todo = this.store.createTodo(randomUUID(), this.todoText(text), parent?.id ?? null);
+    this.broadcastTodo();
+    return todo;
+  }
+
+  updateTodo(id: string, patch: { text?: unknown; done?: unknown }): TodoRecord {
+    if (!this.store.getTodo(id)) throw new HttpError(404, 'todo not found');
+    const next: { text?: string; done?: boolean } = {};
+    if (patch.text !== undefined) next.text = this.todoText(patch.text);
+    if (patch.done !== undefined) {
+      if (typeof patch.done !== 'boolean') throw new HttpError(400, 'done must be a boolean');
+      next.done = patch.done;
+    }
+    const todo = this.store.updateTodo(id, next);
+    this.broadcastTodo();
+    return todo;
+  }
+
+  deleteTodo(id: string): void {
+    if (!this.store.getTodo(id)) throw new HttpError(404, 'todo not found');
+    this.store.deleteTodo(id);
+    this.broadcastTodo();
+  }
+
+  linkTodoThread(id: string, threadId: unknown): void {
+    if (!this.store.getTodo(id)) throw new HttpError(404, 'todo not found');
+    this.getThread(this.threadId(threadId));
+    this.store.linkTodoThread(id, this.threadId(threadId));
+    this.broadcastTodo();
+  }
+
+  unlinkTodoThread(id: string, threadId: unknown): void {
+    if (!this.store.getTodo(id)) throw new HttpError(404, 'todo not found');
+    this.store.unlinkTodoThread(id, this.threadId(threadId));
+    this.broadcastTodo();
+  }
+
+  /** A todo's parent must exist and be top level: plans have children, children do not. */
+  private todoParent(parentId: unknown): TodoRecord {
+    if (typeof parentId !== 'string') throw new HttpError(400, 'parentId must be a string');
+    const parent = this.store.getTodo(parentId);
+    if (!parent) throw new HttpError(404, 'todo not found');
+    if (parent.parentId) throw new HttpError(400, '子项下不能再建子项');
+    return parent;
+  }
+
+  private todoText(text: unknown): string {
+    const value = typeof text === 'string' ? text.trim() : '';
+    if (!value) throw new HttpError(400, 'todo text is empty');
+    if (value.length > 300) throw new HttpError(400, 'todo text is longer than 300 characters');
+    return value;
+  }
+
+  private threadId(threadId: unknown): string {
+    if (typeof threadId !== 'string' || !threadId) throw new HttpError(400, 'threadId is required');
+    return threadId;
+  }
+
+  /** Plan-page changes are not thread events: they go to listeners only, without an event log. */
+  private broadcastTodo(): void {
+    const ev: StoredEvent = { threadId: '', seq: 0, turnId: null, type: 'todo.updated', ts: new Date().toISOString(), data: {} };
+    for (const l of this.listeners) l(ev);
   }
 
   getThread(id: string): ThreadRecord {

@@ -48,6 +48,19 @@ export interface Section {
   position: number;
 }
 
+/** One entry on the plan page. `parentId` is a top-level todo or null: one level of nesting. */
+export interface Todo {
+  id: string;
+  text: string;
+  done: boolean;
+  parentId: string | null;
+  position: number;
+  createdAt: string;
+  doneAt: string | null;
+  /** Threads linked to this plan, as full views so chips can show agent, title and state. */
+  threads: Thread[];
+}
+
 /** An image ready to be sent with a message. */
 export interface OutgoingImage {
   data: string;
@@ -205,6 +218,30 @@ export class Api {
 
   deleteSection(id: string): Promise<void> {
     return this.request('DELETE', `/api/sections/${id}`);
+  }
+
+  todos(): Promise<Todo[]> {
+    return this.request('GET', '/api/todos');
+  }
+
+  createTodo(text: string, parentId?: string | null): Promise<Todo> {
+    return this.request('POST', '/api/todos', { text, parentId });
+  }
+
+  updateTodo(id: string, patch: { text?: string; done?: boolean }): Promise<Todo> {
+    return this.request('PATCH', `/api/todos/${id}`, patch);
+  }
+
+  deleteTodo(id: string): Promise<void> {
+    return this.request('DELETE', `/api/todos/${id}`);
+  }
+
+  linkTodo(id: string, threadId: string): Promise<void> {
+    return this.request('POST', `/api/todos/${id}/threads`, { threadId });
+  }
+
+  unlinkTodo(id: string, threadId: string): Promise<void> {
+    return this.request('DELETE', `/api/todos/${id}/threads?threadId=${encodeURIComponent(threadId)}`);
   }
 
   thread(id: string): Promise<Thread> {
