@@ -16,6 +16,7 @@ import { attentionCount, pageTitle, threadNotices } from './notices';
 import { folderName } from './paths';
 import { PERMISSION_LABELS } from './permissions';
 import { buildTimeline, toMarkdown, turnPreviews, type StoredEvent } from './timeline';
+import { newerBuildAvailable } from './version';
 import { ArchivePanel } from './components/ArchivePanel';
 import { Composer } from './components/Composer';
 import { DirectoryPicker } from './components/DirectoryPicker';
@@ -49,6 +50,9 @@ const FLUSH_MS = 40;
 const NEAR_BOTTOM_PX = 160;
 /** Momentum keeps a list scrolling for a while after the hand that flicked it has lifted. */
 const GESTURE_GRACE_MS = 1500;
+
+/** How often, at most, the page asks whether a newer build is being served. */
+const UPDATE_CHECK_MS = 30_000;
 
 const isNearBottom = (el: HTMLElement) => el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
 
@@ -91,7 +95,7 @@ export function App() {
   // Text handed back to the composer: messages that were waiting when the user pressed stop.
   const [restore, setRestore] = useState<{ text: string; nonce: number } | null>(null);
   // A message waiting for the user to confirm sending into a session the terminal also used.
-  const [pendingSend, setPendingSend] = useState<{ text: string; images: PreparedImage[] } | null>(null);
+  const [pendingSend, setPendingSend] = useState<{ text: string; images: PreparedImage[]; resolve: () => void; reject: (e: unknown) => void } | null>(null);
   const [pageHidden, setPageHidden] = useState(() => document.hidden);
   const baseTitle = useRef(document.title);
   const seenThreads = useRef<Thread[] | null>(null);
@@ -169,7 +173,13 @@ export function App() {
       }, 150);
     };
     (async () => {
-      while (!ctrl.signal.aborted) {
+      for (let attempt = 0; !ctrl.signal.aborted; attempt++) {
+        // Whatever changed while the stream was down was never announced on it. A dropped stream
+        // is also how a restarted daemon looks from here, so it is a moment to look for a new build.
+        if (attempt > 0) {
+          refresh();
+          checkForUpdate();
+        }
         try {
           await api.stream('/api/stream', refresh, ctrl.signal);
         } catch (e) {
@@ -184,6 +194,18 @@ export function App() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api]);
+
+  // A page left open keeps running the build it loaded. When the daemon serves a newer one, say
+  // so and offer to reload; asked when the list stream reconnects and when the page comes back
+  // to the foreground, at most once in a while.
+  const updateAskedAt = useRef(0);
+  const checkForUpdate = () => {
+    if (Date.now() - updateAskedAt.current < UPDATE_CHECK_MS) return;
+    updateAskedAt.current = Date.now();
+    void newerBuildAvailable().then((newer) => {
+      if (newer) setToast({ message: '有新版本', action: { label: '刷新', run: () => window.location.reload() }, sticky: true });
+    });
+  };
 
   // Event log for the selected thread: the newest turns first (a long thread's full log can be
   // tens of thousands of events), then a live stream that resumes from the last seq. Older
@@ -407,9 +429,14 @@ export function App() {
   );
 
   useEffect(() => {
-    const onVisibility = () => setPageHidden(document.hidden);
+    const onVisibility = () => {
+      setPageHidden(document.hidden);
+      if (!document.hidden) checkForUpdate();
+    };
     document.addEventListener('visibilitychange', onVisibility);
     return () => document.removeEventListener('visibilitychange', onVisibility);
+    // checkForUpdate only reads a ref and calls a state setter.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // The thread on screen is being read. With the page in the background, nothing is.
@@ -484,10 +511,12 @@ export function App() {
     toast: setToast,
     // The open thread is already in memory; copying it straight away keeps the browser's
     // "this came from a click" window, which the plain-http copy fallback depends on.
+    // Only when all of it is: a long thread has older turns that were never loaded, and the copy
+    // must not stop where the screen does.
     markdownOf: async (thread) => {
-      if (thread.id === selectedId) return toMarkdown(thread.title, timeline.items);
+      if (thread.id === selectedId && !hasOlder) return toMarkdown(thread.title, timeline.items);
       if (!api) return '';
-      return toMarkdown(thread.title, buildTimeline(await api.events(thread.id, 0)).items);
+      return toMarkdown(thread.title, buildTimeline(await api.allEvents(thread.id)).items);
     },
   });
 
@@ -539,9 +568,9 @@ export function App() {
   const send = async (text: string, images: PreparedImage[]) => {
     // The terminal wrote to this session after the hub last did. Both sides writing the same session
     // interleaves turns, so ask before joining in again.
+    // The composer keeps the draft and its pictures until this settles, so backing out loses nothing.
     if (selectedId && selected?.terminalActivity) {
-      setPendingSend({ text, images });
-      return;
+      return new Promise<void>((resolve, reject) => setPendingSend({ text, images, resolve, reject }));
     }
     await performSend(text, images, true);
   };
@@ -901,14 +930,13 @@ export function App() {
           message="终端和网页写的是同一个会话，两边轮流发会把顺序搅乱。确认要在这里继续发送吗？"
           confirmLabel="仍然发送"
           onCancel={() => {
-            // Give the text back rather than swallow it.
-            if (pendingSend.text) setRestore({ text: pendingSend.text, nonce: Date.now() });
+            pendingSend.reject(new Error('not sent'));
             setPendingSend(null);
           }}
           onConfirm={() => {
             const p = pendingSend;
             setPendingSend(null);
-            if (p) void performSend(p.text, p.images, false);
+            performSend(p.text, p.images, false).then(p.resolve, p.reject);
           }}
         />
       )}

@@ -147,6 +147,11 @@ export function saveToken(token: string): void {
 
 export class AuthError extends Error {}
 
+/** The server pings every 15 seconds; a stream silent for this long is dead, not quiet. */
+const STREAM_IDLE_MS = 40_000;
+/** Back in the foreground, a stream that has said nothing for this long is reconnected at once. */
+const STREAM_WAKE_MS = 5_000;
+
 export class Api {
   constructor(
     private readonly token: string,
@@ -208,6 +213,11 @@ export class Api {
 
   events(id: string, after = 0): Promise<StoredEvent[]> {
     return this.request('GET', `/api/threads/${id}/events?after=${after}`);
+  }
+
+  /** A thread's whole log, with streamed fragments merged: for copying the conversation out. */
+  allEvents(id: string): Promise<StoredEvent[]> {
+    return this.request('GET', `/api/threads/${id}/events?all=1`);
   }
 
   /**
@@ -359,28 +369,50 @@ export class Api {
    * Opens an SSE stream and calls `onEvent` for each message. Resolves when the server closes the stream.
    * The caller aborts via `signal`. Uses fetch (not EventSource) so the Authorization header can be sent.
    */
-  async stream(path: string, onEvent: (ev: StoredEvent) => void, signal: AbortSignal): Promise<void> {
+  /**
+   * Reads a server-sent event stream until it ends, and returns so the caller can reconnect. A
+   * stream can also die without ending: a phone that slept or changed network leaves a read that
+   * never resolves. The server writes at least a ping every 15 seconds, so a stream silent for
+   * `idleMs` is taken for dead; and when the page comes back to the foreground, one that has been
+   * silent for a few seconds is not waited on at all.
+   */
+  async stream(path: string, onEvent: (ev: StoredEvent) => void, signal: AbortSignal, idleMs = STREAM_IDLE_MS): Promise<void> {
     const res = await fetch(this.base + path, { headers: this.headers({ Accept: 'text/event-stream' }), signal });
     if (res.status === 401) throw new AuthError('unauthorized');
     if (!res.ok || !res.body) throw new Error(`stream failed: HTTP ${res.status}`);
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buf = '';
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) return;
-      buf += decoder.decode(value, { stream: true });
-      let idx: number;
-      while ((idx = buf.indexOf('\n\n')) >= 0) {
-        const block = buf.slice(0, idx);
-        buf = buf.slice(idx + 2);
-        const data = block
-          .split('\n')
-          .filter((l) => l.startsWith('data: '))
-          .map((l) => l.slice(6))
-          .join('\n');
-        if (data) onEvent(JSON.parse(data) as StoredEvent);
+    let heardAt = Date.now();
+    const giveUp = () => void reader.cancel().catch(() => undefined);
+    let idle = setTimeout(giveUp, idleMs);
+    const onVisible = () => {
+      if (!document.hidden && Date.now() - heardAt > STREAM_WAKE_MS) giveUp();
+    };
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisible);
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) return;
+        heardAt = Date.now();
+        clearTimeout(idle);
+        idle = setTimeout(giveUp, idleMs);
+        buf += decoder.decode(value, { stream: true });
+        let idx: number;
+        while ((idx = buf.indexOf('\n\n')) >= 0) {
+          const block = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          const data = block
+            .split('\n')
+            .filter((l) => l.startsWith('data: '))
+            .map((l) => l.slice(6))
+            .join('\n');
+          if (data) onEvent(JSON.parse(data) as StoredEvent);
+        }
       }
+    } finally {
+      clearTimeout(idle);
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisible);
     }
   }
 }

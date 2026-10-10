@@ -39,7 +39,7 @@ before(async () => {
 
   daemon = await startDaemon({ RAH_DATA_DIR: dataDir, RAH_WORKDIRS: workdir });
   browser = await launchBrowser();
-  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true });
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, permissions: ['clipboard-read', 'clipboard-write'] });
   page = await ctx.newPage();
 });
 
@@ -100,4 +100,22 @@ test('the newest turn opens whole and at the bottom; older turns page in from th
   assert.deepEqual(await questions(), ['first question', 'second question', 'latest question']);
   await page.waitForTimeout(300);
   assert.equal(await older.count(), 0, 'nothing older is left to load');
+});
+
+test('copying the conversation takes all of it, not only the turns on screen', async () => {
+  // A fresh visit: only the newest turn is loaded.
+  await openUi(page, daemon);
+  await page.locator('.menu-btn').click();
+  await page.locator('.thread-title', { hasText: 'long thread' }).first().click();
+  await page.getByText('latest answer line 39').waitFor({ timeout: 15_000 });
+  assert.deepEqual(await questions(), ['latest question']);
+
+  await page.locator('.composer textarea').click();
+  await page.keyboard.type('/export');
+  await page.keyboard.press('Enter');
+  await page.getByText('已复制对话').waitFor({ timeout: 15_000 });
+  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  for (const name of ['first', 'second', 'latest']) {
+    assert.ok(copied.includes(`${name} question`) && copied.includes(`${name} answer line 39`), `the ${name} turn is in the copy`);
+  }
 });

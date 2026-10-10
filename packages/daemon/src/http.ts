@@ -272,7 +272,9 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (method === 'GET' && sub === 'events') {
         // ?tail: the newest turns, what a reopened page renders first. ?before=S: the turns just
         // before what the page has. Both begin at a turn's start and merge streamed fragments.
+        // ?all: the whole log, fragments merged, for copying a conversation out.
         // Plain ?after=S is the log as stored, one page at a time.
+        if (url.searchParams.has('all')) return sendJson(res, 200, manager.listEventsSince(threadId, 0));
         if (url.searchParams.has('tail')) return sendJson(res, 200, manager.listEventsPage(threadId));
         const before = Number(url.searchParams.get('before') ?? 0) || 0;
         if (before > 0) return sendJson(res, 200, manager.listEventsPage(threadId, before));

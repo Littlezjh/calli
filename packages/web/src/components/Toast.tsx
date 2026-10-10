@@ -6,6 +6,8 @@ export interface ToastState {
   action?: { label: string; run: () => void };
   /** Something is still in progress: the toast stays until it is replaced or cleared. */
   busy?: boolean;
+  /** Waits for the user: it stays until acted on or replaced. */
+  sticky?: boolean;
 }
 
 interface Props {
@@ -16,7 +18,7 @@ interface Props {
 /** A short confirmation at the bottom of the screen that goes away on its own. */
 export function Toast({ toast, onDismiss }: Props) {
   useEffect(() => {
-    if (!toast || toast.busy) return;
+    if (!toast || toast.busy || toast.sticky) return;
     // Longer when there is something to act on.
     const timer = setTimeout(onDismiss, toast.action ? 6000 : 2500);
     return () => clearTimeout(timer);

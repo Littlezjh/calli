@@ -1550,6 +1550,11 @@ test('events endpoint: a page begins where a turn begins, and streamed fragments
     ],
   );
   assert.deepEqual(await page(`before=${first[0].seq}`), [], 'nothing before the start');
+
+  // The whole log in one answer, for copying the conversation: every turn, fragments merged.
+  const whole = await page('all=1');
+  assert.deepEqual(whole.filter((e) => e.type === 'turn.started').map((e) => e.data.text), ['first', 'second', 'third']);
+  assert.ok(whole.length < 30, `21,000 fragments come as a handful of events (${whole.length})`);
   assert.equal((await api('/api/threads/nope/events?tail=1')).status, 404);
 });
 

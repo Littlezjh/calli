@@ -23,7 +23,7 @@
 - [x] 未读：线程在后台跑完后标为未读，打开即已读（各设备同步）；右键可手动"标记为未读"
 - [x] 复制子菜单：会话 ID、终端恢复命令、工作目录、整段对话的 Markdown
 - [x] 侧边栏分组的折叠状态记在本机
-- [ ] **P0** 手机上侧边栏顶部被安全区截断：`.sidebar` 在手机上是 `position: fixed; inset: 0`，但 `.sidebar-inner` 的 padding 没算 `env(safe-area-inset-top)`（styles.css 里其他 fixed 元素都加了）；顺手全面检查一遍 fixed 元素
+- [x] 手机上顶栏和侧边栏顶部被安全区截断：顶栏、侧边栏按 `env(safe-area-inset-top)` 留出位置；触屏设备输入框 16px，避免 iOS 聚焦时放大整页
 - [ ] **P2** 搜索对话内容（现在只搜标题）
 [x] 项目和分区的分组头直接建会话：项目组的"+"预填该目录；分区组的"+"创建时归入该分区（`createThread` 收 `sectionId`），草稿 composer 里有分区标签，点了可取消
 - [ ] **P2** 排序切换：按最近更新 / 按项目
