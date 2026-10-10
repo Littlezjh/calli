@@ -1,0 +1,152 @@
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import type { AgentAdapter } from '../src/adapters/types.js';
+import { AttachmentStore } from '../src/attachments.js';
+import { createHttpServer } from '../src/http.js';
+import { Store } from '../src/store.js';
+import { ThreadManager } from '../src/threads.js';
+
+// Plan-page CRUD over HTTP. Threads exist only as rows: linking never starts an agent, so a
+// stub adapter is enough.
+
+const stubAdapter: AgentAdapter = {
+  label: 'Stub',
+  available: async () => true,
+  capabilities: {
+    resume: false,
+    approvals: false,
+    permissionModes: [],
+    effortLevels: [],
+    images: false,
+    deleteSession: false,
+    history: false,
+    fork: false,
+  },
+  async commands() {
+    return [];
+  },
+  async start() {
+    throw new Error('not used here');
+  },
+} as unknown as AgentAdapter;
+
+const TOKEN = 'test-token-0123456789';
+const auth = { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' };
+
+let server: Server;
+let base: string;
+let dataDir: string;
+let workroot: string;
+let manager: ThreadManager;
+let store: Store;
+
+const api = async (path: string, init: RequestInit = {}): Promise<Response> =>
+  fetch(base + path, { ...init, headers: { ...auth, ...(init.headers ?? {}) } });
+
+interface TodoJson {
+  id: string;
+  text: string;
+  done: boolean;
+  parentId: string | null;
+  position: number;
+  threads: Array<{ id: string; title: string }>;
+}
+
+before(async () => {
+  dataDir = mkdtempSync(join(tmpdir(), 'rah-todo-test-'));
+  workroot = mkdtempSync(join(tmpdir(), 'rah-todo-work-'));
+  store = new Store(dataDir);
+  manager = new ThreadManager(store, new Map([['pi', stubAdapter]]), [workroot], new AttachmentStore(dataDir));
+  server = createHttpServer({ manager, token: TOKEN, webDir: null, version: 'test' });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
+  const { port } = server.address() as AddressInfo;
+  base = `http://127.0.0.1:${port}`;
+});
+
+after(async () => {
+  server.close();
+  await manager.shutdown();
+  store.close();
+  rmSync(dataDir, { recursive: true, force: true });
+  rmSync(workroot, { recursive: true, force: true });
+});
+
+test('todos: create, list, edit, strike through, delete', async () => {
+  const created = await api('/api/todos', { method: 'POST', body: JSON.stringify({ text: '  重构支付  ' }) });
+  assert.equal(created.status, 201);
+  const todo = (await created.json()) as TodoJson;
+  assert.equal(todo.text, '重构支付');
+  assert.equal(todo.done, false);
+
+  // Empty and over-long texts are refused, so the list never holds blank rows.
+  assert.equal((await api('/api/todos', { method: 'POST', body: JSON.stringify({ text: '   ' }) })).status, 400);
+  assert.equal((await api('/api/todos', { method: 'POST', body: JSON.stringify({ text: 'x'.repeat(301) }) })).status, 400);
+
+  const patched = await api(`/api/todos/${todo.id}`, { method: 'PATCH', body: JSON.stringify({ done: true }) });
+  const after = (await patched.json()) as TodoJson;
+  assert.equal(after.done, true);
+  assert.ok(after.doneAt);
+
+  const untoggled = await api(`/api/todos/${todo.id}`, { method: 'PATCH', body: JSON.stringify({ done: false }) });
+  assert.equal(((await untoggled.json()) as TodoJson).done, false);
+
+  const listed = await api('/api/todos');
+  assert.deepEqual(((await listed.json()) as TodoJson[]).map((t) => t.id), [todo.id]);
+
+  assert.equal((await api(`/api/todos/${todo.id}`, { method: 'DELETE' })).status, 204);
+  assert.equal((await api(`/api/todos/${todo.id}`, { method: 'PATCH', body: JSON.stringify({ done: true }) })).status, 404);
+});
+
+test('todos: sub-items nest one level under a real plan, never deeper', async () => {
+  const parent = (await (await api('/api/todos', { method: 'POST', body: JSON.stringify({ text: '计划页' }) })).json()) as TodoJson;
+  const child = (await (
+    await api('/api/todos', { method: 'POST', body: JSON.stringify({ text: '折叠已完成', parentId: parent.id }) })
+  ).json()) as TodoJson;
+  assert.equal(child.parentId, parent.id);
+
+  // A child is not a valid parent.
+  const deep = await api('/api/todos', { method: 'POST', body: JSON.stringify({ text: '太深', parentId: child.id }) });
+  assert.equal(deep.status, 400);
+  const ghost = await api('/api/todos', { method: 'POST', body: JSON.stringify({ text: '悬空', parentId: 'nope' }) });
+  assert.equal(ghost.status, 404);
+
+  // Deleting the plan takes its sub-item with it.
+  await api(`/api/todos/${parent.id}`, { method: 'DELETE' });
+  const listed = (await (await api('/api/todos')).json()) as TodoJson[];
+  assert.equal(listed.find((t) => t.id === child.id), undefined);
+});
+
+test('todos: threads link and unlink, and vanish with the thread', async () => {
+  const workdir = join(workroot, 'proj');
+  mkdirSync(workdir, { recursive: true });
+  const thread = (await (
+    await fetch(base + '/api/threads', {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ agent: 'pi', cwd: workdir, title: '支付重构' }),
+    })
+  ).json()) as { id: string; title: string };
+  assert.ok(thread.id, 'thread was created');
+  const todo = (await (await api('/api/todos', { method: 'POST', body: JSON.stringify({ text: '支付重构收尾' }) })).json()) as TodoJson;
+
+  assert.equal((await api(`/api/todos/${todo.id}/threads`, { method: 'POST', body: JSON.stringify({ threadId: thread.id }) })).status, 204);
+  const linked = (await (await api('/api/todos')).json()) as TodoJson[];
+  assert.deepEqual(linked.find((t) => t.id === todo.id)?.threads.map((t) => t.id), [thread.id]);
+
+  // Unknown todos and threads are refused.
+  assert.equal((await api('/api/todos/nope/threads', { method: 'POST', body: JSON.stringify({ threadId: thread.id }) })).status, 404);
+  assert.equal((await api(`/api/todos/${todo.id}/threads`, { method: 'POST', body: JSON.stringify({ threadId: 'nope' }) })).status, 404);
+
+  // Deleting the thread removes the link, not the plan.
+  await fetch(`${base}/api/threads/${thread.id}`, { method: 'DELETE', headers: auth });
+  const after = (await (await api('/api/todos')).json()) as TodoJson[];
+  assert.deepEqual(after.find((t) => t.id === todo.id)?.threads, []);
+
+  await api(`/api/todos/${todo.id}`, { method: 'DELETE' });
+  rmSync(workdir, { recursive: true, force: true });
+});

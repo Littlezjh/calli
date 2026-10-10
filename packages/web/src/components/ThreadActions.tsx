@@ -1,15 +1,20 @@
 import { useState, type ReactNode } from 'react';
-import type { AgentInfo, Api, Section, Thread } from '../api';
+import type { AgentInfo, Api, Section, Thread, Todo } from '../api';
 import { copyText } from '../clipboard';
+import { folderName } from '../paths';
 import { Dialog } from './Dialog';
 import { Menu, type MenuEntry } from './Menu';
-import { IconArchive, IconCopy, IconDot, IconEdit, IconFork, IconList, IconPin, IconPlus, IconTrash } from './icons';
+import { IconArchive, IconCheck, IconCopy, IconDot, IconEdit, IconFork, IconList, IconPin, IconPlus, IconTrash } from './icons';
 import type { ToastState } from './Toast';
 
 interface Deps {
   api: Api | null;
   agents: AgentInfo[];
   sections: Section[];
+  /** The plan page's list, for the "关联到计划" submenu. */
+  todos: Todo[];
+  /** A plan was linked or unlinked here: reload the list. */
+  onTodosChange: () => void;
   /** A thread changed. One that now has `archivedAt` should leave the sidebar. */
   onThreadChange: (thread: Thread) => void;
   onThreadRemove: (id: string) => void;
@@ -49,7 +54,7 @@ export function forkBlocked(thread: Thread): string | null {
  * the archive and the slash menu, so an action behaves the same wherever it is started.
  */
 export function useThreadActions(deps: Deps) {
-  const { api, agents, sections, onThreadChange, onThreadRemove, onThreadOpen, onMarkedUnread, onSectionsChange, onError, toast, markdownOf } = deps;
+  const { api, agents, sections, todos, onTodosChange, onThreadChange, onThreadRemove, onThreadOpen, onMarkedUnread, onSectionsChange, onError, toast, markdownOf } = deps;
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [dialog, setDialog] = useState<DialogState | null>(null);
 
@@ -109,6 +114,8 @@ export function useThreadActions(deps: Deps) {
 
   const threadItems = (thread: Thread): MenuEntry[] => {
     const filed = sections.some((s) => s.id === thread.sectionId);
+    const linkedTodoIds = new Set(todos.filter((t) => t.threads.some((it) => it.id === thread.id)).map((t) => t.id));
+    const planChoices = todos.filter((t) => !t.parentId).slice(0, 30);
     return [
       { id: 'rename', label: '重命名', icon: IconEdit, onSelect: () => run('rename', thread) },
       { id: 'pin', label: thread.pinned ? '取消置顶' : '置顶', icon: IconPin, onSelect: () => run('pin', thread) },
@@ -133,6 +140,39 @@ export function useThreadActions(deps: Deps) {
           ...(filed ? [{ id: 'unfile', label: '移出分区', onSelect: () => void patch(thread, { sectionId: null }) }] : []),
           ...(sections.length ? (['separator'] as MenuEntry[]) : []),
           { id: 'new-section', label: '新建分区…', icon: IconPlus, onSelect: () => setDialog({ kind: 'new-section', thread }) },
+        ],
+      },
+      {
+        id: 'todo',
+        label: '关联到计划',
+        icon: IconCheck,
+        disabled: planChoices.length === 0,
+        submenu: [
+          ...planChoices.map((t) => ({
+            id: `todo-${t.id}`,
+            label: t.text,
+            checked: linkedTodoIds.has(t.id),
+            onSelect: () =>
+              void guard(async () => {
+                if (!api) return;
+                if (linkedTodoIds.has(t.id)) await api.unlinkTodo(t.id, thread.id);
+                else await api.linkTodo(t.id, thread.id);
+                onTodosChange();
+              }),
+          })),
+          ...(planChoices.length ? (['separator'] as MenuEntry[]) : []),
+          {
+            id: 'new-todo',
+            label: '新建计划…',
+            icon: IconPlus,
+            onSelect: () =>
+              void guard(async () => {
+                if (!api) return;
+                const todo = await api.createTodo(thread.title || folderName(thread.cwd));
+                await api.linkTodo(todo.id, thread.id);
+                onTodosChange();
+              }),
+          },
         ],
       },
       {

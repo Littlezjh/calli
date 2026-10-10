@@ -30,6 +30,7 @@ const GLOBAL_EVENT_TYPES = new Set([
   'turn.error',
   'approval.request',
   'approval.resolved',
+  'todo.updated',
 ]);
 
 const MIME: Record<string, string> = {
@@ -224,6 +225,38 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (method === 'PATCH') return sendJson(res, 200, manager.renameSection(parts[2], (await readJson(req)).name));
       if (method === 'DELETE') {
         manager.deleteSection(parts[2]);
+        res.writeHead(204).end();
+        return;
+      }
+    }
+
+    // Plan page: the user's own long-lived list, linked to threads.
+    if (path === '/api/todos') {
+      if (method === 'GET') return sendJson(res, 200, manager.listTodos());
+      if (method === 'POST') {
+        const body = await readJson(req);
+        return sendJson(res, 201, manager.createTodo(body.text, body.parentId));
+      }
+    }
+    if (parts[1] === 'todos' && parts[2] && !parts[3]) {
+      if (method === 'PATCH') {
+        const body = await readJson(req);
+        return sendJson(res, 200, manager.updateTodo(parts[2], { text: body.text, done: body.done }));
+      }
+      if (method === 'DELETE') {
+        manager.deleteTodo(parts[2]);
+        res.writeHead(204).end();
+        return;
+      }
+    }
+    if (parts[1] === 'todos' && parts[2] && parts[3] === 'threads') {
+      if (method === 'POST') {
+        manager.linkTodoThread(parts[2], (await readJson(req)).threadId);
+        res.writeHead(204).end();
+        return;
+      }
+      if (method === 'DELETE') {
+        manager.unlinkTodoThread(parts[2], url.searchParams.get('threadId'));
         res.writeHead(204).end();
         return;
       }

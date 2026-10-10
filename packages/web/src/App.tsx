@@ -9,6 +9,7 @@ import {
   type Section,
   type SlashCommand,
   type Thread,
+  type Todo,
 } from './api';
 import type { HubAction } from './commands';
 import type { PreparedImage } from './images';
@@ -22,6 +23,7 @@ import { DirectoryPicker } from './components/DirectoryPicker';
 import { Dialog } from './components/Dialog';
 import { ImportPanel } from './components/ImportPanel';
 import { StatusPanel } from './components/StatusPanel';
+import { TodosPanel } from './components/TodosPanel';
 import { AgentPicker, effortsForModel, imagesBlocked, imagesNote, modelName, ModelPicker, PermissionPicker, UsageMeter } from './components/Pickers';
 import { Sidebar } from './components/Sidebar';
 import { forkBlocked, useThreadActions } from './components/ThreadActions';
@@ -54,6 +56,10 @@ export function App() {
   const [workdirs, setWorkdirs] = useState<string[]>([]);
   const [threads, setThreads] = useState<Thread[]>([]);
   const [sections, setSections] = useState<Section[]>([]);
+  const [todos, setTodos] = useState<Todo[]>([]);
+  const [todosOpen, setTodosOpen] = useState(false);
+  /** Bumped by daemon broadcasts, so the open plan panel reloads. */
+  const [todosKey, setTodosKey] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [events, setEvents] = useState<StoredEvent[]>([]);
   const [draftAgent, setDraftAgent] = useState('claude');
@@ -106,6 +112,7 @@ export function App() {
   };
 
   const refreshThreads = () => api?.threads().then(setThreads).catch(() => undefined);
+  const reloadTodos = useCallback(() => api?.todos().then(setTodos).catch(() => undefined), [api]);
   const dismissToast = useCallback(() => setToast(null), []);
 
   // Initial data once we have a token.
@@ -114,12 +121,13 @@ export function App() {
     let cancelled = false;
     (async () => {
       try {
-        const [a, c, t, s] = await Promise.all([api.agents(), api.workdirs(), api.threads(), api.sections()]);
+        const [a, c, t, s, td] = await Promise.all([api.agents(), api.workdirs(), api.threads(), api.sections(), api.todos()]);
         if (cancelled) return;
         setAgents(a);
         setWorkdirs(c.workdirs);
         setThreads(t);
         setSections(s);
+        setTodos(td);
         setDraftCwd((cur) => cur || c.workdirs[0] || '');
         setDraftAgent(a.find((x) => x.available)?.id ?? 'claude');
       } catch (e) {
@@ -142,6 +150,8 @@ export function App() {
       clearTimeout(timer);
       timer = setTimeout(() => {
         api.threads().then(setThreads).catch(() => undefined);
+        // Plan chips show thread states; a bumped key reloads the open panel.
+        setTodosKey((k) => k + 1);
       }, 150);
     };
     (async () => {
@@ -355,6 +365,8 @@ export function App() {
     api,
     agents,
     sections,
+    todos,
+    onTodosChange: reloadTodos,
     onThreadOpen: openThread,
     onMarkedUnread: (thread) => {
       if (thread.id === selectedId) setSelectedId(null);
@@ -654,6 +666,10 @@ export function App() {
             setArchiveOpen(true);
             setDrawer(false);
           }}
+          onOpenTodos={() => {
+            setTodosOpen(true);
+            setDrawer(false);
+          }}
           onOpenImport={
             importAgents.length
               ? () => {
@@ -753,6 +769,21 @@ export function App() {
           onRestore={(t) => threadActions.run('restore', t)}
           onDelete={(t) => threadActions.run('delete', t)}
           onClose={() => setArchiveOpen(false)}
+          onError={handleError}
+        />
+      )}
+      {todosOpen && (
+        <TodosPanel
+          api={api}
+          todos={todos}
+          threads={threads}
+          refreshKey={todosKey}
+          onReload={reloadTodos}
+          onOpenThread={(id) => {
+            pick(id);
+            setTodosOpen(false);
+          }}
+          onClose={() => setTodosOpen(false)}
           onError={handleError}
         />
       )}
