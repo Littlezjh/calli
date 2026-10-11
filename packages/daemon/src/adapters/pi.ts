@@ -579,6 +579,8 @@ export class PiRpcAdapter implements AgentAdapter {
     deleteSession: false,
     history: true,
     fork: true,
+    // pi has no plan of its own to read: it runs on whatever model account it was given.
+    quota: false,
   };
 
   private modelCache: Cached<ModelOption[]> | null = null;

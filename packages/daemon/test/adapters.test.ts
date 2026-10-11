@@ -639,7 +639,7 @@ test('AgyAdapter: lists what agy answers itself plus its skills, and answers tho
   try {
     const usage = collectingHooks();
     assert.deepEqual(await session.prompt(turn('/usage'), usage.hooks), { stopReason: 'end_turn' });
-    assert.match(textFrom(usage.events), /^\| \| \| \|\n\|---\|---\|---\|\n\|Fast models\|Weekly Limit Remaining\|97%\|/);
+    assert.match(textFrom(usage.events), /^\| \| \| \| \|\n\|---\|---\|---\|---\|\n\|Fast models\|Weekly Limit Remaining\|97%\|/);
     const alias = collectingHooks();
     await session.prompt(turn('/quota'), alias.hooks);
     assert.match(textFrom(alias.events), /Weekly Limit Remaining/, 'aliases work too');

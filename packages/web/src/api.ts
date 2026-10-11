@@ -124,8 +124,29 @@ export interface AgentInfo {
     deleteSession: boolean;
     /** Can list its past sessions and replay them, so they can be imported. */
     history: boolean;
+    /** Can read plan usage outside a session, for the quota panel. */
+    quota: boolean;
     fork: boolean;
   };
+}
+
+/** One window of a plan's usage, as the agent itself reports it. */
+export interface QuotaWindow {
+  /** Short chip label, such as "5H" or "7D". */
+  label: string;
+  /** What the window covers, when the agent splits by model group. */
+  scope?: string;
+  /** How much of the window is used, 0 to 100. */
+  usedPercent: number;
+  /** When the window resets, if the agent said so. ISO. */
+  resetsAt?: string;
+}
+
+/** Plan usage of an agent instance, read outside any session. */
+export interface PlanQuota {
+  windows: QuotaWindow[];
+  /** When the agent was last asked. ISO. */
+  checkedAt: string;
 }
 
 /** A conversation the agent already has, as offered for import. */
@@ -386,6 +407,11 @@ export class Api {
   /** Commands for an agent in a directory; project-level commands differ between directories. */
   commands(agent: string, cwd?: string): Promise<SlashCommand[]> {
     return this.request('GET', `/api/agents/${agent}/commands${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''}`);
+  }
+
+  /** Plan usage of an agent instance, read outside any session. */
+  agentQuota(agent: string): Promise<PlanQuota> {
+    return this.request('GET', `/api/agents/${agent}/quota`);
   }
 
   models(agent: string): Promise<ModelOption[]> {

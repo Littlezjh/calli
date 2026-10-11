@@ -24,6 +24,7 @@ import { DirectoryPicker } from './components/DirectoryPicker';
 import { Dialog } from './components/Dialog';
 import { ImportPanel } from './components/ImportPanel';
 import { StatusPanel } from './components/StatusPanel';
+import { QuotaPanel } from './components/QuotaPanel';
 import { TodosPanel } from './components/TodosPanel';
 import { AgentPicker, type DiscoveredAgent, effortsForModel, imagesBlocked, imagesNote, modelName, ModelPicker, PermissionPicker, UsageMeter } from './components/Pickers';
 import { Sidebar } from './components/Sidebar';
@@ -91,6 +92,8 @@ export function App() {
   const [archiveKey, setArchiveKey] = useState(0);
   const [importOpen, setImportOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
+  /** The agent whose plan usage the quota panel shows. */
+  const [quotaAgent, setQuotaAgent] = useState<{ id: string; label: string } | null>(null);
   // Counters that open the composer's pickers from elsewhere (the slash menu).
   const [permissionSignal, setPermissionSignal] = useState(0);
   const [modelSignal, setModelSignal] = useState(0);
@@ -704,6 +707,9 @@ export function App() {
   const hubActions: HubAction[] = [
     { id: 'new', label: '新线程', hint: '开始一个新的对话', keywords: ['new', 'clear'] },
     { id: 'status', label: '状态', hint: '会话、模型、上下文和终端恢复命令', keywords: ['status', 'info'] },
+    ...(activeCaps?.quota
+      ? [{ id: 'usage', label: '额度', hint: '套餐用量和重置时间', keywords: ['usage', 'quota', '额度', 'cost'] }]
+      : []),
     ...(models.length || effortLevels.length
       ? [{ id: 'model', label: '模型与思考强度', hint: modelName(models, model), keywords: ['model', 'effort', 'thinking'] }]
       : []),
@@ -728,6 +734,7 @@ export function App() {
   const runHubAction = (id: string) => {
     if (id === 'new') return newThread();
     if (id === 'status') return setStatusOpen(true);
+    if (id === 'usage' && activeCaps?.quota) return setQuotaAgent({ id: activeAgent, label: agentLabel(activeAgent) });
     if (id === 'export' && selected) return threadActions.copyConversation(selected);
     if (id === 'model') return setModelSignal((n) => n + 1);
     if (id === 'permission') return setPermissionSignal((n) => n + 1);
@@ -972,8 +979,18 @@ export function App() {
           directory={activeCwd}
           usage={selected ? timeline.usage : null}
           usageCommand={['usage', 'cost', 'session'].find((name) => (commandsByKey[commandsKey] ?? []).some((c) => c.name === name)) ?? null}
+          onOpenQuota={activeCaps?.quota ? () => setQuotaAgent({ id: activeAgent, label: agentLabel(activeAgent) }) : undefined}
           onRunCommand={(text) => void send(text, []).catch(() => undefined)}
           onClose={() => setStatusOpen(false)}
+        />
+      )}
+      {quotaAgent && api && (
+        <QuotaPanel
+          api={api}
+          agentId={quotaAgent.id}
+          agentLabel={quotaAgent.label}
+          onClose={() => setQuotaAgent(null)}
+          onError={handleError}
         />
       )}
       {importOpen && (

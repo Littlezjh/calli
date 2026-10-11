@@ -517,6 +517,8 @@ export class CodexAppServerAdapter implements AgentAdapter {
     deleteSession: true,
     history: true,
     fork: true,
+    // Its app-server has no usage request yet.
+    quota: false,
   };
 
   private modelProbe: Promise<ModelOption[]> | null = null;

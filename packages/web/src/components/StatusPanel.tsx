@@ -16,6 +16,8 @@ interface Props {
   usage: Usage | null;
   /** The agent's own command for plan usage, if it has one (such as "usage" or "cost"). */
   usageCommand: string | null;
+  /** Opens the quota panel when the agent can read its plan outside a session. */
+  onOpenQuota?: () => void;
   onRunCommand: (text: string) => void;
   onClose: () => void;
 }
@@ -40,7 +42,7 @@ const STATUS_LABELS: Record<string, string> = { idle: '空闲', running: '运行
  * What `/status` shows in a terminal, for any agent: who is answering, with which settings, in
  * which session, and how full the context is. Agents do not offer this outside their terminal UI.
  */
-export function StatusPanel({ thread, agentLabel, model, permission, directory, usage, usageCommand, onRunCommand, onClose }: Props) {
+export function StatusPanel({ thread, agentLabel, model, permission, directory, usage, usageCommand, onOpenQuota, onRunCommand, onClose }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -98,18 +100,31 @@ export function StatusPanel({ thread, agentLabel, model, permission, directory, 
             </div>
           ))}
         </dl>
-        {thread && usageCommand && (
+        {(onOpenQuota || (thread && usageCommand)) && (
           <div className="status-actions">
-            <button
-              type="button"
-              className="text-btn strong"
-              onClick={() => {
-                onRunCommand(`/${usageCommand}`);
-                onClose();
-              }}
-            >
-              查看 {agentLabel} 的套餐用量（/{usageCommand}）
-            </button>
+            {onOpenQuota ? (
+              <button
+                type="button"
+                className="text-btn strong"
+                onClick={() => {
+                  onOpenQuota();
+                  onClose();
+                }}
+              >
+                查看 {agentLabel} 的套餐额度
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="text-btn strong"
+                onClick={() => {
+                  onRunCommand(`/${usageCommand}`);
+                  onClose();
+                }}
+              >
+                查看 {agentLabel} 的套餐用量（/{usageCommand}）
+              </button>
+            )}
           </div>
         )}
       </div>

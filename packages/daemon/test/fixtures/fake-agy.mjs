@@ -19,7 +19,7 @@ if (promptIndex >= 0 && args[promptIndex + 1] !== undefined) {
   } else if (text === '/skills') {
     process.stdout.write('make-video\tTurn a brief into a video\nreview\tReview the current change\n');
   } else if (text.startsWith('/usage') || text.startsWith('/quota')) {
-    process.stdout.write(`Fast models\tWeekly Limit Remaining\t97%\nSlow | models\tFive Hour Limit Remaining\t40%\n`);
+    process.stdout.write('Fast models\tWeekly Limit Remaining\t97%\t2026-10-16T11:59:18Z\nSlow | models\tFive Hour Limit Remaining\t40%\t2026-10-10T12:14:28Z\n');
   } else if (text === '/config') {
     process.stdout.write('colorScheme\tterminal\nallowNonWorkspaceAccess\tfalse\n');
   } else if (text === '/broken') {

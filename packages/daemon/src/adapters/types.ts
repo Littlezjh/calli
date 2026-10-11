@@ -79,6 +79,25 @@ export interface SlashCommand {
   kind?: 'command' | 'prompt' | 'skill';
 }
 
+/** One window of a plan's usage, as the agent itself reports it. */
+export interface QuotaWindow {
+  /** Short chip label, such as "5H" or "7D". */
+  label: string;
+  /** What the window covers, when the agent splits by model group or model. */
+  scope?: string;
+  /** How much of the window is used, 0 to 100. */
+  usedPercent: number;
+  /** When the window resets, if the agent said so. ISO. */
+  resetsAt?: string;
+}
+
+/** Plan usage of an agent instance, read outside any session so nothing is left behind. */
+export interface PlanQuota {
+  windows: QuotaWindow[];
+  /** When the agent was last asked. ISO. */
+  checkedAt: string;
+}
+
 export interface ModelOption {
   /** Value sent back when the user picks this model. */
   id: string;
@@ -143,6 +162,8 @@ export interface AgentAdapter {
     deleteSession: boolean;
     /** Whether existing conversations can be listed and their history read, for importing. */
     history: boolean;
+    /** Whether plan usage can be read outside a session, for the quota panel. */
+    quota: boolean;
     /** Whether a conversation can be copied into a new, independent one. */
     fork: boolean;
   };
@@ -168,6 +189,9 @@ export interface AgentAdapter {
    * Images in them may be shown in the thread, like images in the thread's own directory.
    */
   artifactDirs?(agentSessionId: string): string[];
+
+  /** Plan usage, read outside any session. With capabilities.quota. Cached one layer up. */
+  fetchQuota?(): Promise<PlanQuota>;
   /** Copies a conversation and returns the id of the copy. With capabilities.fork. */
   forkSession?(agentSessionId: string, cwd: string): Promise<string>;
   start(opts: StartOptions): Promise<AgentSession>;

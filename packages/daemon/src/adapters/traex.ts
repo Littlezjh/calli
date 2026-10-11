@@ -42,6 +42,8 @@ export class TraexAcpAdapter extends AcpAdapter {
     deleteSession: true,
     history: true,
     fork: true,
+    // traex is ACP like Claude; a quota probe can follow once its CLI has a usage command.
+    quota: false,
   };
 
   protected readonly modeIds = TRAEX_MODE_IDS;

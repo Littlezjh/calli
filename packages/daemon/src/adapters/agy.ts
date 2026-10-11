@@ -9,6 +9,8 @@ import type {
   AgentSession,
   ModelOption,
   PermissionMode,
+  PlanQuota,
+  QuotaWindow,
   SlashCommand,
   StartOptions,
   TurnHooks,
@@ -57,6 +59,30 @@ export function parseAgyHelp(stdout: string): AgyCliCommand[] {
     if (!m) continue;
     const aliases = (m[2] ?? '').split(/[,\s]+/).filter(Boolean);
     out.push({ name: m[1], aliases, description: m[3].trim() });
+  }
+  return out;
+}
+
+/**
+ * Reads `agy -p /usage`, one row per line, tab-separated:
+ *   Gemini Models\tWeekly Limit Remaining\t98%\t2026-10-16T11:59:18Z
+ * agy reports REMAINING; the panel shows used, so the number flips.
+ */
+export function parseAgyUsage(stdout: string): QuotaWindow[] {
+  const out: QuotaWindow[] = [];
+  for (const line of stdout.split('\n')) {
+    const cols = line.trim().split('\t');
+    if (cols.length < 3) continue;
+    const kind = cols[1] ?? '';
+    const label = /five hour/i.test(kind) ? '5H' : /weekly/i.test(kind) ? '7D' : null;
+    const remaining = Number.parseInt(cols[2] ?? '', 10);
+    if (!label || !Number.isFinite(remaining)) continue;
+    out.push({
+      label,
+      scope: cols[0]?.trim() || undefined,
+      usedPercent: Math.min(100, Math.max(0, 100 - remaining)),
+      ...(cols[3] && !Number.isNaN(Date.parse(cols[3])) ? { resetsAt: cols[3].trim() } : {}),
+    });
   }
   return out;
 }
@@ -395,6 +421,7 @@ export class AgyAdapter implements AgentAdapter {
     deleteSession: false,
     history: false,
     fork: false,
+    quota: true,
   };
   private modelCache: { at: number; models: ModelOption[] } | null = null;
   private readonly commandCache = new Map<string, { at: number; value: Promise<{ cli: AgyCliCommand[]; list: SlashCommand[] }> }>();
@@ -407,6 +434,12 @@ export class AgyAdapter implements AgentAdapter {
 
   async available(): Promise<boolean> {
     return commandExists(this.command[0]);
+  }
+
+  /** `agy -p /usage` is tab-separated: model group, window, REMAINING percent, reset ISO time. */
+  async fetchQuota(): Promise<PlanQuota> {
+    const stdout = await this.runPrint(process.cwd(), '/usage');
+    return { windows: parseAgyUsage(stdout), checkedAt: new Date().toISOString() };
   }
 
   async models(): Promise<ModelOption[]> {

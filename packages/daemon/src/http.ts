@@ -168,6 +168,11 @@ export function createHttpServer(deps: HttpDeps): Server {
       return sendJson(res, 200, await manager.listAgentSessions(parts[2]));
     }
 
+    // GET /api/agents/:id/quota: plan usage, read outside any session and cached briefly
+    if (method === 'GET' && parts[0] === 'api' && parts[1] === 'agents' && parts[2] && parts[3] === 'quota') {
+      return sendJson(res, 200, await manager.agentQuota(parts[2]));
+    }
+
     // GET /api/agents/:id/commands
     if (method === 'GET' && parts[0] === 'api' && parts[1] === 'agents' && parts[2] && parts[3] === 'commands') {
       return sendJson(res, 200, await manager.listCommands(parts[2], url.searchParams.get('cwd') ?? undefined));

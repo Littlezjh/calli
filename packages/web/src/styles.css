@@ -2208,6 +2208,120 @@ input.picker-search {
 
 /* ---------- Plan page ---------- */
 
+/* ---------- Quota panel ---------- */
+
+.quota-panel {
+  width: min(440px, 100%);
+}
+
+.quota-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 6px;
+}
+
+.quota-headline {
+  margin: 2px 0 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.quota-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0 10px;
+}
+
+.quota-row + .quota-row {
+  border-top: 1px solid var(--border);
+}
+
+.quota-row-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.quota-chip {
+  flex: none;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: var(--hover);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 22px;
+}
+
+.quota-chip.warn,
+.quota-percent.warn {
+  background: var(--positive-bg);
+}
+
+.quota-chip.danger,
+.quota-percent.danger {
+  background: var(--danger-bg);
+}
+
+.quota-scope {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.quota-percent {
+  flex: none;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.quota-percent.danger {
+  color: var(--danger);
+}
+
+.quota-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--hover);
+  overflow: hidden;
+}
+
+.quota-bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--positive);
+  transition: width 0.3s ease;
+}
+
+.quota-bar-fill.warn {
+  background: var(--warn);
+}
+
+.quota-bar-fill.danger {
+  background: var(--danger);
+}
+
+.quota-reset {
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.quota-checked {
+  margin: 8px 0 0;
+  color: var(--faint);
+  font-size: 12px;
+  text-align: center;
+}
+
+
 .todos-panel {
   width: min(640px, 100%);
 }

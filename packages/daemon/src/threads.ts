@@ -12,6 +12,7 @@ import {
   type EffortLevel,
   type ModelOption,
   type PermissionMode,
+  type PlanQuota,
   type SlashCommand,
   type TurnHooks,
   type TurnInput,
@@ -49,6 +50,8 @@ interface QueuedTurn {
 export const MAX_QUEUED = 5;
 /** The largest image file the hub will serve from a thread's directory. */
 const MAX_SERVED_IMAGE_BYTES = 20 * 1024 * 1024;
+/** How long a plan-usage answer is reused. The probes spawn a CLI; a minute is fresh enough. */
+const QUOTA_TTL_MS = 60_000;
 
 /** Quotes a path for a POSIX shell, leaving plain paths readable. */
 function shellQuote(value: string): string {
@@ -98,6 +101,8 @@ export class ThreadManager {
   private readonly listeners = new Set<Listener>();
   /** Agent sessions being imported right now, so the same one is not imported twice in parallel. */
   private readonly importing = new Set<string>();
+  /** Plan-usage reads in flight or fresh, per agent: the probes spawn a CLI, so they are shared. */
+  private readonly quotaCache = new Map<string, { at: number; value: Promise<PlanQuota> }>();
   /** Threads whose session is being synced right now, for the same reason. */
   private readonly syncing = new Set<string>();
   /** Messages waiting for the running turn of their thread to finish. Kept in memory only. */
@@ -136,6 +141,25 @@ export class ThreadManager {
     const dir = cwd ? resolve(cwd) : undefined;
     if (dir && !isWithinWorkdirs(dir, this.workdirs)) throw new HttpError(400, 'cwd is not in the allowed workdirs');
     return adapter.commands(dir);
+  }
+
+  /**
+   * Plan usage of an agent instance. The probe costs a CLI run (claude's takes seconds), so the
+   * answer is reused for a minute and concurrent callers share one run.
+   */
+  agentQuota(agent: string): Promise<PlanQuota> {
+    const adapter = this.adapters.get(agent);
+    if (!adapter) throw new HttpError(404, `unknown agent: ${agent}`);
+    if (!adapter.capabilities.quota || !adapter.fetchQuota) throw new HttpError(400, `${agent} has no plan usage to read`);
+    const hit = this.quotaCache.get(agent);
+    if (hit && Date.now() - hit.at < QUOTA_TTL_MS) return hit.value;
+    const value = adapter.fetchQuota().catch((err) => {
+      // A failed probe is not worth caching; the next caller can try again right away.
+      if (this.quotaCache.get(agent)?.value === value) this.quotaCache.delete(agent);
+      throw err;
+    });
+    this.quotaCache.set(agent, { at: Date.now(), value });
+    return value;
   }
 
   /**

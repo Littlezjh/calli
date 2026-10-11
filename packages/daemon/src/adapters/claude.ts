@@ -1,5 +1,6 @@
+import { execFile } from 'node:child_process';
 import { AcpAdapter, AcpSession } from './acp.js';
-import type { ModelOption, PermissionMode, SlashCommand } from './types.js';
+import type { ModelOption, PermissionMode, PlanQuota, QuotaWindow, SlashCommand } from './types.js';
 
 /**
  * Claude Code, through the ACP bridge this repo ships with (`@agentclientprotocol/claude-agent-acp`).
@@ -42,6 +43,46 @@ export function withUnlistedCommands(listed: SlashCommand[]): SlashCommand[] {
   return [...listed, ...UNLISTED_COMMANDS.filter((c) => !names.has(c.name))];
 }
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/**
+ * "Oct 10, 12:40pm" as the CLI prints it: no year, no timezone beyond the "(UTC)" around it.
+ * The year is this one, or next one when that would land the reset in the past.
+ */
+function claudeResetAt(text: string, now: Date): string | undefined {
+  const m = /^(\w{3}) (\d{1,2}), (\d{1,2})(?::(\d{2}))?(am|pm)$/.exec(text.trim());
+  if (!m) return undefined;
+  const month = MONTHS.indexOf(m[1]);
+  const day = Number(m[2]);
+  const hour = Number(m[3]) % 12 + (m[5] === 'pm' ? 12 : 0);
+  for (const year of [now.getUTCFullYear(), now.getUTCFullYear() + 1]) {
+    const ts = Date.UTC(year, month, day, hour, Number(m[4] ?? 0));
+    if (ts >= now.getTime() - 30 * 86_400_000) return new Date(ts).toISOString();
+  }
+  return undefined;
+}
+
+/**
+ * `claude -p "/usage"` output, such as:
+ *   Current session: 95% used · resets Oct 10, 12:40pm (UTC)
+ *   Current week (all models): 40% used · resets Oct 11, 7am (UTC)
+ * Lines that do not match (the advice below, the cost table) are ignored.
+ */
+export function parseClaudeUsage(text: string, now = new Date()): QuotaWindow[] {
+  const out: QuotaWindow[] = [];
+  for (const line of text.split('\n')) {
+    const m = /^Current (session|week(?: \(all models\))?): (\d+)% used(?: · resets ([^(]+?)\(UTC\))?$/.exec(line.trim());
+    if (!m) continue;
+    out.push({
+      label: m[1] === 'session' ? '5H' : '7D',
+      ...(m[1] !== 'session' ? { scope: '全部模型' } : {}),
+      usedPercent: Number(m[2]),
+      ...(m[3] ? { resetsAt: claudeResetAt(m[3], now) } : {}),
+    });
+  }
+  return out;
+}
+
 export class ClaudeAcpAdapter extends AcpAdapter {
   readonly id = 'claude';
   readonly label = 'Claude Code';
@@ -53,6 +94,7 @@ export class ClaudeAcpAdapter extends AcpAdapter {
     images: true,
     deleteSession: true,
     history: true,
+    quota: true,
     fork: true,
   };
 
@@ -83,5 +125,18 @@ export class ClaudeAcpAdapter extends AcpAdapter {
 
   resumeCommand(agentSessionId: string): string {
     return `claude --resume ${agentSessionId}`;
+  }
+
+  /** One `claude -p "/usage"` run. A local command, so no session is written and no turn spent. */
+  async fetchQuota(): Promise<PlanQuota> {
+    const bin = process.env.RAH_CLAUDE_QUOTA_BIN ?? 'claude';
+    const stdout = await new Promise<string>((resolve, reject) => {
+      execFile(bin, ['-p', '/usage'], { timeout: 30_000, maxBuffer: 1024 * 1024, env: { ...process.env, ...this.env } }, (err, out) => {
+        if (!err) return resolve(out);
+        const reason = String(err.message).split('\n').pop() ?? '';
+        reject(new Error(`claude /usage failed: ${reason.slice(0, 200)}`));
+      });
+    });
+    return { windows: parseClaudeUsage(stdout), checkedAt: new Date().toISOString() };
   }
 }
