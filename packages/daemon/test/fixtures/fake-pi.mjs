@@ -38,6 +38,54 @@ const MODELS = [
   { id: 'loose', provider: 'fake', name: 'Loose', reasoning: true, input: ['text'] },
 ];
 
+const HIST_MESSAGES = [
+  { role: 'system', content: '' },
+  { role: 'user', content: 'run the tests', timestamp: 1 },
+  {
+    role: 'assistant',
+    content: [
+      { type: 'thinking', thinking: 'need to run them' },
+      { type: 'toolCall', id: 'c9', name: 'bash', arguments: { command: 'npm test' } },
+    ],
+  },
+  { role: 'toolResult', toolCallId: 'c9', toolName: 'bash', content: [{ type: 'text', text: '12 passed' }], isError: false },
+  { role: 'assistant', content: [{ type: 'text', text: 'All 12 pass.' }] },
+  { role: 'user', content: [{ type: 'text', text: 'and this picture?' }, { type: 'image', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', mimeType: 'image/png' }], timestamp: 2 },
+  { role: 'assistant', content: [{ type: 'text', text: 'A single pixel.' }] },
+];
+
+const userText = (m) => (typeof m.content === 'string' ? m.content : (m.content ?? []).filter((b) => b.type === 'text').map((b) => b.text).join(''));
+
+/**
+ * What a session holds. Tests can script what the "terminal" did to one: a JSON file of messages
+ * per session id. Sessions named hist… hold a canned two-turn conversation. A session made by
+ * `fork` holds what its source did before the message it was forked from.
+ */
+function messagesOf(id) {
+  const forked = /^(.*)-fork-e(\d+)$/.exec(String(id));
+  if (forked) {
+    const source = messagesOf(forked[1]);
+    let seen = 0;
+    const cut = source.findIndex((m) => m.role === 'user' && ++seen === Number(forked[2]));
+    return cut < 0 ? source : source.slice(0, cut);
+  }
+  if (process.env.FAKE_PI_MESSAGES_FILE) {
+    try {
+      const scripted = JSON.parse(readFileSync(process.env.FAKE_PI_MESSAGES_FILE, 'utf8'));
+      if (Array.isArray(scripted[id])) return scripted[id];
+    } catch {
+      // fall through to the canned answer
+    }
+  }
+  return String(id).startsWith('hist') ? HIST_MESSAGES : [];
+}
+
+/** The user messages of a session, numbered from one: e1, e2, … */
+const forkPoints = (id) =>
+  messagesOf(id)
+    .filter((m) => m.role === 'user')
+    .map((m, i) => ({ entryId: `e${i + 1}`, text: userText(m) }));
+
 const rl = createInterface({ input: process.stdin });
 rl.on('line', (line) => {
   const cmd = JSON.parse(line);
@@ -63,35 +111,17 @@ rl.on('line', (line) => {
     case 'set_model':
     case 'set_thinking_level':
       return reply({});
-    case 'get_messages': {
-      // Tests can script what the "terminal" did to a session: a JSON file of messages per session id.
-      if (process.env.FAKE_PI_MESSAGES_FILE) {
-        try {
-          const scripted = JSON.parse(readFileSync(process.env.FAKE_PI_MESSAGES_FILE, 'utf8'));
-          if (Array.isArray(scripted[sessionId])) return reply({ messages: scripted[sessionId] });
-        } catch {
-          // fall through to the canned answer
-        }
-      }
-      return reply({
-        messages: String(sessionId).startsWith('hist')
-          ? [
-              { role: 'system', content: '' },
-              { role: 'user', content: 'run the tests', timestamp: 1 },
-              {
-                role: 'assistant',
-                content: [
-                  { type: 'thinking', thinking: 'need to run them' },
-                  { type: 'toolCall', id: 'c9', name: 'bash', arguments: { command: 'npm test' } },
-                ],
-              },
-              { role: 'toolResult', toolCallId: 'c9', toolName: 'bash', content: [{ type: 'text', text: '12 passed' }], isError: false },
-              { role: 'assistant', content: [{ type: 'text', text: 'All 12 pass.' }] },
-              { role: 'user', content: [{ type: 'text', text: 'and this picture?' }, { type: 'image', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', mimeType: 'image/png' }], timestamp: 2 },
-              { role: 'assistant', content: [{ type: 'text', text: 'A single pixel.' }] },
-            ]
-          : [],
-      });
+    case 'get_messages':
+      return reply({ messages: messagesOf(sessionId) });
+    // The user messages a copy can be forked from, each with the id `fork` takes.
+    case 'get_fork_messages':
+      return reply({ messages: forkPoints(sessionId) });
+    // A copy that holds everything before one user message; this pi moves over to it.
+    case 'fork': {
+      const point = forkPoints(sessionId).find((m) => m.entryId === cmd.entryId);
+      if (!point) return reply(null, false, `no entry ${cmd.entryId}`);
+      sessionId = `${sessionId}-fork-${cmd.entryId}`;
+      return reply({ text: point.text, cancelled: false });
     }
     case 'compact':
       if (cmd.customInstructions === 'explode') return reply(null, false, 'nothing to compact');
@@ -137,6 +167,35 @@ rl.on('line', (line) => {
           running = false;
           out({ type: 'agent_settled', aborted: false });
         }, 2900);
+        return;
+      }
+      // "manysteps" is a turn that looks around a lot before it says anything: four calls in a
+      // row, a remark, then two more with the last one slow. The view folds each finished run of
+      // calls into one line that counts them, and keeps the call in flight on screen.
+      if (cmd.message.includes('manysteps')) {
+        const call = (id, toolName, args, text) => {
+          out({ type: 'tool_execution_start', toolCallId: id, toolName, args });
+          if (text !== undefined) out({ type: 'tool_execution_end', toolCallId: id, toolName, result: { content: [{ type: 'text', text }] }, isError: false });
+        };
+        setTimeout(() => {
+          call('m1', 'read', { path: 'src/a.ts' }, 'export const a = 1;');
+          call('m2', 'read', { path: 'src/b.ts' }, 'export const b = 2;');
+          call('m3', 'grep', { pattern: 'TODO' }, 'src/a.ts:3');
+          call('m4', 'bash', { command: 'ls src' }, 'a.ts b.ts');
+        }, 200);
+        setTimeout(() => {
+          out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'looked around, now checking: ' } });
+        }, 700);
+        setTimeout(() => {
+          call('m5', 'bash', { command: 'npm run lint' }, 'clean');
+          call('m6', 'bash', { command: 'npm test' });
+        }, 1200);
+        setTimeout(() => {
+          out({ type: 'tool_execution_end', toolCallId: 'm6', toolName: 'bash', result: { content: [{ type: 'text', text: '12 passed' }] }, isError: false });
+          out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'all good' } });
+          running = false;
+          out({ type: 'agent_settled', aborted: false });
+        }, 4200);
         return;
       }
       // "forkflow" is the shape of a turn watched on a phone: an edit lands (so the turn has

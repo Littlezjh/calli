@@ -262,12 +262,12 @@ export class Store {
   }
 
   /** Copies a thread's whole event log to another thread, keeping order and timestamps. */
-  copyEvents(fromThreadId: string, toThreadId: string): void {
+  copyEvents(fromThreadId: string, toThreadId: string, upToSeq = Number.MAX_SAFE_INTEGER): void {
     this.db
       .prepare(
-        'INSERT INTO events (thread_id, seq, turn_id, type, ts, data) SELECT ?, seq, turn_id, type, ts, data FROM events WHERE thread_id = ?',
+        'INSERT INTO events (thread_id, seq, turn_id, type, ts, data) SELECT ?, seq, turn_id, type, ts, data FROM events WHERE thread_id = ? AND seq <= ?',
       )
-      .run(toThreadId, fromThreadId);
+      .run(toThreadId, fromThreadId, upToSeq);
   }
 
   /** Runs several writes as one: all of them happen, or none. Also much faster for bulk inserts. */

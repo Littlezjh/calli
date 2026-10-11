@@ -251,8 +251,14 @@ rl.on('line', (line) => {
     case 'thread/turns/list':
       if (String(msg.params?.threadId).startsWith('hist-')) return out({ jsonrpc: '2.0', id: msg.id, result: { data: historyTurns(), nextCursor: null } });
       return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: 'unknown thread' } });
-    case 'thread/fork':
-      return out({ jsonrpc: '2.0', id: msg.id, result: { thread: { id: `${msg.params?.threadId}-fork`, cwd: '/tmp/one' }, model: currentModel } });
+    case 'thread/fork': {
+      // `lastTurnId`: the copy goes through that turn and leaves out what came after.
+      const last = msg.params?.lastTurnId;
+      if (last && !historyTurns().some((t) => t.id === last)) {
+        return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: `unknown turn ${last}` } });
+      }
+      return out({ jsonrpc: '2.0', id: msg.id, result: { thread: { id: `${msg.params?.threadId}-fork${last ? `-at-${last}` : ''}`, cwd: '/tmp/one' }, model: currentModel } });
+    }
     case 'thread/delete':
       if (process.env.FAKE_CODEX_DELETE_LOG) appendFileSync(process.env.FAKE_CODEX_DELETE_LOG, msg.params?.threadId + '\n');
       return out({ jsonrpc: '2.0', id: msg.id, result: {} });

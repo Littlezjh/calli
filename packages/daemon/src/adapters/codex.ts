@@ -250,7 +250,8 @@ export function codexApprovalDecision(decision: ApprovalDecision, params: any): 
 export function turnsFromCodexHistory(turns: any[]): HistoryTurn[] {
   const out: HistoryTurn[] = [];
   for (const turn of turns ?? []) {
-    const current: HistoryTurn = { text: '', images: [], events: [] };
+    // Codex forks "through" a turn it is given the id of.
+    const current: HistoryTurn = { text: '', images: [], events: [], ...(typeof turn?.id === 'string' && turn.id ? { forkRef: turn.id } : {}) };
     for (const item of turn?.items ?? []) {
       if (item?.type === 'userMessage') {
         current.text = (item.content ?? [])
@@ -517,6 +518,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
     deleteSession: true,
     history: true,
     fork: true,
+    forkAt: true,
     // Its app-server has no usage request yet.
     quota: false,
   };
@@ -614,9 +616,15 @@ export class CodexAppServerAdapter implements AgentAdapter {
     });
   }
 
-  async forkSession(agentSessionId: string): Promise<string> {
+  async forkSession(agentSessionId: string, _cwd?: string, forkRef?: string): Promise<string> {
     return this.withServer(async (peer) => {
-      const res = await peer.request('thread/fork', { threadId: agentSessionId, ephemeral: false, excludeTurns: true });
+      const res = await peer.request('thread/fork', {
+        threadId: agentSessionId,
+        // Turns after this one are left out of the copy.
+        ...(forkRef ? { lastTurnId: forkRef } : {}),
+        ephemeral: false,
+        excludeTurns: true,
+      });
       const id = res?.thread?.id;
       if (!id) throw new Error('Codex did not return a thread id for the fork');
       return String(id);

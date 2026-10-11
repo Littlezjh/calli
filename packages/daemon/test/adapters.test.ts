@@ -298,7 +298,7 @@ test('ClaudeAcpAdapter: commands keep the argument hint and are tracked per dire
 });
 
 import { turnsFromAcpReplay } from '../src/adapters/acp.js';
-import { summarisePiSession, turnsFromPiMessages } from '../src/adapters/pi.js';
+import { summarisePiSession, turnsFromPiMessages, withPiForkRefs } from '../src/adapters/pi.js';
 import { mkdirSync as mkdir, mkdtempSync as mkdtemp, rmSync as rm, writeFileSync as writeFile } from 'node:fs';
 import { tmpdir as osTmpdir } from 'node:os';
 
@@ -422,6 +422,10 @@ test('both agents list, replay and fork sessions through their own means', async
   assert.equal(turns[1].images.length, 1);
   assert.equal(await claude.forkSession('hist-x', here), 'hist-x-fork');
   await assert.rejects(claude.forkSession('unforkable', here), /cannot fork/);
+  // A copy can stop where a turn ended: at the last message the agent wrote in it.
+  assert.deepEqual(turns.map((t) => t.forkRef), ['m1b', 'm2']);
+  assert.equal(await claude.forkSession('hist-x', here, turns[0].forkRef), 'hist-x-fork-at-m1b');
+  await assert.rejects(claude.forkSession('hist-x', here, 'no-such-message'), /was not found/);
 
   const pi = new PiRpcAdapter([process.execPath, fakePi]);
   const piTurns = await pi.loadHistory('hist-p', here);
@@ -429,6 +433,26 @@ test('both agents list, replay and fork sessions through their own means', async
   assert.deepEqual(piTurns[0].events.map((e) => e.type), ['reasoning.delta', 'tool.start', 'tool.end', 'message.delta']);
   assert.equal(await pi.forkSession('hist-p', here), 'hist-p-clone');
   await assert.rejects(pi.forkSession('uncloneable', here), /cancelled/);
+  // pi forks from a user message, so "after the first turn" is a fork from the second turn's
+  // message. Nothing comes after the last turn; its copy is a clone.
+  assert.deepEqual(piTurns.map((t) => t.forkRef), ['e2', undefined]);
+  assert.equal(await pi.forkSession('hist-p', here, piTurns[0].forkRef), 'hist-p-fork-e2');
+  // The copy holds the first turn and nothing of the second.
+  assert.deepEqual((await pi.loadHistory('hist-p-fork-e2', here)).map((t) => t.text), ['run the tests']);
+  await assert.rejects(pi.forkSession('hist-p', here, 'e9'), /no entry e9/);
+});
+
+test('pi fork points are matched to turns by what was asked, not by position', () => {
+  const turn = (text: string) => ({ text, images: [], events: [] });
+  // pi lists a message that is not one of the turns here (say, from a branch summary): passed over.
+  const refs = withPiForkRefs(
+    [turn('one'), turn('two'), turn('three')],
+    [{ entryId: 'a', text: 'one' }, { entryId: 'x', text: 'something else' }, { entryId: 'b', text: ' two ' }, { entryId: 'c', text: 'three' }],
+  ).map((t) => t.forkRef);
+  assert.deepEqual(refs, ['b', 'c', undefined]);
+  // A turn pi has no fork point for: the turn before it cannot be forked at, the others still can.
+  assert.deepEqual(withPiForkRefs([turn('one'), turn('two'), turn('three')], [{ entryId: 'a', text: 'one' }, { entryId: 'c', text: 'three' }]).map((t) => t.forkRef), [undefined, 'c', undefined]);
+  assert.deepEqual(withPiForkRefs([turn('one')], []).map((t) => t.forkRef), [undefined]);
 });
 
 import { AgyAdapter, agyArgs, agyTurnResult, mapAgyStep, parseAgyModels } from '../src/adapters/agy.js';
@@ -1154,6 +1178,10 @@ test('CodexAppServerAdapter: listing, history, forking and deleting go through o
   assert.deepEqual(historyDiff, [{ type: 'diff', path: '/tmp/one/notes.md', oldText: 'a', newText: 'b' }]);
 
   assert.equal(await adapter.forkSession('codex-thread-1'), 'codex-thread-1-fork');
+  // Codex forks through a turn it is given the id of.
+  assert.deepEqual(history.map((t) => t.forkRef), ['turn-1', 'turn-2']);
+  assert.equal(await adapter.forkSession('hist-thread', here, history[0].forkRef), 'hist-thread-fork-at-turn-1');
+  await assert.rejects(adapter.forkSession('hist-thread', here, 'turn-9'), /unknown turn/);
 
   const log = join(tmpdir(), `fake-codex-delete-${process.pid}.log`);
   process.env.FAKE_CODEX_DELETE_LOG = log;

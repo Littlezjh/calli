@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEve
 import { MAX_QUEUED, type QueuedMessage, type SlashCommand } from '../api';
 import { buildMenu, type HubAction, type MenuRow } from '../commands';
 import { MAX_IMAGES, prepareImage, type PreparedImage } from '../images';
+import { withQuote } from '../timeline';
+import { Lightbox } from './Lightbox';
 import {
   IconArchive,
   IconClose,
@@ -14,6 +16,7 @@ import {
   IconInfo,
   IconPaperclip,
   IconPin,
+  IconQuote,
   IconSend,
   IconShield,
   IconSlash,
@@ -52,6 +55,8 @@ interface Props {
   onSendQueuedNow: (id: string) => void;
   /** Text to put back in the box, such as messages that were waiting when the user pressed stop. */
   restore: { text: string; nonce: number } | null;
+  /** Text quoted out of a message, to go along with what is typed. */
+  quote: { text: string; nonce: number } | null;
 }
 
 const ACTION_ICONS: Record<string, (p: { size?: number }) => JSX.Element> = {
@@ -90,14 +95,18 @@ export function Composer({
   onRemoveQueued,
   onSendQueuedNow,
   restore,
+  quote,
 }: Props) {
   const [text, setText] = useState('');
+  const [quoteText, setQuoteText] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [images, setImages] = useState<PreparedImage[]>([]);
   const [preparing, setPreparing] = useState(0);
   const [dragOver, setDragOver] = useState(false);
   const [active, setActive] = useState(0);
   const [dismissed, setDismissed] = useState(false);
+  /** A picture being looked at full size before it goes out. */
+  const [preview, setPreview] = useState<PreparedImage | null>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -111,6 +120,14 @@ export function Composer({
     setActive(0);
     setDismissed(false);
   }, [text]);
+
+  // A selection quoted out of a message. Keyed on the nonce: quoting the same text twice lands too.
+  useEffect(() => {
+    if (!quote) return;
+    setQuoteText(quote.text);
+    ref.current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quote?.nonce]);
 
   useEffect(() => {
     listRef.current?.querySelector('[data-active="true"]')?.scrollIntoView({ block: 'nearest' });
@@ -186,7 +203,7 @@ export function Composer({
     choose(row);
   };
 
-  const hasContent = text.trim() !== '' || images.length > 0;
+  const hasContent = text.trim() !== '' || images.length > 0 || quoteText !== null;
   // While a turn runs, sending means queueing, up to a limit.
   const queueFull = running && queued.length >= MAX_QUEUED;
   const canSend = hasContent && !busy && !disabled && preparing === 0 && !queueFull;
@@ -196,7 +213,8 @@ export function Composer({
     if (images.length && attachBlocked) return onError(attachBlocked);
     setBusy(true);
     try {
-      await onSend(text.trim(), images);
+      await onSend(quoteText ? withQuote(quoteText, text) : text.trim(), images);
+      setQuoteText(null);
       images.forEach((img) => URL.revokeObjectURL(img.previewUrl));
       setImages([]);
       setText('');
@@ -351,7 +369,15 @@ export function Composer({
             <div className="attachments" aria-label="要发送的图片">
               {images.map((img) => (
                 <div key={img.id} className="attachment">
-                  <img src={img.previewUrl} alt={img.name} />
+                  <button
+                    type="button"
+                    className="attachment-view"
+                    aria-label={`预览 ${img.name}`}
+                    title="预览"
+                    onClick={() => setPreview(img)}
+                  >
+                    <img src={img.previewUrl} alt={img.name} />
+                  </button>
                   <button type="button" className="attachment-remove" aria-label={`移除 ${img.name}`} onClick={() => removeImage(img.id)}>
                     <IconClose size={12} />
                   </button>
@@ -360,6 +386,20 @@ export function Composer({
               {Array.from({ length: preparing }, (_, i) => (
                 <div key={`p-${i}`} className="attachment pending" aria-label="正在处理图片" />
               ))}
+            </div>
+          )}
+
+          {quoteText !== null && (
+            <div className="quote-strip">
+              <span className="quote-icon">
+                <IconQuote size={14} />
+              </span>
+              <span className="quote-text" title={quoteText}>
+                {quoteText}
+              </span>
+              <button type="button" className="quote-remove" aria-label="移除引用" title="移除引用" onClick={() => setQuoteText(null)}>
+                <IconClose size={13} />
+              </button>
             </div>
           )}
 
@@ -422,6 +462,7 @@ export function Composer({
           </div>
         </div>
       </div>
+      {preview && <Lightbox url={preview.previewUrl} onClose={() => setPreview(null)} />}
     </div>
   );
 }

@@ -2,15 +2,21 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildTimeline,
+  clockLabel,
   durationLabel,
   groupByTurn,
+  runSummary,
   splitThinking,
+  splitUserQuote,
   thinkingPreview,
   stepDurationLabel,
   stepStatusLabel,
   stepTitle,
   toMarkdown,
   turnPreviews,
+  workSections,
+  withQuote,
+  type Step,
   type StoredEvent,
 } from '../src/timeline.js';
 
@@ -120,6 +126,30 @@ test('a finished answer gets an action row carrying its text; a running or faile
   seq = 0;
   const failed = buildTimeline([ev('turn.started', { text: 'q' }), ev('message.delta', { text: 'partial' }), ev('turn.error', { message: 'boom' })]);
   assert.equal(failed.items.some((i) => i.kind === 'actions'), false);
+});
+
+test('the action row carries when the turn ended, unless the hub only copied the turn in', () => {
+  seq = 0;
+  const seen = buildTimeline([ev('turn.started', { text: 'q' }), ev('message.delta', { text: 'a' }), ev('turn.done', {}, 't1', '2026-10-10T05:11:00.000Z')]);
+  const row = seen.items.at(-1);
+  assert.equal(row?.kind === 'actions' && row.at, '2026-10-10T05:11:00.000Z');
+
+  // An imported turn and one synced from the terminal were written down later than they happened.
+  for (const flag of ['imported', 'fromTerminal']) {
+    seq = 0;
+    const copied = buildTimeline([ev('turn.started', { text: 'q', [flag]: true }), ev('message.delta', { text: 'a' }), ev('turn.done', { [flag]: true })]);
+    const last = copied.items.at(-1);
+    assert.equal(last?.kind, 'actions');
+    assert.equal(last?.kind === 'actions' && 'at' in last, false, `${flag}: no time to show`);
+  }
+});
+
+test('clockLabel says only as much of the date as is needed', () => {
+  const now = new Date(2026, 9, 11, 9, 30);
+  assert.equal(clockLabel(new Date(2026, 9, 11, 8, 5).toISOString(), now), '08:05');
+  assert.equal(clockLabel(new Date(2026, 9, 10, 13, 11).toISOString(), now), '10月10日 13:11');
+  assert.equal(clockLabel(new Date(2025, 11, 31, 23, 59).toISOString(), now), '2025年12月31日 23:59');
+  assert.equal(clockLabel('not a date', now), '');
 });
 
 test('user images are kept on the user item', () => {
@@ -568,4 +598,79 @@ test('a turn the hub restart interrupted says so in plain words', () => {
   const error = tl.items.find((i) => i.kind === 'error');
   assert.match(error?.kind === 'error' ? error.message : '', /重启.*中断/);
   assert.equal(tl.running, false);
+});
+
+
+const step = (id: string, kind: string, extra: Partial<Step> = {}): Step => ({ id, title: id, kind, status: 'completed', diffs: [], ...extra });
+
+test('workSections keeps what was said apart and gathers the calls and thinking between into runs', () => {
+  seq = 0;
+  const tl = buildTimeline([
+    ev('turn.started', { text: 'q' }),
+    ev('reasoning.delta', { text: 'hmm' }),
+    ev('tool.start', { id: 'a', kind: 'read' }),
+    ev('tool.end', { id: 'a', status: 'completed' }),
+    ev('tool.start', { id: 'b', kind: 'search' }),
+    ev('tool.end', { id: 'b', status: 'completed' }),
+    ev('message.delta', { text: 'found it, fixing' }),
+    ev('tool.start', { id: 'c', kind: 'edit' }),
+  ]);
+  const work = tl.items.find((i) => i.kind === 'work');
+  assert.ok(work?.kind === 'work');
+  const sections = workSections(work.entries);
+  assert.deepEqual(sections.map((s) => s.kind), ['run', 'note', 'run']);
+  const [first, , last] = sections;
+  assert.ok(first.kind === 'run' && last.kind === 'run');
+  assert.deepEqual(first.entries.map((e) => e.kind), ['thought', 'step', 'step'], 'thinking stays in the run, in order');
+  assert.deepEqual(first.steps.map((s) => s.id), ['a', 'b']);
+  assert.deepEqual(last.steps.map((s) => s.id), ['c']);
+  // A run is still the same run when more calls join it: its key is its first entry's.
+  assert.notEqual(first.key, last.key);
+  assert.equal(workSections(work.entries.slice(0, 2))[0].key, first.key);
+});
+
+test('runSummary counts the calls by kind, in one line', () => {
+  const summary = runSummary([step('1', 'read'), step('2', 'execute'), step('3', 'read'), step('4', 'search'), step('5', 'mcp-thing')]);
+  assert.equal(summary.text, '已浏览 2 个文件，搜索 1 次，运行 1 条命令，调用 1 次工具');
+  assert.equal(summary.kind, 'read', 'the kind there is most of');
+  assert.equal(summary.failed, 0);
+});
+
+test('runSummary counts edited files once each, and says how many calls failed', () => {
+  const d = (path: string) => ({ path, oldText: '', newText: 'x', added: 1, removed: 0 });
+  const summary = runSummary([
+    step('1', 'edit', { diffs: [d('a.ts')] }),
+    step('2', 'edit', { diffs: [d('a.ts')] }),
+    step('3', 'edit', { diffs: [d('b.ts')] }),
+    step('4', 'edit'), // does not say what it wrote
+    step('5', 'execute', { status: 'failed' }),
+  ]);
+  assert.equal(summary.text, '已编辑 3 个文件，运行 1 条命令');
+  assert.equal(summary.kind, 'edit');
+  assert.equal(summary.failed, 1);
+  assert.equal(runSummary([]).text, '');
+});
+
+test('withQuote carries the passage as Markdown quote lines', () => {
+  assert.equal(withQuote('one line', 'why?'), '> one line\n\nwhy?');
+  // Several lines keep one marker each; empty ones stay empty quote lines.
+  assert.equal(withQuote('first\n\nsecond', 'and this?'), '> first\n>\n> second\n\nand this?');
+  // A quote alone is a whole message; so is text without one.
+  assert.equal(withQuote('  only the quote  ', ''), '> only the quote');
+});
+
+test('splitUserQuote reads the leading quote back out of a sent message', () => {
+  const roundTrip = splitUserQuote(withQuote('first\nsecond', 'the question'));
+  assert.equal(roundTrip.quote, 'first\nsecond');
+  assert.equal(roundTrip.body, 'the question');
+
+  // Text with no quote lines up front comes back whole, body only.
+  assert.deepEqual(splitUserQuote('plain message'), { quote: null, body: 'plain message' });
+  // Only the leading block counts: a quote typed in the middle stays in the body.
+  const inner = splitUserQuote('before\n> later');
+  assert.equal(inner.quote, null);
+  assert.equal(inner.body, 'before\n> later');
+  // A quote-only message has no body, and surrounding whitespace is dropped.
+  assert.deepEqual(splitUserQuote('> quoted'), { quote: 'quoted', body: '' });
+  assert.equal(splitUserQuote('>  spaced  ').quote, 'spaced');
 });

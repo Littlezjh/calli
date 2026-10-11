@@ -127,6 +127,8 @@ export interface AgentInfo {
     /** Can read plan usage outside a session, for the quota panel. */
     quota: boolean;
     fork: boolean;
+    /** A fork can end at an earlier turn instead of taking the whole thread. Missing from daemons that predate it. */
+    forkAt?: boolean;
   };
 }
 
@@ -384,9 +386,12 @@ export class Api {
     return this.request('POST', '/api/threads/import', { agent, sessionId });
   }
 
-  /** Copies a thread, on the agent's side too, into a new one that can go its own way. */
-  forkThread(threadId: string): Promise<Thread> {
-    return this.request('POST', `/api/threads/${threadId}/fork`);
+  /**
+   * Copies a thread, on the agent's side too, into a new one that can go its own way. With a turn,
+   * the copy ends where that turn ended.
+   */
+  forkThread(threadId: string, turnId?: string): Promise<Thread> {
+    return this.request('POST', `/api/threads/${threadId}/fork`, turnId ? { turnId } : undefined);
   }
 
   /** Pulls in turns the terminal added to this thread's session. */

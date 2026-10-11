@@ -101,6 +101,11 @@ export function turnsFromAcpReplay(updates: any[]): HistoryTurn[] {
   let current: HistoryTurn | null = null;
   let lastUserMessageId: unknown;
   for (const update of updates) {
+    // What the agent said or thought carries the id of the message it is part of. The last one
+    // in a turn is where a copy that ends with this turn stops.
+    if (current && (update?.sessionUpdate === 'agent_message_chunk' || update?.sessionUpdate === 'agent_thought_chunk')) {
+      if (typeof update.messageId === 'string' && update.messageId) current.forkRef = update.messageId;
+    }
     if (update?.sessionUpdate === 'user_message_chunk') {
       // Chunks of one message arrive one after another, before anything from the agent.
       const continues = current !== null && current.events.length === 0;
@@ -372,9 +377,19 @@ export abstract class AcpAdapter implements AgentAdapter {
     });
   }
 
-  async forkSession(agentSessionId: string, cwd: string): Promise<string> {
+  /**
+   * How this agent is told where a copy stops, as the `_meta` of `session/fork`. ACP itself has no
+   * field for it, so each agent has its own; the default is that there is no way.
+   */
+  protected forkPointMeta(_forkRef: string): Record<string, unknown> | undefined {
+    return undefined;
+  }
+
+  async forkSession(agentSessionId: string, cwd: string, forkRef?: string): Promise<string> {
+    const meta = forkRef ? this.forkPointMeta(forkRef) : undefined;
+    if (forkRef && !meta) throw new Error('this agent can only copy a whole conversation');
     return this.withAgent(cwd, async (peer) => {
-      const res = await peer.request('session/fork', { sessionId: agentSessionId, cwd, mcpServers: [] });
+      const res = await peer.request('session/fork', { sessionId: agentSessionId, cwd, mcpServers: [], ...(meta ? { _meta: meta } : {}) });
       if (!res?.sessionId) throw new Error('the agent did not return a session id for the fork');
       return String(res.sessionId);
     });

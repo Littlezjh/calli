@@ -126,6 +126,28 @@ export function summarisePiSession(headText: string, updatedAt: string | null): 
   };
 }
 
+/**
+ * pi forks from a user message: the copy holds everything before it. So the conversation as it
+ * stood when a turn ended is a fork from the next turn's message, and the last turn has no such
+ * point (its copy is a clone). `forkMessages` is what `get_fork_messages` lists, in order; a turn
+ * is matched to its message by text, so a message pi lists that is not a turn here is passed over.
+ */
+export function withPiForkRefs(turns: HistoryTurn[], forkMessages: any[]): HistoryTurn[] {
+  const entryOf: Array<string | undefined> = [];
+  let next = 0;
+  for (const turn of turns) {
+    let at = next;
+    while (at < forkMessages.length && String(forkMessages[at]?.text ?? '').trim() !== turn.text.trim()) at++;
+    if (at < forkMessages.length) {
+      entryOf.push(typeof forkMessages[at]?.entryId === 'string' ? forkMessages[at].entryId : undefined);
+      next = at + 1;
+    } else {
+      entryOf.push(undefined);
+    }
+  }
+  return turns.map((turn, i) => (entryOf[i + 1] ? { ...turn, forkRef: entryOf[i + 1] } : turn));
+}
+
 /** Turns the messages pi returns for a session into past turns. A user message starts a turn. */
 export function turnsFromPiMessages(messages: any[]): HistoryTurn[] {
   const turns: HistoryTurn[] = [];
@@ -579,6 +601,7 @@ export class PiRpcAdapter implements AgentAdapter {
     deleteSession: false,
     history: true,
     fork: true,
+    forkAt: true,
     // pi has no plan of its own to read: it runs on whatever model account it was given.
     quota: false,
   };
@@ -732,17 +755,23 @@ export class PiRpcAdapter implements AgentAdapter {
     const session = await PiSession.open(this.command, { cwd, resumeId: agentSessionId }, 'pi', this.env);
     try {
       const data = await session.request('get_messages', {});
-      return turnsFromPiMessages(data?.messages ?? []);
+      const turns = turnsFromPiMessages(data?.messages ?? []);
+      // Where a copy may stop. Older pi builds have no such command; then only whole copies work.
+      const forks = await session.request('get_fork_messages', {}).catch(() => null);
+      return withPiForkRefs(turns, forks?.messages ?? []);
     } finally {
       await session.close();
     }
   }
 
-  /** `clone` copies the conversation into a new session file and switches this pi to it. */
-  async forkSession(agentSessionId: string, cwd: string): Promise<string> {
+  /**
+   * `clone` copies the conversation into a new session file and switches this pi to it. `fork`
+   * does the same up to, and not including, one of its user messages.
+   */
+  async forkSession(agentSessionId: string, cwd: string, forkRef?: string): Promise<string> {
     const session = await PiSession.open(this.command, { cwd, resumeId: agentSessionId }, 'pi', this.env);
     try {
-      const res = await session.request('clone', {});
+      const res = forkRef ? await session.request('fork', { entryId: forkRef }) : await session.request('clone', {});
       if (res?.cancelled) throw new Error('an extension cancelled the fork');
       const state = await session.request('get_state', {});
       const id = String(state?.sessionId ?? '');

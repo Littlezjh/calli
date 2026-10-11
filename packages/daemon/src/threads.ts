@@ -63,6 +63,27 @@ function turnKey(text: string): string {
   return text.trim().slice(0, 200);
 }
 
+/**
+ * Pairs the agent's turns with the hub's, walking both lists from the start. A hub turn the agent
+ * never recorded (cancelled before it got there) is skipped, up to `tolerance` in a row. Returns,
+ * for each hub turn, which agent turn it is (-1 for none), and the first agent turn the hub does
+ * not have. Null when the two histories disagree beyond the tolerance.
+ */
+export function matchTurns(agentKeys: string[], hubKeys: string[], tolerance: number): { hubToAgent: number[]; agentNext: number } | null {
+  const hubToAgent = hubKeys.map(() => -1);
+  let ai = 0;
+  let hi = 0;
+  while (ai < agentKeys.length && hi < hubKeys.length) {
+    let j = hi;
+    while (j < hubKeys.length && j - hi < tolerance && agentKeys[ai] !== hubKeys[j]) j++;
+    if (j >= hubKeys.length || agentKeys[ai] !== hubKeys[j]) return null;
+    hubToAgent[j] = ai;
+    ai++;
+    hi = j + 1;
+  }
+  return { hubToAgent, agentNext: ai };
+}
+
 export interface AgentInfo {
   id: string;
   label: string;
@@ -242,19 +263,33 @@ export class ThreadManager {
 
   /**
    * Copies a thread into a new one that can go its own way. The agent copies its side of the
-   * conversation; the hub copies the event log and the images.
+   * conversation; the hub copies the event log and the images. With `turnId` the copy ends where
+   * that turn ended, on both sides; without it, or when that turn is the last, it is the whole thread.
    */
-  async forkThread(id: string): Promise<ThreadView> {
+  async forkThread(id: string, opts: { turnId?: string } = {}): Promise<ThreadView> {
     const thread = this.getThread(id);
     const adapter = this.adapters.get(thread.agent);
     if (!adapter?.capabilities.fork || !adapter.forkSession) throw new HttpError(400, `${thread.agent} cannot fork a conversation`);
     if (!thread.agentSessionId) throw new HttpError(400, 'there is nothing to fork yet; send a message first');
     if (this.running.has(id)) throw new HttpError(409, 'wait for the running turn to finish before forking');
 
+    // Where the hub's copy stops, and which of its turns that is. Null: the whole thread.
+    let cut: { upToSeq: number; hubIndex: number; hubKeys: string[] } | null = null;
+    if (opts.turnId) {
+      const starts = this.store.listEventsOfType(id, 'turn.started');
+      const hubIndex = starts.findIndex((ev) => ev.turnId === opts.turnId);
+      if (hubIndex < 0) throw new HttpError(404, 'no such turn in this thread');
+      if (hubIndex < starts.length - 1) {
+        cut = { upToSeq: starts[hubIndex + 1].seq - 1, hubIndex, hubKeys: starts.map((ev) => turnKey(String(ev.data.text ?? ''))) };
+      }
+    }
+
     let forkedSessionId: string;
     try {
-      forkedSessionId = await adapter.forkSession(thread.agentSessionId, thread.cwd);
+      const forkRef = cut ? await this.agentForkRef(thread, adapter, cut.hubIndex, cut.hubKeys) : undefined;
+      forkedSessionId = await adapter.forkSession(thread.agentSessionId, thread.cwd, forkRef);
     } catch (err) {
+      if (err instanceof HttpError) throw err;
       throw new HttpError(502, `could not fork the ${thread.agent} session: ${err instanceof Error ? err.message : err}`);
     }
 
@@ -273,7 +308,7 @@ export class ThreadManager {
           forkedFrom: thread.id,
         });
         this.store.updateThread(copyId, { agentSessionId: forkedSessionId, sectionId: thread.sectionId }, { touch: true });
-        this.store.copyEvents(thread.id, copyId);
+        this.store.copyEvents(thread.id, copyId, cut?.upToSeq);
       });
     } catch (err) {
       this.attachments.removeThread(copyId);
@@ -281,6 +316,26 @@ export class ThreadManager {
     }
     this.emitThreadEvent(copyId, null, 'thread.updated', { forkedFrom: thread.id });
     return this.threadView(copyId);
+  }
+
+  /**
+   * What the agent needs to stop its copy where one of the hub's turns ended. The agent numbers
+   * and names its turns its own way, so its history is read and lined up with the hub's by what
+   * was asked in each turn. Undefined when the agent has nothing after that turn: then its whole
+   * conversation is the copy.
+   */
+  private async agentForkRef(thread: ThreadRecord, adapter: AgentAdapter, hubIndex: number, hubKeys: string[]): Promise<string | undefined> {
+    if (!adapter.capabilities.forkAt || !adapter.loadHistory || !thread.agentSessionId) {
+      throw new HttpError(400, `${thread.agent} can only fork a whole conversation`);
+    }
+    const agentTurns = await adapter.loadHistory(thread.agentSessionId, thread.cwd);
+    const matched = matchTurns(agentTurns.map((t) => turnKey(t.text)), hubKeys, ThreadManager.SYNC_SKIP_TOLERANCE);
+    const agentIndex = matched?.hubToAgent[hubIndex] ?? -1;
+    if (agentIndex < 0) throw new HttpError(409, `this turn is not in ${thread.agent}'s own history, so a copy cannot stop there`);
+    if (agentIndex === agentTurns.length - 1) return undefined;
+    const ref = agentTurns[agentIndex].forkRef;
+    if (!ref) throw new HttpError(409, `${thread.agent} cannot stop a copy at this turn`);
+    return ref;
   }
 
   /** Where a stored image is on disk, for the HTTP layer to stream. */
@@ -757,24 +812,9 @@ export class ThreadManager {
       ),
     ]);
 
-    let ai = 0;
-    let hi = 0;
-    while (ai < agentTurns.length && hi < hubTexts.length) {
-      if (turnKey(agentTurns[ai].text) === hubTexts[hi]) {
-        ai++;
-        hi++;
-        continue;
-      }
-      // The agent's turn may sit further down the hub's list: hub turns the agent never recorded
-      // (cancelled before they got there) are skipped, up to a small tolerance.
-      let j = hi;
-      while (j < hubTexts.length && j - hi < ThreadManager.SYNC_SKIP_TOLERANCE && turnKey(agentTurns[ai].text) !== hubTexts[j]) j++;
-      if (j >= hubTexts.length || turnKey(agentTurns[ai].text) !== hubTexts[j]) {
-        return { added: 0, terminalActivity: this.view(thread).terminalActivity }; // histories disagree
-      }
-      hi = j;
-    }
-    const fresh = agentTurns.slice(ai);
+    const matched = matchTurns(agentTurns.map((t) => turnKey(t.text)), hubTexts, ThreadManager.SYNC_SKIP_TOLERANCE);
+    if (!matched) return { added: 0, terminalActivity: this.view(thread).terminalActivity }; // histories disagree
+    const fresh = agentTurns.slice(matched.agentNext);
     if (fresh.length === 0) return { added: 0, terminalActivity: this.view(thread).terminalActivity };
 
     const events: StoredEvent[] = [];

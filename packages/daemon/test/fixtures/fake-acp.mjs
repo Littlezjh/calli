@@ -13,6 +13,8 @@ if (process.argv[2] === 'delete') {
 }
 
 const traex = process.env.FAKE_ACP_FLAVOR === 'traex';
+// The ids the agent's messages carry in the canned history below; a fork can stop at any of them.
+const HIST_MESSAGE_IDS = ['m1a', 'm1b', 'm2'];
 
 const rl = createInterface({ input: process.stdin });
 const out = (obj) => process.stdout.write(JSON.stringify(obj) + '\n');
@@ -116,20 +118,27 @@ rl.on('line', (line) => {
       if (msg.params.sessionId === 'unforkable') {
         return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: 'cannot fork this one' } });
       }
-      return out({ jsonrpc: '2.0', id: msg.id, result: { sessionId: `${msg.params.sessionId}-fork` } });
+      {
+        // The real agent reads where to stop from this extension field: the id of the last message to keep.
+        const at = msg.params._meta?.jetbrains?.air?.fork;
+        if (at && (at.version !== 1 || !HIST_MESSAGE_IDS.includes(at.messageId))) {
+          return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: `Fork point message ${at.messageId} was not found` } });
+        }
+        return out({ jsonrpc: '2.0', id: msg.id, result: { sessionId: `${msg.params.sessionId}-fork${at ? `-at-${at.messageId}` : ''}` } });
+      }
     case 'session/load': {
       const replay = (u) => out({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: msg.params.sessionId, update: u } });
       if (String(msg.params.sessionId).startsWith('hist-')) {
         // A two-turn conversation, replayed the way the real agent does: all of it before the response.
         replay({ sessionUpdate: 'user_message_chunk', messageId: 'u1', content: { type: 'text', text: 'first ' } });
         replay({ sessionUpdate: 'user_message_chunk', messageId: 'u1', content: { type: 'text', text: 'question' } });
-        replay({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'let me look' } });
+        replay({ sessionUpdate: 'agent_thought_chunk', messageId: 'm1a', content: { type: 'text', text: 'let me look' } });
         replay({ sessionUpdate: 'tool_call', toolCallId: 'h1', title: 'Edit notes.md', kind: 'edit', status: 'pending' });
         replay({ sessionUpdate: 'tool_call_update', toolCallId: 'h1', status: 'completed', rawOutput: 'ok', content: [{ type: 'diff', path: 'notes.md', oldText: 'a', newText: 'b' }] });
-        replay({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'first answer' } });
+        replay({ sessionUpdate: 'agent_message_chunk', messageId: 'm1b', content: { type: 'text', text: 'first answer' } });
         replay({ sessionUpdate: 'user_message_chunk', messageId: 'u2', content: { type: 'text', text: 'second question' } });
         replay({ sessionUpdate: 'user_message_chunk', messageId: 'u2', content: { type: 'image', mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==' } });
-        replay({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'second answer' } });
+        replay({ sessionUpdate: 'agent_message_chunk', messageId: 'm2', content: { type: 'text', text: 'second answer' } });
       } else {
         replay({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'replayed (should be dropped)' } });
       }

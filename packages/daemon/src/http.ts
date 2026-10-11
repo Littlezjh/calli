@@ -391,7 +391,9 @@ export function createHttpServer(deps: HttpDeps): Server {
       }
 
       if (method === 'POST' && sub === 'fork') {
-        return sendJson(res, 201, await manager.forkThread(threadId));
+        // An empty body copies the whole thread; `turnId` names the turn the copy ends with.
+        const body = await readJson(req);
+        return sendJson(res, 201, await manager.forkThread(threadId, typeof body?.turnId === 'string' ? { turnId: body.turnId } : {}));
       }
 
       if (method === 'POST' && sub === 'cancel') {

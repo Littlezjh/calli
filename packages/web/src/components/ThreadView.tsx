@@ -5,13 +5,18 @@ import { copyText } from '../clipboard';
 import { diffLines, numberLines } from '../diff';
 import { nameAttachments, relativePath, shortenPaths } from '../paths';
 import {
+  clockLabel,
   durationLabel,
   groupByTurn,
   imagePathsIn,
+  runSummary,
   splitThinking,
+  splitUserQuote,
   thinkingPreview,
+  stepActive,
   stepTitle,
   stepStatusLabel,
+  workSections,
   type ApprovalOption,
   type FileChange,
   type FileDiff,
@@ -19,8 +24,10 @@ import {
   type Item,
   type Step,
   type Thought,
+  type WorkSection,
 } from '../timeline';
-import { IconCheck, IconChevron, IconClose, IconCopy, IconFile, IconSearch, IconTerminal } from './icons';
+import { Lightbox } from './Lightbox';
+import { IconCheck, IconChevron, IconClose, IconCopy, IconEdit, IconFile, IconFork, IconGlobe, IconSearch, IconTerminal } from './icons';
 
 interface Props {
   items: Item[];
@@ -36,6 +43,10 @@ interface Props {
   hasOlder?: boolean;
   loadingOlder?: boolean;
   onLoadOlder?: () => void;
+  /** Copies the thread as it stands and opens the copy. Missing when the agent cannot fork, or there is no session yet. */
+  onFork?: (turnId: string) => void;
+  /** The agent can end a copy at any finished turn, so every answer gets the button, not only the last. */
+  forkAnyTurn?: boolean;
 }
 
 /** Lines of one diff shown before the rest is folded away. */
@@ -44,7 +55,7 @@ const MAX_DIFF_LINES = 400;
 /** How many turns stay rendered before the rest folds into "上 N 条消息". */
 const RECENT_TURNS = 30;
 
-export function ThreadView({ items, running, roots, loadImage, loadFile, onDecide, hasOlder, loadingOlder, onLoadOlder }: Props) {
+export function ThreadView({ items, running, roots, loadImage, loadFile, onDecide, hasOlder, loadingOlder, onLoadOlder, onFork, forkAnyTurn }: Props) {
   const [lightbox, setLightbox] = useState<string | null>(null);
   const groups = useMemo(() => groupByTurn(items), [items]);
   // "Show everything" is remembered per thread; switching threads starts folded again.
@@ -55,11 +66,17 @@ export function ThreadView({ items, running, roots, loadImage, loadFile, onDecid
   const shown = folded ? groups.slice(groups.length - RECENT_TURNS) : groups;
   const hiddenCount = folded ? groups.length - shown.length : 0;
   const hiddenMessages = folded ? groups.slice(0, -RECENT_TURNS).reduce((n, g) => n + g.items.length, 0) : 0;
+  // A fork from the last answer copies the whole thread; it is offered while that answer is the
+  // last thing in it. Where the agent can end a copy at an earlier turn, every answer offers one.
+  const tail = items[items.length - 1];
+  const lastKey = tail?.kind === 'actions' ? tail.key : null;
 
   const renderItems = (list: Item[]) =>
     list.map((item) => {
       switch (item.kind) {
-        case 'user':
+        case 'user': {
+          // A quoted passage rides in the message text as Markdown quote lines; drawn apart here.
+          const { quote, body } = splitUserQuote(item.text);
           return (
             <div key={item.key} className="row user" data-turn={item.turnId}>
               {item.images.length > 0 && (
@@ -69,19 +86,25 @@ export function ThreadView({ items, running, roots, loadImage, loadFile, onDecid
                   ))}
                 </div>
               )}
-              {item.text && (
-                <div className="bubble">
-                  {item.fromTerminal && <span className="term-chip" title="这轮是在终端里发的">终端</span>}
-                  {item.text}
+              {quote !== null && (
+                <div className="bubble-quote" title={quote}>
+                  {quote}
                 </div>
               )}
-              {!item.text && item.fromTerminal && (
+              {body && (
+                <div className="bubble">
+                  {item.fromTerminal && <span className="term-chip" title="这轮是在终端里发的">终端</span>}
+                  {body}
+                </div>
+              )}
+              {!body && item.fromTerminal && (
                 <div className="bubble">
                   <span className="term-chip" title="这轮是在终端里发的">终端</span>
                 </div>
               )}
             </div>
           );
+        }
         case 'assistant':
           if (!item.text) return null;
           return <AssistantMessage key={item.key} text={item.text} done={item.done} roots={roots} loadFile={loadFile} onOpen={setLightbox} />;
@@ -97,6 +120,22 @@ export function ThreadView({ items, running, roots, loadImage, loadFile, onDecid
           return (
             <div key={item.key} className="row message-actions">
               <CopyButton text={item.text} label="复制回答" />
+              {onFork && (forkAnyTurn || item.key === lastKey) && (
+                <button
+                  type="button"
+                  className="quiet-btn"
+                  aria-label="分叉"
+                  title={item.key === lastKey ? '分叉：复制这个线程，从这里另走一条路' : '分叉：从这一轮之后另走一条路，后面的不带过去'}
+                  onClick={() => onFork(item.turnId)}
+                >
+                  <IconFork size={15} />
+                </button>
+              )}
+              {item.at && (
+                <time className="message-time" dateTime={item.at} title={new Date(item.at).toLocaleString('zh-CN')}>
+                  {clockLabel(item.at)}
+                </time>
+              )}
             </div>
           );
         case 'error':
@@ -316,24 +355,6 @@ function SentImage({ image, load, onOpen }: { image: ImageRef; load: (id: string
   );
 }
 
-function Lightbox({ url, onClose }: { url: string; onClose: () => void }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
-  return (
-    <div className="lightbox" role="dialog" aria-modal="true" aria-label="图片" onClick={onClose}>
-      <img src={url} alt="放大的图片" />
-      <button type="button" className="lightbox-close" aria-label="关闭" onClick={onClose}>
-        <IconClose size={18} />
-      </button>
-    </div>
-  );
-}
-
 function WorkGroup({ item, roots }: { item: Extract<Item, { kind: 'work' }>; roots: string[] }) {
   // Open while the turn runs so progress is visible; collapsed once it finishes.
   const [open, setOpen] = useState(!item.done);
@@ -344,7 +365,7 @@ function WorkGroup({ item, roots }: { item: Extract<Item, { kind: 'work' }>; roo
   const time = item.done && item.timed ? durationLabel(item.startedAt, item.endedAt) : '';
   const label = !item.done ? '工作中' : time ? `用时 ${time}` : '已处理';
   const count = item.steps.length;
-  const last = item.entries.length - 1;
+  const sections = workSections(item.entries);
   return (
     <div className="row work">
       <button className="work-toggle" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
@@ -354,17 +375,14 @@ function WorkGroup({ item, roots }: { item: Extract<Item, { kind: 'work' }>; roo
       </button>
       {open && (
         <div className="work-body">
-          {item.entries.map((entry, i) => {
-            switch (entry.kind) {
-              case 'thought':
-                // Only the stretch at the end of a running turn is still being thought.
-                return <ThinkingBlock key={entry.thought.key} thought={entry.thought} live={!item.done && i === last} />;
-              case 'step':
-                return <StepRow key={entry.step.id} step={entry.step} roots={roots} />;
-              case 'note':
-                return <WorkNote key={entry.key} text={entry.text} />;
-            }
-          })}
+          {sections.map((section, i) =>
+            section.kind === 'note' ? (
+              <WorkNote key={section.key} text={section.text} />
+            ) : (
+              // Only the stretch at the end of a running turn is still going on.
+              <StepRun key={section.key} run={section} live={!item.done && i === sections.length - 1} roots={roots} />
+            ),
+          )}
         </div>
       )}
     </div>
@@ -433,6 +451,62 @@ const STEP_ICONS: Record<string, (p: { size?: number }) => JSX.Element> = {
   execute: IconTerminal,
   search: IconSearch,
 };
+
+/** The icon of a folded run: what there was most of in it. Looking around, by file or by search, is one thing. */
+const RUN_ICONS: Record<string, (p: { size?: number }) => JSX.Element> = {
+  execute: IconTerminal,
+  search: IconSearch,
+  read: IconSearch,
+  fetch: IconGlobe,
+  edit: IconEdit,
+};
+
+/** From this many finished calls on, a run is one line that counts them. Fewer are shown as they are. */
+const RUN_FOLD_MIN = 2;
+
+/**
+ * A stretch of thinking and tool calls between two things the agent said. Several calls fold into
+ * one line that counts them by kind ("已浏览 2 个文件，搜索 1 次"), the way Codex does, and open to
+ * the calls themselves. In a run that is still going on, what is in flight stays on screen as
+ * itself; only what is over is folded.
+ */
+function StepRun({ run, live, roots }: { run: Extract<WorkSection, { kind: 'run' }>; live: boolean; roots: string[] }) {
+  const [open, setOpen] = useState(false);
+  const last = run.entries.length - 1;
+  const inFlight = (i: number) => {
+    const entry = run.entries[i];
+    return live && (entry.kind === 'step' ? stepActive(entry.step) : i === last);
+  };
+  const row = (i: number) => {
+    const entry = run.entries[i];
+    return entry.kind === 'thought' ? (
+      <ThinkingBlock key={entry.thought.key} thought={entry.thought} live={live && i === last} />
+    ) : (
+      <StepRow key={entry.step.id} step={entry.step} roots={roots} />
+    );
+  };
+  const indexes = run.entries.map((_, i) => i);
+  const over = indexes.filter((i) => !inFlight(i));
+  const overSteps = over.map((i) => run.entries[i]).flatMap((e) => (e.kind === 'step' ? [e.step] : []));
+  if (overSteps.length < RUN_FOLD_MIN) return <>{indexes.map(row)}</>;
+
+  const summary = runSummary(overSteps);
+  const Icon = RUN_ICONS[summary.kind] ?? IconFile;
+  return (
+    <>
+      <div className="step-run">
+        <button className="step-head run-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+          <Icon size={15} />
+          <span className="run-title">{summary.text}</span>
+          {summary.failed > 0 && <span className="run-failed">{summary.failed} 次失败</span>}
+          <IconChevron size={13} open={open} />
+        </button>
+        {open && <div className="run-body">{over.map(row)}</div>}
+      </div>
+      {indexes.filter(inFlight).map(row)}
+    </>
+  );
+}
 
 function StepRow({ step, roots }: { step: Step; roots: string[] }) {
   const [open, setOpen] = useState(false);

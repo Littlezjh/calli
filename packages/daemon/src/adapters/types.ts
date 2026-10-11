@@ -134,6 +134,12 @@ export interface HistoryTurn {
   text: string;
   images: ImageInput[];
   events: EmittedEvent[];
+  /**
+   * What forkSession needs to copy the conversation as it stood when this turn ended. Only from
+   * adapters with capabilities.forkAt, and missing where the agent cannot stop a copy: an adapter
+   * may leave it off the last turn, whose copy is the whole conversation anyway.
+   */
+  forkRef?: string;
 }
 
 export interface StartOptions {
@@ -166,6 +172,8 @@ export interface AgentAdapter {
     quota: boolean;
     /** Whether a conversation can be copied into a new, independent one. */
     fork: boolean;
+    /** Whether that copy can stop at an earlier turn instead of taking everything. Needs fork and history. */
+    forkAt: boolean;
   };
   /** Whether the agent can be started on this host. */
   available(): Promise<boolean>;
@@ -192,7 +200,10 @@ export interface AgentAdapter {
 
   /** Plan usage, read outside any session. With capabilities.quota. Cached one layer up. */
   fetchQuota?(): Promise<PlanQuota>;
-  /** Copies a conversation and returns the id of the copy. With capabilities.fork. */
-  forkSession?(agentSessionId: string, cwd: string): Promise<string>;
+  /**
+   * Copies a conversation and returns the id of the copy. With capabilities.fork. Given a turn's
+   * forkRef (with capabilities.forkAt), the copy ends where that turn ended.
+   */
+  forkSession?(agentSessionId: string, cwd: string, forkRef?: string): Promise<string>;
   start(opts: StartOptions): Promise<AgentSession>;
 }

@@ -14,7 +14,7 @@ import type { AgentAdapter } from '../src/adapters/types.js';
 import { AttachmentStore, sniffImageType } from '../src/attachments.js';
 import { createHttpServer, tokenMatches } from '../src/http.js';
 import { Store } from '../src/store.js';
-import { ThreadManager } from '../src/threads.js';
+import { matchTurns, ThreadManager } from '../src/threads.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const TOKEN = 'test-token-0123456789';
@@ -944,6 +944,89 @@ test('fork works for pi too, and agents say whether they can import and fork', a
 
   const agents = (await (await api('/api/agents')).json()) as Array<{ id: string; capabilities: { history: boolean; fork: boolean } }>;
   assert.deepEqual(agents.map((a) => [a.id, a.capabilities.history, a.capabilities.fork]).sort(), [['agy', false, false], ['claude', true, true], ['pi', true, true]]);
+});
+
+test('fork at a turn: the copy ends where that turn ended, on the hub and on the agent', async () => {
+  const turnsOf = async (id: string) => (await events(id)).filter((e) => e.type === 'turn.started');
+  const ask = async (id: string, text: string) => {
+    await api(`/api/threads/${id}/turns`, { method: 'POST', body: JSON.stringify({ text }) });
+    await waitFor(async () => {
+      const t = (await (await api(`/api/threads/${id}`)).json()) as { status: string };
+      return t.status === 'idle' ? t : null;
+    });
+  };
+  const forkAt = (id: string, turnId: string) => api(`/api/threads/${id}/fork`, { method: 'POST', body: JSON.stringify({ turnId }) });
+
+  // Three turns here; the agent's own history (the fake's canned one) knows the first two.
+  const thread = await newThread({ agent: 'pi' });
+  for (const text of ['run the tests', 'and this picture?', 'never reached the agent']) await ask(thread.id, text);
+  store.updateThread(thread.id, { agentSessionId: 'hist-forkat' });
+  const [first, second, third] = await turnsOf(thread.id);
+
+  // After the first turn: pi forks from the second turn's message, the hub copies the log up to it.
+  const res = await forkAt(thread.id, first.turnId!);
+  assert.equal(res.status, 201);
+  const copy = (await res.json()) as Record<string, any>;
+  assert.equal(copy.agentSessionId, 'hist-forkat-fork-e2');
+  assert.equal(copy.forkedFrom, thread.id);
+  const copied = await events(copy.id);
+  assert.deepEqual(copied.filter((e) => e.type === 'turn.started').map((e) => e.data.text), ['run the tests']);
+  // Everything before the next turn, nothing of it; then only the note that this thread is a fork.
+  const before = (await events(thread.id)).filter((e) => e.seq < second.seq);
+  assert.deepEqual(copied.slice(0, before.length).map((e) => [e.seq, e.type, e.data]), before.map((e) => [e.seq, e.type, e.data]));
+  assert.deepEqual(copied.slice(before.length).map((e) => e.type), ['thread.updated']);
+  assert.equal(copied.some((e) => e.turnId === first.turnId && e.type === 'turn.done'), true);
+
+  // The copy goes its own way from there, and the original keeps all three turns.
+  await ask(copy.id, 'a different second turn');
+  assert.deepEqual((await turnsOf(copy.id)).map((e) => e.data.text), ['run the tests', 'a different second turn']);
+  assert.equal((await turnsOf(thread.id)).length, 3);
+
+  // The agent has nothing after the second turn, so its whole conversation is the copy; the hub
+  // still leaves out the turn that came after.
+  const whole = (await (await forkAt(thread.id, second.turnId!)).json()) as Record<string, any>;
+  assert.equal(whole.agentSessionId, 'hist-forkat-clone');
+  assert.deepEqual((await turnsOf(whole.id)).map((e) => e.data.text), ['run the tests', 'and this picture?']);
+
+  // The last turn is the whole thread: no history is read for it.
+  const last = (await (await forkAt(thread.id, third.turnId!)).json()) as Record<string, any>;
+  assert.equal(last.agentSessionId, 'hist-forkat-clone');
+  assert.equal((await turnsOf(last.id)).length, 3);
+
+  assert.equal((await forkAt(thread.id, 'no-such-turn')).status, 404);
+
+  // A thread whose turns the agent has no record of: there is nowhere on its side to stop.
+  const lost = await newThread({ agent: 'pi' });
+  await ask(lost.id, 'one');
+  await ask(lost.id, 'two');
+  const [lostFirst] = await turnsOf(lost.id);
+  const refused = await forkAt(lost.id, lostFirst.turnId!);
+  assert.equal(refused.status, 409);
+  assert.match(((await refused.json()) as { error: string }).error, /not in pi's own history/);
+
+  // Claude is told the last message to keep.
+  const claude = await newThread({ agent: 'claude' });
+  await ask(claude.id, 'first question');
+  await ask(claude.id, 'second question');
+  store.updateThread(claude.id, { agentSessionId: 'hist-forkat' });
+  const [claudeFirst] = await turnsOf(claude.id);
+  const claudeCopy = (await (await forkAt(claude.id, claudeFirst.turnId!)).json()) as Record<string, any>;
+  assert.equal(claudeCopy.agentSessionId, 'hist-forkat-fork-at-m1b');
+  assert.deepEqual((await turnsOf(claudeCopy.id)).map((e) => e.data.text), ['first question']);
+
+  const agents = (await (await api('/api/agents')).json()) as Array<{ id: string; capabilities: { forkAt: boolean } }>;
+  assert.deepEqual(agents.map((a) => [a.id, a.capabilities.forkAt]).sort(), [['agy', false], ['claude', true], ['pi', true]]);
+});
+
+test('matchTurns pairs the two histories from the start and gives up when they disagree', () => {
+  assert.deepEqual(matchTurns(['a', 'b'], ['a', 'b', 'c'], 3), { hubToAgent: [0, 1, -1], agentNext: 2 });
+  // A hub turn the agent never recorded is passed over; the agent's extra turn is new.
+  assert.deepEqual(matchTurns(['a', 'c', 'd'], ['a', 'b', 'c'], 3), { hubToAgent: [0, -1, 1], agentNext: 2 });
+  // The same question asked twice pairs in order.
+  assert.deepEqual(matchTurns(['go', 'go'], ['go', 'go'], 3), { hubToAgent: [0, 1], agentNext: 2 });
+  assert.equal(matchTurns(['x'], ['a', 'b'], 3), null);
+  assert.equal(matchTurns(['e'], ['a', 'b', 'c', 'd', 'e'], 3), null, 'further apart than the tolerance');
+  assert.deepEqual(matchTurns([], ['a'], 3), { hubToAgent: [-1], agentNext: 0 });
 });
 
 test('agy: two permission levels, no approvals, no images; settings are flags of its process', async () => {

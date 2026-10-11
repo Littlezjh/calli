@@ -68,17 +68,23 @@ export function useThreadActions(deps: Deps) {
     }
   };
 
-  // The agent copies its side of the conversation, which can take a few seconds.
-  const fork = async (thread: Thread) => {
+  // The agent copies its side of the conversation, which can take a few seconds. With a turn, the
+  // copy ends where that turn ended; the agent's own history is read to find that place.
+  const fork = async (thread: Thread, turnId?: string) => {
     if (!api) return;
     const blocked = forkBlocked(thread);
     if (blocked) return toast({ message: blocked });
     toast({ message: '正在分叉…', busy: true });
     try {
-      onThreadOpen(await api.forkThread(thread.id));
+      onThreadOpen(await api.forkThread(thread.id, turnId));
       toast({ message: '已分叉，现在在新线程里' });
     } catch (e) {
       toast(null);
+      // The agent keeps its own record of the conversation. A turn it has no record of (one that
+      // never reached it, say) is not a place its copy can stop.
+      if (turnId && e instanceof Error && /own history|cannot stop a copy|whole conversation/.test(e.message)) {
+        return toast({ message: '这一轮在 agent 自己的记录里对不上，没法从这里分叉；可以从最后一条回答分叉整个线程' });
+      }
       onError(e);
     }
   };
@@ -334,6 +340,8 @@ export function useThreadActions(deps: Deps) {
     openSectionMenu: (section: Section, x: number, y: number) => setMenu({ section, x, y }),
     copyConversation: (thread: Thread) => void copy(markdownOf(thread), '对话'),
     newSection: () => setDialog({ kind: 'new-section', thread: null }),
+    /** Forks so that the copy ends with the given turn. */
+    forkAt: (thread: Thread, turnId: string) => void fork(thread, turnId),
     run,
     layer,
   };

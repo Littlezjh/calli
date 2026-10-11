@@ -122,8 +122,8 @@ export type Item =
   | { kind: 'plan'; key: string; turnId: string; entries: PlanEntry[]; done: boolean }
   /** Files a turn changed, shown once after everything else in the turn. */
   | { kind: 'changes'; key: string; turnId: string; files: FileChange[]; added: number; removed: number }
-  /** The row under a finished answer. `text` is what "copy" copies. */
-  | { kind: 'actions'; key: string; turnId: string; text: string }
+  /** The row under a finished answer. `text` is what "copy" copies; `at` is when the turn ended, where the hub saw it end. */
+  | { kind: 'actions'; key: string; turnId: string; text: string; at?: string }
   | { kind: 'error'; key: string; turnId: string | null; message: string };
 
 /**
@@ -148,6 +148,36 @@ export interface Timeline {
   awaitingApproval: boolean;
   /** The latest context usage the agent reported, if it reports any. */
   usage: Usage | null;
+}
+
+/**
+ * Text a user picked out of a message, quoted into the text they send. The quote rides along as
+ * ordinary Markdown block-quote lines, so the agent, the terminal and every copy of the thread
+ * see the same thing with no storage of our own.
+ */
+export function withQuote(quote: string, body: string): string {
+  const quoted = quote
+    .trim()
+    .split('\n')
+    .map((line) => `> ${line}`.trimEnd())
+    .join('\n');
+  const rest = body.trim();
+  return rest ? `${quoted}\n\n${rest}` : quoted;
+}
+
+/** The leading block-quote lines of a sent message, split back out to draw above the bubble. */
+export function splitUserQuote(text: string): { quote: string | null; body: string } {
+  const lines = text.split('\n');
+  let end = 0;
+  while (end < lines.length && lines[end].startsWith('>')) end += 1;
+  if (end === 0) return { quote: null, body: text };
+  const quote = lines
+    .slice(0, end)
+    .map((line) => line.replace(/^>\s?/, ''))
+    .join('\n')
+    .trim();
+  const body = lines.slice(end).join('\n').replace(/^\n+/, '');
+  return { quote: quote || null, body };
 }
 
 // The timeline is rebuilt on every new event. Line counts are the costly part, and the raw
@@ -203,7 +233,9 @@ function applyToolData(step: Step, data: Record<string, any>): void {
 
 export function buildTimeline(events: StoredEvent[]): Timeline {
   const items: Item[] = [];
-  const finished = new Set<string>();
+  // Finished turns, with the time each ended. Turns the hub only copied in (imported history,
+  // turns synced from the terminal) ended at some earlier time it never saw: those have none.
+  const finished = new Map<string, string | undefined>();
   const imported = new Set<string>();
   let lastSeq = 0;
   let running = false;
@@ -388,7 +420,7 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
 
       case 'turn.done':
         closeTurn(ev.ts);
-        finished.add(turn);
+        finished.set(turn, ev.data.imported || ev.data.fromTerminal ? undefined : ev.ts);
         running = false;
         break;
 
@@ -445,7 +477,7 @@ export function imagePathsIn(text: string): string[] {
  * A turn still running gets neither: its live steps are the story on screen. Turns never overlap
  * in a thread, so a turn ends where the next user item begins.
  */
-function addTurnSummaries(items: Item[], finished: Set<string>): Item[] {
+function addTurnSummaries(items: Item[], finished: Map<string, string | undefined>): Item[] {
   const out: Item[] = [];
   let turnItems: Item[] = [];
 
@@ -486,7 +518,8 @@ function addTurnSummaries(items: Item[], finished: Set<string>): Item[] {
     if (finished.has(turnId)) {
       const answers = turnItems.filter((it): it is Extract<Item, { kind: 'assistant' }> => it.kind === 'assistant' && it.text.trim() !== '');
       const last = answers[answers.length - 1];
-      if (last) out.push({ kind: 'actions', key: `actions-${turnId}`, turnId, text: last.text });
+      const at = finished.get(turnId);
+      if (last) out.push({ kind: 'actions', key: `actions-${turnId}`, turnId, text: last.text, ...(at ? { at } : {}) });
     }
     turnItems = [];
   };
@@ -497,6 +530,20 @@ function addTurnSummaries(items: Item[], finished: Set<string>): Item[] {
   }
   flush();
   return out;
+}
+
+/**
+ * When a turn ended, as short as it can be said: the time alone today, the date with it earlier
+ * this year, and the year too before that.
+ */
+export function clockLabel(iso: string, now: Date = new Date()): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+  if (sameDay) return time;
+  const date = `${d.getMonth() + 1}月${d.getDate()}日`;
+  return d.getFullYear() === now.getFullYear() ? `${date} ${time}` : `${d.getFullYear()}年${date} ${time}`;
 }
 
 /** Seconds between the first and last event of a work group, for the "用时 X" label. */
@@ -543,8 +590,73 @@ export function stepTitle(step: Step): string {
 /** What the right side of a step row says: the duration when done, the state otherwise. */
 export function stepStatusLabel(step: Step): string {
   if (step.status === 'failed') return '失败';
-  if (step.status === 'in_progress' || step.status === 'pending') return '运行中';
+  if (stepActive(step)) return '运行中';
   return stepDurationLabel(step.startedAt, step.endedAt) || '完成';
+}
+
+/** A call that has started and not come back yet. */
+export const stepActive = (step: Step) => step.status === 'in_progress' || step.status === 'pending';
+
+/**
+ * A turn's work as it is laid out: what the agent said on the way, and between those remarks the
+ * stretches of thinking and tool calls. A stretch of several calls is shown as one line that
+ * counts them, so a long turn reads as what was said, not as every command that was run.
+ */
+export type WorkSection =
+  | { kind: 'note'; key: string; text: string }
+  | { kind: 'run'; key: string; entries: Exclude<WorkEntry, { kind: 'note' }>[]; steps: Step[] };
+
+export function workSections(entries: WorkEntry[]): WorkSection[] {
+  const out: WorkSection[] = [];
+  for (const entry of entries) {
+    if (entry.kind === 'note') {
+      out.push(entry);
+      continue;
+    }
+    let run = out[out.length - 1];
+    if (run?.kind !== 'run') {
+      run = { kind: 'run', key: `run-${entry.kind === 'step' ? entry.step.id : entry.thought.key}`, entries: [], steps: [] };
+      out.push(run);
+    }
+    run.entries.push(entry);
+    if (entry.kind === 'step') run.steps.push(entry.step);
+  }
+  return out;
+}
+
+/** The kinds of call a summary counts apart, in the order it names them. Anything else is "a tool". */
+const RUN_GROUPS: Array<{ kinds: string[]; say: (n: number) => string }> = [
+  { kinds: ['read'], say: (n) => `浏览 ${n} 个文件` },
+  { kinds: ['search'], say: (n) => `搜索 ${n} 次` },
+  { kinds: ['fetch'], say: (n) => `抓取 ${n} 个网页` },
+  { kinds: ['edit', 'write'], say: (n) => `编辑 ${n} 个文件` },
+  { kinds: ['create'], say: (n) => `创建 ${n} 个文件` },
+  { kinds: ['delete'], say: (n) => `删除 ${n} 个文件` },
+  { kinds: ['move'], say: (n) => `移动 ${n} 个文件` },
+  { kinds: ['execute'], say: (n) => `运行 ${n} 条命令` },
+];
+
+/**
+ * A stretch of tool calls in one line: "已浏览 2 个文件，搜索 1 次". Also which kind of call
+ * there was most of (for the row's icon) and how many failed.
+ */
+export function runSummary(steps: Step[]): { text: string; kind: string; failed: number } {
+  const parts: string[] = [];
+  let lead = { kind: 'other', count: 0 };
+  const count = (kind: string, n: number, say: (n: number) => string) => {
+    if (n === 0) return;
+    parts.push(say(n));
+    if (n > lead.count) lead = { kind, count: n };
+  };
+  const known = new Set(RUN_GROUPS.flatMap((g) => g.kinds));
+  for (const group of RUN_GROUPS) {
+    const calls = steps.filter((s) => group.kinds.includes(s.kind));
+    // Three edits to one file changed one file. A call that does not say what it wrote counts as one.
+    const files = new Set(calls.flatMap((s) => (s.diffs.length ? s.diffs.map((d) => d.path) : [`call:${s.id}`])));
+    count(group.kinds[0], group.kinds[0] === 'edit' ? files.size : calls.length, group.say);
+  }
+  count('other', steps.filter((s) => !known.has(s.kind)).length, (n) => `调用 ${n} 次工具`);
+  return { text: parts.length ? `已${parts.join('，')}` : '', kind: lead.kind, failed: steps.filter((s) => s.status === 'failed').length };
 }
 
 /** Thinking text the model wrote as one stream is shown as short paragraphs. */

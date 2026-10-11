@@ -1,16 +1,128 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type MouseEvent, type TouchEvent } from 'react';
+
+function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = useState(() => typeof window !== 'undefined' && window.matchMedia(query).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(query);
+    const onChange = () => setMatches(mq.matches);
+    onChange();
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, [query]);
+  return matches;
+}
 
 /** True on phone-width screens, where menus are bottom sheets instead of floating panels. */
 export function useIsNarrow(): boolean {
-  const query = '(max-width: 640px)';
-  const [narrow, setNarrow] = useState(() => typeof window !== 'undefined' && window.matchMedia(query).matches);
+  return useMediaQuery('(max-width: 640px)');
+}
+
+/** True where the thread list is a layer under the conversation, not a column beside it. The stylesheet draws the line at the same width. */
+export function useIsCompact(): boolean {
+  return !useMediaQuery('(min-width: 900px)');
+}
+
+/** How close to the left edge a swipe has to start to open the thread list. */
+const EDGE_PX = 28;
+/** How far sideways a finger travels before the swipe counts. */
+const SWIPE_PX = 56;
+/** How far it may wander up or down meanwhile; further than this and it is a scroll. */
+const SWIPE_DRIFT_PX = 40;
+
+/**
+ * Swipes that move the phone's thread list: in from the left edge opens it, leftwards closes it.
+ * Only on the conversation and the list themselves, never on a sheet or dialog lying over them.
+ */
+export function useListSwipe(enabled: boolean, open: boolean, setOpen: (open: boolean) => void) {
   useEffect(() => {
-    const mq = window.matchMedia(query);
-    const onChange = () => setNarrow(mq.matches);
-    mq.addEventListener('change', onChange);
-    return () => mq.removeEventListener('change', onChange);
-  }, []);
-  return narrow;
+    if (!enabled) return;
+    let start: { x: number; y: number } | null = null;
+    const onStart = (e: globalThis.TouchEvent) => {
+      start = null;
+      const t = e.touches[0];
+      const el = e.target instanceof Element ? e.target : null;
+      if (e.touches.length !== 1 || !el?.closest('.main, .sidebar') || el.closest('.pop-panel, .pop-scrim, .lightbox')) return;
+      if (open || t.clientX <= EDGE_PX) start = { x: t.clientX, y: t.clientY };
+    };
+    const onMove = (e: globalThis.TouchEvent) => {
+      const t = e.touches[0];
+      if (!start || !t) return;
+      const dx = t.clientX - start.x;
+      if (Math.abs(t.clientY - start.y) > SWIPE_DRIFT_PX) start = null;
+      else if (open ? dx < -SWIPE_PX : dx > SWIPE_PX) {
+        start = null;
+        setOpen(!open);
+      }
+    };
+    const onEnd = () => {
+      start = null;
+    };
+    document.addEventListener('touchstart', onStart, { passive: true });
+    document.addEventListener('touchmove', onMove, { passive: true });
+    document.addEventListener('touchend', onEnd, { passive: true });
+    document.addEventListener('touchcancel', onEnd, { passive: true });
+    return () => {
+      document.removeEventListener('touchstart', onStart);
+      document.removeEventListener('touchmove', onMove);
+      document.removeEventListener('touchend', onEnd);
+      document.removeEventListener('touchcancel', onEnd);
+    };
+    // setOpen is a state setter.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, open]);
+}
+
+/** How long a finger rests on something before it counts as a long press. */
+const LONG_PRESS_MS = 450;
+/** How far it may drift meanwhile; further than this and it is a scroll. */
+const LONG_PRESS_SLOP = 10;
+
+/**
+ * Long press, for touch screens: there is no right click there, and iOS sends no contextmenu
+ * event. Returns a function that makes the handlers for one target. The press that opened
+ * something is not also a tap, so the click that would follow it is swallowed.
+ */
+export function useLongPress<T>(onLongPress: (target: T, x: number, y: number) => void) {
+  const press = useRef({ timer: undefined as ReturnType<typeof setTimeout> | undefined, x: 0, y: 0, fired: false });
+  const cancel = () => {
+    clearTimeout(press.current.timer);
+    press.current.timer = undefined;
+  };
+  useEffect(() => cancel, []);
+
+  return (target: T) => ({
+    onTouchStart: (e: TouchEvent) => {
+      cancel();
+      if (e.touches.length !== 1) return;
+      const { clientX: x, clientY: y } = e.touches[0];
+      press.current = {
+        x,
+        y,
+        fired: false,
+        timer: setTimeout(() => {
+          press.current.fired = true;
+          onLongPress(target, x, y);
+        }, LONG_PRESS_MS),
+      };
+    },
+    onTouchMove: (e: TouchEvent) => {
+      const t = e.touches[0];
+      if (t && Math.hypot(t.clientX - press.current.x, t.clientY - press.current.y) > LONG_PRESS_SLOP) cancel();
+    },
+    onTouchEnd: (e: TouchEvent) => {
+      cancel();
+      if (!press.current.fired) return;
+      e.preventDefault(); // no click for the finger that is being lifted
+      setTimeout(() => (press.current.fired = false), 400);
+    },
+    onTouchCancel: cancel,
+    onClickCapture: (e: MouseEvent) => {
+      if (!press.current.fired) return;
+      press.current.fired = false;
+      e.preventDefault();
+      e.stopPropagation();
+    },
+  });
 }
 
 /** A set of string keys kept in localStorage, for things like which sidebar groups are collapsed. */

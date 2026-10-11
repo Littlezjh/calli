@@ -16,6 +16,8 @@
   --active: rgba(31, 30, 28, 0.08);
   --accent: #1f1e1c;
   --accent-fg: #ffffff;
+  /* The accent taken down a notch, for a large filled control that should not be the darkest thing on the page. Follows the theme. */
+  --accent-soft: color-mix(in srgb, var(--accent) 66%, var(--bg));
   --on-color: #ffffff;
   --positive: #2f7d5b;
   --user-bg: #eceae4;
@@ -31,6 +33,7 @@
   --radius-sm: 8px;
   --radius: 12px;
   --radius-lg: 18px;
+  --radius-xl: 30px;
   --sidebar-w: 288px;
   --content-w: 760px;
   --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Noto Sans CJK SC',
@@ -187,34 +190,13 @@ button:disabled {
 }
 
 .sidebar {
-  position: fixed;
-  inset: 0 auto 0 0;
-  z-index: 40;
-  width: min(86vw, 320px);
   display: flex;
   flex-direction: column;
   background: var(--sidebar);
-  border-right: 1px solid var(--border);
-  transform: translateX(-102%);
-  transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-.app.drawer-open .sidebar {
-  transform: none;
-  box-shadow: var(--shadow-pop);
 }
 
 .scrim {
   display: none;
-}
-
-.app.drawer-open .scrim {
-  display: block;
-  position: fixed;
-  inset: 0;
-  z-index: 35;
-  background: var(--scrim);
-  animation: fade-in 0.18s ease-out;
 }
 
 .main {
@@ -224,6 +206,7 @@ button:disabled {
   display: flex;
   flex-direction: column;
   height: 100%;
+  background: var(--bg);
 }
 
 .topbar {
@@ -235,14 +218,169 @@ button:disabled {
   padding: env(safe-area-inset-top) 12px 0;
 }
 
-.topbar-title {
+.topbar-heading {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+}
+
+.topbar-title,
+.topbar-sub {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.topbar-title {
   font-size: 15px;
   font-weight: 600;
   letter-spacing: -0.005em;
+}
+
+.topbar-sub {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* ---------- Phones: the thread list lies under the conversation ---------- */
+
+/* Codex's way: opening the list slides the conversation aside as a card and the list is the page
+   under it. Nothing dark is drawn over the screen, so the top of it stays one colour up to the
+   status bar. */
+@media (max-width: 899.98px) {
+  .app {
+    --drawer-w: min(84vw, 340px);
+    background: var(--sidebar);
+  }
+
+  .sidebar {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    visibility: hidden;
+    transition: visibility 0s linear 0.32s;
+  }
+
+  .app.drawer-open .sidebar {
+    visibility: visible;
+    transition-delay: 0s;
+  }
+
+  .sidebar-inner {
+    opacity: 0;
+    transform: translateX(-24px);
+    transition:
+      transform 0.32s cubic-bezier(0.2, 0.8, 0.2, 1),
+      opacity 0.24s ease-out;
+  }
+
+  .app.drawer-open .sidebar-inner {
+    opacity: 1;
+    transform: none;
+  }
+
+  .main {
+    z-index: 2;
+    overflow: hidden;
+    transform-origin: left center;
+    transition:
+      transform 0.32s cubic-bezier(0.2, 0.8, 0.2, 1),
+      border-radius 0.32s cubic-bezier(0.2, 0.8, 0.2, 1),
+      box-shadow 0.32s ease-out;
+  }
+
+  .app.drawer-open .main {
+    transform: translateX(var(--drawer-w)) scale(0.94);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-pop);
+  }
+
+  /* What a tap on the pushed-aside conversation hits. It also quietens the card a little. */
+  .app.drawer-open .scrim {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 30;
+    background: color-mix(in srgb, var(--bg) 45%, transparent);
+    animation: fade-in 0.24s ease-out;
+  }
+
+  /* The bar floats: round buttons on the page, and the thread fades out under it instead of
+     being cut off at a line. It is raised only here: on a wide screen the turn ruler reaches up
+     beside the title and must stay on top. */
+  .topbar {
+    position: relative;
+    z-index: 6;
+    gap: 10px;
+    height: calc(60px + env(safe-area-inset-top));
+    padding: env(safe-area-inset-top) 12px 0;
+  }
+
+  .topbar::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    height: 16px;
+    background: linear-gradient(var(--bg), transparent);
+    pointer-events: none;
+  }
+
+  .topbar .menu-btn,
+  .topbar-actions {
+    border: 1px solid var(--border);
+    background: var(--surface);
+    box-shadow: var(--shadow-card);
+  }
+
+  .topbar .menu-btn {
+    width: 42px;
+    height: 42px;
+  }
+
+  .topbar-actions {
+    height: 42px;
+    padding: 0 2px;
+    border-radius: 999px;
+  }
+
+  .topbar-actions .icon-btn {
+    width: 40px;
+    height: 40px;
+  }
+
+  .topbar-heading {
+    padding: 0 2px;
+    line-height: 1.3;
+  }
+
+  .topbar-title {
+    font-size: 16px;
+    font-weight: 650;
+  }
+
+  .scroller {
+    padding-top: 14px;
+  }
+}
+
+/* The colour iOS carries up behind the status bar is the page's own. */
+body {
+  transition: background-color 0.32s;
+}
+
+html.list-open body {
+  background: var(--sidebar);
 }
 
 .scroller {
@@ -571,6 +709,25 @@ button:disabled {
   background: var(--user-bg);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* A passage the user picked out of a message and sent along with their words. */
+.bubble-quote {
+  max-width: min(85%, 600px);
+  margin-bottom: 3px;
+  padding: 7px 12px;
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .markdown {
@@ -915,6 +1072,46 @@ button:disabled {
   opacity: 1;
 }
 
+/* A stretch of calls said in one line. The chevron follows the words; the line opens to the
+   calls themselves, set in from a hairline so they read as belonging to it. */
+.step-run {
+  display: flex;
+  flex-direction: column;
+}
+
+.run-head {
+  align-self: flex-start;
+  width: auto;
+  max-width: 100%;
+}
+
+.run-head > svg {
+  flex-shrink: 0;
+}
+
+.run-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13.5px;
+}
+
+.run-failed {
+  flex-shrink: 0;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.run-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 0 6px 7px;
+  padding-left: 16px;
+  border-left: 1px solid var(--border);
+}
+
 .step-title {
   flex: 1;
   min-width: 0;
@@ -1090,6 +1287,57 @@ button:disabled {
 
 .composer-box textarea::placeholder {
   color: var(--faint);
+}
+
+/* The passage about to be quoted into the next message. */
+.quote-strip {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 10px 14px 0;
+  padding: 7px 10px;
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.quote-icon {
+  display: flex;
+  flex: none;
+  margin-top: 2px;
+  color: var(--faint);
+}
+
+.quote-text {
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.quote-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin: -1px -3px 0 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.quote-remove:hover {
+  background: var(--hover);
+  color: var(--text);
 }
 
 .composer-bar {
@@ -1393,6 +1641,52 @@ button:disabled {
   white-space: nowrap;
   color: var(--muted);
   font-size: 13px;
+}
+
+/* ---------- Selection menu ---------- */
+
+/* On iOS a long-press that selects text also summons the system bar (拷贝/查询/翻译…), which
+   piles up under our own menu. The callout is turned off wherever text can be picked; selection
+   itself — handles, highlighting — is untouched, and our menu still follows it. */
+.thread,
+.thread * {
+  -webkit-touch-callout: none;
+}
+
+/* The menu that follows text selected in the conversation. */
+.selection-menu {
+  position: fixed;
+  z-index: 90;
+  display: flex;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+  animation: pop-in 0.12s ease-out;
+}
+
+.selection-menu button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.selection-menu button:hover {
+  background: var(--hover);
+}
+
+.selection-menu button:active {
+  background: var(--active);
 }
 
 /* ---------- Dialog ---------- */
@@ -1918,8 +2212,250 @@ input.picker-search {
 }
 
 .topbar-more {
-  margin-left: auto;
   color: var(--muted);
+}
+
+/* ---------- Sidebar on a phone ---------- */
+
+/* A page of its own, laid out for thumbs: large rows, round buttons, the one main action floating
+   at the bottom. Only as wide as what the pushed-aside conversation leaves in view. */
+.sidebar-inner.compact {
+  position: relative;
+  width: var(--drawer-w);
+  padding: calc(10px + env(safe-area-inset-top)) 0 0;
+}
+
+.compact .sidebar-top {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 52px;
+  padding: 0 14px 4px 22px;
+}
+
+.compact .brand {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.round-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-card);
+}
+
+.round-btn:active {
+  background: var(--surface-2);
+}
+
+.compact .sidebar-search-box {
+  flex: 1;
+  height: 46px;
+  margin-left: -8px;
+  padding: 0 4px 0 16px;
+  border-color: var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.search-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+}
+
+.sidebar-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px 12px calc(104px + env(safe-area-inset-bottom));
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.side-nav {
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 6px;
+}
+
+.side-link {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 50px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  font-size: 17px;
+  text-align: left;
+}
+
+.side-link:active {
+  background: var(--hover);
+}
+
+.compact .thread-groups {
+  flex: none;
+  overflow: visible;
+  margin: 0;
+  padding: 0;
+}
+
+.compact .group-label,
+.compact .group-label-row {
+  margin: 18px 4px 2px 10px;
+}
+
+.compact .group-label {
+  font-size: 13px;
+}
+
+.compact .group-label-row .group-label {
+  margin: 0;
+}
+
+.compact .thread-group + .thread-group {
+  margin-top: 4px;
+}
+
+/* A group reads as a heading: its name, then the chevron that folds it. */
+.compact .group-head {
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 10px;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.compact .group-head > svg {
+  display: none;
+}
+
+.compact .group-chevron {
+  order: 2;
+}
+
+.compact .group-head-row:hover {
+  background: transparent;
+}
+
+.compact .group-add,
+.compact .group-head-row .row-more {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+}
+
+.compact .group-empty {
+  margin: 0 10px 8px;
+  font-size: 13.5px;
+}
+
+.compact .group-empty.top {
+  margin: 18px 10px;
+}
+
+.compact .thread-row {
+  margin-left: 0;
+  border-radius: var(--radius);
+  /* A long press is ours here: no text selection, no system callout. */
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.compact .thread-item {
+  gap: 10px;
+  min-height: 48px;
+  padding: 0 10px;
+}
+
+.compact .thread-title {
+  font-size: 16.5px;
+}
+
+.compact .agent-tag {
+  font-size: 12.5px;
+}
+
+/* A long press opens a row's menu on a touch screen, so the rows carry no button of their own. */
+@media (hover: none) {
+  .compact .thread-row .row-more {
+    display: none;
+  }
+
+  .compact .thread-row:hover,
+  .compact .thread-row:focus-within {
+    background: transparent;
+  }
+
+  .compact .thread-row.active {
+    background: var(--active);
+  }
+
+  .compact .thread-row:active {
+    background: var(--hover);
+  }
+}
+
+/* The list scrolls away under the floating buttons instead of stopping at a line above them. */
+.sidebar-float {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 36px 16px calc(16px + env(safe-area-inset-bottom));
+  background: linear-gradient(to top, var(--sidebar) 58%, transparent);
+  pointer-events: none;
+}
+
+.sidebar-float > * {
+  pointer-events: auto;
+}
+
+.compact .new-thread {
+  gap: 10px;
+  width: auto;
+  min-height: 52px;
+  padding: 0 24px 0 20px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-fg);
+  font-size: 16.5px;
+  font-weight: 600;
+  box-shadow: var(--shadow-pop);
+}
+
+.compact .new-thread:hover {
+  background: var(--accent-soft);
+}
+
+.compact .new-thread:active {
+  opacity: 0.88;
 }
 
 /* ---------- Menu (right-click, "more" buttons) ---------- */
@@ -2321,6 +2857,75 @@ input.picker-search {
   text-align: center;
 }
 
+
+/* ---------- Side chat ---------- */
+
+/* Asking about a selected passage: a panel docked over the right of the conversation. */
+.side-chat-scrim {
+  place-items: stretch end;
+  padding: 0;
+}
+
+.side-chat {
+  display: flex;
+  flex-direction: column;
+  width: min(460px, 100%);
+  border-left: 1px solid var(--border);
+  background: var(--bg);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+  animation: side-in 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.side-chat-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 10px 12px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.side-chat-heading {
+  min-width: 0;
+}
+
+.side-chat-title {
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.side-chat-sub {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.side-chat-body {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.side-chat-intro {
+  padding: 14px 16px;
+}
+
+.side-chat-passage {
+  padding: 10px 14px;
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 13.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 
 .todos-panel {
   width: min(640px, 100%);
@@ -2731,6 +3336,29 @@ input.picker-search {
   object-fit: cover;
 }
 
+/* Tapping the thumbnail looks the picture over before it is sent. */
+.attachment-view {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
+}
+
+.attachment-view img {
+  transition: transform 0.12s ease-out;
+}
+
+.attachment-view:hover img {
+  transform: scale(1.05);
+}
+
+.attachment-view:active img {
+  transform: scale(0.97);
+}
+
 .attachment.pending {
   border-radius: 11px;
   background: var(--hover);
@@ -2865,10 +3493,31 @@ input.picker-search {
   color: var(--text);
 }
 
+/* Under a finished answer: copy, fork where the thread ends, and when the turn ended. The row is
+   pulled left so the first icon lines up with the text above it. */
 .row.message-actions {
   flex-direction: row;
+  align-items: center;
   gap: 2px;
-  margin-top: -8px;
+  margin: -8px 0 0 -7px;
+}
+
+.message-time {
+  margin-left: 6px;
+  color: var(--faint);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (hover: none) {
+  .message-actions .quiet-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  .row.message-actions {
+    margin-left: -10px;
+  }
 }
 
 .quiet-btn {
@@ -3165,6 +3814,13 @@ input.picker-search {
   }
 }
 
+@keyframes side-in {
+  from {
+    opacity: 0;
+    transform: translateX(28px);
+  }
+}
+
 @keyframes pulse {
   50% {
     opacity: 0.45;
@@ -3305,23 +3961,15 @@ input.picker-search {
 
 @media (min-width: 900px) {
   .sidebar {
-    position: static;
     width: var(--sidebar-w);
     flex-shrink: 0;
-    transform: none;
-    transition: none;
-    box-shadow: none;
+    border-right: 1px solid var(--border);
   }
 
-  .app.drawer-open .sidebar {
-    box-shadow: none;
-  }
-
-  .app.drawer-open .scrim {
-    display: none;
-  }
-
-  .menu-btn {
+  /* The sidebar is always there: nothing to open, no second "new thread", and the composer names the agent. */
+  .menu-btn,
+  .topbar-new,
+  .topbar-sub {
     display: none;
   }
 
@@ -3649,5 +4297,27 @@ input.picker-search {
   input,
   textarea {
     font-size: 16px !important;
+  }
+}
+
+/* On a phone the side chat is not a docked column but the whole screen, following the visual
+   viewport like the app does so the keyboard cannot cover the composer. */
+@media (max-width: 899px) {
+  .side-chat-scrim {
+    place-items: stretch;
+    top: 0;
+    bottom: auto;
+    height: var(--vvh, 100dvh);
+    transform: translateY(var(--vvt, 0px));
+    padding-top: env(safe-area-inset-top);
+  }
+
+  .side-chat {
+    width: 100%;
+    border-left: 0;
+  }
+
+  .side-chat-head {
+    padding-left: 16px;
   }
 }

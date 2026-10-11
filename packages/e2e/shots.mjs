@@ -64,6 +64,15 @@ for (const theme of ['light', 'dark']) {
   await phone.waitForTimeout(300);
   await phone.screenshot({ path: join(outDir, `phone-${theme}.png`) });
 }
+// The thread list: the conversation slid aside as a card, the list under it.
+await phone.locator('.menu-btn').click();
+await phone.locator('.drawer-open').waitFor({ timeout: 5000 });
+await phone.waitForTimeout(500);
+for (const theme of ['light', 'dark']) {
+  await phone.evaluate((t) => document.documentElement.setAttribute('data-theme', t), theme);
+  await phone.waitForTimeout(300);
+  await phone.screenshot({ path: join(outDir, `phone-${theme}-list.png`) });
+}
 
 await browser.close();
 await daemon.stop();

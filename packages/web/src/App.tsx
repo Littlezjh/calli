@@ -12,6 +12,7 @@ import {
   type Todo,
 } from './api';
 import type { HubAction } from './commands';
+import { useIsCompact, useListSwipe } from './hooks';
 import type { PreparedImage } from './images';
 import { attentionCount, pageTitle, threadNotices } from './notices';
 import { folderName } from './paths';
@@ -23,8 +24,11 @@ import { Composer } from './components/Composer';
 import { DirectoryPicker } from './components/DirectoryPicker';
 import { Dialog } from './components/Dialog';
 import { ImportPanel } from './components/ImportPanel';
+import { Menu } from './components/Menu';
 import { StatusPanel } from './components/StatusPanel';
 import { QuotaPanel } from './components/QuotaPanel';
+import { SelectionMenu } from './components/SelectionMenu';
+import { SideChat } from './components/SideChat';
 import { TodosPanel } from './components/TodosPanel';
 import { AgentPicker, type DiscoveredAgent, effortsForModel, imagesBlocked, imagesNote, modelName, ModelPicker, PermissionPicker, UsageMeter } from './components/Pickers';
 import { Sidebar } from './components/Sidebar';
@@ -33,7 +37,7 @@ import { ThreadView } from './components/ThreadView';
 import { TurnRuler } from './components/TurnRuler';
 import { Toast, type ToastState } from './components/Toast';
 import { TokenGate } from './components/TokenGate';
-import { IconArrowDown, IconChevron, IconClose, IconFolder, IconFork, IconList, IconMenu, IconMore } from './components/icons';
+import { IconArchive, IconArrowDown, IconChevron, IconClose, IconEdit, IconFolder, IconImport, IconList, IconMenu, IconMore, IconSignOut } from './components/icons';
 
 const sleep = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve) => {
@@ -85,6 +89,13 @@ export function App() {
   const [modelsByAgent, setModelsByAgent] = useState<Record<string, ModelOption[]>>({});
   const [commandsByKey, setCommandsByKey] = useState<Record<string, SlashCommand[]>>({});
   const [drawer, setDrawer] = useState(false);
+  // On a phone the thread list is a page under the conversation; `drawer` slides the conversation aside.
+  const compact = useIsCompact();
+  const listOpen = drawer && compact;
+  useListSwipe(compact && Boolean(token), listOpen, setDrawer);
+  const [confirmSignOut, setConfirmSignOut] = useState(false);
+  /** Where the phone layout's settings menu opened from, while it is open. */
+  const [settingsAt, setSettingsAt] = useState<{ x: number; y: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [showDirPicker, setShowDirPicker] = useState(false);
@@ -103,6 +114,10 @@ export function App() {
   const [loadingOlder, setLoadingOlder] = useState(false);
   // Text handed back to the composer: messages that were waiting when the user pressed stop.
   const [restore, setRestore] = useState<{ text: string; nonce: number } | null>(null);
+  // Text quoted out of a message by selecting it.
+  const [quoteSignal, setQuoteSignal] = useState<{ text: string; nonce: number } | null>(null);
+  // The passage a side chat was opened for, if one is open.
+  const [sideAsk, setSideAsk] = useState<{ text: string; nonce: number } | null>(null);
   // A message waiting for the user to confirm sending into a session the terminal also used.
   const [pendingSend, setPendingSend] = useState<{ text: string; images: PreparedImage[]; resolve: () => void; reject: (e: unknown) => void } | null>(null);
   const [pageHidden, setPageHidden] = useState(() => document.hidden);
@@ -368,6 +383,24 @@ export function App() {
       vv.removeEventListener('scroll', apply);
     };
   }, []);
+
+  // What a phone paints behind its status bar follows the page: the theme colour on older
+  // systems, the page background on newer ones. With the list open the top of the screen is the
+  // list, so both say the list's colour; otherwise a band of the wrong shade sits above it.
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.toggle('list-open', listOpen);
+    // The keyboard belongs to the conversation; it goes down when the conversation moves aside.
+    if (listOpen && document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    const sync = () => {
+      const colour = getComputedStyle(root).getPropertyValue(listOpen ? '--sidebar' : '--bg').trim();
+      if (colour) document.querySelector('meta[name="theme-color"]')?.setAttribute('content', colour);
+    };
+    sync();
+    const scheme = window.matchMedia('(prefers-color-scheme: dark)');
+    scheme.addEventListener('change', sync);
+    return () => scheme.removeEventListener('change', sync);
+  }, [listOpen]);
 
   // A scroll hands the position over to the user only when their hand caused it. Scroll events
   // also come from the pin itself, from the keyboard resizing the page and from content changing
@@ -747,15 +780,18 @@ export function App() {
 
   const attachBlocked = !activeCaps?.images ? `${agentLabel(activeAgent)} 不支持发图片` : imagesBlocked(models, model);
 
+  // On a phone the top bar names the thread's agent and directory, so the composer does not repeat them.
   const header = selected ? (
-    <>
-      <span className="context-text">{agentLabel(selected.agent)}</span>
-      <span className="context-text muted" title={selected.cwd}>
-        <IconFolder size={14} />
-        {folderName(selected.cwd)}
-      </span>
-      {timeline.usage && <UsageMeter usage={timeline.usage} />}
-    </>
+    compact ? null : (
+      <>
+        <span className="context-text">{agentLabel(selected.agent)}</span>
+        <span className="context-text muted" title={selected.cwd}>
+          <IconFolder size={14} />
+          {folderName(selected.cwd)}
+        </span>
+        {timeline.usage && <UsageMeter usage={timeline.usage} />}
+      </>
+    )
   ) : (
     <>
       <AgentPicker agents={agents} value={draftAgent} onChange={pickAgent} discovered={discovered} onAdd={addDiscoveredAgent} />
@@ -779,32 +815,19 @@ export function App() {
   );
 
   const left = (
-    <>
-      {/* Fork, like Codex's bottom-left button: one click copies the thread and opens the copy.
-          Only once there is a conversation to fork; a click while it cannot run says why. */}
-      {selected && selected.agentSessionId && activeCaps?.fork && (
-        <button
-          type="button"
-          className="tool-btn icon-only"
-          aria-label="分叉"
-          title="分叉：复制这个线程，从这里另走一条路"
-          onClick={() => threadActions.run('fork', selected)}
-        >
-          <IconFork size={17} />
-        </button>
-      )}
-      <PermissionPicker
-        modes={permissionModes}
-        value={permission}
-        canAsk={activeCaps?.approvals ?? true}
-        openSignal={permissionSignal}
-        onChange={(m) => (selected ? updateSelected({ permissionMode: m }) : setDraftPermission(m))}
-      />
-    </>
+    <PermissionPicker
+      modes={permissionModes}
+      value={permission}
+      canAsk={activeCaps?.approvals ?? true}
+      openSignal={permissionSignal}
+      onChange={(m) => (selected ? updateSelected({ permissionMode: m }) : setDraftPermission(m))}
+    />
   );
 
   const right = (
-    <ModelPicker
+    <>
+      {compact && selected && timeline.usage && <UsageMeter usage={timeline.usage} />}
+      <ModelPicker
       models={models}
       model={model}
       efforts={effortLevels}
@@ -816,11 +839,12 @@ export function App() {
         if (draftEffort && !effortsForModel(models, v, effortLevels).includes(draftEffort)) setDraftEffort(null);
       }}
       onEffort={(v) => (selected ? updateSelected({ effort: v }) : setDraftEffort(v))}
-    />
+      />
+    </>
   );
 
   return (
-    <div className={`app${drawer ? ' drawer-open' : ''}`}>
+    <div className={`app${listOpen ? ' drawer-open' : ''}`}>
       {showDirPicker && (
         <DirectoryPicker
           api={api}
@@ -839,6 +863,8 @@ export function App() {
           onNew={() => newThread()}
           onNewIn={newThread}
           onSignOut={() => signOut()}
+          compact={compact}
+          onOpenSettings={(x, y) => setSettingsAt({ x, y })}
           onThreadMenu={threadActions.openThreadMenu}
           onSectionMenu={threadActions.openSectionMenu}
           onNewSection={threadActions.newSection}
@@ -860,25 +886,36 @@ export function App() {
           }
         />
       </aside>
-      <div className="scrim" onClick={() => setDrawer(false)} aria-hidden="true" />
 
       <main className="main">
         <header className="topbar">
-          <button className="icon-btn menu-btn" aria-label="打开线程列表" onClick={() => setDrawer((v) => !v)}>
+          <button className="icon-btn menu-btn" aria-label="打开线程列表" aria-expanded={listOpen} onClick={() => setDrawer((v) => !v)}>
             <IconMenu />
           </button>
-          <div className="topbar-title">{selected ? selected.title : '新线程'}</div>
+          <div className="topbar-heading">
+            <div className="topbar-title">{selected ? selected.title : '新线程'}</div>
+            {selected && (
+              <div className="topbar-sub">
+                {agentLabel(selected.agent)} · {folderName(selected.cwd)}
+              </div>
+            )}
+          </div>
           {selected && (
-            <button
-              className="icon-btn topbar-more"
-              aria-label="这个线程的更多操作"
-              onClick={(e) => {
-                const rect = e.currentTarget.getBoundingClientRect();
-                threadActions.openThreadMenu(selected, rect.right - 200, rect.bottom + 6);
-              }}
-            >
-              <IconMore />
-            </button>
+            <div className="topbar-actions">
+              <button className="icon-btn topbar-new" aria-label="新线程" onClick={() => newThread()}>
+                <IconEdit />
+              </button>
+              <button
+                className="icon-btn topbar-more"
+                aria-label="这个线程的更多操作"
+                onClick={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  threadActions.openThreadMenu(selected, rect.right - 200, rect.bottom + 6);
+                }}
+              >
+                <IconMore />
+              </button>
+            </div>
           )}
         </header>
 
@@ -905,6 +942,16 @@ export function App() {
               hasOlder={hasOlder}
               loadingOlder={loadingOlder}
               onLoadOlder={loadOlder}
+              // Under each answer, like Codex: one click copies the thread up to there and opens the
+              // copy. Only once there is a conversation to fork; a click while it cannot run says why.
+              // The button appears the moment the log says a turn is over; the thread list hears of it
+              // a beat later, so the log's word on whether a turn is running is the one to go by.
+              onFork={
+                selected.agentSessionId && activeCaps?.fork
+                  ? (turnId) => threadActions.forkAt(timeline.running ? selected : { ...selected, status: 'idle' }, turnId)
+                  : undefined
+              }
+              forkAnyTurn={Boolean(activeCaps?.forkAt)}
             />
           ) : (
             <div className="empty">
@@ -941,7 +988,10 @@ export function App() {
           onRemoveQueued={removeQueued}
           onSendQueuedNow={sendQueuedNow}
           restore={restore}
+          quote={quoteSignal}
         />
+        {/* With the list open, the conversation is a card pushed aside; a tap on it brings it back. */}
+        <div className="scrim" onClick={() => setDrawer(false)} aria-hidden="true" />
       </main>
 
       {archiveOpen && (
@@ -1023,8 +1073,78 @@ export function App() {
           }}
         />
       )}
+      {settingsAt && (
+        <Menu
+          label="配置"
+          x={settingsAt.x}
+          y={settingsAt.y}
+          onClose={() => setSettingsAt(null)}
+          items={[
+            {
+              id: 'archive',
+              label: '已归档',
+              icon: IconArchive,
+              onSelect: () => {
+                setArchiveOpen(true);
+                setDrawer(false);
+              },
+            },
+            ...(importAgents.length
+              ? [
+                  {
+                    id: 'import',
+                    label: '导入历史',
+                    icon: IconImport,
+                    onSelect: () => {
+                      setImportOpen(true);
+                      setDrawer(false);
+                    },
+                  },
+                ]
+              : []),
+            'separator',
+            // Signing out costs the saved token, so it asks first.
+            { id: 'sign-out', label: '退出', icon: IconSignOut, danger: true, onSelect: () => setConfirmSignOut(true) },
+          ]}
+        />
+      )}
+      {confirmSignOut && (
+        <Dialog
+          title="退出登录？"
+          message="这台设备上保存的 token 会被清除，再进来要重新输入。"
+          confirmLabel="退出"
+          onCancel={() => setConfirmSignOut(false)}
+          onConfirm={() => {
+            setConfirmSignOut(false);
+            setDrawer(false);
+            signOut();
+          }}
+        />
+      )}
+      {sideAsk && (
+        <SideChat
+          api={api}
+          agent={activeAgent}
+          agentLabel={agentLabel(activeAgent)}
+          cwd={activeCwd}
+          permissionMode={permission}
+          model={model}
+          effort={effort}
+          quoteText={sideAsk.text}
+          sourceTitle={selected?.title ?? null}
+          forkSourceId={selected && activeCaps?.fork && !forkBlocked(selected) ? selected.id : null}
+          attachBlocked={attachBlocked}
+          onClose={() => setSideAsk(null)}
+          onError={handleError}
+          onThreadCreated={(t) => setThreads((prev) => [t, ...prev.filter((x) => x.id !== t.id)])}
+        />
+      )}
       {threadActions.layer}
       <Toast toast={toast} onDismiss={dismissToast} />
+      <SelectionMenu
+        onQuote={(text) => setQuoteSignal({ text, nonce: Date.now() })}
+        onSideAsk={(text) => setSideAsk({ text, nonce: Date.now() })}
+      />
     </div>
   );
 }

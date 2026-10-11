@@ -55,7 +55,7 @@ test('with the keyboard up, the app fills what is left of the screen, wherever t
 
   // Layers over the app stay on the visible part too: the plan page, with its own field.
   await page.locator('.menu-btn').click();
-  await page.locator('.foot-link', { hasText: '计划' }).click();
+  await page.locator('.sidebar').getByRole('button', { name: '计划' }).click();
   await page.waitForTimeout(500); // the sheet slides in
   const sheet = await box('.todos-panel');
   assert.ok(sheet.top >= 344 && sheet.bottom <= 844, `the sheet is inside the visible part (${sheet.top}–${sheet.bottom})`);

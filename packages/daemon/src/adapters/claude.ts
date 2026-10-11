@@ -96,7 +96,16 @@ export class ClaudeAcpAdapter extends AcpAdapter {
     history: true,
     quota: true,
     fork: true,
+    forkAt: true,
   };
+
+  /**
+   * claude-agent-acp reads the point to fork at from this extension field: the id of the last
+   * message to keep, which is the `messageId` its message and thought chunks carry.
+   */
+  protected forkPointMeta(forkRef: string): Record<string, unknown> {
+    return { jetbrains: { air: { fork: { version: 1, messageId: forkRef } } } };
+  }
 
   protected readonly modeIds = CLAUDE_MODE_IDS;
 
