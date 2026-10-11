@@ -346,6 +346,18 @@ test('usage is the latest the agent reported; the summary rounds it and flags a 
   assert.equal(buildTimeline([]).usage, null);
 });
 
+test('unknown context clears the previous reading and a later measurement restores it', () => {
+  const events = [
+    ev('usage.updated', { used: 183510, size: 258400 }),
+    ev('usage.updated', { used: null, size: 258400 }),
+  ];
+  assert.equal(buildTimeline(events).usage, null);
+  events.push(ev('usage.updated', { used: 12000, size: 258400 }));
+  assert.deepEqual(buildTimeline(events).usage, { used: 12000, size: 258400 });
+  for (const used of [-1, NaN, Infinity]) events.push(ev('usage.updated', { used, size: 258400 }));
+  assert.deepEqual(buildTimeline(events).usage, { used: 12000, size: 258400 });
+});
+
 test('imagePathsIn finds local image files in an answer and leaves web addresses alone', () => {
   assert.deepEqual(imagePathsIn('Saved to /work/app/out/chart.png and also `docs/logo.webp`.'), ['/work/app/out/chart.png', 'docs/logo.webp']);
   assert.deepEqual(imagePathsIn('![the chart](out/chart.png "Chart")\n\n![remote](https://example.com/a.png)'), ['out/chart.png']);

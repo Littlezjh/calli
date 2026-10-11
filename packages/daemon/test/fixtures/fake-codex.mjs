@@ -129,9 +129,6 @@ const runTurn = (text, turnId, done) => {
   if (text.includes('plan')) {
     notify('turn/plan/updated', { turnId, plan: [{ step: 'Read the code', status: 'completed' }, { step: 'Write the fix', status: 'inProgress' }] });
   }
-  if (text.includes('usage')) {
-    notify('thread/tokenUsage/updated', { turnId, tokenUsage: { total: { totalTokens: 9000, inputTokens: 8000, outputTokens: 1000 }, last: { totalTokens: 9000 }, modelContextWindow: 100000 } });
-  }
   if (text.includes('model?')) {
     say(`model:${currentModel};effort:${currentEffort};sandbox:${sandboxName()};approval:${currentApproval}`);
     return done();
@@ -165,7 +162,14 @@ const runTurn = (text, turnId, done) => {
   }
   if (text.includes('slow')) return; // only turn/interrupt ends this
   say(`echo:${text}`);
-  notify('thread/tokenUsage/updated', { turnId, tokenUsage: { total: { totalTokens: 500 }, modelContextWindow: 100000 } });
+  const tokenUsage = text.includes('usage')
+    ? {
+        total: { totalTokens: text.includes('compacted') ? 1900000 : 1798110 },
+        ...(text.includes('missing') ? {} : { last: { totalTokens: text.includes('compacted') ? 12000 : 183510 } }),
+        modelContextWindow: 258400,
+      }
+    : { total: { totalTokens: 500 }, last: { totalTokens: 500 }, modelContextWindow: 100000 };
+  notify('thread/tokenUsage/updated', { turnId, tokenUsage });
   done();
 };
 

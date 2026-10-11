@@ -72,8 +72,8 @@ export function mapAcpUpdate(update: any): EmittedEvent | null {
       return { type: 'plan.updated', data: { entries: update.entries ?? [] } };
     case 'usage_update': {
       // How full the context window is. Without a window size there is nothing to show.
-      if (typeof update.used !== 'number' || typeof update.size !== 'number' || update.size <= 0) return null;
-      const cost = update.cost && typeof update.cost.amount === 'number' ? { amount: update.cost.amount, currency: String(update.cost.currency ?? 'USD') } : null;
+      if (typeof update.used !== 'number' || !Number.isFinite(update.used) || update.used < 0 || typeof update.size !== 'number' || !Number.isFinite(update.size) || update.size <= 0) return null;
+      const cost = update.cost && typeof update.cost.amount === 'number' && Number.isFinite(update.cost.amount) && update.cost.amount >= 0 ? { amount: update.cost.amount, currency: String(update.cost.currency ?? 'USD') } : null;
       return { type: 'usage.updated', data: { used: update.used, size: update.size, ...(cost ? { cost } : {}) } };
     }
     default:

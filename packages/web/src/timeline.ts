@@ -346,8 +346,12 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
       }
 
       case 'usage.updated':
-        if (typeof ev.data.used === 'number' && typeof ev.data.size === 'number' && ev.data.size > 0) {
-          usage = { used: ev.data.used, size: ev.data.size, ...(ev.data.cost ? { cost: ev.data.cost } : {}) };
+        if (typeof ev.data.size === 'number' && Number.isFinite(ev.data.size) && ev.data.size > 0) {
+          // An explicit unknown reading invalidates the previous measurement, e.g. after compaction.
+          if (ev.data.used === null) usage = null;
+          else if (typeof ev.data.used === 'number' && Number.isFinite(ev.data.used) && ev.data.used >= 0) {
+            usage = { used: ev.data.used, size: ev.data.size, ...(ev.data.cost ? { cost: ev.data.cost } : {}) };
+          }
         }
         break;
 

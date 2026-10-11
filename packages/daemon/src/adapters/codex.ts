@@ -364,9 +364,10 @@ class CodexSession implements AgentSession {
       }
       case 'thread/tokenUsage/updated': {
         const usage = params?.tokenUsage;
-        const used = usage?.total?.totalTokens;
+        // `total` accumulates billed tokens across requests; `last` measures the active context.
+        const used = usage?.last?.totalTokens;
         const size = usage?.modelContextWindow;
-        if (typeof used === 'number' && typeof size === 'number' && size > 0) {
+        if (typeof used === 'number' && Number.isFinite(used) && used >= 0 && typeof size === 'number' && Number.isFinite(size) && size > 0) {
           this.emit({ type: 'usage.updated', data: { used, size } });
         }
         break;

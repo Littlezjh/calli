@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { effortsFromConfig, mapAcpUpdate, modelsFromConfig } from '../src/adapters/acp.js';
 import { ClaudeAcpAdapter } from '../src/adapters/claude.js';
 import { TraexAcpAdapter } from '../src/adapters/traex.js';
-import { mapPiEvent, piEfforts, PiRpcAdapter } from '../src/adapters/pi.js';
+import { mapPiEvent, mapPiStats, piEfforts, PiRpcAdapter } from '../src/adapters/pi.js';
 import type { EmittedEvent } from '../src/events.js';
 import type { ApprovalDecision, TurnHooks, TurnInput } from '../src/adapters/types.js';
 
@@ -54,6 +54,27 @@ test('mapPiEvent maps text, thinking and tool execution records', () => {
   assert.equal(mapPiEvent({ type: 'queue_update' }), null);
 });
 
+test('context mappings distinguish current occupancy, cumulative totals and unknown usage', () => {
+  assert.deepEqual(mapPiStats({ tokens: { total: 1700000 }, contextUsage: { tokens: 1200, contextWindow: 200000 }, cost: 0.02 }), {
+    type: 'usage.updated', data: { used: 1200, size: 200000, cost: { amount: 0.02, currency: 'USD' } },
+  });
+  assert.equal(mapPiStats({ tokens: { total: 1700000 } }), null);
+  assert.deepEqual(mapPiStats({ contextUsage: { tokens: null, contextWindow: 200000 } }), {
+    type: 'usage.updated', data: { used: null, size: 200000 },
+  });
+  assert.deepEqual(mapAcpUpdate({ sessionUpdate: 'usage_update', used: 52000, size: 200000, cost: { amount: 0.42, currency: 'USD' } }), {
+    type: 'usage.updated', data: { used: 52000, size: 200000, cost: { amount: 0.42, currency: 'USD' } },
+  });
+  for (const used of [-1, NaN, Infinity]) {
+    assert.equal(mapPiStats({ contextUsage: { tokens: used, contextWindow: 200000 } }), null);
+    assert.equal(mapAcpUpdate({ sessionUpdate: 'usage_update', used, size: 200000 }), null);
+  }
+  for (const size of [0, -1, NaN, Infinity]) {
+    assert.equal(mapPiStats({ contextUsage: { tokens: 1200, contextWindow: size } }), null);
+    assert.equal(mapAcpUpdate({ sessionUpdate: 'usage_update', used: 52000, size }), null);
+  }
+});
+
 test('ClaudeAcpAdapter: prompt streams events and returns end_turn', async () => {
   const adapter = new ClaudeAcpAdapter([process.execPath, fakeAcp]);
   assert.equal(await adapter.available(), true);
@@ -67,6 +88,16 @@ test('ClaudeAcpAdapter: prompt streams events and returns end_turn', async () =>
   assert.deepEqual(types, ['reasoning.delta', 'tool.start', 'tool.end', 'message.delta']);
   assert.equal(events.at(-1)?.data.text, 'echo:hello');
   await session.close();
+});
+
+test('Claude and TRAE: ACP context updates preserve current occupancy and cumulative cost', async (t) => {
+  for (const adapter of [new ClaudeAcpAdapter([process.execPath, fakeAcp]), new TraexAcpAdapter([process.execPath, fakeAcp], { FAKE_ACP_FLAVOR: 'traex' })]) {
+    const session = await adapter.start({ cwd: here });
+    t.after(() => session.close());
+    const { hooks, events } = collectingHooks();
+    await session.prompt(turn('usage'), hooks);
+    assert.deepEqual(events.find((e) => e.type === 'usage.updated')?.data, { used: 52000, size: 200000, cost: { amount: 0.42, currency: 'USD' } });
+  }
 });
 
 test('ClaudeAcpAdapter: permission request is routed to the hook and answered', async () => {
@@ -696,10 +727,11 @@ test('pi: /compact and /session are answered through its requests, and listed fi
     assert.deepEqual(await session.prompt(turn('/compact keep the API notes'), compact.hooks), { stopReason: 'end_turn' });
     assert.deepEqual(compact.events.map((e) => e.type), ['message.delta', 'usage.updated']);
     assert.equal(compact.events[0].data.text, '已压缩上下文：150.0k → 约 32.0k tokens。');
+    assert.deepEqual(compact.events[1].data, { used: null, size: 200000, cost: { amount: 0.02, currency: 'USD' } });
 
     const stats = collectingHooks();
     await session.prompt(turn('/session'), stats.hooks);
-    assert.match(String(stats.events[0].data.text), /\| 上下文 \| 1\.2k \/ 200\.0k（0\.6%） \|/);
+    assert.match(String(stats.events[0].data.text), /\| 上下文 \| 待下一次响应更新 \/ 200\.0k \|/);
 
     const failed = await session.prompt(turn('/compact explode'), collectingHooks().hooks);
     assert.deepEqual(failed, { stopReason: 'error', error: 'nothing to compact' });
@@ -708,6 +740,10 @@ test('pi: /compact and /session are answered through its requests, and listed fi
     const normal = collectingHooks();
     await session.prompt(turn('/compacted is not a command'), normal.hooks);
     assert.ok(normal.events.some((e) => e.type === 'tool.start'));
+    assert.deepEqual(normal.events.at(-1)?.data, { used: 1200, size: 200000, cost: { amount: 0.02, currency: 'USD' } });
+    const measured = collectingHooks();
+    await session.prompt(turn('/session'), measured.hooks);
+    assert.match(String(measured.events[0].data.text), /\| 上下文 \| 1\.2k \/ 200\.0k（0\.6%） \|/);
   } finally {
     await session.close();
   }
@@ -1043,6 +1079,20 @@ test('CodexAppServerAdapter: prompt streams steps and text, then ends the turn',
   assert.equal(textFrom(events), 'echo:tool and reason please');
   assert.deepEqual(events.at(-1)?.data, { used: 500, size: 100000 });
   await session.close();
+});
+
+test('CodexAppServerAdapter: context uses the latest request and shrinks after compaction', async (t) => {
+  const session = await new CodexAppServerAdapter([process.execPath, fakeCodex]).start({ cwd: here });
+  t.after(() => session.close());
+  for (const [text, expected] of [
+    ['usage', { used: 183510, size: 258400 }],
+    ['usage compacted', { used: 12000, size: 258400 }],
+    ['usage missing', undefined],
+  ] as const) {
+    const { hooks, events } = collectingHooks();
+    await session.prompt(turn(text), hooks);
+    assert.deepEqual(events.find((e) => e.type === 'usage.updated')?.data, expected);
+  }
 });
 
 test('CodexAppServerAdapter: file changes stream their patch and carry diffs', async () => {

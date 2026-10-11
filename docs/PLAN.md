@@ -42,10 +42,12 @@ daemon（Node.js，跑在远程主机上）
 | `tool.start` / `tool.update` / `tool.end` | 工具调用。`content` 里的 `{type:'diff', path, oldText, newText}` 是文件改动 |
 | `approval.request` / `approval.resolved` | 审批。`toolCall.content` 里同样带 diff |
 | `plan.updated` | agent 的任务清单 |
+| `usage.updated` | 当前上下文占用：`used`、`size`，可带累计费用 `cost`。`used: null` 明确表示占用未知，清除旧读数 |
 
 ## 定下来的事
 
 - **事件日志是唯一真相。** 每个事件有递增的 `seq`，SSE 断线后用 `after=<seq>` 续传。
+- **上下文占用和累计用量分开。** Codex 取 `tokenUsage.last.totalTokens`，不能取会话累计的 `total`；pi 取 `contextUsage`，压缩后返回 `tokens: null` 时隐藏旧占用，等下一次响应更新；Claude 和 TRAE 取 ACP 的 `usage_update.used / size`。agy 尚未提供占用数据。前端只消费统一事件，不按 agent 分支；80% 提示只是界面阈值，不表示 agent 已触发自动压缩。
 - **读回来按轮次分页。** 文字和思考是一个片段存一条，长轮次有上万条。打开线程只取最新几轮（`events?tail`），更早的从顶部一页页取（`events?before=<seq>`）；一页总是从某一轮的开头开始，单轮再长也整轮给。读回时把同一轮里连续的同类片段合并成首尾两条，存储不变。SSE 续传把游标之后的全部补完再接实时事件，不按页截断。
 - **一轮一个工作块。** 一轮里做的事（思考、工具调用、中途说的话）按发生顺序收在一个块里，运行中展开，结束后折成"用时 X · N 步"；块后面的文字才是回答。思考只露最新几行，想完是一行。
 - **页面自己发现断线和新版本。** 事件流 40 秒没有任何字节（daemon 每 15 秒发一次 ping）就当它死了重连，回到前台时静默超过 5 秒也立刻重连；线程列表流重连后重新拉一次列表。回到前台或重连时比对 `index.html` 里的入口脚本，不一样就提示"有新版本"。

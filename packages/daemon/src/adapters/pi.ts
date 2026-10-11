@@ -234,8 +234,10 @@ export function mapPiEvent(record: any): EmittedEvent | null {
 /** Context window use and cost, from pi's session statistics. Null when pi does not report a window. */
 export function mapPiStats(stats: any): EmittedEvent | null {
   const usage = stats?.contextUsage;
-  if (typeof usage?.tokens !== 'number' || typeof usage?.contextWindow !== 'number' || usage.contextWindow <= 0) return null;
-  const cost = typeof stats.cost === 'number' && stats.cost > 0 ? { amount: stats.cost, currency: 'USD' } : null;
+  if (typeof usage?.contextWindow !== 'number' || !Number.isFinite(usage.contextWindow) || usage.contextWindow <= 0) return null;
+  // Pi explicitly reports null after compaction until a new assistant response measures it.
+  if (usage.tokens !== null && (typeof usage.tokens !== 'number' || !Number.isFinite(usage.tokens) || usage.tokens < 0)) return null;
+  const cost = typeof stats.cost === 'number' && Number.isFinite(stats.cost) && stats.cost >= 0 ? { amount: stats.cost, currency: 'USD' } : null;
   return { type: 'usage.updated', data: { used: usage.tokens, size: usage.contextWindow, ...(cost ? { cost } : {}) } };
 }
 
@@ -269,7 +271,7 @@ export function formatPiStats(stats: any): string {
   ];
   if (typeof stats?.cost === 'number') rows.push(['费用', `$${stats.cost.toFixed(4)}`]);
   const ctx = stats?.contextUsage;
-  if (ctx?.contextWindow) rows.push(['上下文', `${tokens(ctx.tokens)} / ${tokens(ctx.contextWindow)}（${Math.round((ctx.tokens / ctx.contextWindow) * 1000) / 10}%）`]);
+  if (mapPiStats(stats)) rows.push(['上下文', ctx.tokens === null ? `待下一次响应更新 / ${tokens(ctx.contextWindow)}` : `${tokens(ctx.tokens)} / ${tokens(ctx.contextWindow)}（${Math.round((ctx.tokens / ctx.contextWindow) * 1000) / 10}%）`]);
   if (stats?.sessionId) rows.push(['会话 ID', `\`${stats.sessionId}\``]);
   return ['| | |', '|---|---|', ...rows.map(([k, v]) => `| ${k} | ${v} |`)].join('\n');
 }

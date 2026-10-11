@@ -23,6 +23,7 @@ const sessionIdx = args.indexOf('--session');
 let sessionId = sessionIdx >= 0 ? args[sessionIdx + 1] : 'pi-session-1';
 const out = (obj) => process.stdout.write(JSON.stringify(obj) + '\n');
 let running = false;
+let contextUnknown = false;
 
 // "think" maps like a real provider: null means unsupported, xhigh/max need an explicit mapping.
 const MODELS = [
@@ -125,6 +126,7 @@ rl.on('line', (line) => {
     }
     case 'compact':
       if (cmd.customInstructions === 'explode') return reply(null, false, 'nothing to compact');
+      contextUnknown = true;
       return reply({ summary: `summary ${cmd.customInstructions ?? ''}`.trim(), tokensBefore: 150000, estimatedTokensAfter: 32000 });
     case 'get_session_stats':
       return reply({
@@ -132,9 +134,9 @@ rl.on('line', (line) => {
         userMessages: 2,
         assistantMessages: 2,
         toolCalls: 3,
-        tokens: { input: 900, output: 300, cacheRead: 0, cacheWrite: 0, total: 1200 },
+        tokens: { input: 900000, output: 300000, cacheRead: 400000, cacheWrite: 100000, total: 1700000 },
         cost: 0.02,
-        contextUsage: { tokens: 1200, contextWindow: 200000, percent: 0.6 },
+        contextUsage: { tokens: contextUnknown ? null : 1200, contextWindow: 200000, percent: contextUnknown ? null : 0.6 },
       });
     case 'clone':
       if (sessionId === 'uncloneable') return reply({ cancelled: true });
@@ -144,6 +146,7 @@ rl.on('line', (line) => {
       return reply({ sessionId, isStreaming: running, model: MODELS[0] });
     case 'prompt': {
       if (running) return reply(null, false, 'already streaming');
+      contextUnknown = false;
       running = true;
       reply({ disposition: 'started' });
       out({ type: 'agent_start' });
