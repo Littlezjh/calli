@@ -4,8 +4,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { Server } from 'node:http';
+import { get, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { gunzipSync } from 'node:zlib';
 import { AgentRegistry, defaultInstances } from '../src/agents.js';
 import { AgyAdapter } from '../src/adapters/agy.js';
 import { ClaudeAcpAdapter } from '../src/adapters/claude.js';
@@ -1747,4 +1748,45 @@ test('restart: a turn the last daemon left running is ended as interrupted', asy
   await post(`/api/threads/${cut.id}/turns`, { text: 'carry on' });
   await untilIdle(cut.id);
   assert.equal((await viewOf(cut.id)).status, 'idle');
+});
+
+test('a page of history collapses a tool call\'s update burst, and the payload travels gzipped', async () => {
+  const thread = await newThread({ agent: 'pi', cwd: workdir });
+  writeLog(thread.id, 'a1', [
+    ['turn.started', { text: 'edit it' }],
+    ['tool.start', { id: 'c1', kind: 'edit', title: 'Edit a.ts', status: 'in_progress' }],
+    ...Array.from({ length: 40 }, (_, i) => [
+      'tool.update',
+      {
+        id: 'c1',
+        status: 'in_progress',
+        content: [{ type: 'diff', path: 'a.ts', oldText: null, newText: 'line\n'.repeat(i + 1) }],
+      },
+    ] as ['tool.update', Record<string, unknown>]),
+    ['tool.end', { id: 'c1', status: 'completed' }],
+    ['message.delta', { text: 'done' }],
+    ['turn.done', { stopReason: 'end_turn' }],
+  ]);
+
+  const list = (await (await api(`/api/threads/${thread.id}/events?tail=1`)).json()) as Logged[];
+  const tools = list.filter((e) => e.type.startsWith('tool.'));
+  assert.deepEqual(tools.map((e) => e.type), ['tool.start', 'tool.end'], 'the burst became one event');
+  const merged = tools[1];
+  assert.equal(merged.data.status, 'completed');
+  // The last update set the diffs (40 lines); the end after it said only a status, so they travel on.
+  assert.equal(String((merged.data.content as any[])[0].newText).split('line').length - 1, 40);
+  assert.ok(merged.seq > tools[0].seq && merged.seq < list.find((e) => e.type === 'message.delta')!.seq, 'the merged event carries the run\'s last seq');
+
+  // Same request with gzip asked for: the answer arrives compressed.
+  const raw = await new Promise<{ status: number; headers: Record<string, string | string[] | undefined>; body: Buffer }>((resolve, reject) => {
+    get(new URL(`/api/threads/${thread.id}/events?tail=1`, base), { headers: { ...auth, 'Accept-Encoding': 'gzip' } }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body: Buffer.concat(chunks) }));
+    }).on('error', reject);
+  });
+  assert.equal(raw.status, 200);
+  assert.equal(raw.headers['content-encoding'], 'gzip');
+  const unzipped = JSON.parse(gunzipSync(raw.body).toString()) as Logged[];
+  assert.equal(unzipped.filter((e) => e.type === 'tool.update').length, 0);
 });

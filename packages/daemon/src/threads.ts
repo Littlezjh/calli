@@ -20,7 +20,7 @@ import {
 import { MAX_IMAGES, sniffImageType, type AttachmentStore, type StoredAttachment } from './attachments.js';
 import { HttpError } from './errors.js';
 import { isWithinWorkdirs } from './workdirs.js';
-import { compactDeltas, type EmittedEvent, type EventType, type StoredEvent } from './events.js';
+import { coalesceToolEvents, compactDeltas, type EmittedEvent, type EventType, type StoredEvent } from './events.js';
 import type { SectionRecord, Store, ThreadRecord, TodoRecord } from './store.js';
 
 /** A thread as the API returns it: the stored record plus values worked out from it. */
@@ -731,7 +731,7 @@ export class ThreadManager {
    */
   listEventsSince(threadId: string, afterSeq: number): StoredEvent[] {
     this.getThread(threadId);
-    return compactDeltas(this.store.listEvents(threadId, afterSeq, -1));
+    return coalesceToolEvents(compactDeltas(this.store.listEvents(threadId, afterSeq, -1)));
   }
 
   /** How far back, in stored events, one page of history reaches before stopping at a turn's start. */
@@ -743,7 +743,7 @@ export class ThreadManager {
    */
   listEventsPage(threadId: string, beforeSeq?: number): StoredEvent[] {
     this.getThread(threadId);
-    return compactDeltas(this.store.listEventsPage(threadId, ThreadManager.PAGE_BUDGET, beforeSeq));
+    return coalesceToolEvents(compactDeltas(this.store.listEventsPage(threadId, ThreadManager.PAGE_BUDGET, beforeSeq)));
   }
 
   /**

@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { createReadStream, existsSync, readdirSync, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { extname, join, normalize, resolve, sep } from 'node:path';
+import { gzipSync } from 'node:zlib';
 import type { ApprovalDecision } from './adapters/types.js';
 import type { AgentRegistry } from './agents.js';
 import type { StoredEvent } from './events.js';
@@ -54,6 +55,22 @@ export function tokenMatches(given: string | undefined, expected: string): boole
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
+  // Thread logs reach megabytes of JSON; a browser that accepts gzip gets many times less to
+  // transfer. `res.req` is the request this response belongs to.
+  const accepts = String(res.req?.headers['accept-encoding'] ?? '');
+  if (accepts.includes('gzip') && payload.length > 1024) {
+    const gzipped = gzipSync(payload);
+    if (gzipped.length < payload.length) {
+      res.writeHead(status, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Content-Encoding': 'gzip',
+        Vary: 'Accept-Encoding',
+        'Cache-Control': 'no-store',
+      });
+      res.end(gzipped);
+      return;
+    }
+  }
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': Buffer.byteLength(payload),

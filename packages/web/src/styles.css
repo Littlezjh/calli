@@ -1689,6 +1689,14 @@ html.list-open body {
   background: var(--active);
 }
 
+/* The open thread's first page is still arriving. */
+.loading-note {
+  padding: 28px 0 8px;
+  color: var(--faint);
+  font-size: 13px;
+  text-align: center;
+}
+
 /* ---------- Dialog ---------- */
 
 .dialog-scrim,

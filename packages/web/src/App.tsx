@@ -112,6 +112,8 @@ export function App() {
   // The thread has turns older than the ones loaded; they are fetched a page at a time.
   const [hasOlder, setHasOlder] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
+  // The first page of the open thread is still on its way from the daemon.
+  const [eventsLoading, setEventsLoading] = useState(false);
   // Text handed back to the composer: messages that were waiting when the user pressed stop.
   const [restore, setRestore] = useState<{ text: string; nonce: number } | null>(null);
   // Text quoted out of a message by selecting it.
@@ -248,6 +250,7 @@ export function App() {
     setEvents([]);
     setHasOlder(false);
     setLoadingOlder(false);
+    setEventsLoading(Boolean(api && selectedId));
     if (!api || !selectedId) return;
     const ctrl = new AbortController();
     const id = selectedId;
@@ -276,11 +279,15 @@ export function App() {
         const initial = await api.eventsTail(id);
         if (ctrl.signal.aborted) return;
         setEvents(initial);
+        setEventsLoading(false);
         // A thread's log starts at seq 1; a page that starts later has turns before it.
         setHasOlder(initial.length > 0 && initial[0].seq > 1);
         after = initial.at(-1)?.seq ?? 0;
       } catch (e) {
-        if (!ctrl.signal.aborted) handleError(e);
+        if (!ctrl.signal.aborted) {
+          setEventsLoading(false);
+          handleError(e);
+        }
         return;
       }
       while (!ctrl.signal.aborted) {
@@ -930,6 +937,7 @@ export function App() {
 
         <div className="scroller" ref={scrollerRef} onScroll={onScroll} {...gestureProps}>
           {selected && <TurnRuler scrollerRef={scrollerRef} previews={turnPreviewMap} />}
+          {selected && eventsLoading && <div className="loading-note">加载中…</div>}
           {selected ? (
             <ThreadView
               items={timeline.items}

@@ -61,3 +61,87 @@ export function compactDeltas(events: StoredEvent[]): StoredEvent[] {
   }
   return out;
 }
+
+/* The pieces below mirror the web timeline's reading of a tool event field by field, so that one
+ * merged event leaves the timeline in exactly the state the whole run would. If the web's reading
+ * changes (src/timeline.ts, applyToolData), this must change with it. */
+
+function hasDiffParts(content: unknown): boolean {
+  return Array.isArray(content) && content.some((part) => (part as { type?: unknown } | null)?.type === 'diff');
+}
+
+function textOfContent(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((part) => {
+      const p = part as { type?: unknown; text?: unknown; content?: { type?: unknown; text?: unknown } } | null;
+      if (!p || p.type === 'diff') return '';
+      if (p.type === 'content' && p.content?.type === 'text') return String(p.content.text ?? '');
+      if (p.type === 'text' && typeof p.text === 'string') return p.text;
+      return '';
+    })
+    .filter(Boolean)
+    .join('\n');
+}
+
+function toolText(output: unknown, content: unknown): string {
+  if (output !== undefined && output !== null && output !== '') {
+    return typeof output === 'string' ? output : JSON.stringify(output, null, 2);
+  }
+  return textOfContent(content);
+}
+
+/** One run of updates and the end of a single tool call, as one event the timeline reads the same. */
+function mergedToolEvent(run: StoredEvent[]): StoredEvent {
+  const last = run[run.length - 1];
+  let status: unknown;
+  let title: unknown;
+  let content: unknown;
+  let text: string | undefined;
+  for (const ev of run) {
+    if (ev.data.status) status = ev.data.status;
+    if (ev.data.title) title = ev.data.title;
+    // The timeline replaces a step's diffs only when an event carries some, and its output text
+    // from the last event that carries either; each field is taken from where it was last set.
+    if (hasDiffParts(ev.data.content)) content = ev.data.content;
+    const said = toolText(ev.data.output, ev.data.content);
+    if (said) text = said;
+  }
+  const data: Record<string, unknown> = { id: last.data.id };
+  if (status !== undefined) data.status = status;
+  if (title !== undefined) data.title = title;
+  if (content !== undefined) data.content = content;
+  if (text !== undefined) data.output = text;
+  return { ...last, data };
+}
+
+/**
+ * A tool call streaming to completion is stored as a burst of updates, each a snapshot that
+ * supersedes the last, and an end; a long call under a chatty agent is hundreds of events whose
+ * intermediates no reader needs. Consecutive update/end events of one call are collapsed into one
+ * that carries the state the whole run leaves behind — every field from the event that last set
+ * it, and the call's last seq, time and type, so durations and "still running" read the same. The
+ * store keeps every intermediate; this is only how pages are served.
+ */
+export function coalesceToolEvents(events: StoredEvent[]): StoredEvent[] {
+  const out: StoredEvent[] = [];
+  let run: StoredEvent[] = [];
+  const flush = () => {
+    if (run.length === 1) out.push(run[0]);
+    else if (run.length > 1) out.push(mergedToolEvent(run));
+    run = [];
+  };
+  for (const ev of events) {
+    const isTool = ev.type === 'tool.update' || ev.type === 'tool.end';
+    const continues = isTool && run.length > 0 && run[run.length - 1].turnId === ev.turnId && run[run.length - 1].data.id === ev.data.id;
+    if (isTool && (continues || run.length === 0)) run.push(ev);
+    else {
+      flush();
+      if (isTool) run.push(ev);
+      else out.push(ev);
+    }
+  }
+  flush();
+  return out;
+}
