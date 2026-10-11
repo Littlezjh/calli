@@ -1888,15 +1888,22 @@ input.picker-search {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 2px;
+}
+
+.sidebar-foot .link-btn {
+  flex: none;
+  padding: 0 6px;
+  white-space: nowrap;
 }
 
 .foot-link {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-height: 34px;
-  padding: 0 8px;
+  padding: 0 6px;
+  white-space: nowrap;
   border: 0;
   border-radius: 8px;
   background: transparent;
@@ -2082,6 +2089,8 @@ input.picker-search {
   font-weight: 600;
   text-decoration: underline;
   text-underline-offset: 3px;
+  flex: none;
+  white-space: nowrap;
 }
 
 @keyframes toast-in {
@@ -2204,33 +2213,39 @@ input.picker-search {
   padding-bottom: 8px;
 }
 
-.todo-row {
-  position: relative;
+/* One plan: its line, the threads it is linked to, then its sub-items, one under the other. */
+.todo {
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 10px;
-  padding: 7px 0;
+  flex-direction: column;
 }
 
-.todo-row.child {
-  margin-left: 34px;
+.todo-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 3px 0;
 }
 
 .todo-check {
   flex: none;
-  align-self: center;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 20px;
   height: 20px;
+  margin-top: 6px;
+  padding: 0;
   border: 1.5px solid var(--border-strong);
   border-radius: 50%;
+  background: transparent;
   color: var(--on-color);
   transition:
     background 0.12s,
     border-color 0.12s;
+}
+
+.todo-check:hover {
+  border-color: var(--muted);
 }
 
 .todo-check.done {
@@ -2241,19 +2256,24 @@ input.picker-search {
 .todo-text {
   flex: 1;
   min-width: 0;
-  padding: 2px 0;
+  padding: 5px 0;
+  border: 0;
+  background: none;
+  color: var(--text);
   text-align: left;
   font-size: 14.5px;
-  line-height: 1.45;
+  line-height: 1.5;
   overflow-wrap: anywhere;
+  cursor: text;
 }
 
-.todo-row.child .todo-text {
-  font-size: 13.5px;
+.todo.child .todo-text {
   color: var(--muted);
+  font-size: 13.5px;
 }
 
-.todo-text.done {
+.todo-text.done,
+.todo.child .todo-text.done {
   color: var(--faint);
   text-decoration: line-through;
 }
@@ -2261,24 +2281,35 @@ input.picker-search {
 .todo-edit {
   flex: 1;
   min-width: 0;
-  height: 30px;
+  height: 32px;
   padding: 0 10px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--surface);
+  color: var(--text);
   font-size: 14px;
 }
 
-.todo-row .row-more {
-  align-self: center;
+.todo-line .row-more {
+  margin: 2px 0 0;
+}
+
+.todo-line:hover .row-more,
+.todo-line:focus-within .row-more {
+  opacity: 1;
 }
 
 .todo-chips {
-  flex-basis: 100%;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  padding-left: 30px;
+  margin: 1px 0 7px 30px;
+}
+
+.todo-children {
+  display: flex;
+  flex-direction: column;
+  margin-left: 30px;
 }
 
 .todo-chip {
@@ -2287,7 +2318,7 @@ input.picker-search {
   gap: 6px;
   max-width: 100%;
   height: 26px;
-  padding: 0 4px 0 9px;
+  padding: 0 3px 0 9px;
   border: 1px solid var(--border);
   border-radius: 999px;
   background: var(--surface-2);
@@ -2321,10 +2352,19 @@ input.picker-search {
 .todo-chip-name {
   min-width: 0;
   max-width: 320px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-size: inherit;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text);
+}
+
+.todo-chip-name:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .todo-chip-unlink {
@@ -2332,10 +2372,13 @@ input.picker-search {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
   border-radius: 50%;
-  color: var(--muted);
+  background: none;
+  color: var(--faint);
 }
 
 .todo-chip-unlink:hover {
@@ -2344,27 +2387,25 @@ input.picker-search {
 }
 
 .todos-done-group {
-  margin-top: 6px;
+  margin-top: 8px;
   border-top: 1px solid var(--border);
 }
 
 .todos-done-head {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   width: 100%;
-  padding: 11px 2px;
+  min-height: 40px;
+  padding: 0 2px;
+  border: 0;
+  background: none;
   color: var(--muted);
   font-size: 13px;
 }
 
-.todos-done-head .group-chevron {
-  font-size: 15px;
-  transition: transform 0.15s ease;
-}
-
-.todos-done-head .group-chevron.open {
-  transform: rotate(90deg);
+.todos-done-head:hover {
+  color: var(--text);
 }
 
 .todos-foot {
@@ -2372,7 +2413,7 @@ input.picker-search {
   align-items: center;
   gap: 9px;
   margin: 0 22px;
-  padding: 11px 0 14px;
+  padding: 9px 0 12px;
   border-top: 1px solid var(--border);
   color: var(--muted);
 }
@@ -2388,17 +2429,49 @@ input.picker-search {
   color: var(--text);
 }
 
+.todo-add:focus {
+  outline: none;
+}
+
 .todo-add::placeholder {
   color: var(--faint);
 }
 
 .todo-add.child {
-  flex-basis: 100%;
-  margin: 2px 0 0 30px;
+  flex: none;
+  margin: 3px 0 7px;
   padding: 0 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
+}
+
+.todo-add.child:focus {
+  border-color: var(--border-strong);
+}
+
+/* On a phone the keyboard covers the bottom of the sheet, so the line for a new plan sits under
+   the title instead, and the sheet is tall enough to read a list in. */
+@media (max-width: 640px) {
+  .todos-panel {
+    min-height: 62dvh;
+  }
+
+  .todos-foot {
+    order: -1;
+    margin-bottom: 4px;
+    border-top: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .todos-panel .panel-head {
+    order: -3;
+  }
+
+  .todos-panel .panel-hint {
+    order: -2;
+    margin-bottom: 4px;
+  }
 }
 
 .panel-empty {

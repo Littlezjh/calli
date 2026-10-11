@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState, type MouseEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent } from 'react';
 import type { Api, Thread, Todo } from '../api';
 import { buildTodoBoard, linkableThreads, type TodoNode } from '../todos';
 import { Dialog } from './Dialog';
 import { Menu, type MenuEntry } from './Menu';
-import { IconCheck, IconClose, IconList, IconMore, IconPlus } from './icons';
+import { IconCheck, IconChevron, IconClose, IconList, IconMore, IconPlus } from './icons';
 
 interface Props {
   api: Api;
@@ -27,6 +27,12 @@ function below(e: MouseEvent<HTMLElement>): [number, number] {
 
 const MAX_LINK_CHOICES = 30;
 
+/**
+ * Enter that means "done typing". While an input method is composing (pinyin picking its
+ * characters), Enter belongs to it and must not submit half a word.
+ */
+const isCommit = (e: ReactKeyboardEvent<HTMLInputElement>) => e.key === 'Enter' && !e.nativeEvent.isComposing;
+
 /** How many plans a thread is already linked to, for the thread menu's "checked" marks. */
 export function todoLinkCount(todos: Todo[], threadId: string): number {
   return todos.filter((t) => t.threads.some((thread) => thread.id === threadId)).length;
@@ -38,7 +44,8 @@ export function todoLinkCount(todos: Todo[], threadId: string): number {
  */
 export function TodosPanel({ api, todos, threads, refreshKey, onReload, onOpenThread, onClose, onError }: Props) {
   const [adding, setAdding] = useState('');
-  const [childFor, setChildFor] = useState<string | null>(null);
+  // The plan a sub-item is being typed under, with what has been typed so far.
+  const [child, setChild] = useState<{ parentId: string; text: string } | null>(null);
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
   const [menu, setMenu] = useState<{ todo: Todo; x: number; y: number } | null>(null);
   const [deleting, setDeleting] = useState<Todo | null>(null);
@@ -46,12 +53,14 @@ export function TodosPanel({ api, todos, threads, refreshKey, onReload, onOpenTh
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    // Escape closes the innermost thing: a menu or dialog on top, or a field that used it to
+    // cancel (it marks the event handled), before it closes the panel.
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape' && !e.defaultPrevented && !menu && !deleting) onClose();
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, menu, deleting]);
 
   // Reload when anything changes on the server: plan edits from another device, or thread
   // states that the chips show.
@@ -95,7 +104,7 @@ export function TodosPanel({ api, todos, threads, refreshKey, onReload, onOpenTh
     const choices = linkableThreads(todos, todo.id, threads).slice(0, MAX_LINK_CHOICES);
     return [
       ...(isTop
-        ? [{ id: 'add-child', label: '加子项', icon: IconPlus, onSelect: () => setChildFor(todo.id) }]
+        ? [{ id: 'add-child', label: '加子项', icon: IconPlus, onSelect: () => setChild({ parentId: todo.id, text: '' }) }]
         : []),
       {
         id: 'link',
@@ -105,7 +114,6 @@ export function TodosPanel({ api, todos, threads, refreshKey, onReload, onOpenTh
         submenu: choices.map((t) => ({
           id: `link-${t.id}`,
           label: t.title || t.cwd,
-          checked: false,
           onSelect: () => void act(() => api.linkTodo(todo.id, t.id)),
         })),
       },
@@ -131,83 +139,100 @@ export function TodosPanel({ api, todos, threads, refreshKey, onReload, onOpenTh
     </span>
   );
 
-  const row = (todo: TodoNode, child: boolean) => {
+  const row = (todo: TodoNode, isChild: boolean) => {
     const editingThis = editing?.id === todo.id;
     return (
-      <div key={todo.id} className={child ? 'todo-row child' : 'todo-row'}>
-        <button
-          type="button"
-          className={`todo-check${todo.done ? ' done' : ''}`}
-          aria-label={todo.done ? '标记为未完成' : '标记为已完成'}
-          onClick={() => toggle(todo)}
-        >
-          {todo.done && <IconCheck size={12} />}
-        </button>
-        {editingThis ? (
-          <input
-            className="todo-edit"
-            value={editing.text}
-            autoFocus
-            onChange={(e) => setEditing({ id: todo.id, text: e.target.value })}
-            onBlur={saveEdit}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') saveEdit();
-              if (e.key === 'Escape') setEditing(null);
-            }}
-            aria-label="编辑计划"
-          />
-        ) : (
+      <div key={todo.id} className={isChild ? 'todo child' : 'todo'}>
+        <div className="todo-line">
           <button
             type="button"
-            className={`todo-text${todo.done ? ' done' : ''}`}
-            title="点击编辑"
-            onClick={() => setEditing({ id: todo.id, text: todo.text })}
+            className={`todo-check${todo.done ? ' done' : ''}`}
+            aria-label={todo.done ? '标记为未完成' : '标记为已完成'}
+            onClick={() => toggle(todo)}
           >
-            {todo.text}
+            {todo.done && <IconCheck size={12} />}
           </button>
-        )}
-        <button
-          type="button"
-          className="row-more"
-          aria-label={`计划“${todo.text}”的更多操作`}
-          onClick={(e) => {
-            const [x, y] = below(e);
-            setMenu({ todo, x, y });
-          }}
-        >
-          <IconMore size={15} />
-        </button>
+          {editingThis ? (
+            <input
+              className="todo-edit"
+              value={editing.text}
+              autoFocus
+              onChange={(e) => setEditing({ id: todo.id, text: e.target.value })}
+              onBlur={saveEdit}
+              onKeyDown={(e) => {
+                if (isCommit(e)) saveEdit();
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  setEditing(null);
+                }
+              }}
+              aria-label="编辑计划"
+            />
+          ) : (
+            <button
+              type="button"
+              className={`todo-text${todo.done ? ' done' : ''}`}
+              title="点击编辑"
+              onClick={() => setEditing({ id: todo.id, text: todo.text })}
+            >
+              {todo.text}
+            </button>
+          )}
+          <button
+            type="button"
+            className="row-more"
+            aria-label={`计划“${todo.text}”的更多操作`}
+            onClick={(e) => {
+              const [x, y] = below(e);
+              setMenu({ todo, x, y });
+            }}
+          >
+            <IconMore size={15} />
+          </button>
+        </div>
         {todo.threads.length > 0 && <div className="todo-chips">{todo.threads.map((t) => chip(todo, t))}</div>}
-        {childFor === todo.id && (
-          <input
-            className="todo-add child"
-            autoFocus
-            placeholder="加一个子项，回车确认"
-            value={adding}
-            onChange={(e) => setAdding(e.target.value)}
-            onBlur={() => {
-              if (!adding.trim()) setChildFor(null);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                void add(todo.id, adding).then(() => setAdding(''));
-              }
-              if (e.key === 'Escape') {
-                setAdding('');
-                setChildFor(null);
-              }
-            }}
-            aria-label="新子项"
-          />
+        {(todo.children.length > 0 || child?.parentId === todo.id) && (
+          <div className="todo-children">
+            {todo.children.map((c) => row(c, true))}
+            {child?.parentId === todo.id && (
+              <input
+                className="todo-add child"
+                autoFocus
+                placeholder="加一个子项，回车确认"
+                value={child.text}
+                onChange={(e) => setChild({ parentId: todo.id, text: e.target.value })}
+                onKeyDown={(e) => {
+                  // Stays open for the next one: sub-items tend to come several at a time. Enter
+                  // on an empty line, or Escape, is how it is put away. Not losing focus: the menu
+                  // that opened it takes focus back as it closes, which would shut it at once.
+                  if (isCommit(e)) {
+                    if (child.text.trim()) void add(todo.id, child.text);
+                    setChild(child.text.trim() ? { parentId: todo.id, text: '' } : null);
+                  }
+                  if (e.key === 'Escape') {
+                    e.preventDefault();
+                    setChild(null);
+                  }
+                }}
+                aria-label="新子项"
+              />
+            )}
+          </div>
         )}
-        {todo.children.map((c) => row(c, true))}
       </div>
     );
   };
 
   return (
-    <div className="dialog-scrim" onClick={onClose}>
-      <div className="panel todos-panel" role="dialog" aria-modal="true" aria-labelledby="todos-title" onClick={(e) => e.stopPropagation()}>
+    // Only a click on the dimmed backdrop itself closes the page. The menu and the confirmation
+    // below are drawn over it, and a click in them is not a click "outside".
+    <div
+      className="dialog-scrim"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="panel todos-panel" role="dialog" aria-modal="true" aria-labelledby="todos-title">
         <header className="panel-head">
           <h2 id="todos-title" className="panel-title">
             <IconList size={20} /> 计划
@@ -227,7 +252,8 @@ export function TodosPanel({ api, todos, threads, refreshKey, onReload, onOpenTh
           {board.done.length > 0 && (
             <div className="todos-done-group">
               <button type="button" className="todos-done-head" aria-expanded={showDone} onClick={() => setShowDone((v) => !v)}>
-                <span className={`group-chevron${showDone ? ' open' : ''}`}>›</span>已完成 {board.done.length}
+                <IconChevron size={13} open={showDone} />
+                已完成 {board.done.length}
               </button>
               {showDone && board.done.map((n) => row(n, false))}
             </div>
@@ -243,9 +269,9 @@ export function TodosPanel({ api, todos, threads, refreshKey, onReload, onOpenTh
             value={adding}
             onChange={(e) => setAdding(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                void add(null, adding).then(() => setAdding(''));
-                inputRef.current?.focus();
+              if (isCommit(e) && adding.trim()) {
+                void add(null, adding);
+                setAdding('');
               }
             }}
             aria-label="新计划"

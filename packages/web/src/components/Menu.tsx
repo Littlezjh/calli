@@ -77,7 +77,8 @@ export function Menu({ label, x, y, items, onClose }: Props) {
   const pick = (item: MenuItem) => {
     if (item.disabled) return;
     if (item.submenu) {
-      setOpenSub((cur) => (cur === item.id && !narrow ? null : item.id));
+      // Hovering has usually opened it already; a click on top of that means "this one", not "close it".
+      setOpenSub(item.id);
       return;
     }
     onClose();
