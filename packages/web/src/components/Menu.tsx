@@ -47,8 +47,11 @@ export function Menu({ label, x, y, items, onClose }: Props) {
     const el = panelRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
-    const left = Math.max(EDGE, Math.min(x, window.innerWidth - rect.width - EDGE));
-    const top = Math.max(EDGE, Math.min(y, window.innerHeight - rect.height - EDGE));
+    // x and y are where the pointer was on screen; the panel is placed within the app's box,
+    // which a phone or tablet keyboard can have moved down the page.
+    const box = el.closest('.app')?.getBoundingClientRect();
+    const left = Math.max(EDGE, Math.min(x, window.innerWidth - rect.width - EDGE)) - (box?.left ?? 0);
+    const top = Math.max(EDGE, Math.min(y, window.innerHeight - rect.height - EDGE)) - (box?.top ?? 0);
     // Submenus open to the right unless there is no room for one there.
     const flip = left + rect.width + 220 > window.innerWidth;
     setPos({ left, top, flip, ready: true });

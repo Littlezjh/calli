@@ -338,23 +338,32 @@ export function App() {
     return () => ro.disconnect();
   }, [selectedId]);
 
-  // Phone keyboards shrink the visual viewport instead of the layout; sizing the app to it keeps
-  // the composer visible without Safari scrolling the page (which pushed the top bar off screen).
-  // Pinch zoom shrinks the visual viewport too, and that is not room the layout has lost.
+  // A phone keyboard does not resize the page: it covers the bottom of it, and the browser pans
+  // what is left (the visual viewport) over the page to keep the focused field in sight. So the
+  // app is drawn exactly where the visual viewport is: its height, and its offset down the page.
+  // Following the height alone is not enough. Safari pans to the field before the app has shrunk,
+  // and stays panned: the app, still at the top of the page, shows only its lower part at the top
+  // of the screen, with bare page under it down to the keyboard.
+  // Pinch zoom moves and shrinks the visual viewport too, and that is not the keyboard.
   //
   // This is the one keyboard mechanism: never add interactive-widget=resizes-content to the
-  // viewport meta as well. Where that meta is honoured the layout viewport also shrinks, and
-  // visualViewport.height then subtracts the keyboard a second time — the app ends up half-size
-  // at the top of the screen with the page background filling the rest.
+  // viewport meta as well, or where it is honoured the keyboard is taken off twice.
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
     const apply = () => {
-      if (Math.abs(vv.scale - 1) < 0.01) document.documentElement.style.setProperty('--vvh', `${vv.height}px`);
+      if (Math.abs(vv.scale - 1) >= 0.01) return;
+      const root = document.documentElement.style;
+      root.setProperty('--vvh', `${vv.height}px`);
+      root.setProperty('--vvt', `${vv.pageTop}px`);
     };
     apply();
     vv.addEventListener('resize', apply);
-    return () => vv.removeEventListener('resize', apply);
+    vv.addEventListener('scroll', apply);
+    return () => {
+      vv.removeEventListener('resize', apply);
+      vv.removeEventListener('scroll', apply);
+    };
   }, []);
 
   // A scroll hands the position over to the user only when their hand caused it. Scroll events

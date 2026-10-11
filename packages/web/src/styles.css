@@ -177,9 +177,12 @@ button:disabled {
   position: relative;
   display: flex;
   height: 100%;
-  /* --vvh tracks the visual viewport, so a phone keyboard shrinks the app instead of being
-     overlaid on top of it. Falls back to dynamic viewport height where it is not set. */
+  /* --vvh and --vvt track the visual viewport: with a phone keyboard up, the app is as tall as
+     what is left of the screen and sits where the browser has panned to. The transform also makes
+     the app the box that fixed layers inside it (sheets, dialogs, toasts) are placed in, so they
+     stay on the visible part of the screen too. Without the variables: the whole viewport. */
   height: var(--vvh, 100dvh);
+  transform: translateY(var(--vvt, 0px));
   overflow: hidden;
 }
 
@@ -2454,7 +2457,7 @@ input.picker-search {
    the title instead, and the sheet is tall enough to read a list in. */
 @media (max-width: 640px) {
   .todos-panel {
-    min-height: 62dvh;
+    min-height: min(62dvh, 100%);
   }
 
   .todos-foot {
@@ -3148,7 +3151,8 @@ input.picker-search {
 
   .panel {
     width: 100%;
-    max-height: 88dvh;
+    /* Of the screen, but never more than the app's own box: with the keyboard up that is smaller. */
+    max-height: min(88dvh, 100%);
     border-width: 1px 0 0;
     border-radius: 22px 22px 0 0;
     animation: sheet-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
