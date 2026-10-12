@@ -1,12 +1,13 @@
 # Limi 应用图标
 
-以昵称「粒米」为出发点：两粒米组成柔和的 L，呼应 Limi 的首字母。使用现有界面的炭黑与暖米白，适合亮色、深色界面。图标不加文字，保留小尺寸辨识度。
+正式采用 Limacia 海蛞蝓的可爱形象：奶油白的圆润身体、橙色短触角、小眼睛和微笑，配浅薄荷绿背景。保留 Limacia 的形态线索，弱化写实生物感。
 
-- 原图：`packages/web/public/limi-icon.png`，1254 × 1254 PNG。
-- 使用位置：浏览器标签页、Apple 主屏幕图标。
-- 生成方式：内置 image_gen 工具。保留生成原图，未作后期修改。
-- 色彩方向：现有设计变量 `--text`（#1f1e1c）与 `--bg`（#f8f6f1）。
+- 正式图标：`packages/web/public/limi-icon.png`，1254 × 1254 PNG。
+- 使用位置：浏览器标签页、Apple 主屏幕图标、README 品牌展示。
+- 生成方式：内置 image_gen，以第二版截图为参考重新设计；采用用户选定的第三版原图。
+- 配色方向：浅薄荷绿 #DCEEE5、奶油白 #FFF9ED、橙色 #F6A45D、可可棕 #604739。
+- 小尺寸优先保留圆润轮廓、两根短触角与表情。
 
 ## 生成提示词（原文）
 
-> Use case: logo-design. Create one finished application icon for Limi (nickname 粒米, meaning a grain of rice), a quiet, refined browser workspace for collaborating with remote coding agents. Design: a bold, original abstract lowercase L formed by exactly two soft ivory rice-grain shapes: an upright elongated gently tapered grain for the stem, and a shorter grain angled slightly upward to the right for the foot, with a crisp small negative-space gap between them. The silhouette must immediately read as a graceful L, not a checkmark or a leaf plant. Large simple shapes, optically centered, beautiful asymmetry, extremely legible at 24px. Palette taken from the real application: solid warm charcoal #1f1e1c background, warm ivory #f8f6f1 mark. Flat vector-like precision, no texture, no gradients, no shadows, no 3D, no lettering or wordmark, no sparkle, no robot, no circuit or terminal symbols. Square 1024x1024 full-bleed opaque charcoal canvas, WITHOUT rounded corners (the operating system can mask it); mark occupies roughly 64% of the canvas with generous balanced padding. Single production icon only, no presentation board or mockup.
+Redesign the Limacia app icon shown in the reference. The user finds the elongated realistic sea slug disturbing and the black background gloomy. Keep only the Limacia identity: cream-white sea slug with orange-tipped short sensory feelers. Radically change silhouette, palette and rendering. Create a delightful, very cute, professionally designed 2D mascot app icon. A tiny plump bean-shaped baby sea slug, nearly round with a very short rounded tail, three-quarter FRONT view so its friendly face is prominent. Two tiny dark cocoa dot eyes widely spaced, a small gently smiling curved mouth, very subtle peach cheeks. Exactly two SHORT stubby rounded orange-tipped feelers on top; two or three tiny orange rounded nubs along the back, simplified and visually subordinate. No long appendages, no fingers, no fleshy folds, no wet or translucent skin, no anatomical realism, no elongated worm body, no snail shell. The white body has a clean charming silhouette and a slight warm apricot underside. Flat vector-like illustration with soft chunky curves and only one restrained cel-shadow shape, no painted texture, no realistic lighting, no plastic 3D. Full-bleed square background in fresh pale mint #DCEEE5; body warm cream #FFF9ED; accents cheerful tangerine #F6A45D; facial dots cocoa #604739. Make the character large and centered occupying 68 percent of the canvas, ample clear space all around, optically balanced. Feels like a lovable little desktop companion, sweet but sophisticated and uncluttered. Do not use black or dark backgrounds. No text, lettering, logos, border, extra objects, sparkles, bubbles, mockups or comparison grids. One finished square application icon.

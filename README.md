@@ -1,8 +1,14 @@
+<p align="center">
+  <img src="packages/web/public/limi-icon.png" alt="Limi：薄荷绿背景上的奶油白小海蛞蝓，带橙色触角和微笑" width="160" />
+</p>
+
 # Limi
 
 Limi（全名 Limacia，昵称「粒米」）是一个在浏览器里使用远程 coding agent 的工作台。
 
-在远程主机上运行 coding agent，通过手机或电脑浏览器使用。界面参考 Codex 的版式，但功能更少，目标是简单、不干扰 agent。
+让 coding agent 在远程主机上工作，你用手机或电脑浏览器查看进展、补充要求、处理审批和检查结果。Limi 保持界面简单，也保留各个 agent 原有的目录、配置和会话。
+
+名字来自 Limacia 海蛞蝓。图标是一只带橙色短触角、奶油白身体的小伙伴，配上浅薄荷绿背景，希望工作台也能轻松、亲切一些。
 
 > 状态：可用，正在迭代。要做的事见 [docs/TODO.md](docs/TODO.md)，架构见 [docs/PLAN.md](docs/PLAN.md)。
 
@@ -13,7 +19,7 @@ Limi（全名 Limacia，昵称「粒米」）是一个在浏览器里使用远�
 | Claude Code | ACP（`@agentclientprotocol/claude-agent-acp`，随项目安装） | 有 | 有 | 有 |
 | pi | `pi --mode rpc` | 无（pi 本身没有） | 有。纯文本模型需要装 pi 扩展 `pi-aux-vision` | 有 |
 | Antigravity | `agy` 的无界面 stream-json 模式 | 无（不能询问，只有"自动改文件"和"完全访问"两档） | 有（按文件路径交给它） | 暂无 |
-| Codex | `codex app-server` | 计划中 | | |
+| Codex | `codex app-server` | 有 | 有 | 有 |
 
 pi 和 agy 要先在主机上装好并登录。没装的 agent 在界面里显示为不可用。
 
