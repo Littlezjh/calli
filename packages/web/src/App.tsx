@@ -26,6 +26,7 @@ import { Dialog } from './components/Dialog';
 import { ImportPanel } from './components/ImportPanel';
 import { Menu } from './components/Menu';
 import { StatusPanel } from './components/StatusPanel';
+import { TerminalPanel } from './components/TerminalPanel';
 import { QuotaPanel } from './components/QuotaPanel';
 import { SelectionMenu } from './components/SelectionMenu';
 import { SideChat } from './components/SideChat';
@@ -37,7 +38,7 @@ import { ThreadView } from './components/ThreadView';
 import { TurnRuler } from './components/TurnRuler';
 import { Toast, type ToastState } from './components/Toast';
 import { TokenGate } from './components/TokenGate';
-import { IconArchive, IconArrowDown, IconChevron, IconClose, IconEdit, IconFolder, IconImport, IconList, IconMenu, IconMore, IconSignOut } from './components/icons';
+import { IconArchive, IconArrowDown, IconChevron, IconClose, IconEdit, IconFolder, IconImport, IconList, IconMenu, IconMore, IconSignOut, IconTerminal } from './components/icons';
 
 const sleep = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve) => {
@@ -103,6 +104,7 @@ export function App() {
   const [archiveKey, setArchiveKey] = useState(0);
   const [importOpen, setImportOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
+  const [termOpen, setTermOpen] = useState(false);
   /** The agent whose plan usage the quota panel shows. */
   const [quotaAgent, setQuotaAgent] = useState<{ id: string; label: string } | null>(null);
   // Counters that open the composer's pickers from elsewhere (the slash menu).
@@ -582,6 +584,7 @@ export function App() {
       api?.sections().then(setSections).catch(handleError);
       void refreshThreads();
     },
+    onOpenTerminal: () => setTermOpen(true),
     onError: handleError,
     toast: setToast,
     // The open thread is already in memory; copying it straight away keeps the browser's
@@ -747,6 +750,7 @@ export function App() {
   const hubActions: HubAction[] = [
     { id: 'new', label: '新线程', hint: '开始一个新的对话', keywords: ['new', 'clear'] },
     { id: 'status', label: '状态', hint: '会话、模型、上下文和终端恢复命令', keywords: ['status', 'info'] },
+    { id: 'term', label: '终端', hint: '在这台主机上开一个真的终端', keywords: ['term', 'terminal', 'shell', '命令行'] },
     ...(activeCaps?.quota
       ? [{ id: 'usage', label: '额度', hint: '套餐用量和重置时间', keywords: ['usage', 'quota', '额度', 'cost'] }]
       : []),
@@ -774,6 +778,7 @@ export function App() {
   const runHubAction = (id: string) => {
     if (id === 'new') return newThread();
     if (id === 'status') return setStatusOpen(true);
+    if (id === 'term') return setTermOpen(true);
     if (id === 'usage' && activeCaps?.quota) return setQuotaAgent({ id: activeAgent, label: agentLabel(activeAgent) });
     if (id === 'export' && selected) return threadActions.copyConversation(selected);
     if (id === 'model') return setModelSignal((n) => n + 1);
@@ -909,6 +914,11 @@ export function App() {
           </div>
           {selected && (
             <div className="topbar-actions">
+              {!compact && (
+                <button className="icon-btn topbar-term" aria-label="打开终端" title="终端" onClick={() => setTermOpen(true)}>
+                  <IconTerminal />
+                </button>
+              )}
               <button className="icon-btn topbar-new" aria-label="新线程" onClick={() => newThread()}>
                 <IconEdit />
               </button>
@@ -1002,6 +1012,15 @@ export function App() {
         <div className="scrim" onClick={() => setDrawer(false)} aria-hidden="true" />
       </main>
 
+      {termOpen && (
+        <TerminalPanel
+          api={api}
+          cwd={selected?.cwd || draftCwd || workdirs[0] || ''}
+          toast={setToast}
+          onClose={() => setTermOpen(false)}
+          onError={handleError}
+        />
+      )}
       {archiveOpen && (
         <ArchivePanel
           api={api}

@@ -149,9 +149,9 @@
   - `GET …/:id/stream` SSE：先补最近 ~256KB 环形缓冲（base64，应用可能输出非 UTF-8 字节），再接实时输出块，退出发 `exit(code)`；断线的 UTF-8 字符跨块拼接不丢
   - 生命周期：临时会话，daemon 重启即消失（不写 SQLite）；空闲 30 分钟回收；同时最多 3 个；daemon 退出时全杀；退出的会话保留 60 秒，重连还能看到结尾
   - shell 用 `$SHELL`（systemd 经登录 shell 启动，agent 的环境变量终端也能用），`RAH_TERM_SHELL` 可覆盖
-- [ ] **P0** web `TerminalPanel.tsx`：`@xterm/xterm` + fit + web-links addon；全屏面板（照 TodosPanel 模式），头部是目录（短路径，点开复制全路径）、＋ 新建、关闭；配色字号从 styles.css 变量读，主题切换时换 theme；断线重连先重放缓冲再接实时（xterm 清屏重画）
-- [ ] **P0** 入口：线程头部按钮（桌面）、手机「更多」菜单、斜杠面板 `/term`（搜索关键词带「终端/命令行」）
-- [x] 测试：daemon 起真 PTY 验证建/输入/输出/退出/resize/杀/空闲回收
+- [x] web `TerminalPanel.tsx`：`@xterm/xterm` + fit + web-links addon；全屏面板，头部是目录（短路径，悬停看全路径，点一下复制）、关闭（＋新建和多终端 Tab 留给 P1）；配色字号从 styles.css 变量读，16 色 ANSI 按亮暗各配一套，主题切换时换 theme；断线重连先重放缓冲再接实时（xterm 清屏重画）；关面板不杀终端，再开接回；结束显示「已结束」，可重新打开。*桌面和手机、亮暗在 headless Chromium 里验证：几何、溢出、ANSI 颜色、中文、四种入口和生命周期；像素级没看过，截图在 /tmp/rah-shots 留档*
+- [x] 入口：线程头部按钮（桌面）、线程菜单首项「打开终端」（手机和侧边栏右键）、斜杠面板 `/term`（搜索词带「终端/命令行/terminal」）
+- [x] 测试：daemon 起真 PTY 验证建/输入/输出/退出/resize/杀/空闲回收；e2e 三条：桌面按钮开-跑命令-关开接回-exit 重开、手机菜单进入、斜杠面板进入
 - [ ] **P1** 多终端：头部变 Tab；关闭面板不杀终端，再开接回
 - [ ] **P1** 手机功能键排（Esc、Tab、Ctrl、↑↓、`|`、`-`）：没有它们没法 Tab 补全；粘贴多行先确认（学 VS Code）；桌面 Ctrl+` 开关
 - [ ] **P2** 滚动搜索；审批卡片「在终端运行」（把命令粘进终端不自动回车）；`RAH_NO_TERMINAL` 整体关闭
