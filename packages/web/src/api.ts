@@ -191,6 +191,7 @@ export interface AgentInfo {
     history: boolean;
     /** Can read plan usage outside a session, for the quota panel. */
     quota: boolean;
+    compact?: boolean;
     fork: boolean;
     /** A fork can end at an earlier turn instead of taking the whole thread. Missing from daemons that predate it. */
     forkAt?: boolean;
@@ -214,6 +215,7 @@ export interface QuotaWindow {
 /** Plan usage of an agent instance, read outside any session. */
 export interface PlanQuota {
   windows: QuotaWindow[];
+  note?: string;
   /** When the agent was last asked. ISO. */
   checkedAt: string;
 }

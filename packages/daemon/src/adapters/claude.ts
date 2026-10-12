@@ -101,6 +101,7 @@ export class ClaudeAcpAdapter extends AcpAdapter {
     deleteSession: true,
     history: true,
     quota: true,
+    compact: true,
     fork: true,
     forkAt: true,
     multiAccount: true,

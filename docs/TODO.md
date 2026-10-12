@@ -90,6 +90,7 @@
 - [ ] **P2** agy 导入历史（`brain/<会话>/.system_generated/logs/transcript.jsonl`）和文件改动 diff（流里只有路径，没有内容）
 - [x] Codex：`codex app-server`（v2 线程协议）。流式、审批（命令/文件改动）、切模型和强度、三档权限、图片按路径发、导入历史、分叉、`/compact`
 - [x] Codex 命令补齐：额度面板（`/usage`）、`/review [审查说明]`、`/mcp`、`/skills`，按项目目录发现技能并通过正式协议调用；`/approvals` 搜索权限入口。支持多额度池、重置时间和旧版单池数据。
+- [x] 上下文弹层增加「压缩」：由适配器能力决定是否显示，复用现有命令，运行中排队执行，不清空草稿；模型与思考强度改成紧凑卡片、分档滑杆和模型子列表，支持拖动、触控、方向键和恢复默认。Codex 只返回周额度时说明未提供 5 小时窗口，不补造数据。
 - [ ] **P3** zcode：`zcode app-server`
 [x] 多账号：一个适配器可配多个实例（`data/agents.json` 或 `RAH_AGENTS_JSON`：id、adapter、label、command、env），线程存实例 id，默认实例沿用原名不迁移；实例 env 合并进它起的所有进程（如第二个 Claude 账号带自己的 `CLAUDE_CONFIG_DIR`）；扫描 PATH 发现同类 CLI（`agy2` 这类，`ping`/`pix` 不算），Agent picker 里一键添加，添加后立刻可用并写回 agents.json
 - [x] 链接另一个账号（发现已登录的）：终端里 `CLAUDE_CONFIG_DIR=~/.claude-2 claude` 登录好的账号，Agent picker「已登录的账号」一节里一键接进来，不用 SSH。`GET /api/agents/accounts/discover`：适配器各自找已登录的账号（Claude 扫 `~/.claude` 和 `~/.claude-2` 这类目录、只认目录，逐个 `claude auth status` 问邮箱，登录过期的自然掉出列表；`env.CLAUDE_CONFIG_DIR` 由适配器构造，前端不认变量名），registry 补上只有它知道的——已被实例占用的账号不列（无 env 的实例占用默认账号），建议 id/label 取第一个空闲的 `claude-N`/「Claude Code N」，同一次发现里也不撞。点一下即 `POST /api/agents` 注册并选中。本地跑 claude 的命令统一走 `RAH_CLAUDE_BIN`（原 `RAH_CLAUDE_QUOTA_BIN` 仍认）。页面里直接完成 OAuth 授权的向导（daemon 起登录进程、贴授权码）以后再做

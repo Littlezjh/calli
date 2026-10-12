@@ -161,6 +161,7 @@ const runTurn = (text, turnId, done) => {
     awaitingApproval.set(requestId, { itemId: id, command, turnId, done });
     return;
   }
+  if (text === 'delayed') { setTimeout(done, 5000); return; }
   if (text.includes('slow')) return; // only turn/interrupt ends this
   say(`echo:${text}`);
   const tokenUsage = text.includes('usage')
@@ -217,9 +218,14 @@ rl.on('line', (line) => {
     case 'initialize':
       return out({ jsonrpc: '2.0', id: msg.id, result: { userAgent: 'fake-codex/0.160', codexHome: '/tmp/codex' } });
     case 'model/list':
-      return out({ jsonrpc: '2.0', id: msg.id, result: { data: MODELS, nextCursor: null } });
+      return out({ jsonrpc: '2.0', id: msg.id, result: { data: process.env.FAKE_CODEX_NO_EFFORT_MODEL
+        ? [...MODELS, { id: 'gpt-basic', model: 'gpt-basic', displayName: 'GPT Basic', supportedReasoningEfforts: [] }] : MODELS, nextCursor: null } });
     case 'account/rateLimits/read': {
       if (process.env.FAKE_CODEX_QUOTA_ERROR) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: 'ChatGPT authentication required' } });
+      if (process.env.FAKE_CODEX_WEEKLY_ONLY) {
+        const rateLimits = { limitId: 'codex', primary: { usedPercent: 16, windowDurationMins: 10080, resetsAt: 1792000000 }, secondary: null };
+        return out({ jsonrpc: '2.0', id: msg.id, result: { rateLimits, rateLimitsByLimitId: { codex: rateLimits } } });
+      }
       const rateLimits = { limitId: 'codex', primary: { usedPercent: 25, windowDurationMins: 300, resetsAt: 1791800000 }, secondary: { usedPercent: 82, windowDurationMins: 10080, resetsAt: 1792000000 } };
       return out({ jsonrpc: '2.0', id: msg.id, result: { rateLimits, rateLimitsByLimitId: { codex: rateLimits, review: { limitName: '代码审查', primary: { usedPercent: 10, windowDurationMins: 10080 } } } } });
     }

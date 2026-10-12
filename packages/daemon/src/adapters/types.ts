@@ -94,6 +94,8 @@ export interface QuotaWindow {
 /** Plan usage of an agent instance, read outside any session so nothing is left behind. */
 export interface PlanQuota {
   windows: QuotaWindow[];
+  /** An adapter's explanation of missing or limited quota data. */
+  note?: string;
   /** When the agent was last asked. ISO. */
   checkedAt: string;
 }
@@ -184,6 +186,8 @@ export interface AgentAdapter {
     history: boolean;
     /** Whether plan usage can be read outside a session, for the quota panel. */
     quota: boolean;
+    /** Whether /compact can compress the current context. */
+    compact?: boolean;
     /** Whether a conversation can be copied into a new, independent one. */
     fork: boolean;
     /** Whether that copy can stop at an earlier turn instead of taking everything. Needs fork and history. */

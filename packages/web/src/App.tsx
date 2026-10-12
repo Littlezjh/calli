@@ -3,6 +3,7 @@ import {
   Api,
   ApiError,
   AuthError,
+  MAX_QUEUED,
   loadToken,
   saveToken,
   type AgentInfo,
@@ -1060,7 +1061,13 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
 
   const right = (
     <>
-      {selected && timeline.usage && <UsageMeter usage={timeline.usage} />}
+      {selected && timeline.usage && <UsageMeter
+        usage={timeline.usage}
+        onCompact={activeCaps?.compact ? () => send('/compact', []) : undefined}
+        running={running}
+        compactQueued={selected.queued?.some((message) => message.text.trim() === '/compact')}
+        compactDisabled={(selected.queued?.length ?? 0) >= MAX_QUEUED}
+      />}
       <ModelPicker
       models={models}
       model={model}

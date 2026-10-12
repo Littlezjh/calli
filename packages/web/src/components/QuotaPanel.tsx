@@ -86,6 +86,7 @@ export function QuotaPanel({ api, agentId, agentLabel, onClose, onError }: Props
                   <div className="quota-reset">{formatReset(w)}</div>
                 </div>
               ))}
+              {quota.note && <p className="quota-note">{quota.note}</p>}
               <p className="quota-checked">
                 检查于 {new Date(quota.checkedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 {failedAt ? ` · 上次刷新失败（${failedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}）` : ''}

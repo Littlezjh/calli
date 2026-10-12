@@ -614,6 +614,7 @@ export class PiRpcAdapter implements AgentAdapter {
     forkInto: true,
     // pi has no plan of its own to read: it runs on whatever model account it was given.
     quota: false,
+    compact: true,
   };
 
   private modelCache: Cached<ModelOption[]> | null = null;

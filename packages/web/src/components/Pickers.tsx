@@ -2,8 +2,9 @@ import { useState } from 'react';
 import type { AgentInfo, ModelOption } from '../api';
 import { usageSummary, type Usage } from '../timeline';
 import { EFFORT_LABELS, PERMISSION_LABELS, PERMISSION_ORDER, permissionHint } from '../permissions';
-import { AgentMark, IconCheck, IconChevron, IconFolder, IconHand, IconPlus, IconShield, IconShieldAlert, IconSparkle, IconWorktree } from './icons';
+import { AgentMark, IconBolt, IconCompress, IconRefresh, IconCheck, IconChevron, IconFolder, IconHand, IconPlus, IconShield, IconShieldAlert, IconSparkle, IconWorktree } from './icons';
 import { Popover } from './Popover';
+import { EffortSlider } from './EffortSlider';
 
 const PERMISSION_ICON: Record<string, (p: { size?: number }) => JSX.Element> = {
   ask: IconHand,
@@ -146,10 +147,10 @@ export function modelRows(models: ModelOption[]): Array<{ value: string | null; 
   return [first, ...rest];
 }
 
-/** Model and thinking effort in one panel, like the model control in Codex. */
-export function ModelPicker({ models, model, efforts, effort, onModel, onEffort, openSignal }: ModelProps) {
+/** Model and thinking effort in a compact card; the model list is a second view. */
+export function ModelPicker(props: ModelProps) {
+  const { models, model, efforts, effort, openSignal } = props;
   if (models.length === 0 && efforts.length === 0) return null;
-  // Effort follows the model: some models take fewer levels, some take none.
   const levels = effortsForModel(models, model, efforts);
   const shownEffort = effort && levels.includes(effort) ? effort : null;
   return (
@@ -157,77 +158,53 @@ export function ModelPicker({ models, model, efforts, effort, onModel, onEffort,
       label="模型与思考强度"
       openSignal={openSignal}
       align="end"
-      triggerClassName="tool-btn"
-      trigger={
-        <>
-          <span>{modelName(models, model)}</span>
-          {shownEffort && <span className="tool-btn-sub">{EFFORT_LABELS[shownEffort] ?? shownEffort}</span>}
-          <IconChevron size={13} open />
-        </>
-      }
+      panelClassName="model-control-panel"
+      triggerClassName="tool-btn model-control-trigger"
+      triggerTitle={`${modelName(models, model)} · ${shownEffort ? (EFFORT_LABELS[shownEffort] ?? shownEffort) : '默认强度'}`}
+      trigger={<><span>{levels.length ? (shownEffort ? (EFFORT_LABELS[shownEffort] ?? shownEffort) : '选择强度') : modelName(models, model)}</span><IconChevron size={13} open /></>}
     >
-      {(close) => (
-        <>
-          {efforts.length > 0 && (
-            <>
-              <div className="pop-title">思考强度</div>
-              {levels.length > 0 ? (
-                <div className="segmented" role="radiogroup" aria-label="思考强度">
-                  {[null, ...levels].map((level) => (
-                    <button
-                      key={level ?? 'default'}
-                      type="button"
-                      role="radio"
-                      aria-checked={shownEffort === level}
-                      className={`segment${shownEffort === level ? ' active' : ''}`}
-                      onClick={() => onEffort(level)}
-                    >
-                      {level === null ? '默认' : (EFFORT_LABELS[level] ?? level)}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <div className="pop-note">{modelName(models, model)} 没有思考强度设置。</div>
-              )}
-            </>
-          )}
-          {models.length > 0 && (
-            <>
-              <div className="pop-title">模型</div>
-              <div className="pop-scroll">
-                {modelRows(models).map((row) => {
-                  // A thread saved with the literal "default" id is the same as no override.
-                  const checked = row.value === (model === AGENT_DEFAULT ? null : model);
-                  return (
-                    <button
-                      key={row.value ?? 'default'}
-                      type="button"
-                      role="menuitemradio"
-                      aria-checked={checked}
-                      className="pop-item compact"
-                      onClick={() => {
-                        onModel(row.value);
-                        close();
-                      }}
-                    >
-                      <span className="pop-item-text">
-                        <span className="pop-item-label">{row.label}</span>
-                        <span className="pop-item-hint">{row.hint}</span>
-                      </span>
-                      {checked && (
-                        <span className="pop-item-check">
-                          <IconCheck size={16} />
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </>
-          )}
-        </>
-      )}
+      {() => <ModelControl {...props} />}
     </Popover>
+  );
+}
+
+function ModelControl({ models, model, efforts, effort, onModel, onEffort }: ModelProps) {
+  const levels = effortsForModel(models, model, efforts);
+  const [showModels, setShowModels] = useState(levels.length === 0);
+  const [preview, setPreview] = useState<string | null | undefined>(undefined);
+  const selected = effort && levels.includes(effort) ? effort : null;
+  const shown = preview === undefined ? selected : preview;
+  return showModels ? (
+    <>
+      <div className="model-list-head">
+        {levels.length > 0 && <button type="button" className="icon-btn model-back" aria-label="返回思考强度" onClick={() => setShowModels(false)}><IconChevron size={16} /></button>}
+        <span>选择模型</span>
+      </div>
+      <div className="pop-scroll">
+        {modelRows(models).map((row) => (
+          <button key={row.value ?? 'default'} type="button" role="menuitemradio" aria-checked={row.value === (model === AGENT_DEFAULT ? null : model)} className="pop-item compact"
+            onClick={() => { onModel(row.value); setPreview(undefined); setShowModels(false); }}>
+            <span className="pop-item-text"><span className="pop-item-label">{row.label}</span><span className="pop-item-hint">{row.hint}</span></span>
+            {row.value === (model === AGENT_DEFAULT ? null : model) && <span className="pop-item-check"><IconCheck size={16} /></span>}
+          </button>
+        ))}
+      </div>
+    </>
+  ) : (
+    <div className="effort-card">
+      <div className="effort-card-head">
+        <span className="effort-symbol"><IconBolt size={19} /></span>
+        <div className="effort-card-heading">
+          <div className="effort-value" aria-live="polite">{levels.length ? (shown ? (EFFORT_LABELS[shown] ?? shown) : '默认') : '无需设置强度'}</div>
+          <button type="button" className="effort-model" disabled={models.length === 0} onClick={() => setShowModels(true)} aria-label={`切换模型，当前 ${modelName(models, model)}`}>
+            <span>{modelName(models, model)}</span><IconChevron size={13} />
+          </button>
+        </div>
+        <button type="button" className="icon-btn effort-reset" aria-label="恢复默认强度" title="恢复默认强度" disabled={selected === null} onClick={() => onEffort(null)}><IconRefresh size={18} /></button>
+      </div>
+      {levels.length > 0 ? <EffortSlider key={`${model ?? 'default'}:${levels.join(',')}`} levels={levels} value={selected} onChange={onEffort} onPreview={setPreview} />
+        : <div className="pop-note">当前模型不提供思考强度设置。</div>}
+    </div>
   );
 }
 
@@ -375,7 +352,14 @@ export function AgentPicker({ agents, value, onChange, discovered = [], onAdd, a
 }
 
 /** How full the agent's context window is: a small ring that opens to the numbers. */
-export function UsageMeter({ usage }: { usage: Usage }) {
+export function UsageMeter({ usage, onCompact, running, compactDisabled, compactQueued }: {
+  usage: Usage;
+  onCompact?: () => Promise<void>;
+  running?: boolean;
+  compactDisabled?: boolean;
+  compactQueued?: boolean;
+}) {
+  const [compacting, setCompacting] = useState(false);
   const { percent, high, detail } = usageSummary(usage);
   // A ring of radius 6 has a circumference of about 37.7; the dash shows the used share of it.
   const circumference = 2 * Math.PI * 6;
@@ -404,13 +388,24 @@ export function UsageMeter({ usage }: { usage: Usage }) {
         </>
       }
     >
-      {() => (
+      {(close) => (
         <>
           <div className="pop-title">上下文</div>
           <div className="pop-note">
             {detail}
             {high && '。快满了，agent 可能很快会自动压缩前面的内容。'}
           </div>
+          {onCompact && <button type="button" className="pop-item compact context-compact" disabled={compacting || compactDisabled || compactQueued}
+            onClick={async () => {
+              setCompacting(true);
+              try { await onCompact(); close(); } catch { /* The caller displays the error. */ }
+              finally { setCompacting(false); }
+            }}>
+            <span className="pop-item-icon"><IconCompress size={17} /></span>
+            <span className="pop-item-text"><span className="pop-item-label">{compacting ? '正在提交…' : compactQueued ? '已排队压缩' : '压缩'}</span>
+              <span className="pop-item-hint">{compactDisabled ? '消息队列已满' : running ? '本轮结束后压缩，保留当前草稿' : '精简较早的对话，释放上下文'}</span>
+            </span>
+          </button>}
         </>
       )}
     </Popover>
