@@ -157,7 +157,7 @@ export function Sidebar({
         group(
           'pinned',
           <>
-            <IconPin size={14} />
+            <IconPin size={13} />
             <span className="group-name">置顶</span>
           </>,
           model.pinned,
@@ -196,7 +196,7 @@ export function Sidebar({
         group(
           `project:${p.key}`,
           <>
-            <IconFolder size={15} />
+            <IconFolder size={13} />
             <span className="group-name" title={p.cwd}>
               {p.name}
             </span>
