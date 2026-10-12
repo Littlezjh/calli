@@ -4883,6 +4883,20 @@ input.picker-search {
   cursor: zoom-in;
 }
 
+/* A mermaid drawing fills the block the way a picture does, without growing past it. */
+.code-diagram {
+  overflow-x: auto;
+  padding: 14px 10px;
+  background: var(--picture-bg);
+}
+
+.code-diagram svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
 /* At its own size when it has one (an icon stays an icon), never wider than the block nor taller
    than most of a screen; a drawing that names no size fills the width. */
 .markdown .code-picture img {

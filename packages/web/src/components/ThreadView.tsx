@@ -1,6 +1,7 @@
 import { Children, createContext, isValidElement, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { renderMermaidDiagram } from '../mermaid';
 import { copyText } from '../clipboard';
 import { diffLines, numberLines } from '../diff';
 import { pictureUrl, svgPicture } from '../images';
@@ -326,8 +327,33 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   // A source the browser cannot draw (not well formed) stays code.
   const [failed, setFailed] = useState<string | null>(null);
   const [showCode, setShowCode] = useState(false);
+  // A mermaid block draws itself, once the library is in; until then and forever if it cannot
+  // parse, the code stands in.
+  const [diagram, setDiagram] = useState<string | null>(null);
+  useEffect(() => {
+    if (language !== 'mermaid') return;
+    let cancelled = false;
+    void renderMermaidDiagram(text)
+      .then((svg) => !cancelled && setDiagram(svg))
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [language, text]);
+  // The look can flip while the answer stays on screen: redraw with it.
+  useEffect(() => {
+    if (language !== 'mermaid' || diagram === null) return;
+    const root = document.documentElement;
+    const observer = new MutationObserver(() => {
+      void renderMermaidDiagram(text)
+        .then((svg) => setDiagram(svg))
+        .catch(() => undefined);
+    });
+    observer.observe(root, { attributes: true, attributeFilter: ['data-theme', 'data-palette'] });
+    return () => observer.disconnect();
+  }, [language, text, diagram]);
   const pictures = useContext(Pictures);
-  const drawn = picture !== null && picture !== failed;
+  const drawn = (picture !== null && picture !== failed) || diagram !== null;
   return (
     <div className="code-block">
       <div className="code-head">
@@ -347,9 +373,13 @@ function CodeBlock({ children }: { children?: ReactNode }) {
         </span>
       </div>
       {drawn && !showCode ? (
-        <button type="button" className="code-picture" aria-label="查看大图" onClick={() => pictures?.show(picture, 'drawing.svg')}>
-          <img src={picture} alt="这段 SVG 画出的图" onError={() => setFailed(picture)} />
-        </button>
+        diagram !== null ? (
+          <div className="code-diagram" role="img" aria-label="这段 Mermaid 画出的图" dangerouslySetInnerHTML={{ __html: diagram }} />
+        ) : (
+          <button type="button" className="code-picture" aria-label="查看大图" onClick={() => picture && pictures?.show(picture, 'drawing.svg')}>
+            <img src={picture ?? undefined} alt="这段 SVG 画出的图" onError={() => picture && setFailed(picture)} />
+          </button>
+        )
       ) : (
         <pre>{children}</pre>
       )}
