@@ -84,6 +84,7 @@
 - [x] Antigravity `agy`：无界面 stream-json 模式。流式、工具步骤、停止、恢复、切模型、两档权限
 - [ ] **P2** agy 导入历史（`brain/<会话>/.system_generated/logs/transcript.jsonl`）和文件改动 diff（流里只有路径，没有内容）
 - [x] Codex：`codex app-server`（v2 线程协议）。流式、审批（命令/文件改动）、切模型和强度、三档权限、图片按路径发、导入历史、分叉、`/compact`
+- [x] Codex 命令补齐：额度面板（`/usage`）、`/review [审查说明]`、`/mcp`、`/skills`，按项目目录发现技能并通过正式协议调用；`/approvals` 搜索权限入口。支持多额度池、重置时间和旧版单池数据。
 - [ ] **P3** zcode：`zcode app-server`
 [x] 多账号：一个适配器可配多个实例（`data/agents.json` 或 `RAH_AGENTS_JSON`：id、adapter、label、command、env），线程存实例 id，默认实例沿用原名不迁移；实例 env 合并进它起的所有进程（如第二个 Claude 账号带自己的 `CLAUDE_CONFIG_DIR`）；扫描 PATH 发现同类 CLI（`agy2` 这类，`ping`/`pix` 不算），Agent picker 里一键添加，添加后立刻可用并写回 agents.json
 - [x] 链接另一个账号（发现已登录的）：终端里 `CLAUDE_CONFIG_DIR=~/.claude-2 claude` 登录好的账号，Agent picker「已登录的账号」一节里一键接进来，不用 SSH。`GET /api/agents/accounts/discover`：适配器各自找已登录的账号（Claude 扫 `~/.claude` 和 `~/.claude-2` 这类目录、只认目录，逐个 `claude auth status` 问邮箱，登录过期的自然掉出列表；`env.CLAUDE_CONFIG_DIR` 由适配器构造，前端不认变量名），registry 补上只有它知道的——已被实例占用的账号不列（无 env 的实例占用默认账号），建议 id/label 取第一个空闲的 `claude-N`/「Claude Code N」，同一次发现里也不撞。点一下即 `POST /api/agents` 注册并选中。本地跑 claude 的命令统一走 `RAH_CLAUDE_BIN`（原 `RAH_CLAUDE_QUOTA_BIN` 仍认）。页面里直接完成 OAuth 授权的向导（daemon 起登录进程、贴授权码）以后再做
@@ -132,6 +133,7 @@
 | Claude | `claude -p "/usage"` 约 3 秒，文本可解析（Current session / Current week + 重置时间）；⚠️ 待验证 `-p` 是否落盘会话 | ACP 拿不到每轮输出 token，`message.delta` 字符数估算 |
 | agy | `agy -p /usage`，TSV（模型组 / 五小时 / 每周 / 剩余% / 重置 ISO），剩余换算已用 | 流里 usage 为空，同上估算 |
 | pi | 无套餐概念，capability 不开 | `get_session_stats` 差分，精确 |
+| Codex | `account/rateLimits/read`，多额度池的主要/次要窗口，时长与重置时间由服务端提供；需要账号支持套餐额度查询 | `thread/tokenUsage/updated` 的 `last` 用于上下文占用 |
 
 - [ ] **P0** 类型与能力：`PlanQuota { plan?, windows: [{ label, usedPercent, resetsAt? }], checkedAt }`、`capabilities.quota`、适配器方法 `fetchQuota?()`
 - [ ] **P0** daemon：`GET /api/agents/:id/quota`，60s TTL 缓存 + in-flight 去重（几个浏览器同时开只跑一次命令；Claude 要 3 秒，异步 + loading 态）

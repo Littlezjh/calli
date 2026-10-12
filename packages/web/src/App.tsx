@@ -937,7 +937,7 @@ export function App() {
       ? [{ id: 'model', label: '模型与思考强度', hint: modelName(models, model), keywords: ['model', 'effort', 'thinking'] }]
       : []),
     ...(permissionModes.length
-      ? [{ id: 'permission', label: '权限', hint: PERMISSION_LABELS[permission]?.label ?? '', keywords: ['permission', 'permissions', 'mode'] }]
+      ? [{ id: 'permission', label: '权限', hint: PERMISSION_LABELS[permission]?.label ?? '', keywords: ['permission', 'permissions', 'approvals', 'mode'] }]
       : []),
     ...(selected
       ? [
@@ -969,7 +969,7 @@ export function App() {
   };
 
   // The hub has its own controls for these; going through the agent would leave them out of sync.
-  const hiddenCommands = [...(models.length ? ['model'] : []), ...(effortLevels.length ? ['effort'] : [])];
+  const hiddenCommands = [...(models.length ? ['model'] : []), ...(effortLevels.length ? ['effort'] : []), ...(activeCaps?.quota ? ['usage'] : [])];
 
   const attachBlocked = !activeCaps?.images ? `${agentLabel(activeAgent)} 不支持发图片` : imagesBlocked(models, model);
 

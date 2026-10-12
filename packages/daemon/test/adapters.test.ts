@@ -1246,7 +1246,7 @@ test('CodexAppServerAdapter: models come from the agent, commands are the local 
   assert.deepEqual(models[0].efforts, ['low', 'high', 'max']);
   assert.equal(await adapter.models(), models, 'the probe runs once and is cached');
   assert.deepEqual(await adapter.commands(), CODEX_LOCAL_COMMANDS);
-  assert.deepEqual(CODEX_LOCAL_COMMANDS.map((c) => c.name), ['compact']);
+  assert.deepEqual(CODEX_LOCAL_COMMANDS.map((c) => c.name), ['compact', 'review', 'skills', 'mcp', 'usage']);
 });
 
 test('CodexAppServerAdapter: listing, history, forking and deleting go through one-off servers', async () => {
