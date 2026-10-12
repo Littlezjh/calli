@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { ApiError, AuthError, type Api, type HostFailure, type HostInfo } from '../api';
 import { HOST_STATUS, hostProblem } from '../hosts';
 import { Dialog } from './Dialog';
-import { IconClose, IconPlus, IconServer } from './icons';
+import { IconCheck, IconChevron, IconClose, IconComputer, IconGlobe, IconPlus, IconServer, IconSettings } from './icons';
+import { Popover } from './Popover';
 
 /** ssh's own words, for whoever has to fix it. When no daemon answered there is nothing of ssh's to quote. */
 const SshSaid = ({ host }: { host: Pick<HostInfo, 'code' | 'error'> }) =>
@@ -17,6 +18,43 @@ interface SwitcherProps {
   /** The machine on screen; null is the hub's own. */
   current: string | null;
   onPick: (id: string | null) => void;
+}
+
+/** Chooses where a new conversation runs, next to its project rather than only in the sidebar. */
+export function MachinePicker({ hosts, current, onPick, onManage }: SwitcherProps & { onManage: () => void }) {
+  const selected = hosts.find((host) => host.id === current);
+  const label = current ? `远程 · ${selected?.label ?? '连接中'}` : '本机';
+  return (
+    <Popover label="工作位置" triggerLabel="选择机器" triggerClassName="context-btn machine-trigger" triggerTitle={label}
+      trigger={<>
+        {current ? <IconGlobe size={15} /> : <IconComputer size={15} />}
+        <span>{label}</span>
+        {current && <StatusDot status={selected?.status ?? 'connecting'} />}
+        <IconChevron size={12} open />
+      </>}
+    >
+      {(close) => <>
+        <div className="pop-title">工作位置</div>
+        <button type="button" role="menuitemradio" aria-checked={current === null} className="pop-item compact" onClick={() => { close(); onPick(null); }}>
+          <span className="pop-item-icon"><IconComputer size={17} /></span>
+          <span className="pop-item-text"><span className="pop-item-label">本机</span><span className="pop-item-hint">Hub 所在机器</span></span>
+          {current === null && <span className="pop-item-check"><IconCheck size={16} /></span>}
+        </button>
+        {hosts.length > 0 && <div className="pop-sep">远程机器</div>}
+        {hosts.map((host) => <button key={host.id} type="button" role="menuitemradio" aria-checked={current === host.id} className="pop-item compact" title={host.target}
+          onClick={() => { close(); onPick(host.id); }}>
+          <span className="pop-item-icon"><IconGlobe size={17} /></span>
+          <span className="pop-item-text"><span className="pop-item-label">{host.label}</span><span className="pop-item-hint machine-status"><StatusDot status={host.status} />{HOST_STATUS[host.status]}</span></span>
+          {current === host.id && <span className="pop-item-check"><IconCheck size={16} /></span>}
+        </button>)}
+        <div className="pop-divider" role="separator" />
+        <button type="button" role="menuitem" className="pop-item compact" onClick={() => { close(); onManage(); }}>
+          <span className="pop-item-icon"><IconSettings size={17} /></span>
+          <span className="pop-item-label">管理机器…</span>
+        </button>
+      </>}
+    </Popover>
+  );
 }
 
 /** Which machine the list below is of, like the row on top of Codex's phone app. Absent until a machine is added. */

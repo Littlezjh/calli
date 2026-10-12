@@ -228,6 +228,12 @@ export const IconGlobe = (p: { size?: number }) => (
     <path d="M3.5 12h17M12 3.5c2.6 2.4 3.9 5.2 3.9 8.5s-1.3 6.1-3.9 8.5c-2.6-2.4-3.9-5.2-3.9-8.5s1.3-6.1 3.9-8.5z" />
   </Svg>
 );
+export const IconComputer = (p: { size?: number }) => (
+  <Svg {...p}>
+    <rect x="4" y="4" width="16" height="12" rx="2" />
+    <path d="M4 16l-2 4h20l-2-4M9 20h6" />
+  </Svg>
+);
 /** A machine: two units in a rack. */
 export const IconServer = (p: { size?: number }) => (
   <Svg {...p}>

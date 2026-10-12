@@ -5,6 +5,7 @@ interface Props {
   label: string;
   triggerClassName?: string;
   triggerTitle?: string;
+  triggerLabel?: string;
   panelClassName?: string;
   trigger: ReactNode;
   /** Which edge of the trigger the panel lines up with on wide screens. */
@@ -23,6 +24,7 @@ export function Popover({
   label,
   triggerClassName,
   triggerTitle,
+  triggerLabel,
   panelClassName,
   trigger,
   align = 'start',
@@ -64,6 +66,7 @@ export function Popover({
         type="button"
         className={triggerClassName}
         title={triggerTitle}
+        aria-label={triggerLabel}
         aria-haspopup="menu"
         aria-expanded={open}
         disabled={disabled}
