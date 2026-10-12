@@ -14,6 +14,14 @@ export function permissionHint(mode: string, canAsk: boolean): string {
   return PERMISSION_LABELS[mode]?.hint ?? '';
 }
 
+/** The level a new thread with this agent starts at: the agent's own default, else the usual one. */
+export function startingPermission(caps: { permissionModes: string[]; defaultPermissionMode?: string }): string {
+  const modes = caps.permissionModes;
+  if (caps.defaultPermissionMode && modes.includes(caps.defaultPermissionMode)) return caps.defaultPermissionMode;
+  if (modes.length === 0 || modes.includes('auto_edit')) return 'auto_edit';
+  return modes[0];
+}
+
 /** Stable order for the picker: from most to least restrictive. */
 export const PERMISSION_ORDER = ['ask', 'auto_edit', 'full_access'];
 

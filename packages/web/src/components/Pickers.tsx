@@ -444,7 +444,7 @@ export function WorkspacePicker({ branch, changes, worktree, onChange }: Workspa
   return (
     <Popover
       label="在哪里工作"
-      triggerClassName="context-btn"
+      triggerClassName="context-btn workspace-btn"
       triggerTitle={worktree ? '在新工作树里开始' : '在当前目录里开始'}
       trigger={
         <>

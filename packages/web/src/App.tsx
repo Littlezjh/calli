@@ -16,7 +16,7 @@ import { useAppearance, useIsCompact, useListSwipe } from './hooks';
 import type { PreparedImage } from './images';
 import { attentionCount, pageTitle, threadNotices } from './notices';
 import { folderName } from './paths';
-import { PERMISSION_LABELS } from './permissions';
+import { PERMISSION_LABELS, startingPermission } from './permissions';
 import { buildTimeline, toMarkdown, turnPreviews, type StoredEvent } from './timeline';
 import { newerBuildAvailable } from './version';
 import { AppearancePanel } from './components/AppearancePanel';
@@ -233,7 +233,9 @@ export function App() {
         setSections(s);
         setTodos(td);
         setDraftCwd((cur) => cur || c.workdirs[0] || '');
-        setDraftAgent(a.find((x) => x.available)?.id ?? 'claude');
+        const first = a.find((x) => x.available);
+        setDraftAgent(first?.id ?? 'claude');
+        if (first) setDraftPermission(startingPermission(first.capabilities));
         // Cheap enough to do once: PATH scan for other copies of known CLIs.
         api
           .discoverAgents()
@@ -800,10 +802,9 @@ export function App() {
     setDraftAgent(id);
     setDraftModel(null);
     setDraftEffort(null);
-    const modes = capsOf(id)?.permissionModes ?? [];
-    if (modes.length && !modes.includes(draftPermission)) {
-      setDraftPermission(modes.includes('auto_edit') ? 'auto_edit' : modes[0]);
-    }
+    // Each agent starts at its own level: one that cannot ask starts where it can work.
+    const caps = capsOf(id);
+    if (caps) setDraftPermission(startingPermission(caps));
   };
 
   // Adds a discovered CLI as its own instance and selects it for the new thread.

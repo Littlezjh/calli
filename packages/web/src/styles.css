@@ -1480,6 +1480,13 @@ html.list-open body {
   text-overflow: ellipsis;
 }
 
+/* On a phone the strip holds agent, directory and this; its icon alone tells folder from worktree. */
+@media (max-width: 640px) {
+  .workspace-btn > span {
+    display: none;
+  }
+}
+
 .composer-box textarea {
   width: 100%;
   min-height: 52px;

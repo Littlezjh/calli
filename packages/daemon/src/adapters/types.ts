@@ -172,6 +172,8 @@ export interface AgentAdapter {
     approvals: boolean;
     /** Permission levels this agent supports. Empty means the UI shows no permission picker. */
     permissionModes: readonly PermissionMode[];
+    /** The level a new thread starts at when none is chosen. Without one, `auto_edit`. */
+    defaultPermissionMode?: PermissionMode;
     /** Thinking effort levels this agent supports. Empty means the UI shows no effort picker. */
     effortLevels: readonly EffortLevel[];
     /** Whether a turn may carry images. A model can still opt out through ModelOption.images. */

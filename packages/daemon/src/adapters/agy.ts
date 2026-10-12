@@ -418,6 +418,9 @@ export class AgyAdapter implements AgentAdapter {
     resume: true,
     approvals: false,
     permissionModes: ['auto_edit', 'full_access'] as const,
+    // It cannot ask, so at the lower level every command is refused and the turn stops; new threads
+    // start where it can actually work.
+    defaultPermissionMode: 'full_access' as const,
     effortLevels: [] as const,
     images: true,
     deleteSession: false,

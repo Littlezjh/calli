@@ -145,6 +145,8 @@ export interface AgentInfo {
     resume: boolean;
     approvals: boolean;
     permissionModes: string[];
+    /** The level a new thread starts at. Missing: `auto_edit`. */
+    defaultPermissionMode?: string;
     effortLevels: string[];
     images: boolean;
     deleteSession: boolean;

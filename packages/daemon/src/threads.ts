@@ -1000,11 +1000,11 @@ export class ThreadManager {
     if (input.sectionId !== undefined && input.sectionId !== null && !this.store.getSection(input.sectionId)) {
       throw new HttpError(400, 'section not found');
     }
-    // Default for new threads: auto-approve edits, still ask before other actions.
+    // Default for new threads: the agent's own, else auto-approve edits and still ask before other actions.
     const permissionMode =
       adapter.capabilities.permissionModes.length === 0
         ? 'auto_edit'
-        : this.validatePermissionMode(input.agent, input.permissionMode ?? 'auto_edit');
+        : this.validatePermissionMode(input.agent, input.permissionMode ?? adapter.capabilities.defaultPermissionMode ?? 'auto_edit');
     const model = input.model ? await this.validateModel(input.agent, input.model) : null;
     const effort = input.effort ? await this.validateEffort(input.agent, model, input.effort) : null;
     const title = (input.title ?? '').trim() || 'New thread';

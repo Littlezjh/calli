@@ -1238,11 +1238,15 @@ test('agy: two permission levels, no approvals, no images; settings are flags of
   const models = (await (await api('/api/agents/agy/models')).json()) as Array<{ id: string; efforts: string[] }>;
   assert.deepEqual(models.map((m) => m.id), ['fast-low', 'fast-high', 'big-thinking']);
 
-  // It cannot ask, so "ask" is not offered; the default is the level a new thread gets anyway.
+  // It cannot ask, so "ask" is not offered, and a new thread starts with full access: at the lower
+  // level every command is refused. The lower level can still be chosen; other agents keep theirs.
+  assert.equal(agy.capabilities.defaultPermissionMode, 'full_access');
   const ask = await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'agy', cwd: workdir, permissionMode: 'ask' }) });
   assert.equal(ask.status, 400);
   assert.equal((await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'agy', cwd: workdir, effort: 'high' }) })).status, 400);
-  const thread = (await newThread({ agent: 'agy', model: 'fast-low' })) as { id: string; permissionMode?: string };
+  assert.equal(((await newThread({ agent: 'agy' })) as { permissionMode?: string }).permissionMode, 'full_access');
+  assert.equal(((await newThread({ agent: 'claude' })) as { permissionMode?: string }).permissionMode, 'auto_edit');
+  const thread = (await newThread({ agent: 'agy', model: 'fast-low', permissionMode: 'auto_edit' })) as { id: string; permissionMode?: string };
   assert.equal(thread.permissionMode, 'auto_edit');
 
   const replyOf = (list: Array<{ type: string; turnId: string | null; data: any }>, turnId: string | null) =>

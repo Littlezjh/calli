@@ -81,6 +81,15 @@ test('permissionHint: the middle level means edits only for an agent that cannot
   assert.equal(permissionHint('unknown', true), '');
 });
 
+test('startingPermission: the agent\'s own default when it has one it supports, else auto_edit', async () => {
+  const { startingPermission } = await import('../src/permissions.js');
+  assert.equal(startingPermission({ permissionModes: ['auto_edit', 'full_access'], defaultPermissionMode: 'full_access' }), 'full_access');
+  assert.equal(startingPermission({ permissionModes: ['ask', 'auto_edit', 'full_access'] }), 'auto_edit');
+  assert.equal(startingPermission({ permissionModes: ['auto_edit'], defaultPermissionMode: 'full_access' }), 'auto_edit');
+  assert.equal(startingPermission({ permissionModes: ['ask', 'full_access'] }), 'ask');
+  assert.equal(startingPermission({ permissionModes: [] }), 'auto_edit');
+});
+
 test('a model that cannot see is still offered pictures when the agent can show them to it', async () => {
   const { imagesNote } = await import('../src/components/Pickers.js');
   const models = [
