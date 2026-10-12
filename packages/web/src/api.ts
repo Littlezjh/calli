@@ -177,6 +177,10 @@ export interface AgentInfo {
   label: string;
   /** The agent's mark: the path of a 24×24 drawing, filled with the even-odd rule. Missing from daemons that predate it. */
   icon?: string;
+  /** Which adapter this instance is; instances of one adapter group together in the picker. */
+  adapter?: string;
+  /** The login this instance runs as, when it is a linked account (an email). */
+  account?: string | null;
   available: boolean;
   capabilities: {
     resume: boolean;
@@ -630,7 +634,7 @@ export class Api {
   }
 
   /** Adds an agent instance (another CLI, another account). */
-  addAgent(input: { id?: string; adapter: string; label?: string; command?: string[]; env?: Record<string, string> }): Promise<{ id: string }> {
+  addAgent(input: { id?: string; adapter: string; label?: string; command?: string[]; env?: Record<string, string>; account?: string }): Promise<{ id: string }> {
     return this.request('POST', '/api/agents', input);
   }
 

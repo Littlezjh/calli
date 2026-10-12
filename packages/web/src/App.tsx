@@ -967,7 +967,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
   // Links a signed-in account as its own instance and selects it for the new thread.
   const addAccount = async (account: DiscoveredAccount) => {
     if (!api) return;
-    await api.addAgent({ id: account.id, adapter: account.adapter, label: account.label, env: account.env });
+    await api.addAgent({ id: account.id, adapter: account.adapter, label: account.label, env: account.env, account: account.email });
     const [list, rest] = await Promise.all([api.agents(), api.discoverAccounts()]);
     setAgents(list);
     setAccounts(rest);

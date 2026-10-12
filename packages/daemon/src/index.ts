@@ -46,7 +46,7 @@ async function main(): Promise<void> {
   // Directories added from the page are kept next to the hub's data; threads in no project work in
   // a scratch area there too.
   const dirs = new Workdirs(workdirs, join(config.dataDir, 'workdirs.json'), join(config.dataDir, 'scratch'));
-  const manager = new ThreadManager(store, adapters, dirs, new AttachmentStore(config.dataDir));
+  const manager = new ThreadManager(store, adapters, dirs, new AttachmentStore(config.dataDir), () => registry.list());
   manager.recoverInterrupted();
   const terminals = new TerminalManager({ workdirs: () => dirs.all(), shell: config.termShell ?? undefined });
   // Other machines, each reached over SSH through its daemon's socket.

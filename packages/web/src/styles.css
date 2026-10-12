@@ -1911,6 +1911,28 @@ html.list-open body {
   font-size: 12.5px;
 }
 
+/* The way out of a group's accounts, back to the list of agents. */
+.pop-back {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 8px 10px 6px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.pop-back .icon {
+  transform: rotate(180deg);
+}
+
+.pop-back:hover {
+  color: var(--text);
+}
+
 .pop-scroll {
   max-height: min(300px, 42vh);
   overflow-y: auto;

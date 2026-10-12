@@ -121,6 +121,10 @@ export interface AgentInfo {
   label: string;
   /** The agent's mark, when its adapter has one. Instances of one adapter share it. */
   icon?: string;
+  /** Which adapter this instance is: instances of one adapter group together in the picker. */
+  adapter?: string;
+  /** The account this instance runs as, when it is a linked second login (an email). */
+  account?: string | null;
   available: boolean;
   capabilities: AgentAdapter['capabilities'];
 }
@@ -171,6 +175,8 @@ export class ThreadManager {
     private readonly adapters: Map<string, AgentAdapter>,
     workdirs: string[] | Workdirs,
     private readonly attachments: AttachmentStore,
+    /** What each instance is beyond its adapter: its adapter kind and linked account. */
+    private readonly agentMeta: () => Array<{ id: string; adapter?: string; account?: string }> = () => [],
   ) {
     this.dirs = Array.isArray(workdirs) ? new Workdirs(workdirs) : workdirs;
   }
@@ -192,10 +198,20 @@ export class ThreadManager {
 
   async listAgents(): Promise<AgentInfo[]> {
     const out: AgentInfo[] = [];
+    const meta = new Map(this.agentMeta().map((m) => [m.id, m]));
     for (const [id, a] of this.adapters) {
       // The key is the instance id: a second account of the same CLI must not report the
       // adapter's own name, or the picker could not tell the two apart.
-      out.push({ id, label: a.label, icon: a.icon, available: await a.available(), capabilities: a.capabilities });
+      const m = meta.get(id);
+      out.push({
+        id,
+        label: a.label,
+        icon: a.icon,
+        ...(m?.adapter ? { adapter: m.adapter } : {}),
+        ...(m?.account ? { account: m.account } : {}),
+        available: await a.available(),
+        capabilities: a.capabilities,
+      });
     }
     return out;
   }

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { AgentInfo, ModelOption } from '../api';
 import { usageSummary, type Usage } from '../timeline';
 import { EFFORT_LABELS, PERMISSION_LABELS, PERMISSION_ORDER, permissionHint } from '../permissions';
@@ -238,9 +238,33 @@ interface AgentProps {
   onAddAccount?: (account: DiscoveredAccount) => Promise<void>;
 }
 
+/**
+ * Agents grouped the way the picker shows them: instances of one adapter belong together, and a
+ * group with several of them folds into one row that opens to the accounts. An agent whose
+ * adapter is not told stands as a group of its own, the way it always listed.
+ */
+export function agentGroups(agents: AgentInfo[]): AgentInfo[][] {
+  const groups = new Map<string, AgentInfo[]>();
+  for (const a of agents) {
+    const key = a.adapter ?? `_${a.id}`;
+    groups.set(key, [...(groups.get(key) ?? []), a]);
+  }
+  return [...groups.values()];
+}
+
+/** One group's name: the shortest label in it, which for a pair like "Claude Code" and
+ * "Claude Code 2" is the adapter's own name. */
+function groupLabel(group: AgentInfo[]): string {
+  return group.reduce((short, a) => (a.label.length < short.length ? a.label : short), group[0].label);
+}
+
 export function AgentPicker({ agents, value, onChange, accounts = [], onAddAccount }: AgentProps) {
   const current = agents.find((a) => a.id === value);
   const [adding, setAdding] = useState<string | null>(null);
+  /** The group whose accounts are on screen, drilled in from the list of agents. */
+  const [openGroup, setOpenGroup] = useState<string | null>(null);
+  const groups = useMemo(() => agentGroups(agents), [agents]);
+  const drilled = groups.find((g) => g.some((a) => a.id === openGroup)) ?? null;
   // The marks the thread list shows in place of names are introduced here, next to the names.
   const marks = agents.some((a) => a.icon);
   return (
@@ -255,34 +279,95 @@ export function AgentPicker({ agents, value, onChange, accounts = [], onAddAccou
         </>
       }
     >
-      {(close) => (
-        <>
-          <div className="pop-title">用哪个 agent？</div>
-          {agents.map((a) => (
-            <button
-              key={a.id}
-              type="button"
-              role="menuitemradio"
-              aria-checked={a.id === value}
-              className="pop-item compact"
-              disabled={!a.available}
-              onClick={() => {
-                onChange(a.id);
-                close();
-              }}
-            >
-              {marks && <span className="pop-item-icon">{a.icon && <AgentMark path={a.icon} size={16} />}</span>}
-              <span className="pop-item-text">
-                <span className="pop-item-label">{a.label}</span>
-                {!a.available && <span className="pop-item-hint">这台主机上没有找到</span>}
-              </span>
-              {a.id === value && (
-                <span className="pop-item-check">
-                  <IconCheck size={16} />
-                </span>
-              )}
+      {(close) =>
+        drilled ? (
+          <>
+            <button type="button" className="pop-back" onClick={() => setOpenGroup(null)}>
+              <IconChevron size={12} /> {groupLabel(drilled)}
             </button>
-          ))}
+            {drilled.map((a) => (
+              <button
+                key={a.id}
+                type="button"
+                role="menuitemradio"
+                aria-checked={a.id === value}
+                className="pop-item compact"
+                disabled={!a.available}
+                onClick={() => {
+                  onChange(a.id);
+                  setOpenGroup(null);
+                  close();
+                }}
+              >
+                {marks && <span className="pop-item-icon">{a.icon && <AgentMark path={a.icon} size={16} />}</span>}
+                <span className="pop-item-text">
+                  <span className="pop-item-label">{a.label}</span>
+                  {a.account ? (
+                    <span className="pop-item-hint">{a.account}</span>
+                  ) : (
+                    !a.available && <span className="pop-item-hint">这台主机上没有找到</span>
+                  )}
+                </span>
+                {a.id === value && (
+                  <span className="pop-item-check">
+                    <IconCheck size={16} />
+                  </span>
+                )}
+              </button>
+            ))}
+          </>
+        ) : (
+          <>
+          <div className="pop-title">用哪个 agent？</div>
+          {groups.map((group) => {
+            const solo = group.length === 1 ? group[0] : null;
+            if (solo)
+              return (
+                <button
+                  key={solo.id}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={solo.id === value}
+                  className="pop-item compact"
+                  disabled={!solo.available}
+                  onClick={() => {
+                    onChange(solo.id);
+                    close();
+                  }}
+                >
+                  {marks && <span className="pop-item-icon">{solo.icon && <AgentMark path={solo.icon} size={16} />}</span>}
+                  <span className="pop-item-text">
+                    <span className="pop-item-label">{solo.label}</span>
+                    {!solo.available && <span className="pop-item-hint">这台主机上没有找到</span>}
+                  </span>
+                  {solo.id === value && (
+                    <span className="pop-item-check">
+                      <IconCheck size={16} />
+                    </span>
+                  )}
+                </button>
+              );
+            // Several accounts of one agent: the row stands for the agent, says which account is
+            // in use, and opens to the choice.
+            const active = group.find((a) => a.id === value) ?? group[0];
+            return (
+              <button
+                key={active.id}
+                type="button"
+                className="pop-item compact"
+                onClick={() => setOpenGroup(active.id)}
+              >
+                {marks && <span className="pop-item-icon">{active.icon && <AgentMark path={active.icon} size={16} />}</span>}
+                <span className="pop-item-text">
+                  <span className="pop-item-label">{groupLabel(group)}</span>
+                  <span className="pop-item-hint">{active.account ?? active.label}</span>
+                </span>
+                <span className="pop-item-check">
+                  <IconChevron size={13} />
+                </span>
+              </button>
+            );
+          })}
           {onAddAccount && accounts.length > 0 && (
             <>
               <div className="pop-sep">已登录的账号</div>
