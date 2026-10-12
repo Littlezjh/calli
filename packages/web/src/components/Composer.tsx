@@ -3,7 +3,7 @@ import { ApiError, MAX_QUEUED, type OutgoingImage, type QueuedMessage, type Slas
 import { buildMenu, type HubAction, type MenuRow } from '../commands';
 import { readDrafts, writeDraft } from '../drafts';
 import { MAX_IMAGES, prepareImage, restoreImage, type PreparedImage } from '../images';
-import { withQuote } from '../timeline';
+import { withNotes, type Note } from '../timeline';
 import { Lightbox } from './Lightbox';
 import {
   IconArchive,
@@ -17,7 +17,6 @@ import {
   IconInfo,
   IconPaperclip,
   IconPin,
-  IconQuote,
   IconSend,
   IconShield,
   IconSlash,
@@ -25,16 +24,24 @@ import {
   IconStop,
 } from './icons';
 
-/** What is left unsent in a box: the words, a quote and pictures. */
+/** A passage noted for the next message. The id ties it to its highlight in the conversation. */
+export interface DraftNote extends Note {
+  id: string;
+}
+
+/** What is left unsent in a box: the words, noted passages and pictures. */
 interface Draft {
   text: string;
-  quote: string | null;
+  notes: DraftNote[];
   images: PreparedImage[];
 }
 
+let noteSeq = 0;
+const noteId = () => `note-${Date.now()}-${++noteSeq}`;
+
 /**
  * Unsent drafts by thread, so what is typed in one thread stays there: switching away keeps it,
- * switching back brings it back, and another thread starts with its own. Words and quotes are also
+ * switching back brings it back, and another thread starts with its own. Words and notes are also
  * kept on the device and outlast a reload; pictures only last as long as the page.
  */
 const drafts = new Map<string, Draft>();
@@ -52,11 +59,11 @@ function loadDraft(key: string): Draft | undefined {
   if (inMemory) return inMemory;
   const store = storage();
   const stored = store ? readDrafts(store)[key] : undefined;
-  return stored && { text: stored.text, quote: stored.quote, images: [] };
+  return stored && { text: stored.text, notes: stored.notes.map((n) => ({ ...n, id: noteId() })), images: [] };
 }
 
 function keepDraft(key: string, draft: Draft | null): void {
-  if (draft && (draft.text.trim() || draft.quote !== null || draft.images.length)) drafts.set(key, draft);
+  if (draft && (draft.text.trim() || draft.notes.length || draft.images.length)) drafts.set(key, draft);
   else drafts.delete(key);
   const store = storage();
   if (store) writeDraft(store, key, draft);
@@ -103,8 +110,10 @@ interface Props {
   onSendQueuedNow: (id: string) => void;
   /** Text to put back in the box, such as messages that were waiting when the user pressed stop. */
   restore: { text: string; nonce: number } | null;
-  /** Text quoted out of a message, to go along with what is typed. */
-  quote: { text: string; nonce: number } | null;
+  /** A passage noted out of a message, to go along with what is typed. Each one adds to the list. */
+  note: (DraftNote & { nonce: number }) | null;
+  /** Told which notes are in the box, so their passages can stay highlighted in the conversation. */
+  onNotesChange?: (notes: DraftNote[]) => void;
 }
 
 const ACTION_ICONS: Record<string, (p: { size?: number }) => JSX.Element> = {
@@ -145,10 +154,11 @@ export function Composer({
   onEditQueued,
   onSendQueuedNow,
   restore,
-  quote,
+  note,
+  onNotesChange,
 }: Props) {
   const [text, setText] = useState('');
-  const [quoteText, setQuoteText] = useState<string | null>(null);
+  const [notes, setNotes] = useState<DraftNote[]>([]);
   const [busy, setBusy] = useState(false);
   const [images, setImages] = useState<PreparedImage[]>([]);
   const [preparing, setPreparing] = useState(0);
@@ -171,13 +181,15 @@ export function Composer({
     setDismissed(false);
   }, [text]);
 
-  // A selection quoted out of a message. Keyed on the nonce: quoting the same text twice lands too.
+  // A passage noted out of a message joins the others. Keyed on the nonce: the same passage can be noted twice.
   useEffect(() => {
-    if (!quote) return;
-    setQuoteText(quote.text);
+    if (!note) return;
+    const { nonce: _nonce, ...added } = note;
+    setNotes((prev) => [...prev, added]);
     ref.current?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [quote?.nonce]);
+  }, [note?.nonce]);
+  useEffect(() => onNotesChange?.(notes), [notes, onNotesChange]);
 
   useEffect(() => {
     listRef.current?.querySelector('[data-active="true"]')?.scrollIntoView({ block: 'nearest' });
@@ -194,14 +206,14 @@ export function Composer({
 
   // Each thread has its own draft. Swapped before paint, so the old text never flashes in the new
   // thread. The pictures' object URLs go with the draft; they are released once it is sent.
-  const draftRef = useRef<Draft>({ text, quote: quoteText, images });
-  draftRef.current = { text, quote: quoteText, images };
+  const draftRef = useRef<Draft>({ text, notes, images });
+  draftRef.current = { text, notes, images };
   const sendingRef = useRef(false);
   useLayoutEffect(() => {
     if (draftKey === undefined) return;
     const saved = loadDraft(draftKey);
     setText(saved?.text ?? '');
-    setQuoteText(saved?.quote ?? null);
+    setNotes(saved?.notes ?? []);
     setImages(saved?.images ?? []);
     return () => {
       const draft = draftRef.current;
@@ -221,7 +233,7 @@ export function Composer({
       if (keyRef.current !== undefined && !sendingRef.current) keepDraft(keyRef.current, draftRef.current);
     }, SAVE_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [draftKey, text, quoteText]);
+  }, [draftKey, text, notes]);
   // Without a draft to keep them, thumbnails left in the box are released when it goes away.
   useEffect(
     () => () => {
@@ -304,7 +316,7 @@ export function Composer({
     choose(row);
   };
 
-  const hasContent = text.trim() !== '' || images.length > 0 || quoteText !== null;
+  const hasContent = text.trim() !== '' || images.length > 0 || notes.length > 0;
   // While a turn runs, sending means queueing, up to a limit.
   const queueFull = running && queued.length >= MAX_QUEUED;
   const canSend = hasContent && !busy && !disabled && preparing === 0 && !queueFull;
@@ -315,8 +327,8 @@ export function Composer({
     setBusy(true);
     sendingRef.current = true;
     try {
-      await onSend(quoteText ? withQuote(quoteText, text) : text.trim(), images);
-      setQuoteText(null);
+      await onSend(notes.length ? withNotes(notes, text) : text.trim(), images);
+      setNotes([]);
       images.forEach((img) => URL.revokeObjectURL(img.previewUrl));
       setImages([]);
       setText('');
@@ -495,17 +507,28 @@ export function Composer({
             </div>
           )}
 
-          {quoteText !== null && (
-            <div className="quote-strip">
-              <span className="quote-icon">
-                <IconQuote size={14} />
-              </span>
-              <span className="quote-text" title={quoteText}>
-                {quoteText}
-              </span>
-              <button type="button" className="quote-remove" aria-label="移除引用" title="移除引用" onClick={() => setQuoteText(null)}>
-                <IconClose size={13} />
-              </button>
+          {notes.length > 0 && (
+            <div className="notes" aria-label={`${notes.length} 条注释`}>
+              {notes.map((n, i) => (
+                <div key={n.id} className="note-strip">
+                  <span className="note-num">{i + 1}</span>
+                  <span className="note-body">
+                    <span className="note-quote" title={n.quote}>
+                      {n.quote}
+                    </span>
+                    {n.comment && <span className="note-comment">{n.comment}</span>}
+                  </span>
+                  <button
+                    type="button"
+                    className="quote-remove"
+                    aria-label={`移除注释 ${i + 1}`}
+                    title="移除注释"
+                    onClick={() => setNotes((prev) => prev.filter((x) => x.id !== n.id))}
+                  >
+                    <IconClose size={13} />
+                  </button>
+                </div>
+              ))}
             </div>
           )}
 

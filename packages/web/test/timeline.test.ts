@@ -16,6 +16,8 @@ import {
   turnPreviews,
   workSections,
   withQuote,
+  withNotes,
+  splitNotes,
   type Step,
   type StoredEvent,
 } from '../src/timeline.js';
@@ -685,4 +687,28 @@ test('splitUserQuote reads the leading quote back out of a sent message', () => 
   // A quote-only message has no body, and surrounding whitespace is dropped.
   assert.deepEqual(splitUserQuote('> quoted'), { quote: 'quoted', body: '' });
   assert.equal(splitUserQuote('>  spaced  ').quote, 'spaced');
+});
+
+test('withNotes numbers each passage, with its comment when there is one, and splitNotes reads them back', () => {
+  const sent = withNotes(
+    [
+      { quote: '输入 0.042 美元', comment: '这个核实了吗？' },
+      { quote: 'first\n\nsecond', comment: '' },
+    ],
+    '  都看一下  ',
+  );
+  assert.equal(sent, '[注释 1]\n> 输入 0.042 美元\n评论：这个核实了吗？\n\n[注释 2]\n> first\n>\n> second\n\n都看一下');
+  assert.deepEqual(splitNotes(sent), {
+    notes: [
+      { quote: '输入 0.042 美元', comment: '这个核实了吗？' },
+      { quote: 'first\n\nsecond', comment: '' },
+    ],
+    body: '都看一下',
+  });
+  // Notes alone are a message too; a comment typed over several lines is kept on one.
+  assert.equal(withNotes([{ quote: 'x', comment: 'a\n b' }], ''), '[注释 1]\n> x\n评论：a b');
+  assert.deepEqual(splitNotes('[注释 1]\n> x'), { notes: [{ quote: 'x', comment: '' }], body: '' });
+  // Anything else is left as it is, including the older single quote.
+  assert.deepEqual(splitNotes('> quoted\n\nwhy?'), { notes: [], body: '> quoted\n\nwhy?' });
+  assert.deepEqual(splitNotes('see [注释 1] above'), { notes: [], body: 'see [注释 1] above' });
 });

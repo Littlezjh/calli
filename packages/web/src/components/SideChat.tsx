@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Api, type Thread } from '../api';
 import type { PreparedImage } from '../images';
 import { folderName } from '../paths';
-import { buildTimeline, type StoredEvent } from '../timeline';
+import { buildTimeline, splitNotes, withNotes, type StoredEvent } from '../timeline';
 import { Composer } from './Composer';
 import { ThreadView } from './ThreadView';
 import { IconClose } from './icons';
@@ -182,10 +182,11 @@ export function SideChat({
       created = await api.updateThread(forked.id, { title });
       baseSeq.current = (await api.eventsTail(created.id)).at(-1)?.seq ?? 0;
     } else {
-      // A fresh agent seeing a bare snippet has nothing to go on but the words, so the quote
-      // block says which thread it was lifted out of.
+      // A fresh agent seeing a bare snippet has nothing to go on but the words, so the message
+      // says which thread the notes were lifted out of.
       created = await api.createThread({ agent, cwd, permissionMode, model, effort, title });
-      if (sourceTitle && text.startsWith('>')) firstText = `> 引自线程「${sourceTitle}」：\n${text}`;
+      const { notes, body } = splitNotes(text);
+      if (sourceTitle && notes.length) firstText = withNotes(notes, `（注释引自线程「${sourceTitle}」）\n\n${body}`);
     }
     setThread(created);
     onThreadCreated(created);
@@ -256,7 +257,7 @@ export function SideChat({
           }}
           onSendQueuedNow={(id) => threadId && api.sendQueuedNow(threadId, id).catch(onError)}
           restore={null}
-          quote={{ text: quoteText, nonce: 1 }}
+          note={{ id: 'side-chat-passage', quote: quoteText, comment: '', nonce: 1 }}
         />
       </aside>
     </div>

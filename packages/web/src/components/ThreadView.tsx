@@ -11,6 +11,7 @@ import {
   imagePathsIn,
   runSummary,
   splitThinking,
+  splitNotes,
   splitUserQuote,
   thinkingPreview,
   stepActive,
@@ -22,12 +23,13 @@ import {
   type FileDiff,
   type ImageRef,
   type Item,
+  type Note,
   type Step,
   type Thought,
   type WorkSection,
 } from '../timeline';
 import { Lightbox } from './Lightbox';
-import { IconCheck, IconChevron, IconClose, IconCopy, IconEdit, IconFile, IconFork, IconGlobe, IconSearch, IconTerminal, IconWorktree } from './icons';
+import { IconCheck, IconChevron, IconClose, IconCopy, IconEdit, IconFile, IconFork, IconGlobe, IconQuote, IconSearch, IconTerminal, IconWorktree } from './icons';
 
 interface Props {
   items: Item[];
@@ -129,8 +131,9 @@ export function ThreadView({ items, running, roots, loadImage, loadFile, onDecid
     list.map((item) => {
       switch (item.kind) {
         case 'user': {
-          // A quoted passage rides in the message text as Markdown quote lines; drawn apart here.
-          const { quote, body } = splitUserQuote(item.text);
+          // Notes (and the older single quote) ride in the message text; drawn apart here.
+          const noted = splitNotes(item.text);
+          const { quote, body } = noted.notes.length ? { quote: null, body: noted.body } : splitUserQuote(item.text);
           return (
             <div key={item.key} className="row user" data-turn={item.turnId}>
               {item.images.length > 0 && (
@@ -140,6 +143,7 @@ export function ThreadView({ items, running, roots, loadImage, loadFile, onDecid
                   ))}
                 </div>
               )}
+              {noted.notes.length > 0 && <SentNotes notes={noted.notes} />}
               {quote !== null && (
                 <div className="bubble-quote" title={quote}>
                   {quote}
@@ -760,4 +764,31 @@ function decisionLabel(item: Extract<Item, { kind: 'approval' }>): string {
     default:
       return `已选择：${option?.name ?? d.optionId}`;
   }
+}
+
+/** The notes a message went out with: one quiet chip, opened to read them, like Codex. */
+function SentNotes({ notes }: { notes: Note[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" className="notes-chip" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        <IconQuote size={12} />
+        {notes.length} 条注释
+        <IconChevron size={12} open={open} />
+      </button>
+      {open && (
+        <ol className="sent-notes">
+          {notes.map((n, i) => (
+            <li key={i} className="note-strip">
+              <span className="note-num">{i + 1}</span>
+              <span className="note-body">
+                <span className="note-quote">{n.quote}</span>
+                {n.comment && <span className="note-comment">{n.comment}</span>}
+              </span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </>
+  );
 }

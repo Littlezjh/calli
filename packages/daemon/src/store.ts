@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { EventType, StoredEvent } from './events.js';
+import { askedText } from './util.js';
 
 export interface ThreadRecord {
   id: string;
@@ -504,7 +505,7 @@ export class Store {
     // The sidebar's preview line is the newest ask, whatever wrote it — a live turn, an import, a
     // sync from the terminal. Hub-injected handover turns are not the user asking.
     if (type === 'turn.started' && typeof data.text === 'string' && data.text.trim() && !data.handover) {
-      this.db.prepare('UPDATE threads SET preview = ? WHERE id = ?').run(data.text.trim().slice(0, 80), threadId);
+      this.db.prepare('UPDATE threads SET preview = ? WHERE id = ?').run(askedText(data.text).slice(0, 80), threadId);
     }
     return { threadId, seq, turnId, type, ts, data };
   }

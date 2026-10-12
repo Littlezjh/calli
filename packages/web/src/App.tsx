@@ -21,7 +21,7 @@ import { buildTimeline, toMarkdown, turnPreviews, type StoredEvent } from './tim
 import { newerBuildAvailable } from './version';
 import { AppearancePanel } from './components/AppearancePanel';
 import { ArchivePanel } from './components/ArchivePanel';
-import { Composer } from './components/Composer';
+import { Composer, type DraftNote } from './components/Composer';
 import { DirectoryPicker } from './components/DirectoryPicker';
 import { Dialog } from './components/Dialog';
 import { ImportPanel } from './components/ImportPanel';
@@ -37,6 +37,7 @@ import { Sidebar } from './components/Sidebar';
 import { forkBlocked, useThreadActions } from './components/ThreadActions';
 import { ThreadView } from './components/ThreadView';
 import { TurnRuler } from './components/TurnRuler';
+import { NoteMarks, type NoteMark } from './components/NoteMarks';
 import { Toast, type ToastState } from './components/Toast';
 import { TokenGate } from './components/TokenGate';
 import { IconArchive, IconArrowDown, IconChevron, IconClose, IconEdit, IconFolder, IconImport, IconList, IconMenu, IconMore, IconPalette, IconSignOut, IconTerminal } from './components/icons';
@@ -132,7 +133,18 @@ export function App() {
   // Text handed back to the composer: messages that were waiting when the user pressed stop.
   const [restore, setRestore] = useState<{ text: string; nonce: number } | null>(null);
   // Text quoted out of a message by selecting it.
-  const [quoteSignal, setQuoteSignal] = useState<{ text: string; nonce: number } | null>(null);
+  const [noteSignal, setNoteSignal] = useState<(DraftNote & { nonce: number }) | null>(null);
+  // Where each noted passage stands in the conversation, for as long as its note waits in the box.
+  const noteRanges = useRef(new Map<string, Range>());
+  const [noteMarks, setNoteMarks] = useState<NoteMark[]>([]);
+  const onNotesChange = useCallback((notes: DraftNote[]) => {
+    const ranges = noteRanges.current;
+    for (const id of [...ranges.keys()]) if (!notes.some((n) => n.id === id)) ranges.delete(id);
+    setNoteMarks(notes.flatMap((n, i) => {
+      const range = ranges.get(n.id);
+      return range ? [{ id: n.id, n: i + 1, range }] : [];
+    }));
+  }, []);
   // The passage a side chat was opened for, if one is open.
   const [sideAsk, setSideAsk] = useState<{ text: string; nonce: number } | null>(null);
   // A message waiting for the user to confirm sending into a session the terminal also used.
@@ -1085,7 +1097,8 @@ export function App() {
           onEditQueued={editQueued}
           onSendQueuedNow={sendQueuedNow}
           restore={restore}
-          quote={quoteSignal}
+          note={noteSignal}
+          onNotesChange={onNotesChange}
         />
         )}
         {/* With the list open, the conversation is a card pushed aside; a tap on it brings it back. */}
@@ -1246,8 +1259,13 @@ export function App() {
       )}
       {threadActions.layer}
       <Toast toast={toast} onDismiss={dismissToast} />
+      <NoteMarks marks={noteMarks} scrollerRef={scrollerRef} />
       <SelectionMenu
-        onQuote={(text) => setQuoteSignal({ text, nonce: Date.now() })}
+        onNote={(quote, comment, range) => {
+          const id = `note-${Date.now()}`;
+          noteRanges.current.set(id, range);
+          setNoteSignal({ id, quote, comment, nonce: Date.now() });
+        }}
         onSideAsk={(text) => setSideAsk({ text, nonce: Date.now() })}
       />
     </div>

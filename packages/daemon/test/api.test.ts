@@ -2084,3 +2084,18 @@ test('the sidebar preview line: the newest ask, not a hub-injected handover turn
   listed = (await (await api('/api/threads')).json()) as Array<{ id: string; preview: string | null }>;
   assert.equal(listed.find((t) => t.id === thread.id)?.preview, '第二个问题');
 });
+
+test('title and preview are what was asked, not the notes or quote in front of it', async () => {
+  const ask = async (text: string) => {
+    const thread = (await (await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: workdir }) })).json()) as { id: string };
+    await api(`/api/threads/${thread.id}/turns`, { method: 'POST', body: JSON.stringify({ text }) });
+    await untilIdle(thread.id);
+    const view = (await (await api(`/api/threads/${thread.id}`)).json()) as { title: string; preview: string | null };
+    return [view.title, view.preview];
+  };
+  assert.deepEqual(await ask('[注释 1]\n> 输入 0.042 美元\n评论：核实了吗\n\n[注释 2]\n> 输出免费\n\n这两处再查一下'), ['这两处再查一下', '这两处再查一下']);
+  assert.deepEqual(await ask('[注释 1]\n> 输出免费\n评论：官网这么写的吗'), ['官网这么写的吗', '官网这么写的吗']);
+  assert.deepEqual(await ask('[注释 1]\n> 输出免费'), ['输出免费', '输出免费']);
+  assert.deepEqual(await ask('> scripts/restart.sh\n\n重启一下'), ['重启一下', '重启一下']);
+  assert.deepEqual(await ask('评论：不是注释'), ['评论：不是注释', '评论：不是注释']);
+});

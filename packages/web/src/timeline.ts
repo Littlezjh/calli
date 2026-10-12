@@ -167,6 +167,61 @@ export function withQuote(quote: string, body: string): string {
   return rest ? `${quoted}\n\n${rest}` : quoted;
 }
 
+/** A passage picked out of the conversation to talk about, with what the user says about it. */
+export interface Note {
+  quote: string;
+  /** Optional: a passage can go along on its own. */
+  comment: string;
+}
+
+const NOTE_HEAD = /^\[注释 (\d+)\]$/;
+const NOTE_COMMENT = '评论：';
+
+/**
+ * A message with numbered notes in front, in plain text any agent reads and can refer back to
+ * ("注释 2"):
+ *
+ *   [注释 1]
+ *   > the passage
+ *   评论：what the user says about it
+ *
+ *   the message itself
+ */
+export function withNotes(notes: Note[], body: string): string {
+  const blocks = notes.map((note, i) => {
+    const quoted = note.quote
+      .trim()
+      .split('\n')
+      .map((line) => `> ${line}`.trimEnd())
+      .join('\n');
+    const comment = note.comment.trim().replace(/\s*\n\s*/g, ' ');
+    return [`[注释 ${i + 1}]`, quoted, ...(comment ? [NOTE_COMMENT + comment] : [])].join('\n');
+  });
+  const rest = body.trim();
+  return [...blocks, ...(rest ? [rest] : [])].join('\n\n');
+}
+
+/** The notes at the start of a sent message, split back out to draw as a chip above the bubble. */
+export function splitNotes(text: string): { notes: Note[]; body: string } {
+  const lines = text.split('\n');
+  const notes: Note[] = [];
+  let i = 0;
+  let end = 0;
+  while (i < lines.length) {
+    while (i < lines.length && !lines[i].trim()) i += 1;
+    if (i >= lines.length || !NOTE_HEAD.test(lines[i].trim())) break;
+    i += 1;
+    const quoted: string[] = [];
+    while (i < lines.length && lines[i].startsWith('>')) quoted.push(lines[i++].replace(/^>\s?/, ''));
+    let comment = '';
+    if (i < lines.length && lines[i].startsWith(NOTE_COMMENT)) comment = lines[i++].slice(NOTE_COMMENT.length).trim();
+    notes.push({ quote: quoted.join('\n').trim(), comment });
+    end = i;
+  }
+  if (notes.length === 0) return { notes, body: text };
+  return { notes, body: lines.slice(end).join('\n').replace(/^\n+/, '') };
+}
+
 /** The leading block-quote lines of a sent message, split back out to draw above the bubble. */
 export function splitUserQuote(text: string): { quote: string | null; body: string } {
   const lines = text.split('\n');

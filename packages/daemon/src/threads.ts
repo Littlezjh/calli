@@ -23,6 +23,7 @@ import { handoverPrompt, synthesizeHandover, turnMessage } from './handover.js';
 import { isWithinWorkdirs } from './workdirs.js';
 import { coalesceToolEvents, compactDeltas, type EmittedEvent, type EventType, type StoredEvent } from './events.js';
 import type { SectionRecord, Store, ThreadRecord, ThreadWorktree, TodoRecord } from './store.js';
+import { askedText } from './util.js';
 import { addWorktree, countChanges, findCheckout, removeWorktree, samePath, worktreeLeftovers, type Checkout, type Worktree } from './worktrees.js';
 
 /** Why a copy cannot get a worktree of its own, said to whoever asked for one anyway. */
@@ -1100,7 +1101,7 @@ export class ThreadManager {
     this.store.updateThread(threadId, { status: 'running', hubTurnAt: new Date().toISOString() }, { touch: true });
 
     if (thread.title === 'New thread') {
-      const title = text.split('\n')[0].slice(0, 60) || '图片';
+      const title = askedText(text).split('\n')[0].slice(0, 60) || '图片';
       this.store.updateThread(threadId, { title });
     }
 
