@@ -33,14 +33,14 @@ import { SelectionMenu } from './components/SelectionMenu';
 import { SideChat } from './components/SideChat';
 import { TodosPage } from './components/TodosPage';
 import { AgentPicker, type DiscoveredAccount, type DiscoveredAgent, effortsForModel, imagesBlocked, imagesNote, modelName, ModelPicker, PermissionPicker, UsageMeter, WorkspacePicker } from './components/Pickers';
-import { Sidebar } from './components/Sidebar';
+import { Sidebar, SIDEBAR_SHORTCUT } from './components/Sidebar';
 import { forkBlocked, useThreadActions } from './components/ThreadActions';
 import { ThreadView } from './components/ThreadView';
 import { TurnRuler } from './components/TurnRuler';
 import { NoteMarks, type NoteMark } from './components/NoteMarks';
 import { Toast, type ToastState } from './components/Toast';
 import { TokenGate } from './components/TokenGate';
-import { IconArchive, IconArrowDown, IconChevron, IconClose, IconEdit, IconFolder, IconImport, IconList, IconMenu, IconMore, IconPalette, IconSignOut, IconTerminal } from './components/icons';
+import { IconArchive, IconArrowDown, IconChevron, IconClose, IconEdit, IconFolder, IconImport, IconList, IconMenu, IconMore, IconPalette, IconSidebar, IconSignOut, IconTerminal } from './components/icons';
 
 const sleep = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve) => {
@@ -68,6 +68,9 @@ const isNearBottom = (el: HTMLElement) => el.scrollHeight - el.scrollTop - el.cl
 
 /** The plan page's address. Threads have none: the main area showing a thread is the plain URL. */
 const TODOS_HASH = '#/todos';
+
+/** Whether the thread list is put away on a wide screen. */
+const SIDEBAR_HIDDEN_KEY = 'rah.sidebar.hidden';
 
 export function App() {
   const [token, setToken] = useState(loadToken);
@@ -102,8 +105,38 @@ export function App() {
   const [modelsByAgent, setModelsByAgent] = useState<Record<string, ModelOption[]>>({});
   const [commandsByKey, setCommandsByKey] = useState<Record<string, SlashCommand[]>>({});
   const [drawer, setDrawer] = useState(false);
+  // On a wide screen the list can be put away for room, like Codex; remembered on this device.
+  const [sidebarHidden, setSidebarHidden] = useState(() => {
+    try {
+      return window.localStorage.getItem(SIDEBAR_HIDDEN_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggleSidebar = useCallback(() => {
+    setSidebarHidden((hidden) => {
+      try {
+        window.localStorage.setItem(SIDEBAR_HIDDEN_KEY, hidden ? '0' : '1');
+      } catch {
+        // Not remembered, still toggled.
+      }
+      return !hidden;
+    });
+  }, []);
   // On a phone the thread list is a page under the conversation; `drawer` slides the conversation aside.
   const compact = useIsCompact();
+  // ⇧⌘S (Ctrl+Shift+S elsewhere), Codex's key for it. Only where there is a sidebar to put away.
+  useEffect(() => {
+    if (compact) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code === 'KeyS' && e.shiftKey && (e.metaKey || e.ctrlKey) && !e.altKey) {
+        e.preventDefault();
+        toggleSidebar();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [compact, toggleSidebar]);
   const listOpen = drawer && compact;
   useListSwipe(compact && Boolean(token), listOpen, setDrawer);
   const [confirmSignOut, setConfirmSignOut] = useState(false);
@@ -941,7 +974,7 @@ export function App() {
   );
 
   return (
-    <div className={`app${listOpen ? ' drawer-open' : ''}`}>
+    <div className={`app${listOpen ? ' drawer-open' : ''}${sidebarHidden && !compact ? ' sidebar-hidden' : ''}`}>
       {showDirPicker && (
         <DirectoryPicker
           api={api}
@@ -962,6 +995,7 @@ export function App() {
           onNewIn={newThread}
           compact={compact}
           onOpenSettings={(x, y) => setSettingsAt({ x, y })}
+          onHide={compact ? undefined : toggleSidebar}
           onThreadMenu={threadActions.openThreadMenu}
           onSectionMenu={threadActions.openSectionMenu}
           onNewSection={threadActions.newSection}
@@ -975,6 +1009,17 @@ export function App() {
           <button className="icon-btn menu-btn" aria-label="打开线程列表" aria-expanded={listOpen} onClick={() => setDrawer((v) => !v)}>
             <IconMenu />
           </button>
+          {/* With the list put away, the way back and a new thread move up here. */}
+          {sidebarHidden && !compact && (
+            <div className="topbar-lead">
+              <button className="icon-btn" aria-label="显示侧边栏" title={`显示侧边栏（${SIDEBAR_SHORTCUT}）`} onClick={toggleSidebar}>
+                <IconSidebar />
+              </button>
+              <button className="icon-btn" aria-label="新线程" title="新线程" onClick={() => newThread()}>
+                <IconEdit />
+              </button>
+            </div>
+          )}
           <div className="topbar-heading">
             {/* The plan page carries its own heading. */}
             <div className="topbar-title">{onTodos ? '' : selected ? selected.title : '新线程'}</div>

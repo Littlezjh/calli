@@ -675,6 +675,12 @@ html.list-open body {
   padding: 0 12px 4px 20px;
 }
 
+.sidebar-top-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .brand {
   font-size: 19px;
   font-weight: 700;
@@ -4688,7 +4694,35 @@ input.picker-search {
   .sidebar {
     width: var(--sidebar-w);
     flex-shrink: 0;
+    overflow: hidden;
     border-right: 1px solid var(--border);
+    transition:
+      width 0.2s ease,
+      border-right-width 0.2s ease;
+  }
+
+  /* The list keeps its width while the column closes over it, so nothing reflows on the way. */
+  .sidebar-inner {
+    width: var(--sidebar-w);
+    flex: none;
+  }
+
+  /* Put away: no width, and out of the tab order once the column has closed. */
+  .app.sidebar-hidden .sidebar {
+    width: 0;
+    border-right-width: 0;
+    visibility: hidden;
+    transition:
+      width 0.2s ease,
+      border-right-width 0.2s ease,
+      visibility 0s 0.2s;
+  }
+
+  .topbar-lead {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-left: -10px;
   }
 
   /* The sidebar is always there: nothing to open, and no second "new thread". */

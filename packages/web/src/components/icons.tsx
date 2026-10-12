@@ -244,3 +244,10 @@ export const IconSideChat = (p: { size?: number }) => (
     <path d="M13 3h4a3 3 0 013 3v5a3 3 0 01-3 3h-1" />
   </Svg>
 );
+/** A window with its side panel: shows or hides the thread list. */
+export const IconSidebar = (p: { size?: number }) => (
+  <Svg {...p}>
+    <rect x="3.5" y="4.5" width="17" height="15" rx="3.5" />
+    <path d="M9.5 4.5v15" />
+  </Svg>
+);

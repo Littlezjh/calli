@@ -3,11 +3,13 @@ import type { AgentInfo, Section, Thread } from '../api';
 import { useLongPress, useStoredSet } from '../hooks';
 import { threadMark } from '../notices';
 import { buildSidebar, taggedAgents } from '../sidebar';
-import { AgentMark, IconChevron, IconClose, IconEdit, IconFolder, IconFork, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconWorktree } from './icons';
+import { AgentMark, IconChevron, IconClose, IconEdit, IconFolder, IconFork, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconWorktree, IconSidebar } from './icons';
 
 export { folderName } from '../paths';
 
 interface Props {
+  /** Puts the list away on a wide screen; the top bar then has the button to bring it back. */
+  onHide?: () => void;
   threads: Thread[];
   sections: Section[];
   /** For the mark each row shows in place of its agent's name. */
@@ -47,6 +49,9 @@ function GroupAdd({ label, onClick }: { label: string; onClick: () => void }) {
   );
 }
 
+/** The key that shows and hides the list, as Codex has it. */
+export const SIDEBAR_SHORTCUT = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⇧⌘S' : 'Ctrl+Shift+S';
+
 export function Sidebar({
   threads,
   sections,
@@ -62,6 +67,7 @@ export function Sidebar({
   todosActive = false,
   compact = false,
   onOpenSettings,
+  onHide,
 }: Props) {
   const [search, setSearch] = useState('');
   // The search field is put away behind a button until it is asked for.
@@ -238,9 +244,16 @@ export function Sidebar({
         ) : (
           <>
             <span className="brand">Agent Hub</span>
-            <button className="round-btn" aria-label="搜索线程" title="搜索线程" onClick={() => setSearching(true)}>
-              <IconSearch size={compact ? 20 : 16} />
-            </button>
+            <span className="sidebar-top-actions">
+              {onHide && (
+                <button className="round-btn sidebar-hide" aria-label="隐藏侧边栏" title={`隐藏侧边栏（${SIDEBAR_SHORTCUT}）`} onClick={onHide}>
+                  <IconSidebar size={16} />
+                </button>
+              )}
+              <button className="round-btn" aria-label="搜索线程" title="搜索线程" onClick={() => setSearching(true)}>
+                <IconSearch size={compact ? 20 : 16} />
+              </button>
+            </span>
           </>
         )}
       </div>
