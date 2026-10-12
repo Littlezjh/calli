@@ -10,6 +10,7 @@ import type { AddressInfo } from 'node:net';
 import { gunzipSync } from 'node:zlib';
 import { AgentRegistry, defaultInstances } from '../src/agents.js';
 import { AgyAdapter } from '../src/adapters/agy.js';
+import { CodexAppServerAdapter } from '../src/adapters/codex.js';
 import { ClaudeAcpAdapter } from '../src/adapters/claude.js';
 import { PiRpcAdapter } from '../src/adapters/pi.js';
 import type { AgentAdapter } from '../src/adapters/types.js';
@@ -830,6 +831,46 @@ test('threads report their directory with symlinks resolved, as agents report fi
 
 const events = async (threadId: string) =>
   (await (await api(`/api/threads/${threadId}/events`)).json()) as Array<{ seq: number; type: string; turnId: string | null; data: any }>;
+
+test('import: Codex reads just the chosen session and rechecks its directory and duplicate status', async () => {
+  const file = join(dataDir, 'codex-import-sessions.json');
+  const log = join(dataDir, 'codex-import-rpc.jsonl');
+  writeFileSync(file, JSON.stringify([
+    { id: 'hist-indexed', cwd: workdir, name: 'Indexed session' },
+    { id: 'hist-outside', cwd: tmpdir(), name: 'Outside' },
+    { id: 'hist-removed', cwd: join(workdir, 'missing-project'), name: 'Removed' },
+    { id: 'hist-subagent', cwd: workdir, name: 'Scratch', source: { subAgent: 'review' } },
+  ]));
+  const adapter = new CodexAppServerAdapter([process.execPath, join(here, 'fixtures', 'fake-codex.mjs')], {
+    FAKE_CODEX_SESSIONS_FILE: file, FAKE_CODEX_RPC_LOG: log,
+  });
+  const m = new ThreadManager(store, new Map([['codex', adapter]]), [workdir], new AttachmentStore(dataDir));
+  const srv = createHttpServer({ manager: m, token: TOKEN, webDir: null, version: 'test' });
+  await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+  const root = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+  const requestImport = (sessionId: string) => fetch(root + '/api/threads/import', {
+    method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ agent: 'codex', sessionId }),
+  });
+  try {
+    for (const id of ['hist-outside', 'hist-removed', 'hist-missing', 'hist-subagent']) {
+      assert.equal((await requestImport(id)).status, 404, id);
+    }
+    const imported = await requestImport('hist-indexed');
+    assert.equal(imported.status, 201);
+    const thread = await imported.json() as { id: string; title: string; agentSessionId: string };
+    assert.equal(thread.title, 'Indexed session');
+    assert.equal(thread.agentSessionId, 'hist-indexed');
+    assert.equal((await events(thread.id)).filter((e) => e.type === 'turn.started').length, 2);
+    assert.equal((await requestImport('hist-indexed')).status, 409);
+    const calls = readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    assert.equal(calls.filter((c) => c.method === 'thread/list').length, 0);
+    assert.equal(calls.filter((c) => c.method === 'thread/turns/list').length, 1, 'only the valid import reads history');
+  } finally {
+    srv.close();
+    await m.shutdown();
+  }
+});
 
 test('import: sessions the agent already has are listed, and only those in allowed directories', async () => {
   const outside = mkdtempSync(join(tmpdir(), 'rah-test-outside-'));

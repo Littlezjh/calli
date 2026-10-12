@@ -3,7 +3,7 @@
 // `codex app-server` does. Prompt text drives behaviour: "tool" runs a command, "edit" changes a
 // file, "approve" asks for a command approval, "deny" offers a plain decline, "slow" waits until
 // interrupted, "crash" exits. Settings ride with turn/start the way the adapter sends them.
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import { createInterface } from 'node:readline';
 
@@ -46,7 +46,7 @@ const MODELS = [
 ];
 
 // Every conversation the fake has on record, two per page so the adapter's paging is exercised.
-const THREADS = [
+const THREADS = process.env.FAKE_CODEX_SESSIONS_FILE ? JSON.parse(readFileSync(process.env.FAKE_CODEX_SESSIONS_FILE, 'utf8')) : [
   { id: 'codex-thread-1', cwd: '/tmp/one', name: 'Named chat', preview: '', updatedAt: 1791648439 },
   { id: 'codex-thread-2', cwd: '/tmp/two', name: null, preview: 'How do I…', updatedAt: 1791648000 },
   { id: 'codex-thread-3', cwd: '/tmp/three', name: 'Third', preview: '', updatedAt: 1791647000 },
@@ -287,10 +287,21 @@ rl.on('line', (line) => {
     case 'thread/compact/start':
       return out({ jsonrpc: '2.0', id: msg.id, result: {} });
     case 'thread/list': {
+      if (!msg.params?.useStateDbOnly) {
+        return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: 'listing must not scan rollouts' } });
+      }
       const start = msg.params?.cursor ? Number(msg.params.cursor) : 0;
-      const page = THREADS.slice(start, start + 2);
-      const next = start + 2 < THREADS.length ? String(start + 2) : null;
+      const size = process.env.FAKE_CODEX_SESSIONS_FILE ? Math.min(msg.params.limit ?? 2, 100) : 2;
+      const page = THREADS.slice(start, start + size);
+      const next = process.env.FAKE_CODEX_REPEAT_CURSOR ? 'repeat' : start + size < THREADS.length ? String(start + size) : null;
       return out({ jsonrpc: '2.0', id: msg.id, result: { data: page, nextCursor: next } });
+    }
+    case 'thread/read': {
+      if (msg.params?.includeTurns !== false) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: 'metadata read must not hydrate turns' } });
+      const thread = THREADS.find((t) => t.id === msg.params.threadId);
+      return thread
+        ? out({ jsonrpc: '2.0', id: msg.id, result: { thread: { source: 'cli', ...thread, turns: [] } } })
+        : out({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: 'unknown thread' } });
     }
     case 'thread/turns/list':
       if (String(msg.params?.threadId).startsWith('hist-')) return out({ jsonrpc: '2.0', id: msg.id, result: { data: historyTurns(), nextCursor: null } });
