@@ -1,4 +1,4 @@
-import { Children, isValidElement, memo, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Children, isValidElement, memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { copyText } from '../clipboard';
@@ -54,6 +54,8 @@ const MAX_DIFF_LINES = 400;
 
 /** How many turns stay rendered before the rest folds into "上 N 条消息". */
 const RECENT_TURNS = 30;
+/** Scrolling up to within this distance of the top unfolds or fetches the earlier turns. */
+const NEAR_TOP_PX = 600;
 
 export function ThreadView({ items, running, roots, loadImage, loadFile, onDecide, hasOlder, loadingOlder, onLoadOlder, onFork, forkAnyTurn }: Props) {
   const [lightbox, setLightbox] = useState<string | null>(null);
@@ -66,6 +68,57 @@ export function ThreadView({ items, running, roots, loadImage, loadFile, onDecid
   const shown = folded ? groups.slice(groups.length - RECENT_TURNS) : groups;
   const hiddenCount = folded ? groups.length - shown.length : 0;
   const hiddenMessages = folded ? groups.slice(0, -RECENT_TURNS).reduce((n, g) => n + g.items.length, 0) : 0;
+
+  // Scrolling up near the top brings in what is above, like Codex: first the folded turns, then
+  // the pages the daemon has not sent yet. Only upward movement counts, so opening a thread (which
+  // starts at the top and is pinned down) and the scroll restore after a load trigger nothing.
+  const threadRef = useRef<HTMLDivElement | null>(null);
+  const restoreFromBottom = useRef<number | null>(null);
+  const expand = () => {
+    const scroller = threadRef.current?.closest<HTMLElement>('.scroller');
+    if (scroller) restoreFromBottom.current = scroller.scrollHeight - scroller.scrollTop;
+    setExpandedFor({ key: threadKey, value: true });
+  };
+  const reachTop = useRef(() => {});
+  reachTop.current = () => {
+    if (folded) expand();
+    else if (hasOlder && !loadingOlder) onLoadOlder?.();
+  };
+  // Unfolded turns land above the viewport; keep the same content in view.
+  useLayoutEffect(() => {
+    const scroller = threadRef.current?.closest<HTMLElement>('.scroller');
+    if (scroller && restoreFromBottom.current !== null) scroller.scrollTop = scroller.scrollHeight - restoreFromBottom.current;
+    restoreFromBottom.current = null;
+  }, [expanded]);
+  useEffect(() => {
+    const scroller = threadRef.current?.closest<HTMLElement>('.scroller');
+    if (!scroller) return;
+    let lastTop = scroller.scrollTop;
+    let touchY = 0;
+    const onScroll = () => {
+      const top = scroller.scrollTop;
+      if (top < lastTop && top < NEAR_TOP_PX) reachTop.current();
+      lastTop = top;
+    };
+    // Already at the top (or too short to scroll) there is no scroll event; the gesture itself says "up".
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0 && scroller.scrollTop < NEAR_TOP_PX) reachTop.current();
+    };
+    const onTouchStart = (e: TouchEvent) => void (touchY = e.touches[0]?.clientY ?? 0);
+    const onTouchMove = (e: TouchEvent) => {
+      if ((e.touches[0]?.clientY ?? 0) > touchY + 10 && scroller.scrollTop < NEAR_TOP_PX) reachTop.current();
+    };
+    scroller.addEventListener('scroll', onScroll, { passive: true });
+    scroller.addEventListener('wheel', onWheel, { passive: true });
+    scroller.addEventListener('touchstart', onTouchStart, { passive: true });
+    scroller.addEventListener('touchmove', onTouchMove, { passive: true });
+    return () => {
+      scroller.removeEventListener('scroll', onScroll);
+      scroller.removeEventListener('wheel', onWheel);
+      scroller.removeEventListener('touchstart', onTouchStart);
+      scroller.removeEventListener('touchmove', onTouchMove);
+    };
+  }, []);
   // A fork from the last answer copies the whole thread; it is offered while that answer is the
   // last thing in it. Where the agent can end a copy at an earlier turn, every answer offers one.
   // The mark a fork starts with is not part of the conversation: the answer above it is still the last.
@@ -159,19 +212,24 @@ export function ThreadView({ items, running, roots, loadImage, loadFile, onDecid
     });
 
   return (
-    <div className="thread">
+    <div className="thread" ref={threadRef}>
+      {/* Scrolling up loads these on its own; the buttons stay for keyboards and screen readers. */}
       {folded && (
         <div className="row">
-          <button className="older-messages" onClick={() => setExpandedFor({ key: threadKey, value: true })}>
+          <button className="older-messages" onClick={expand}>
             上 {hiddenMessages} 条消息
           </button>
         </div>
       )}
       {!folded && hasOlder && (
-        <div className="row">
-          <button className="older-messages" disabled={loadingOlder} onClick={onLoadOlder}>
-            {loadingOlder ? '加载中…' : '加载更早的消息'}
-          </button>
+        <div className="row older-row">
+          {loadingOlder ? (
+            <span className="spinner" role="status" aria-label="正在加载更早的消息" />
+          ) : (
+            <button className="older-messages" onClick={onLoadOlder}>
+              加载更早的消息
+            </button>
+          )}
         </div>
       )}
       {shown.map((g) => renderItems(g.items))}

@@ -1026,6 +1026,29 @@ html.list-open body {
   border-color: var(--border-strong);
 }
 
+/* Same height as the button it replaces, so the rows below do not jump while a page loads. */
+.older-row {
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+}
+
+.spinner {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--border);
+  border-top-color: var(--muted);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* The turn ruler along the thread's left edge. Hidden on narrow screens (see the media block). */
 .turn-ruler {
   position: absolute;
