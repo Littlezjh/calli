@@ -68,8 +68,8 @@ test('attentionCount counts waiting threads and unread ones that are not on scre
   assert.equal(attentionCount(list, null), 3);
   assert.equal(attentionCount(list, 'a'), 2, 'the open thread is being read');
   assert.equal(attentionCount(list, 'b'), 3, 'an approval still needs answering even when open');
-  assert.equal(pageTitle('Agent Hub', 3), '(3) Agent Hub');
-  assert.equal(pageTitle('Agent Hub', 0), 'Agent Hub');
+  assert.equal(pageTitle('Limi', 3), '(3) Limi');
+  assert.equal(pageTitle('Limi', 0), 'Limi');
 });
 
 test('threadMark picks one dot: waiting, then running, then error, then unread', () => {

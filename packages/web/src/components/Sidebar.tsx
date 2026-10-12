@@ -282,7 +282,7 @@ export function Sidebar({
           </label>
         ) : (
           <>
-            <span className="brand">Agent Hub</span>
+            <span className="brand">Limi</span>
             <span className="sidebar-top-actions">
               {onHide && (
                 <button className="round-btn sidebar-hide" aria-label="隐藏侧边栏" title={`隐藏侧边栏（${SIDEBAR_SHORTCUT}）`} onClick={onHide}>

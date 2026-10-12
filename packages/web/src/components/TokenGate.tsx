@@ -16,7 +16,7 @@ export function TokenGate({ onSubmit, message }: Props) {
           if (value.trim()) onSubmit(value.trim());
         }}
       >
-        <h1>Remote Agent Hub</h1>
+        <h1>Limi</h1>
         <p className="muted">输入访问 token。它只保存在这台设备的浏览器里。</p>
         <input
           type="password"

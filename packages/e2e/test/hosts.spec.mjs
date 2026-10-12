@@ -185,7 +185,7 @@ test('a machine that drops says so in place of its threads, and is back after a 
 
   const down = page.locator('.host-down');
   await down.getByText('连不上 devbox').waitFor({ timeout: 30_000 });
-  assert.match(await down.innerText(), /Agent Hub 没有应答/);
+  assert.match(await down.innerText(), /Limi 没有应答/);
   assert.equal(await page.locator('.composer').count(), 0, 'nothing can be sent to a machine that is not there');
   assert.equal(await page.locator('.sidebar .thread-row').count(), 0, 'and its threads are not made to look gone');
   await page.getByText('这台机器现在连不上').waitFor();

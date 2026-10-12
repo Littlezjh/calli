@@ -773,7 +773,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
     );
 
     try {
-      await peer.request('initialize', { clientInfo: { name: 'remote-agent-hub', title: 'Remote Agent Hub', version: '0.1.0' } });
+      await peer.request('initialize', { clientInfo: { name: 'remote-agent-hub', title: 'Limi', version: '0.1.0' } });
       peer.notify('initialized', {});
 
       const mode = opts.permissionMode ? CODEX_MODES[opts.permissionMode] : null;
@@ -820,7 +820,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
     const child = spawn(bin, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ...this.env } });
     const peer = new JsonRpcPeer(child, { onNotification: () => undefined, onRequest: async () => undefined }, 'codex');
     try {
-      await peer.request('initialize', { clientInfo: { name: 'remote-agent-hub', title: 'Remote Agent Hub', version: '0.1.0' } });
+      await peer.request('initialize', { clientInfo: { name: 'remote-agent-hub', title: 'Limi', version: '0.1.0' } });
       peer.notify('initialized', {});
       return await job(peer);
     } finally {

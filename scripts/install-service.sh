@@ -29,7 +29,7 @@ SHELL_BIN="${SHELL:-/bin/bash}"
 mkdir -p "$UNIT_DIR"
 cat > "$UNIT" <<UNIT
 [Unit]
-Description=Remote Agent Hub
+Description=Limi
 After=network-online.target
 Wants=network-online.target
 # Keep retrying: at boot the VPN address the daemon binds to may not exist yet.

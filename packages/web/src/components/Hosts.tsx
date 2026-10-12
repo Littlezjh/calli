@@ -82,7 +82,7 @@ interface PanelProps {
 
 /**
  * The machines this hub shows besides its own. Adding one takes only what ssh calls it: the hub
- * signs in, finds the Agent Hub running there, and keeps a connection to it.
+ * signs in, finds the Limi running there, and keeps a connection to it.
  */
 export function HostsPanel({ api, hosts, onChanged, onClose, onError }: PanelProps) {
   const [candidates, setCandidates] = useState<string[]>([]);
@@ -167,7 +167,7 @@ export function HostsPanel({ api, hosts, onChanged, onClose, onError }: PanelPro
             <IconClose size={18} />
           </button>
         </header>
-        <p className="panel-hint">把别的机器上的 Agent Hub 接到这里，一个页面管多台。hub 用 SSH 连过去，那台机器不用开端口，也不用再输 token。</p>
+        <p className="panel-hint">把别的机器上的 Limi 接到这里，一个页面管多台。hub 用 SSH 连过去，那台机器不用开端口，也不用再输 token。</p>
 
         <div className="panel-list">
           {hosts.map((h) => (
@@ -243,7 +243,7 @@ export function HostsPanel({ api, hosts, onChanged, onClose, onError }: PanelPro
               ))}
             </div>
           )}
-          <p className="host-foot">那台机器上要先装好并启动 Agent Hub（scripts/install-service.sh），hub 所在的机器要能不输密码 ssh 过去。</p>
+          <p className="host-foot">那台机器上要先装好并启动 Limi（scripts/install-service.sh），hub 所在的机器要能不输密码 ssh 过去。</p>
         </div>
       </div>
     </div>

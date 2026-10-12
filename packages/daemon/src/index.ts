@@ -76,7 +76,7 @@ async function main(): Promise<void> {
   }
 
   server.listen(config.port, config.host, () => {
-    console.log(`remote-agent-hub daemon ${VERSION} listening on http://${config.host}:${config.port}`);
+    console.log(`Limi daemon ${VERSION} listening on http://${config.host}:${config.port}`);
     console.log(`workdirs: ${dirs.roots().join(', ')}`);
     if (config.host === '0.0.0.0' || config.host === '::') {
       console.warn('warning: listening on all interfaces. Bind to the VPN address instead.');
