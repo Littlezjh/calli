@@ -1,3 +1,4 @@
+import { sessionEnvironment } from './types.js';
 import { spawn } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -623,6 +624,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
   readonly label = 'Codex';
   readonly icon = CODEX_ICON;
   readonly capabilities = {
+    coordination: true,
     resume: true,
     approvals: true,
     permissionModes: ['ask', 'auto_edit', 'full_access'] as const,
@@ -798,7 +800,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
 
   async start(opts: StartOptions): Promise<AgentSession> {
     const [bin, ...args] = this.command;
-    const child = spawn(bin, args, { cwd: opts.cwd, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ...this.env } });
+    const child = spawn(bin, args, { cwd: opts.cwd, stdio: ['pipe', 'pipe', 'pipe'], env: sessionEnvironment(this.env, opts.coordinationEnv) });
 
     const holder: { session: CodexSession | null } = { session: null };
     const peer = new JsonRpcPeer(

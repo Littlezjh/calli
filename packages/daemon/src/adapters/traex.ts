@@ -39,6 +39,7 @@ export class TraexAcpAdapter extends AcpAdapter {
   readonly label = 'TRAE CLI';
   readonly icon = TRAE_ICON;
   readonly capabilities = {
+    coordination: true,
     resume: true,
     approvals: true,
     permissionModes: ['auto_edit', 'full_access'] as const,

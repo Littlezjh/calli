@@ -1,3 +1,4 @@
+import { sessionEnvironment } from './types.js';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -392,7 +393,7 @@ class PiSession implements AgentSession {
     /** Instead of resuming `opts.resumeId`: the arguments that say which session this pi is on. */
     sessionArgs: string[] = opts.resumeId ? ['--session', opts.resumeId] : [],
   ): Promise<PiSession> {
-    const session = PiSession.spawn(command, sessionArgs, opts.cwd, label, env);
+    const session = PiSession.spawn(command, sessionArgs, opts.cwd, label, sessionEnvironment(env, opts.coordinationEnv) as Record<string, string>);
     try {
       const state = await session.request('get_state', {});
       const sessionId = String(state?.sessionId ?? '');
@@ -599,6 +600,7 @@ export class PiRpcAdapter implements AgentAdapter {
   readonly icon = PI_ICON;
   // pi has no approval flow, so there is nothing to choose.
   readonly capabilities = {
+    coordination: true,
     resume: true,
     approvals: false,
     permissionModes: [] as const,

@@ -28,6 +28,15 @@ function ev(type: string, data: Record<string, any> = {}, turnId: string | null 
   return { threadId: 'th', seq, turnId, type, ts, data };
 }
 
+test('collaboration turns expose their source and hide runtime instructions', () => {
+  const tl = buildTimeline([ev('turn.started', { text: 'internal instructions', displayText: '来自审查成员的结果', coordination: { from: 'reviewer' } })]);
+  const item = tl.items[0];
+  assert.equal(item.kind, 'user');
+  if (item.kind !== 'user') return;
+  assert.equal(item.text, '来自审查成员的结果');
+  assert.equal(item.coordination, true);
+});
+
 test('user text and streamed assistant text are grouped per turn', () => {
   seq = 0;
   const tl = buildTimeline([

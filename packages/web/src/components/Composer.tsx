@@ -1,9 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { ApiError, MAX_QUEUED, type OutgoingImage, type QueuedMessage, type SlashCommand } from '../api';
+import { ApiError, MAX_QUEUED, type AgentMention, type OutgoingImage, type QueuedMessage, type SlashCommand } from '../api';
 import { buildMenu, type HubAction, type MenuRow } from '../commands';
 import { readDrafts, writeDraft, type Sending } from '../drafts';
 import { MAX_IMAGES, prepareImage, restoreImage, type PreparedImage } from '../images';
 import { withNotes, type Note } from '../timeline';
+import { Popover } from './Popover';
 import { Lightbox } from './Lightbox';
 import {
   IconArchive,
@@ -31,6 +32,7 @@ export interface DraftNote extends Note {
 
 /** What is left unsent in a box: the words, noted passages and pictures. */
 interface Draft {
+  mentions?: AgentMention[];
   text: string;
   notes: DraftNote[];
   images: PreparedImage[];
@@ -69,11 +71,11 @@ function loadDraft(key: string): Draft | undefined {
   if (inMemory) return inMemory;
   const store = storage();
   const stored = store ? readDrafts(store)[key] : undefined;
-  return stored && { text: stored.text, notes: stored.notes.map((n) => ({ ...n, id: noteId() })), images: [], sending: stored.sending };
+  return stored && { text: stored.text, mentions: stored.mentions, notes: stored.notes.map((n) => ({ ...n, id: noteId() })), images: [], sending: stored.sending };
 }
 
 function keepDraft(key: string, draft: Draft | null): void {
-  if (draft && (draft.text.trim() || draft.notes.length || draft.images.length)) drafts.set(key, draft);
+  if (draft && (draft.text.trim() || draft.notes.length || draft.images.length || draft.mentions?.length)) drafts.set(key, draft);
   else drafts.delete(key);
   const store = storage();
   if (store) writeDraft(store, key, draft);
@@ -96,7 +98,9 @@ interface Props {
   running: boolean;
   disabled?: boolean;
   placeholder: string;
-  onSend: (text: string, images: PreparedImage[]) => Promise<void> | void;
+  mentionOptions?: AgentMention[];
+  mentionDirectories?: string[];
+  onSend: (text: string, images: PreparedImage[], mentions?: AgentMention[]) => Promise<void> | void;
   onStop: () => void;
   /** Strip above the text area: which agent and which directory. */
   header: ReactNode;
@@ -174,8 +178,13 @@ export function Composer({
   note,
   onNotesChange,
   lastSent = null,
+  mentionOptions = [],
+  mentionDirectories = [],
 }: Props) {
   const [text, setText] = useState('');
+  const [mentions, setMentions] = useState<AgentMention[]>([]);
+  const [mentionActive, setMentionActive] = useState(0);
+  const [mentionDismissed, setMentionDismissed] = useState(false);
   const [notes, setNotes] = useState<DraftNote[]>([]);
   const [busy, setBusy] = useState(false);
   /** The send has been going for a while: a picture uploading over a slow line, an agent waking up. */
@@ -194,6 +203,16 @@ export function Composer({
   const rows = useMemo(() => buildMenu(text, actions, commands, hiddenCommands), [text, actions, commands, hiddenCommands]);
   const selectable = useMemo(() => rows.filter((r): r is Selectable => r.type !== 'heading'), [rows]);
   const menuOpen = selectable.length > 0 && !dismissed;
+
+  const mentionMatch = /(?:^|\s)@([^\s@]*)$/.exec(text);
+  const mentionRows = mentionOptions.filter(m => !mentions.some(v => v.id === m.id && v.kind === m.kind) && (!mentionMatch?.[1] || `${m.label} ${m.id}`.toLowerCase().includes(mentionMatch[1].toLowerCase())));
+  const mentionOpen = Boolean(mentionMatch && mentionRows.length && !mentionDismissed);
+  const chooseMention = (mention: AgentMention) => {
+    setMentions(prev => [...prev, mention]);
+    setText(prev => prev.replace(/@[^\s@]*$/, ''));
+    ref.current?.focus();
+  };
+  useEffect(() => { setMentionActive(0); setMentionDismissed(false); }, [text]);
 
   // Typing changes the list, so the highlight goes back to the first row and a dismissed menu can reopen.
   useEffect(() => {
@@ -231,13 +250,14 @@ export function Composer({
   const inFlight = useRef<Sending | null>(null);
   const unsettled = inFlight.current !== null && asMessage(text, notes) === inFlight.current.text;
   const draftRef = useRef<Draft>({ text, notes, images });
-  draftRef.current = { text, notes, images, ...(unsettled ? { sending: inFlight.current! } : {}) };
+  draftRef.current = { text, notes, images, mentions, ...(unsettled ? { sending: inFlight.current! } : {}) };
   const sendingRef = useRef(false);
   useLayoutEffect(() => {
     if (draftKey === undefined) return;
     const saved = loadDraft(draftKey);
     inFlight.current = saved?.sending ?? null;
     setText(saved?.text ?? '');
+    setMentions(saved?.mentions ?? []);
     setNotes(saved?.notes ?? []);
     setImages(saved?.images ?? []);
     if (saved?.focus) {
@@ -262,7 +282,7 @@ export function Composer({
       if (keyRef.current !== undefined && !sendingRef.current) keepDraft(keyRef.current, draftRef.current);
     }, SAVE_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [draftKey, text, notes]);
+  }, [draftKey, text, notes, mentions]);
   // Whether that message arrived is for the thread to say. Once a new turn of the user's carries
   // this very text, it is no draft: left in the box it would look unsent, and be sent a second time.
   useEffect(() => {
@@ -274,6 +294,7 @@ export function Composer({
     setImages([]);
     setText('');
     setNotes([]);
+    setMentions([]);
     if (draftKey !== undefined) keepDraft(draftKey, null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [unsettled, lastSent?.turnId, lastSent?.text, draftKey]);
@@ -374,10 +395,11 @@ export function Composer({
     const sentFrom = draftKey;
     // On the device the draft now says it is on its way. Should the page be reloaded before the
     // send comes back, it is neither lost nor taken for something still to send.
-    if (sentFrom !== undefined) keepDraft(sentFrom, { text, notes, images, sending: mark });
+    if (sentFrom !== undefined) keepDraft(sentFrom, { text, notes, images, mentions, sending: mark });
     const slowTimer = setTimeout(() => setSlow(true), SLOW_SEND_MS);
     try {
-      await onSend(message, images);
+      await onSend(message, images, mentions);
+      setMentions([]);
       // Forgotten at once, not when the box next saves itself: a reload right now must not bring it back.
       if (sentFrom !== undefined) keepDraft(sentFrom, null);
       inFlight.current = null;
@@ -400,6 +422,11 @@ export function Composer({
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (mentionOpen && !e.nativeEvent.isComposing) {
+      if (e.key === 'Escape') { e.preventDefault(); setMentionDismissed(true); return; }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); setMentionActive(i => (i + (e.key === 'ArrowDown' ? 1 : -1) + mentionRows.length) % mentionRows.length); return; }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); chooseMention(mentionRows[mentionActive] ?? mentionRows[0]); return; }
+    }
     if (menuOpen && !e.nativeEvent.isComposing) {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
@@ -590,6 +617,18 @@ export function Composer({
             </div>
           )}
 
+          {mentions.length > 0 && <div className="coord-mentions">{mentions.map(m => <span className="coord-mention" key={`${m.kind}:${m.id}`}>
+            {m.kind === 'member' ? <span className="coord-mention-label">@{m.label}</span> : <Popover label="成员工作目录" triggerClassName="coord-mention-label" trigger={<span>@{m.label}{m.cwd ? ` · ${m.cwd.split('/').pop()}` : ''}</span>}>
+              {close => <>{mentionDirectories.map(dir => <button className="menu-item" key={dir} onClick={() => { setMentions(prev => prev.map(v => v === m ? { ...v, cwd: dir } : v)); close(); }}>{dir}</button>)}</>}
+            </Popover>}
+            <button className="icon-btn" aria-label={`移除 ${m.label}`} onClick={() => setMentions(prev => prev.filter(v => v !== m))}><IconClose size={12} /></button>
+          </span>)}</div>}
+          {mentionOpen && <div className="coord-mention-menu" role="listbox" aria-label="选择协作智能体">
+            {(['member', 'agent'] as const).map(kind => <div key={kind}>
+              {mentionRows.some(m => m.kind === kind) && <div className="coord-caption">{kind === 'member' ? '本次协作' : '可用实例 · 新建成员'}</div>}
+              {mentionRows.map((m, i) => m.kind === kind && <button role="option" aria-selected={i === mentionActive} className={`menu-item${i === mentionActive ? ' selected' : ''}`} key={m.id} onClick={() => chooseMention(m)}>{m.label}</button>)}
+            </div>)}
+          </div>}
           <textarea
             ref={ref}
             rows={1}

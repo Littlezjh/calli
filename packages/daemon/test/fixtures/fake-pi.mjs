@@ -1,5 +1,6 @@
 // Fake pi RPC process for tests. Speaks pi's JSONL RPC protocol on stdio.
 // Prompt text drives behaviour: "slow" waits until abort, "fail" ends with an error.
+import { coordinationFixture } from './coordination.mjs';
 import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -163,6 +164,15 @@ rl.on('line', (line) => {
       return reply({ sessionId, isStreaming: running, model: MODELS[0] });
     case 'prompt': {
       if (running) return reply(null, false, 'already streaming');
+      const collaboration = coordinationFixture(cmd.message);
+      if (collaboration !== null) {
+        reply({ disposition: 'started' });
+        out({ type: 'agent_start' });
+        out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: collaboration } });
+        out({ type: 'agent_settled', aborted: false });
+        return;
+      }
+
       contextUnknown = false;
       running = true;
       reply({ disposition: 'started' });

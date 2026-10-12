@@ -238,6 +238,15 @@ export class Store {
     `);
   }
 
+  coordinationRecords(): Array<{ id: string; data: string }> {
+    this.db.exec('CREATE TABLE IF NOT EXISTS coordination (id TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE, data TEXT NOT NULL)');
+    return this.db.prepare('SELECT id, data FROM coordination').all() as Array<{ id: string; data: string }>;
+  }
+
+  saveCoordination(id: string, data: string): void {
+    this.db.prepare('INSERT INTO coordination (id, data) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data').run(id, data);
+  }
+
   close(): void {
     this.db.close();
   }
@@ -504,8 +513,8 @@ export class Store {
       .run(threadId, seq, turnId, type, ts, JSON.stringify(data));
     // The sidebar's preview line is the newest ask, whatever wrote it — a live turn, an import, a
     // sync from the terminal. Hub-injected handover turns are not the user asking.
-    if (type === 'turn.started' && typeof data.text === 'string' && data.text.trim() && !data.handover) {
-      this.db.prepare('UPDATE threads SET preview = ? WHERE id = ?').run(askedText(data.text).slice(0, 80), threadId);
+    if (type === 'turn.started' && typeof data.text === 'string' && data.text.trim() && !data.handover && !data.coordination) {
+      this.db.prepare('UPDATE threads SET preview = ? WHERE id = ?').run(askedText(typeof data.displayText === 'string' ? data.displayText : data.text).slice(0, 80), threadId);
     }
     return { threadId, seq, turnId, type, ts, data };
   }

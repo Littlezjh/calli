@@ -85,7 +85,7 @@ export type WorkEntry =
   | { kind: 'note'; key: string; text: string };
 
 export type Item =
-  | { kind: 'user'; key: string; turnId: string; text: string; images: ImageRef[]; fromTerminal?: boolean }
+  | { kind: 'user'; key: string; turnId: string; text: string; images: ImageRef[]; fromTerminal?: boolean; coordination?: boolean }
   /** The turn's answer: the text after everything the agent did. */
   | { kind: 'assistant'; key: string; turnId: string; text: string; done: boolean }
   /**
@@ -382,9 +382,10 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
           kind: 'user',
           key,
           turnId: turn,
-          text: String(ev.data.text ?? ''),
+          text: String(ev.data.displayText ?? ev.data.text ?? ''),
           images: Array.isArray(ev.data.images) ? ev.data.images : [],
           ...(ev.data.fromTerminal ? { fromTerminal: true } : {}),
+          ...(ev.data.coordination ? { coordination: true } : {}),
         });
         break;
 

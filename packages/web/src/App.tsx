@@ -40,6 +40,9 @@ import { fileRef } from './files';
 import { AddAgentDialog } from './components/AddAgentDialog';
 import { QuotaBoard } from './components/QuotaBoard';
 import { SelectionMenu } from './components/SelectionMenu';
+import { AgentPanel } from './components/AgentPanel';
+import type { AgentMention, Coordination } from './api';
+import { Popover as CoordinationPopover } from './components/Popover';
 import { SideChat } from './components/SideChat';
 import { SkillsPage } from './components/SkillsPage';
 import { TodosPage } from './components/TodosPage';
@@ -52,7 +55,7 @@ import { NewProjectDialog, ProjectPicker, RootsDialog } from './components/Proje
 import { NoteMarks, type NoteMark } from './components/NoteMarks';
 import { Toast, type ToastState } from './components/Toast';
 import { TokenGate } from './components/TokenGate';
-import { IconArchive, IconArrowDown, IconChevron, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconImport, IconList, IconMenu, IconMore, IconPalette, IconPlus, IconServer, IconSidebar, IconSignOut, IconTerminal } from './components/icons';
+import { IconAgents, IconArchive, IconArrowDown, IconChevron, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconImport, IconList, IconMenu, IconMore, IconPalette, IconPlus, IconServer, IconSidebar, IconSignOut, IconTerminal } from './components/icons';
 
 const sleep = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve) => {
@@ -141,6 +144,10 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
   /** Bumped by daemon broadcasts, so the open plan page reloads. */
   const [todosKey, setTodosKey] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [coordination, setCoordination] = useState<Coordination | null>(null);
+  const [agentsOpen, setAgentsOpen] = useState(false);
+  const [draftCollaboration, setDraftCollaboration] = useState(false);
+  const [collaborationDirectories, setCollaborationDirectories] = useState<string[]>([]);
   const [events, setEvents] = useState<StoredEvent[]>([]);
   const [draftAgent, setDraftAgent] = useState('');
   const [draftCwd, setDraftCwd] = useState('');
@@ -233,7 +240,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
   // The passage a side chat was opened for, if one is open.
   const [sideAsk, setSideAsk] = useState<{ text: string; nonce: number } | null>(null);
   // A message waiting for the user to confirm sending into a session the terminal also used.
-  const [pendingSend, setPendingSend] = useState<{ text: string; images: PreparedImage[]; resolve: () => void; reject: (e: unknown) => void } | null>(null);
+  const [pendingSend, setPendingSend] = useState<{ text: string; images: PreparedImage[]; mentions?: AgentMention[]; resolve: () => void; reject: (e: unknown) => void } | null>(null);
   const [pageHidden, setPageHidden] = useState(() => document.hidden);
   const baseTitle = useRef(document.title);
   const seenThreads = useRef<Thread[] | null>(null);
@@ -244,11 +251,18 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
   const lastSent = useMemo(() => {
     for (let i = timeline.items.length - 1; i >= 0; i--) {
       const item = timeline.items[i];
-      if (item.kind === 'user') return { turnId: item.turnId, text: item.text };
+      if (item.kind === 'user' && !item.coordination) return { turnId: item.turnId, text: item.text };
     }
     return null;
   }, [timeline.items]);
   const selected = threads.find((t) => t.id === selectedId) ?? null;
+  useEffect(() => {
+    let cancelled = false;
+    if (!api || !selected?.coordination) { setCoordination(null); return; }
+    void api.coordination(selected.id).then(value => { if (!cancelled) setCoordination(value); }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [api, selectedId, threads]);
+  useEffect(() => { setAgentsOpen(false); setDraftCollaboration(false); setCollaborationDirectories([]); }, [selectedId, hostId]);
   const onTodos = view === 'todos' && !selectedId;
   const onSkills = view === 'skills' && !selectedId;
 
@@ -687,6 +701,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
       const ref = fileRef(raw);
       // Asked first, so a file the thread cannot show falls back to copying its path.
       const file = await api.threadText(selectedId, ref.path);
+      setAgentsOpen(false);
       setFiles({ path: file.path, line: ref.line, file, seq: ++filesSeq.current });
     },
     [api, selectedId],
@@ -802,7 +817,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
     );
   }
 
-  const performSend = async (text: string, images: PreparedImage[], isNewThread: boolean) => {
+  const performSend = async (text: string, images: PreparedImage[], isNewThread: boolean, mentions?: AgentMention[]) => {
     setError(null);
     try {
       let id = selectedId;
@@ -822,13 +837,14 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
         // Every worktree is a new branch; the next thread starts in place unless asked again.
         setDraftWorktree(false);
       }
+      if (draftCollaboration && !selected?.coordination) await api.configureCoordination(id, { directories: collaborationDirectories.length ? collaborationDirectories : undefined });
       stickToBottom.current = true;
       // "queue" only matters while a turn is running: then the message waits instead of being refused.
       await api.startTurn(
         id,
         text,
         images.map(({ data, mimeType }) => ({ data, mimeType })),
-        { queue: true },
+        { queue: true, mentions },
       );
       void refreshThreads();
     } catch (e) {
@@ -837,14 +853,14 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
     }
   };
 
-  const send = async (text: string, images: PreparedImage[]) => {
+  const send = async (text: string, images: PreparedImage[], mentions?: AgentMention[]) => {
     // The terminal wrote to this session after the hub last did. Both sides writing the same session
     // interleaves turns, so ask before joining in again.
     // The composer keeps the draft and its pictures until this settles, so backing out loses nothing.
     if (selectedId && selected?.terminalActivity) {
-      return new Promise<void>((resolve, reject) => setPendingSend({ text, images, resolve, reject }));
+      return new Promise<void>((resolve, reject) => setPendingSend({ text, images, mentions, resolve, reject }));
     }
-    await performSend(text, images, true);
+    await performSend(text, images, true, mentions);
   };
 
   // Stopping means stopping: messages that were waiting are not sent. Their text goes back in the box.
@@ -1065,7 +1081,22 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
     </>
   );
 
-  const left = (
+  const left = (<>
+    {(activeCaps?.coordination || selected?.coordination) && <CoordinationPopover label="协作设置" triggerClassName="coord-trigger" triggerLabel="协作" trigger={<><IconAgents size={15} />协作{selected?.coordination || draftCollaboration ? ' · 已启用' : ''}</>}>
+      {close => <div className="coord-setup">
+        <strong>{selected?.coordination ? '当前协作' : '让多个智能体一起工作'}</strong>
+        <p>输入 @ 选择助手，由当前智能体安排分工。默认在当前目录工作。</p>
+        {!selected?.coordination && <>
+          <div className="coord-caption">允许使用的目录</div>
+          {[...new Set([activeCwd, ...workdirs].filter(Boolean))].map(dir => <button className="menu-item" role="menuitemcheckbox" aria-checked={(collaborationDirectories.length ? collaborationDirectories : [activeCwd]).includes(dir)} key={dir} onClick={() => setCollaborationDirectories(prev => { const current = prev.length ? prev : [activeCwd]; return current.includes(dir) ? current.filter(v => v !== dir) : [...current, dir]; })}>{(collaborationDirectories.length ? collaborationDirectories : [activeCwd]).includes(dir) ? '已选 · ' : ''}{dir}</button>)}
+          <button className="menu-item" disabled={running} onClick={() => {
+            if (selected) void api.configureCoordination(selected.id, { directories: collaborationDirectories.length ? collaborationDirectories : [selected.cwd] }).then(value => { setCoordination(value); void refreshThreads(); close(); }).catch(handleError);
+            else { setDraftCollaboration(v => !v); close(); }
+          }}>{draftCollaboration ? '关闭协作' : running ? '当前轮结束后可启用' : '启用协作'}</button>
+        </>}
+        {selected?.coordination && <button className="menu-item" onClick={() => { setAgentsOpen(true); setFiles(null); close(); }}>查看智能体</button>}
+      </div>}
+    </CoordinationPopover>}
     <PermissionPicker
       modes={permissionModes}
       value={permission}
@@ -1073,7 +1104,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
       openSignal={permissionSignal}
       onChange={(m) => (selected ? updateSelected({ permissionMode: m }) : setDraftPermission(m))}
     />
-  );
+  </>);
 
   // Older daemons advertise /compact before they expose the dedicated capability.
   const canCompact = activeCaps?.compact ?? (commandsByKey[commandsKey] ?? []).some((command) => command.name === 'compact' && command.kind !== 'skill');
@@ -1139,7 +1170,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
       {projectDialog === 'roots' && <RootsDialog api={api} roots={roots} onChange={applyWorkdirs} onCancel={() => setProjectDialog(null)} />}
       <aside className="sidebar">
         <Sidebar
-          threads={threads}
+          threads={threads.filter(t => !t.coordination || t.coordination.rootId === t.id || t.id === selectedId)}
           sections={sections}
           agents={agents}
           selectedId={selectedId}
@@ -1193,12 +1224,14 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           </div>
           {selected && (
             <div className="topbar-actions">
+              {selected.coordination && <button className="coord-trigger" aria-label="查看智能体" aria-pressed={agentsOpen} onClick={() => { setAgentsOpen(v => !v); setFiles(null); }}><IconAgents size={16} /><span className="coord-trigger-label">智能体</span>{selected.coordination.children}</button>}
+              {selected.coordination && selected.coordination.rootId !== selected.id && <button className="coord-trigger" onClick={() => pick(selected.coordination!.rootId)}>返回主线程</button>}
               <button
                 className={`icon-btn topbar-files${files ? ' on' : ''}`}
                 aria-label="文件"
                 aria-pressed={Boolean(files)}
                 title="文件"
-                onClick={() => setFiles(files ? null : { path: null, seq: ++filesSeq.current })}
+                onClick={() => { setAgentsOpen(false); setFiles(files ? null : { path: null, seq: ++filesSeq.current }); }}
               >
                 <IconFiles />
               </button>
@@ -1309,6 +1342,11 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           disabled={!selected && !draftCwd}
           placeholder={selected ? (running ? '追加一条，这一轮结束后发送' : '继续这个线程') : draftScratch ? '随便问点什么' : `在 ${folderName(draftCwd) || '工作目录'} 中开始`}
           onSend={send}
+          mentionOptions={(selected?.coordination?.rootId === selected?.id && selected?.coordination) || draftCollaboration ? [
+            ...(coordination?.members.map(m => ({ id: m.id, label: m.name, kind: 'member' as const })) ?? []),
+            ...agents.filter(a => a.available && a.capabilities.coordination && (!coordination || coordination.agents.includes(a.id))).map(a => ({ id: a.id, label: a.label, kind: 'agent' as const })),
+          ] : []}
+          mentionDirectories={coordination?.directories ?? (collaborationDirectories.length ? collaborationDirectories : [activeCwd])}
           onStop={stop}
           header={header}
           left={left}
@@ -1334,6 +1372,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
         <div className="scrim" onClick={() => setDrawer(false)} aria-hidden="true" />
       </main>
 
+      {agentsOpen && coordination && <AgentPanel key={coordination.rootId} api={api} team={coordination} phone={compact} onClose={() => setAgentsOpen(false)} onOpen={thread => { openThread(thread); setAgentsOpen(false); }} onAdjust={name => { setAgentsOpen(false); setSelectedId(coordination.rootId); setRestore({ text: `请调整「${name}」的任务：`, nonce: Date.now() }); }} onRefresh={() => { void refreshThreads(); }} onError={handleError} />}
       {files && selected && api && <FilesPanel api={api} threadId={selected.id} target={files} phone={compact} onClose={() => setFiles(null)} />}
       {preview && api && (
         <PreviewPanel api={api} threadId={preview.threadId} path={preview.path} onClose={() => setPreview(null)} onError={handleError} />
@@ -1408,7 +1447,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           onConfirm={() => {
             const p = pendingSend;
             setPendingSend(null);
-            performSend(p.text, p.images, false).then(p.resolve, p.reject);
+            performSend(p.text, p.images, false, p.mentions).then(p.resolve, p.reject);
           }}
         />
       )}

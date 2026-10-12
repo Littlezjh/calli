@@ -1,3 +1,4 @@
+import { sessionEnvironment } from './types.js';
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -280,7 +281,7 @@ class AgySession implements AgentSession {
   async launch(): Promise<void> {
     const [bin, ...base] = this.command;
     const args = agyArgs({ conversationId: this.agentSessionId || undefined, permissionMode: this.permissionMode, model: this.opts.model });
-    const child = spawn(bin, [...base, ...args], { cwd: this.opts.cwd, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ...this.env } });
+    const child = spawn(bin, [...base, ...args], { cwd: this.opts.cwd, stdio: ['pipe', 'pipe', 'pipe'], env: sessionEnvironment(this.env, this.opts.coordinationEnv) });
     this.child = child;
     this.buffer = '';
     this.stderrTail = '';
@@ -417,6 +418,7 @@ export class AgyAdapter implements AgentAdapter {
   readonly label = 'Antigravity';
   readonly icon = ANTIGRAVITY_ICON;
   readonly capabilities = {
+    coordination: true,
     resume: true,
     approvals: false,
     permissionModes: ['auto_edit', 'full_access'] as const,

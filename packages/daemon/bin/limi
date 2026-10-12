@@ -1,0 +1,33 @@
+#!/usr/bin/env node
+import { readFileSync } from 'node:fs';
+import { request } from 'node:http';
+const args = process.argv.slice(2);
+if (!args.length || args.includes('--help')) {
+  console.log(`limi agents | status | result ID | stop NAME
+limi spawn --agent ID --name NAME [--cwd DIR] --message-file FILE --request-id KEY
+limi send NAME --message-file FILE --request-id KEY
+FILE may be - for stdin. Reuse the request ID only when retrying the same request.
+Members can message existing teammates; only the lead can spawn or stop members.`);
+  process.exit(0);
+}
+try {
+  const [op, ...rest] = args;
+  const input = { op };
+  if (rest[0] && !rest[0].startsWith('--')) input.target = rest.shift();
+  const names = { '--agent': 'agent', '--name': 'name', '--cwd': 'cwd', '--request-id': 'requestId', '--message-file': 'file' };
+  while (rest.length) {
+    const flag = rest.shift(); const key = names[flag]; const value = rest.shift();
+    if (!key || value === undefined) throw new Error(`Invalid argument: ${flag}`);
+    input[key] = value;
+  }
+  if (input.file) { input.text = readFileSync(input.file === '-' ? 0 : input.file, 'utf8'); delete input.file; }
+  if (!process.env.LIMI_SOCKET || !process.env.LIMI_KEY) throw new Error('Enable collaboration in limi before running this command.');
+  const payload = JSON.stringify(input);
+  const req = request({ socketPath: process.env.LIMI_SOCKET, path: '/command', method: 'POST', headers: { Authorization: `Bearer ${process.env.LIMI_KEY}`, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } }, res => {
+    let text = ''; res.setEncoding('utf8'); res.on('data', chunk => { text += chunk; });
+    res.on('end', () => { console.log(text); if (res.statusCode >= 400) process.exitCode = 1; });
+  });
+  req.setTimeout(30000, () => req.destroy(new Error('Timed out; retry with the same request-id.')));
+  req.on('error', err => { console.error(err.message); process.exitCode = 1; });
+  req.end(payload);
+} catch (err) { console.error(err.message); process.exitCode = 1; }

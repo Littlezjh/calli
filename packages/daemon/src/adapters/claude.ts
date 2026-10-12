@@ -93,6 +93,7 @@ export class ClaudeAcpAdapter extends AcpAdapter {
   readonly label = 'Claude Code';
   readonly icon = CLAUDE_ICON;
   readonly capabilities = {
+    coordination: true,
     resume: true,
     approvals: true,
     permissionModes: ['ask', 'auto_edit', 'full_access'] as const,

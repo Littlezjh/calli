@@ -1,3 +1,4 @@
+import type { CoordinationManager } from './coordination.js';
 import { randomUUID } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, readSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
@@ -50,6 +51,7 @@ export interface ForkOptions {
 
 /** A thread as the API returns it: the stored record plus values worked out from it. */
 export type ThreadView = Omit<ThreadRecord, 'worktree'> & {
+  coordination?: { rootId: string; children: number; paused: boolean };
   /** Working in the hub's scratch area: a thread that is in no project. */
   scratch: boolean;
   /** `of` is how the directory was spelled when the worktree was made; `ofReal` has symlinks resolved, like `cwdReal`. */
@@ -154,6 +156,17 @@ function isDirectory(path: string): boolean {
  * fans events out to subscribers, and routes approval decisions back to agents.
  */
 export class ThreadManager {
+  coordination?: CoordinationManager;
+
+  /** Drop an idle process so runtime-only connection context takes effect on resume. */
+  async refreshRuntime(id: string): Promise<void> {
+    if (this.running.has(id)) throw new HttpError(409, '请等待当前轮结束后启用协作');
+    await this.dropSession(id);
+  }
+
+  notifyCoordination(id: string): void {
+    if (this.store.getThread(id)) this.emitThreadEvent(id, null, 'thread.updated', {});
+  }
   private readonly sessions = new Map<string, AgentSession>();
   /** Turns in flight. `cancelRequested` covers cancels that arrive before the agent session exists. */
   private readonly running = new Map<string, { turnId: string; cancelRequested: boolean }>();
@@ -521,7 +534,7 @@ export class ThreadManager {
       worktree = { ...thread.worktree, ofReal };
     }
     const scratch = this.dirs.scratchRoot !== null && isWithinWorkdirs(thread.cwd, [this.dirs.scratchRoot]);
-    return { ...thread, worktree, resumeCommand, cwdReal, waiting, queued, terminalActivity, scratch };
+    return { ...thread, worktree, resumeCommand, cwdReal, waiting, queued, terminalActivity, scratch, coordination: this.coordination?.metadata(thread.id) };
   }
 
   /**
@@ -861,6 +874,7 @@ export class ThreadManager {
   async deleteThread(id: string, opts: { agentSession?: boolean; worktree?: boolean; force?: boolean } = {}): Promise<void> {
     const thread = this.getThread(id);
     if (this.running.has(id)) throw new HttpError(409, 'cancel the running turn before deleting this thread');
+    if (this.coordination?.metadata(id)) throw new HttpError(409, '协作线程请先归档，保留成员关系与消息记录');
     let doomed: { main: string; tree: ThreadWorktree } | null = null;
     if (opts.worktree) {
       const tree = thread.worktree;
@@ -1232,9 +1246,11 @@ export class ThreadManager {
   async startTurn(
     threadId: string,
     input: { text?: unknown; images?: unknown; queue?: unknown; handover?: unknown },
+    delivery?: { turnId: string; source: Record<string, unknown>; displayText: string; claim: () => void },
   ): Promise<{ turnId: string } | { queued: true; id: string }> {
     const thread = this.getThread(threadId);
-    const text = typeof input.text === 'string' ? input.text.trim() : '';
+    const rawText = typeof input.text === 'string' ? input.text.trim() : '';
+    const text = rawText ? (this.coordination?.instructions(threadId, rawText) ?? rawText) : '';
     const rawImages = Array.isArray(input.images) ? input.images : [];
     if (!text && rawImages.length === 0) throw new HttpError(400, 'text is empty');
     if (thread.archivedAt) throw new HttpError(409, 'this thread is archived; restore it first');
@@ -1243,7 +1259,7 @@ export class ThreadManager {
       const queue = this.queues.get(threadId) ?? [];
       if (queue.length >= MAX_QUEUED) throw new HttpError(409, `at most ${MAX_QUEUED} messages can wait in a thread`);
       this.attachments.check(rawImages); // a bad image is refused now, not when its turn comes
-      const queued: QueuedTurn = { id: randomUUID(), text, images: rawImages };
+      const queued: QueuedTurn = { id: randomUUID(), text: rawText, images: rawImages };
       this.queues.set(threadId, [...queue, queued]);
       this.emitThreadEvent(threadId, null, 'thread.updated', {});
       return { queued: true, id: queued.id };
@@ -1259,20 +1275,25 @@ export class ThreadManager {
     }
     const { stored, images } = this.attachments.save(threadId, rawImages);
 
-    const turnId = randomUUID();
-    this.running.set(threadId, { turnId, cancelRequested: false });
-    this.store.updateThread(threadId, { status: 'running', hubTurnAt: new Date().toISOString() }, { touch: true });
-
-    if (thread.title === 'New thread') {
-      const title = askedText(text).split('\n')[0].slice(0, 60) || '图片';
-      this.store.updateThread(threadId, { title });
-    }
-
-    this.emitThreadEvent(threadId, turnId, 'turn.started', {
-      text,
-      ...(stored.length ? { images: stored } : {}),
-      ...(typeof input.handover === 'string' && input.handover ? { handover: input.handover } : {}),
-    });
+    const turnId = delivery?.turnId ?? randomUUID();
+    try {
+      this.store.transaction(() => {
+        delivery?.claim();
+        this.running.set(threadId, { turnId, cancelRequested: false });
+        this.store.updateThread(threadId, { status: 'running', hubTurnAt: new Date().toISOString() }, { touch: true });
+        if (thread.title === 'New thread') {
+          const title = askedText(rawText).split('\n')[0].slice(0, 60) || '图片';
+          this.store.updateThread(threadId, { title });
+        }
+        this.emitThreadEvent(threadId, turnId, 'turn.started', {
+          text,
+          ...(delivery ? { coordination: delivery.source } : {}),
+          ...(text !== rawText ? { displayText: delivery?.displayText ?? rawText.split('\n\n[指定协作对象]')[0] } : {}),
+          ...(stored.length ? { images: stored } : {}),
+          ...(typeof input.handover === 'string' && input.handover ? { handover: input.handover } : {}),
+        });
+      });
+    } catch (err) { this.running.delete(threadId); throw err; }
     void this.runTurn(thread, turnId, { text, images });
     return { turnId };
   }
@@ -1378,6 +1399,7 @@ export class ThreadManager {
    */
   async cancelTurn(threadId: string, opts: { keepQueue?: boolean } = {}): Promise<{ dropped: string[] }> {
     this.getThread(threadId);
+    if (!opts.keepQueue) await this.coordination?.beforeStop(threadId);
     const dropped = opts.keepQueue ? [] : (this.queues.get(threadId) ?? []).map((q) => q.text).filter(Boolean);
     if (!opts.keepQueue && this.queues.has(threadId)) this.setQueue(threadId, []);
     await this.stopTurn(threadId);
@@ -1412,6 +1434,7 @@ export class ThreadManager {
 
   /** Closes live agent processes. Threads and events stay in the store. */
   async shutdown(): Promise<void> {
+    this.coordination?.suspendAll();
     for (const threadId of [...this.running.keys()]) await this.cancelTurn(threadId).catch(() => undefined);
     const deadline = Date.now() + 3000;
     while (this.running.size > 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 25));
@@ -1464,6 +1487,7 @@ export class ThreadManager {
     const adapter = this.adapters.get(thread.agent);
     if (!adapter) throw new Error(`unknown agent: ${thread.agent}`);
     const session = await adapter.start({
+      coordinationEnv: this.coordination?.environment(thread.id),
       cwd: thread.cwd,
       resumeId: thread.agentSessionId ?? undefined,
       permissionMode: thread.permissionMode as PermissionMode,

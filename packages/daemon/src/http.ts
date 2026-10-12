@@ -454,6 +454,18 @@ export function createHttpServer(deps: HttpDeps): Server {
       const threadId = parts[2];
       const sub = parts[3];
 
+      if (sub === 'coordination') {
+        manager.threadView(threadId);
+        const collaboration = manager.coordination;
+        if (!collaboration) throw new HttpError(501, '此 daemon 尚未启用协作');
+        if (method === 'GET') return sendJson(res, 200, collaboration.view(threadId));
+        if (method === 'POST') {
+          const body = await readJson(req);
+          if (body.action === 'resume') return sendJson(res, 200, await collaboration.resume(threadId));
+          if (body.action === 'stop') { await manager.cancelTurn(threadId); return sendJson(res, 200, collaboration.view(threadId)); }
+          return sendJson(res, 200, await collaboration.enable(threadId, body));
+        }
+      }
       if (method === 'GET' && !sub) return sendJson(res, 200, manager.threadView(threadId));
 
       if (method === 'DELETE' && !sub) {
@@ -529,7 +541,8 @@ export function createHttpServer(deps: HttpDeps): Server {
 
       if (method === 'POST' && sub === 'turns') {
         const body = await readJson(req, MAX_TURN_BODY);
-        return sendJson(res, 202, await manager.startTurn(threadId, { text: body.text, images: body.images, queue: body.queue }));
+        const text = manager.coordination?.mentionText(threadId, body.text, body.mentions) ?? body.text;
+        return sendJson(res, 202, await manager.startTurn(threadId, { text, images: body.images, queue: body.queue }));
       }
 
       // DELETE /api/threads/:id/queue/:queuedId: take back a message that is waiting; it comes back

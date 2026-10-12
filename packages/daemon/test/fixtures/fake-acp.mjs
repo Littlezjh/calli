@@ -3,6 +3,7 @@
 // FAKE_ACP_FLAVOR=traex shapes the answers the way TRAE CLI does: no modes in session/new,
 // the effort option is named reasoning_effort, and "delete" on the command line (its CLI,
 // which the adapter runs for deletion) logs to FAKE_ACP_DELETE_LOG and exits.
+import { coordinationFixture } from './coordination.mjs';
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -183,6 +184,13 @@ rl.on('line', (line) => {
       recordSession(traex ? 'traex' : 'claude', msg.params.sessionId);
       const blocks = msg.params.prompt;
       const text = blocks.filter((p) => p.type === 'text').map((p) => p.text).join('');
+      const collaboration = coordinationFixture(text);
+      if (collaboration !== null) {
+        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: collaboration } });
+        out({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });
+        return;
+      }
+
       const images = blocks.filter((p) => p.type === 'image');
       if (images.length) {
         update({

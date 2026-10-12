@@ -1,5 +1,8 @@
+import type { AgentMention } from './api';
+
 /** Unsent words in a thread's box, kept on this device so a reload does not lose them. */
 export interface StoredDraft {
+  mentions?: AgentMention[];
   text: string;
   /** Passages noted for this message, in order: they are numbered when sent. */
   notes: Array<{ quote: string; comment: string }>;
@@ -46,10 +49,10 @@ export function readDrafts(storage: Storage): Record<string, StoredDraft> {
     const parsed = JSON.parse(storage.getItem(DRAFTS_KEY) ?? '{}') as unknown;
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
     const out: Record<string, StoredDraft> = {};
-    for (const [key, value] of Object.entries(parsed as Record<string, { text?: unknown; notes?: unknown; quote?: unknown; at?: unknown; sending?: unknown }>)) {
+    for (const [key, value] of Object.entries(parsed as Record<string, { text?: unknown; notes?: unknown; quote?: unknown; at?: unknown; sending?: unknown; mentions?: unknown }>)) {
       if (value && typeof value.text === 'string') {
         const sending = readSending(value.sending);
-        out[key] = { text: value.text, notes: readNotes(value), at: Number(value.at) || 0, ...(sending ? { sending } : {}) };
+        out[key] = { ...(Array.isArray(value.mentions) ? { mentions: value.mentions.filter(m => m && typeof m.id === 'string' && typeof m.label === 'string' && ['agent', 'member'].includes(m.kind) && (m.cwd === undefined || typeof m.cwd === 'string')) } : {}), text: value.text, notes: readNotes(value), at: Number(value.at) || 0, ...(sending ? { sending } : {}) };
       }
     }
     return out;
@@ -59,11 +62,12 @@ export function readDrafts(storage: Storage): Record<string, StoredDraft> {
 }
 
 /** Keeps `draft` under `key`, or forgets it when there is nothing left to keep. */
-export function writeDraft(storage: Storage, key: string, draft: { text: string; notes: StoredDraft['notes']; sending?: Sending } | null, now = Date.now()): void {
+export function writeDraft(storage: Storage, key: string, draft: { text: string; notes: StoredDraft['notes']; sending?: Sending; mentions?: AgentMention[] } | null, now = Date.now()): void {
   const all = readDrafts(storage);
-  if (draft && (draft.text.trim() || draft.notes.length)) {
+  if (draft && (draft.text.trim() || draft.notes.length || draft.mentions?.length)) {
     all[key] = {
       text: draft.text,
+      ...(draft.mentions?.length ? { mentions: draft.mentions } : {}),
       notes: draft.notes.map(({ quote, comment }) => ({ quote, comment })),
       at: now,
       ...(draft.sending !== undefined ? { sending: draft.sending } : {}),

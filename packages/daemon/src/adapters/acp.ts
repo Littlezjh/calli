@@ -1,3 +1,4 @@
+import { sessionEnvironment } from './types.js';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -414,7 +415,7 @@ export abstract class AcpAdapter implements AgentAdapter {
   /** Starts a session and also returns the config options the agent reported for it. */
   protected async open(opts: StartOptions): Promise<{ session: AcpSession; configOptions: ConfigOption[] }> {
     const [bin, ...args] = this.command;
-    const child = spawn(bin, args, { cwd: opts.cwd, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ...this.env } });
+    const child = spawn(bin, args, { cwd: opts.cwd, stdio: ['pipe', 'pipe', 'pipe'], env: sessionEnvironment(this.env, opts.coordinationEnv) });
 
     // The session object is created after the peer, but the peer's handlers need it.
     // Route through a holder so both can reference each other without a cycle at construction.

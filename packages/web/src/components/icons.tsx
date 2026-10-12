@@ -317,3 +317,7 @@ export const IconFiles = (p: { size?: number }) => (
     <path d="M9 11h12v9H9z" />
   </Svg>
 );
+
+export const IconAgents = (p: { size?: number }) => (
+  <Svg {...p}><circle cx="9" cy="7" r="3" /><path d="M3 20v-2a6 6 0 0 1 12 0v2M16 4a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 4v2" /></Svg>
+);

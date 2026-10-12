@@ -163,6 +163,8 @@ export interface DiscoveredAccount {
 }
 
 export interface StartOptions {
+  /** Ephemeral limi connection context. Never persisted in agent configuration. */
+  coordinationEnv?: Record<string, string>;
   cwd: string;
   /** Agent-side session id to resume, if the thread already has one. */
   resumeId?: string;
@@ -178,6 +180,8 @@ export interface AgentAdapter {
   /** The agent's mark: the path of a 24×24 drawing, filled with the even-odd rule. See icons.ts. */
   readonly icon?: string;
   readonly capabilities: {
+    /** Accepts runtime-only limi CLI connection context. */
+    coordination?: boolean;
     resume: boolean;
     approvals: boolean;
     /** Permission levels this agent supports. Empty means the UI shows no permission picker. */
@@ -258,4 +262,11 @@ export interface AgentAdapter {
    */
   forkSession?(agentSessionId: string, cwd: string, forkRef?: string, intoCwd?: string): Promise<string>;
   start(opts: StartOptions): Promise<AgentSession>;
+}
+
+/** Preserve account environment and its PATH while exposing the runtime CLI. */
+export function sessionEnvironment(base: Record<string, string>, context?: Record<string, string>): NodeJS.ProcessEnv {
+  const env = { ...process.env, ...base, ...context };
+  if (context?.LIMI_BIN_DIR) env.PATH = `${context.LIMI_BIN_DIR}${process.platform === 'win32' ? ';' : ':'}${base.PATH ?? process.env.PATH ?? ''}`;
+  return env;
 }

@@ -3,6 +3,7 @@
 // `codex app-server` does. Prompt text drives behaviour: "tool" runs a command, "edit" changes a
 // file, "approve" asks for a command approval, "deny" offers a plain decline, "slow" waits until
 // interrupted, "crash" exits. Settings ride with turn/start the way the adapter sends them.
+import { coordinationFixture } from './coordination.mjs';
 import { appendFileSync, readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -95,6 +96,9 @@ const runTurn = (text, turnId, done) => {
   const userItem = { type: 'userMessage', id: `user-${nextTurnSeq}`, content: [{ type: 'text', text }] };
   notify('item/started', { item: userItem, turnId });
   notify('item/completed', { item: userItem, turnId });
+
+  const collaboration = coordinationFixture(text);
+  if (collaboration !== null) { say(collaboration); done(); return; }
 
   if (text.includes('crash')) {
     setTimeout(() => process.exit(1), 20);

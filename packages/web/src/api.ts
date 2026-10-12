@@ -35,7 +35,17 @@ export interface WorkdirsConfig {
   scratch?: boolean;
 }
 
+export interface AgentMention { id: string; label: string; kind: 'agent' | 'member'; cwd?: string }
+export interface Coordination {
+  rootId: string; paused: boolean; directories: string[]; agents: string[];
+  members: Array<{ id: string; name: string; thread: Thread | null; latest: CoordinationMessage | null }>;
+  messages: CoordinationMessage[];
+}
+export interface CoordinationMessage {
+  id: string; from: string; to: string; text: string; kind: string; state: string; result: string; createdAt: string; turnId: string | null;
+}
 export interface Thread {
+  coordination?: { rootId: string; children: number; paused: boolean };
   id: string;
   agent: string;
   cwd: string;
@@ -191,6 +201,7 @@ export interface AgentInfo {
   account?: string | null;
   available: boolean;
   capabilities: {
+    coordination?: boolean;
     resume: boolean;
     approvals: boolean;
     permissionModes: string[];
@@ -539,17 +550,23 @@ export class Api {
     return this.request('GET', `/api/worktree-options?cwd=${encodeURIComponent(cwd)}`);
   }
 
+  coordination(id: string): Promise<Coordination | null> { return this.request('GET', `/api/threads/${id}/coordination`); }
+  configureCoordination(id: string, body: { action?: string; directories?: string[] }): Promise<Coordination> {
+    return this.request('POST', `/api/threads/${id}/coordination`, body);
+  }
+
   /** Sends a message. With `queue`, one sent while a turn is running waits for that turn to finish. */
   startTurn(
     threadId: string,
     text: string,
     images: OutgoingImage[] = [],
-    opts: { queue?: boolean } = {},
+    opts: { queue?: boolean; mentions?: AgentMention[] } = {},
   ): Promise<{ turnId: string } | { queued: true; id: string }> {
     return this.request('POST', `/api/threads/${threadId}/turns`, {
       text,
       ...(images.length ? { images } : {}),
       ...(opts.queue ? { queue: true } : {}),
+      ...(opts.mentions?.length ? { mentions: opts.mentions } : {}),
     });
   }
 

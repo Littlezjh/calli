@@ -1,3 +1,4 @@
+import { CoordinationManager, coordinationServer } from './coordination.js';
 import { loadConfig, loadDotEnv } from './config.js';
 import { createHttpServer, listenPrivate } from './http.js';
 import { HostRegistry } from './hosts.js';
@@ -48,6 +49,10 @@ async function main(): Promise<void> {
   const dirs = new Workdirs(workdirs, join(config.dataDir, 'workdirs.json'), join(config.dataDir, 'scratch'));
   const manager = new ThreadManager(store, adapters, dirs, new AttachmentStore(config.dataDir), () => registry.list());
   manager.recoverInterrupted();
+  const coordinationPath = join(config.dataDir, 'coordination', 'limi.sock');
+  const coordination = new CoordinationManager(store, manager, coordinationPath);
+  const collaborationServer = coordinationServer(coordination);
+  if (!await listenPrivate(collaborationServer, coordinationPath)) throw new Error('Collaboration socket is already in use');
   const terminals = new TerminalManager({ workdirs: () => dirs.all(), shell: config.termShell ?? undefined });
   // Other machines, each reached over SSH through its daemon's socket.
   const hosts = new HostRegistry({ file: join(config.dataDir, 'hosts.json'), ssh: config.sshCommand });
@@ -92,6 +97,9 @@ async function main(): Promise<void> {
     // that looks does not take a stopped daemon for a running one.
     if (ownsSocket && config.socket) rmSync(config.socket, { force: true });
     hosts.dispose();
+    coordination.dispose();
+    collaborationServer.close();
+    rmSync(coordinationPath, { force: true });
     await manager.shutdown();
     terminals.dispose();
     store.close();
