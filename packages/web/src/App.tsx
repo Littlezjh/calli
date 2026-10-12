@@ -33,6 +33,8 @@ import { ImportPanel } from './components/ImportPanel';
 import { Menu } from './components/Menu';
 import { StatusPanel } from './components/StatusPanel';
 import { TerminalPanel } from './components/TerminalPanel';
+import { FilesPanel, type FilesTarget } from './components/FilesPanel';
+import { fileRef } from './files';
 import { QuotaPanel } from './components/QuotaPanel';
 import { SelectionMenu } from './components/SelectionMenu';
 import { SideChat } from './components/SideChat';
@@ -46,7 +48,7 @@ import { NewProjectDialog, ProjectPicker, RootsDialog, type ProjectOption } from
 import { NoteMarks, type NoteMark } from './components/NoteMarks';
 import { Toast, type ToastState } from './components/Toast';
 import { TokenGate } from './components/TokenGate';
-import { IconArchive, IconArrowDown, IconChevron, IconClose, IconEdit, IconFolder, IconImport, IconList, IconMenu, IconMore, IconPalette, IconServer, IconSidebar, IconSignOut, IconTerminal } from './components/icons';
+import { IconArchive, IconArrowDown, IconChevron, IconClose, IconEdit, IconFiles, IconFolder, IconImport, IconList, IconMenu, IconMore, IconPalette, IconServer, IconSidebar, IconSignOut, IconTerminal } from './components/icons';
 
 const sleep = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve) => {
@@ -665,6 +667,21 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
     [api, selectedId],
   );
 
+  // The file panel: what it shows, for the thread on screen. Switching threads closes it.
+  const [files, setFiles] = useState<FilesTarget | null>(null);
+  const filesSeq = useRef(0);
+  useEffect(() => setFiles(null), [selectedId]);
+  const openFileLink = useCallback(
+    async (raw: string) => {
+      if (!api || !selectedId) throw new Error('no thread');
+      const ref = fileRef(raw);
+      // Asked first, so a file the thread cannot show falls back to copying its path.
+      const file = await api.threadText(selectedId, ref.path);
+      setFiles({ path: file.path, line: ref.line, file, seq: ++filesSeq.current });
+    },
+    [api, selectedId],
+  );
+
   useEffect(() => {
     const onVisibility = () => {
       setPageHidden(document.hidden);
@@ -1130,6 +1147,15 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           </div>
           {selected && (
             <div className="topbar-actions">
+              <button
+                className={`icon-btn topbar-files${files ? ' on' : ''}`}
+                aria-label="文件"
+                aria-pressed={Boolean(files)}
+                title="文件"
+                onClick={() => setFiles(files ? null : { path: null, seq: ++filesSeq.current })}
+              >
+                <IconFiles />
+              </button>
               {!compact && (
                 <button className="icon-btn topbar-term" aria-label="打开终端" title="终端" onClick={() => setTermOpen(true)}>
                   <IconTerminal />
@@ -1192,6 +1218,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
               roots={threadRoots}
               loadImage={loadImage}
               loadFile={loadFile}
+              onOpenFile={openFileLink}
               onDecide={decide}
               hasOlder={hasOlder}
               loadingOlder={loadingOlder}
@@ -1254,6 +1281,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
         <div className="scrim" onClick={() => setDrawer(false)} aria-hidden="true" />
       </main>
 
+      {files && selected && api && <FilesPanel api={api} threadId={selected.id} target={files} phone={compact} onClose={() => setFiles(null)} />}
       {termOpen && (
         <TerminalPanel
           api={api}

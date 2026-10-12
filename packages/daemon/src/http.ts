@@ -519,6 +519,21 @@ export function createHttpServer(deps: HttpDeps): Server {
         return;
       }
 
+      // GET /api/threads/:id/tree?path=: one folder of the thread's directory, for the file browser
+      if (method === 'GET' && sub === 'tree') {
+        return sendJson(res, 200, await manager.listThreadDir(threadId, url.searchParams.get('path')));
+      }
+
+      // GET /api/threads/:id/find?q=: files in the thread directory whose path matches, for the browser's filter
+      if (method === 'GET' && sub === 'find') {
+        return sendJson(res, 200, await manager.findThreadFiles(threadId, url.searchParams.get('q') ?? ''));
+      }
+
+      // GET /api/threads/:id/text?path=: a text file's contents, for the file viewer (read only)
+      if (method === 'GET' && sub === 'text') {
+        return sendJson(res, 200, manager.readThreadText(threadId, url.searchParams.get('path')));
+      }
+
       // GET /api/threads/:id/attachments/:attachmentId
       if (method === 'GET' && sub === 'attachments' && parts[4]) {
         const file = manager.getAttachment(threadId, parts[4]);

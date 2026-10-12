@@ -1680,6 +1680,76 @@ test("files: an agent's own folder for the session is served too, and only that 
   assert.equal((await api(`/api/threads/${claude.id}/files?path=${encodeURIComponent(mine)}`)).status, 404);
 });
 
+test('browse: folders and text files in the thread directory can be read, and nothing outside it', async () => {
+  // A folder of its own, so the other tests' files do not show up in the listings.
+  const dir = join(workdir, 'browse-test');
+  mkdirSync(join(dir, 'src', 'b'), { recursive: true });
+  mkdirSync(join(dir, 'node_modules', 'x'), { recursive: true });
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  writeFileSync(join(dir, '.gitignore'), 'node_modules/\n');
+  writeFileSync(join(dir, 'src', 'a10.ts'), 'export const ten = 10;\n');
+  writeFileSync(join(dir, 'src', 'a2.ts'), 'export const two = 2;\n');
+  writeFileSync(join(dir, 'blob.bin'), Buffer.from([1, 2, 0, 3]));
+  writeFileSync(join(dir, 'big.txt'), 'line of text\n'.repeat(100_000));
+  writeFileSync(join(dataDir, 'secret.txt'), 'not for the page');
+  symlinkSync(join(dataDir, 'secret.txt'), join(dir, 'leak.txt'));
+  symlinkSync(join(dataDir, 'missing'), join(dir, 'dangling'));
+  try {
+    const thread = await newThread({ agent: 'claude', cwd: dir });
+    const tree = (path?: string) => api(`/api/threads/${thread.id}/tree${path === undefined ? '' : `?path=${encodeURIComponent(path)}`}`);
+    const text = (path: string) => api(`/api/threads/${thread.id}/text?path=${encodeURIComponent(path)}`);
+    const real = realpathSync(dir);
+
+    const top = (await (await tree()).json()) as { root: string; path: string; entries: Array<{ name: string; type: string; ignored?: boolean; size?: number }> };
+    assert.equal(top.root, real);
+    assert.equal(top.path, real);
+    assert.deepEqual(
+      top.entries.map((e) => [e.name, e.type, Boolean(e.ignored)]),
+      [
+        ['node_modules', 'dir', true],
+        ['src', 'dir', false],
+        ['.gitignore', 'file', false],
+        ['big.txt', 'file', false],
+        ['blob.bin', 'file', false],
+        ['leak.txt', 'file', false],
+      ],
+      'folders first, .git and dangling links left out, ignored ones marked',
+    );
+    const src = (await (await tree('src')).json()) as typeof top;
+    assert.deepEqual(src.entries.map((e) => e.name), ['b', 'a2.ts', 'a10.ts'], 'numbers sort as numbers');
+    assert.equal(src.entries[1].size, 22);
+
+    const a2 = (await (await text(join(dir, 'src', 'a2.ts'))).json()) as { root: string; path: string; text: string | null; truncated: boolean; size: number };
+    assert.deepEqual(a2, { root: real, path: join(real, 'src', 'a2.ts'), size: 22, text: 'export const two = 2;\n', truncated: false });
+    const blob = (await (await text('blob.bin')).json()) as typeof a2;
+    assert.equal(blob.text, null, 'a binary file has no text');
+    const big = (await (await text('big.txt')).json()) as typeof a2;
+    assert.ok(big.truncated);
+    assert.ok(big.text!.length <= 1024 * 1024 && big.text!.endsWith('line of text\n'), 'cut at a whole line');
+
+    const find = async (q: string) => ((await (await api(`/api/threads/${thread.id}/find?q=${encodeURIComponent(q)}`)).json()) as { paths: string[] }).paths;
+    writeFileSync(join(dir, 'src', 'b', 'two-notes.md'), '# notes\n');
+    assert.deepEqual(await find('a2'), ['src/a2.ts']);
+    assert.deepEqual(await find('TWO'), ['src/b/two-notes.md'], 'case does not matter; file contents are not searched');
+    assert.deepEqual(await find('src ts'), ['src/a2.ts', 'src/a10.ts'], 'every word must match');
+    assert.deepEqual(await find('node_modules'), [], 'ignored files are not offered');
+    assert.deepEqual(await find(''), []);
+
+    assert.equal((await text('leak.txt')).status, 404, 'a link that leads outside');
+    assert.equal((await text(join(dataDir, 'secret.txt'))).status, 404);
+    assert.equal((await text('../browse-test/../../' + 'x')).status, 404);
+    assert.equal((await text('src')).status, 404, 'a folder is not a file');
+    assert.equal((await text('')).status, 400);
+    assert.equal((await tree('src/a2.ts')).status, 404, 'a file is not a folder');
+    assert.equal((await tree('..')).status, 404);
+    assert.equal((await tree(dataDir)).status, 404);
+    assert.equal((await api(`/api/threads/${thread.id}/tree`, {}, false)).status, 401);
+    assert.equal((await api(`/api/threads/${thread.id}/text?path=src/a2.ts`, { method: 'POST' })).status, 404, 'read only');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('commands: agy lists and answers its own commands; the answer is a normal turn in the thread', async () => {
   const list = (await (await api(`/api/agents/agy/commands?cwd=${encodeURIComponent(workdir)}`)).json()) as Array<{ name: string; kind: string }>;
   assert.ok(list.some((c) => c.name === 'usage' && c.kind === 'command'));

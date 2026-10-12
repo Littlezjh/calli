@@ -17,6 +17,7 @@ import {
   type TurnHooks,
   type TurnInput,
 } from './adapters/types.js';
+import { findFiles, listDir, readText, type Listing, type TextFile } from './browse.js';
 import { MAX_IMAGES, sniffImageType, sniffSvg, type AttachmentStore, type StoredAttachment } from './attachments.js';
 import { HttpError } from './errors.js';
 import { handoverContext, handoverPrompt, synthesizeHandover, turnMessage } from './handover.js';
@@ -493,34 +494,45 @@ export class ThreadManager {
   }
 
   /**
-   * An image file the agent made or mentioned, for showing it in the thread. Only files inside the
-   * thread's directory, or the agent's own folder for this session, and only real images: one of
-   * the four bitmap formats, or an SVG.
+   * Where a path the page asked about really is, if the thread may show it: inside the thread's
+   * directory, or the agent's own folder for this session. Symlinks are resolved first, so a link
+   * inside cannot point the way out. Anything else is "not found", whether it exists or not.
+   * `root` is the real path of the folder it was found in, which the file browser counts from.
    */
-  getThreadImage(threadId: string, rawPath: unknown): { path: string; mimeType: string; size: number } {
+  resolveInThread(threadId: string, rawPath: unknown, notFound: HttpError): { real: string; root: string } {
     const thread = this.getThread(threadId);
-    const notFound = new HttpError(404, 'no such image in this thread');
-    if (typeof rawPath !== 'string' || !rawPath || rawPath.length > 4096) throw new HttpError(400, 'path is required');
-    const given = rawPath.startsWith('file://') ? rawPath.slice('file://'.length) : rawPath;
+    if (rawPath !== undefined && rawPath !== null && typeof rawPath !== 'string') throw new HttpError(400, 'path must be a string');
+    if (typeof rawPath === 'string' && rawPath.length > 4096) throw new HttpError(400, 'path is too long');
+    const given = !rawPath ? thread.cwd : rawPath.startsWith('file://') ? rawPath.slice('file://'.length) : rawPath;
 
     const adapter = this.adapters.get(thread.agent);
     const roots = [thread.cwd, ...(thread.agentSessionId ? (adapter?.artifactDirs?.(thread.agentSessionId) ?? []) : [])];
     let real: string;
     try {
-      // Symlinks are resolved first, so a link inside the directory cannot point the way out.
       real = realpathSync(isAbsolute(given) ? given : resolve(thread.cwd, given));
     } catch {
       throw notFound;
     }
-    const inside = roots.some((root) => {
+    for (const root of roots) {
+      let base: string;
       try {
-        const base = realpathSync(root);
-        return real === base || real.startsWith(base.endsWith(sep) ? base : base + sep);
+        base = realpathSync(root);
       } catch {
-        return false;
+        continue;
       }
-    });
-    if (!inside) throw notFound;
+      if (real === base || real.startsWith(base.endsWith(sep) ? base : base + sep)) return { real, root: base };
+    }
+    throw notFound;
+  }
+
+  /**
+   * An image file the agent made or mentioned, for showing it in the thread. Only files the thread
+   * may show (see resolveInThread), and only real images: one of the four bitmap formats, or an SVG.
+   */
+  getThreadImage(threadId: string, rawPath: unknown): { path: string; mimeType: string; size: number } {
+    const notFound = new HttpError(404, 'no such image in this thread');
+    if (typeof rawPath !== 'string' || !rawPath) throw new HttpError(400, 'path is required');
+    const { real } = this.resolveInThread(threadId, rawPath, notFound);
 
     const stat = statSync(real);
     if (!stat.isFile() || stat.size === 0 || stat.size > MAX_SERVED_IMAGE_BYTES) throw notFound;
@@ -534,6 +546,29 @@ export class ThreadManager {
     const mimeType = sniffImageType(head) ?? (sniffSvg(head) && stat.size <= MAX_SERVED_SVG_BYTES ? 'image/svg+xml' : null);
     if (!mimeType) throw notFound;
     return { path: real, mimeType, size: stat.size };
+  }
+
+  /** One folder of the thread's directory, for the file browser. No path: the thread's directory itself. */
+  async listThreadDir(threadId: string, rawPath: unknown): Promise<{ root: string; path: string } & Listing> {
+    const { real, root } = this.resolveInThread(threadId, rawPath, new HttpError(404, 'no such folder in this thread'));
+    if (!statSync(real).isDirectory()) throw new HttpError(404, 'no such folder in this thread');
+    return { root, path: real, ...(await listDir(real)) };
+  }
+
+  /** Files under the thread's directory whose path matches a search, relative to it. */
+  async findThreadFiles(threadId: string, query: unknown): Promise<{ root: string; paths: string[]; truncated: boolean }> {
+    if (typeof query !== 'string' || query.length > 200) throw new HttpError(400, 'q must be a short string');
+    const { real } = this.resolveInThread(threadId, null, new HttpError(404, 'the thread directory is gone'));
+    return { root: real, ...(await findFiles(real, query)) };
+  }
+
+  /** A text file in the thread's directory, for the file viewer. A binary one comes back without text. */
+  readThreadText(threadId: string, rawPath: unknown): { root: string; path: string } & TextFile {
+    const notFound = new HttpError(404, 'no such file in this thread');
+    if (typeof rawPath !== 'string' || !rawPath) throw new HttpError(400, 'path is required');
+    const { real, root } = this.resolveInThread(threadId, rawPath, notFound);
+    if (!statSync(real).isFile()) throw notFound;
+    return { root, path: real, ...readText(real) };
   }
 
   listSections(): SectionRecord[] {
