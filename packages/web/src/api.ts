@@ -50,6 +50,7 @@ export interface Thread {
   sectionId: string | null;
   /** The thread this one was forked from, if it is a fork. */
   forkedFrom: string | null;
+  handover?: { sourceId: string; title: string; agent: string } | null;
   /**
    * The git worktree the thread runs in, when a fork was given one. `of` is the directory it would
    * be in otherwise, which is the project it is listed under; `ofReal` is that with symlinks

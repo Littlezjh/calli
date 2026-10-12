@@ -1079,7 +1079,7 @@ export class ThreadManager {
     worktree?: boolean;
     /** In no project: the thread gets a fresh folder of its own in the hub's scratch area; `cwd` is ignored. */
     scratch?: boolean;
-  }, inheritedWorktree?: ThreadWorktree | null): Promise<ThreadView> {
+  }, inheritedWorktree?: ThreadWorktree | null, handover?: ThreadRecord['handover']): Promise<ThreadView> {
     const adapter = this.adapters.get(input.agent);
     if (!adapter) throw new HttpError(400, `unknown agent: ${input.agent}`);
     const id = randomUUID();
@@ -1130,6 +1130,7 @@ export class ThreadManager {
         permissionMode,
         model,
         effort,
+        handover,
         ...(input.sectionId ? { sectionId: input.sectionId } : {}),
         ...(added ? { worktree: { root: added.tree.root, branch: added.tree.branch, of: cwd } } : inheritedWorktree ? { worktree: inheritedWorktree } : {}),
       });
@@ -1149,7 +1150,7 @@ export class ThreadManager {
       cwd: source.cwd,
       title: `${source.title}（接手）`,
       sectionId: source.sectionId,
-    }, source.worktree);
+    }, source.worktree, { sourceId: source.id, title: source.title, agent: source.agent });
   }
 
   /** The project roots, each with whether it was added from the page and so can be removed there. */

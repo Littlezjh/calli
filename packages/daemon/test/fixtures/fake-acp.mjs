@@ -8,6 +8,16 @@ import { basename, dirname } from 'node:path';
 import { createInterface } from 'node:readline';
 import { recordSession } from './fake-session-store.mjs';
 
+if (process.argv[2] === 'models') {
+  if (process.env.FAKE_TRAEX_MODELS_FAIL === '1') process.exit(1);
+  const rows = process.env.FAKE_TRAEX_MODELS_FILE ? JSON.parse(readFileSync(process.env.FAKE_TRAEX_MODELS_FILE, 'utf8')) : [
+    { name: 'Big 1.0', config_name: 'big', _meta: { trae: { load: { percent: 184 }, weeklyQuota: { applies: true, usedPercent: 1, resetTime: 1792339199 } } } },
+    { name: 'Small 1.0', config_name: 'small', _meta: { trae: { load: { percent: 0 } } } },
+  ];
+  process.stdout.write(JSON.stringify(rows));
+  process.exit(0);
+}
+
 if (process.argv[2] === 'delete') {
   // CLI mode, not an ACP server: the traex adapter deletes sessions this way.
   if (process.env.FAKE_ACP_DELETE_LOG) appendFileSync(process.env.FAKE_ACP_DELETE_LOG, process.argv[4] + '\n');

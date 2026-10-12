@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Section, Thread } from '../src/api.js';
-import { buildActivity, buildSidebar, taggedAgents } from '../src/sidebar.js';
+import { buildActivity, buildSidebar, handoverGroups, taggedAgents } from '../src/sidebar.js';
 
 let clock = 0;
 function thread(id: string, over: Partial<Thread> = {}): Thread {
@@ -151,4 +151,27 @@ test('threads in no project sit together after the projects, unless pinned or fi
   assert.deepEqual(model.projects.map((p) => p.name), ['code'], 'each scratch folder is not a project of its own');
   assert.deepEqual(ids(model.pinned), ['s3']);
   assert.deepEqual(ids(model.sections[0].threads), ['s4']);
+});
+
+
+test('handovers group by explicit ancestry and open the latest successor even when the original is active', () => {
+  const a = thread('origin', { updatedAt: '2030-01-01' });
+  const b = thread('successor', { handover: { sourceId: a.id, title: a.title, agent: a.agent } });
+  const c = thread('third', { handover: { sourceId: b.id, title: b.title, agent: b.agent }, createdAt: '2027-01-01' });
+  const unrelated = thread('same-title', { title: a.title });
+  const groups = handoverGroups([a, unrelated, c, b]);
+  assert.equal(groups.length, 2);
+  assert.equal(groups[0].latest.id, c.id);
+  assert.deepEqual(new Set(ids(groups[0].members)), new Set([a.id, b.id, c.id]));
+  assert.equal(handoverGroups([a, unrelated])[0].members.length, 1, 'separate sections do not pull threads in');
+  assert.equal(handoverGroups([c])[0].latest.id, c.id, 'missing parents stay usable');
+});
+
+test('forks stay separate, and corrupt handover cycles terminate', () => {
+  const a = thread('a');
+  const b = thread('b', { forkedFrom: a.id });
+  assert.equal(handoverGroups([a, b]).length, 2);
+  a.handover = { sourceId: b.id, title: b.title, agent: b.agent };
+  b.handover = { sourceId: a.id, title: a.title, agent: a.agent };
+  assert.equal(handoverGroups([a, b]).length, 1);
 });

@@ -124,6 +124,8 @@ test('handover-thread creates an unsent conversation in the same worktree, inclu
     assert.equal(next.sectionId,source.sectionId);
     assert.equal(next.agentSessionId,null);
     assert.equal(next.forkedFrom,null,'handover does not copy the native session');
+    assert.deepEqual(next.handover,{sourceId:source.id,title:source.title,agent:source.agent});
+    assert.deepEqual(store.getThread(next.id)?.handover,next.handover);
     assert.equal(next.status,'idle');
     assert.equal(next.title,'原任务（接手）');
     assert.equal(manager.listEventsSince(next.id,0).some(e=>e.type==='turn.started'),false);

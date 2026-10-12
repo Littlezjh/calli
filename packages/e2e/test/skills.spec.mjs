@@ -31,7 +31,7 @@ before(async () => {
   page.on('pageerror', (err) => console.error('browser error:', err));
   await page.addInitScript((token) => localStorage.setItem('rah.token', token), hub.token);
   await openUi(page, hub);
-  await page.getByRole('button', { name: '技能', exact: true }).click();
+  await openSkills(page);
 });
 after(async () => {
   await browser?.close();
@@ -39,6 +39,15 @@ after(async () => {
   await remote?.stop();
   if (root) rmSync(root, { recursive: true, force: true });
 });
+
+async function openSkills(p, phone = false, shot) {
+  if (phone) await p.locator('.menu-btn').click();
+  assert.equal(await p.locator('.side-nav').getByRole('button', { name: '技能', exact: true }).count(), 0);
+  await p.getByRole('button', { name: '配置', exact: true }).click();
+  await p.getByRole('menuitem', { name: '技能', exact: true }).waitFor();
+  if (shot) { await p.waitForTimeout(300); await p.screenshot({ path: shot }); }
+  await p.getByRole('menuitem', { name: '技能', exact: true }).click();
+}
 
 async function openSync(p = page) {
   await p.getByRole('button', { name: 'review-code 的操作' }).click();
@@ -56,7 +65,7 @@ test('machine matrix, search, instructions, and remote selection retain the hub'
   await page.getByRole('heading', { name: '代码审查', exact: true }).waitFor();
   await page.getByRole('dialog').getByLabel('关闭').click();
   await page.getByRole('tab', { name: '开发机' }).click();
-  await page.getByRole('button', { name: '技能', exact: true }).click();
+  await openSkills(page);
   await page.locator('.skills-differs').waitFor();
   assert.deepEqual((await page.locator('.skills-grid-head .skills-cell-machine').allInnerTexts()).sort(), ['开发机', '本机'].sort());
 });
@@ -84,7 +93,7 @@ test('desktop and phone, light and dark fit the viewport with readable sync dial
     const p = await ctx.newPage();
     await p.addInitScript((token) => localStorage.setItem('rah.token', token), hub.token);
     await openUi(p, hub);
-    await p.evaluate(() => { location.hash = '#/skills'; });
+    await openSkills(p, phone, shots ? join(shots, `${phone ? 'phone' : 'desktop'}-${theme}-settings.png`) : undefined);
     await p.locator('.skills-row').waitFor();
     await p.locator('.skills-grid-head .skills-cell-machine').last().waitFor({ state: 'attached' });
     assert.equal(await p.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
