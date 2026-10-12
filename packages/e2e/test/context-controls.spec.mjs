@@ -130,9 +130,15 @@ test('compression queues once during a turn and preserves a draft; pi uses its o
   const context = await browser.newContext();
   try {
     const page = await context.newPage();
+    await page.route('**/api/agents', async (route) => {
+      const response = await route.fetch();
+      const agents = await response.json();
+      for (const agent of agents) delete agent.capabilities.compact;
+      await route.fulfill({ response, json: agents });
+    });
+    await send(thread, 'delayed');
     await select(page, thread);
     await page.locator('.composer textarea').fill('下一轮草稿');
-    await send(thread, 'delayed');
     await page.getByRole('button', { name: '停止', exact: true }).waitFor();
     await page.locator('.usage:visible').click();
     await page.getByRole('button', { name: /压缩 本轮结束后/ }).click();

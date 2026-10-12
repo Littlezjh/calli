@@ -638,8 +638,9 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
 
   // Slash commands depend on the directory (projects add their own). Claude only announces them
   // once a session has started, so the list is re-read whenever a turn finishes as well.
+  // Load an initial list even during a turn, so a freshly opened page can offer queued commands.
   useEffect(() => {
-    if (!api || !activeAgent || running) return;
+    if (!api || !activeAgent || (running && commandsByKey[commandsKey])) return;
     api
       .commands(activeAgent, activeCwd || undefined)
       .then((list) => setCommandsByKey((prev) => ({ ...prev, [commandsKey]: list })))
