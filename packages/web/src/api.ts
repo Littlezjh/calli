@@ -177,6 +177,10 @@ export interface AgentInfo {
   label: string;
   /** The agent's mark: the path of a 24×24 drawing, filled with the even-odd rule. Missing from daemons that predate it. */
   icon?: string;
+  /** Which adapter this instance is; instances of one adapter group together in the picker. */
+  adapter?: string;
+  /** The login this instance runs as, when it is a linked account (an email). */
+  account?: string | null;
   available: boolean;
   capabilities: {
     resume: boolean;
@@ -191,6 +195,7 @@ export interface AgentInfo {
     history: boolean;
     /** Can read plan usage outside a session, for the quota panel. */
     quota: boolean;
+    compact?: boolean;
     fork: boolean;
     /** A fork can end at an earlier turn instead of taking the whole thread. Missing from daemons that predate it. */
     forkAt?: boolean;
@@ -214,6 +219,7 @@ export interface QuotaWindow {
 /** Plan usage of an agent instance, read outside any session. */
 export interface PlanQuota {
   windows: QuotaWindow[];
+  note?: string;
   /** When the agent was last asked. ISO. */
   checkedAt: string;
 }
@@ -652,6 +658,11 @@ export class Api {
     return this.request('GET', `/api/threads/${threadId}/preview-link?path=${encodeURIComponent(path)}`);
   }
 
+  /** Creates an empty successor in the same directory and worktree, without starting an agent turn. */
+  createHandoverThread(threadId: string, agent: string): Promise<Thread> {
+    return this.request('POST', `/api/threads/${threadId}/handover-thread`, { agent });
+  }
+
   /** Asks the thread's agent to write a handover summary for another agent, in its own session. */
   startHandover(threadId: string, target: string): Promise<{ turnId: string }> {
     return this.request('POST', `/api/threads/${threadId}/handover`, { target });
@@ -678,7 +689,7 @@ export class Api {
   }
 
   /** Adds an agent instance (another CLI, another account). */
-  addAgent(input: { id?: string; adapter: string; label?: string; command?: string[]; env?: Record<string, string> }): Promise<{ id: string }> {
+  addAgent(input: { id?: string; adapter: string; label?: string; command?: string[]; env?: Record<string, string>; account?: string }): Promise<{ id: string }> {
     return this.request('POST', '/api/agents', input);
   }
 

@@ -12,7 +12,7 @@
 set -euo pipefail
 
 NAME=remote-agent-hub
-REPO="$(cd "$(dirname "$0")/.." && pwd)"
+REPO="$(cd "$(dirname "$0")/.." && pwd -P)"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/$NAME"
 LOG="$STATE_DIR/restart.log"
 POLL=5

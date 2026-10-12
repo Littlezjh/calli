@@ -1,6 +1,14 @@
-# Remote Agent Hub
+<p align="center">
+  <img src="packages/web/public/limi-icon.png" alt="Limi：薄荷绿背景上的奶油白小海蛞蝓，带橙色触角和微笑" width="160" />
+</p>
 
-在远程主机上运行 coding agent，通过手机或电脑浏览器使用。界面参考 Codex 的版式，但功能更少，目标是简单、不干扰 agent。
+# Limi
+
+Limi（全名 Limacia，昵称「粒米」）是一个在浏览器里使用远程 coding agent 的工作台。
+
+让 coding agent 在远程主机上工作，你用手机或电脑浏览器查看进展、补充要求、处理审批和检查结果。Limi 保持界面简单，也保留各个 agent 原有的目录、配置和会话。
+
+名字来自 Limacia 海蛞蝓。图标是一只带橙色短触角、奶油白身体的小伙伴，配上浅薄荷绿背景，希望工作台也能轻松、亲切一些。
 
 > 状态：可用，正在迭代。要做的事见 [docs/TODO.md](docs/TODO.md)，架构见 [docs/PLAN.md](docs/PLAN.md)。
 
@@ -11,7 +19,7 @@
 | Claude Code | ACP（`@agentclientprotocol/claude-agent-acp`，随项目安装） | 有 | 有 | 有 |
 | pi | `pi --mode rpc` | 无（pi 本身没有） | 有。纯文本模型需要装 pi 扩展 `pi-aux-vision` | 有 |
 | Antigravity | `agy` 的无界面 stream-json 模式 | 无（不能询问，只有"自动改文件"和"完全访问"两档） | 有（按文件路径交给它） | 暂无 |
-| Codex | `codex app-server` | 计划中 | | |
+| Codex | `codex app-server` | 有 | 有 | 有 |
 
 pi 和 agy 要先在主机上装好并登录。没装的 agent 在界面里显示为不可用。
 
@@ -52,7 +60,9 @@ daemon 在 `packages/daemon` 目录里运行，所以用 `RAH_ENV_FILE` 指向�
 2. **主 hub**：以 daemon 的运行用户配置 SSH 别名和凭据，先手动连接、核实主机密钥，再确认 `ssh -o BatchMode=yes <SSH别名> true` 能成功。服务需要能持续免交互认证；只在当前终端可用的 ssh-agent 或临时票据不一定能被服务使用。
 3. **浏览器**：打开「配置 → 机器」，从 SSH 别名列表添加，或输入别名 / `user@host`。成功后在线程列表顶部切换机器。
 
-添加流程读取的是 **hub 所在机器**的 SSH 配置，不是手机或电脑浏览器的配置。目标上的 daemon 要先启动；第一期不自动安装和启动。
+添加流程读取的是 **hub 所在机器**的 SSH 配置，不是手机或电脑浏览器的配置。目标上的 daemon 要先启动；第一期不自动安装和启动。远端 daemon 负责调用该机器上的 agent、读取会话与文件，浏览器仍只访问主 hub；远端无需单独部署前端或开放 HTTP 端口。
+
+更新主 hub 不会自动更新远端 daemon，每台机器需要分别更新。源码安装先同步代码、安装依赖，再运行 `scripts/restart.sh` 构建并等待线程空闲后重启；仅安装运行包的机器需要同步新版 daemon 构建产物，依赖有变化时安装生产依赖，再运行 `scripts/restart.sh --no-build`。保留原有配置和数据目录即可保留 token、线程与会话。涉及新接口的功能（例如新建接手对话）需要目标机器的 daemon 也更新。
 
 | 配置 | 默认与用途 |
 | --- | --- |
@@ -62,6 +72,8 @@ daemon 在 `packages/daemon` 目录里运行，所以用 `RAH_ENV_FILE` 指向�
 私有 socket 依赖文件权限和 SSH 认证，免 token。主 hub 的 token 因此能操作所有已添加的机器。移除机器只断开连接，远端线程继续保留。连不上时，机器面板会显示原因；常见原因是服务环境缺少 SSH 凭据、未知主机密钥、目标 daemon 没启动或 sshd 不允许 Unix socket 转发。架构与限制见 [多机管理设计](docs/multi-host-design.md)。
 
 ## 开机自启
+
+应用已更名为 Limi。为兼容已有安装，systemd 服务名、配置与数据目录、私有 socket 路径以及 `RAH_*` 环境变量沿用原标识 `remote-agent-hub`，升级时不迁移已有会话。
 
 ```bash
 scripts/install-service.sh              # 装成 systemd 用户服务并启动；默认读 ~/.config/remote-agent-hub/.env
@@ -107,3 +119,9 @@ npm run typecheck
 ## 许可证
 
 [MIT](LICENSE)
+
+### 安装为桌面应用
+
+在 Chrome 中打开 Limi 后，可通过浏览器菜单将它安装为应用。安装名称为 Limi，图标使用 Limacia 小海蛞蝓。
+
+如果此前安装的应用仍显示 AgentHub 或默认字母图标，先尝试关闭所有应用窗口后重新打开，并接受 Chrome 提供的名称或图标更新。如果仍未更新，可卸载旧应用后从当前网页重新安装；卸载时不要勾选清除网站数据，以保留本机登录和偏好。

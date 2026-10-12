@@ -24,6 +24,8 @@ export interface AgentInstance {
   command?: string[];
   /** Merged over the daemon's environment for everything this instance spawns. */
   env?: Record<string, string>;
+  /** The login this instance runs as, when it is a linked account (an email, for the picker). */
+  account?: string;
 }
 
 interface InstanceFile {
@@ -231,6 +233,8 @@ export class AgentRegistry {
     label?: unknown;
     command?: unknown;
     env?: unknown;
+    /** The login when this instance is a linked account (an email). */
+    account?: unknown;
   }): Promise<AgentInstance> {
     const adapter = String(input.adapter ?? '');
     if (!(adapter in ADAPTER_LABELS)) throw new HttpError(400, `unknown adapter: ${adapter}`);
@@ -242,6 +246,8 @@ export class AgentRegistry {
       ? input.command.map(String)
       : undefined;
     const label = typeof input.label === 'string' && input.label.trim() ? input.label.trim().slice(0, 60) : undefined;
+    const account =
+      typeof input.account === 'string' && input.account.trim() ? input.account.trim().slice(0, 120) : undefined;
     const env =
       input.env && typeof input.env === 'object' && !Array.isArray(input.env)
         ? Object.fromEntries(Object.entries(input.env as Record<string, unknown>).map(([k, v]) => [String(k), String(v)]))
@@ -255,6 +261,7 @@ export class AgentRegistry {
       label: label ?? id,
       ...(command ? { command } : {}),
       ...(env ? { env } : {}),
+      ...(account ? { account } : {}),
     };
     this.register(instance);
     await this.persist();

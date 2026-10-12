@@ -38,7 +38,7 @@ export function hostProblem(code: HostFailure | undefined, target: string): stri
     case 'unreachable':
       return '连不到这台机器：名字解析不了、网络不通，或者超时了。';
     case 'daemon_missing':
-      return '登录上了，但那台机器上的 Agent Hub 没有应答。在那台机器上装好并启动它；已经在运行的话，检查它的 sshd 是否允许转发。';
+      return '登录上了，但那台机器上的 Limi 没有应答。在那台机器上装好并启动它；已经在运行的话，检查它的 sshd 是否允许转发。';
     case 'forward_denied':
       return '那台机器的 sshd 不允许转发连接。';
     default:

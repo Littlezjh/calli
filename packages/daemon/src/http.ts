@@ -503,6 +503,11 @@ export function createHttpServer(deps: HttpDeps): Server {
         return finishStream(req, res, off);
       }
 
+      if (method === 'POST' && sub === 'handover-thread') {
+        const body = await readJson(req);
+        return sendJson(res, 201, await manager.createHandoverThread(threadId, body.agent));
+      }
+
       if (method === 'POST' && sub === 'handover') {
         // Asks the thread's agent to write a summary for another agent; the GET reads it back.
         const body = await readJson(req);

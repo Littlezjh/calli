@@ -46,7 +46,7 @@ async function main(): Promise<void> {
   // Directories added from the page are kept next to the hub's data; threads in no project work in
   // a scratch area there too.
   const dirs = new Workdirs(workdirs, join(config.dataDir, 'workdirs.json'), join(config.dataDir, 'scratch'));
-  const manager = new ThreadManager(store, adapters, dirs, new AttachmentStore(config.dataDir));
+  const manager = new ThreadManager(store, adapters, dirs, new AttachmentStore(config.dataDir), () => registry.list());
   manager.recoverInterrupted();
   const terminals = new TerminalManager({ workdirs: () => dirs.all(), shell: config.termShell ?? undefined });
   // Other machines, each reached over SSH through its daemon's socket.
@@ -76,7 +76,7 @@ async function main(): Promise<void> {
   }
 
   server.listen(config.port, config.host, () => {
-    console.log(`remote-agent-hub daemon ${VERSION} listening on http://${config.host}:${config.port}`);
+    console.log(`Limi daemon ${VERSION} listening on http://${config.host}:${config.port}`);
     console.log(`workdirs: ${dirs.roots().join(', ')}`);
     if (config.host === '0.0.0.0' || config.host === '::') {
       console.warn('warning: listening on all interfaces. Bind to the VPN address instead.');

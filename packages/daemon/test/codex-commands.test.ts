@@ -86,3 +86,17 @@ test('review results survive importing history', () => {
   const history = turnsFromCodexHistory([{ items: [{ type: 'exitedReviewMode', review: '审查结论' }] }]);
   assert.deepEqual(history[0].events, [{ type: 'message.delta', data: { text: '审查结论' } }]);
 });
+
+test('weekly-only quota reports the missing upstream window without fabricating 5-hour usage', async () => {
+  const weekly = await new CodexAppServerAdapter(command, { FAKE_CODEX_WEEKLY_ONLY: '1' }).fetchQuota();
+  assert.deepEqual(weekly.windows.map((window) => window.label), ['7D']);
+  assert.match(weekly.note ?? '', /服务端未提供 5 小时窗口/);
+  const full = await new CodexAppServerAdapter(command).fetchQuota();
+  assert.ok(full.windows.some((window) => window.label === '5H'));
+  assert.equal(full.note, undefined);
+});
+
+test('a model with no reasoning levels does not inherit the agent-wide slider choices', async () => {
+  const models = await new CodexAppServerAdapter(command, { FAKE_CODEX_NO_EFFORT_MODEL: '1' }).models();
+  assert.deepEqual(models.find((model) => model.id === 'gpt-basic')?.efforts, []);
+});

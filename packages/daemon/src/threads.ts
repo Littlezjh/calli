@@ -122,6 +122,10 @@ export interface AgentInfo {
   label: string;
   /** The agent's mark, when its adapter has one. Instances of one adapter share it. */
   icon?: string;
+  /** Which adapter this instance is: instances of one adapter group together in the picker. */
+  adapter?: string;
+  /** The account this instance runs as, when it is a linked second login (an email). */
+  account?: string | null;
   available: boolean;
   capabilities: AgentAdapter['capabilities'];
 }
@@ -172,6 +176,8 @@ export class ThreadManager {
     private readonly adapters: Map<string, AgentAdapter>,
     workdirs: string[] | Workdirs,
     private readonly attachments: AttachmentStore,
+    /** What each instance is beyond its adapter: its adapter kind and linked account. */
+    private readonly agentMeta: () => Array<{ id: string; adapter?: string; account?: string }> = () => [],
   ) {
     this.dirs = Array.isArray(workdirs) ? new Workdirs(workdirs) : workdirs;
     this.skills = new SkillsManager(this.adapters);
@@ -197,10 +203,20 @@ export class ThreadManager {
 
   async listAgents(): Promise<AgentInfo[]> {
     const out: AgentInfo[] = [];
+    const meta = new Map(this.agentMeta().map((m) => [m.id, m]));
     for (const [id, a] of this.adapters) {
       // The key is the instance id: a second account of the same CLI must not report the
       // adapter's own name, or the picker could not tell the two apart.
-      out.push({ id, label: a.label, icon: a.icon, available: await a.available(), capabilities: a.capabilities });
+      const m = meta.get(id);
+      out.push({
+        id,
+        label: a.label,
+        icon: a.icon,
+        ...(m?.adapter ? { adapter: m.adapter } : {}),
+        ...(m?.account ? { account: m.account } : {}),
+        available: await a.available(),
+        capabilities: a.capabilities,
+      });
     }
     return out;
   }
@@ -1063,7 +1079,7 @@ export class ThreadManager {
     worktree?: boolean;
     /** In no project: the thread gets a fresh folder of its own in the hub's scratch area; `cwd` is ignored. */
     scratch?: boolean;
-  }): Promise<ThreadView> {
+  }, inheritedWorktree?: ThreadWorktree | null): Promise<ThreadView> {
     const adapter = this.adapters.get(input.agent);
     if (!adapter) throw new HttpError(400, `unknown agent: ${input.agent}`);
     const id = randomUUID();
@@ -1115,7 +1131,7 @@ export class ThreadManager {
         model,
         effort,
         ...(input.sectionId ? { sectionId: input.sectionId } : {}),
-        ...(added ? { worktree: { root: added.tree.root, branch: added.tree.branch, of: cwd } } : {}),
+        ...(added ? { worktree: { root: added.tree.root, branch: added.tree.branch, of: cwd } } : inheritedWorktree ? { worktree: inheritedWorktree } : {}),
       });
     } catch (err) {
       if (added) await removeWorktree(added.main, added.tree).catch(() => undefined);
@@ -1123,6 +1139,17 @@ export class ThreadManager {
     }
     this.emitThreadEvent(thread.id, null, 'thread.created', { agent: thread.agent, cwd: thread.cwd });
     return this.view(thread);
+  }
+
+  /** A fresh conversation in the source's exact directory, sharing its existing worktree. No agent is started. */
+  async createHandoverThread(threadId: string, agent: string): Promise<ThreadView> {
+    const source = this.getThread(threadId);
+    return this.createThread({
+      agent,
+      cwd: source.cwd,
+      title: `${source.title}（接手）`,
+      sectionId: source.sectionId,
+    }, source.worktree);
   }
 
   /** The project roots, each with whether it was added from the page and so can be removed there. */

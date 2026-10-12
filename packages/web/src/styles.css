@@ -1914,6 +1914,28 @@ html.list-open body {
   font-size: 12.5px;
 }
 
+/* The way out of a group's accounts, back to the list of agents. */
+.pop-back {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 8px 10px 6px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.pop-back .icon {
+  transform: rotate(180deg);
+}
+
+.pop-back:hover {
+  color: var(--text);
+}
+
 .pop-scroll {
   max-height: min(300px, 42vh);
   overflow-y: auto;
@@ -3521,30 +3543,33 @@ input.picker-search {
   width: min(620px, 100%);
 }
 
-.handover-targets {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 4px 0 18px;
-}
-
-.handover-target {
+.handover-successor {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 10px 13px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg);
-  color: var(--text);
-  font-size: 14.5px;
-  cursor: pointer;
+  gap: 12px;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 13px;
 }
 
-.handover-target.on {
-  border-color: color-mix(in srgb, var(--text) 45%, transparent);
-  background: var(--surface);
+.handover-successor fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.handover-cwd {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.handover .dialog-actions {
+  flex-wrap: wrap;
 }
 
 .handover-summary {
@@ -3837,6 +3862,23 @@ input.picker-search {
   .look-body {
     padding-bottom: calc(22px + env(safe-area-inset-bottom));
   }
+}
+
+/* An add-agent dialog is a plain list of what was found, one row per CLI. */
+.add-agent {
+  width: min(360px, 100%);
+}
+
+.dialog-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.dialog-title-row .dialog-title {
+  margin: 0;
 }
 
 /* ---------- Quota panel ---------- */
@@ -5303,6 +5345,11 @@ input.picker-search {
   .dialog-actions > button {
     flex: 1;
     min-height: 44px;
+  }
+
+  .handover .dialog-actions > .primary {
+    flex: 1 0 100%;
+    white-space: nowrap;
   }
 
   .tool-btn,
@@ -7144,4 +7191,170 @@ input.picker-search {
   .skills-search input { font-size: 16px; }
   .skill-dialog { width: 100%; max-height: 88dvh; }
   .skill-target { min-height: 36px; }
+}
+
+/* Compact model card: choose a supported effort directly, or open the model list. */
+.model-control-trigger {
+  min-width: 0;
+  justify-content: flex-start;
+  padding-inline: 16px;
+  border-radius: var(--radius-xl);
+  background: var(--hover);
+}
+
+.model-trigger-name {
+  min-width: 0;
+  color: var(--text);
+}
+
+.model-control-panel {
+  width: 310px;
+  border-radius: var(--radius-lg);
+}
+
+.effort-card {
+  padding: 9px 8px 10px;
+}
+
+.effort-card-head {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 30px;
+  align-items: start;
+  gap: 4px;
+  margin-bottom: 22px;
+}
+
+.effort-symbol {
+  display: grid;
+  place-items: center;
+  height: 30px;
+  color: var(--muted);
+}
+
+.effort-card-heading {
+  min-width: 0;
+  text-align: center;
+  padding-top: 3px;
+}
+
+.effort-value {
+  color: var(--positive);
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.effort-model {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  max-width: 100%;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  padding: 3px 5px;
+  cursor: pointer;
+}
+
+.effort-model span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.effort-model svg { flex-shrink: 0; }
+.effort-model:hover { background: var(--hover); color: var(--text); }
+.effort-reset:disabled { opacity: 0.4; }
+
+.effort-slider {
+  position: relative;
+  height: 32px;
+  border-radius: var(--radius-xl);
+  background: var(--active);
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+}
+
+.effort-slider:focus-visible {
+  outline: 2px solid var(--positive);
+  outline-offset: 5px;
+}
+
+.effort-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: calc(16px + (100% - 32px) * var(--effort-fraction, 0));
+  background: var(--positive);
+  border-radius: var(--radius-xl);
+}
+
+.effort-rail {
+  position: absolute;
+  inset: 0 16px;
+}
+
+.effort-dot {
+  position: absolute;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-xl);
+  background: var(--muted);
+  opacity: 0.45;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.effort-dot.filled { background: var(--on-color); }
+
+.effort-thumb {
+  position: absolute;
+  left: var(--effort-position);
+  top: 50%;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--on-color);
+  box-shadow: var(--shadow-card);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.effort-slider.is-default .effort-fill { background: transparent; }
+
+.model-list-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 36px;
+  padding: 0 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.model-back svg { transform: rotate(180deg); }
+
+.context-compact {
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+}
+.context-compact:disabled { opacity: 0.5; cursor: default; }
+.quota-note { color: var(--muted); font-size: 12px; line-height: 1.6; margin: 14px 0 0; }
+
+@media (max-width: 640px) {
+  .composer-bar { gap: 2px; }
+  .composer-bar .usage { padding-inline: 4px; }
+  .model-control-trigger { gap: 4px; padding-inline: 6px; }
+  .model-control-panel { width: auto; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+  .effort-card { padding: 10px 12px 12px; }
+  .effort-card-head { margin-bottom: 24px; }
+  .effort-slider { height: 38px; }
+  .effort-thumb { width: 40px; height: 40px; }
+  .effort-rail { inset-inline: 20px; }
+  .effort-fill { width: calc(20px + (100% - 40px) * var(--effort-fraction, 0)); }
 }

@@ -3,6 +3,7 @@ import {
   Api,
   ApiError,
   AuthError,
+  MAX_QUEUED,
   loadToken,
   saveToken,
   type AgentInfo,
@@ -25,7 +26,7 @@ import { buildTimeline, toMarkdown, turnPreviews, type StoredEvent } from './tim
 import { newerBuildAvailable } from './version';
 import { AppearancePanel } from './components/AppearancePanel';
 import { ArchivePanel } from './components/ArchivePanel';
-import { Composer, type DraftNote } from './components/Composer';
+import { Composer, prefillComposerDraft, type DraftNote } from './components/Composer';
 import { DirectoryPicker } from './components/DirectoryPicker';
 import { Dialog } from './components/Dialog';
 import { HostDown, HostsPanel } from './components/Hosts';
@@ -36,6 +37,7 @@ import { TerminalPanel } from './components/TerminalPanel';
 import { FilesPanel, type FilesTarget } from './components/FilesPanel';
 import { PreviewPanel } from './components/PreviewPanel';
 import { fileRef } from './files';
+import { AddAgentDialog } from './components/AddAgentDialog';
 import { QuotaBoard } from './components/QuotaBoard';
 import { SelectionMenu } from './components/SelectionMenu';
 import { SideChat } from './components/SideChat';
@@ -50,7 +52,7 @@ import { NewProjectDialog, ProjectPicker, RootsDialog, type ProjectOption } from
 import { NoteMarks, type NoteMark } from './components/NoteMarks';
 import { Toast, type ToastState } from './components/Toast';
 import { TokenGate } from './components/TokenGate';
-import { IconArchive, IconArrowDown, IconChevron, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconImport, IconList, IconMenu, IconMore, IconPalette, IconServer, IconSidebar, IconSignOut, IconTerminal } from './components/icons';
+import { IconArchive, IconArrowDown, IconChevron, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconImport, IconList, IconMenu, IconMore, IconPalette, IconPlus, IconServer, IconSidebar, IconSignOut, IconTerminal } from './components/icons';
 
 const sleep = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve) => {
@@ -202,6 +204,8 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
   /** The agent whose plan usage the quota panel shows. */
   /** The quota dashboard, over every agent that can report usage. */
   const [quotaOpen, setQuotaOpen] = useState(false);
+  /** Other agent CLIs found on this host, added from the settings menu — not the picker. */
+  const [addAgentOpen, setAddAgentOpen] = useState(false);
   // Counters that open the composer's pickers from elsewhere (the slash menu).
   const [permissionSignal, setPermissionSignal] = useState(0);
   const [modelSignal, setModelSignal] = useState(0);
@@ -644,8 +648,9 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
 
   // Slash commands depend on the directory (projects add their own). Claude only announces them
   // once a session has started, so the list is re-read whenever a turn finishes as well.
+  // Load an initial list even during a turn, so a freshly opened page can offer queued commands.
   useEffect(() => {
-    if (!api || !activeAgent || running) return;
+    if (!api || !activeAgent || (running && commandsByKey[commandsKey])) return;
     api
       .commands(activeAgent, activeCwd || undefined)
       .then((list) => setCommandsByKey((prev) => ({ ...prev, [commandsKey]: list })))
@@ -750,9 +755,11 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
   }, [api, selectedId, selectedUnread, pageHidden]);
 
   /** Shows a thread that was just made here: imported, forked, or brought back from the archive. */
-  const openThread = (thread: Thread) => {
+  const openThread = (thread: Thread, draft?: string) => {
+    if (draft !== undefined) prefillComposerDraft(hostId ? `host:${hostId}:${thread.id}` : thread.id, draft);
     setThreads((prev) => [thread, ...prev.filter((t) => t.id !== thread.id)]);
     setSelectedId(thread.id);
+    setView('thread');
     setDrawer(false);
     void refreshThreads(); // the server decides the order
   };
@@ -976,7 +983,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
   // Links a signed-in account as its own instance and selects it for the new thread.
   const addAccount = async (account: DiscoveredAccount) => {
     if (!api) return;
-    await api.addAgent({ id: account.id, adapter: account.adapter, label: account.label, env: account.env });
+    await api.addAgent({ id: account.id, adapter: account.adapter, label: account.label, env: account.env, account: account.email });
     const [list, rest] = await Promise.all([api.agents(), api.discoverAccounts()]);
     setAgents(list);
     setAccounts(rest);
@@ -1037,7 +1044,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
   // strip is only for choosing them, before the thread exists.
   const header = selected ? null : (
     <>
-      <AgentPicker agents={agents} value={draftAgent} onChange={pickAgent} discovered={discovered} onAdd={addDiscoveredAgent} accounts={accounts} onAddAccount={addAccount} />
+      <AgentPicker agents={agents} value={draftAgent} onChange={pickAgent} accounts={accounts} onAddAccount={addAccount} />
       <ProjectPicker
         projects={projectOptions}
         cwd={draftCwd}
@@ -1077,9 +1084,18 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
     />
   );
 
+  // Older daemons advertise /compact before they expose the dedicated capability.
+  const canCompact = activeCaps?.compact ?? (commandsByKey[commandsKey] ?? []).some((command) => command.name === 'compact' && command.kind !== 'skill');
+
   const right = (
     <>
-      {selected && timeline.usage && <UsageMeter usage={timeline.usage} />}
+      {selected && timeline.usage && <UsageMeter
+        usage={timeline.usage}
+        onCompact={canCompact ? () => send('/compact', []) : undefined}
+        running={running}
+        compactQueued={selected.queued?.some((message) => message.text.trim() === '/compact')}
+        compactDisabled={(selected.queued?.length ?? 0) >= MAX_QUEUED}
+      />}
       <ModelPicker
       models={models}
       model={model}
@@ -1359,6 +1375,15 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
         />
       )}
       {quotaOpen && api && <QuotaBoard api={api} agents={agents} onClose={() => setQuotaOpen(false)} onError={handleError} />}
+      {addAgentOpen && (
+        <AddAgentDialog
+          found={discovered}
+          onAdd={addDiscoveredAgent}
+          onClose={() => {
+            setAddAgentOpen(false);
+          }}
+        />
+      )}
       {importOpen && (
         <ImportPanel
           api={api}
@@ -1423,6 +1448,19 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
                     icon: IconGauge,
                     onSelect: () => {
                       setQuotaOpen(true);
+                      setDrawer(false);
+                    },
+                  },
+                ]
+              : []),
+            ...(discovered.length > 0
+              ? [
+                  {
+                    id: 'add-agent',
+                    label: '添加 agent',
+                    icon: IconPlus,
+                    onSelect: () => {
+                      setAddAgentOpen(true);
                       setDrawer(false);
                     },
                   },

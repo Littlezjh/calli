@@ -212,7 +212,7 @@ export function codexModelOptions(models: any[]): ModelOption[] {
         id: m.id,
         label: m.displayName || m.model || m.id,
         ...(typeof m.description === 'string' && m.description ? { description: m.description } : {}),
-        ...(efforts.length ? { efforts } : {}),
+        ...(Array.isArray(m.supportedReasoningEfforts) ? { efforts } : {}),
         ...(Array.isArray(m.inputModalities) ? { images: m.inputModalities.includes('image') } : {}),
         ...(m.isDefault ? { isDefault: true } : {}),
       };
@@ -336,7 +336,12 @@ export function codexQuota(response: any): PlanQuota {
       });
     }
   }
-  return { windows, checkedAt: new Date().toISOString() };
+  const weeklyOnly = windows.length > 0 && windows.every((window) => window.label === '7D');
+  return {
+    windows,
+    ...(weeklyOnly ? { note: '本次仅返回每周额度，服务端未提供 5 小时窗口。' } : {}),
+    checkedAt: new Date().toISOString(),
+  };
 }
 
 interface CodexSkill { name: string; description: string; path: string }
@@ -620,6 +625,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
     // A thread is resumed with the directory to work in, whatever directory it was made in.
     forkInto: true,
     quota: true,
+    compact: true,
   };
 
   private modelProbe: Promise<ModelOption[]> | null = null;
@@ -776,7 +782,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
     );
 
     try {
-      await peer.request('initialize', { clientInfo: { name: 'remote-agent-hub', title: 'Remote Agent Hub', version: '0.1.0' } });
+      await peer.request('initialize', { clientInfo: { name: 'remote-agent-hub', title: 'Limi', version: '0.1.0' } });
       peer.notify('initialized', {});
 
       const mode = opts.permissionMode ? CODEX_MODES[opts.permissionMode] : null;
@@ -823,7 +829,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
     const child = spawn(bin, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ...this.env } });
     const peer = new JsonRpcPeer(child, { onNotification: () => undefined, onRequest: async () => undefined }, 'codex');
     try {
-      await peer.request('initialize', { clientInfo: { name: 'remote-agent-hub', title: 'Remote Agent Hub', version: '0.1.0' } });
+      await peer.request('initialize', { clientInfo: { name: 'remote-agent-hub', title: 'Limi', version: '0.1.0' } });
       peer.notify('initialized', {});
       return await job(peer);
     } finally {

@@ -107,6 +107,12 @@ export const IconRefresh = (p: { size?: number }) => (
     <path d="M19 12a7 7 0 1 1-2-4.9M17 3v4.3h-4.3" />
   </Svg>
 );
+export const IconBolt = (p: { size?: number }) => (
+  <Svg {...p}><path d="m13 2-9 12h7l-1 8 10-12h-7z" /></Svg>
+);
+export const IconCompress = (p: { size?: number }) => (
+  <Svg {...p}><path d="m5 3 7 7 7-7M5 21l7-7 7 7M4 12h16" /></Svg>
+);
 export const IconExternal = (p: { size?: number }) => (
   <Svg {...p}>
     <path d="M14 5h5v5M19 5l-7 7M17 14v5H5V7h5" />

@@ -78,7 +78,7 @@ daemon（Node.js，跑在远程主机上）
 - **agent 实例（多账号）：** 一个适配器可以起多个实例。实例来自 `data/agents.json`（或 `RAH_AGENTS_JSON` 内联 JSON）：`{ id, adapter, label?, command?, env? }`，adapter 指到 `adapters/` 里的实现，command 不写就继承该适配器的默认。实例 env 合并进它起的所有进程（第二个 Claude 账号带自己的 `CLAUDE_CONFIG_DIR`），所以账号隔离和会话目录隔离都是实例属性。线程的 `agent` 字段存实例 id；内置实例沿用 claude/pi/agy(/traex) 这些名字，老数据零迁移。`GET /api/agents/discover` 扫 PATH 找同类 CLI（前缀匹配且后缀是数字或分隔符，所以 `ping`、`pix` 不算 pi），`POST /api/agents` 添加后立即生效并写回 agents.json。已登录账号的发现：`GET /api/agents/accounts/discover` 让适配器找自己已登录的账号（Claude 扫 `~/.claude*` 目录、逐个 `claude auth status` 验证），已挂到实例上的不列，前端一键链接，差异（找哪里、用什么环境变量）都在适配器里。
 - **终端同步：** 打开线程时和每 30 秒（页面可见时）调 `POST /api/threads/:id/sync`，把 agent 那边的历史读回来（临时进程，只读），从头部逐轮和 hub 的事件对齐：hub 独有的取消轮最多跳过 3 条，对不齐就什么都不写。对齐之后多出的轮次整段补进事件日志，带 `fromTerminal` 标记（界面上一个小"终端"徽标），并记下 `externalAt`。`externalAt` 晚于最近一次 hub 轮（`hubTurnAt`）时，网页发送前弹确认——两边同时写同一个会话会乱序；从网页再发一轮后警告自动解除。同步本身有去重锁，轮询和手动拉不会重复导入。
 
-- **交接定位：** 打开交接即由 hub 只读拼接实例 ID、项目 cwd、agent 配置/数据目录、原生 session ID 和实际文件地址，再附日志摘要。原生目录布局由适配器的 `sessionLocation()` 负责，前端不按 agent 名分支。Claude 恢复命令带对应 `CLAUDE_CONFIG_DIR`，不混用同名实例；找不到文件则明确标注，不回退到其他账号。复制内容要求接手 agent 使用自己的会话在原 cwd 继续；已有 worktree 通过只读 Git 探测定位，保留分支与未提交改动，不另建目录或要求用户手动开会话。
+- **交接定位：** 打开交接即由 hub 只读拼接实例 ID、项目 cwd、agent 配置/数据目录、原生 session ID 和实际文件地址，再附日志摘要。原生目录布局由适配器的 `sessionLocation()` 负责，前端不按 agent 名分支。Claude 恢复命令带对应 `CLAUDE_CONFIG_DIR`，不混用同名实例；找不到文件则明确标注，不回退到其他账号。`POST /api/threads/:id/handover-thread` 根据源线程创建独立空线程，沿用原 cwd、worktree 元数据和分区，按目标实例的默认权限初始化；不分叉原生 session，也不创建 worktree 或发送消息。前端先保存按机器/线程隔离的交接草稿，再打开接手线程，用户编辑后发送。复制内容要求接手 agent 使用自己的会话在原 cwd 继续；已有 worktree 通过只读 Git 探测定位，保留分支与未提交改动，不另建目录或要求用户手动开会话。
 
 ## 网络与安全
 

@@ -29,15 +29,15 @@ const thread = (id: string, over: Partial<Thread> = {}): Thread => ({
   ...over,
 });
 
-test('threadNotices reports a turn that ended elsewhere, and how it ended', () => {
+test('threadNotices keeps successful completion quiet and reports errors elsewhere', () => {
   // "b" ran and finished between the two snapshots; it is reported all the same.
   const before = [thread('a', { status: 'running' }), thread('b'), thread('c', { status: 'running' })];
   const after = [thread('a', { unread: true }), thread('b', { status: 'error', unread: true }), thread('c', { status: 'running' })];
   assert.deepEqual(
     threadNotices(before, after, null).map((n) => [n.threadId, n.kind]),
-    [['a', 'done'], ['b', 'error']],
+    [['b', 'error']],
   );
-  assert.match(threadNotices(before, after, null)[0].message, /Thread a.*跑完了/);
+  assert.match(threadNotices(before, after, null)[0].message, /Thread b.*出错了/);
   // A turn the user stopped is not marked unread, so it is not announced.
   assert.deepEqual(threadNotices([thread('a', { status: 'running' })], [thread('a')], null), []);
 });
@@ -58,7 +58,7 @@ test('threadNotices says nothing about the thread on screen, or about threads it
 
 test('long titles are shortened in a notice', () => {
   const title = 'A very long thread title that would not fit in a toast at all';
-  const [notice] = threadNotices([thread('a', { title, status: 'running' })], [thread('a', { title, unread: true })], null);
+  const [notice] = threadNotices([thread('a', { title, status: 'running' })], [thread('a', { title, status: 'error', unread: true })], null);
   assert.ok(notice.message.includes('…'));
   assert.ok(notice.message.length < 40);
 });
@@ -68,8 +68,8 @@ test('attentionCount counts waiting threads and unread ones that are not on scre
   assert.equal(attentionCount(list, null), 3);
   assert.equal(attentionCount(list, 'a'), 2, 'the open thread is being read');
   assert.equal(attentionCount(list, 'b'), 3, 'an approval still needs answering even when open');
-  assert.equal(pageTitle('Agent Hub', 3), '(3) Agent Hub');
-  assert.equal(pageTitle('Agent Hub', 0), 'Agent Hub');
+  assert.equal(pageTitle('Limi', 3), '(3) Limi');
+  assert.equal(pageTitle('Limi', 0), 'Limi');
 });
 
 test('threadMark picks one dot: waiting, then running, then error, then unread', () => {

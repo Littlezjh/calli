@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { AgentInfo, ModelOption } from '../api';
 import { usageSummary, type Usage } from '../timeline';
 import { EFFORT_LABELS, PERMISSION_LABELS, PERMISSION_ORDER, permissionHint } from '../permissions';
-import { AgentMark, IconCheck, IconChevron, IconFolder, IconHand, IconPlus, IconShield, IconShieldAlert, IconSparkle, IconWorktree } from './icons';
+import { AgentMark, IconBolt, IconCompress, IconRefresh, IconCheck, IconChevron, IconFolder, IconHand, IconPlus, IconShield, IconShieldAlert, IconSparkle, IconWorktree } from './icons';
 import { Popover } from './Popover';
+import { EffortSlider } from './EffortSlider';
 
 const PERMISSION_ICON: Record<string, (p: { size?: number }) => JSX.Element> = {
   ask: IconHand,
@@ -146,10 +147,10 @@ export function modelRows(models: ModelOption[]): Array<{ value: string | null; 
   return [first, ...rest];
 }
 
-/** Model and thinking effort in one panel, like the model control in Codex. */
-export function ModelPicker({ models, model, efforts, effort, onModel, onEffort, openSignal }: ModelProps) {
+/** Model and thinking effort in a compact card; the model list is a second view. */
+export function ModelPicker(props: ModelProps) {
+  const { models, model, efforts, effort, openSignal } = props;
   if (models.length === 0 && efforts.length === 0) return null;
-  // Effort follows the model: some models take fewer levels, some take none.
   const levels = effortsForModel(models, model, efforts);
   const shownEffort = effort && levels.includes(effort) ? effort : null;
   return (
@@ -157,77 +158,57 @@ export function ModelPicker({ models, model, efforts, effort, onModel, onEffort,
       label="模型与思考强度"
       openSignal={openSignal}
       align="end"
-      triggerClassName="tool-btn"
-      trigger={
-        <>
-          <span>{modelName(models, model)}</span>
-          {shownEffort && <span className="tool-btn-sub">{EFFORT_LABELS[shownEffort] ?? shownEffort}</span>}
-          <IconChevron size={13} open />
-        </>
-      }
+      panelClassName="model-control-panel"
+      triggerClassName="tool-btn model-control-trigger"
+      triggerTitle={`${modelName(models, model)} · ${shownEffort ? (EFFORT_LABELS[shownEffort] ?? shownEffort) : '默认强度'}`}
+      trigger={<>
+        <span className="model-trigger-name">{modelName(models, model)}</span>
+        {levels.length > 0 && <span className="tool-btn-sub">{shownEffort ? (EFFORT_LABELS[shownEffort] ?? shownEffort) : '默认'}</span>}
+        <IconChevron size={13} open />
+      </>}
     >
-      {(close) => (
-        <>
-          {efforts.length > 0 && (
-            <>
-              <div className="pop-title">思考强度</div>
-              {levels.length > 0 ? (
-                <div className="segmented" role="radiogroup" aria-label="思考强度">
-                  {[null, ...levels].map((level) => (
-                    <button
-                      key={level ?? 'default'}
-                      type="button"
-                      role="radio"
-                      aria-checked={shownEffort === level}
-                      className={`segment${shownEffort === level ? ' active' : ''}`}
-                      onClick={() => onEffort(level)}
-                    >
-                      {level === null ? '默认' : (EFFORT_LABELS[level] ?? level)}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <div className="pop-note">{modelName(models, model)} 没有思考强度设置。</div>
-              )}
-            </>
-          )}
-          {models.length > 0 && (
-            <>
-              <div className="pop-title">模型</div>
-              <div className="pop-scroll">
-                {modelRows(models).map((row) => {
-                  // A thread saved with the literal "default" id is the same as no override.
-                  const checked = row.value === (model === AGENT_DEFAULT ? null : model);
-                  return (
-                    <button
-                      key={row.value ?? 'default'}
-                      type="button"
-                      role="menuitemradio"
-                      aria-checked={checked}
-                      className="pop-item compact"
-                      onClick={() => {
-                        onModel(row.value);
-                        close();
-                      }}
-                    >
-                      <span className="pop-item-text">
-                        <span className="pop-item-label">{row.label}</span>
-                        <span className="pop-item-hint">{row.hint}</span>
-                      </span>
-                      {checked && (
-                        <span className="pop-item-check">
-                          <IconCheck size={16} />
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </>
-          )}
-        </>
-      )}
+      {() => <ModelControl {...props} />}
     </Popover>
+  );
+}
+
+function ModelControl({ models, model, efforts, effort, onModel, onEffort }: ModelProps) {
+  const levels = effortsForModel(models, model, efforts);
+  const [showModels, setShowModels] = useState(levels.length === 0);
+  const [preview, setPreview] = useState<string | null | undefined>(undefined);
+  const selected = effort && levels.includes(effort) ? effort : null;
+  const shown = preview === undefined ? selected : preview;
+  return showModels ? (
+    <>
+      <div className="model-list-head">
+        {levels.length > 0 && <button type="button" className="icon-btn model-back" aria-label="返回思考强度" onClick={() => setShowModels(false)}><IconChevron size={16} /></button>}
+        <span>选择模型</span>
+      </div>
+      <div className="pop-scroll">
+        {modelRows(models).map((row) => (
+          <button key={row.value ?? 'default'} type="button" role="menuitemradio" aria-checked={row.value === (model === AGENT_DEFAULT ? null : model)} className="pop-item compact"
+            onClick={() => { onModel(row.value); setPreview(undefined); setShowModels(false); }}>
+            <span className="pop-item-text"><span className="pop-item-label">{row.label}</span><span className="pop-item-hint">{row.hint}</span></span>
+            {row.value === (model === AGENT_DEFAULT ? null : model) && <span className="pop-item-check"><IconCheck size={16} /></span>}
+          </button>
+        ))}
+      </div>
+    </>
+  ) : (
+    <div className="effort-card">
+      <div className="effort-card-head">
+        <span className="effort-symbol"><IconBolt size={19} /></span>
+        <div className="effort-card-heading">
+          <div className="effort-value" aria-live="polite">{levels.length ? (shown ? (EFFORT_LABELS[shown] ?? shown) : '默认') : '无需设置强度'}</div>
+          <button type="button" className="effort-model" disabled={models.length === 0} onClick={() => setShowModels(true)} aria-label={`切换模型，当前 ${modelName(models, model)}`}>
+            <span>{modelName(models, model)}</span><IconChevron size={13} />
+          </button>
+        </div>
+        <button type="button" className="icon-btn effort-reset" aria-label="恢复默认强度" title="恢复默认强度" disabled={selected === null} onClick={() => onEffort(null)}><IconRefresh size={18} /></button>
+      </div>
+      {levels.length > 0 ? <EffortSlider key={`${model ?? 'default'}:${levels.join(',')}`} levels={levels} value={selected} onChange={onEffort} onPreview={setPreview} />
+        : <div className="pop-note">当前模型不提供思考强度设置。</div>}
+    </div>
   );
 }
 
@@ -252,17 +233,38 @@ interface AgentProps {
   agents: AgentInfo[];
   value: string;
   onChange: (id: string) => void;
-  /** Extra CLIs found on this host; picking one adds it as a new instance. */
-  discovered?: DiscoveredAgent[];
-  onAdd?: (agent: DiscoveredAgent) => Promise<void>;
   /** Signed-in accounts found on this host; picking one links it as a new instance. */
   accounts?: DiscoveredAccount[];
   onAddAccount?: (account: DiscoveredAccount) => Promise<void>;
 }
 
-export function AgentPicker({ agents, value, onChange, discovered = [], onAdd, accounts = [], onAddAccount }: AgentProps) {
+/**
+ * Agents grouped the way the picker shows them: instances of one adapter belong together, and a
+ * group with several of them folds into one row that opens to the accounts. An agent whose
+ * adapter is not told stands as a group of its own, the way it always listed.
+ */
+export function agentGroups(agents: AgentInfo[]): AgentInfo[][] {
+  const groups = new Map<string, AgentInfo[]>();
+  for (const a of agents) {
+    const key = a.adapter ?? `_${a.id}`;
+    groups.set(key, [...(groups.get(key) ?? []), a]);
+  }
+  return [...groups.values()];
+}
+
+/** One group's name: the shortest label in it, which for a pair like "Claude Code" and
+ * "Claude Code 2" is the adapter's own name. */
+function groupLabel(group: AgentInfo[]): string {
+  return group.reduce((short, a) => (a.label.length < short.length ? a.label : short), group[0].label);
+}
+
+export function AgentPicker({ agents, value, onChange, accounts = [], onAddAccount }: AgentProps) {
   const current = agents.find((a) => a.id === value);
   const [adding, setAdding] = useState<string | null>(null);
+  /** The group whose accounts are on screen, drilled in from the list of agents. */
+  const [openGroup, setOpenGroup] = useState<string | null>(null);
+  const groups = useMemo(() => agentGroups(agents), [agents]);
+  const drilled = groups.find((g) => g.some((a) => a.id === openGroup)) ?? null;
   // The marks the thread list shows in place of names are introduced here, next to the names.
   const marks = agents.some((a) => a.icon);
   return (
@@ -277,66 +279,95 @@ export function AgentPicker({ agents, value, onChange, discovered = [], onAdd, a
         </>
       }
     >
-      {(close) => (
-        <>
-          <div className="pop-title">用哪个 agent？</div>
-          {agents.map((a) => (
-            <button
-              key={a.id}
-              type="button"
-              role="menuitemradio"
-              aria-checked={a.id === value}
-              className="pop-item compact"
-              disabled={!a.available}
-              onClick={() => {
-                onChange(a.id);
-                close();
-              }}
-            >
-              {marks && <span className="pop-item-icon">{a.icon && <AgentMark path={a.icon} size={16} />}</span>}
-              <span className="pop-item-text">
-                <span className="pop-item-label">{a.label}</span>
-                {!a.available && <span className="pop-item-hint">这台主机上没有找到</span>}
-              </span>
-              {a.id === value && (
-                <span className="pop-item-check">
-                  <IconCheck size={16} />
-                </span>
-              )}
+      {(close) =>
+        drilled ? (
+          <>
+            <button type="button" className="pop-back" onClick={() => setOpenGroup(null)}>
+              <IconChevron size={12} /> {groupLabel(drilled)}
             </button>
-          ))}
-          {onAdd && discovered.length > 0 && (
-            <>
-              <div className="pop-sep">在这台主机上发现</div>
-              {discovered.map((d) => (
+            {drilled.map((a) => (
+              <button
+                key={a.id}
+                type="button"
+                role="menuitemradio"
+                aria-checked={a.id === value}
+                className="pop-item compact"
+                disabled={!a.available}
+                onClick={() => {
+                  onChange(a.id);
+                  setOpenGroup(null);
+                  close();
+                }}
+              >
+                {marks && <span className="pop-item-icon">{a.icon && <AgentMark path={a.icon} size={16} />}</span>}
+                <span className="pop-item-text">
+                  <span className="pop-item-label">{a.label}</span>
+                  {a.account ? (
+                    <span className="pop-item-hint">{a.account}</span>
+                  ) : (
+                    !a.available && <span className="pop-item-hint">这台主机上没有找到</span>
+                  )}
+                </span>
+                {a.id === value && (
+                  <span className="pop-item-check">
+                    <IconCheck size={16} />
+                  </span>
+                )}
+              </button>
+            ))}
+          </>
+        ) : (
+          <>
+          <div className="pop-title">用哪个 agent？</div>
+          {groups.map((group) => {
+            const solo = group.length === 1 ? group[0] : null;
+            if (solo)
+              return (
                 <button
-                  key={d.id}
+                  key={solo.id}
                   type="button"
+                  role="menuitemradio"
+                  aria-checked={solo.id === value}
                   className="pop-item compact"
-                  disabled={adding !== null}
-                  onClick={async () => {
-                    setAdding(d.id);
-                    try {
-                      await onAdd(d);
-                      onChange(d.id);
-                      close();
-                    } finally {
-                      setAdding(null);
-                    }
+                  disabled={!solo.available}
+                  onClick={() => {
+                    onChange(solo.id);
+                    close();
                   }}
                 >
-                  {marks && <span className="pop-item-icon" />}
+                  {marks && <span className="pop-item-icon">{solo.icon && <AgentMark path={solo.icon} size={16} />}</span>}
                   <span className="pop-item-text">
-                    <span className="pop-item-label">{d.id}</span>
-                    <span className="pop-item-hint">添加后作为新 agent 使用</span>
+                    <span className="pop-item-label">{solo.label}</span>
+                    {!solo.available && <span className="pop-item-hint">这台主机上没有找到</span>}
                   </span>
-                  <span className="pop-item-check">
-                    {adding === d.id ? <IconSparkle size={13} /> : <IconPlus size={14} />}
-                  </span>
+                  {solo.id === value && (
+                    <span className="pop-item-check">
+                      <IconCheck size={16} />
+                    </span>
+                  )}
                 </button>
-              ))}
-            </>
-          )}
+              );
+            // Several accounts of one agent: the row stands for the agent, says which account is
+            // in use, and opens to the choice.
+            const active = group.find((a) => a.id === value) ?? group[0];
+            return (
+              <button
+                key={active.id}
+                type="button"
+                className="pop-item compact"
+                onClick={() => setOpenGroup(active.id)}
+              >
+                {marks && <span className="pop-item-icon">{active.icon && <AgentMark path={active.icon} size={16} />}</span>}
+                <span className="pop-item-text">
+                  <span className="pop-item-label">{groupLabel(group)}</span>
+                  <span className="pop-item-hint">{active.account ?? active.label}</span>
+                </span>
+                <span className="pop-item-check">
+                  <IconChevron size={13} />
+                </span>
+              </button>
+            );
+          })}
           {onAddAccount && accounts.length > 0 && (
             <>
               <div className="pop-sep">已登录的账号</div>
@@ -375,7 +406,14 @@ export function AgentPicker({ agents, value, onChange, discovered = [], onAdd, a
 }
 
 /** How full the agent's context window is: a small ring that opens to the numbers. */
-export function UsageMeter({ usage }: { usage: Usage }) {
+export function UsageMeter({ usage, onCompact, running, compactDisabled, compactQueued }: {
+  usage: Usage;
+  onCompact?: () => Promise<void>;
+  running?: boolean;
+  compactDisabled?: boolean;
+  compactQueued?: boolean;
+}) {
+  const [compacting, setCompacting] = useState(false);
   const { percent, high, detail } = usageSummary(usage);
   // A ring of radius 6 has a circumference of about 37.7; the dash shows the used share of it.
   const circumference = 2 * Math.PI * 6;
@@ -404,13 +442,24 @@ export function UsageMeter({ usage }: { usage: Usage }) {
         </>
       }
     >
-      {() => (
+      {(close) => (
         <>
           <div className="pop-title">上下文</div>
           <div className="pop-note">
             {detail}
             {high && '。快满了，agent 可能很快会自动压缩前面的内容。'}
           </div>
+          {onCompact && <button type="button" className="pop-item compact context-compact" disabled={compacting || compactDisabled || compactQueued}
+            onClick={async () => {
+              setCompacting(true);
+              try { await onCompact(); close(); } catch { /* The caller displays the error. */ }
+              finally { setCompacting(false); }
+            }}>
+            <span className="pop-item-icon"><IconCompress size={17} /></span>
+            <span className="pop-item-text"><span className="pop-item-label">{compacting ? '正在提交…' : compactQueued ? '已排队压缩' : '压缩'}</span>
+              <span className="pop-item-hint">{compactDisabled ? '消息队列已满' : running ? '本轮结束后压缩，保留当前草稿' : '精简较早的对话，释放上下文'}</span>
+            </span>
+          </button>}
         </>
       )}
     </Popover>
