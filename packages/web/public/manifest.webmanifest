@@ -1,0 +1,20 @@
+{
+  "id": "/",
+  "name": "Limi",
+  "short_name": "Limi",
+  "description": "Limacia · 远程 coding agent 工作台",
+  "lang": "zh-CN",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f8f6f1",
+  "theme_color": "#f8f6f1",
+  "icons": [
+    {
+      "src": "/limi-icon.png?v=3",
+      "sizes": "1254x1254",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
