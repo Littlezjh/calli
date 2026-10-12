@@ -62,6 +62,8 @@ test('effort slider, model subview, reset and compression work in both themes an
       await page.locator('.model-control-trigger').click();
       const slider = page.getByRole('slider', { name: '思考强度' });
       await slider.waitFor();
+      await slider.press('Home');
+      await waitFor(async () => (await read(thread)).effort === null);
       await page.waitForTimeout(350);
       assert.equal(await slider.getAttribute('aria-valuemax'), '3');
       const rail = await slider.locator('.effort-rail').boundingBox();
@@ -113,9 +115,11 @@ test('effort slider, model subview, reset and compression work in both themes an
       assert.equal(await input.inputValue(), '这段草稿需要保留');
       await input.fill('/usage');
       await input.press('Enter');
-      const quota = page.getByRole('dialog', { name: 'Codex 的额度' });
+      const quota = page.getByRole('dialog', { name: /Codex 的额度|额度看板/ });
       await quota.getByText('本次仅返回每周额度，服务端未提供 5 小时窗口。').waitFor();
-      assert.equal(await quota.locator('.quota-chip').innerText(), '7D');
+      const boardRow = quota.locator('.quota-board-row').filter({ hasText: 'Codex' });
+      const quotaData = await boardRow.count() ? boardRow : quota;
+      assert.equal(await quotaData.locator('.quota-chip').innerText(), '7D');
       await shot(page, `quota-weekly-${tag}`);
     } finally { await context.close(); }
   }

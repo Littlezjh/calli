@@ -34,10 +34,13 @@ test('Codex quota, commands and skills work on desktop and phone in both themes'
         await input.fill('/usage');
         assert.equal(await page.getByRole('option').count(), 1);
         await input.press('Enter');
-        const panel = page.getByRole('dialog', { name: 'Codex 的额度' });
-        await panel.locator('.quota-row').first().waitFor();
-        assert.equal(await panel.locator('.quota-row').count(), 3);
-        assert.deepEqual(await panel.locator('.quota-percent').allTextContents(), ['25%', '82%', '10%']);
+        const panel = page.getByRole('dialog', { name: /Codex 的额度|额度看板/ });
+        await panel.waitFor();
+        const boardRow = panel.locator('.quota-board-row').filter({ hasText: 'Codex' });
+        const quotaData = await boardRow.count() ? boardRow : panel;
+        await quotaData.locator('.quota-row').first().waitFor();
+        assert.equal(await quotaData.locator('.quota-row').count(), 3);
+        assert.deepEqual(await quotaData.locator('.quota-percent').allTextContents(), ['25%', '82%', '10%']);
         await page.waitForTimeout(400);
         const bounds = await panel.boundingBox();
         assert.ok(bounds && bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= page.viewportSize().width + 1 && bounds.y + bounds.height <= page.viewportSize().height + 1);
