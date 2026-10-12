@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { EmittedEvent } from '../events.js';
 import { commandExists } from '../util.js';
@@ -18,6 +18,7 @@ import type {
   PermissionMode,
   PermissionOption,
   PlanQuota,
+  SkillDir,
   SlashCommand,
   StartOptions,
   TurnHooks,
@@ -682,6 +683,14 @@ export class CodexAppServerAdapter implements AgentAdapter {
     const sessionPath = await findSessionFile(join(configDir, 'sessions'), agentSessionId, 3, matches)
       ?? await findSessionFile(join(configDir, 'archived_sessions'), agentSessionId, 3, matches);
     return { configDir, sessionPath, ...(agentSessionId ? { resumeCommand: `env CODEX_HOME=${quoteArg(configDir)} codex resume ${quoteArg(agentSessionId)}` } : {}) };
+  }
+
+  skillDirs(): SkillDir[] {
+    // Include shared user skills while installing into the selected instance's private folder.
+    return [
+      { path: join(configDirectory(this.env, 'CODEX_HOME', ['.codex'], process.cwd()), 'skills'), scope: 'personal' },
+      { path: join(this.env.HOME ?? process.env.HOME ?? homedir(), '.agents', 'skills'), scope: 'shared' },
+    ];
   }
 
   async deleteSession(agentSessionId: string): Promise<void> {

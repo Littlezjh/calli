@@ -36,9 +36,10 @@ import { TerminalPanel } from './components/TerminalPanel';
 import { FilesPanel, type FilesTarget } from './components/FilesPanel';
 import { PreviewPanel } from './components/PreviewPanel';
 import { fileRef } from './files';
-import { QuotaPanel } from './components/QuotaPanel';
+import { QuotaBoard } from './components/QuotaBoard';
 import { SelectionMenu } from './components/SelectionMenu';
 import { SideChat } from './components/SideChat';
+import { SkillsPage } from './components/SkillsPage';
 import { TodosPage } from './components/TodosPage';
 import { AgentPicker, type DiscoveredAccount, type DiscoveredAgent, effortsForModel, imagesBlocked, imagesNote, modelName, ModelPicker, PermissionPicker, UsageMeter, WorkspacePicker } from './components/Pickers';
 import { Sidebar, SIDEBAR_SHORTCUT } from './components/Sidebar';
@@ -49,7 +50,7 @@ import { NewProjectDialog, ProjectPicker, RootsDialog, type ProjectOption } from
 import { NoteMarks, type NoteMark } from './components/NoteMarks';
 import { Toast, type ToastState } from './components/Toast';
 import { TokenGate } from './components/TokenGate';
-import { IconArchive, IconArrowDown, IconChevron, IconClose, IconEdit, IconFiles, IconFolder, IconImport, IconList, IconMenu, IconMore, IconPalette, IconServer, IconSidebar, IconSignOut, IconTerminal } from './components/icons';
+import { IconArchive, IconArrowDown, IconChevron, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconImport, IconList, IconMenu, IconMore, IconPalette, IconServer, IconSidebar, IconSignOut, IconTerminal } from './components/icons';
 
 const sleep = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve) => {
@@ -77,6 +78,7 @@ const isNearBottom = (el: HTMLElement) => el.scrollHeight - el.scrollTop - el.cl
 
 /** The plan page's address. Threads have none: the main area showing a thread is the plain URL. */
 const TODOS_HASH = '#/todos';
+const SKILLS_HASH = '#/skills';
 
 /** Whether the thread list is put away on a wide screen. */
 const SIDEBAR_HIDDEN_KEY = 'rah.sidebar.hidden';
@@ -129,9 +131,11 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
   const [threads, setThreads] = useState<Thread[]>([]);
   const [sections, setSections] = useState<Section[]>([]);
   const [todos, setTodos] = useState<Todo[]>([]);
-  /** What the main area shows: a thread (or the blank one a new thread starts from), or the plan page. */
-  // The plan page has an address of its own, so a reload or a bookmark lands back on it.
-  const [view, setView] = useState<'thread' | 'todos'>(() => (window.location.hash === TODOS_HASH ? 'todos' : 'thread'));
+  /** What the main area shows: a thread (or the blank one a new thread starts from), the plan page, or the skills page. */
+  // Those pages have addresses of their own, so a reload or a bookmark lands back on them.
+  const [view, setView] = useState<'thread' | 'todos' | 'skills'>(() =>
+    window.location.hash === TODOS_HASH ? 'todos' : window.location.hash === SKILLS_HASH ? 'skills' : 'thread',
+  );
   /** Bumped by daemon broadcasts, so the open plan page reloads. */
   const [todosKey, setTodosKey] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -196,7 +200,8 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
   const [statusOpen, setStatusOpen] = useState(false);
   const [termOpen, setTermOpen] = useState(false);
   /** The agent whose plan usage the quota panel shows. */
-  const [quotaAgent, setQuotaAgent] = useState<{ id: string; label: string } | null>(null);
+  /** The quota dashboard, over every agent that can report usage. */
+  const [quotaOpen, setQuotaOpen] = useState(false);
   // Counters that open the composer's pickers from elsewhere (the slash menu).
   const [permissionSignal, setPermissionSignal] = useState(0);
   const [modelSignal, setModelSignal] = useState(0);
@@ -241,15 +246,16 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
   }, [timeline.items]);
   const selected = threads.find((t) => t.id === selectedId) ?? null;
   const onTodos = view === 'todos' && !selectedId;
+  const onSkills = view === 'skills' && !selectedId;
 
-  // The address follows what the main area shows. Replaced, not pushed: going between the page and
+  // The address follows what the main area shows. Replaced, not pushed: going between the pages and
   // threads is not a trail for the back button to walk.
   useEffect(() => {
-    const want = onTodos ? TODOS_HASH : '';
+    const want = onTodos ? TODOS_HASH : onSkills ? SKILLS_HASH : '';
     if (window.location.hash !== want) {
       window.history.replaceState(window.history.state, '', want || window.location.pathname + window.location.search);
     }
-  }, [onTodos]);
+  }, [onTodos, onSkills]);
 
   // Whether the directory a new thread would start in is a git repository. Asked once per directory picked.
   useEffect(() => {
@@ -292,6 +298,11 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
       if (window.location.hash === TODOS_HASH) {
         setSelectedId(null);
         setView('todos');
+        setDrawer(false);
+      }
+      if (window.location.hash === SKILLS_HASH) {
+        setSelectedId(null);
+        setView('skills');
         setDrawer(false);
       }
     };
@@ -889,6 +900,12 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
     setDrawer(false);
   };
 
+  const openSkills = () => {
+    setSelectedId(null);
+    setView('skills');
+    setDrawer(false);
+  };
+
   const newThread = (opts: { cwd?: string; sectionId?: string | null; scratch?: boolean } = {}) => {
     setSelectedId(null);
     setView('thread');
@@ -971,9 +988,10 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
     { id: 'new', label: '新线程', hint: '开始一个新的对话', keywords: ['new', 'clear'] },
     { id: 'status', label: '状态', hint: '会话、模型、上下文和终端恢复命令', keywords: ['status', 'info'] },
     { id: 'term', label: '终端', hint: '在这台主机上开一个真的终端', keywords: ['term', 'terminal', 'shell', '命令行'] },
-    ...(activeCaps?.quota
-      ? [{ id: 'usage', label: '额度', hint: '套餐用量和重置时间', keywords: ['usage', 'quota', '额度', 'cost'] }]
+    ...(agents.some((a) => a.capabilities.quota)
+      ? [{ id: 'usage', label: '额度', hint: '所有 agent 的用量、重置时间和刷新', keywords: ['usage', 'quota', '额度', 'cost'] }]
       : []),
+    { id: 'skills', label: '技能', hint: '各机器各 agent 的技能，互相同步', keywords: ['skills', 'skill', '技能'] },
     ...(models.length || effortLevels.length
       ? [{ id: 'model', label: '模型与思考强度', hint: modelName(models, model), keywords: ['model', 'effort', 'thinking'] }]
       : []),
@@ -1000,7 +1018,8 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
     if (id === 'new') return newThread();
     if (id === 'status') return setStatusOpen(true);
     if (id === 'term') return setTermOpen(true);
-    if (id === 'usage' && activeCaps?.quota) return setQuotaAgent({ id: activeAgent, label: agentLabel(activeAgent) });
+    if (id === 'usage') return setQuotaOpen(true);
+    if (id === 'skills') return openSkills();
     if (id === 'export' && selected) return threadActions.copyConversation(selected);
     if (id === 'model') return setModelSignal((n) => n + 1);
     if (id === 'permission') return setPermissionSignal((n) => n + 1);
@@ -1126,6 +1145,8 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           onNewSection={threadActions.newSection}
           onOpenTodos={openTodos}
           todosActive={onTodos}
+          onOpenSkills={openSkills}
+          skillsActive={onSkills}
         />
       </aside>
 
@@ -1147,7 +1168,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           )}
           <div className="topbar-heading">
             {/* The plan page carries its own heading. */}
-            <div className="topbar-title">{host && !hostUp ? host.label : onTodos ? '' : selected ? selected.title : '新线程'}</div>
+            <div className="topbar-title">{host && !hostUp ? host.label : onTodos || onSkills ? '' : selected ? selected.title : '新线程'}</div>
             {selected && (
               <div className="topbar-sub" title={selected.cwd}>
                 {agentLabel(selected.agent)} ·{' '}
@@ -1202,6 +1223,11 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           // The machine's threads are over there; until it is back there is only this to say.
           <div key="host-down" className="scroller">
             <HostDown host={host} onRetry={() => api.reconnectHost(host.id).catch(() => undefined).then(reloadHosts)} />
+          </div>
+        ) : onSkills ? (
+          // The skills page spans the machines from the hub, so it carries its own scroller too.
+          <div key="skills" className="scroller">
+            <SkillsPage api={api} token={token} hostId={hostId} hosts={hosts} agents={agents} onError={handleError} />
           </div>
         ) : onTodos ? (
           // A scroller of its own: the thread's one pins itself to the bottom, a document starts at the top.
@@ -1262,7 +1288,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           )}
         </div>
 
-        {!onTodos && !(host && !hostUp) && (
+        {!onTodos && !onSkills && !(host && !hostUp) && (
         <Composer
           draftKey={hostId ? `host:${hostId}:${selectedId ?? 'new'}` : selectedId ?? 'new'}
           running={running}
@@ -1327,20 +1353,12 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           directory={activeCwd}
           usage={selected ? timeline.usage : null}
           usageCommand={['usage', 'cost', 'session'].find((name) => (commandsByKey[commandsKey] ?? []).some((c) => c.name === name)) ?? null}
-          onOpenQuota={activeCaps?.quota ? () => setQuotaAgent({ id: activeAgent, label: agentLabel(activeAgent) }) : undefined}
+          onOpenQuota={agents.some((a) => a.capabilities.quota) ? () => setQuotaOpen(true) : undefined}
           onRunCommand={(text) => void send(text, []).catch(() => undefined)}
           onClose={() => setStatusOpen(false)}
         />
       )}
-      {quotaAgent && api && (
-        <QuotaPanel
-          api={api}
-          agentId={quotaAgent.id}
-          agentLabel={quotaAgent.label}
-          onClose={() => setQuotaAgent(null)}
-          onError={handleError}
-        />
-      )}
+      {quotaOpen && api && <QuotaBoard api={api} agents={agents} onClose={() => setQuotaOpen(false)} onError={handleError} />}
       {importOpen && (
         <ImportPanel
           api={api}
@@ -1397,6 +1415,19 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
                 setDrawer(false);
               },
             },
+            ...(agents.some((a) => a.capabilities.quota)
+              ? [
+                  {
+                    id: 'quota',
+                    label: '额度',
+                    icon: IconGauge,
+                    onSelect: () => {
+                      setQuotaOpen(true);
+                      setDrawer(false);
+                    },
+                  },
+                ]
+              : []),
             {
               id: 'hosts',
               label: '机器',

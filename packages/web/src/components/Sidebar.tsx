@@ -5,7 +5,7 @@ import { attentionCount, threadMark } from '../notices';
 import { folderName } from '../paths';
 import { buildActivity, buildSidebar, projectDir, taggedAgents } from '../sidebar';
 import { HostSwitcher } from './Hosts';
-import { AgentMark, IconBell, IconChevron, IconClose, IconEdit, IconFolder, IconFork, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconWorktree, IconSidebar } from './icons';
+import { AgentMark, IconBell, IconChevron, IconClose, IconEdit, IconFolder, IconFork, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconSparkle, IconWorktree, IconSidebar } from './icons';
 
 export { folderName } from '../paths';
 
@@ -27,6 +27,9 @@ interface Props {
   onOpenTodos: () => void;
   /** The plan page is what the main area shows. */
   todosActive?: boolean;
+  /** Opens the skills page, which the main area then shows. */
+  onOpenSkills: () => void;
+  skillsActive?: boolean;
   /** The phone layout: the list is a page of its own under the conversation, laid out for thumbs. */
   compact?: boolean;
   /** Opens the settings menu, where the look, the archive, importing and signing out are. It grows up and to the left from the point given. */
@@ -73,6 +76,8 @@ export function Sidebar({
   onNewSection,
   onOpenTodos,
   todosActive = false,
+  onOpenSkills,
+  skillsActive = false,
   compact = false,
   onOpenSettings,
   onHide,
@@ -320,6 +325,9 @@ export function Sidebar({
             )}
             <button className={`side-link${todosActive ? ' active' : ''}`} aria-current={todosActive ? 'page' : undefined} onClick={onOpenTodos}>
               <IconList size={compact ? 21 : 17} /> 计划
+            </button>
+            <button className={`side-link${skillsActive ? ' active' : ''}`} aria-current={skillsActive ? 'page' : undefined} onClick={onOpenSkills}>
+              <IconSparkle size={compact ? 21 : 17} /> 技能
             </button>
           </div>
         )}

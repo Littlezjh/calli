@@ -14,6 +14,7 @@ import type {
   EffortLevel,
   HistoryTurn,
   ModelOption,
+  SkillDir,
   SlashCommand,
   StartOptions,
   TurnHooks,
@@ -732,6 +733,16 @@ export class PiRpcAdapter implements AgentAdapter {
     const configDir = configDirectory(this.env, 'PI_CODING_AGENT_DIR', ['.pi', 'agent'], cwd);
     const sessionPath = await findSessionFile(join(configDir, 'sessions'), agentSessionId, 1, (name, id) => name.endsWith(`_${id}.jsonl`));
     return { configDir, sessionPath, ...(agentSessionId ? { resumeCommand: `env PI_CODING_AGENT_DIR=${quoteArg(configDir)} pi --session ${quoteArg(sessionPath ?? agentSessionId)}` } : {}) };
+  }
+
+  skillDirs(): SkillDir[] {
+    // pi keeps skills in its agent dir and also reads the open-standard `~/.agents/skills`, which
+    // other agents may share. A synced skill goes to pi's own dir, so it never trips over another
+    // agent reading the same folder.
+    return [
+      { path: join(configDirectory(this.env, 'PI_CODING_AGENT_DIR', ['.pi', 'agent'], process.cwd()), 'skills'), scope: 'personal' },
+      { path: join(this.env.HOME ?? process.env.HOME ?? homedir(), '.agents', 'skills'), scope: 'shared' },
+    ];
   }
 
   /**

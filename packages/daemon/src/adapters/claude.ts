@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { AcpAdapter, AcpSession, airForkPoint } from './acp.js';
 import { CLAUDE_ICON } from './icons.js';
 import { configDirectory, findSessionFile, quoteArg } from './session-location.js';
-import type { DiscoveredAccount, ModelOption, PermissionMode, PlanQuota, QuotaWindow, SlashCommand } from './types.js';
+import type { DiscoveredAccount, ModelOption, PermissionMode, PlanQuota, QuotaWindow, SkillDir, SlashCommand } from './types.js';
 
 /**
  * Claude Code, through the ACP bridge this repo ships with (`@agentclientprotocol/claude-agent-acp`).
@@ -150,6 +150,11 @@ export class ClaudeAcpAdapter extends AcpAdapter {
       sessionPath,
       ...(agentSessionId ? { resumeCommand: `env CLAUDE_CONFIG_DIR=${quoteArg(configDir)} ${quoteArg(this.env.RAH_CLAUDE_BIN || claudeCli())} --resume ${quoteArg(agentSessionId)}` } : {}),
     };
+  }
+
+  skillDirs(): SkillDir[] {
+    // Claude keeps skills in its config dir, `~/.claude/skills` unless CLAUDE_CONFIG_DIR moves it.
+    return [{ path: join(configDirectory(this.env, 'CLAUDE_CONFIG_DIR', ['.claude'], process.cwd()), 'skills'), scope: 'personal' }];
   }
 
   /** One `claude -p "/usage"` run. A local command, so no session is written and no turn spent. */

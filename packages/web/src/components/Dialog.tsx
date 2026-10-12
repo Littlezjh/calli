@@ -124,3 +124,37 @@ export function ChoiceDialog({ title, choices, onPick, onCancel }: ChoiceProps) 
     </div>
   );
 }
+
+/** Shared modal surface for dialogs with custom content. */
+export function DialogSurface({ children, className = '', labelledBy, onClose, busy = false }: {
+  children: ReactNode;
+  className?: string;
+  labelledBy: string;
+  onClose: () => void;
+  busy?: boolean;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    ref.current?.focus();
+    return () => previous?.focus();
+  }, []);
+  return (
+    <div className="dialog-scrim" onClick={busy ? undefined : onClose}>
+      <div ref={ref} tabIndex={-1} className={`dialog ${className}`} role="dialog" aria-modal="true" aria-labelledby={labelledBy}
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') { e.stopPropagation(); if (!busy) onClose(); }
+          if (e.key !== 'Tab') return;
+          const items = [...(ref.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), a[href], [tabindex="0"]') ?? [])];
+          const first = items[0];
+          const last = items[items.length - 1];
+          if (!first) { e.preventDefault(); return; }
+          if (e.shiftKey && (document.activeElement === first || document.activeElement === ref.current)) { e.preventDefault(); last.focus(); }
+          else if (!e.shiftKey && (document.activeElement === last || document.activeElement === ref.current)) { e.preventDefault(); first.focus(); }
+        }}>
+        {children}
+      </div>
+    </div>
+  );
+}

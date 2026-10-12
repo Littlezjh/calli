@@ -21,6 +21,7 @@ import { findFiles, listDir, readText, type Listing, type TextFile } from './bro
 import { MAX_IMAGES, sniffImageType, sniffSvg, type AttachmentStore, type StoredAttachment } from './attachments.js';
 import { HttpError } from './errors.js';
 import { handoverContext, handoverPrompt, synthesizeHandover, turnMessage } from './handover.js';
+import { SkillsManager } from './skills.js';
 import { isWithinWorkdirs, Workdirs } from './workdirs.js';
 import { coalesceToolEvents, compactDeltas, type EmittedEvent, type EventType, type StoredEvent } from './events.js';
 import type { SectionRecord, Store, ThreadRecord, ThreadWorktree, TodoRecord } from './store.js';
@@ -173,7 +174,11 @@ export class ThreadManager {
     private readonly attachments: AttachmentStore,
   ) {
     this.dirs = Array.isArray(workdirs) ? new Workdirs(workdirs) : workdirs;
+    this.skills = new SkillsManager(this.adapters);
   }
+
+  /** The skills every agent instance on this machine can reach. Read-mostly, by the skills page. */
+  readonly skills: SkillsManager;
 
   /** Every directory a thread may work in right now, the scratch area included. */
   private get workdirs(): string[] {
@@ -213,12 +218,12 @@ export class ThreadManager {
    * Plan usage of an agent instance. The probe costs a CLI run (claude's takes seconds), so the
    * answer is reused for a minute and concurrent callers share one run.
    */
-  agentQuota(agent: string): Promise<PlanQuota> {
+  agentQuota(agent: string, refresh = false): Promise<PlanQuota> {
     const adapter = this.adapters.get(agent);
     if (!adapter) throw new HttpError(404, `unknown agent: ${agent}`);
     if (!adapter.capabilities.quota || !adapter.fetchQuota) throw new HttpError(400, `${agent} has no plan usage to read`);
     const hit = this.quotaCache.get(agent);
-    if (hit && Date.now() - hit.at < QUOTA_TTL_MS) return hit.value;
+    if (!refresh && hit && Date.now() - hit.at < QUOTA_TTL_MS) return hit.value;
     const value = adapter.fetchQuota().catch((err) => {
       // A failed probe is not worth caching; the next caller can try again right away.
       if (this.quotaCache.get(agent)?.value === value) this.quotaCache.delete(agent);

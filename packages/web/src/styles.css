@@ -43,6 +43,9 @@
   --scrim: rgba(24, 23, 21, 0.32);
   --shadow-pop: 0 14px 40px rgba(31, 30, 28, 0.14), 0 2px 6px rgba(31, 30, 28, 0.06);
   --shadow-card: 0 1px 2px rgba(31, 30, 28, 0.04), 0 6px 20px rgba(31, 30, 28, 0.05);
+  --radius-pill: 999px;
+  --shadow-radio: inset 0 0 0 3px var(--surface);
+  --shadow-selected: inset 0 0 0 1px var(--border-strong);
   --radius-sm: 8px;
   --radius: 12px;
   --radius-lg: 18px;
@@ -3838,6 +3841,33 @@ input.picker-search {
 
 /* ---------- Quota panel ---------- */
 
+/* A dashboard row: the agent's name above its windows, separated from the next agent. */
+.quota-board-row {
+  padding: 14px 2px;
+  border-bottom: 1px solid var(--border);
+}
+
+.quota-board-row:last-child {
+  border-bottom: 0;
+}
+
+.quota-board-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.quota-board-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14.5px;
+  font-weight: 600;
+}
+
 .quota-panel {
   width: min(440px, 100%);
 }
@@ -6578,4 +6608,540 @@ input.picker-search {
 
 .files-panel.phone .files-markdown {
   padding: 16px 18px 40px;
+}
+
+/* == Skills page: a row per skill, a column per machine, marks where an agent can use it == */
+
+.skills-page {
+  position: relative;
+  width: min(var(--content-w), 100%);
+  margin: 0 auto;
+  padding: 32px 0 calc(48px + env(safe-area-inset-bottom));
+}
+
+.skills-head {
+  margin-bottom: 18px;
+}
+
+.skills-title {
+  margin: 0 0 14px;
+  font-size: 30px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.skills-hint {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 14.5px;
+  line-height: 1.6;
+}
+
+.skills-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.skills-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1;
+  max-width: 300px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--muted);
+}
+
+.skills-search:focus-within {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.skills-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+}
+
+.skills-search input:focus {
+  outline: none;
+}
+
+/* The grid holds one name column, one per machine, and the row's "more" button. */
+.skills-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) repeat(var(--cols, 1), 128px) 34px;
+  align-items: center;
+  column-gap: 10px;
+}
+
+.skills-grid-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  min-height: 40px;
+  padding: 6px 2px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.skills-cell-machine {
+  font-size: 12.5px;
+  color: var(--muted);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skills-machine-error {
+  margin-left: 5px;
+  color: var(--warn);
+  font-size: 11.5px;
+}
+
+.skills-list {
+  padding-bottom: 8px;
+}
+
+.skills-row {
+  position: relative;
+  border-bottom: 1px solid var(--border);
+}
+
+.skills-row:hover {
+  background: var(--hover);
+}
+
+.skills-cell-name {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 11px 2px;
+  border: 0;
+  background: none;
+  text-align: left;
+  font: inherit;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.skills-name-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.skills-cell-name:focus-visible {
+  outline: 2px solid var(--border-strong);
+  outline-offset: -2px;
+  border-radius: var(--radius-sm);
+}
+
+.skills-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14.5px;
+  font-weight: 600;
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skills-differs {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  background: var(--hover);
+  border: 1px solid var(--border);
+  color: var(--warn);
+  font-size: 11px;
+  font-weight: 500;
+  font-family: var(--font);
+}
+
+.skills-desc {
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.skills-meta {
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+/* The marks: one per agent that sees the skill there. */
+.skill-marks {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.skill-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.skill-mark-name {
+  padding: 0 4px;
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+/* An empty cell offers the one thing that makes sense there: bring the skill over. */
+.skill-add {
+  height: 24px;
+  padding: 0 10px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.skills-row .skill-add {
+  opacity: 0;
+}
+
+.skills-row:hover .skill-add,
+.skills-row:focus-within .skill-add,
+.skill-add:focus-visible {
+  opacity: 1;
+}
+
+.skill-add:hover {
+  border-style: solid;
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+/* The skills dialogues: reading a SKILL.md, and moving a copy. */
+.skill-dialog {
+  width: min(680px, calc(100vw - 32px));
+  max-height: min(82vh, 780px);
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.skill-dialog-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 18px 0;
+}
+
+.skill-dialog-title {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  font-size: 17px;
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-dialog-meta {
+  margin: 6px 18px 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.skill-dialog-body {
+  flex: 1;
+  overflow: auto;
+  margin-top: 10px;
+  padding: 0 18px calc(18px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border);
+}
+
+.skill-md {
+  padding-top: 14px;
+  font-size: 13.5px;
+}
+
+.skill-md h1 {
+  font-size: 19px;
+}
+
+.skill-md h2 {
+  font-size: 15.5px;
+}
+
+/* The sync dialogue: a source to copy from, targets to copy to. */
+.skill-sync {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.skill-sync-scroll {
+  flex: 1;
+  overflow: auto;
+  padding: 4px 18px 8px;
+}
+
+.skill-sync-group {
+  margin: 10px 0 16px;
+}
+
+.skill-sync-label {
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.skill-source {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 6px;
+  cursor: pointer;
+}
+
+.skill-source:hover {
+  background: var(--hover);
+}
+
+.skill-source.picked {
+  border-color: var(--border-strong);
+  background: var(--hover);
+}
+
+.skill-source input {
+  flex: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+}
+
+.skill-source input:checked {
+  background: var(--accent);
+  box-shadow: var(--shadow-radio);
+}
+
+.skill-source-marks {
+  flex: none;
+  display: inline-flex;
+  gap: 3px;
+}
+
+.skill-source-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.skill-source-machine {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.skill-source-path {
+  color: var(--faint);
+  font-size: 11.5px;
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-target-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 7px 0;
+}
+
+.skill-target-machine {
+  flex: none;
+  width: 84px;
+  padding-top: 4px;
+  color: var(--muted);
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-target-agents {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.skill-target {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.skill-target:hover {
+  border-color: var(--border-strong);
+}
+
+.skill-target.on {
+  border-color: var(--border-strong);
+  background: var(--hover);
+  box-shadow: var(--shadow-selected);
+}
+
+.skill-target.ok {
+  border-color: transparent;
+  background: var(--positive-bg);
+  color: var(--positive);
+}
+
+.skill-target.warn {
+  border-color: var(--warn);
+}
+
+.skill-target.bad {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.skill-target-name {
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-target-state {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.skill-target.ok .skill-target-state {
+  color: var(--positive);
+}
+
+.skill-target.bad .skill-target-state {
+  color: var(--danger);
+}
+
+.skill-target-none {
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.skill-sync-error {
+  margin: 4px 0;
+  color: var(--danger);
+  font-size: 12.5px;
+}
+
+.skill-sync-actions {
+  flex-shrink: 0;
+  padding: 12px 18px calc(16px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+/* A phone: no columns to spare, so each skill carries its machines underneath. */
+.skills-mobile-machines {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  padding: 0 2px 12px;
+}
+
+.skills-mobile-machine {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.skills-mobile-label {
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+.skills-mobile-machine .skill-add {
+  opacity: 1;
+  height: 22px;
+  padding: 0 9px;
+  font-size: 11.5px;
+}
+
+@media (max-width: 640px) {
+  .skills-page {
+    padding-top: 16px;
+  }
+
+  .skills-title {
+    margin-bottom: 10px;
+    font-size: 24px;
+  }
+
+  .skills-grid-head {
+    display: none;
+  }
+
+  .skills-row .skill-add {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 640px) {
+  .skills-row { grid-template-columns: minmax(0, 1fr) 38px; }
+  .skills-row > .skills-cell-machine { display: none; }
+  .skills-search input { font-size: 16px; }
+  .skill-dialog { width: 100%; max-height: 88dvh; }
+  .skill-target { min-height: 36px; }
 }

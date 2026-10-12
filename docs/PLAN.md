@@ -113,3 +113,13 @@ daemon（Node.js，跑在远程主机上）
 | `pi-aux-vision@0.5.1` | 可以装。只注册 `describe_image` 工具，当前模型不能看图时才出现；调用视觉模型走 pi 自己的管线和登录，没有自己的网络请求；读文件前确认是真图片；只写自己的配置文件。唯一的命令执行是 Windows 上用 PowerShell 生成测试图 |
 | `@z_ai/mcp-server@0.1.5` | 不推荐。没配 `Z_AI_API_KEY` 时会把 `ANTHROPIC_AUTH_TOKEN` 当成 key 发给智谱；模型给什么路径就读什么文件上传，不检查是否是图片 |
 | `pi-vision-handoff`、`@getpipher/vision` | 没细审。前者自动转述（不是工具调用）；后者自己直连 `/chat/completions`，还写缓存和审计文件 |
+
+## 全局技能管理
+
+侧边栏「技能」按技能列行、按机器列列，单元格显示可见该技能的 agent 实例；手机将机器信息放到技能下方。支持搜索、说明预览、选择来源与目标同步、冲突后显式覆盖，以及删除指定位置的副本。离线机器保留列并显示读取失败。
+
+参考 [Vercel skills](https://github.com/vercel-labs/skills) 的目录映射与文件复制方式，以及 [skills-manager](https://github.com/xingkongliang/skills-manager) 的跨 agent 可见性设计。目录知识只在适配器的 `skillDirs()` 中：实例自己的全局技能目录可作为安装目标，共享目录只作为发现来源。当前覆盖 Claude、Codex、pi、agy；Codex、pi、agy 同时发现共享用户技能。第一期不扫描项目技能、插件内技能，也不从市场下载或自动追踪上游更新。
+
+各机器通过自身 daemon 提供 `/api/skills`、`/detail`、`/export`、`/install`；浏览器通过已有主机代理传递文件载荷。复制全部普通文件并保留可执行位，SHA-256 覆盖路径、完整内容与可执行位。相同内容跳过，不同内容默认不覆盖；先在同目录写完新副本，再替换目标，替换失败恢复旧副本。技能根目录可以是软链接，内部链接只允许指向技能内，循环或指向外部的链接拒绝导出。删除根软链接不删除其指向的技能。
+
+同步限制为 400 个文件、单文件 4 MB、合计 16 MB。校验目录穿越、文件与目录冲突、缺少 `SKILL.md` 及非法编码。技能列表短暂缓存 3 秒，写入后失效。不改 agent 配置或会话；新增技能是否立即可用仍取决于各 agent 的重新加载机制。

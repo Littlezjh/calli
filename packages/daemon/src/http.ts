@@ -245,9 +245,10 @@ export function createHttpServer(deps: HttpDeps): Server {
       return sendJson(res, 200, await manager.listAgentSessions(parts[2]));
     }
 
-    // GET /api/agents/:id/quota: plan usage, read outside any session and cached briefly
+    // GET /api/agents/:id/quota: plan usage, read outside any session and cached briefly.
+    // ?refresh=1 skips the cache: the dashboard's refresh button means "ask again now".
     if (method === 'GET' && parts[0] === 'api' && parts[1] === 'agents' && parts[2] && parts[3] === 'quota') {
-      return sendJson(res, 200, await manager.agentQuota(parts[2]));
+      return sendJson(res, 200, await manager.agentQuota(parts[2], url.searchParams.get('refresh') === '1'));
     }
 
     // GET /api/agents/:id/commands
@@ -258,6 +259,29 @@ export function createHttpServer(deps: HttpDeps): Server {
     // GET /api/agents/:id/models
     if (method === 'GET' && parts[0] === 'api' && parts[1] === 'agents' && parts[2] && parts[3] === 'models') {
       return sendJson(res, 200, await manager.listModels(parts[2]));
+    }
+
+    // Skills: what each agent instance has, where it came from, and how a copy moves between
+    // agents and machines. The page drives cross-machine sync itself, through these same routes.
+    if (parts[1] === 'skills' && !parts[2]) {
+      if (method === 'GET') return sendJson(res, 200, manager.skills.listing());
+      if (method === 'DELETE') {
+        manager.skills.remove(url.searchParams.get('name') ?? '', url.searchParams.get('path'));
+        res.writeHead(204).end();
+        return;
+      }
+    }
+    // GET /api/skills/detail?name=&path=: one skill and its SKILL.md, for the page to read
+    if (method === 'GET' && parts[1] === 'skills' && parts[2] === 'detail' && !parts[3]) {
+      return sendJson(res, 200, manager.skills.detail(url.searchParams.get('name') ?? '', url.searchParams.get('path')));
+    }
+    // GET /api/skills/export?name=&path=: a skill packed to carry to another machine
+    if (method === 'GET' && parts[1] === 'skills' && parts[2] === 'export' && !parts[3]) {
+      return sendJson(res, 200, manager.skills.payload(url.searchParams.get('name') ?? '', url.searchParams.get('path')));
+    }
+    // POST /api/skills/install { from?: { name, path }, skill?: payload, targets: [agent], overwrite? }
+    if (method === 'POST' && parts[1] === 'skills' && parts[2] === 'install' && !parts[3]) {
+      return sendJson(res, 200, await manager.skills.install(await readJson(req, 24 * 1024 * 1024)));
     }
 
     // GET /api/config: the project roots, and whether threads can work outside a project

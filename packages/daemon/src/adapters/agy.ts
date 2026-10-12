@@ -13,6 +13,7 @@ import type {
   PermissionMode,
   PlanQuota,
   QuotaWindow,
+  SkillDir,
   SlashCommand,
   StartOptions,
   TurnHooks,
@@ -527,6 +528,15 @@ export class AgyAdapter implements AgentAdapter {
       ? await findSessionFile(join(configDir, 'brain', safeId, '.system_generated', 'logs'), safeId, 0, (name) => name === 'transcript.jsonl')
       : null;
     return { configDir, sessionPath };
+  }
+
+  skillDirs(): SkillDir[] {
+    // agy's own skills live under its CLI home; it also reads the shared `~/.agents/skills`.
+    // Synced skills go to its own dir, so what lands there is only agy's business.
+    return [
+      { path: join(configDirectory(this.env, 'RAH_AGY_HOME', ['.gemini', 'antigravity-cli'], process.cwd()), 'skills'), scope: 'personal' },
+      { path: join(this.env.HOME ?? process.env.HOME ?? homedir(), '.agents', 'skills'), scope: 'shared' },
+    ];
   }
 
   /** agy saves what it generates (images, among other things) in a folder of its own per conversation. */

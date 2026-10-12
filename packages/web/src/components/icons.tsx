@@ -112,6 +112,11 @@ export const IconExternal = (p: { size?: number }) => (
     <path d="M14 5h5v5M19 5l-7 7M17 14v5H5V7h5" />
   </Svg>
 );
+export const IconGauge = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M4 14a8 8 0 1 1 16 0M12 14l4-4" />
+  </Svg>
+);
 export const IconArchive = (p: { size?: number }) => (
   <Svg {...p}>
     <path d="M4 5h16v4H4zM6 9v10h12V9M10 13h4" />

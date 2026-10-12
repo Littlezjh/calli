@@ -244,6 +244,61 @@ export type TerminalFrame = { type: 'backlog'; data: string } | { type: 'out'; d
 /** Why a machine cannot be reached, as the hub sorts what ssh said. */
 export type HostFailure = 'no_ssh' | 'host_key' | 'auth' | 'unreachable' | 'ssh_failed' | 'daemon_missing' | 'forward_denied';
 
+/** A folder an agent reads skills from. `agents` are the instances that see it. */
+export interface SkillLocation {
+  path: string;
+  scope: 'personal' | 'shared';
+  agents: string[];
+}
+
+/** One skill as it stands in one folder. */
+export interface SkillPlace {
+  /** The folder the skill sits in, not the skill's own folder. */
+  path: string;
+  mtime: string;
+  sizeBytes: number;
+  fileCount: number;
+  /** sha256 of the layout plus the SKILL.md: how two machines tell they hold the same. */
+  digest: string;
+  agents: string[];
+}
+
+/** A skill merged across the folders it sits in, newest first. */
+export interface SkillEntry extends SkillPlace {
+  name: string;
+  description: string;
+  locations: SkillPlace[];
+  /** Union of the agents that see it somewhere. */
+  agents: string[];
+}
+
+export interface SkillsListing {
+  locations: SkillLocation[];
+  skills: SkillEntry[];
+}
+
+export interface SkillDetail extends SkillEntry {
+  skillMd: string;
+}
+
+/** A skill packed to travel between machines. */
+export interface SkillPayload {
+  name: string;
+  description?: string;
+  files: Array<{ path: string; mode?: number; data: string }>;
+  sizeBytes: number;
+  digest: string;
+}
+
+export type SkillInstallStatus = 'installed' | 'exists' | 'same' | 'no_dir' | 'error';
+
+export interface SkillInstallOutcome {
+  agent: string;
+  dir: string;
+  status: SkillInstallStatus;
+  error?: string;
+}
+
 /** Another machine this hub shows: the same daemon over there, reached over SSH. */
 export interface HostInfo {
   id: string;
@@ -632,9 +687,43 @@ export class Api {
     return this.request('GET', `/api/agents/${agent}/commands${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''}`);
   }
 
-  /** Plan usage of an agent instance, read outside any session. */
-  agentQuota(agent: string): Promise<PlanQuota> {
-    return this.request('GET', `/api/agents/${agent}/quota`);
+  /** Plan usage of an agent instance, read outside any session. `refresh` asks again now. */
+  agentQuota(agent: string, refresh = false): Promise<PlanQuota> {
+    return this.request('GET', `/api/agents/${agent}/quota${refresh ? '?refresh=1' : ''}`);
+  }
+
+  // Skills, in the folders the agents themselves read. Whichever machine this client is for
+  // answers from its own folders; the skills page also opens one client per other machine.
+
+  skills(): Promise<SkillsListing> {
+    return this.request('GET', '/api/skills');
+  }
+
+  /** One skill and its SKILL.md, of the copy in `path` when that is given. */
+  skillDetail(name: string, path?: string | null): Promise<SkillDetail> {
+    const q = `name=${encodeURIComponent(name)}${path ? `&path=${encodeURIComponent(path)}` : ''}`;
+    return this.request('GET', `/api/skills/detail?${q}`);
+  }
+
+  /** A skill packed to carry to another machine. */
+  skillExport(name: string, path?: string | null): Promise<SkillPayload> {
+    const q = `name=${encodeURIComponent(name)}${path ? `&path=${encodeURIComponent(path)}` : ''}`;
+    return this.request('GET', `/api/skills/export?${q}`);
+  }
+
+  /** Copies a skill into agents' folders: from a folder on this machine, or from a payload. */
+  skillInstall(body: {
+    from?: { name: string; path: string };
+    skill?: SkillPayload;
+    targets: string[];
+    overwrite?: boolean;
+  }): Promise<SkillInstallOutcome[]> {
+    return this.request('POST', '/api/skills/install', body);
+  }
+
+  /** Takes a skill out of one folder on this machine. */
+  skillRemove(name: string, path: string): Promise<void> {
+    return this.request('DELETE', `/api/skills?name=${encodeURIComponent(name)}&path=${encodeURIComponent(path)}`);
   }
 
   /** Live web terminals on this daemon. */

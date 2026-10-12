@@ -68,6 +68,14 @@ export type PermissionMode = (typeof PERMISSION_MODES)[number];
 export const EFFORT_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type EffortLevel = (typeof EFFORT_LEVELS)[number];
 
+/** Where an agent looks for skills: a folder of skill folders (each with a SKILL.md). */
+export interface SkillDir {
+  /** Absolute path, resolved from the instance's own environment. */
+  path: string;
+  /** `personal` is the agent's own config dir; `shared` is the cross-agent `~/.agents/skills`. */
+  scope: 'personal' | 'shared';
+}
+
 /** A slash command the agent understands, shown when the user types "/" in the composer. */
 export interface SlashCommand {
   /** Without the leading slash. */
@@ -222,6 +230,13 @@ export interface AgentAdapter {
    * Images in them may be shown in the thread, like images in the thread's own directory.
    */
   artifactDirs?(agentSessionId: string): string[];
+
+  /**
+   * Where this instance looks for skills, read from the filesystem without starting the agent.
+   * The first `personal` dir is where a synced skill is written for this instance. Agents whose
+   * skill locations are not known leave this out; the page then shows no badge for them.
+   */
+  skillDirs?(): SkillDir[];
 
   /** Plan usage, read outside any session. With capabilities.quota. Cached one layer up. */
   fetchQuota?(): Promise<PlanQuota>;
