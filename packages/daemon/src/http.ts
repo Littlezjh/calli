@@ -214,8 +214,17 @@ export function createHttpServer(deps: HttpDeps): Server {
       return sendJson(res, 200, await manager.listModels(parts[2]));
     }
 
-    // GET /api/config
-    if (method === 'GET' && path === '/api/config') return sendJson(res, 200, { workdirs: manager.allowedWorkdirs });
+    // GET /api/config: the project roots, and whether threads can work outside a project
+    if (method === 'GET' && path === '/api/config') return sendJson(res, 200, manager.workdirsConfig());
+
+    // POST /api/workdirs { path }, DELETE /api/workdirs?path=: project roots added from the page
+    if (path === '/api/workdirs') {
+      if (method === 'POST') return sendJson(res, 200, manager.addWorkdir((await readJson(req))?.path));
+      if (method === 'DELETE') return sendJson(res, 200, manager.removeWorkdir(url.searchParams.get('path')));
+    }
+
+    // POST /api/projects { parent, name, git }: a new project folder
+    if (method === 'POST' && path === '/api/projects') return sendJson(res, 201, await manager.createProject((await readJson(req)) ?? {}));
 
     // GET /api/directories?path=...
     if (method === 'GET' && path.startsWith('/api/directories')) {
@@ -260,6 +269,7 @@ export function createHttpServer(deps: HttpDeps): Server {
             effort: body.effort,
             sectionId: body.sectionId,
             worktree: body.worktree === true,
+            scratch: body.scratch === true,
           }),
         );
       }

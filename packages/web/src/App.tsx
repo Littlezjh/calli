@@ -10,8 +10,10 @@ import {
   type SlashCommand,
   type Thread,
   type Todo,
+  type WorkdirsConfig,
 } from './api';
 import type { HubAction } from './commands';
+import { projectDir } from './sidebar';
 import { useAppearance, useIsCompact, useListSwipe } from './hooks';
 import type { PreparedImage } from './images';
 import { attentionCount, pageTitle, threadNotices } from './notices';
@@ -37,6 +39,7 @@ import { Sidebar, SIDEBAR_SHORTCUT } from './components/Sidebar';
 import { forkBlocked, useThreadActions } from './components/ThreadActions';
 import { ThreadView } from './components/ThreadView';
 import { TurnRuler } from './components/TurnRuler';
+import { NewProjectDialog, ProjectPicker, RootsDialog, type ProjectOption } from './components/Projects';
 import { NoteMarks, type NoteMark } from './components/NoteMarks';
 import { Toast, type ToastState } from './components/Toast';
 import { TokenGate } from './components/TokenGate';
@@ -83,6 +86,17 @@ export function App() {
   /** Accounts of multi-account agents already signed in here, offered in the picker. */
   const [accounts, setAccounts] = useState<DiscoveredAccount[]>([]);
   const [workdirs, setWorkdirs] = useState<string[]>([]);
+  // Each project root and whether it was added from the page; and whether threads can be in no project.
+  const [roots, setRoots] = useState<Array<{ path: string; removable: boolean }>>([]);
+  const [scratchAvailable, setScratchAvailable] = useState(false);
+  // A new thread in no project: the hub gives it a scratch folder.
+  const [draftScratch, setDraftScratch] = useState(false);
+  const [projectDialog, setProjectDialog] = useState<'new' | 'roots' | null>(null);
+  const applyWorkdirs = useCallback((c: WorkdirsConfig) => {
+    setWorkdirs(c.workdirs);
+    setRoots(c.roots ?? c.workdirs.map((path) => ({ path, removable: false })));
+    setScratchAvailable(c.scratch === true);
+  }, []);
   const [threads, setThreads] = useState<Thread[]>([]);
   const [sections, setSections] = useState<Section[]>([]);
   const [todos, setTodos] = useState<Todo[]>([]);
@@ -215,6 +229,25 @@ export function App() {
     };
   }, [api, draftCwd, selectedId]);
   const offer = worktreeOffer?.cwd === draftCwd ? worktreeOffer : null;
+  // Projects for a new thread: where threads went lately, newest first, then roots not used yet.
+  const projectOptions = useMemo<ProjectOption[]>(() => {
+    const seen = new Set<string>();
+    const out: ProjectOption[] = [];
+    const push = (cwd: string, real: string) => {
+      if (!cwd || seen.has(real)) return;
+      seen.add(real);
+      out.push({ cwd, name: folderName(cwd) || cwd });
+    };
+    // The one picked last comes first, even before any thread has run there (a project just made).
+    if (draftCwd && !threads.some((t) => !t.scratch && projectDir(t).cwd === draftCwd)) push(draftCwd, draftCwd);
+    for (const t of [...threads].sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))) {
+      if (t.scratch || t.archivedAt) continue;
+      const dir = projectDir(t);
+      push(dir.cwd, dir.real);
+    }
+    for (const root of workdirs) push(root, root);
+    return out;
+  }, [threads, workdirs, draftCwd]);
 
   // An address typed or followed while the page is open.
   useEffect(() => {
@@ -273,7 +306,7 @@ export function App() {
         ]);
         if (cancelled) return;
         setAgents(a);
-        setWorkdirs(c.workdirs);
+        applyWorkdirs(c);
         setThreads(t);
         setSections(s);
         setTodos(td);
@@ -722,7 +755,7 @@ export function App() {
           model: draftModel,
           effort: draftEffort,
           ...(draftSectionId && isNewThread ? { sectionId: draftSectionId } : {}),
-          ...(draftWorktree && offer ? { worktree: true } : {}),
+          ...(draftScratch ? { scratch: true } : draftWorktree && offer ? { worktree: true } : {}),
         });
         id = t.id;
         setSelectedId(id);
@@ -798,11 +831,15 @@ export function App() {
     setDrawer(false);
   };
 
-  const newThread = (opts: { cwd?: string; sectionId?: string | null } = {}) => {
+  const newThread = (opts: { cwd?: string; sectionId?: string | null; scratch?: boolean } = {}) => {
     setSelectedId(null);
     setView('thread');
     setDrawer(false);
-    if (opts.cwd !== undefined) setDraftCwd(opts.cwd);
+    if (opts.cwd !== undefined) {
+      setDraftCwd(opts.cwd);
+      setDraftScratch(false);
+    }
+    if (opts.scratch) setDraftScratch(true);
     setDraftSectionId(opts.sectionId ?? null);
   };
 
@@ -924,12 +961,21 @@ export function App() {
   const header = selected ? null : (
     <>
       <AgentPicker agents={agents} value={draftAgent} onChange={pickAgent} discovered={discovered} onAdd={addDiscoveredAgent} accounts={accounts} onAddAccount={addAccount} />
-      <button className="context-btn" onClick={() => setShowDirPicker(true)} title={draftCwd}>
-        <IconFolder size={14} />
-        <span>{folderName(draftCwd) || '选择目录'}</span>
-        <IconChevron size={12} open />
-      </button>
-      {offer && <WorkspacePicker branch={offer.branch} changes={offer.changes} worktree={draftWorktree} onChange={setDraftWorktree} />}
+      <ProjectPicker
+        projects={projectOptions}
+        cwd={draftCwd}
+        scratch={draftScratch}
+        scratchAvailable={scratchAvailable}
+        onPick={(cwd) => {
+          setDraftCwd(cwd);
+          setDraftScratch(false);
+        }}
+        onScratch={() => setDraftScratch(true)}
+        onBrowse={() => setShowDirPicker(true)}
+        onNewProject={() => setProjectDialog('new')}
+        onManageRoots={() => setProjectDialog('roots')}
+      />
+      {offer && !draftScratch && <WorkspacePicker branch={offer.branch} changes={offer.changes} worktree={draftWorktree} onChange={setDraftWorktree} />}
       {draftSectionId && sections.some((s) => s.id === draftSectionId) && (
         <button
           className="context-chip"
@@ -980,10 +1026,27 @@ export function App() {
           api={api}
           roots={workdirs}
           selected={draftCwd}
-          onSelect={setDraftCwd}
+          onSelect={(cwd) => {
+            setDraftCwd(cwd);
+            setDraftScratch(false);
+          }}
           onClose={() => setShowDirPicker(false)}
         />
       )}
+      {projectDialog === 'new' && (
+        <NewProjectDialog
+          api={api}
+          roots={workdirs}
+          onCancel={() => setProjectDialog(null)}
+          onCreated={(path) => {
+            setProjectDialog(null);
+            setDraftCwd(path);
+            setDraftScratch(false);
+            setToast({ message: `已新建项目 ${folderName(path)}` });
+          }}
+        />
+      )}
+      {projectDialog === 'roots' && <RootsDialog api={api} roots={roots} onChange={applyWorkdirs} onCancel={() => setProjectDialog(null)} />}
       <aside className="sidebar">
         <Sidebar
           threads={threads}
@@ -1025,7 +1088,8 @@ export function App() {
             <div className="topbar-title">{onTodos ? '' : selected ? selected.title : '新线程'}</div>
             {selected && (
               <div className="topbar-sub" title={selected.cwd}>
-                {agentLabel(selected.agent)} · {selected.worktree ? `${folderName(selected.worktree.of)} · ${selected.worktree.branch}` : folderName(selected.cwd)}
+                {agentLabel(selected.agent)} ·{' '}
+                {selected.scratch ? '不在项目中' : selected.worktree ? `${folderName(selected.worktree.of)} · ${selected.worktree.branch}` : folderName(selected.cwd)}
               </div>
             )}
           </div>
@@ -1105,7 +1169,7 @@ export function App() {
             />
           ) : (
             <div className="empty">
-              <h2>我们应该在 {folderName(draftCwd) || '这里'} 中做些什么？</h2>
+              <h2>{draftScratch ? '我们应该做些什么？' : `我们应该在 ${folderName(draftCwd) || '这里'} 中做些什么？`}</h2>
             </div>
           )}
         </div>
@@ -1124,7 +1188,7 @@ export function App() {
           draftKey={selectedId ?? 'new'}
           running={running}
           disabled={!selected && !draftCwd}
-          placeholder={selected ? (running ? '追加一条，这一轮结束后发送' : '继续这个线程') : `在 ${folderName(draftCwd) || '工作目录'} 中开始`}
+          placeholder={selected ? (running ? '追加一条，这一轮结束后发送' : '继续这个线程') : draftScratch ? '随便问点什么' : `在 ${folderName(draftCwd) || '工作目录'} 中开始`}
           onSend={send}
           onStop={stop}
           header={header}

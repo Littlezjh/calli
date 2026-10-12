@@ -5,6 +5,8 @@ import { AttachmentStore } from './attachments.js';
 import { Store } from './store.js';
 import { TerminalManager } from './terminals.js';
 import { ThreadManager } from './threads.js';
+import { Workdirs } from './workdirs.js';
+import { join } from 'node:path';
 
 export const VERSION = '0.1.0';
 
@@ -39,14 +41,17 @@ async function main(): Promise<void> {
   }
 
   const store = new Store(config.dataDir);
-  const manager = new ThreadManager(store, adapters, workdirs, new AttachmentStore(config.dataDir));
+  // Directories added from the page are kept next to the hub's data; threads in no project work in
+  // a scratch area there too.
+  const dirs = new Workdirs(workdirs, join(config.dataDir, 'workdirs.json'), join(config.dataDir, 'scratch'));
+  const manager = new ThreadManager(store, adapters, dirs, new AttachmentStore(config.dataDir));
   manager.recoverInterrupted();
-  const terminals = new TerminalManager({ workdirs, shell: config.termShell ?? undefined });
+  const terminals = new TerminalManager({ workdirs: () => dirs.all(), shell: config.termShell ?? undefined });
   const server = createHttpServer({ manager, registry, terminals, token: config.token, webDir: config.webDir, version: VERSION });
 
   server.listen(config.port, config.host, () => {
     console.log(`remote-agent-hub daemon ${VERSION} listening on http://${config.host}:${config.port}`);
-    console.log(`workdirs: ${workdirs.join(', ')}`);
+    console.log(`workdirs: ${dirs.roots().join(', ')}`);
     if (config.host === '0.0.0.0' || config.host === '::') {
       console.warn('warning: listening on all interfaces. Bind to the VPN address instead.');
     }

@@ -2,7 +2,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { get, type Server } from 'node:http';
@@ -17,6 +17,7 @@ import { AttachmentStore, sniffImageType, sniffSvg } from '../src/attachments.js
 import { createHttpServer, tokenMatches } from '../src/http.js';
 import { Store } from '../src/store.js';
 import { matchTurns, ThreadManager } from '../src/threads.js';
+import { Workdirs } from '../src/workdirs.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const TOKEN = 'test-token-0123456789';
@@ -59,7 +60,7 @@ before(async () => {
   adapters.set('pi', new PiRpcAdapter([process.execPath, join(here, 'fixtures', 'fake-pi.mjs')]));
   adapters.set('agy', new AgyAdapter([process.execPath, join(here, 'fixtures', 'fake-agy.mjs')]));
   store = new Store(dataDir);
-  manager = new ThreadManager(store, adapters, [workdir], new AttachmentStore(dataDir));
+  manager = new ThreadManager(store, adapters, new Workdirs([workdir], join(dataDir, 'workdirs.json'), join(dataDir, 'scratch')), new AttachmentStore(dataDir));
   server = createHttpServer({ manager, token: TOKEN, webDir: null, version: 'test' });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
   const { port } = server.address() as AddressInfo;
@@ -140,7 +141,81 @@ test('agents carry their own mark, and instances of one adapter share it', async
 
 test('config exposes allowed workdirs', async () => {
   const res = await api('/api/config');
-  assert.deepEqual(((await res.json()) as { workdirs: string[] }).workdirs, [workdir]);
+  assert.deepEqual(await res.json(), { workdirs: [workdir], roots: [{ path: workdir, removable: false }], scratch: true });
+});
+
+test('project roots can be added and removed from the page, within limits, and are kept', async () => {
+  type Config = { workdirs: string[]; roots: Array<{ path: string; removable: boolean }> };
+  const add = (path: unknown) => api('/api/workdirs', { method: 'POST', body: JSON.stringify({ path }) });
+  const remove = (path: string) => api(`/api/workdirs?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
+  const other = mkdtempSync(join(tmpdir(), 'rah-test-root-'));
+  try {
+    // Before it is added, nothing can start there.
+    assert.equal((await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: other }) })).status, 400);
+    const added = await add(other);
+    assert.equal(added.status, 200);
+    assert.deepEqual(((await added.json()) as Config).roots, [{ path: workdir, removable: false }, { path: other, removable: true }]);
+    assert.equal((await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: other }) })).status, 201);
+    assert.equal((await api(`/api/directory-tree?root=${encodeURIComponent(other)}`)).status, 200, 'browsable at once');
+    // Kept next to the data, and read back by a hub starting later.
+    assert.deepEqual(JSON.parse(readFileSync(join(dataDir, 'workdirs.json'), 'utf8')), [other]);
+    assert.deepEqual(new Workdirs([workdir], join(dataDir, 'workdirs.json')).roots(), [workdir, other]);
+
+    // Refused: relative, missing, too wide, already covered.
+    for (const bad of ['relative/dir', join(other, 'missing'), '/', homedir(), join(workdir), 42]) {
+      assert.equal((await add(bad)).status, 400, String(bad));
+    }
+    mkdirSync(join(other, 'inner'));
+    assert.match(((await (await add(join(other, 'inner'))).json()) as { error: string }).error, /already allowed/);
+
+    // The hub's own roots stay; an added one goes, and with it the right to start there.
+    assert.equal((await remove(workdir)).status, 400);
+    assert.deepEqual(((await (await remove(other)).json()) as Config).workdirs, [workdir]);
+    assert.equal((await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: other }) })).status, 400);
+    assert.equal((await remove(other)).status, 400, 'already gone');
+  } finally {
+    rmSync(other, { recursive: true, force: true });
+  }
+});
+
+test('a new project is a folder in a root, a git repository with a first commit when asked', async () => {
+  const create = (body: Record<string, unknown>) => api('/api/projects', { method: 'POST', body: JSON.stringify(body) });
+  // In a folder of its own, so other tests listing the workdir do not see these.
+  const root = join(workdir, 'projects-test');
+  mkdirSync(root);
+  const made = await create({ parent: root, name: '新项目', git: true });
+  assert.equal(made.status, 201);
+  const { path } = (await made.json()) as { path: string };
+  assert.equal(path, join(root, '新项目'));
+  assert.equal(execFileSync('git', ['log', '--format=%s'], { cwd: path, encoding: 'utf8' }).trim(), 'Initial commit');
+  // So a thread can start in a worktree of it right away.
+  const offer = (await (await api(`/api/worktree-options?cwd=${encodeURIComponent(path)}`)).json()) as { available: boolean };
+  assert.equal(offer.available, true);
+
+  const plain = (await (await create({ parent: root, name: 'plain' })).json()) as { path: string; git: boolean };
+  assert.deepEqual([existsSync(plain.path), existsSync(join(plain.path, '.git')), plain.git], [true, false, false]);
+
+  assert.equal((await create({ parent: root, name: 'plain' })).status, 409, 'taken');
+  for (const name of ['', 'a/b', '..', '.hidden', 'x'.repeat(101)]) assert.equal((await create({ parent: root, name })).status, 400, name);
+  assert.equal((await create({ parent: tmpdir(), name: 'outside' })).status, 400);
+  assert.equal((await create({ name: 'no-parent' })).status, 400);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('a thread in no project gets a scratch folder of its own', async () => {
+  const res = await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', scratch: true, cwd: '/ignored' }) });
+  assert.equal(res.status, 201);
+  const thread = (await res.json()) as { id: string; cwd: string; scratch: boolean };
+  assert.equal(thread.scratch, true);
+  assert.equal(dirname(thread.cwd), join(dataDir, 'scratch'));
+  assert.match(thread.cwd, new RegExp(`\\d{4}-\\d{2}-\\d{2}-${thread.id.slice(0, 8)}$`));
+  assert.ok(existsSync(thread.cwd));
+  // It runs there like any other.
+  await api(`/api/threads/${thread.id}/turns`, { method: 'POST', body: JSON.stringify({ text: 'hello' }) });
+  await finishedEvents(thread.id);
+  // Not offered as a project root.
+  assert.deepEqual(((await (await api('/api/config')).json()) as { workdirs: string[] }).workdirs, [workdir]);
+  assert.equal(((await newThread({ agent: 'pi' })) as unknown as { scratch: boolean }).scratch, false);
 });
 
 test('threads can start in an allowed workdir or below it, and nowhere else', async () => {

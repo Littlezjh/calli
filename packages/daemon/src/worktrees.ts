@@ -172,3 +172,15 @@ export function samePath(a: string, b: string): boolean {
   };
   return real(a) === real(b);
 }
+
+/**
+ * Makes `dir` a repository with one empty commit, so a worktree can be added to it at once. The
+ * commit is made as whoever git is set up for; on a machine with no identity, as the hub.
+ */
+export async function initRepository(dir: string): Promise<void> {
+  await git(dir, ['init', '--quiet']);
+  const message = ['commit', '--quiet', '--allow-empty', '-m', 'Initial commit'];
+  await git(dir, message).catch(() =>
+    git(dir, ['-c', 'user.name=remote-agent-hub', '-c', 'user.email=hub@localhost', '-c', 'commit.gpgsign=false', ...message]),
+  );
+}

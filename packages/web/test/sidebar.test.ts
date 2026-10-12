@@ -134,3 +134,21 @@ test('by activity: what wants attention or is at work comes first, the rest by t
   assert.equal(found.count, 2);
   assert.deepEqual(buildActivity([], '', now, null), { groups: [], count: 0 });
 });
+
+test('threads in no project sit together after the projects, unless pinned or filed in a section', () => {
+  const model = buildSidebar(
+    [
+      thread('s1', { scratch: true, cwd: '/data/scratch/2026-10-12-aaaa' }),
+      thread('p', { cwd: '/work/code' }),
+      thread('s2', { scratch: true, cwd: '/data/scratch/2026-10-12-bbbb' }),
+      thread('s3', { scratch: true, pinned: true, cwd: '/data/scratch/2026-10-12-cccc' }),
+      thread('s4', { scratch: true, sectionId: 's1', cwd: '/data/scratch/2026-10-12-dddd' }),
+    ],
+    sections,
+    '',
+  );
+  assert.deepEqual(ids(model.scratch), ['s1', 's2']);
+  assert.deepEqual(model.projects.map((p) => p.name), ['code'], 'each scratch folder is not a project of its own');
+  assert.deepEqual(ids(model.pinned), ['s3']);
+  assert.deepEqual(ids(model.sections[0].threads), ['s4']);
+});

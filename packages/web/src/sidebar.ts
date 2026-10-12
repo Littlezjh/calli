@@ -37,6 +37,8 @@ export interface SidebarModel {
   sections: Array<{ section: Section; threads: Thread[] }>;
   /** `key` identifies the project (and its collapsed state); `cwd` is the path to show. */
   projects: Array<{ key: string; cwd: string; name: string; threads: Thread[] }>;
+  /** Threads in no project (each in a scratch folder of its own), together after the projects. */
+  scratch: Thread[];
   /** Number of threads shown after filtering. */
   count: number;
 }
@@ -56,12 +58,15 @@ export function buildSidebar(threads: Thread[], sections: Section[], search: str
   const pinned: Thread[] = [];
   const bySection = new Map<string, Thread[]>();
   const byProject = new Map<string, Thread[]>();
+  const scratch: Thread[] = [];
 
   for (const t of visible) {
     if (t.pinned) {
       pinned.push(t);
     } else if (t.sectionId && sectionIds.has(t.sectionId)) {
       bySection.set(t.sectionId, [...(bySection.get(t.sectionId) ?? []), t]);
+    } else if (t.scratch) {
+      scratch.push(t);
     } else {
       const key = projectDir(t).real;
       byProject.set(key, [...(byProject.get(key) ?? []), t]);
@@ -79,6 +84,7 @@ export function buildSidebar(threads: Thread[], sections: Section[], search: str
     projects: [...byProject.entries()]
       .map(([key, list]) => ({ key, cwd: projectDir(list[0]).cwd, name: folderName(projectDir(list[0]).cwd), threads: list }))
       .sort((a, b) => (a.threads[0].updatedAt < b.threads[0].updatedAt ? 1 : -1)),
+    scratch,
     count: visible.length,
   };
 }

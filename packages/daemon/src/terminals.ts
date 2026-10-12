@@ -140,7 +140,8 @@ class TerminalSession {
 
 export interface TerminalManagerOptions {
   /** Terminal start directories are held to the same whitelist as threads. */
-  workdirs: string[];
+  /** Where shells may start; a function when the list can change while the hub runs. */
+  workdirs: string[] | (() => string[]);
   /** Shell executable. Defaults to $SHELL, then /bin/bash; RAH_TERM_SHELL reaches here. */
   shell?: string;
   maxTerminals?: number;
@@ -169,7 +170,8 @@ export class TerminalManager {
   create(cwd: unknown): TerminalSnapshot {
     if (typeof cwd !== 'string' || cwd === '') throw new HttpError(400, 'cwd is required');
     const dir = resolve(cwd);
-    if (!isWithinWorkdirs(dir, this.opts.workdirs)) throw new HttpError(400, 'cwd is not in the allowed workdirs');
+    const allowed = typeof this.opts.workdirs === 'function' ? this.opts.workdirs() : this.opts.workdirs;
+    if (!isWithinWorkdirs(dir, allowed)) throw new HttpError(400, 'cwd is not in the allowed workdirs');
     if (!existsSync(dir) || !statSync(dir).isDirectory()) throw new HttpError(400, 'cwd does not exist');
     if (this.alive().length >= (this.opts.maxTerminals ?? 3)) {
       throw new HttpError(409, `at most ${this.opts.maxTerminals ?? 3} terminals at once; close one first`);

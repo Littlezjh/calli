@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { closeSync, existsSync, openSync, readSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import {
   EFFORT_LEVELS,
@@ -20,11 +20,11 @@ import {
 import { MAX_IMAGES, sniffImageType, sniffSvg, type AttachmentStore, type StoredAttachment } from './attachments.js';
 import { HttpError } from './errors.js';
 import { handoverPrompt, synthesizeHandover, turnMessage } from './handover.js';
-import { isWithinWorkdirs } from './workdirs.js';
+import { isWithinWorkdirs, Workdirs } from './workdirs.js';
 import { coalesceToolEvents, compactDeltas, type EmittedEvent, type EventType, type StoredEvent } from './events.js';
 import type { SectionRecord, Store, ThreadRecord, ThreadWorktree, TodoRecord } from './store.js';
 import { askedText } from './util.js';
-import { addWorktree, countChanges, findCheckout, removeWorktree, samePath, worktreeLeftovers, type Checkout, type Worktree } from './worktrees.js';
+import { addWorktree, countChanges, findCheckout, initRepository, removeWorktree, samePath, worktreeLeftovers, type Checkout, type Worktree } from './worktrees.js';
 
 /** Why a copy cannot get a worktree of its own, said to whoever asked for one anyway. */
 const WORKTREE_REFUSALS = {
@@ -48,6 +48,8 @@ export interface ForkOptions {
 
 /** A thread as the API returns it: the stored record plus values worked out from it. */
 export type ThreadView = Omit<ThreadRecord, 'worktree'> & {
+  /** Working in the hub's scratch area: a thread that is in no project. */
+  scratch: boolean;
   /** `of` is how the directory was spelled when the worktree was made; `ofReal` has symlinks resolved, like `cwdReal`. */
   worktree: (ThreadWorktree & { ofReal: string }) | null;
   /** Shell command that continues this conversation in a terminal. Null until the agent session exists. */
@@ -160,20 +162,31 @@ export class ThreadManager {
   /** Messages waiting for the running turn of their thread to finish. Kept in memory only. */
   private readonly queues = new Map<string, QueuedTurn[]>();
 
+  /** Where threads may work; directories can be added from the page while the hub runs. */
+  readonly dirs: Workdirs;
+
   constructor(
     private readonly store: Store,
     private readonly adapters: Map<string, AgentAdapter>,
-    private readonly workdirs: string[],
+    workdirs: string[] | Workdirs,
     private readonly attachments: AttachmentStore,
-  ) {}
+  ) {
+    this.dirs = Array.isArray(workdirs) ? new Workdirs(workdirs) : workdirs;
+  }
+
+  /** Every directory a thread may work in right now, the scratch area included. */
+  private get workdirs(): string[] {
+    return this.dirs.all();
+  }
 
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
 
+  /** The roots people pick projects from (not the scratch area). */
   get allowedWorkdirs(): string[] {
-    return [...this.workdirs];
+    return this.dirs.roots();
   }
 
   async listAgents(): Promise<AgentInfo[]> {
@@ -475,7 +488,8 @@ export class ThreadManager {
       }
       worktree = { ...thread.worktree, ofReal };
     }
-    return { ...thread, worktree, resumeCommand, cwdReal, waiting, queued, terminalActivity };
+    const scratch = this.dirs.scratchRoot !== null && isWithinWorkdirs(thread.cwd, [this.dirs.scratchRoot]);
+    return { ...thread, worktree, resumeCommand, cwdReal, waiting, queued, terminalActivity, scratch };
   }
 
   /**
@@ -999,10 +1013,20 @@ export class ThreadManager {
     sectionId?: string | null;
     /** Start in a new git worktree of the directory's repository, under `.worktrees/`. */
     worktree?: boolean;
+    /** In no project: the thread gets a fresh folder of its own in the hub's scratch area; `cwd` is ignored. */
+    scratch?: boolean;
   }): Promise<ThreadView> {
     const adapter = this.adapters.get(input.agent);
     if (!adapter) throw new HttpError(400, `unknown agent: ${input.agent}`);
-    const cwd = resolve(input.cwd);
+    const id = randomUUID();
+    let cwd: string;
+    if (input.scratch === true) {
+      if (!this.dirs.scratchRoot) throw new HttpError(400, 'this hub has no scratch area for threads outside a project');
+      cwd = join(this.dirs.scratchRoot, `${new Date().toISOString().slice(0, 10)}-${id.slice(0, 8)}`);
+      mkdirSync(cwd, { recursive: true });
+    } else {
+      cwd = resolve(input.cwd);
+    }
     // An allowed directory or anything inside one. The directory picker offers subdirectories.
     if (!isWithinWorkdirs(cwd, this.workdirs)) throw new HttpError(400, 'cwd is not in the allowed workdirs');
     if (!existsSync(cwd) || !statSync(cwd).isDirectory()) throw new HttpError(400, 'cwd does not exist');
@@ -1017,7 +1041,6 @@ export class ThreadManager {
     const model = input.model ? await this.validateModel(input.agent, input.model) : null;
     const effort = input.effort ? await this.validateEffort(input.agent, model, input.effort) : null;
     const title = (input.title ?? '').trim() || 'New thread';
-    const id = randomUUID();
     // A new thread has no conversation to move, so any agent can start in a worktree.
     let added: { main: string; tree: Worktree; cwd: string } | null = null;
     if (input.worktree === true) {
@@ -1052,6 +1075,53 @@ export class ThreadManager {
     }
     this.emitThreadEvent(thread.id, null, 'thread.created', { agent: thread.agent, cwd: thread.cwd });
     return this.view(thread);
+  }
+
+  /** The project roots, each with whether it was added from the page and so can be removed there. */
+  workdirsConfig(): { workdirs: string[]; roots: Array<{ path: string; removable: boolean }>; scratch: boolean } {
+    return { workdirs: this.dirs.roots(), roots: this.dirs.describe(), scratch: this.dirs.scratchRoot !== null };
+  }
+
+  addWorkdir(path: unknown): ReturnType<ThreadManager['workdirsConfig']> {
+    try {
+      this.dirs.add(typeof path === 'string' ? path.trim() : '');
+    } catch (err) {
+      throw new HttpError(400, err instanceof Error ? err.message : String(err));
+    }
+    return this.workdirsConfig();
+  }
+
+  removeWorkdir(path: unknown): ReturnType<ThreadManager['workdirsConfig']> {
+    try {
+      this.dirs.remove(typeof path === 'string' ? path : '');
+    } catch (err) {
+      throw new HttpError(400, err instanceof Error ? err.message : String(err));
+    }
+    return this.workdirsConfig();
+  }
+
+  /**
+   * A new project: a folder named `name` in `parent` (inside a project root), made a git repository
+   * with one empty commit when `git` is set, so a thread can start in a worktree of it at once.
+   */
+  async createProject(input: { parent?: unknown; name?: unknown; git?: unknown }): Promise<{ path: string; git: boolean }> {
+    const name = typeof input.name === 'string' ? input.name.trim() : '';
+    if (!name || name.length > 100 || /[\\/\0]/.test(name) || name.startsWith('.')) {
+      throw new HttpError(400, 'a project name is a plain folder name: no slashes, not starting with a dot');
+    }
+    const parent = typeof input.parent === 'string' && input.parent ? resolve(input.parent) : '';
+    if (!parent || !isWithinWorkdirs(parent, this.dirs.roots())) throw new HttpError(400, 'parent is not in the allowed workdirs');
+    if (!isDirectory(parent)) throw new HttpError(400, 'parent does not exist');
+    const path = join(parent, name);
+    if (existsSync(path)) throw new HttpError(409, 'a file or folder with this name is already there', { code: 'exists' });
+    mkdirSync(path);
+    const git = input.git === true;
+    if (git) {
+      await initRepository(path).catch((err) => {
+        throw new HttpError(500, `the folder was made, but git init failed: ${err instanceof Error ? err.message : err}`);
+      });
+    }
+    return { path, git };
   }
 
   /**

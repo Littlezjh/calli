@@ -1,5 +1,14 @@
 import type { StoredEvent } from './timeline';
 
+/** Where threads may work: the project roots, and whether one can start outside any project. */
+export interface WorkdirsConfig {
+  workdirs: string[];
+  /** Each root and whether it was added from the page (and so can be removed there). Missing from older daemons. */
+  roots?: Array<{ path: string; removable: boolean }>;
+  /** Missing from older daemons: no threads outside a project. */
+  scratch?: boolean;
+}
+
 export interface Thread {
   id: string;
   agent: string;
@@ -21,6 +30,8 @@ export interface Thread {
    * resolved. Missing from daemons that predate worktrees.
    */
   worktree?: { root: string; branch: string; of: string; ofReal: string } | null;
+  /** In no project: working in the hub's scratch area. Missing from daemons that predate it. */
+  scratch?: boolean;
   /** A turn finished and nobody has looked at the result yet. */
   unread: boolean;
   /** The newest thing the user asked, shown under the title. Null until the first ask. */
@@ -262,8 +273,23 @@ export class Api {
     return this.request('GET', '/api/agents');
   }
 
-  workdirs(): Promise<{ workdirs: string[] }> {
+  workdirs(): Promise<WorkdirsConfig> {
     return this.request('GET', '/api/config');
+  }
+
+  /** Allows another directory as a project root, from the page. */
+  addWorkdir(path: string): Promise<WorkdirsConfig> {
+    return this.request('POST', '/api/workdirs', { path });
+  }
+
+  /** Takes back a root that was added from the page. */
+  removeWorkdir(path: string): Promise<WorkdirsConfig> {
+    return this.request('DELETE', `/api/workdirs?path=${encodeURIComponent(path)}`);
+  }
+
+  /** A new project folder in `parent`, a git repository with a first commit when `git` is set. */
+  createProject(input: { parent: string; name: string; git: boolean }): Promise<{ path: string; git: boolean }> {
+    return this.request('POST', '/api/projects', input);
   }
 
   threads(opts: { archived?: boolean } = {}): Promise<Thread[]> {
@@ -351,6 +377,8 @@ export class Api {
     sectionId?: string | null;
     /** Start in a new git worktree under the repository's `.worktrees/`. */
     worktree?: boolean;
+    /** In no project: the hub gives the thread a scratch folder of its own; `cwd` is ignored. */
+    scratch?: boolean;
   }): Promise<Thread> {
     return this.request('POST', '/api/threads', input);
   }

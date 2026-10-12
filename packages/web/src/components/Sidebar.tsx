@@ -19,7 +19,7 @@ interface Props {
   onSelect: (id: string) => void;
   onNew: () => void;
   /** Starts a new thread with a directory or section pre-filled, from a group's "+". */
-  onNewIn: (opts: { cwd?: string; sectionId?: string }) => void;
+  onNewIn: (opts: { cwd?: string; sectionId?: string; scratch?: boolean }) => void;
   onThreadMenu: (thread: Thread, x: number, y: number) => void;
   onSectionMenu: (section: Section, x: number, y: number) => void;
   onNewSection: () => void;
@@ -233,6 +233,13 @@ export function Sidebar({
           <GroupAdd label={`在 ${p.name} 新建线程`} onClick={() => onNewIn({ cwd: p.cwd })} />,
         ),
       )}
+      {model.scratch.length > 0 &&
+        group(
+          'scratch',
+          <span className="group-name">不在项目中</span>,
+          model.scratch,
+          <GroupAdd label="新建不在项目中的线程" onClick={() => onNewIn({ scratch: true })} />,
+        )}
     </nav>
   );
 
