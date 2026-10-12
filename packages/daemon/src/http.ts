@@ -7,6 +7,7 @@ import type { ApprovalDecision } from './adapters/types.js';
 import type { AgentRegistry } from './agents.js';
 import type { StoredEvent } from './events.js';
 import { HttpError } from './errors.js';
+import type { TerminalEvent, TerminalManager } from './terminals.js';
 import type { ThreadManager } from './threads.js';
 import { isWithinWorkdirs } from './workdirs.js';
 
@@ -14,6 +15,8 @@ export interface HttpDeps {
   manager: ThreadManager;
   /** Agent instances beyond the built-in ones. Optional so simple setups and tests need none. */
   registry?: AgentRegistry;
+  /** Web terminals. Optional so deployments and tests can run without them. */
+  terminals?: TerminalManager;
   token: string;
   webDir: string | null;
   version: string;
@@ -119,6 +122,11 @@ function writeEvent(res: ServerResponse, ev: StoredEvent): void {
   res.write(`id: ${ev.seq}\nevent: ${ev.type}\ndata: ${JSON.stringify(ev)}\n\n`);
 }
 
+/** Terminal frames carry no seq, so they get their own simpler SSE writer. */
+function writeTerminalEvent(res: ServerResponse, ev: TerminalEvent): void {
+  res.write(`event: ${ev.type}\ndata: ${JSON.stringify(ev)}\n\n`);
+}
+
 function serveStatic(res: ServerResponse, webDir: string, urlPath: string): void {
   const rel = urlPath === '/' ? 'index.html' : decodeURIComponent(urlPath.slice(1));
   let file = normalize(join(webDir, rel));
@@ -143,7 +151,7 @@ function serveStatic(res: ServerResponse, webDir: string, urlPath: string): void
 }
 
 export function createHttpServer(deps: HttpDeps): Server {
-  const { manager, registry, token, webDir, version } = deps;
+  const { manager, registry, terminals, token, webDir, version } = deps;
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? '/', 'http://localhost');
@@ -288,6 +296,43 @@ export function createHttpServer(deps: HttpDeps): Server {
         manager.unlinkTodoThread(parts[2], url.searchParams.get('threadId'));
         res.writeHead(204).end();
         return;
+      }
+    }
+
+    // Web terminals: a real PTY each, output over SSE and keystrokes over POST.
+    if (terminals) {
+      if (path === '/api/terminals') {
+        if (method === 'GET') return sendJson(res, 200, terminals.list());
+        if (method === 'POST') {
+          const body = await readJson(req);
+          return sendJson(res, 201, terminals.create(body.cwd));
+        }
+      }
+      if (parts[1] === 'terminals' && parts[2] && !parts[3]) {
+        if (method === 'DELETE') {
+          terminals.kill(parts[2]);
+          res.writeHead(204).end();
+          return;
+        }
+      }
+      if (parts[1] === 'terminals' && parts[2] && parts[3] === 'input' && method === 'POST') {
+        const body = await readJson(req);
+        terminals.input(parts[2], body.data);
+        res.writeHead(204).end();
+        return;
+      }
+      if (parts[1] === 'terminals' && parts[2] && parts[3] === 'size' && method === 'POST') {
+        const body = await readJson(req);
+        terminals.resize(parts[2], body.cols, body.rows);
+        res.writeHead(204).end();
+        return;
+      }
+      if (method === 'GET' && parts[1] === 'terminals' && parts[2] && parts[3] === 'stream') {
+        terminals.get(parts[2]); // 404 before opening the stream
+        openSse(res);
+        // Synchronous replay: no frame can slip in between the backlog and the subscription.
+        const off = terminals.subscribe(parts[2], (ev) => writeTerminalEvent(res, ev));
+        return finishStream(req, res, off);
       }
     }
 

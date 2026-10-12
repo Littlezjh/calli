@@ -3,6 +3,7 @@ import { createHttpServer } from './http.js';
 import { AgentRegistry, defaultInstances } from './agents.js';
 import { AttachmentStore } from './attachments.js';
 import { Store } from './store.js';
+import { TerminalManager } from './terminals.js';
 import { ThreadManager } from './threads.js';
 
 export const VERSION = '0.1.0';
@@ -40,7 +41,8 @@ async function main(): Promise<void> {
   const store = new Store(config.dataDir);
   const manager = new ThreadManager(store, adapters, workdirs, new AttachmentStore(config.dataDir));
   manager.recoverInterrupted();
-  const server = createHttpServer({ manager, registry, token: config.token, webDir: config.webDir, version: VERSION });
+  const terminals = new TerminalManager({ workdirs, shell: config.termShell ?? undefined });
+  const server = createHttpServer({ manager, registry, terminals, token: config.token, webDir: config.webDir, version: VERSION });
 
   server.listen(config.port, config.host, () => {
     console.log(`remote-agent-hub daemon ${VERSION} listening on http://${config.host}:${config.port}`);
@@ -54,6 +56,7 @@ async function main(): Promise<void> {
     console.log(`${signal} received, shutting down`);
     server.close();
     await manager.shutdown();
+    terminals.dispose();
     store.close();
     process.exit(0);
   };
