@@ -306,6 +306,9 @@ export class ThreadManager {
       const starts = this.store.listEventsOfType(id, 'turn.started');
       const hubIndex = starts.findIndex((ev) => ev.turnId === opts.turnId);
       if (hubIndex < 0) throw new HttpError(404, 'no such turn in this thread');
+      // A turn the user stopped is not a place to go on from: the agent may not have kept it at all.
+      const end = this.store.listEventsOfType(id, 'turn.done').find((ev) => ev.turnId === opts.turnId);
+      if (end?.data.stopReason === 'cancelled') throw new HttpError(409, 'this turn was stopped, so a copy cannot end there');
       if (hubIndex < starts.length - 1) {
         cut = { upToSeq: starts[hubIndex + 1].seq - 1, hubIndex, hubKeys: starts.map((ev) => turnKey(String(ev.data.text ?? ''))) };
       }

@@ -712,3 +712,32 @@ test('withNotes numbers each passage, with its comment when there is one, and sp
   assert.deepEqual(splitNotes('> quoted\n\nwhy?'), { notes: [], body: '> quoted\n\nwhy?' });
   assert.deepEqual(splitNotes('see [注释 1] above'), { notes: [], body: 'see [注释 1] above' });
 });
+
+test('a stopped turn says so, keeps what was said, and offers nothing to copy or fork from', () => {
+  seq = 0;
+  const tl = buildTimeline([
+    // Stopped at once: only the line.
+    ev('turn.started', { text: '你好' }, 't1', '2026-10-10T00:00:00.000Z'),
+    ev('turn.done', { stopReason: 'cancelled' }, 't1', '2026-10-10T00:00:00.400Z'),
+    // Stopped mid-answer: the line above the words so far.
+    ev('turn.started', { text: 'hhh' }, 't2', '2026-10-10T00:00:01.000Z'),
+    ev('message.delta', { text: '半句' }, 't2', '2026-10-10T00:00:02.000Z'),
+    ev('turn.done', { stopReason: 'cancelled' }, 't2', '2026-10-10T00:00:04.000Z'),
+    // Stopped while working: the work block says it.
+    ev('turn.started', { text: 'run' }, 't3', '2026-10-10T00:00:05.000Z'),
+    ev('tool.start', { id: 'a', title: 'ls', kind: 'execute', status: 'in_progress' }, 't3', '2026-10-10T00:00:06.000Z'),
+    ev('turn.done', { stopReason: 'cancelled' }, 't3', '2026-10-10T00:00:07.000Z'),
+    // A turn that finished as usual still gets its row.
+    ev('turn.started', { text: 'again' }, 't4', '2026-10-10T00:00:08.000Z'),
+    ev('message.delta', { text: 'answer' }, 't4', '2026-10-10T00:00:09.000Z'),
+    ev('turn.done', { stopReason: 'end_turn' }, 't4', '2026-10-10T00:00:10.000Z'),
+  ]);
+  assert.deepEqual(
+    tl.items.map((i) => i.kind),
+    ['user', 'stopped', 'user', 'stopped', 'assistant', 'user', 'work', 'user', 'assistant', 'actions'],
+  );
+  const work = tl.items[6];
+  assert.equal(work.kind === 'work' && work.stopped, true);
+  assert.equal(tl.items[4].kind === 'assistant' && tl.items[4].text, '半句');
+  assert.equal(tl.items.filter((i) => i.kind === 'actions').length, 1);
+});

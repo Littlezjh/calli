@@ -104,7 +104,11 @@ export type Item =
       done: boolean;
       /** False for turns imported from the agent's history: their events were all written at once. */
       timed: boolean;
+      /** The user stopped the turn: it reads "你在 N 秒后停止了", like Codex. */
+      stopped?: boolean;
     }
+  /** A turn the user stopped before it did anything worth a work block. */
+  | { kind: 'stopped'; key: string; turnId: string; startedAt: string; endedAt: string; timed: boolean }
   | {
       kind: 'approval';
       key: string;
@@ -293,6 +297,9 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
   // Finished turns, with the time each ended. Turns the hub only copied in (imported history,
   // turns synced from the terminal) ended at some earlier time it never saw: those have none.
   const finished = new Map<string, string | undefined>();
+  // Turns the user stopped. What they said so far stays on screen, but there is no answer to copy
+  // or fork from: the agent may not have kept the turn at all.
+  const stopped = new Set<string>();
   const imported = new Set<string>();
   let lastSeq = 0;
   let running = false;
@@ -480,6 +487,17 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
       }
 
       case 'turn.done':
+        if (ev.data.stopReason === 'cancelled') {
+          stopped.add(turn);
+          if (open.work) open.work.stopped = true;
+          else {
+            const line: Item = { kind: 'stopped', key, turnId: turn, startedAt: open.startedAt || ev.ts, endedAt: ev.ts, timed: !imported.has(turn) };
+            // Above whatever the agent had said, where a work block would stand.
+            const at = open.answer ? items.indexOf(open.answer) : -1;
+            if (at >= 0) items.splice(at, 0, line);
+            else items.push(line);
+          }
+        }
         closeTurn(ev.ts);
         finished.set(turn, ev.data.imported || ev.data.fromTerminal ? undefined : ev.ts);
         running = false;
@@ -505,7 +523,7 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
     }
   }
 
-  const withSummaries = addTurnSummaries(items, finished);
+  const withSummaries = addTurnSummaries(items, finished, stopped);
   const awaitingApproval = running && items.some((it) => it.kind === 'approval' && it.decision === null);
   return { items: withSummaries, lastSeq, running, awaitingApproval, usage };
 }
@@ -547,7 +565,7 @@ export function imagePathsIn(text: string): string[] {
  * A turn still running gets neither: its live steps are the story on screen. Turns never overlap
  * in a thread, so a turn ends where the next user item begins.
  */
-function addTurnSummaries(items: Item[], finished: Map<string, string | undefined>): Item[] {
+function addTurnSummaries(items: Item[], finished: Map<string, string | undefined>, stopped: Set<string>): Item[] {
   const out: Item[] = [];
   let turnItems: Item[] = [];
 
@@ -585,7 +603,7 @@ function addTurnSummaries(items: Item[], finished: Map<string, string | undefine
       });
     }
 
-    if (finished.has(turnId)) {
+    if (finished.has(turnId) && !stopped.has(turnId)) {
       const answers = turnItems.filter((it): it is Extract<Item, { kind: 'assistant' }> => it.kind === 'assistant' && it.text.trim() !== '');
       const last = answers[answers.length - 1];
       const at = finished.get(turnId);

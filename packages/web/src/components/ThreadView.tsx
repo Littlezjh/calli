@@ -174,6 +174,14 @@ export function ThreadView({ items, running, roots, loadImage, loadFile, onDecid
           return <ApprovalCard key={item.key} item={item} roots={roots} onDecide={onDecide} />;
         case 'changes':
           return <ChangesCard key={item.key} item={item} roots={roots} />;
+        case 'stopped': {
+          const time = item.timed ? durationLabel(item.startedAt, item.endedAt) : '';
+          return (
+            <div key={item.key} className="row work">
+              <div className="work-toggle stopped">{stoppedLabel(time)}</div>
+            </div>
+          );
+        }
         case 'actions':
           return (
             <div key={item.key} className="row message-actions">
@@ -436,7 +444,7 @@ function WorkGroup({ item, roots }: { item: Extract<Item, { kind: 'work' }>; roo
     if (item.done) setOpen(false);
   }, [item.done]);
   const time = item.done && item.timed ? durationLabel(item.startedAt, item.endedAt) : '';
-  const label = !item.done ? '工作中' : time ? `用时 ${time}` : '已处理';
+  const label = !item.done ? '工作中' : item.stopped ? stoppedLabel(time) : time ? `用时 ${time}` : '已处理';
   const count = item.steps.length;
   const sections = workSections(item.entries);
   return (
@@ -791,4 +799,9 @@ function SentNotes({ notes }: { notes: Note[] }) {
       )}
     </>
   );
+}
+
+/** A turn the user stopped, said the way Codex says it. */
+function stoppedLabel(time: string): string {
+  return time ? `你在 ${time} 后停止了` : '已停止';
 }

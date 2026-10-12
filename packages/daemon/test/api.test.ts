@@ -1015,6 +1015,17 @@ test('fork at a turn: the copy ends where that turn ended, on the hub and on the
 
   assert.equal((await forkAt(thread.id, 'no-such-turn')).status, 404);
 
+  // A turn the user stopped is no place to end a copy, wherever it stands.
+  const stopping = await newThread({ agent: 'pi' });
+  await ask(stopping.id, 'first');
+  const slow = (await (await api(`/api/threads/${stopping.id}/turns`, { method: 'POST', body: JSON.stringify({ text: 'slow' }) })).json()) as { turnId: string };
+  await api(`/api/threads/${stopping.id}/cancel`, { method: 'POST' });
+  await waitFor(async () => ((await turnsOf(stopping.id)).length === 2 && (await events(stopping.id)).some((e) => e.type === 'turn.done' && e.turnId === slow.turnId) ? true : null));
+  await ask(stopping.id, 'after the stop');
+  const stoppedFork = await forkAt(stopping.id, slow.turnId);
+  assert.equal(stoppedFork.status, 409);
+  assert.match(((await stoppedFork.json()) as { error: string }).error, /stopped/);
+
   // A thread whose turns the agent has no record of: there is nowhere on its side to stop.
   const lost = await newThread({ agent: 'pi' });
   await ask(lost.id, 'one');

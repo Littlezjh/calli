@@ -261,6 +261,12 @@ export function Sidebar({
       <div className="sidebar-scroll">
         {!search.trim() && (
           <div className="side-nav">
+            {/* On a wide screen a new thread is the first row, like Codex; a phone keeps the floating button by the thumb. */}
+            {!compact && (
+              <button className="side-link" onClick={onNew}>
+                <IconEdit size={17} /> 新线程
+              </button>
+            )}
             <button className={`side-link${todosActive ? ' active' : ''}`} aria-current={todosActive ? 'page' : undefined} onClick={onOpenTodos}>
               <IconList size={compact ? 21 : 17} /> 计划
             </button>
@@ -270,9 +276,11 @@ export function Sidebar({
       </div>
 
       <div className="sidebar-float">
-        <button className="new-thread" onClick={onNew}>
-          <IconEdit size={compact ? 19 : 16} /> 新线程
-        </button>
+        {compact && (
+          <button className="new-thread" onClick={onNew}>
+            <IconEdit size={19} /> 新线程
+          </button>
+        )}
         {/* The look, the archive, importing and signing out are not everyday things: they live behind this. */}
         <button
           className="round-btn"

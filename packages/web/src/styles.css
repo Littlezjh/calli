@@ -2670,6 +2670,8 @@ input.picker-search {
 .sidebar-float .round-btn {
   width: 40px;
   height: 40px;
+  /* Right-hand, with or without the new-thread button beside it. */
+  margin-left: auto;
 }
 
 /* ---------- Sidebar on a phone ---------- */
