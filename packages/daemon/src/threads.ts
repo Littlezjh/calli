@@ -260,9 +260,14 @@ export class ThreadManager {
       throw new HttpError(400, `${agent} has no session history to import`);
     }
     const sessions = await adapter.listSessions();
+    const allowed = new Map<string, boolean>();
+    const workdirs = this.workdirs;
     return sessions
       // A session whose directory has since been removed cannot be continued, so it is not offered.
-      .filter((s) => s.cwd && isDirectory(s.cwd) && isWithinWorkdirs(s.cwd, this.workdirs))
+      .filter((s) => {
+        if (!allowed.has(s.cwd)) allowed.set(s.cwd, !!s.cwd && isWithinWorkdirs(s.cwd, workdirs) && isDirectory(s.cwd));
+        return allowed.get(s.cwd);
+      })
       .map((s) => ({ ...s, threadId: this.store.findThreadByAgentSession(agent, s.id)?.id ?? null }))
       // Newest first; sessions with no date go last.
       .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
@@ -278,10 +283,15 @@ export class ThreadManager {
     const sessionId = String(input.sessionId ?? '');
     const adapter = this.adapters.get(agent);
     if (!adapter) throw new HttpError(400, `unknown agent: ${agent}`);
-    const summary = (await this.listAgentSessions(agent)).find((s) => s.id === sessionId);
-    if (!summary) throw new HttpError(404, 'session not found, or it is outside the allowed workdirs');
+    if (!adapter.capabilities.history) throw new HttpError(400, `${agent} has no session history to import`);
+    const summary = adapter.getSession
+      ? await adapter.getSession(sessionId)
+      : (await this.listAgentSessions(agent)).find((s) => s.id === sessionId);
+    if (!summary || summary.id !== sessionId || !summary.cwd || !isWithinWorkdirs(summary.cwd, this.workdirs) || !isDirectory(summary.cwd)) {
+      throw new HttpError(404, 'session not found, or it is outside the allowed workdirs');
+    }
     const key = `${agent}:${sessionId}`;
-    if (summary.threadId || this.importing.has(key)) throw new HttpError(409, 'this session is already a thread');
+    if (this.store.findThreadByAgentSession(agent, sessionId) || this.importing.has(key)) throw new HttpError(409, 'this session is already a thread');
     if (!adapter.loadHistory) throw new HttpError(400, `${agent} has no session history to import`);
 
     this.importing.add(key);

@@ -806,7 +806,7 @@ test('Claude: commands it answers but does not announce are added, once', () => 
 // TRAE CLI speaks ACP too (see acp.ts); these tests cover what is its own. The fake agent takes
 // a flavour that answers the way TRAE CLI does: no modes announced, the effort option named
 // reasoning_effort, and deletion happening through its CLI rather than the protocol.
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
 const traexEnv = { FAKE_ACP_FLAVOR: 'traex' };
@@ -1282,6 +1282,45 @@ test('CodexAppServerAdapter: listing, history, forking and deleting go through o
     delete process.env.FAKE_CODEX_DELETE_LOG;
     rmSync(log, { force: true });
   }
+});
+
+test('CodexAppServerAdapter: index-only listing shares requests and keeps sessions beyond page 50', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rah-codex-index-'));
+  const file = join(dir, 'sessions.json');
+  const log = join(dir, 'rpc.jsonl');
+  try {
+    writeFileSync(file, JSON.stringify(Array.from({ length: 5101 }, (_, i) => ({
+      id: `indexed-${i}`, cwd: '/tmp/project', name: `Session ${i}`, updatedAt: 1791648439,
+    }))));
+    const adapter = new CodexAppServerAdapter([process.execPath, fakeCodex], {
+      FAKE_CODEX_SESSIONS_FILE: file, FAKE_CODEX_RPC_LOG: log,
+    });
+    const [first, concurrent] = await Promise.all([adapter.listSessions(), adapter.listSessions()]);
+    assert.equal(first, concurrent, 'concurrent callers share the probe');
+    assert.equal(first.length, 5101);
+    assert.equal(first.at(-1)?.title, 'Session 5100');
+    const calls = readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    assert.equal(calls.filter((c) => c.method === 'initialize').length, 1);
+    assert.equal(calls.filter((c) => c.method === 'thread/list').length, 52);
+    assert.ok(calls.filter((c) => c.method === 'thread/list').every((c) => c.params.useStateDbOnly && c.params.sortKey === 'updated_at'));
+    assert.ok(!calls.some((c) => c.method === 'thread/read' || c.method === 'thread/turns/list'));
+    writeFileSync(file, '[]');
+    assert.deepEqual(await adapter.listSessions(), [], 'a later request sees native changes');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('CodexAppServerAdapter: a broken cursor fails instead of silently truncating the list', async () => {
+  const adapter = new CodexAppServerAdapter([process.execPath, fakeCodex], { FAKE_CODEX_REPEAT_CURSOR: '1' });
+  await assert.rejects(adapter.listSessions(), /repeated session cursor/);
+  await assert.rejects(adapter.listSessions(), /repeated session cursor/, 'failed probes can be retried');
+});
+
+test('CodexAppServerAdapter: one session can be read without listing or hydrating history', async () => {
+  const adapter = new CodexAppServerAdapter([process.execPath, fakeCodex]);
+  assert.equal((await adapter.getSession('codex-thread-1'))?.title, 'Named chat');
+  assert.equal(await adapter.getSession('missing-thread'), null);
 });
 
 test('CodexAppServerAdapter: pictures go as file paths', async () => {

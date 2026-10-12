@@ -42,6 +42,17 @@ const CODEX_MODES: Record<PermissionMode, { sandbox: string; approvalPolicy: str
   full_access: { sandbox: 'danger-full-access', approvalPolicy: 'never' },
 };
 
+/** Metadata shared by the index and a single-thread read; never hydrate turns for a title. */
+function codexSessionSummary(t: any): AgentSessionSummary {
+  const title = [t?.name, t?.preview].find((s: unknown): s is string => typeof s === 'string' && s.trim().length > 0);
+  return {
+    id: String(t?.id ?? ''),
+    cwd: String(t?.cwd ?? ''),
+    title: (title ?? '').slice(0, 80),
+    updatedAt: typeof t?.updatedAt === 'number' ? new Date(t.updatedAt * 1000).toISOString() : null,
+  };
+}
+
 /** The sandbox names `turn/start` takes, unlike the kebab-case ones `thread/start` wants. */
 const SANDBOX_POLICY: Record<string, { type: string }> = {
   'read-only': { type: 'readOnly' },
@@ -51,6 +62,7 @@ const SANDBOX_POLICY: Record<string, { type: string }> = {
 
 /** Effort levels a Codex model may report that the hub's picker can also offer. */
 const KNOWN_EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+const SESSION_SOURCES = ['cli', 'vscode', 'exec', 'appServer', 'unknown'];
 
 /** What `turn/completed` says, mapped to the hub's stop reasons. */
 function stopReasonOf(status: string): string {
@@ -703,30 +715,48 @@ export class CodexAppServerAdapter implements AgentAdapter {
     await this.withServer((peer) => peer.request('thread/delete', { threadId: agentSessionId }));
   }
 
-  /** Every conversation Codex has on record, newest first. */
-  async listSessions(): Promise<AgentSessionSummary[]> {
+  /** Share concurrent list requests without retaining a stale snapshot of native sessions. */
+  private sessionListRead: Promise<AgentSessionSummary[]> | null = null;
+
+  /** Read the index only: the default list call scans rollouts to repair metadata on every page. */
+  listSessions(): Promise<AgentSessionSummary[]> {
+    this.sessionListRead ??= this.readSessionIndex().finally(() => { this.sessionListRead = null; });
+    return this.sessionListRead;
+  }
+
+  private async readSessionIndex(): Promise<AgentSessionSummary[]> {
     return this.withServer(async (peer) => {
       const out: AgentSessionSummary[] = [];
+      const cursors = new Set<string>();
       let cursor: string | undefined;
-      // Without sourceKinds, Codex hides sessions that did not come from its own UIs; `codex exec`
-      // runs are conversations too. Sub-agent scratch threads stay out.
-      const sourceKinds = ['cli', 'vscode', 'exec', 'appServer', 'unknown'];
-      for (let page = 0; page < 50; page++) {
-        const res = await peer.request('thread/list', { limit: 100, sourceKinds, ...(cursor ? { cursor } : {}) });
-        for (const t of res?.data ?? []) {
-          const title = [t?.name, t?.preview].find((s: unknown): s is string => typeof s === 'string' && s.trim().length > 0);
-          out.push({
-            id: String(t?.id ?? ''),
-            cwd: String(t?.cwd ?? ''),
-            title: (title ?? '').slice(0, 80),
-            updatedAt: typeof t?.updatedAt === 'number' ? new Date(t.updatedAt * 1000).toISOString() : null,
-          });
-        }
+      // Include terminal and exec sessions, but keep sub-agent scratch threads out.
+      for (;;) {
+        const res = await peer.request('thread/list', {
+          limit: 500, sourceKinds: SESSION_SOURCES, useStateDbOnly: true, sortKey: 'updated_at',
+          ...(cursor ? { cursor } : {}),
+        });
+        for (const t of res?.data ?? []) out.push(codexSessionSummary(t));
         cursor = res?.nextCursor ?? undefined;
         if (!cursor) break;
+        // Fail visibly instead of returning a silently truncated list (and incomplete search).
+        if (cursors.has(cursor)) throw new Error('Codex returned a repeated session cursor');
+        cursors.add(cursor);
       }
       return out;
-    });
+    }, tmpdir(), 30_000);
+  }
+
+  async getSession(agentSessionId: string): Promise<AgentSessionSummary | null> {
+    try {
+      return await this.withServer(async (peer) => {
+        const res = await peer.request('thread/read', { threadId: agentSessionId, includeTurns: false });
+        const thread = res?.thread;
+        return thread && SESSION_SOURCES.includes(thread.source) ? codexSessionSummary(thread) : null;
+      }, tmpdir(), 30_000);
+    } catch (err) {
+      if (err instanceof RpcError && err.code === -32602) return null;
+      throw err;
+    }
   }
 
   /** Reads a conversation's turns. Reading does not open the thread, so it cannot change it. */
@@ -824,15 +854,25 @@ export class CodexAppServerAdapter implements AgentAdapter {
    * reading history, forking, deleting. Only skill discovery uses the project's directory;
    * none of these probes starts a thread.
    */
-  private async withServer<T>(job: (peer: JsonRpcPeer) => Promise<T>, cwd = tmpdir()): Promise<T> {
+  private async withServer<T>(job: (peer: JsonRpcPeer) => Promise<T>, cwd = tmpdir(), timeoutMs?: number): Promise<T> {
     const [bin, ...args] = this.command;
     const child = spawn(bin, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ...this.env } });
     const peer = new JsonRpcPeer(child, { onNotification: () => undefined, onRequest: async () => undefined }, 'codex');
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      await peer.request('initialize', { clientInfo: { name: 'remote-agent-hub', title: 'Limi', version: '0.1.0' } });
-      peer.notify('initialized', {});
-      return await job(peer);
+      const run = async () => {
+        await peer.request('initialize', { clientInfo: { name: 'remote-agent-hub', title: 'Limi', version: '0.1.0' } });
+        peer.notify('initialized', {});
+        return job(peer);
+      };
+      return await (timeoutMs === undefined ? run() : Promise.race([
+        run(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('读取 Codex 会话超时，请重试。')), timeoutMs);
+        }),
+      ]));
     } finally {
+      clearTimeout(timer);
       peer.close();
     }
   }

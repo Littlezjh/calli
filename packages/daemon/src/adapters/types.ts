@@ -227,6 +227,8 @@ export interface AgentAdapter {
   deleteSession?(agentSessionId: string, cwd: string): Promise<void>;
   /** Every conversation the agent has on record, in any directory. With capabilities.history. */
   listSessions?(): Promise<AgentSessionSummary[]>;
+  /** Read one session's metadata without listing every session or loading its turns. */
+  getSession?(agentSessionId: string): Promise<AgentSessionSummary | null>;
   /** The past turns of a conversation. Reading must not change the conversation. With capabilities.history. */
   loadHistory?(agentSessionId: string, cwd: string): Promise<HistoryTurn[]>;
   /**

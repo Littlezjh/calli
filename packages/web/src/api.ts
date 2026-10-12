@@ -142,6 +142,14 @@ export interface DirectoryInfo {
   parent?: string | null;
 }
 
+export interface ProjectDirectoryInfo {
+  path: string;
+  parent: string | null;
+  directories: Array<{ name: string; path: string }>;
+  allowed: boolean;
+  selectable: boolean;
+}
+
 export interface DirectoryTreeNode {
   name: string;
   path: string;
@@ -769,6 +777,10 @@ export class Api {
   listDirectory(path: string): Promise<DirectoryInfo> {
     const encoded = encodeURIComponent(path);
     return this.request('GET', `/api/directories?path=${encoded}`);
+  }
+
+  projectDirectories(path?: string): Promise<ProjectDirectoryInfo> {
+    return this.request('GET', `/api/project-directories${path ? `?path=${encodeURIComponent(path)}` : ''}`);
   }
 
   directoryTree(root: string, maxDepth = 3): Promise<DirectoryTreeNode> {

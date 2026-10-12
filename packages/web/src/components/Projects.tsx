@@ -1,18 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ApiError, type Api, type WorkdirsConfig } from '../api';
 import { folderName } from '../paths';
-import { IconCheck, IconChevron, IconClose, IconFolder, IconPlus, IconSearch, IconSettings } from './icons';
+import { projectPath, type ProjectOption } from '../projects';
+import { IconCheck, IconComputer, IconGlobe, IconChevron, IconClose, IconFolder, IconPlus, IconSearch, IconSettings } from './icons';
 import { Popover } from './Popover';
-
-/** A directory a new thread can start in, as the picker lists it. */
-export interface ProjectOption {
-  cwd: string;
-  name: string;
-}
 
 interface PickerProps {
   /** Most recently used first; the roots that have no threads yet come after. */
   projects: ProjectOption[];
+  machineLabel: string;
+  remote: boolean;
   cwd: string;
   /** Not in any project: the thread gets a scratch folder from the hub. */
   scratch: boolean;
@@ -32,7 +29,7 @@ const parentOf = (path: string) => path.replace(/\/[^/]+\/?$/, '') || '/';
  * Where a new thread works, like Codex's project menu: the projects used lately (searchable), then
  * a deeper look through the folders, a new project, no project at all, and which folders are open.
  */
-export function ProjectPicker({ projects, cwd, scratch, scratchAvailable, onPick, onScratch, onBrowse, onNewProject, onManageRoots }: PickerProps) {
+export function ProjectPicker({ projects, machineLabel, remote, cwd, scratch, scratchAvailable, onPick, onScratch, onBrowse, onNewProject, onManageRoots }: PickerProps) {
   const [query, setQuery] = useState('');
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -68,14 +65,20 @@ export function ProjectPicker({ projects, cwd, scratch, scratchAvailable, onPick
             </label>
             <div className="pop-scroll">
               {shown.map((p) => {
-                const checked = !scratch && p.cwd === cwd;
+                const checked = !scratch && p.paths.includes(projectPath(cwd));
                 return (
                   <button key={p.cwd} type="button" role="menuitemradio" aria-checked={checked} className="pop-item compact" title={p.cwd} onClick={act(() => onPick(p.cwd))}>
                     <span className="pop-item-icon">
                       <IconFolder size={16} />
                     </span>
                     <span className="pop-item-text">
-                      <span className="pop-item-label">{p.name}</span>
+                      <span className="pop-item-label project-label-line">
+                        <span className="project-name-text">{p.name}</span>
+                        <span className={`project-machine${remote ? ' remote' : ''}`} title={remote ? `远程 · ${machineLabel}` : '本机 · Hub 所在机器'}>
+                          {remote ? <IconGlobe size={13} /> : <IconComputer size={13} />}
+                          <span>{machineLabel}</span>
+                        </span>
+                      </span>
                       <span className="pop-item-hint">{parentOf(p.cwd)}</span>
                     </span>
                     {checked && (

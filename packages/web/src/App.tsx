@@ -16,7 +16,7 @@ import {
   type WorkdirsConfig,
 } from './api';
 import type { HubAction } from './commands';
-import { projectDir } from './sidebar';
+import { buildProjectOptions } from './projects';
 import { useAppearance, useIsCompact, useListSwipe } from './hooks';
 import { useHosts } from './hosts';
 import type { PreparedImage } from './images';
@@ -30,7 +30,7 @@ import { ArchivePanel } from './components/ArchivePanel';
 import { Composer, prefillComposerDraft, type DraftNote } from './components/Composer';
 import { DirectoryPicker } from './components/DirectoryPicker';
 import { Dialog } from './components/Dialog';
-import { HostDown, HostsPanel } from './components/Hosts';
+import { HostDown, HostsPanel, MachinePicker } from './components/Hosts';
 import { ImportPanel } from './components/ImportPanel';
 import { Menu } from './components/Menu';
 import { StatusPanel } from './components/StatusPanel';
@@ -49,7 +49,7 @@ import { Sidebar, SIDEBAR_SHORTCUT } from './components/Sidebar';
 import { forkBlocked, useThreadActions } from './components/ThreadActions';
 import { ThreadView } from './components/ThreadView';
 import { TurnRuler } from './components/TurnRuler';
-import { NewProjectDialog, ProjectPicker, RootsDialog, type ProjectOption } from './components/Projects';
+import { NewProjectDialog, ProjectPicker, RootsDialog } from './components/Projects';
 import { NoteMarks, type NoteMark } from './components/NoteMarks';
 import { Toast, type ToastState } from './components/Toast';
 import { TokenGate } from './components/TokenGate';
@@ -278,24 +278,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
   }, [api, draftCwd, selectedId]);
   const offer = worktreeOffer?.cwd === draftCwd ? worktreeOffer : null;
   // Projects for a new thread: where threads went lately, newest first, then roots not used yet.
-  const projectOptions = useMemo<ProjectOption[]>(() => {
-    const seen = new Set<string>();
-    const out: ProjectOption[] = [];
-    const push = (cwd: string, real: string) => {
-      if (!cwd || seen.has(real)) return;
-      seen.add(real);
-      out.push({ cwd, name: folderName(cwd) || cwd });
-    };
-    // The one picked last comes first, even before any thread has run there (a project just made).
-    if (draftCwd && !threads.some((t) => !t.scratch && projectDir(t).cwd === draftCwd)) push(draftCwd, draftCwd);
-    for (const t of [...threads].sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))) {
-      if (t.scratch || t.archivedAt) continue;
-      const dir = projectDir(t);
-      push(dir.cwd, dir.real);
-    }
-    for (const root of workdirs) push(root, root);
-    return out;
-  }, [threads, workdirs, draftCwd]);
+  const projectOptions = useMemo(() => buildProjectOptions(threads, workdirs, draftCwd), [threads, workdirs, draftCwd]);
 
   // An address typed or followed while the page is open.
   useEffect(() => {
@@ -1048,6 +1031,8 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
       <AgentPicker agents={agents} value={draftAgent} onChange={pickAgent} accounts={accounts} onAddAccount={addAccount} />
       <ProjectPicker
         projects={projectOptions}
+        machineLabel={host?.label ?? (hostId ? '远程机器' : '本机')}
+        remote={Boolean(hostId)}
         cwd={draftCwd}
         scratch={draftScratch}
         scratchAvailable={scratchAvailable}
@@ -1060,6 +1045,12 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
         onNewProject={() => setProjectDialog('new')}
         onManageRoots={() => setProjectDialog('roots')}
       />
+      {onHost && <MachinePicker
+        hosts={hosts}
+        current={hostId}
+        onPick={(id) => { if (id !== hostId) onHost(id); }}
+        onManage={() => setHostsOpen(true)}
+      />}
       {offer && !draftScratch && <WorkspacePicker branch={offer.branch} changes={offer.changes} worktree={draftWorktree} onChange={setDraftWorktree} />}
       {draftSectionId && sections.some((s) => s.id === draftSectionId) && (
         <button
@@ -1120,6 +1111,12 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           api={api}
           roots={workdirs}
           selected={draftCwd}
+          machine={host?.label ?? (hostId ? '远程机器' : '本机')}
+          onRootsChange={applyWorkdirs}
+          onManageRoots={() => {
+            setShowDirPicker(false);
+            setProjectDialog('roots');
+          }}
           onSelect={(cwd) => {
             setDraftCwd(cwd);
             setDraftScratch(false);
@@ -1184,6 +1181,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           <div className="topbar-heading">
             {/* The plan page carries its own heading. */}
             <div className="topbar-title">{host && !hostUp ? host.label : onTodos || onSkills ? '' : selected ? selected.title : '新线程'}</div>
+            {!selected && !onTodos && !onSkills && host && hostUp && <div className="topbar-sub">{host.label}</div>}
             {selected && (
               <div className="topbar-sub" title={selected.cwd}>
                 {agentLabel(selected.agent)} ·{' '}

@@ -13,6 +13,7 @@ import { checkGrant, cookieValue, makeGrant, PREVIEW_COOKIE, readPreviewFile } f
 import type { TerminalEvent, TerminalManager } from './terminals.js';
 import type { ThreadManager } from './threads.js';
 import { isWithinWorkdirs } from './workdirs.js';
+import { listProjectDirectories } from './project-directories.js';
 
 export interface HttpDeps {
   manager: ThreadManager;
@@ -286,6 +287,11 @@ export function createHttpServer(deps: HttpDeps): Server {
 
     // GET /api/config: the project roots, and whether threads can work outside a project
     if (method === 'GET' && path === '/api/config') return sendJson(res, 200, manager.workdirsConfig());
+
+    // Browse candidate project folders without widening file access or allowed working directories.
+    if (method === 'GET' && path === '/api/project-directories') {
+      return sendJson(res, 200, listProjectDirectories(manager.workdirsConfig().workdirs, url.searchParams.get('path') ?? undefined));
+    }
 
     // POST /api/workdirs { path }, DELETE /api/workdirs?path=: project roots added from the page
     if (path === '/api/workdirs') {
