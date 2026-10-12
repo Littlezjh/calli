@@ -19,6 +19,7 @@ import {
 } from './adapters/types.js';
 import { MAX_IMAGES, sniffImageType, type AttachmentStore, type StoredAttachment } from './attachments.js';
 import { HttpError } from './errors.js';
+import { handoverPrompt, synthesizeHandover, turnMessage } from './handover.js';
 import { isWithinWorkdirs } from './workdirs.js';
 import { coalesceToolEvents, compactDeltas, type EmittedEvent, type EventType, type StoredEvent } from './events.js';
 import type { SectionRecord, Store, ThreadRecord, TodoRecord } from './store.js';
@@ -890,7 +891,7 @@ export class ThreadManager {
    */
   async startTurn(
     threadId: string,
-    input: { text?: unknown; images?: unknown; queue?: unknown },
+    input: { text?: unknown; images?: unknown; queue?: unknown; handover?: unknown },
   ): Promise<{ turnId: string } | { queued: true; id: string }> {
     const thread = this.getThread(threadId);
     const text = typeof input.text === 'string' ? input.text.trim() : '';
@@ -927,9 +928,50 @@ export class ThreadManager {
       this.store.updateThread(threadId, { title });
     }
 
-    this.emitThreadEvent(threadId, turnId, 'turn.started', { text, ...(stored.length ? { images: stored } : {}) });
+    this.emitThreadEvent(threadId, turnId, 'turn.started', {
+      text,
+      ...(stored.length ? { images: stored } : {}),
+      ...(typeof input.handover === 'string' && input.handover ? { handover: input.handover } : {}),
+    });
     void this.runTurn(thread, turnId, { text, images });
     return { turnId };
+  }
+
+  /**
+   * Asks this thread's agent to write a handover summary for another agent, in its own session:
+   * it knows its own context best. The turn runs like any other and streams into the thread.
+   */
+  async startHandover(threadId: string, target: string): Promise<{ turnId: string }> {
+    const thread = this.getThread(threadId);
+    const successor = this.adapters.get(target);
+    if (!successor) throw new HttpError(404, `no such agent: ${target}`);
+    if (target === thread.agent) throw new HttpError(400, 'the successor must be another agent');
+    const started = await this.startTurn(threadId, { text: handoverPrompt(successor.label), handover: target });
+    if (!('turnId' in started)) throw new HttpError(409, 'a turn is already running in this thread');
+    return started;
+  }
+
+  /**
+   * The handover summary: what the agent wrote in its handover turn, or — when the turn failed or
+   * none was run — one the hub synthesizes from the event log, which holds the whole process.
+   */
+  handoverSummary(
+    threadId: string,
+    turnId: string | null,
+    target?: string,
+  ): { pending: true } | { summary: string; source: 'agent' | 'log' } {
+    const thread = this.getThread(threadId);
+    const events = this.listEventsSince(threadId, 0);
+    if (turnId) {
+      const turnEvents = events.filter((e) => e.turnId === turnId);
+      if (turnEvents.length === 0) throw new HttpError(404, 'no such turn');
+      if (!turnEvents.some((e) => e.type === 'turn.done' || e.type === 'turn.error')) return { pending: true };
+      const written = turnMessage(turnEvents).trim();
+      if (written) return { summary: written, source: 'agent' };
+    }
+    const successor = (target ? this.adapters.get(target)?.label ?? target : '另一个 agent');
+    const from = this.adapters.get(thread.agent)?.label ?? thread.agent;
+    return { summary: synthesizeHandover(events, { title: thread.title, from, target: successor }), source: 'log' };
   }
 
   /** Takes a waiting message out of the queue. */

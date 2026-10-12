@@ -2658,6 +2658,58 @@ input.picker-search {
   cursor: pointer;
 }
 
+/* ---------- Handover ---------- */
+
+.handover {
+  width: min(440px, 100%);
+}
+
+.handover-targets {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 4px 0 18px;
+}
+
+.handover-target {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14.5px;
+  cursor: pointer;
+}
+
+.handover-target.on {
+  border-color: color-mix(in srgb, var(--text) 45%, transparent);
+  background: var(--surface);
+}
+
+.handover-summary {
+  max-height: min(420px, 48dvh);
+  overflow: auto;
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  font-size: 12.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.handover-note {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
 .dialog-option input {
   width: 17px;
   height: 17px;

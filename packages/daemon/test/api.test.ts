@@ -1828,3 +1828,33 @@ test('a page of history collapses a tool call\'s update burst, and the payload t
   const unzipped = JSON.parse(gunzipSync(raw.body).toString()) as Logged[];
   assert.equal(unzipped.filter((e) => e.type === 'tool.update').length, 0);
 });
+
+test('handover: the agent writes the summary; the log stands in when it cannot', async () => {
+  const thread = (await (await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: workdir }) })).json()) as { id: string };
+  await api(`/api/threads/${thread.id}/turns`, { method: 'POST', body: JSON.stringify({ text: 'hello' }) });
+  await untilIdle(thread.id);
+
+  // A successor must exist and cannot be the thread's own agent.
+  assert.equal((await api(`/api/threads/${thread.id}/handover`, { method: 'POST', body: JSON.stringify({ target: 'pi' }) })).status, 400);
+  assert.equal((await api(`/api/threads/${thread.id}/handover`, { method: 'POST', body: JSON.stringify({ target: 'nobody' }) })).status, 404);
+
+  // The handover turn runs like any other; the fake pi echoes the prompt back.
+  const started = (await (await api(`/api/threads/${thread.id}/handover`, { method: 'POST', body: JSON.stringify({ target: 'agy' }) })).json()) as { turnId: string };
+  const written = await waitFor(async () => {
+    const r = (await (await api(`/api/threads/${thread.id}/handover?turn=${started.turnId}&target=agy`)).json()) as
+      | { pending: true }
+      | { summary: string; source: string };
+    return 'summary' in r ? r : null;
+  }, 15_000);
+  assert.equal(written.source, 'agent');
+  assert.match(written.summary, /hi there/);
+  assert.match(written.summary, /Antigravity/, 'the prompt names the successor by its label');
+
+  // Without the turn: the hub synthesizes from the log, quoting the user's asks.
+  const synthesized = (await (await api(`/api/threads/${thread.id}/handover?turn=&target=agy`)).json()) as { summary: string; source: string };
+  assert.equal(synthesized.source, 'log');
+  assert.match(synthesized.summary, /1\. hello/);
+  assert.match(synthesized.summary, /Antigravity/);
+  // The hub-injected handover turn is not one of the asks.
+  assert.doesNotMatch(synthesized.summary, /请写一份交接摘要/);
+});

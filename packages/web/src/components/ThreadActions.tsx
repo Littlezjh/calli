@@ -3,8 +3,9 @@ import type { AgentInfo, Api, Section, Thread, Todo } from '../api';
 import { copyText } from '../clipboard';
 import { folderName } from '../paths';
 import { Dialog } from './Dialog';
+import { HandoverDialog } from './HandoverDialog';
 import { Menu, type MenuEntry } from './Menu';
-import { IconArchive, IconCheck, IconCopy, IconDot, IconEdit, IconFork, IconList, IconPin, IconPlus, IconTrash } from './icons';
+import { IconArchive, IconCheck, IconCopy, IconDot, IconEdit, IconFork, IconHand, IconList, IconPin, IconPlus, IconTrash } from './icons';
 import type { ToastState } from './Toast';
 
 interface Deps {
@@ -37,7 +38,9 @@ type DialogState =
   | { kind: 'delete'; thread: Thread }
   | { kind: 'new-section'; thread: Thread | null }
   | { kind: 'rename-section'; section: Section }
-  | { kind: 'delete-section'; section: Section };
+  | { kind: 'delete-section'; section: Section }
+  /** Pick another agent and get a summary to hand the thread's task over to it. */
+  | { kind: 'handover'; thread: Thread };
 
 export type ThreadAction = 'rename' | 'pin' | 'fork' | 'archive' | 'restore' | 'delete';
 
@@ -205,6 +208,7 @@ export function useThreadActions(deps: Deps) {
       ...(agents.find((a) => a.id === thread.agent)?.capabilities.fork
         ? [{ id: 'fork', label: '分叉', icon: IconFork, disabled: forkBlocked(thread) !== null, onSelect: () => run('fork', thread) }]
         : []),
+      { id: 'handover', label: '交接', icon: IconHand, onSelect: () => setDialog({ kind: 'handover', thread }) },
       'separator',
       thread.archivedAt
         ? { id: 'restore', label: '恢复', icon: IconArchive, onSelect: () => run('restore', thread) }
@@ -299,6 +303,11 @@ export function useThreadActions(deps: Deps) {
           }
           onCancel={close}
         />
+      );
+    } else if (dialog.kind === 'handover') {
+      const { thread } = dialog;
+      dialogNode = (
+        <HandoverDialog api={api} thread={thread} agents={agents} onClose={close} onError={onError} />
       );
     } else {
       const { section } = dialog;

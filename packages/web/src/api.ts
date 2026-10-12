@@ -399,6 +399,21 @@ export class Api {
     return this.request('POST', `/api/threads/${threadId}/sync`);
   }
 
+  /** Asks the thread's agent to write a handover summary for another agent, in its own session. */
+  startHandover(threadId: string, target: string): Promise<{ turnId: string }> {
+    return this.request('POST', `/api/threads/${threadId}/handover`, { target });
+  }
+
+  /** The handover summary: `{ pending: true }` while the handover turn is still running. */
+  handoverSummary(
+    threadId: string,
+    turn: string,
+    target: string,
+  ): Promise<{ pending: true } | { summary: string; source: 'agent' | 'log' }> {
+    const q = `turn=${encodeURIComponent(turn)}&target=${encodeURIComponent(target)}`;
+    return this.request('GET', `/api/threads/${threadId}/handover?${q}`);
+  }
+
   /** CLIs on PATH that look like another copy of a known agent, offered for adding. */
   discoverAgents(): Promise<Array<{ id: string; adapter: string; command: string }>> {
     return this.request('GET', '/api/agents/discover');

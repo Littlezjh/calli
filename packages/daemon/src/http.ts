@@ -362,6 +362,19 @@ export function createHttpServer(deps: HttpDeps): Server {
         return finishStream(req, res, off);
       }
 
+      if (method === 'POST' && sub === 'handover') {
+        // Asks the thread's agent to write a summary for another agent; the GET reads it back.
+        const body = await readJson(req);
+        return sendJson(res, 202, await manager.startHandover(threadId, String(body.target ?? '')));
+      }
+      if (method === 'GET' && sub === 'handover') {
+        return sendJson(
+          res,
+          200,
+          await manager.handoverSummary(threadId, url.searchParams.get('turn'), url.searchParams.get('target') ?? undefined),
+        );
+      }
+
       if (method === 'POST' && sub === 'turns') {
         const body = await readJson(req, MAX_TURN_BODY);
         return sendJson(res, 202, await manager.startTurn(threadId, { text: body.text, images: body.images, queue: body.queue }));
