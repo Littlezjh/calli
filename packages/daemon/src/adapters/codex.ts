@@ -5,7 +5,7 @@ import type { EmittedEvent } from '../events.js';
 import { commandExists } from '../util.js';
 import { CODEX_ICON } from './icons.js';
 import { configDirectory, findSessionFile, quoteArg } from './session-location.js';
-import { JsonRpcPeer } from './jsonrpc.js';
+import { JsonRpcPeer, RpcError } from './jsonrpc.js';
 import type {
   AgentAdapter,
   AgentSession,
@@ -17,6 +17,7 @@ import type {
   ModelOption,
   PermissionMode,
   PermissionOption,
+  PlanQuota,
   SlashCommand,
   StartOptions,
   TurnHooks,
@@ -263,8 +264,9 @@ export function turnsFromCodexHistory(turns: any[]): HistoryTurn[] {
           .join('');
         continue;
       }
-      if (item?.type === 'agentMessage') {
-        if (item.text) current.events.push({ type: 'message.delta', data: { text: String(item.text) } });
+      if (item?.type === 'agentMessage' || item?.type === 'exitedReviewMode') {
+        const text = item.type === 'exitedReviewMode' ? item.review : item.text;
+        if (text) current.events.push({ type: 'message.delta', data: { text: String(text) } });
         continue;
       }
       if (item?.type === 'reasoning') {
@@ -304,8 +306,56 @@ export function turnsFromCodexHistory(turns: any[]): HistoryTurn[] {
  * are features of its terminal UI, not of app-server; the hub offers its own panels for those.
  */
 export const CODEX_LOCAL_COMMANDS: SlashCommand[] = [
-  { name: 'compact', description: 'Compact the conversation history of this thread', kind: 'command' },
+  { name: 'compact', description: '压缩当前线程的上下文', kind: 'command' },
+  { name: 'review', description: '审查未提交的修改，或按说明审查代码', hint: '[审查说明]', kind: 'command' },
+  { name: 'skills', description: '查看当前目录可用的技能', kind: 'command' },
+  { name: 'mcp', description: '查看 MCP 服务、工具数量和认证状态', kind: 'command' },
+  { name: 'usage', description: '查看套餐额度和重置时间', kind: 'command' },
 ];
+
+/** Prefer the complete bucket map; older servers only return the single snapshot. */
+export function codexQuota(response: any): PlanQuota {
+  const buckets = Object.entries(response?.rateLimitsByLimitId ?? {});
+  if (!buckets.length && response?.rateLimits) buckets.push([response.rateLimits.limitId ?? 'codex', response.rateLimits]);
+  const windows: PlanQuota['windows'] = [];
+  for (const [id, raw] of buckets) {
+    const bucket = raw as any;
+    for (const [key, fallback] of [['primary', '主要'], ['secondary', '次要']]) {
+      const window = bucket?.[key];
+      if (typeof window?.usedPercent !== 'number' || !Number.isFinite(window.usedPercent)) continue;
+      const mins = window.windowDurationMins;
+      const label = typeof mins !== 'number' || !Number.isFinite(mins) || mins <= 0 ? fallback
+        : mins % 1440 === 0 ? `${mins / 1440}D` : mins % 60 === 0 ? `${mins / 60}H` : `${mins}M`;
+      const reset = typeof window.resetsAt === 'number' ? new Date(window.resetsAt * 1000) : null;
+      windows.push({
+        label,
+        ...(buckets.length > 1 || bucket?.limitName || id !== 'codex' ? { scope: bucket?.limitName || id } : {}),
+        usedPercent: Math.max(0, Math.min(100, window.usedPercent)),
+        ...(reset && Number.isFinite(reset.getTime()) ? { resetsAt: reset.toISOString() } : {}),
+      });
+    }
+  }
+  return { windows, checkedAt: new Date().toISOString() };
+}
+
+interface CodexSkill { name: string; description: string; path: string }
+
+async function readSkills(peer: JsonRpcPeer, cwd: string): Promise<CodexSkill[]> {
+  const res = await peer.request('skills/list', { cwds: [cwd] });
+  const skills = new Map<string, CodexSkill>();
+  for (const entry of res?.data ?? []) {
+    for (const skill of entry?.skills ?? []) {
+      if (skill?.enabled === false || typeof skill?.name !== 'string' || !skill.name || typeof skill.path !== 'string') continue;
+      if (CODEX_LOCAL_COMMANDS.some((command) => command.name === skill.name)) continue;
+      if (!skills.has(skill.name)) skills.set(skill.name, {
+        name: skill.name,
+        description: skill.interface?.shortDescription || skill.shortDescription || skill.description || '使用此技能',
+        path: skill.path,
+      });
+    }
+  }
+  return [...skills.values()];
+}
 
 /** A live Codex thread: one process, one thread id, any number of turns. */
 class CodexSession implements AgentSession {
@@ -321,6 +371,7 @@ class CodexSession implements AgentSession {
   constructor(
     readonly agentSessionId: string,
     private readonly peer: JsonRpcPeer,
+    private readonly cwd: string,
   ) {}
 
   /** Called by the peer for every notification. Ignores anything about another thread. */
@@ -335,6 +386,9 @@ class CodexSession implements AgentSession {
         break;
       }
       case 'item/completed': {
+        if (params?.item?.type === 'exitedReviewMode' && params.item.review) {
+          this.emit({ type: 'message.delta', data: { text: String(params.item.review) } });
+        }
         if (params?.item?.type === 'fileChange') this.fileChanges.set(params.item.id, params.item.changes ?? []);
         const ev = mapCodexItemEnd(params?.item);
         if (ev) this.emit(ev);
@@ -438,15 +492,41 @@ class CodexSession implements AgentSession {
     if (this.turn) throw new Error('a turn is already running');
     this.hooks = hooks;
 
-    // The one command the adapter answers itself.
-    if (/^\/compact\b/.test(input.text.trim()) && input.images.length === 0) {
+    const command = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(input.text.trim());
+    const name = command?.[1];
+    const args = command?.[2]?.trim() ?? '';
+    if (name && CODEX_LOCAL_COMMANDS.some((c) => c.name === name) && name !== 'review') {
       try {
-        await this.peer.request('thread/compact/start', { threadId: this.agentSessionId });
-        hooks.emit({ type: 'message.delta', data: { text: '已开始压缩上下文。' } });
+        if (input.images.length || args) throw new Error(`/${name} 不接受参数或图片。`);
+        let text: string;
+        if (name === 'compact') {
+          await this.peer.request('thread/compact/start', { threadId: this.agentSessionId });
+          text = '已开始压缩上下文。';
+        } else if (name === 'skills') {
+          const skills = await readSkills(this.peer, this.cwd);
+          text = skills.length ? skills.map((s) => `- /${s.name}：${s.description}`).join('\n') : '当前目录没有可用技能。';
+        } else if (name === 'mcp') {
+          const lines: string[] = [];
+          let cursor: string | undefined;
+          do {
+            const res = await this.peer.request('mcpServerStatus/list', { ...(cursor ? { cursor } : {}) });
+            for (const server of res?.data ?? []) {
+              const auth: Record<string, string> = { unsupported: '不支持认证', notLoggedIn: '未登录', bearerToken: '令牌认证', oAuth: '已登录' };
+              lines.push(`- ${server.name}：${Object.keys(server.tools ?? {}).length} 个工具 · ${auth[server.authStatus] ?? '认证状态未知'}`);
+            }
+            cursor = res?.nextCursor ?? undefined;
+          } while (cursor);
+          text = lines.length ? lines.join('\n') : '没有配置 MCP 服务。';
+        } else {
+          const quota = codexQuota(await this.peer.request('account/rateLimits/read', {}));
+          text = quota.windows.length ? quota.windows.map((w) => `- ${w.scope ? `${w.scope} · ` : ''}${w.label}：已用 ${w.usedPercent}%${w.resetsAt ? `，重置于 ${w.resetsAt}` : ''}`).join('\n') : '当前账号没有可用的套餐额度信息。';
+        }
+        hooks.emit({ type: 'message.delta', data: { text } });
         return { stopReason: 'end_turn' };
       } catch (err) {
-        this.hooks = null;
         return { stopReason: 'error', error: err instanceof Error ? err.message : String(err) };
+      } finally {
+        this.hooks = null;
       }
     }
 
@@ -455,10 +535,21 @@ class CodexSession implements AgentSession {
       resolveTurn = resolve;
     });
     try {
-      const res = await this.peer.request('turn/start', {
+      let skill: CodexSkill | undefined;
+      if (name && name !== 'review') {
+        skill = (await readSkills(this.peer, this.cwd)).find((s) => s.name === name);
+        if (!skill) throw new Error(`未知命令 /${name}，请在输入框输入 / 查看可用操作和技能。`);
+      }
+      if (name === 'review' && input.images.length) throw new Error('/review 不接受图片。');
+      const res = name === 'review' ? await this.peer.request('review/start', {
+        threadId: this.agentSessionId,
+        delivery: 'inline',
+        target: args ? { type: 'custom', instructions: args } : { type: 'uncommittedChanges' },
+      }) : await this.peer.request('turn/start', {
         threadId: this.agentSessionId,
         input: [
-          ...(input.text ? [{ type: 'text', text: input.text }] : []),
+          ...(input.text ? [{ type: 'text', text: skill ? `$${skill.name}${args ? ` ${args}` : ''}` : input.text }] : []),
+          ...(skill ? [{ type: 'skill', name: skill.name, path: skill.path }] : []),
           ...input.images.filter((img) => typeof img.path === 'string').map((img) => ({ type: 'localImage', path: img.path })),
         ],
         ...this.turnOverrides(),
@@ -527,8 +618,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
     multiAccount: false,
     // A thread is resumed with the directory to work in, whatever directory it was made in.
     forkInto: true,
-    // Its app-server has no usage request yet.
-    quota: false,
+    quota: true,
   };
 
   private modelProbe: Promise<ModelOption[]> | null = null;
@@ -566,8 +656,20 @@ export class CodexAppServerAdapter implements AgentAdapter {
     });
   }
 
-  commands(): Promise<SlashCommand[]> {
-    return Promise.resolve(CODEX_LOCAL_COMMANDS);
+  async commands(cwd?: string): Promise<SlashCommand[]> {
+    if (!cwd) return CODEX_LOCAL_COMMANDS;
+    try {
+      const skills = await this.withServer((peer) => readSkills(peer, cwd), cwd);
+      return [...CODEX_LOCAL_COMMANDS, ...skills.map((s): SlashCommand => ({ name: s.name, description: s.description, kind: 'skill', hint: '[任务说明]' }))];
+    } catch (err) {
+      // Older app-servers may not expose skills; their built-in commands still work.
+      if (err instanceof RpcError && err.code === -32601) return CODEX_LOCAL_COMMANDS;
+      throw err;
+    }
+  }
+
+  async fetchQuota(): Promise<PlanQuota> {
+    return this.withServer(async (peer) => codexQuota(await peer.request('account/rateLimits/read', {})));
   }
 
   resumeCommand(agentSessionId: string): string {
@@ -688,7 +790,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
         if (!threadId) throw new Error('Codex did not return a thread id');
       }
 
-      const session = new CodexSession(threadId, peer);
+      const session = new CodexSession(threadId, peer, opts.cwd);
       holder.session = session;
       // Effort has no place on thread/start; model and mode still ride with the next turn so a
       // resumed thread switches over even where thread/resume kept its old settings.
@@ -704,11 +806,12 @@ export class CodexAppServerAdapter implements AgentAdapter {
 
   /**
    * Runs one job against a short-lived server that never becomes a thread's session: listing,
-   * reading history, forking, deleting. Started outside any project, so it opens no thread.
+   * reading history, forking, deleting. Only skill discovery uses the project's directory;
+   * none of these probes starts a thread.
    */
-  private async withServer<T>(job: (peer: JsonRpcPeer) => Promise<T>): Promise<T> {
+  private async withServer<T>(job: (peer: JsonRpcPeer) => Promise<T>, cwd = tmpdir()): Promise<T> {
     const [bin, ...args] = this.command;
-    const child = spawn(bin, args, { cwd: tmpdir(), stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ...this.env } });
+    const child = spawn(bin, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ...this.env } });
     const peer = new JsonRpcPeer(child, { onNotification: () => undefined, onRequest: async () => undefined }, 'codex');
     try {
       await peer.request('initialize', { clientInfo: { name: 'remote-agent-hub', title: 'Remote Agent Hub', version: '0.1.0' } });

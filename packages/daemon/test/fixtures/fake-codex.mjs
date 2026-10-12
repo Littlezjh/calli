@@ -181,6 +181,7 @@ const finishTurn = (turnId, status, error = null) =>
 
 rl.on('line', (line) => {
   const msg = JSON.parse(line);
+  if (process.env.FAKE_CODEX_RPC_LOG && msg.method) appendFileSync(process.env.FAKE_CODEX_RPC_LOG, JSON.stringify(msg) + '\n');
 
   // A decision for an approval we asked about.
   if (msg.id !== undefined && msg.method === undefined) {
@@ -217,6 +218,36 @@ rl.on('line', (line) => {
       return out({ jsonrpc: '2.0', id: msg.id, result: { userAgent: 'fake-codex/0.160', codexHome: '/tmp/codex' } });
     case 'model/list':
       return out({ jsonrpc: '2.0', id: msg.id, result: { data: MODELS, nextCursor: null } });
+    case 'account/rateLimits/read': {
+      if (process.env.FAKE_CODEX_QUOTA_ERROR) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: 'ChatGPT authentication required' } });
+      const rateLimits = { limitId: 'codex', primary: { usedPercent: 25, windowDurationMins: 300, resetsAt: 1791800000 }, secondary: { usedPercent: 82, windowDurationMins: 10080, resetsAt: 1792000000 } };
+      return out({ jsonrpc: '2.0', id: msg.id, result: { rateLimits, rateLimitsByLimitId: { codex: rateLimits, review: { limitName: '代码审查', primary: { usedPercent: 10, windowDurationMins: 10080 } } } } });
+    }
+    case 'skills/list': {
+      if (process.env.FAKE_CODEX_NO_SKILLS) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: 'not found' } });
+      const cwd = msg.params?.cwds?.[0];
+      const skills = [
+        { name: 'inspect', path: `${cwd}/.agents/skills/inspect/SKILL.md`, description: `检查项目 ${basename(cwd)}`, enabled: true },
+        { name: 'disabled', path: `${cwd}/disabled/SKILL.md`, description: 'disabled', enabled: false },
+        { name: 'review', path: `${cwd}/review/SKILL.md`, description: 'shadowed by built-in', enabled: true },
+      ];
+      return out({ jsonrpc: '2.0', id: msg.id, result: { data: [{ cwd, skills, errors: [] }] } });
+    }
+    case 'mcpServerStatus/list':
+      return out({ jsonrpc: '2.0', id: msg.id, result: msg.params?.cursor
+        ? { data: [{ name: 'docs', tools: {}, authStatus: 'unsupported' }], nextCursor: null }
+        : { data: [{ name: 'repo', tools: { search: {} }, authStatus: 'oAuth' }], nextCursor: 'page-2' } });
+    case 'review/start': {
+      const turnId = `turn-${nextTurnSeq++}`;
+      activeTurn = turnId;
+      out({ jsonrpc: '2.0', id: msg.id, result: { turn: { id: turnId }, reviewThreadId: threadId } });
+      setTimeout(() => {
+        notify('item/completed', { item: { type: 'exitedReviewMode', id: 'review-result', review: `审查完成：${msg.params.target.instructions ?? msg.params.target.type}` } });
+        activeTurn = null;
+        finishTurn(turnId, 'completed');
+      }, 15);
+      return;
+    }
     case 'thread/start':
       if (typeof msg.params?.sandbox === 'string') currentSandbox = msg.params.sandbox.replace(/-([a-z])/g, (_, c) => c.toUpperCase()).replace('Fullaccess', 'FullAccess');
       if (typeof msg.params?.approvalPolicy === 'string') currentApproval = msg.params.approvalPolicy;
@@ -231,10 +262,12 @@ rl.on('line', (line) => {
       const turnId = `turn-${nextTurnSeq++}`;
       const text = (msg.params?.input ?? []).filter((i) => i.type === 'text').map((i) => i.text).join('');
       const images = (msg.params?.input ?? []).filter((i) => i.type === 'localImage');
+      const skills = (msg.params?.input ?? []).filter((i) => i.type === 'skill');
       out({ jsonrpc: '2.0', id: msg.id, result: { turn: { id: turnId, items: [], itemsView: 'notLoaded', status: 'inProgress', error: null } } });
       activeTurn = turnId;
       notify('turn/started', { turn: { id: turnId, items: [], itemsView: 'notLoaded', status: 'inProgress', error: null } });
       if (images.length) say(`images:${images.map((i) => i.path).join(',')}`);
+      if (skills.length) say(`skills:${skills.map((s) => `${s.name}@${s.path}`).join(',')};`);
       setTimeout(() => runTurn(text, turnId, () => { activeTurn = null; finishTurn(turnId, 'completed'); }), 15);
       return;
     }
