@@ -1,6 +1,32 @@
 import type { StoredEvent } from './timeline';
 
 /** Where threads may work: the project roots, and whether one can start outside any project. */
+export interface FolderEntry {
+  name: string;
+  type: 'dir' | 'file';
+  size?: number;
+  /** Ignored by git: shown, but quieter. */
+  ignored?: boolean;
+}
+
+/** A folder as the file browser sees it. `root` is the real path of the thread folder it is in. */
+export interface FolderListing {
+  root: string;
+  path: string;
+  entries: FolderEntry[];
+  truncated: boolean;
+}
+
+export interface TextFile {
+  root: string;
+  path: string;
+  size: number;
+  /** Null for a binary file. */
+  text: string | null;
+  /** Only the start of a long file is in `text`. */
+  truncated: boolean;
+}
+
 export interface WorkdirsConfig {
   workdirs: string[];
   /** Each root and whether it was added from the page (and so can be removed there). Missing from older daemons. */
@@ -418,6 +444,21 @@ export class Api {
     if (res.status === 401) throw new AuthError('unauthorized');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.blob();
+  }
+
+  /** One folder of the thread's directory, for the file browser. No path: the directory itself. */
+  threadTree(threadId: string, path?: string): Promise<FolderListing> {
+    return this.request('GET', `/api/threads/${threadId}/tree${path ? `?path=${encodeURIComponent(path)}` : ''}`);
+  }
+
+  /** A text file in the thread's directory. A binary one comes back with `text: null`. */
+  threadText(threadId: string, path: string): Promise<TextFile> {
+    return this.request('GET', `/api/threads/${threadId}/text?path=${encodeURIComponent(path)}`);
+  }
+
+  /** Files in the thread's directory whose path has every word of the query, relative to `root`. */
+  findFiles(threadId: string, query: string): Promise<{ root: string; paths: string[]; truncated: boolean }> {
+    return this.request('GET', `/api/threads/${threadId}/find?q=${encodeURIComponent(query)}`);
   }
 
   /** An image attached to a turn. Fetched with the token, since an <img> tag cannot send it. */

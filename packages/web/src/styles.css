@@ -30,6 +30,13 @@
   /* What a drawing with no background of its own is shown on. White in every theme: that is what it was drawn for. */
   --picture-bg: #ffffff;
   --code-bg: #efede7;
+  /* Syntax colours for the file viewer. Mixed with the text colour, so every palette keeps its own tone. */
+  --syn-keyword: color-mix(in srgb, #a4387a 82%, var(--text));
+  --syn-string: color-mix(in srgb, #2f7a3d 85%, var(--text));
+  --syn-number: color-mix(in srgb, #b25a12 85%, var(--text));
+  --syn-title: color-mix(in srgb, #3557b5 85%, var(--text));
+  --syn-type: color-mix(in srgb, #8a5a00 85%, var(--text));
+  --syn-attr: color-mix(in srgb, #1b6f87 85%, var(--text));
   --warn: #c2410c;
   --danger: #b42318;
   --danger-bg: #fdecea;
@@ -69,6 +76,12 @@
   --positive-bg: #1d3327;
   --lightbox: rgba(0, 0, 0, 0.92);
     --code-bg: #201f1d;
+    --syn-keyword: color-mix(in srgb, #e58ac0 85%, var(--text));
+    --syn-string: color-mix(in srgb, #8fcf8a 85%, var(--text));
+    --syn-number: color-mix(in srgb, #f0a46a 85%, var(--text));
+    --syn-title: color-mix(in srgb, #86aaf5 85%, var(--text));
+    --syn-type: color-mix(in srgb, #e3c178 85%, var(--text));
+    --syn-attr: color-mix(in srgb, #7fcbdc 85%, var(--text));
     --warn: #f0935a;
     --danger: #f97066;
     --danger-bg: #3b1f1c;
@@ -100,6 +113,12 @@
   --positive-bg: #1d3327;
   --lightbox: rgba(0, 0, 0, 0.92);
   --code-bg: #201f1d;
+  --syn-keyword: color-mix(in srgb, #e58ac0 85%, var(--text));
+  --syn-string: color-mix(in srgb, #8fcf8a 85%, var(--text));
+  --syn-number: color-mix(in srgb, #f0a46a 85%, var(--text));
+  --syn-title: color-mix(in srgb, #86aaf5 85%, var(--text));
+  --syn-type: color-mix(in srgb, #e3c178 85%, var(--text));
+  --syn-attr: color-mix(in srgb, #7fcbdc 85%, var(--text));
   --warn: #f0935a;
   --danger: #f97066;
   --danger-bg: #3b1f1c;
@@ -5515,4 +5534,501 @@ input.picker-search {
 
 .term-note button:hover {
   background: var(--hover);
+}
+
+/* ---------- Files ---------- */
+
+/* Looking through the thread's folder, read only. On a computer: a column right of the conversation. */
+.files-panel {
+  position: relative;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
+  border-left: 1px solid var(--border);
+  background: var(--bg);
+  animation: side-in 0.18s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.files-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  z-index: 3;
+  width: 8px;
+  cursor: col-resize;
+}
+
+.files-resize:hover,
+.files-resize:active {
+  background: linear-gradient(to right, transparent 3px, var(--border-strong) 3px, var(--border-strong) 5px, transparent 5px);
+}
+
+.files-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 58px;
+  padding: 0 10px 0 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.files-crumbs {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 13.5px;
+}
+
+.files-crumb {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  color: var(--muted);
+}
+
+.files-crumb button {
+  padding: 4px 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+}
+
+.files-crumb button:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.files-crumb-current {
+  padding: 4px 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Long paths give up their first steps before the file's own name. */
+.files-crumb:not(:last-child) {
+  flex-shrink: 1;
+}
+
+.files-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.files-panel .icon-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+}
+
+.files-panel .icon-btn:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.files-panel .icon-btn.on {
+  background: var(--active);
+  color: var(--text);
+}
+
+.files-toggle {
+  width: auto !important;
+  padding: 0 9px;
+  font-size: 12.5px;
+}
+
+.files-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.files-viewer {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.files-tree {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  width: 248px;
+  border-left: 1px solid var(--border);
+  background: var(--sidebar);
+}
+
+.files-tree-scroll {
+  flex: 1;
+  overflow: auto;
+  padding: 0 6px 12px;
+  overscroll-behavior: contain;
+}
+
+.files-filter {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 10px 8px 6px;
+  padding: 0 8px 0 10px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--muted);
+}
+
+.files-filter:focus-within {
+  border-color: var(--border-strong);
+}
+
+.files-filter input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.files-filter-clear {
+  display: inline-flex;
+  padding: 3px;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--muted);
+}
+
+.files-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 28px;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+}
+
+.files-row svg {
+  flex: none;
+  color: var(--muted);
+}
+
+.files-row:hover {
+  background: var(--hover);
+}
+
+.files-row.current {
+  background: var(--active);
+  font-weight: 600;
+}
+
+.files-row.ignored {
+  color: var(--faint);
+}
+
+.files-caret {
+  display: inline-flex;
+  flex: none;
+  width: 12px;
+}
+
+.files-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.files-hint {
+  min-width: 0;
+  margin-left: auto;
+  padding-left: 8px;
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+}
+
+.files-note {
+  padding: 6px 12px;
+  color: var(--faint);
+  font-size: 12.5px;
+}
+
+.files-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  height: 100%;
+  min-height: 160px;
+  padding: 24px;
+  color: var(--faint);
+  font-size: 13.5px;
+  text-align: center;
+}
+
+/* Code: numbered rows, each line drawn on its own so a link can mark one. */
+.files-code {
+  min-width: max-content;
+  padding: 10px 0 40px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  tab-size: 4;
+}
+
+.files-code.wrap {
+  min-width: 0;
+}
+
+.files-chunk {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 4000px;
+}
+
+.files-line {
+  display: flex;
+}
+
+.files-line.hit {
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+}
+
+.files-num {
+  position: sticky;
+  left: 0;
+  flex: none;
+  width: calc(var(--digits) + 28px);
+  padding-right: 14px;
+  background: var(--bg);
+  color: var(--faint);
+  text-align: right;
+  user-select: none;
+}
+
+.files-line.hit .files-num {
+  background: color-mix(in srgb, var(--warn) 14%, var(--bg));
+  color: var(--text);
+}
+
+.files-src {
+  padding-right: 20px;
+  white-space: pre;
+}
+
+.files-code.wrap .files-src {
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.files-truncated {
+  position: sticky;
+  bottom: 0;
+  padding: 8px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.files-markdown {
+  max-width: var(--content-w);
+  padding: 20px 28px 48px;
+}
+
+.files-picture {
+  display: grid;
+  place-items: center;
+  min-height: 100%;
+  padding: 24px;
+}
+
+.files-picture img {
+  max-width: 100%;
+  max-height: 80vh;
+  border-radius: var(--radius-sm);
+  background: var(--picture-bg);
+  box-shadow: var(--shadow-card);
+}
+
+/* Highlighting, from the classes highlight.js gives. */
+.files-code .hljs-comment,
+.files-code .hljs-quote {
+  color: var(--faint);
+  font-style: italic;
+}
+
+.files-code .hljs-keyword,
+.files-code .hljs-selector-tag,
+.files-code .hljs-literal,
+.files-code .hljs-doctag,
+.files-code .hljs-section {
+  color: var(--syn-keyword);
+}
+
+.files-code .hljs-string,
+.files-code .hljs-regexp,
+.files-code .hljs-addition,
+.files-code .hljs-template-tag {
+  color: var(--syn-string);
+}
+
+.files-code .hljs-number,
+.files-code .hljs-symbol,
+.files-code .hljs-bullet {
+  color: var(--syn-number);
+}
+
+.files-code .hljs-title,
+.files-code .hljs-title.function_,
+.files-code .hljs-name {
+  color: var(--syn-title);
+}
+
+.files-code .hljs-type,
+.files-code .hljs-built_in,
+.files-code .hljs-title.class_ {
+  color: var(--syn-type);
+}
+
+.files-code .hljs-attr,
+.files-code .hljs-attribute,
+.files-code .hljs-property,
+.files-code .hljs-variable,
+.files-code .hljs-template-variable,
+.files-code .hljs-selector-class,
+.files-code .hljs-selector-id {
+  color: var(--syn-attr);
+}
+
+.files-code .hljs-meta,
+.files-code .hljs-deletion {
+  color: var(--danger);
+}
+
+.files-code .hljs-emphasis {
+  font-style: italic;
+}
+
+.files-code .hljs-strong {
+  font-weight: 600;
+}
+
+.topbar-files.on {
+  background: var(--active);
+}
+
+/* On a phone: a page of its own over everything, the tree one step back from the file. */
+.files-panel.phone {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  width: auto;
+  border-left: 0;
+}
+
+.files-panel.phone .files-head {
+  height: 54px;
+  padding: 0 6px;
+  gap: 2px;
+}
+
+.files-back {
+  display: inline-flex;
+  transform: rotate(180deg);
+}
+
+.files-title {
+  flex: 1;
+  min-width: 0;
+  padding: 0 4px;
+}
+
+.files-title-name {
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.files-title-sub {
+  display: flex;
+  overflow-x: auto;
+  scrollbar-width: none;
+  white-space: nowrap;
+}
+
+.files-title-sub button {
+  padding: 1px 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+}
+
+.files-sep {
+  padding: 0 4px;
+  color: var(--faint);
+}
+
+.files-list {
+  flex: 1;
+  overflow: auto;
+  padding: 0 8px calc(16px + env(safe-area-inset-bottom));
+}
+
+.files-panel.phone .files-row {
+  min-height: 44px;
+  font-size: 15px;
+}
+
+.files-panel.phone .files-filter {
+  height: 38px;
+  margin: 10px 4px 8px;
+}
+
+.files-panel.phone .files-filter input {
+  font-size: 16px;
+}
+
+.files-panel.phone .files-viewer {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.files-panel.phone .files-code {
+  font-size: 12px;
+}
+
+.files-panel.phone .files-markdown {
+  padding: 16px 18px 40px;
 }

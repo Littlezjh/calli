@@ -258,3 +258,16 @@ export const IconBell = (p: { size?: number }) => (
     <path d="M10 20.5a2.2 2.2 0 004 0" />
   </Svg>
 );
+/** Long lines folded onto the next row. */
+export const IconWrap = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M4 6h16M4 12h13a3 3 0 010 6h-5M14 15.5L11.5 18l2.5 2.5M4 18h4" />
+  </Svg>
+);
+/** The thread's files: a folder with a page in front. */
+export const IconFiles = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M3 18V5h5l2 2h7v2" />
+    <path d="M9 11h12v9H9z" />
+  </Svg>
+);

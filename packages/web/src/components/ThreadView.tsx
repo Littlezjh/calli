@@ -41,6 +41,8 @@ interface Props {
   loadImage: (id: string) => Promise<Blob>;
   /** Fetches an image file from the thread's directory by path; rejects when there is no such image. Same identity rule. */
   loadFile: (path: string) => Promise<Blob>;
+  /** Opens a file an answer links to in the file viewer. Rejects when the thread cannot show it. */
+  onOpenFile?: (path: string) => Promise<void>;
   onDecide: (approvalId: string, optionId: string | null) => void;
   /** The thread's log continues below what is in memory: one more history page can be fetched. */
   hasOlder?: boolean;
@@ -60,7 +62,7 @@ const RECENT_TURNS = 30;
 /** Scrolling up to within this distance of the top unfolds or fetches the earlier turns. */
 const NEAR_TOP_PX = 600;
 
-export function ThreadView({ items, running, roots, loadImage, loadFile, onDecide, hasOlder, loadingOlder, onLoadOlder, onFork, forkAnyTurn }: Props) {
+export function ThreadView({ items, running, roots, loadImage, loadFile, onOpenFile, onDecide, hasOlder, loadingOlder, onLoadOlder, onFork, forkAnyTurn }: Props) {
   const [lightbox, setLightbox] = useState<string | null>(null);
   // A picture opened from a link in an answer is fetched for the occasion, and let go of when it is closed.
   const fetched = useRef<string | null>(null);
@@ -247,6 +249,7 @@ export function ThreadView({ items, running, roots, loadImage, loadFile, onDecid
   return (
     <div className="thread" ref={threadRef}>
       <FilePictures.Provider value={openPicture}>
+      <FileViewer.Provider value={onOpenFile ?? null}>
         {/* Scrolling up loads these on its own; the buttons stay for keyboards and screen readers. */}
         {folded && (
           <div className="row">
@@ -272,6 +275,7 @@ export function ThreadView({ items, running, roots, loadImage, loadFile, onDecid
             <div className="working">工作中…</div>
           </div>
         )}
+      </FileViewer.Provider>
       </FilePictures.Provider>
       {lightbox && <Lightbox url={lightbox} onClose={closeLightbox} />}
     </div>
@@ -337,14 +341,18 @@ function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
  * message is not parsed again for it.
  */
 const FilePictures = createContext<((path: string) => Promise<void>) | null>(null);
+/** Opens any other file in the file viewer; rejects when the thread cannot show it. */
+const FileViewer = createContext<((path: string) => Promise<void>) | null>(null);
 
 /**
  * A link in an answer. One to the web opens in a tab of its own, so the hub stays where it is.
  * One to a file is on the agent's host, where the browser cannot follow: a picture opens at full
- * size, anything else gives its path to the clipboard, for a terminal or an editor.
+ * size, anything else in the file viewer. A file the thread cannot show gives its path to the
+ * clipboard instead, for a terminal or an editor.
  */
 function MarkdownLink({ href, title, children }: { href?: string; title?: string; children?: ReactNode }) {
   const openPicture = useContext(FilePictures);
+  const openText = useContext(FileViewer);
   const [note, setNote] = useState<string | null>(null);
   useEffect(() => {
     if (!note) return;
@@ -369,6 +377,7 @@ function MarkdownLink({ href, title, children }: { href?: string; title?: string
   const act = () => {
     // The path is copied in the click itself where it can be: a browser may refuse once a fetch has come between.
     if (picture) openPicture(path).catch(copy);
+    else if (openText) openText(path).catch(copy);
     else void copy();
   };
   return (
@@ -376,7 +385,7 @@ function MarkdownLink({ href, title, children }: { href?: string; title?: string
       className="file-link"
       role="button"
       tabIndex={0}
-      title={title ?? (picture ? `查看图片：${path}` : `复制路径：${path}`)}
+      title={title ?? (picture ? `查看图片：${path}` : openText ? `打开文件：${path}` : `复制路径：${path}`)}
       onClick={act}
       onKeyDown={(e: KeyboardEvent) => {
         if (e.key !== 'Enter' && e.key !== ' ') return;
