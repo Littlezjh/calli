@@ -6582,11 +6582,16 @@ input.picker-search {
 
 /* Compact model card: choose a supported effort directly, or open the model list. */
 .model-control-trigger {
-  min-width: 118px;
-  justify-content: space-between;
+  min-width: 0;
+  justify-content: flex-start;
   padding-inline: 16px;
   border-radius: var(--radius-xl);
   background: var(--hover);
+}
+
+.model-trigger-name {
+  min-width: 0;
+  color: var(--text);
 }
 
 .model-control-panel {
@@ -6729,6 +6734,9 @@ input.picker-search {
 .quota-note { color: var(--muted); font-size: 12px; line-height: 1.6; margin: 14px 0 0; }
 
 @media (max-width: 640px) {
+  .composer-bar { gap: 2px; }
+  .composer-bar .usage { padding-inline: 4px; }
+  .model-control-trigger { gap: 4px; padding-inline: 6px; }
   .model-control-panel { width: auto; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
   .effort-card { padding: 10px 12px 12px; }
   .effort-card-head { margin-bottom: 24px; }

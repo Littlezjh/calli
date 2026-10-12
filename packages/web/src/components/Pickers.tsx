@@ -161,7 +161,11 @@ export function ModelPicker(props: ModelProps) {
       panelClassName="model-control-panel"
       triggerClassName="tool-btn model-control-trigger"
       triggerTitle={`${modelName(models, model)} · ${shownEffort ? (EFFORT_LABELS[shownEffort] ?? shownEffort) : '默认强度'}`}
-      trigger={<><span>{levels.length ? (shownEffort ? (EFFORT_LABELS[shownEffort] ?? shownEffort) : '选择强度') : modelName(models, model)}</span><IconChevron size={13} open /></>}
+      trigger={<>
+        <span className="model-trigger-name">{modelName(models, model)}</span>
+        {levels.length > 0 && <span className="tool-btn-sub">{shownEffort ? (EFFORT_LABELS[shownEffort] ?? shownEffort) : '默认'}</span>}
+        <IconChevron size={13} open />
+      </>}
     >
       {() => <ModelControl {...props} />}
     </Popover>

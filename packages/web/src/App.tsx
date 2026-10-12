@@ -1059,11 +1059,14 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
     />
   );
 
+  // Older daemons advertise /compact before they expose the dedicated capability.
+  const canCompact = activeCaps?.compact ?? (commandsByKey[commandsKey] ?? []).some((command) => command.name === 'compact' && command.kind !== 'skill');
+
   const right = (
     <>
       {selected && timeline.usage && <UsageMeter
         usage={timeline.usage}
-        onCompact={activeCaps?.compact ? () => send('/compact', []) : undefined}
+        onCompact={canCompact ? () => send('/compact', []) : undefined}
         running={running}
         compactQueued={selected.queued?.some((message) => message.text.trim() === '/compact')}
         compactDisabled={(selected.queued?.length ?? 0) >= MAX_QUEUED}
