@@ -3,7 +3,7 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { copyText } from '../clipboard';
 import { diffLines, numberLines } from '../diff';
-import { pictureUrl } from '../images';
+import { pictureUrl, svgPicture } from '../images';
 import { IMAGE_FILE, linkTarget, nameAttachments, relativePath, shortenPaths } from '../paths';
 import {
   clockLabel,
@@ -43,6 +43,8 @@ interface Props {
   loadFile: (path: string) => Promise<Blob>;
   /** Opens a file an answer links to in the file viewer. Rejects when the thread cannot show it. */
   onOpenFile?: (path: string) => Promise<void>;
+  /** Renders a page the agent wrote, from the thread's directory. HTML and SVG files. */
+  onPreview?: (path: string) => void;
   onDecide: (approvalId: string, optionId: string | null) => void;
   /** The thread's log continues below what is in memory: one more history page can be fetched. */
   hasOlder?: boolean;
@@ -62,8 +64,9 @@ const RECENT_TURNS = 30;
 /** Scrolling up to within this distance of the top unfolds or fetches the earlier turns. */
 const NEAR_TOP_PX = 600;
 
-export function ThreadView({ items, running, roots, loadImage, loadFile, onOpenFile, onDecide, hasOlder, loadingOlder, onLoadOlder, onFork, forkAnyTurn }: Props) {
-  const [lightbox, setLightbox] = useState<string | null>(null);
+export function ThreadView({ items, running, roots, loadImage, loadFile, onOpenFile, onPreview, onDecide, hasOlder, loadingOlder, onLoadOlder, onFork, forkAnyTurn }: Props) {
+  const [lightbox, setLightbox] = useState<{ url: string; name?: string } | null>(null);
+  const show = useCallback((url: string, name?: string) => setLightbox({ url, name }), []);
   // A picture opened from a link in an answer is fetched for the occasion, and let go of when it is closed.
   const fetched = useRef<string | null>(null);
   const release = () => {
@@ -79,11 +82,12 @@ export function ThreadView({ items, running, roots, loadImage, loadFile, onOpenF
       const url = await pictureUrl(await loadFile(path));
       release();
       fetched.current = url;
-      setLightbox(url);
+      setLightbox({ url, name: path });
     },
     [loadFile],
   );
   useEffect(() => release, []);
+  const pictures = useMemo(() => ({ openFile: openPicture, show, openText: onOpenFile }), [openPicture, show, onOpenFile]);
   const groups = useMemo(() => groupByTurn(items), [items]);
   // "Show everything" is remembered per thread; switching threads starts folded again.
   const threadKey = items[0]?.key ?? '';
@@ -162,7 +166,7 @@ export function ThreadView({ items, running, roots, loadImage, loadFile, onOpenF
               {item.images.length > 0 && (
                 <div className="sent-images">
                   {item.images.map((img) => (
-                    <SentImage key={img.id} image={img} load={loadImage} onOpen={setLightbox} />
+                    <SentImage key={img.id} image={img} load={loadImage} onOpen={show} />
                   ))}
                 </div>
               )}
@@ -188,7 +192,7 @@ export function ThreadView({ items, running, roots, loadImage, loadFile, onOpenF
         }
         case 'assistant':
           if (!item.text) return null;
-          return <AssistantMessage key={item.key} text={item.text} done={item.done} roots={roots} loadFile={loadFile} onOpen={setLightbox} />;
+          return <AssistantMessage key={item.key} text={item.text} done={item.done} roots={roots} loadFile={loadFile} onOpen={show} />;
         case 'plan':
           return <PlanCard key={item.key} item={item} />;
         case 'work':
@@ -196,7 +200,7 @@ export function ThreadView({ items, running, roots, loadImage, loadFile, onOpenF
         case 'approval':
           return <ApprovalCard key={item.key} item={item} roots={roots} onDecide={onDecide} />;
         case 'changes':
-          return <ChangesCard key={item.key} item={item} roots={roots} />;
+          return <ChangesCard key={item.key} item={item} roots={roots} onPreview={onPreview} />;
         case 'stopped': {
           const time = item.timed ? durationLabel(item.startedAt, item.endedAt) : '';
           return (
@@ -248,8 +252,7 @@ export function ThreadView({ items, running, roots, loadImage, loadFile, onOpenF
 
   return (
     <div className="thread" ref={threadRef}>
-      <FilePictures.Provider value={openPicture}>
-      <FileViewer.Provider value={onOpenFile ?? null}>
+      <Pictures.Provider value={pictures}>
         {/* Scrolling up loads these on its own; the buttons stay for keyboards and screen readers. */}
         {folded && (
           <div className="row">
@@ -275,9 +278,8 @@ export function ThreadView({ items, running, roots, loadImage, loadFile, onOpenF
             <div className="working">工作中…</div>
           </div>
         )}
-      </FileViewer.Provider>
-      </FilePictures.Provider>
-      {lightbox && <Lightbox url={lightbox} onClose={closeLightbox} />}
+      </Pictures.Provider>
+      {lightbox && <Lightbox url={lightbox.url} name={lightbox.name} onClose={closeLightbox} />}
     </div>
   );
 }
@@ -310,18 +312,47 @@ function plainText(node: ReactNode): string {
   return '';
 }
 
-/** A fenced code block: a small header with the language and a copy button, then the code. */
+/**
+ * A fenced code block: a small header with the language and a copy button, then the code.
+ * When the code is a whole SVG document it is shown as the picture it draws, with the source one
+ * click away, as Claude and Open WebUI do. In an <img>, so that nothing in it runs or is fetched.
+ */
 function CodeBlock({ children }: { children?: ReactNode }) {
   const code = Children.toArray(children).find((c) => isValidElement(c));
   const className = isValidElement<{ className?: string }>(code) ? (code.props.className ?? '') : '';
   const language = /language-([\w+#.-]+)/.exec(className)?.[1] ?? '';
+  const text = plainText(children).replace(/\n$/, '');
+  const picture = useMemo(() => svgPicture(text), [text]);
+  // A source the browser cannot draw (not well formed) stays code.
+  const [failed, setFailed] = useState<string | null>(null);
+  const [showCode, setShowCode] = useState(false);
+  const pictures = useContext(Pictures);
+  const drawn = picture !== null && picture !== failed;
   return (
     <div className="code-block">
       <div className="code-head">
         <span>{language}</span>
-        <CopyButton text={plainText(children).replace(/\n$/, '')} label="复制代码" />
+        <span className="code-actions">
+          {drawn && (
+            <span className="code-views" role="group" aria-label="显示方式">
+              <button type="button" aria-pressed={!showCode} onClick={() => setShowCode(false)}>
+                预览
+              </button>
+              <button type="button" aria-pressed={showCode} onClick={() => setShowCode(true)}>
+                代码
+              </button>
+            </span>
+          )}
+          <CopyButton text={text} label="复制代码" />
+        </span>
       </div>
-      <pre>{children}</pre>
+      {drawn && !showCode ? (
+        <button type="button" className="code-picture" aria-label="查看大图" onClick={() => pictures?.show(picture, 'drawing.svg')}>
+          <img src={picture} alt="这段 SVG 画出的图" onError={() => setFailed(picture)} />
+        </button>
+      ) : (
+        <pre>{children}</pre>
+      )}
     </div>
   );
 }
@@ -336,13 +367,17 @@ function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
 }
 
 /**
- * Opens a picture on the agent's host at full size; rejects when the daemon has no such picture.
- * Reaches the links through context: the components Markdown is given stay the same objects, so a
- * message is not parsed again for it.
+ * How something inside an answer puts a picture up at full size. `openFile` fetches one on the
+ * agent's host, and rejects when the daemon has no such picture; `show` takes one already at hand.
+ * Reaches the links and code blocks through context: the components Markdown is given stay the
+ * same objects, so a message is not parsed again for it.
  */
-const FilePictures = createContext<((path: string) => Promise<void>) | null>(null);
-/** Opens any other file in the file viewer; rejects when the thread cannot show it. */
-const FileViewer = createContext<((path: string) => Promise<void>) | null>(null);
+const Pictures = createContext<{
+  openFile: (path: string) => Promise<void>;
+  show: (url: string, name?: string) => void;
+  /** Opens any other file in the file viewer; rejects when the thread cannot show it. */
+  openText?: (path: string) => Promise<void>;
+} | null>(null);
 
 /**
  * A link in an answer. One to the web opens in a tab of its own, so the hub stays where it is.
@@ -351,8 +386,7 @@ const FileViewer = createContext<((path: string) => Promise<void>) | null>(null)
  * clipboard instead, for a terminal or an editor.
  */
 function MarkdownLink({ href, title, children }: { href?: string; title?: string; children?: ReactNode }) {
-  const openPicture = useContext(FilePictures);
-  const openText = useContext(FileViewer);
+  const pictures = useContext(Pictures);
   const [note, setNote] = useState<string | null>(null);
   useEffect(() => {
     if (!note) return;
@@ -372,12 +406,12 @@ function MarkdownLink({ href, title, children }: { href?: string; title?: string
   if (target.kind === 'none') return <>{children}</>;
 
   const { path } = target;
-  const picture = openPicture && IMAGE_FILE.test(path);
+  const picture = pictures !== null && IMAGE_FILE.test(path);
   const copy = async () => setNote((await copyText(path)) ? '已复制路径' : '复制失败，请手动选中');
   const act = () => {
     // The path is copied in the click itself where it can be: a browser may refuse once a fetch has come between.
-    if (picture) openPicture(path).catch(copy);
-    else if (openText) openText(path).catch(copy);
+    if (picture) pictures.openFile(path).catch(copy);
+    else if (pictures?.openText) pictures.openText(path).catch(copy);
     else void copy();
   };
   return (
@@ -385,7 +419,7 @@ function MarkdownLink({ href, title, children }: { href?: string; title?: string
       className="file-link"
       role="button"
       tabIndex={0}
-      title={title ?? (picture ? `查看图片：${path}` : openText ? `打开文件：${path}` : `复制路径：${path}`)}
+      title={title ?? (picture ? `查看图片：${path}` : pictures?.openText ? `打开文件：${path}` : `复制路径：${path}`)}
       onClick={act}
       onKeyDown={(e: KeyboardEvent) => {
         if (e.key !== 'Enter' && e.key !== ' ') return;
@@ -417,7 +451,7 @@ interface AssistantProps {
   done: boolean;
   roots: string[];
   loadFile: (path: string) => Promise<Blob>;
-  onOpen: (url: string) => void;
+  onOpen: (url: string, name?: string) => void;
 }
 
 /**
@@ -446,7 +480,7 @@ const AssistantMessage = memo(function AssistantMessage({ text, done, roots, loa
 });
 
 /** An image file the answer points at. Shown only if the daemon confirms it is one; otherwise nothing. */
-function FileImage({ path, roots, load, onOpen }: { path: string; roots: string[]; load: (path: string) => Promise<Blob>; onOpen: (url: string) => void }) {
+function FileImage({ path, roots, load, onOpen }: { path: string; roots: string[]; load: (path: string) => Promise<Blob>; onOpen: (url: string, name?: string) => void }) {
   const [url, setUrl] = useState<string | null>(null);
 
   useEffect(() => {
@@ -469,7 +503,7 @@ function FileImage({ path, roots, load, onOpen }: { path: string; roots: string[
   if (!url) return null;
   return (
     <figure className="file-image">
-      <button type="button" onClick={() => onOpen(url)} aria-label={`查看大图：${path}`}>
+      <button type="button" onClick={() => onOpen(url, path)} aria-label={`查看大图：${path}`}>
         <img src={url} alt={path} />
       </button>
       <figcaption title={path}>{relativePath(path, roots)}</figcaption>
@@ -752,8 +786,11 @@ function DiffView({ diffs }: { diffs: FileDiff[] }) {
   );
 }
 
+/** Files an answer can render: pages and drawings. */
+const PREVIEW_FILE = /\.(html?|svg)$/i;
+
 /** What a finished turn changed: a list of files, each opening to its diff. */
-function ChangesCard({ item, roots }: { item: Extract<Item, { kind: 'changes' }>; roots: string[] }) {
+function ChangesCard({ item, roots, onPreview }: { item: Extract<Item, { kind: 'changes' }>; roots: string[]; onPreview?: (path: string) => void }) {
   const [openPath, setOpenPath] = useState<string | null>(null);
   return (
     <div className="row">
@@ -776,6 +813,11 @@ function ChangesCard({ item, roots }: { item: Extract<Item, { kind: 'changes' }>
                 </span>
                 <Stats added={file.added} removed={file.removed} />
               </button>
+              {onPreview && PREVIEW_FILE.test(file.path) && (
+                <button className="changes-preview" title="在预览里打开这个页面" onClick={() => onPreview(file.path)}>
+                  预览
+                </button>
+              )}
               {open && <DiffView diffs={file.diffs} />}
             </div>
           );

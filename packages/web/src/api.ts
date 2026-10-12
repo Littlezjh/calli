@@ -592,6 +592,11 @@ export class Api {
     return this.request('POST', `/api/threads/${threadId}/sync`);
   }
 
+  /** A short-lived signed URL for one file of the thread's directory, for a preview iframe. */
+  previewLink(threadId: string, path: string): Promise<{ url: string }> {
+    return this.request('GET', `/api/threads/${threadId}/preview-link?path=${encodeURIComponent(path)}`);
+  }
+
   /** Asks the thread's agent to write a handover summary for another agent, in its own session. */
   startHandover(threadId: string, target: string): Promise<{ turnId: string }> {
     return this.request('POST', `/api/threads/${threadId}/handover`, { target });

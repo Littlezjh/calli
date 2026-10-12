@@ -9,6 +9,7 @@ import type { AgentRegistry } from './agents.js';
 import type { StoredEvent } from './events.js';
 import { HttpError } from './errors.js';
 import type { HostRegistry } from './hosts.js';
+import { checkGrant, cookieValue, makeGrant, PREVIEW_COOKIE, readPreviewFile } from './preview.js';
 import type { TerminalEvent, TerminalManager } from './terminals.js';
 import type { ThreadManager } from './threads.js';
 import { isWithinWorkdirs } from './workdirs.js';
@@ -29,6 +30,12 @@ export interface HttpDeps {
   token: string;
   webDir: string | null;
   version: string;
+  /**
+   * The port previews are served on. The iframe needs an origin of its own: on the app's port it
+   * would be either opaque (and the browser would block its subresources) or same-origin with
+   * the app (and its pages could reach into it). Null when no preview port could be opened.
+   */
+  previewPort?: number | null;
 }
 
 const MAX_BODY = 1024 * 1024;
@@ -175,11 +182,12 @@ export function createHttpServer(deps: HttpDeps): Server {
 
     if (path === '/api/health') return sendJson(res, 200, { ok: true, version });
 
-    if (!trusted) {
-      const auth = req.headers.authorization ?? '';
-      const bearer = auth.startsWith('Bearer ') ? auth.slice(7) : undefined;
-      if (!tokenMatches(bearer, token)) return sendJson(res, 401, { error: 'unauthorized' });
-    }
+    const auth = req.headers.authorization ?? '';
+    const bearer = auth.startsWith('Bearer ') ? auth.slice(7) : undefined;
+    // One route carries its own auth instead: preview files are fetched by an iframe, which cannot
+    // send headers, so it opens with a short-lived signature verified inside the route.
+    const signedFileRoute = /^\/api\/threads\/[^/]+\/files\//.test(path);
+    if (!trusted && !signedFileRoute && !tokenMatches(bearer, token)) return sendJson(res, 401, { error: 'unauthorized' });
 
     const parts = path.split('/').filter(Boolean); // ['api', ...]
 
@@ -502,8 +510,9 @@ export function createHttpServer(deps: HttpDeps): Server {
         return;
       }
 
-      // GET /api/threads/:id/files?path=: an image the agent made or mentioned
-      if (method === 'GET' && sub === 'files') {
+      // GET /api/threads/:id/files?path=: an image the agent made or mentioned. (Without a
+      // sub-path: /files/<path> below is the signed preview route of the same name.)
+      if (method === 'GET' && sub === 'files' && !parts[4]) {
         const file = manager.getThreadImage(threadId, url.searchParams.get('path'));
         res.writeHead(200, {
           'Content-Type': file.mimeType,
@@ -532,6 +541,51 @@ export function createHttpServer(deps: HttpDeps): Server {
       // GET /api/threads/:id/text?path=: a text file's contents, for the file viewer (read only)
       if (method === 'GET' && sub === 'text') {
         return sendJson(res, 200, manager.readThreadText(threadId, url.searchParams.get('path')));
+      }
+
+      // GET /api/threads/:id/preview-link?path=: where the preview of this file lives, plus the
+      // short-lived cookie that opens it. The iframe loads from the preview port and the cookie
+      // rides along on every request the page makes under its own path, signature or not.
+      if (method === 'GET' && sub === 'preview-link') {
+        const { rel } = manager.threadFile(threadId, url.searchParams.get('path'));
+        if (!deps.previewPort) throw new HttpError(503, 'the preview port is not available on this daemon');
+        const host = (req.headers.host ?? '').replace(/:\d+$/, '');
+        if (!host) throw new HttpError(400, 'the request names no host');
+        const grant = makeGrant(token, threadId);
+        res.setHeader(
+          'Set-Cookie',
+          `${PREVIEW_COOKIE}=${grant.value}; Path=/api/threads/${threadId}/files; Max-Age=${grant.maxAge}; HttpOnly; SameSite=Lax`,
+        );
+        const file = rel.split('/').map(encodeURIComponent).join('/');
+        return sendJson(res, 200, { url: `http://${host}:${deps.previewPort}/api/threads/${threadId}/files/${file}` });
+      }
+
+      // GET /api/threads/:id/files/<path>: the file itself, on the preview port. The cookie from
+      // preview-link is the auth here — subresources of a page carry no query string, but a
+      // cookie scoped to this thread's path comes along on its own.
+      if (method === 'GET' && sub === 'files' && parts[4]) {
+        const rel = parts
+          .slice(4)
+          .map((p) => {
+            try {
+              return decodeURIComponent(p);
+            } catch {
+              return p;
+            }
+          })
+          .join('/');
+        checkGrant(token, threadId, cookieValue(req.headers.cookie, PREVIEW_COOKIE));
+        const { real } = manager.threadFile(threadId, rel);
+        const { body, contentType } = readPreviewFile(real);
+        res.writeHead(200, {
+          'Content-Type': contentType,
+          'X-Content-Type-Options': 'nosniff',
+          // Previews are pages an agent may rewrite any minute: what is shown is what is on disk.
+          'Cache-Control': 'no-store',
+          'Content-Length': body.length,
+        });
+        res.end(body);
+        return;
       }
 
       // GET /api/threads/:id/attachments/:attachmentId

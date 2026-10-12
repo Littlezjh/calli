@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { ApiError, MAX_QUEUED, type OutgoingImage, type QueuedMessage, type SlashCommand } from '../api';
 import { buildMenu, type HubAction, type MenuRow } from '../commands';
-import { readDrafts, writeDraft } from '../drafts';
+import { readDrafts, writeDraft, type Sending } from '../drafts';
 import { MAX_IMAGES, prepareImage, restoreImage, type PreparedImage } from '../images';
 import { withNotes, type Note } from '../timeline';
 import { Lightbox } from './Lightbox';
@@ -34,7 +34,15 @@ interface Draft {
   text: string;
   notes: DraftNote[];
   images: PreparedImage[];
+  /** The message is on its way out. See `StoredDraft.sending`. */
+  sending?: Sending;
 }
+
+/** A box's content as the one text it is sent as: the notes, numbered, then the words. */
+const asMessage = (text: string, notes: Note[]) => (notes.length ? withNotes(notes, text) : text.trim());
+
+/** How long a send may take before the button says it is still going. */
+const SLOW_SEND_MS = 400;
 
 let noteSeq = 0;
 const noteId = () => `note-${Date.now()}-${++noteSeq}`;
@@ -59,7 +67,7 @@ function loadDraft(key: string): Draft | undefined {
   if (inMemory) return inMemory;
   const store = storage();
   const stored = store ? readDrafts(store)[key] : undefined;
-  return stored && { text: stored.text, notes: stored.notes.map((n) => ({ ...n, id: noteId() })), images: [] };
+  return stored && { text: stored.text, notes: stored.notes.map((n) => ({ ...n, id: noteId() })), images: [], sending: stored.sending };
 }
 
 function keepDraft(key: string, draft: Draft | null): void {
@@ -114,6 +122,8 @@ interface Props {
   note: (DraftNote & { nonce: number }) | null;
   /** Told which notes are in the box, so their passages can stay highlighted in the conversation. */
   onNotesChange?: (notes: DraftNote[]) => void;
+  /** The thread's latest message from the user, as it was sent; null when there is none or it is not known yet. */
+  lastSent?: { turnId: string; text: string } | null;
 }
 
 const ACTION_ICONS: Record<string, (p: { size?: number }) => JSX.Element> = {
@@ -156,10 +166,13 @@ export function Composer({
   restore,
   note,
   onNotesChange,
+  lastSent = null,
 }: Props) {
   const [text, setText] = useState('');
   const [notes, setNotes] = useState<DraftNote[]>([]);
   const [busy, setBusy] = useState(false);
+  /** The send has been going for a while: a picture uploading over a slow line, an agent waking up. */
+  const [slow, setSlow] = useState(false);
   const [images, setImages] = useState<PreparedImage[]>([]);
   const [preparing, setPreparing] = useState(0);
   const [dragOver, setDragOver] = useState(false);
@@ -206,12 +219,17 @@ export function Composer({
 
   // Each thread has its own draft. Swapped before paint, so the old text never flashes in the new
   // thread. The pictures' object URLs go with the draft; they are released once it is sent.
+  // A send this page never saw succeed: the page was reloaded meanwhile, or the answer got lost on
+  // the way back. The box stays marked for as long as it still holds exactly what was sent.
+  const inFlight = useRef<Sending | null>(null);
+  const unsettled = inFlight.current !== null && asMessage(text, notes) === inFlight.current.text;
   const draftRef = useRef<Draft>({ text, notes, images });
-  draftRef.current = { text, notes, images };
+  draftRef.current = { text, notes, images, ...(unsettled ? { sending: inFlight.current! } : {}) };
   const sendingRef = useRef(false);
   useLayoutEffect(() => {
     if (draftKey === undefined) return;
     const saved = loadDraft(draftKey);
+    inFlight.current = saved?.sending ?? null;
     setText(saved?.text ?? '');
     setNotes(saved?.notes ?? []);
     setImages(saved?.images ?? []);
@@ -234,6 +252,20 @@ export function Composer({
     }, SAVE_DELAY_MS);
     return () => clearTimeout(timer);
   }, [draftKey, text, notes]);
+  // Whether that message arrived is for the thread to say. Once a new turn of the user's carries
+  // this very text, it is no draft: left in the box it would look unsent, and be sent a second time.
+  useEffect(() => {
+    const mark = inFlight.current;
+    if (!unsettled || !mark || !lastSent) return;
+    if (lastSent.turnId === mark.after || lastSent.text.trim() !== mark.text.trim()) return;
+    inFlight.current = null;
+    draftRef.current.images.forEach((img) => URL.revokeObjectURL(img.previewUrl));
+    setImages([]);
+    setText('');
+    setNotes([]);
+    if (draftKey !== undefined) keepDraft(draftKey, null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unsettled, lastSent?.turnId, lastSent?.text, draftKey]);
   // Without a draft to keep them, thumbnails left in the box are released when it goes away.
   useEffect(
     () => () => {
@@ -326,15 +358,30 @@ export function Composer({
     if (images.length && attachBlocked) return onError(attachBlocked);
     setBusy(true);
     sendingRef.current = true;
+    const message = asMessage(text, notes);
+    const mark: Sending = { text: message, after: lastSent?.turnId ?? null };
+    const sentFrom = draftKey;
+    // On the device the draft now says it is on its way. Should the page be reloaded before the
+    // send comes back, it is neither lost nor taken for something still to send.
+    if (sentFrom !== undefined) keepDraft(sentFrom, { text, notes, images, sending: mark });
+    const slowTimer = setTimeout(() => setSlow(true), SLOW_SEND_MS);
     try {
-      await onSend(notes.length ? withNotes(notes, text) : text.trim(), images);
+      await onSend(message, images);
+      // Forgotten at once, not when the box next saves itself: a reload right now must not bring it back.
+      if (sentFrom !== undefined) keepDraft(sentFrom, null);
+      inFlight.current = null;
       setNotes([]);
       images.forEach((img) => URL.revokeObjectURL(img.previewUrl));
       setImages([]);
       setText('');
     } catch {
-      // The caller shows the error; keep the draft and the pictures so nothing is lost.
+      // The caller shows the error; keep the draft and the pictures so nothing is lost. The mark
+      // stays too: a send can fail on this side (the page being reloaded, the answer lost on a bad
+      // line) after the daemon took the message, and then the thread will show it.
+      inFlight.current = mark;
     } finally {
+      clearTimeout(slowTimer);
+      setSlow(false);
       sendingRef.current = false;
       setBusy(false);
       ref.current?.focus();
@@ -579,19 +626,19 @@ export function Composer({
             {/* While a turn runs the send button appears only once there is something to queue. */}
             {(!running || hasContent) && (
               <button
-                className="send-btn"
+                className={`send-btn${slow ? ' sending' : ''}`}
                 onClick={() => void submit()}
                 disabled={!canSend}
-                aria-label={running ? '排队发送' : '发送'}
-                title={queueFull ? `最多排 ${MAX_QUEUED} 条` : running ? '这一轮结束后发送' : undefined}
+                aria-label={slow ? '正在发送' : running ? '排队发送' : '发送'}
+                title={slow ? '正在发送…' : queueFull ? `最多排 ${MAX_QUEUED} 条` : running ? '这一轮结束后发送' : undefined}
               >
-                <IconSend size={16} />
+                {slow ? <span className="send-spinner" aria-hidden="true" /> : <IconSend size={16} />}
               </button>
             )}
           </div>
         </div>
       </div>
-      {preview && <Lightbox url={preview.previewUrl} onClose={() => setPreview(null)} />}
+      {preview && <Lightbox url={preview.previewUrl} name={preview.name} onClose={() => setPreview(null)} />}
     </div>
   );
 }

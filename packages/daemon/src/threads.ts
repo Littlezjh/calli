@@ -563,6 +563,14 @@ export class ThreadManager {
   }
 
   /** A text file in the thread's directory, for the file viewer. A binary one comes back without text. */
+  /** One file of the thread's directory (or an artifact dir), resolved and checked, for previews. */
+  threadFile(threadId: string, rawPath: unknown): { real: string; rel: string } {
+    const notFound = new HttpError(404, 'no such file in this thread');
+    const { real, root } = this.resolveInThread(threadId, rawPath, notFound);
+    if (!statSync(real).isFile()) throw notFound;
+    return { real, rel: real === root ? '' : real.slice(root.length + 1) };
+  }
+
   readThreadText(threadId: string, rawPath: unknown): { root: string; path: string } & TextFile {
     const notFound = new HttpError(404, 'no such file in this thread');
     if (typeof rawPath !== 'string' || !rawPath) throw new HttpError(400, 'path is required');

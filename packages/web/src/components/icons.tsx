@@ -102,6 +102,16 @@ export const IconClose = (p: { size?: number }) => (
     <path d="M6 6l12 12M18 6L6 18" />
   </Svg>
 );
+export const IconRefresh = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M19 12a7 7 0 1 1-2-4.9M17 3v4.3h-4.3" />
+  </Svg>
+);
+export const IconExternal = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M14 5h5v5M19 5l-7 7M17 14v5H5V7h5" />
+  </Svg>
+);
 export const IconArchive = (p: { size?: number }) => (
   <Svg {...p}>
     <path d="M4 5h16v4H4zM6 9v10h12V9M10 13h4" />
@@ -264,6 +274,17 @@ export const IconBell = (p: { size?: number }) => (
   <Svg {...p}>
     <path d="M6.5 16.5v-5.6a5.5 5.5 0 0111 0v5.6l1.5 1.5H5z" />
     <path d="M10 20.5a2.2 2.2 0 004 0" />
+  </Svg>
+);
+export const IconMinus = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M5 12h14" />
+  </Svg>
+);
+/** Save to this device. */
+export const IconDownload = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19.5h14" />
   </Svg>
 );
 /** Long lines folded onto the next row. */

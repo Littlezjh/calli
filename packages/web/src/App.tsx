@@ -34,6 +34,7 @@ import { Menu } from './components/Menu';
 import { StatusPanel } from './components/StatusPanel';
 import { TerminalPanel } from './components/TerminalPanel';
 import { FilesPanel, type FilesTarget } from './components/FilesPanel';
+import { PreviewPanel } from './components/PreviewPanel';
 import { fileRef } from './files';
 import { QuotaPanel } from './components/QuotaPanel';
 import { SelectionMenu } from './components/SelectionMenu';
@@ -230,6 +231,14 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
 
   const timeline = useMemo(() => buildTimeline(events), [events]);
   const turnPreviewMap = useMemo(() => turnPreviews(timeline.items), [timeline.items]);
+  // What the user last sent here, for a box that was reloaded mid-send to learn that its message arrived.
+  const lastSent = useMemo(() => {
+    for (let i = timeline.items.length - 1; i >= 0; i--) {
+      const item = timeline.items[i];
+      if (item.kind === 'user') return { turnId: item.turnId, text: item.text };
+    }
+    return null;
+  }, [timeline.items]);
   const selected = threads.find((t) => t.id === selectedId) ?? null;
   const onTodos = view === 'todos' && !selectedId;
 
@@ -671,6 +680,8 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
   const [files, setFiles] = useState<FilesTarget | null>(null);
   const filesSeq = useRef(0);
   useEffect(() => setFiles(null), [selectedId]);
+  // A page the agent wrote, rendered in a sandboxed iframe.
+  const [preview, setPreview] = useState<{ threadId: string; path: string } | null>(null);
   const openFileLink = useCallback(
     async (raw: string) => {
       if (!api || !selectedId) throw new Error('no thread');
@@ -1219,6 +1230,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
               loadImage={loadImage}
               loadFile={loadFile}
               onOpenFile={openFileLink}
+              onPreview={selected ? (path) => setPreview({ threadId: selected.id, path }) : undefined}
               onDecide={decide}
               hasOlder={hasOlder}
               loadingOlder={loadingOlder}
@@ -1275,6 +1287,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           restore={restore}
           note={noteSignal}
           onNotesChange={onNotesChange}
+          lastSent={selected ? lastSent : null}
         />
         )}
         {/* With the list open, the conversation is a card pushed aside; a tap on it brings it back. */}
@@ -1282,6 +1295,9 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
       </main>
 
       {files && selected && api && <FilesPanel api={api} threadId={selected.id} target={files} phone={compact} onClose={() => setFiles(null)} />}
+      {preview && api && (
+        <PreviewPanel api={api} threadId={preview.threadId} path={preview.path} onClose={() => setPreview(null)} onError={handleError} />
+      )}
       {termOpen && (
         <TerminalPanel
           api={api}

@@ -41,3 +41,17 @@ test('a draft saved with the older single quote comes back as one note', () => {
     u: { text: '', notes: [], at: 4 },
   });
 });
+
+test('a draft on its way out says so, and stops saying so once it is saved as a plain draft again', () => {
+  const storage = memory();
+  const notes = [{ quote: 'the passage', comment: 'why' }];
+  const sending = { text: '[注释 1]\n> the passage\n评论：why\n\nbody', after: 'turn-7' };
+  writeDraft(storage, 't1', { text: 'body', notes, sending }, 1);
+  assert.deepEqual(readDrafts(storage).t1.sending, sending);
+  writeDraft(storage, 't1', { text: 'body, edited', notes }, 2);
+  assert.equal('sending' in readDrafts(storage).t1, false);
+  // A thread with no turn of the user's yet; and a mark that is not one.
+  storage.setItem(DRAFTS_KEY, JSON.stringify({ t2: { text: 'x', notes: [], at: 1, sending: { text: 'x' } }, t3: { text: 'y', notes: [], at: 1, sending: 'y' } }));
+  assert.deepEqual(readDrafts(storage).t2.sending, { text: 'x', after: null });
+  assert.equal('sending' in readDrafts(storage).t3, false);
+});

@@ -125,3 +125,91 @@ export async function pictureUrl(blob: Blob): Promise<string> {
   if (blob.type !== 'image/svg+xml') return URL.createObjectURL(blob);
   return `data:image/svg+xml;base64,${await toBase64(blob)}`;
 }
+
+/** Past this much source a code block is left as code: a drawing is far smaller. */
+const MAX_SVG_SOURCE = 2_000_000;
+
+/**
+ * The picture a code block draws, as an address for an <img>, when what it holds is one whole SVG
+ * document; null when it holds anything else, or an SVG still being written. Agents often paste the
+ * source of a drawing instead of, or as well as, saving it.
+ *
+ * An <img> reads its source as XML and gives up on the first undeclared prefix, where markup
+ * written for a web page gets away with leaving the namespaces out; they are put back here.
+ */
+export function svgPicture(code: string): string | null {
+  const text = code.trim();
+  if (text.length > MAX_SVG_SOURCE || !/<\/svg\s*>$/i.test(text)) return null;
+  const opening = /^(?:<\?xml[^>]*\?>\s*)?(?:<!--[\s\S]*?-->\s*)*(?:<!DOCTYPE[^>[]*(?:\[[^\]]*\])?\s*>\s*)?(?:<!--[\s\S]*?-->\s*)*<svg(?=[\s>])[^>]*>/i.exec(text);
+  if (!opening) return null;
+  const tag = opening[0];
+  let declared = '';
+  if (!/\sxmlns\s*=/.test(tag)) declared += ' xmlns="http://www.w3.org/2000/svg"';
+  if (/\sxlink:/.test(text) && !/\sxmlns:xlink\s*=/.test(tag)) declared += ' xmlns:xlink="http://www.w3.org/1999/xlink"';
+  const at = tag.toLowerCase().lastIndexOf('<svg') + '<svg'.length;
+  const source = declared ? text.slice(0, at) + declared + text.slice(at) : text;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(source)}`;
+}
+
+const PICTURE_EXTENSIONS: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+  'image/svg+xml': 'svg',
+};
+
+/** The name a picture is saved under: the one it has, with the ending its type calls for when it has none. */
+export function pictureFileName(name: string | undefined, mimeType: string): string {
+  const base = (name ?? '').split(/[\\/]/).pop()?.trim() || 'image';
+  return /\.[a-z0-9]{2,5}$/i.test(base) ? base : `${base}.${PICTURE_EXTENSIONS[mimeType] ?? 'png'}`;
+}
+
+/** The same name for the picture saved as a PNG. */
+export function pngFileName(name: string): string {
+  return `${name.replace(/\.[a-z0-9]{2,5}$/i, '')}.png`;
+}
+
+/** Hands a file to the browser to save. */
+function saveAs(href: string, name: string): void {
+  const link = document.createElement('a');
+  link.href = href;
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+/** Saves a picture shown from `url` as the file it is. The name gets an ending if it lacks one. */
+export async function savePicture(url: string, name?: string): Promise<void> {
+  const blob = await (await fetch(url)).blob();
+  // Always from a blob: address: some browsers open a data: link instead of saving it.
+  const href = URL.createObjectURL(blob);
+  saveAs(href, pictureFileName(name, blob.type));
+  setTimeout(() => URL.revokeObjectURL(href), 10_000);
+}
+
+/** The longest edge a drawing is rendered at when saved as a bitmap. */
+const PNG_EDGE = 2048;
+
+/**
+ * Saves a drawing as a PNG. A vector has no pixels of its own, so it is drawn large: its longest
+ * edge at `PNG_EDGE`, or at its own size where that is larger still. What it leaves blank stays clear.
+ */
+export async function savePictureAsPng(url: string, name?: string): Promise<void> {
+  const img = await loadImage(url);
+  const natural = { width: img.naturalWidth || 300, height: img.naturalHeight || 150 };
+  const k = Math.max(1, PNG_EDGE / Math.max(natural.width, natural.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(natural.width * k);
+  canvas.height = Math.round(natural.height * k);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('无法导出这张图片');
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  const blob = await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((made) => (made ? resolve(made) : reject(new Error('无法导出这张图片'))), 'image/png');
+  });
+  const href = URL.createObjectURL(blob);
+  saveAs(href, pngFileName(pictureFileName(name, 'image/svg+xml')));
+  setTimeout(() => URL.revokeObjectURL(href), 10_000);
+}
