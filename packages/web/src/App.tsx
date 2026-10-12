@@ -1,3 +1,4 @@
+import { HandoverTrail } from './components/HandoverTrail';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Api,
@@ -55,7 +56,7 @@ import { NewProjectDialog, ProjectPicker, RootsDialog } from './components/Proje
 import { NoteMarks, type NoteMark } from './components/NoteMarks';
 import { Toast, type ToastState } from './components/Toast';
 import { TokenGate } from './components/TokenGate';
-import { IconAgents, IconArchive, IconArrowDown, IconChevron, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconImport, IconList, IconMenu, IconMore, IconPalette, IconPlus, IconServer, IconSidebar, IconSignOut, IconTerminal } from './components/icons';
+import { IconAgents, IconArchive, IconArrowDown, IconChevron, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconImport, IconList, IconMenu, IconMore, IconPalette, IconPlus, IconServer, IconSidebar, IconSignOut, IconSparkle, IconTerminal } from './components/icons';
 
 const sleep = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve) => {
@@ -1189,8 +1190,6 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           onNewSection={threadActions.newSection}
           onOpenTodos={openTodos}
           todosActive={onTodos}
-          onOpenSkills={openSkills}
-          skillsActive={onSkills}
         />
       </aside>
 
@@ -1256,6 +1255,8 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
             </div>
           )}
         </header>
+
+        {selected && !onTodos && !onSkills && hostUp && <HandoverTrail thread={selected} threads={threads} agentLabel={agentLabel} onSelect={pick} />}
 
         {error && (
           <div className="banner" role="alert">
@@ -1503,6 +1504,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
                   },
                 ]
               : []),
+            { id: 'skills', label: '技能', icon: IconSparkle, onSelect: openSkills },
             {
               id: 'hosts',
               label: '机器',

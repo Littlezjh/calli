@@ -7359,6 +7359,29 @@ input.picker-search {
   .effort-fill { width: calc(20px + (100% - 40px) * var(--effort-fraction, 0)); }
 }
 
+/* A handover keeps its conversations independent, with one expandable sidebar entry. */
+.handover-head { display: flex; align-items: center; border-radius: var(--radius-sm); }
+.handover-head.selected { background: var(--active); }
+.handover-head > .thread-row { flex: 1; min-width: 0; }
+.handover-toggle { flex: 0 0 24px; align-self: stretch; color: var(--muted); background: none; border: 0; cursor: pointer; border-radius: var(--radius-sm); }
+.handover-toggle:hover { background: var(--hover); }
+.handover-marks { display: flex; gap: 4px; padding-right: 6px; }
+.handover-members { margin: 2px 0 10px 12px; padding-left: 10px; border-left: 1px solid var(--border-strong); }
+.handover-trail { padding: 0 24px 8px; color: var(--muted); font-size: 12px; }
+.handover-link { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 4px 0; font: inherit; }
+.handover-link:hover { color: var(--text); }
+.handover-trail .handover-panel { top: 100%; bottom: auto; max-height: min(480px, 65dvh); overflow-y: auto; width: 320px; max-width: calc(100vw - 32px); }
+.handover-panel-title { padding: 10px 12px; color: var(--muted); font-size: 12px; }
+.handover-entry { display: flex; flex-direction: column; gap: 5px; width: 100%; text-align: left; padding: 12px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--text); cursor: pointer; }
+.handover-entry:hover, .handover-entry.current { background: var(--hover); }
+.handover-entry small { color: var(--muted); overflow-wrap: anywhere; }
+.handover-missing { padding: 12px; color: var(--muted); font-size: 12px; }
+@media (max-width: 700px) {
+  .handover-trail { padding: 0 16px 6px; }
+  .handover-trail .handover-panel { top: auto; bottom: 0; width: auto; max-width: none; }
+  .handover-toggle { flex-basis: 32px; }
+}
+
 /* Project navigation stays on the selected machine; only the list scrolls. */
 .dialog.project-browser {
   display: flex;

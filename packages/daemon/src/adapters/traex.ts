@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import { AcpAdapter, airForkPoint } from './acp.js';
 import { TRAE_ICON } from './icons.js';
 import { configDirectory, findSessionFile } from './session-location.js';
-import type { PermissionMode } from './types.js';
+import type { ModelOption, PermissionMode, PlanQuota, QuotaWindow } from './types.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -34,6 +34,39 @@ const TRAEX_MODE_IDS: Record<PermissionMode, readonly string[]> = {
 /** Effort levels TRAE CLI accepts through the `reasoning_effort` config option. */
 const TRAEX_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const;
 
+interface TraexModelStatus {
+  name: string;
+  configName?: string;
+  loadPercent?: number;
+  quota?: QuotaWindow;
+}
+
+/** Read only documented model metadata; load is not a quota or a queue position. */
+export function parseTraexModelStatus(stdout: string): TraexModelStatus[] {
+  const input: unknown = JSON.parse(stdout);
+  if (!Array.isArray(input)) throw new Error('TRAE 模型状态格式不正确');
+  const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
+  return input.flatMap((row) => {
+    if (!row || typeof row.name !== 'string' || !row.name) return [];
+    const meta = row._meta?.trae;
+    const load = meta?.load?.percent;
+    const weekly = meta?.weeklyQuota;
+    let quota: QuotaWindow | undefined;
+    if (weekly?.applies === true) {
+      const used = finite(weekly.usedPercent) ? weekly.usedPercent
+        : finite(weekly.remainingPercent) ? 100 - weekly.remainingPercent
+        : weekly.isDepleted === true ? 100 : undefined;
+      if (used !== undefined && used >= 0 && used <= 100) {
+        const reset = finite(weekly.resetTime) && weekly.resetTime > 0 ? new Date(weekly.resetTime * 1000) : null;
+        quota = { label: '7D', scope: row.name, usedPercent: used,
+          ...(reset && Number.isFinite(reset.getTime()) ? { resetsAt: reset.toISOString() } : {}) };
+      }
+    }
+    return [{ name: row.name, ...(typeof row.config_name === 'string' ? { configName: row.config_name } : {}),
+      ...(finite(load) && load >= 0 ? { loadPercent: load } : {}), ...(quota ? { quota } : {}) }];
+  });
+}
+
 export class TraexAcpAdapter extends AcpAdapter {
   readonly id = 'traex';
   readonly label = 'TRAE CLI';
@@ -51,8 +84,7 @@ export class TraexAcpAdapter extends AcpAdapter {
     forkAt: true,
     multiAccount: false,
     forkInto: true,
-    // traex is ACP like Claude; a quota probe can follow once its CLI has a usage command.
-    quota: false,
+    quota: true,
   };
 
   protected readonly modeIds = TRAEX_MODE_IDS;
@@ -73,6 +105,41 @@ export class TraexAcpAdapter extends AcpAdapter {
     super(command, env);
     const endsWithServe = command.length > 2 && command.at(-2) === 'acp' && command.at(-1) === 'serve';
     this.cli = cli ?? (endsWithServe ? command.slice(0, -2) : command);
+  }
+
+  private statusRead: Promise<TraexModelStatus[]> | null = null;
+
+  /** Coalesce concurrent requests only; quota caching belongs to ThreadManager. */
+  private readModelStatus(): Promise<TraexModelStatus[]> {
+    if (this.statusRead) return this.statusRead;
+    const read = execFileAsync(this.cli[0], [...this.cli.slice(1), 'models', '--json'], {
+      env: { ...process.env, ...this.env }, timeout: 15_000, maxBuffer: 2 * 1024 * 1024,
+    }).then(({ stdout }) => parseTraexModelStatus(stdout));
+    this.statusRead = read;
+    void read.finally(() => { if (this.statusRead === read) this.statusRead = null; }).catch(() => undefined);
+    return read;
+  }
+
+  override async models(): Promise<ModelOption[]> {
+    const [models, status] = await Promise.all([super.models(), this.readModelStatus().catch(() => [])]);
+    return models.map((model) => {
+      // Keep ACP's model ids and defaults intact, even when CLI display names differ.
+      if (model.id === 'default') return model;
+      const live = status.find((s) => s.configName === model.id || s.name === model.id || s.name === model.label);
+      if (!live) return model;
+      const hints: string[] = [];
+      if (live.loadPercent !== undefined) hints.push(`模型负载 ${live.loadPercent}%`);
+      if (live.quota) hints.push(`每周额度剩余 ${100 - live.quota.usedPercent}%`);
+      return { ...model, description: [...hints, model.description].filter(Boolean).join(' · ') || undefined };
+    });
+  }
+
+  async fetchQuota(): Promise<PlanQuota> {
+    const status = await this.readModelStatus();
+    const windows = status.flatMap((s) => s.quota ? [s.quota] : []);
+    return { windows, checkedAt: new Date().toISOString(),
+      note: windows.length ? '按模型显示每周额度；模型负载请在模型列表查看，不代表排队人数或等待时间。'
+        : 'TRAE 当前未报告每周额度；模型负载请在模型列表查看。' };
   }
 
   resumeCommand(agentSessionId: string): string {

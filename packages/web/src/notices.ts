@@ -46,11 +46,13 @@ export function pageTitle(base: string, count: number): string {
 
 export type ThreadMark = 'waiting' | 'running' | 'error' | 'unread' | null;
 
-/** The one dot a thread gets in the list. Waiting for the user outranks everything else. */
+/**
+ * The one dot a thread gets in the list. Waiting for the user outranks everything else. A failure is
+ * news like any other result: once the thread has been looked at, the dot goes; the error stays in the thread.
+ */
 export function threadMark(thread: Thread, selected: boolean): ThreadMark {
   if (thread.waiting) return 'waiting';
   if (thread.status === 'running') return 'running';
-  if (thread.status === 'error') return 'error';
-  if (thread.unread && !selected) return 'unread';
+  if (thread.unread && !selected) return thread.status === 'error' ? 'error' : 'unread';
   return null;
 }

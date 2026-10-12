@@ -145,3 +145,31 @@ export function buildActivity(threads: Thread[], search: string, now: Date, sele
     count: visible.length,
   };
 }
+
+/** Group explicit handovers only, within the caller's existing section or project. */
+export function handoverGroups(threads: Thread[]): Array<{ key: string; latest: Thread; members: Thread[] }> {
+  const byId = new Map(threads.map((t) => [t.id, t]));
+  const root = (t: Thread): string => {
+    const seen = new Set<string>();
+    while (t.handover && !seen.has(t.id)) {
+      seen.add(t.id);
+      const parent = byId.get(t.handover.sourceId);
+      if (!parent) return t.handover.sourceId;
+      t = parent;
+    }
+    return seen.has(t.id) ? [...seen].sort()[0] : t.id;
+  };
+  const groups = new Map<string, Thread[]>();
+  for (const t of threads) {
+    const key = root(t);
+    groups.set(key, [...(groups.get(key) ?? []), t]);
+  }
+  return [...groups].map(([key, members]) => {
+    members.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
+    const parents = new Set(members.map((t) => t.handover?.sourceId));
+    return { key, latest: members.find((t) => !parents.has(t.id)) ?? members[0], members };
+  }).sort((a, b) => {
+    const newest = (members: Thread[]) => members.reduce((time, t) => t.updatedAt > time ? t.updatedAt : time, '');
+    return newest(b.members).localeCompare(newest(a.members));
+  });
+}

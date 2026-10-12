@@ -86,6 +86,7 @@
 
 ## 4. Agent
 
+- [x] TRAE 模型状态：适配器读取 `traex models --json`，模型列表说明展示负载与每周剩余额度；「配置 → 额度」展示按模型的每周已用比例、重置时间与手动刷新。负载不作为排队人数或等待时间；旧 CLI 的状态读取失败时仍保留 ACP 模型列表。
 - [x] Claude Code（ACP，`@agentclientprotocol/claude-agent-acp`）
 - [x] pi（RPC）
 - [x] Antigravity `agy`：无界面 stream-json 模式。流式、工具步骤、停止、恢复、切模型、两档权限
@@ -97,6 +98,7 @@
 [x] 多账号：一个适配器可配多个实例（`data/agents.json` 或 `RAH_AGENTS_JSON`：id、adapter、label、command、env），线程存实例 id，默认实例沿用原名不迁移；实例 env 合并进它起的所有进程（如第二个 Claude 账号带自己的 `CLAUDE_CONFIG_DIR`）；扫描 PATH 发现同类 CLI（`agy2` 这类，`ping`/`pix` 不算），Agent picker 里一键添加，添加后立刻可用并写回 agents.json
 - [x] 链接另一个账号（发现已登录的）：终端里 `CLAUDE_CONFIG_DIR=~/.claude-2 claude` 登录好的账号，Agent picker「已登录的账号」一节里一键接进来，不用 SSH。`GET /api/agents/accounts/discover`：适配器各自找已登录的账号（Claude 扫 `~/.claude` 和 `~/.claude-2` 这类目录、只认目录，逐个 `claude auth status` 问邮箱，登录过期的自然掉出列表；`env.CLAUDE_CONFIG_DIR` 由适配器构造，前端不认变量名），registry 补上只有它知道的——已被实例占用的账号不列（无 env 的实例占用默认账号），建议 id/label 取第一个空闲的 `claude-N`/「Claude Code N」，同一次发现里也不撞。点一下即 `POST /api/agents` 注册并选中。本地跑 claude 的命令统一走 `RAH_CLAUDE_BIN`（原 `RAH_CLAUDE_QUOTA_BIN` 仍认）。页面里直接完成 OAuth 授权的向导（daemon 起登录进程、贴授权码）以后再做
 - [x] 交接：线程菜单「交接」打开后直接整理可复制内容，无需额外发送一轮；复制不要求选择接手 agent。另可选择接手实例后点「新建接手对话」，在原 cwd 和已有 worktree 创建独立空线程，交接内容预填到可编辑输入框，用户点击发送后才开始一轮。新草稿按机器与线程隔离并立即保存，保留原线程和普通新线程的草稿。包含来源机器、具体 agent 实例名/实例 ID/类型、项目工作目录及真实路径、agent 配置/数据目录、session ID、实际 session 文件地址、hub 线程 ID、原会话恢复命令（仅供参考），以及从事件日志合成的任务进度。接手要求明确写入复制内容：使用接手 agent 自己的会话，在原 cwd 继续；保留原 worktree、分支和未提交改动，不让用户手动新开会话。只读 Git 探测能识别非 hub 创建的 worktree，并保留子目录 cwd。多个 Claude 各自在自己的 `CLAUDE_CONFIG_DIR` 下查会话，恢复命令显式携带该目录；只读查找，不修改 agent 文件，不导出任意环境变量。尚无 session 或找不到文件时明确说明，不猜路径；运行中或只剩一个 agent 也能复制。原有 agent 写摘要接口保留，返回内容同样附带定位信息。覆盖同名 Claude/相同 session ID 的账号隔离、文件未创建/缺失和复制全文；真实无头 Chromium 看过桌面/手机、亮暗四组合，实体手机未测。
+- [x] 交接会话归组：同分组内折叠交接链，按整组最近活跃排序，展开查看各 agent 会话；顶部交接记录支持返回原会话及打开接手会话。单独持久化来源与快照，兼容旧记录的明确本机交接信息，普通 fork 保持独立。
 
 ## 5. 通知与手机
 
@@ -232,7 +234,7 @@
 
 ## 14. Agent 协作
 
-方案与开源调研见 [agent-coordination-design.md](agent-coordination-design.md)。第一版已实现，尚未部署。
+方案与开源调研见 [agent-coordination-design.md](agent-coordination-design.md)。第一版已实现。
 
 - [x] 主 agent 通过 `limi` CLI 在同一机器的一个或多个目录派发子线程，支持不同实例、成员互发消息及继续返工；运行期注入命令环境和说明，不依赖 Skill、不修改 agent 配置
 - [x] SQLite 保存成员关系和消息，按发送者去重、最多 3 个并发成员；结果自动返回原发送者，主控验收；停止暂停续跑，重启保留队列且不重跑中断任务

@@ -3,9 +3,9 @@ import type { AgentInfo, HostInfo, Section, Thread } from '../api';
 import { useLongPress, useStoredFlag, useStoredSet } from '../hooks';
 import { attentionCount, threadMark } from '../notices';
 import { folderName } from '../paths';
-import { buildActivity, buildSidebar, projectDir, taggedAgents } from '../sidebar';
+import { buildActivity, buildSidebar, handoverGroups, projectDir, taggedAgents } from '../sidebar';
 import { HostSwitcher } from './Hosts';
-import { AgentMark, IconBell, IconChevron, IconClose, IconEdit, IconFolder, IconFork, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconSparkle, IconWorktree, IconSidebar } from './icons';
+import { AgentMark, IconBell, IconChevron, IconClose, IconEdit, IconFolder, IconFork, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconWorktree, IconSidebar } from './icons';
 
 export { folderName } from '../paths';
 
@@ -27,9 +27,6 @@ interface Props {
   onOpenTodos: () => void;
   /** The plan page is what the main area shows. */
   todosActive?: boolean;
-  /** Opens the skills page, which the main area then shows. */
-  onOpenSkills: () => void;
-  skillsActive?: boolean;
   /** The phone layout: the list is a page of its own under the conversation, laid out for thumbs. */
   compact?: boolean;
   /** Opens the settings menu, where the look, the archive, importing and signing out are. It grows up and to the left from the point given. */
@@ -76,8 +73,6 @@ export function Sidebar({
   onNewSection,
   onOpenTodos,
   todosActive = false,
-  onOpenSkills,
-  skillsActive = false,
   compact = false,
   onOpenSettings,
   onHide,
@@ -87,6 +82,7 @@ export function Sidebar({
   hostDown = false,
 }: Props) {
   const [search, setSearch] = useState('');
+  const [expandedHandovers, setExpandedHandovers] = useState<Set<string>>(new Set());
   // The search field is put away behind a button until it is asked for.
   const [searching, setSearching] = useState(false);
   const closeSearch = () => {
@@ -108,7 +104,7 @@ export function Sidebar({
   const agentById = new Map(agents.map((a) => [a.id, a]));
   const tagged = taggedAgents(agents);
 
-  const row = (t: Thread) => {
+  const row = (t: Thread, title = t.title, preview = t.preview) => {
     const mark = threadMark(t, t.id === selectedId);
     const agent = agentById.get(t.agent);
     return (
@@ -137,11 +133,11 @@ export function Sidebar({
         )}
         <span className="thread-text">
           <span className="thread-head">
-            <span className="thread-title">{t.title}</span>
+            <span className="thread-title">{title}</span>
             {/* Out of its project group, a thread says where it is. */}
             {byActivity && <span className="thread-dir">{folderName(projectDir(t).cwd)}</span>}
           </span>
-          {t.preview && <span className="thread-preview">{t.preview}</span>}
+          {preview && <span className="thread-preview">{preview}</span>}
         </span>
         <span className="thread-meta">
           {agent?.icon ? (
@@ -162,6 +158,28 @@ export function Sidebar({
     );
   };
 
+  const groupedRows = (list: Thread[]) => handoverGroups(list).map(({ key, latest, members }) => {
+    if (members.length === 1) return row(latest);
+    const storageKey = `${hostId ?? 'local'}:${key}`;
+    const expanded = Boolean(search.trim()) || expandedHandovers.has(storageKey);
+    const marks = [...new Set(members.filter((t) => t.id !== latest.id).map((t) => threadMark(t, t.id === selectedId)).filter(Boolean))];
+    return <div key={key} className="handover-group">
+      <div className={`handover-head${members.some((t) => t.id === selectedId) ? ' selected' : ''}`}>
+        <button className="handover-toggle" aria-label={`${expanded ? '收起' : '展开'}交接记录：${latest.title}`} aria-expanded={expanded} onClick={() => setExpandedHandovers((old) => {
+          const next = new Set(old);
+          if (next.has(storageKey)) next.delete(storageKey); else next.add(storageKey);
+          return next;
+        })}><IconChevron size={13} open={expanded} /></button>
+        {row(latest, latest.title.replace(/(?:（接手）)+$/, ''))}
+        {!expanded && marks.length > 0 && <span className="handover-marks">{marks.map((mark) => <span key={mark} className={`dot ${mark}`} role="img" aria-label={`其他交接会话：${MARK_LABELS[mark!]}`} title={`其他交接会话：${MARK_LABELS[mark!]}`} />)}</span>}
+      </div>
+      {expanded && <div className="handover-members">{members.map((t) => row(t,
+        agentById.get(t.agent)?.label ?? t.agent,
+        `${t.handover ? '接手会话' : '原始会话'}${t.id === selectedId ? ' · 当前' : ''}`,
+      ))}</div>}
+    </div>;
+  });
+
   const group = (key: string, head: React.ReactNode, list: Thread[], extra?: React.ReactNode, emptyHint?: string) => (
     <section key={key} className="thread-group">
       <div className="group-head-row">
@@ -173,7 +191,7 @@ export function Sidebar({
         </button>
         {extra}
       </div>
-      {isOpen(key) && (list.length ? list.map(row) : emptyHint ? <p className="group-empty">{emptyHint}</p> : null)}
+      {isOpen(key) && (list.length ? groupedRows(list) : emptyHint ? <p className="group-empty">{emptyHint}</p> : null)}
     </section>
   );
 
@@ -189,7 +207,7 @@ export function Sidebar({
       {activity.groups.map((g) => (
         <section key={g.key} className="thread-group" aria-label={g.label}>
           <div className="group-label">{g.label}</div>
-          {g.threads.map(row)}
+          {g.threads.map((t) => row(t))}
         </section>
       ))}
     </nav>
@@ -325,9 +343,6 @@ export function Sidebar({
             )}
             <button className={`side-link${todosActive ? ' active' : ''}`} aria-current={todosActive ? 'page' : undefined} onClick={onOpenTodos}>
               <IconList size={compact ? 21 : 17} /> 计划
-            </button>
-            <button className={`side-link${skillsActive ? ' active' : ''}`} aria-current={skillsActive ? 'page' : undefined} onClick={onOpenSkills}>
-              <IconSparkle size={compact ? 21 : 17} /> 技能
             </button>
           </div>
         )}

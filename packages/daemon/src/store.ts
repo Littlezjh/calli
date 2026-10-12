@@ -21,6 +21,7 @@ export interface ThreadRecord {
   sectionId: string | null;
   /** The thread this one was forked from. Kept even if that thread is later deleted. */
   forkedFrom: string | null;
+  handover?: { sourceId: string; title: string; agent: string } | null;
   /** Set when the thread runs in a git worktree the hub made for it, or shares one with the thread it was forked from. */
   worktree: ThreadWorktree | null;
   /** A turn finished and nobody has looked at the result yet. */
@@ -95,6 +96,7 @@ interface ThreadRow {
   archived_at: string | null;
   section_id: string | null;
   forked_from: string | null;
+  handover: string | null;
   worktree: string | null;
   unread: number;
   hub_turn_at: string | null;
@@ -127,6 +129,7 @@ const toThread = (r: ThreadRow): ThreadRecord => ({
   archivedAt: r.archived_at,
   sectionId: r.section_id,
   forkedFrom: r.forked_from,
+  handover: r.handover ? JSON.parse(r.handover) : null,
   worktree: r.worktree ? (JSON.parse(r.worktree) as ThreadWorktree) : null,
   unread: r.unread === 1,
   hubTurnAt: r.hub_turn_at,
@@ -200,6 +203,7 @@ export class Store {
     // Migration: the sidebar's preview line, the newest thing the user asked.
     if (!cols.some((c) => c.name === 'preview')) this.db.exec('ALTER TABLE threads ADD COLUMN preview TEXT');
     // Migration: forks.
+    if (!cols.some((c) => c.name === 'handover')) this.db.exec('ALTER TABLE threads ADD COLUMN handover TEXT');
     if (!cols.some((c) => c.name === 'forked_from')) this.db.exec('ALTER TABLE threads ADD COLUMN forked_from TEXT');
     // Migration: the git worktree a forked thread stands in, as JSON.
     if (!cols.some((c) => c.name === 'worktree')) this.db.exec('ALTER TABLE threads ADD COLUMN worktree TEXT');
@@ -236,6 +240,27 @@ export class Store {
         PRIMARY KEY (todo_id, thread_id)
       );
     `);
+    if (!cols.some((c) => c.name === 'handover')) this.recoverHandovers();
+  }
+
+  /** Recover only the hub's explicit local handover envelope, never title similarity. */
+  private recoverHandovers(): void {
+    const candidates = this.db.prepare(`SELECT t.id, t.cwd, t.created_at,
+      (SELECT e.data FROM events e WHERE e.thread_id = t.id AND e.type = 'turn.started' ORDER BY e.seq LIMIT 1) AS first_turn
+      FROM threads t WHERE t.handover IS NULL AND t.forked_from IS NULL`).all() as Array<{ id: string; cwd: string; created_at: string; first_turn: string | null }>;
+    for (const candidate of candidates) {
+      if (!candidate.first_turn) continue;
+      let text: unknown;
+      try { text = (JSON.parse(candidate.first_turn) as { text?: unknown }).text; } catch { continue; }
+      if (typeof text !== 'string') continue;
+      const envelope = text.match(/^(?:来源机器：本机（当前 hub）\s+)?# 交接信息\r?\n([\s\S]*?)\r?\n## 接手要求(?:\r?\n|$)/);
+      if (!envelope) continue;
+      const ids = [...envelope[1].matchAll(/^- Hub 线程 ID：([^\r\n]+)$/gm)];
+      if (ids.length !== 1) continue;
+      const source = this.getThread(ids[0][1].trim());
+      if (!source || source.id === candidate.id || source.cwd !== candidate.cwd || source.createdAt >= candidate.created_at) continue;
+      this.db.prepare('UPDATE threads SET handover = ? WHERE id = ?').run(JSON.stringify({ sourceId: source.id, title: source.title, agent: source.agent }), candidate.id);
+    }
   }
 
   coordinationRecords(): Array<{ id: string; data: string }> {
@@ -276,7 +301,7 @@ export class Store {
     const now = new Date().toISOString();
     this.db
       .prepare(
-        'INSERT INTO threads (id, agent, cwd, title, status, pinned, permission_mode, model, effort, forked_from, worktree, section_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO threads (id, agent, cwd, title, status, pinned, permission_mode, model, effort, forked_from, worktree, section_id, created_at, updated_at, handover) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         t.id,
@@ -293,6 +318,7 @@ export class Store {
         t.sectionId ?? null,
         now,
         now,
+        t.handover ? JSON.stringify(t.handover) : null,
       );
     return this.getThread(t.id)!;
   }

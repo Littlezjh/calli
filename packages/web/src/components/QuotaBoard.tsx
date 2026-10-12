@@ -87,13 +87,13 @@ function QuotaRow({ api, agent, onError, refreshAll }: { api: Api; agent: AgentI
               <div className="quota-reset">{formatReset(w)}</div>
             </div>
           ))}
-          {quota.note && <p className="quota-note">{quota.note}</p>}
           <p className="quota-checked">
             刷新于 {clock(quota.checkedAt)}
             {failedAt ? ` · 上次刷新失败（${clock(failedAt)}）` : ''}
           </p>
         </>
       )}
+      {quota?.note && <p className="quota-note">{quota.note}</p>}
     </div>
   );
 }
