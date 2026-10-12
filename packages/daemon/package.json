@@ -12,7 +12,8 @@
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
-    "@agentclientprotocol/claude-agent-acp": "0.89.0"
+    "@agentclientprotocol/claude-agent-acp": "0.89.0",
+    "node-pty": "^1.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

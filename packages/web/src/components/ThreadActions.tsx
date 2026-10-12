@@ -5,7 +5,7 @@ import { folderName } from '../paths';
 import { ChoiceDialog, Dialog } from './Dialog';
 import { HandoverDialog } from './HandoverDialog';
 import { Menu, type MenuEntry } from './Menu';
-import { IconArchive, IconCheck, IconCopy, IconDot, IconEdit, IconFork, IconHand, IconList, IconPin, IconPlus, IconTrash, IconWorktree } from './icons';
+import { IconArchive, IconCheck, IconCopy, IconDot, IconEdit, IconFork, IconHand, IconList, IconPin, IconPlus, IconTerminal, IconTrash, IconWorktree } from './icons';
 import type { ToastState } from './Toast';
 
 interface Deps {
@@ -25,6 +25,8 @@ interface Deps {
   onMarkedUnread: (thread: Thread) => void;
   /** Sections were added, renamed or removed: reload them (and the threads filed under them). */
   onSectionsChange: () => void;
+  /** Opens the web terminal, from a menu item tied to the thread's directory. */
+  onOpenTerminal: () => void;
   onError: (e: unknown) => void;
   toast: (t: ToastState | null) => void;
   /** The whole conversation as Markdown, for the copy menu. */
@@ -61,7 +63,7 @@ export function forkBlocked(thread: Thread): string | null {
  * the archive and the slash menu, so an action behaves the same wherever it is started.
  */
 export function useThreadActions(deps: Deps) {
-  const { api, agents, sections, todos, onTodosChange, onThreadChange, onThreadRemove, onThreadOpen, onMarkedUnread, onSectionsChange, onError, toast, markdownOf } = deps;
+  const { api, agents, sections, todos, onTodosChange, onThreadChange, onThreadRemove, onThreadOpen, onMarkedUnread, onSectionsChange, onOpenTerminal, onError, toast, markdownOf } = deps;
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [dialog, setDialog] = useState<DialogState | null>(null);
 
@@ -141,6 +143,7 @@ export function useThreadActions(deps: Deps) {
     const linkedTodoIds = new Set(todos.filter((t) => t.threads.some((it) => it.id === thread.id)).map((t) => t.id));
     const planChoices = todos.filter((t) => !t.parentId).slice(0, 30);
     return [
+      { id: 'terminal', label: '打开终端', icon: IconTerminal, onSelect: onOpenTerminal },
       { id: 'rename', label: '重命名', icon: IconEdit, onSelect: () => run('rename', thread) },
       { id: 'pin', label: thread.pinned ? '取消置顶' : '置顶', icon: IconPin, onSelect: () => run('pin', thread) },
       {

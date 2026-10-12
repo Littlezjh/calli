@@ -188,6 +188,19 @@ export interface AgentSession {
   threadId: string | null;
 }
 
+/** A web terminal, as the daemon lists it. Exited ones are not listed. */
+export interface TerminalInfo {
+  id: string;
+  cwd: string;
+  cols: number;
+  rows: number;
+  startedAt: number;
+  lastActivity: number;
+}
+
+/** One SSE frame of a terminal stream. Output is base64: programs may emit non-UTF-8 bytes. */
+export type TerminalFrame = { type: 'backlog'; data: string } | { type: 'out'; data: string } | { type: 'exit'; code: number };
+
 const TOKEN_KEY = 'rah.token';
 
 /** Token lives in localStorage on this device only. Storage can be blocked, so every access is guarded. */
@@ -483,6 +496,30 @@ export class Api {
     return this.request('GET', `/api/agents/${agent}/quota`);
   }
 
+  /** Live web terminals on this daemon. */
+  listTerminals(): Promise<TerminalInfo[]> {
+    return this.request('GET', '/api/terminals');
+  }
+
+  /** Starts a terminal in `cwd`, which must be one of the allowed workdirs. */
+  createTerminal(cwd: string): Promise<TerminalInfo> {
+    return this.request('POST', '/api/terminals', { cwd });
+  }
+
+  /** Sends keystrokes (or a paste) to a terminal. */
+  terminalInput(id: string, data: string): Promise<void> {
+    return this.request('POST', `/api/terminals/${id}/input`, { data });
+  }
+
+  terminalSize(id: string, cols: number, rows: number): Promise<void> {
+    return this.request('POST', `/api/terminals/${id}/size`, { cols, rows });
+  }
+
+  /** Ends a terminal. Closing its panel does not; the shell is exited by typing, or reaped when idle. */
+  killTerminal(id: string): Promise<void> {
+    return this.request('DELETE', `/api/terminals/${id}`);
+  }
+
   models(agent: string): Promise<ModelOption[]> {
     return this.request('GET', `/api/agents/${agent}/models`);
   }
@@ -508,7 +545,7 @@ export class Api {
    * `idleMs` is taken for dead; and when the page comes back to the foreground, one that has been
    * silent for a few seconds is not waited on at all.
    */
-  async stream(path: string, onEvent: (ev: StoredEvent) => void, signal: AbortSignal, idleMs = STREAM_IDLE_MS): Promise<void> {
+  async stream<T = StoredEvent>(path: string, onEvent: (ev: T) => void, signal: AbortSignal, idleMs = STREAM_IDLE_MS): Promise<void> {
     const res = await fetch(this.base + path, { headers: this.headers({ Accept: 'text/event-stream' }), signal });
     if (res.status === 401) throw new AuthError('unauthorized');
     if (!res.ok || !res.body) throw new Error(`stream failed: HTTP ${res.status}`);
@@ -539,7 +576,7 @@ export class Api {
             .filter((l) => l.startsWith('data: '))
             .map((l) => l.slice(6))
             .join('\n');
-          if (data) onEvent(JSON.parse(data) as StoredEvent);
+          if (data) onEvent(JSON.parse(data) as T);
         }
       }
     } finally {
