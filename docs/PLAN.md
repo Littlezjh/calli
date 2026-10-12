@@ -68,6 +68,7 @@ daemon（Node.js，跑在远程主机上）
 - **图片按 agent 的能力走：** 能直接收图的发图片本身；agy 只收文字，发文件路径让它自己打开；pi 的纯文本模型在装了 `pi-aux-vision` 后发路径，由它的 `describe_image` 工具交给视觉模型，没装就拦下并提示换模型。
 - **排队：** 运行中发的消息排队（内存里，最多 5 条），每轮结束后发下一条；"立即发送"打断当前这轮；按停止则不发，文字退回输入框。
 - **未读存在服务器上，** 所以手机上看过，电脑上也算已读。
+- **终端（第 10 节）：** 真终端要 PTY，首选 `node-pty`（退路 `script -qfc`）；传输沿用 HTTP + SSE（输出 SSE + base64，输入 POST），不引 WebSocket；终端是临时会话，不写 SQLite，daemon 重启即消失，空闲 30 分钟回收，最多 3 个；起始目录限白名单，之后 cd 不管。
 - **agent 做不到的事不假装：** 没有审批的 agent 不显示"请求批准"；agy 因为不能询问而拒绝操作时，`turn.error` 带 `code: permission_refused`，界面提示切到"完全访问"。
 - **工作目录白名单：** 只能在 `RAH_WORKDIRS` 列出的目录里建线程。
 - **agent 实例（多账号）：** 一个适配器可以起多个实例。实例来自 `data/agents.json`（或 `RAH_AGENTS_JSON` 内联 JSON）：`{ id, adapter, label?, command?, env? }`，adapter 指到 `adapters/` 里的实现，command 不写就继承该适配器的默认。实例 env 合并进它起的所有进程（第二个 Claude 账号带自己的 `CLAUDE_CONFIG_DIR`），所以账号隔离和会话目录隔离都是实例属性。线程的 `agent` 字段存实例 id；内置实例沿用 claude/pi/agy(/traex) 这些名字，老数据零迁移。`GET /api/agents/discover` 扫 PATH 找同类 CLI（前缀匹配且后缀是数字或分隔符，所以 `ping`、`pix` 不算 pi），`POST /api/agents` 添加后立即生效并写回 agents.json。

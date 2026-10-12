@@ -9,7 +9,7 @@
 
 页面现在能做的事太少。要补的是**会话管理**（整理、归档、找回、导入、分叉、状态一目了然），不是把编辑器和终端搬进来。
 
-不做：文件树、代码编辑器、网页终端、多用户账号、云端环境。
+不做：文件树、代码编辑器、多用户账号、云端环境。终端例外：给人用的运维工具，见第 10 节。
 
 ## 1. 侧边栏与线程管理
 
@@ -136,6 +136,27 @@
 - [ ] **P2** 英文 README
 - [ ] **P2** 事件日志改成增量构建（现在每来一个事件就全量重算）
 [x] 打开线程慢：页内同一工具调用的 update 突发（每次都是覆盖上一次的快照）在伺服时合并成一条（字段级等价，镜像 web `applyToolData` 的取舍；库里的原始记录不动），配 JSON gzip，重线程从几十 MB 掉到百 KB 级；打开期间显示「加载中…」；实测 codex 线程 39MB→1.2MB→gzip 0.31MB
+
+## 10. 终端
+
+在网页里开一个真的终端（PTY），给自己在这台主机上跑命令：看 git 状态、跑测试、装依赖。不是把 IDE 搬进来：不持久化输出、不进事件日志、不碰 agent 的会话。
+
+- [x] 决定：真终端要 PTY。daemon 引入 `node-pty`（常见平台有预编译）；主机上装不上就退回 `script -qfc $SHELL /dev/null` + `stty` 改窗口大小，零原生依赖。PTY 这层抽成小接口，两种实现同壳
+- [x] 传输沿用 HTTP + SSE，不引 WebSocket：输出走 SSE，输入走 POST；xterm.js 在前端把击键按 ~16ms 合并成一批，keep-alive 下延迟够用
+- [x] daemon `terminals.ts` + 接口：
+  - `POST /api/terminals {cwd}` 建（起始目录必须在白名单里，之后的 cd 不管——daemon 本来就是远程 shell）
+  - `GET /api/terminals` 列表；`POST …/:id/input {data}`（UTF-8）；`POST …/:id/size {cols,rows}`；`DELETE …/:id` 杀掉
+  - `GET …/:id/stream` SSE：先补最近 ~256KB 环形缓冲（base64，应用可能输出非 UTF-8 字节），再接实时输出块，退出发 `exit(code)`；断线的 UTF-8 字符跨块拼接不丢
+  - 生命周期：临时会话，daemon 重启即消失（不写 SQLite）；空闲 30 分钟回收；同时最多 3 个；daemon 退出时全杀；退出的会话保留 60 秒，重连还能看到结尾
+  - shell 用 `$SHELL`（systemd 经登录 shell 启动，agent 的环境变量终端也能用），`RAH_TERM_SHELL` 可覆盖
+- [ ] **P0** web `TerminalPanel.tsx`：`@xterm/xterm` + fit + web-links addon；全屏面板（照 TodosPanel 模式），头部是目录（短路径，点开复制全路径）、＋ 新建、关闭；配色字号从 styles.css 变量读，主题切换时换 theme；断线重连先重放缓冲再接实时（xterm 清屏重画）
+- [ ] **P0** 入口：线程头部按钮（桌面）、手机「更多」菜单、斜杠面板 `/term`（搜索关键词带「终端/命令行」）
+- [x] 测试：daemon 起真 PTY 验证建/输入/输出/退出/resize/杀/空闲回收
+- [ ] **P1** 多终端：头部变 Tab；关闭面板不杀终端，再开接回
+- [ ] **P1** 手机功能键排（Esc、Tab、Ctrl、↑↓、`|`、`-`）：没有它们没法 Tab 补全；粘贴多行先确认（学 VS Code）；桌面 Ctrl+` 开关
+- [ ] **P2** 滚动搜索；审批卡片「在终端运行」（把命令粘进终端不自动回车）；`RAH_NO_TERMINAL` 整体关闭
+
+已知风险：node-pty 装不上要编译工具链（有 script 退路）；中文 IME 在 xterm 里勉强能用（命令行基本 ASCII，真机验证）；POST 转发击键在慢 VPN 上可能粘滞（先合并批，不行再评估 WS）
 
 ## 参考了哪些项目
 
