@@ -10,13 +10,16 @@ interface Props {
 
 /** Fewer turns than this and the ruler is not worth its space. */
 const MIN_TURNS = 3;
-/** With very long threads the ticks are sampled, so the ruler stays readable. */
-const MAX_TICKS = 120;
+/** Ticks sit at an even pitch, like Codex: roomy for short threads, packed for long ones. */
+const MAX_PITCH = 12;
+const MIN_PITCH = 5;
+/** Dash length by distance from the hovered tick (fisheye); beyond the list, the base length. */
+const FISHEYE = [26, 20, 15, 11];
+const BASE_W = 8;
+const ACTIVE_W = 14;
 
 interface Tick {
   turnId: string;
-  /** Position within the scroll content, 0..1. */
-  ratio: number;
   /** The scroll offset clicking this tick jumps to. */
   top: number;
 }
@@ -32,20 +35,22 @@ export function TurnRuler({ scrollerRef, previews }: Props) {
   const [ticks, setTicks] = useState<Tick[]>([]);
   const [activeIdx, setActiveIdx] = useState(-1);
   const [hoverIdx, setHoverIdx] = useState(-1);
+  const [height, setHeight] = useState(0);
 
   const measure = () => {
     const scroller = scrollerRef.current;
     if (!scroller) return;
     const scrollerTop = scroller.getBoundingClientRect().top;
-    const content = scroller.scrollHeight;
     const out: Tick[] = [];
     for (const row of scroller.querySelectorAll<HTMLElement>('[data-turn]')) {
-      const rect = row.getBoundingClientRect();
-      const top = rect.top - scrollerTop + scroller.scrollTop;
-      out.push({ turnId: row.dataset.turn ?? '', ratio: content > 0 ? top / content : 0, top });
+      const top = row.getBoundingClientRect().top - scrollerTop + scroller.scrollTop;
+      out.push({ turnId: row.dataset.turn ?? '', top });
     }
-    // Sample down to MAX_TICKS, always keeping the last (current) turn.
-    const step = Math.ceil(out.length / MAX_TICKS);
+    const h = rootRef.current?.clientHeight ?? 0;
+    if (h > 0) setHeight(h);
+    // Sample down to what fits at the minimum pitch, always keeping the last (current) turn.
+    const fit = Math.max(MIN_TURNS, Math.floor((h || 600) / MIN_PITCH));
+    const step = Math.ceil(out.length / fit);
     const shown = step > 1 ? out.filter((_, i) => i % step === 0 || i === out.length - 1) : out;
     setTicks(shown);
     setActiveIdx((prev) => Math.min(prev, shown.length - 1));
@@ -69,7 +74,6 @@ export function TurnRuler({ scrollerRef, previews }: Props) {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
         const scrollerTop = scroller.getBoundingClientRect().top;
-        const content = scroller.scrollHeight;
         let idx = -1;
         let i = 0;
         for (const row of scroller.querySelectorAll<HTMLElement>('[data-turn]')) {
@@ -77,6 +81,8 @@ export function TurnRuler({ scrollerRef, previews }: Props) {
           if (top <= scroller.scrollTop + 80) idx = i;
           i++;
         }
+        // At the bottom the last turn is the one being read, however short it is.
+        if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4) idx = i - 1;
         setActiveIdx(idx);
       });
     };
@@ -95,22 +101,33 @@ export function TurnRuler({ scrollerRef, previews }: Props) {
 
   const previewOf = useMemo(() => (idx: number): TurnPreview | null => previews.get(ticks[idx]?.turnId ?? '') ?? null, [previews, ticks]);
 
-  if (ticks.length < MIN_TURNS) return null;
+  // Ticks are centred as a block in the rail; the popover follows the hovered tick.
+  const pitch = Math.max(MIN_PITCH, Math.min(MAX_PITCH, height > 0 ? height / ticks.length : MAX_PITCH));
+  const start = Math.max(0, (height - pitch * ticks.length) / 2);
+  const centerOf = (i: number) => start + pitch * i + pitch / 2;
+  const widthOf = (i: number) => {
+    const d = hoverIdx >= 0 ? Math.abs(i - hoverIdx) : Infinity;
+    if (d < FISHEYE.length) return FISHEYE[d];
+    return i === activeIdx ? ACTIVE_W : BASE_W;
+  };
+
+  // The rail itself must render (empty) so it can be measured before ticks appear.
+  if (ticks.length < MIN_TURNS) return <div className="turn-ruler" ref={rootRef} style={{ pointerEvents: 'none' }} aria-hidden />;
 
   return (
     <div className="turn-ruler" ref={rootRef} onMouseLeave={() => setHoverIdx(-1)}>
       {ticks.map((tick, i) => (
         <button
           key={tick.turnId || i}
-          className={`tick${i === activeIdx ? ' active' : ''}${Math.abs(i - hoverIdx) <= 1 && hoverIdx >= 0 ? ' near' : ''}`}
-          style={{ top: `${tick.ratio * 100}%` }}
+          className={`tick${i === activeIdx ? ' active' : ''}${i === hoverIdx ? ' hover' : ''}`}
+          style={{ top: centerOf(i) - pitch / 2, height: pitch, ['--w' as string]: `${widthOf(i)}px` }}
           aria-label={`跳到第 ${i + 1} 轮`}
           onClick={() => jump(tick)}
           onMouseEnter={() => setHoverIdx(i)}
         />
       ))}
       {hoverIdx >= 0 && previewOf(hoverIdx) && (
-        <div className="ruler-pop" style={{ top: `${ticks[hoverIdx].ratio * 100}%` }}>
+        <div className="ruler-pop" style={{ top: centerOf(hoverIdx) }}>
           <div className="ruler-pop-q">{previewOf(hoverIdx)!.question.slice(0, 90) || '（图片）'}</div>
           {previewOf(hoverIdx)!.answer && <div className="ruler-pop-a">{previewOf(hoverIdx)!.answer.slice(0, 110)}</div>}
         </div>

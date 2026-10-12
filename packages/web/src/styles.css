@@ -1031,44 +1031,51 @@ html.list-open body {
   position: absolute;
   top: 12px;
   bottom: 120px;
-  left: clamp(6px, calc(50% - var(--content-w) / 2 - 36px), 44px);
-  width: 22px;
+  left: clamp(6px, calc(50% - var(--content-w) / 2 - 44px), 44px);
+  width: 34px;
   z-index: 5;
 }
 
+/* Each tick is a full-pitch hit area; the visible dash is its ::before, left-aligned and growing
+   rightwards. Its length (--w) comes from the fisheye around the hovered tick. */
 .turn-ruler .tick {
   position: absolute;
-  left: 8px;
-  width: 4px;
-  height: 10px;
+  left: 0;
+  width: 34px;
   padding: 0;
-  transform: translateY(-50%);
   border: 0;
-  border-radius: 2px;
-  background: var(--border-strong);
-  transition: height 0.15s, left 0.15s, background 0.15s;
+  background: none;
+  cursor: pointer;
 }
 
-.turn-ruler .tick:hover,
-.turn-ruler .tick.near {
-  left: 5px;
-  width: 10px;
+.turn-ruler .tick::before {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 50%;
+  width: var(--w, 8px);
+  height: 2px;
+  margin-top: -1px;
+  border-radius: 1px;
+  background: var(--border-strong);
+  transition: width 0.16s ease, background 0.16s ease;
+}
+
+.turn-ruler:hover .tick::before {
   background: var(--faint);
 }
 
-.turn-ruler .tick.active {
-  height: 22px;
+.turn-ruler .tick.active::before {
   background: var(--muted);
 }
 
-.turn-ruler .tick.active:hover,
-.turn-ruler .tick.active.near {
+.turn-ruler .tick.hover::before {
   background: var(--text);
 }
 
 .ruler-pop {
   position: absolute;
-  left: 26px;
+  left: 42px;
   transform: translateY(-50%);
   width: 260px;
   padding: 9px 12px;
