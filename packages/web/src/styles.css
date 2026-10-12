@@ -7358,3 +7358,66 @@ input.picker-search {
   .effort-rail { inset-inline: 20px; }
   .effort-fill { width: calc(20px + (100% - 40px) * var(--effort-fraction, 0)); }
 }
+
+/* Project navigation stays on the selected machine; only the list scrolls. */
+.dialog.project-browser {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 100%);
+  max-height: 86dvh;
+  border-radius: var(--radius-lg);
+}
+.project-browser-machine {
+  margin: 6px 0 16px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.project-browser-controls {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+}
+.project-browser-nav { display: flex; gap: 6px; flex-wrap: wrap; }
+.project-browser-path {
+  margin: 12px 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+  max-height: 64px;
+  overflow-y: auto;
+}
+.project-browser input.picker-search { width: 100%; margin: 0 0 10px; flex-shrink: 0; }
+.project-browser-list { flex: 1; min-height: 80px; overflow-y: auto; }
+.project-browser-folder {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  text-align: left;
+}
+.project-browser-folder:hover { background: var(--hover); }
+.project-browser-folder > svg { flex-shrink: 0; color: var(--muted); }
+.project-browser-folder > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.project-browser-folder small { display: block; color: var(--muted); margin-top: 4px; overflow-wrap: anywhere; }
+.project-browser-note { color: var(--muted); font-size: 13px; line-height: 1.6; margin: 12px 0; }
+.project-browser-error { color: var(--danger); font-size: 13px; line-height: 1.6; margin-top: 10px; }
+.project-browser-manage { align-self: flex-start; margin-top: 8px; }
+.project-browser .dialog-actions { flex-shrink: 0; margin-top: 12px; }
+@media (max-width: 700px) {
+  .dialog.project-browser {
+    width: 100%;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+  .project-browser input.picker-search { font-size: 16px; }
+}

@@ -144,6 +144,23 @@ test('config exposes allowed workdirs', async () => {
   assert.deepEqual(await res.json(), { workdirs: [workdir], roots: [{ path: workdir, removable: false }], scratch: true });
 });
 
+test('project directory browsing is authenticated, read-only, and independent of file access', async () => {
+  assert.equal((await api('/api/project-directories', {}, false)).status, 401);
+  const before = await (await api('/api/config')).json();
+  const res = await api('/api/project-directories');
+  assert.equal(res.status, 200);
+  const body = await res.json() as { path: string; directories: Array<{ name: string; path: string }>; allowed: boolean; selectable: boolean };
+  assert.equal(body.path, homedir());
+  assert.equal(body.allowed, false);
+  assert.equal(body.selectable, false);
+  assert.ok(body.directories.every((d) => Object.keys(d).sort().join(',') === 'name,path'));
+  assert.equal((await api(`/api/directories?path=${encodeURIComponent(homedir())}`)).status, 403);
+  assert.deepEqual(await (await api('/api/config')).json(), before);
+  assert.equal((await api('/api/project-directories?path=relative')).status, 400);
+  assert.equal((await api('/api/project-directories?path=/')).status, 403);
+  assert.equal((await api(`/api/project-directories?path=${encodeURIComponent(workdir)}`)).status, 200);
+});
+
 test('project roots can be added and removed from the page, within limits, and are kept', async () => {
   type Config = { workdirs: string[]; roots: Array<{ path: string; removable: boolean }> };
   const add = (path: unknown) => api('/api/workdirs', { method: 'POST', body: JSON.stringify({ path }) });

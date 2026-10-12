@@ -1119,6 +1119,12 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           api={api}
           roots={workdirs}
           selected={draftCwd}
+          machine={host?.label ?? (hostId ? '远程机器' : '本机')}
+          onRootsChange={applyWorkdirs}
+          onManageRoots={() => {
+            setShowDirPicker(false);
+            setProjectDialog('roots');
+          }}
           onSelect={(cwd) => {
             setDraftCwd(cwd);
             setDraftScratch(false);
@@ -1185,6 +1191,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           <div className="topbar-heading">
             {/* The plan page carries its own heading. */}
             <div className="topbar-title">{host && !hostUp ? host.label : onTodos || onSkills ? '' : selected ? selected.title : '新线程'}</div>
+            {!selected && !onTodos && !onSkills && host && hostUp && <div className="topbar-sub">{host.label}</div>}
             {selected && (
               <div className="topbar-sub" title={selected.cwd}>
                 {agentLabel(selected.agent)} ·{' '}

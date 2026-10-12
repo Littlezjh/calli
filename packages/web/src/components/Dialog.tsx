@@ -9,12 +9,15 @@ interface Props {
   options?: Array<{ label: string; hint?: string }>;
   confirmLabel: string;
   danger?: boolean;
+  children?: ReactNode;
+  confirmDisabled?: boolean;
+  className?: string;
   onConfirm: (value: string | undefined, checked: boolean[]) => void;
   onCancel: () => void;
 }
 
 /** In-app modal used instead of window.prompt / window.confirm, so it matches the rest of the UI. */
-export function Dialog({ title, message, input, options = [], confirmLabel, danger, onConfirm, onCancel }: Props) {
+export function Dialog({ title, message, input, options = [], confirmLabel, danger, children, confirmDisabled, className = '', onConfirm, onCancel }: Props) {
   const [value, setValue] = useState(input?.initial ?? '');
   const [checked, setChecked] = useState<boolean[]>(() => options.map(() => false));
   const inputRef = useRef<HTMLInputElement>(null);
@@ -30,6 +33,7 @@ export function Dialog({ title, message, input, options = [], confirmLabel, dang
   }, [onCancel]);
 
   const submit = () => {
+    if (confirmDisabled) return;
     if (input && !value.trim()) return;
     onConfirm(input ? value.trim() : undefined, checked);
   };
@@ -37,7 +41,7 @@ export function Dialog({ title, message, input, options = [], confirmLabel, dang
   return (
     <div className="dialog-scrim" onClick={onCancel}>
       <div
-        className="dialog"
+        className={`dialog ${className}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="dialog-title"
@@ -47,6 +51,7 @@ export function Dialog({ title, message, input, options = [], confirmLabel, dang
           {title}
         </h2>
         {message && <p className="dialog-message">{message}</p>}
+        {children}
         {input && (
           <label className="dialog-field">
             <span className="sr-only">{input.label}</span>
@@ -77,7 +82,7 @@ export function Dialog({ title, message, input, options = [], confirmLabel, dang
           <button className="ghost" onClick={onCancel}>
             取消
           </button>
-          <button className={danger ? 'danger' : 'primary'} onClick={submit} disabled={!!input && !value.trim()}>
+          <button className={danger ? 'danger' : 'primary'} onClick={submit} disabled={confirmDisabled || (!!input && !value.trim())}>
             {confirmLabel}
           </button>
         </div>
