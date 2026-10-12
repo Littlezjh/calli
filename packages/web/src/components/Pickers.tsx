@@ -239,6 +239,15 @@ export interface DiscoveredAgent {
   command: string;
 }
 
+/** An account of a multi-account agent already signed in on this host, as the picker offers it. */
+export interface DiscoveredAccount {
+  adapter: string;
+  email: string;
+  env: Record<string, string>;
+  id: string;
+  label: string;
+}
+
 interface AgentProps {
   agents: AgentInfo[];
   value: string;
@@ -246,9 +255,12 @@ interface AgentProps {
   /** Extra CLIs found on this host; picking one adds it as a new instance. */
   discovered?: DiscoveredAgent[];
   onAdd?: (agent: DiscoveredAgent) => Promise<void>;
+  /** Signed-in accounts found on this host; picking one links it as a new instance. */
+  accounts?: DiscoveredAccount[];
+  onAddAccount?: (account: DiscoveredAccount) => Promise<void>;
 }
 
-export function AgentPicker({ agents, value, onChange, discovered = [], onAdd }: AgentProps) {
+export function AgentPicker({ agents, value, onChange, discovered = [], onAdd, accounts = [], onAddAccount }: AgentProps) {
   const current = agents.find((a) => a.id === value);
   const [adding, setAdding] = useState<string | null>(null);
   return (
@@ -315,6 +327,37 @@ export function AgentPicker({ agents, value, onChange, discovered = [], onAdd }:
                   </span>
                   <span className="pop-item-check">
                     {adding === d.id ? <IconSparkle size={13} /> : <IconPlus size={14} />}
+                  </span>
+                </button>
+              ))}
+            </>
+          )}
+          {onAddAccount && accounts.length > 0 && (
+            <>
+              <div className="pop-sep">已登录的账号</div>
+              {accounts.map((a) => (
+                <button
+                  key={a.id}
+                  type="button"
+                  className="pop-item compact"
+                  disabled={adding !== null}
+                  onClick={async () => {
+                    setAdding(a.id);
+                    try {
+                      await onAddAccount(a);
+                      onChange(a.id);
+                      close();
+                    } finally {
+                      setAdding(null);
+                    }
+                  }}
+                >
+                  <span className="pop-item-text">
+                    <span className="pop-item-label">{a.email}</span>
+                    <span className="pop-item-hint">{a.label} · 添加后用这个账号</span>
+                  </span>
+                  <span className="pop-item-check">
+                    {adding === a.id ? <IconSparkle size={13} /> : <IconPlus size={14} />}
                   </span>
                 </button>
               ))}

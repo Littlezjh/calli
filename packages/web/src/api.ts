@@ -404,6 +404,11 @@ export class Api {
     return this.request('GET', '/api/agents/discover');
   }
 
+  /** Accounts of multi-account agents already signed in on this host, ready to link in one click. */
+  discoverAccounts(): Promise<Array<{ adapter: string; email: string; env: Record<string, string>; id: string; label: string }>> {
+    return this.request('GET', '/api/agents/accounts/discover');
+  }
+
   /** Adds an agent instance (another CLI, another account). */
   addAgent(input: { id?: string; adapter: string; label?: string; command?: string[]; env?: Record<string, string> }): Promise<{ id: string }> {
     return this.request('POST', '/api/agents', input);

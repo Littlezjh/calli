@@ -173,6 +173,12 @@ export function createHttpServer(deps: HttpDeps): Server {
       return sendJson(res, 200, await registry.discover());
     }
 
+    // GET /api/agents/accounts/discover: signed-in accounts of multi-account agents, ready to link
+    if (method === 'GET' && path === '/api/agents/accounts/discover') {
+      if (!registry) throw new HttpError(404, 'this daemon has no agent registry');
+      return sendJson(res, 200, await registry.discoverAccounts());
+    }
+
     // POST /api/agents: add an instance (another CLI, another account)
     if (method === 'POST' && path === '/api/agents') {
       if (!registry) throw new HttpError(404, 'this daemon has no agent registry');

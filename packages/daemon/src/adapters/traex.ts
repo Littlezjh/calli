@@ -44,6 +44,7 @@ export class TraexAcpAdapter extends AcpAdapter {
     fork: true,
     // Not known to take a fork point; whole copies only.
     forkAt: false,
+    multiAccount: false,
     // traex is ACP like Claude; a quota probe can follow once its CLI has a usage command.
     quota: false,
   };

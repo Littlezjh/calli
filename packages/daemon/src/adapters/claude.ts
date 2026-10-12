@@ -1,6 +1,9 @@
 import { execFile } from 'node:child_process';
+import { readdirSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { AcpAdapter, AcpSession } from './acp.js';
-import type { ModelOption, PermissionMode, PlanQuota, QuotaWindow, SlashCommand } from './types.js';
+import type { DiscoveredAccount, ModelOption, PermissionMode, PlanQuota, QuotaWindow, SlashCommand } from './types.js';
 
 /**
  * Claude Code, through the ACP bridge this repo ships with (`@agentclientprotocol/claude-agent-acp`).
@@ -97,6 +100,7 @@ export class ClaudeAcpAdapter extends AcpAdapter {
     quota: true,
     fork: true,
     forkAt: true,
+    multiAccount: true,
   };
 
   /**
@@ -138,14 +142,74 @@ export class ClaudeAcpAdapter extends AcpAdapter {
 
   /** One `claude -p "/usage"` run. A local command, so no session is written and no turn spent. */
   async fetchQuota(): Promise<PlanQuota> {
-    const bin = process.env.RAH_CLAUDE_QUOTA_BIN ?? 'claude';
     const stdout = await new Promise<string>((resolve, reject) => {
-      execFile(bin, ['-p', '/usage'], { timeout: 30_000, maxBuffer: 1024 * 1024, env: { ...process.env, ...this.env } }, (err, out) => {
+      execFile(claudeCli(), ['-p', '/usage'], { timeout: 30_000, maxBuffer: 1024 * 1024, env: { ...process.env, ...this.env } }, (err, out) => {
         if (!err) return resolve(out);
         const reason = String(err.message).split('\n').pop() ?? '';
         reject(new Error(`claude /usage failed: ${reason.slice(0, 200)}`));
       });
     });
     return { windows: parseClaudeUsage(stdout), checkedAt: new Date().toISOString() };
+  }
+
+  /**
+   * Accounts already signed in on this host: `~/.claude` plus siblings such as `~/.claude-2` that a
+   * second login filled in (`CLAUDE_CONFIG_DIR=… claude` leaves credentials there). Each directory
+   * is asked through `claude auth status`, a local run that writes no session, so accounts whose
+   * login expired drop out of the list on their own. Directories the CLI cannot answer for are
+   * skipped rather than reported broken: discovery must never fail the whole scan.
+   */
+  async discoverAccounts(home = process.env.HOME ?? homedir()): Promise<DiscoveredAccount[]> {
+    let names: string[];
+    try {
+      names = readdirSync(home);
+    } catch {
+      return []; // no home to look at: nothing to offer
+    }
+    // Same shape the PATH scan uses for CLIs, so `.claude.json` (a file, not a config directory)
+    // or other clutter is left alone; only directories can hold a login.
+    const candidates = names
+      .filter((name) => /^\.claude(?=$|[0-9]|[-_.])/.test(name))
+      .map((name) => join(home, name))
+      .filter((dir) => {
+        try {
+          return statSync(dir).isDirectory();
+        } catch {
+          return false;
+        }
+      });
+    const found = await Promise.all(
+      candidates.map(async (dir): Promise<DiscoveredAccount | null> => {
+        const status = await claudeAuthStatus(dir, this.env);
+        if (!status?.loggedIn || !status.email) return null;
+        return { email: status.email, env: { CLAUDE_CONFIG_DIR: dir }, isDefault: dir === join(home, '.claude') };
+      }),
+    );
+    return found.filter((a): a is DiscoveredAccount => a !== null);
+  }
+}
+
+/** The claude CLI used for local one-shot runs: quota reads and account discovery. */
+function claudeCli(): string {
+  return process.env.RAH_CLAUDE_BIN ?? process.env.RAH_CLAUDE_QUOTA_BIN ?? 'claude';
+}
+
+/** One `claude auth status` run against a config directory; null when it says nothing usable. */
+async function claudeAuthStatus(
+  configDir: string,
+  extraEnv: Record<string, string>,
+): Promise<{ loggedIn?: boolean; email?: string } | null> {
+  try {
+    const stdout = await new Promise<string>((resolve, reject) => {
+      execFile(
+        claudeCli(),
+        ['auth', 'status'],
+        { timeout: 15_000, maxBuffer: 64 * 1024, env: { ...process.env, ...extraEnv, CLAUDE_CONFIG_DIR: configDir } },
+        (err, out) => (err ? reject(err) : resolve(out)),
+      );
+    });
+    return JSON.parse(stdout) as { loggedIn?: boolean; email?: string };
+  } catch {
+    return null; // not signed in there, or output the hub does not understand
   }
 }

@@ -1,4 +1,5 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { delimiter } from 'node:path';
 import { AgyAdapter } from './adapters/agy.js';
@@ -6,7 +7,7 @@ import { ClaudeAcpAdapter } from './adapters/claude.js';
 import { CodexAppServerAdapter } from './adapters/codex.js';
 import { PiRpcAdapter } from './adapters/pi.js';
 import { TraexAcpAdapter } from './adapters/traex.js';
-import type { AgentAdapter } from './adapters/types.js';
+import type { AgentAdapter, DiscoveredAccount } from './adapters/types.js';
 import { HttpError } from './errors.js';
 
 /**
@@ -94,6 +95,17 @@ export interface DiscoveredAgent {
   command: string;
 }
 
+/** A signed-in account of a multi-account agent, shaped so the UI can link it in one click. */
+export interface AccountToLink {
+  adapter: AgentInstance['adapter'];
+  email: string;
+  /** Instance env built by the adapter (for Claude, the account's own CLAUDE_CONFIG_DIR). */
+  env: Record<string, string>;
+  /** Suggested instance id and label: the first free "claude-2", "Claude Code 2". */
+  id: string;
+  label: string;
+}
+
 /** Basenames of CLIs the hub can already talk to. Anything else (ping, pipx…) is left alone. */
 const KNOWN_PREFIXES: Array<[AgentInstance['adapter'], RegExp]> = [
   ['claude', /^claude(?=$|[0-9]|[-_.])/],
@@ -159,6 +171,52 @@ export class AgentRegistry {
 
   list(): AgentInstance[] {
     return [...this.instances.values()];
+  }
+
+  /**
+   * Accounts of multi-account agents already signed in on this host that no instance uses yet.
+   * Each adapter knows how to find its own (Claude: `~/.claude`-style directories); the registry
+   * adds what only it knows — which accounts instances already claim, and which ids are free.
+   */
+  async discoverAccounts(): Promise<AccountToLink[]> {
+    const home = process.env.HOME ?? homedir();
+    const byAdapter = new Map<AgentInstance['adapter'], AgentInstance[]>();
+    for (const instance of this.instances.values()) {
+      const list = byAdapter.get(instance.adapter) ?? [];
+      list.push(instance);
+      byAdapter.set(instance.adapter, list);
+    }
+    const out: AccountToLink[] = [];
+    // Suggested ids must not collide with real instances nor with each other within this scan.
+    const takenIds = new Set(this.instances.keys());
+    for (const [kind, instances] of byAdapter) {
+      // The adapter of an instance that pins no account env of its own; it is the neutral one to ask.
+      const neutral = instances.find((i) => !i.env || Object.keys(i.env).length === 0) ?? instances[0];
+      const adapter = this.adapters.get(neutral.id);
+      if (!adapter?.discoverAccounts) continue;
+      // An account is claimed when an instance sets the same env, or when an env-less instance
+      // exists and the account is the adapter's default one.
+      const claimed = (account: DiscoveredAccount) =>
+        instances.some(
+          (i) =>
+            Object.entries(i.env ?? {}).some(([k, v]) => account.env[k] === v) ||
+            (!i.env || Object.keys(i.env).length === 0) && account.isDefault === true,
+        );
+      for (const account of await adapter.discoverAccounts(home)) {
+        if (claimed(account)) continue;
+        let n = 2;
+        while (takenIds.has(`${kind}-${n}`)) n += 1;
+        takenIds.add(`${kind}-${n}`);
+        out.push({
+          adapter: kind,
+          email: account.email,
+          env: account.env,
+          id: `${kind}-${n}`,
+          label: `${ADAPTER_LABELS[kind]} ${n}`,
+        });
+      }
+    }
+    return out.sort((a, b) => a.email.localeCompare(b.email));
   }
 
   private register(instance: AgentInstance): void {

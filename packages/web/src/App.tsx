@@ -30,7 +30,7 @@ import { QuotaPanel } from './components/QuotaPanel';
 import { SelectionMenu } from './components/SelectionMenu';
 import { SideChat } from './components/SideChat';
 import { TodosPanel } from './components/TodosPanel';
-import { AgentPicker, type DiscoveredAgent, effortsForModel, imagesBlocked, imagesNote, modelName, ModelPicker, PermissionPicker, UsageMeter } from './components/Pickers';
+import { AgentPicker, type DiscoveredAccount, type DiscoveredAgent, effortsForModel, imagesBlocked, imagesNote, modelName, ModelPicker, PermissionPicker, UsageMeter } from './components/Pickers';
 import { Sidebar } from './components/Sidebar';
 import { forkBlocked, useThreadActions } from './components/ThreadActions';
 import { ThreadView } from './components/ThreadView';
@@ -71,6 +71,8 @@ export function App() {
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   /** CLIs on PATH that look like extra agents, offered in the picker. */
   const [discovered, setDiscovered] = useState<DiscoveredAgent[]>([]);
+  /** Accounts of multi-account agents already signed in here, offered in the picker. */
+  const [accounts, setAccounts] = useState<DiscoveredAccount[]>([]);
   const [workdirs, setWorkdirs] = useState<string[]>([]);
   const [threads, setThreads] = useState<Thread[]>([]);
   const [sections, setSections] = useState<Section[]>([]);
@@ -183,6 +185,10 @@ export function App() {
         api
           .discoverAgents()
           .then(setDiscovered)
+          .catch(() => undefined);
+        api
+          .discoverAccounts()
+          .then(setAccounts)
           .catch(() => undefined);
       } catch (e) {
         if (!cancelled) handleError(e);
@@ -742,6 +748,15 @@ export function App() {
     setDiscovered(more);
   };
 
+  // Links a signed-in account as its own instance and selects it for the new thread.
+  const addAccount = async (account: DiscoveredAccount) => {
+    if (!api) return;
+    await api.addAgent({ id: account.id, adapter: account.adapter, label: account.label, env: account.env });
+    const [list, rest] = await Promise.all([api.agents(), api.discoverAccounts()]);
+    setAgents(list);
+    setAccounts(rest);
+  };
+
   // What the slash menu offers besides the agent's own commands. The keywords include the names
   // these have in the agents' terminals (/clear, /resume, /export, /status), so habits still work.
   const hubActions: HubAction[] = [
@@ -801,7 +816,7 @@ export function App() {
     )
   ) : (
     <>
-      <AgentPicker agents={agents} value={draftAgent} onChange={pickAgent} discovered={discovered} onAdd={addDiscoveredAgent} />
+      <AgentPicker agents={agents} value={draftAgent} onChange={pickAgent} discovered={discovered} onAdd={addDiscoveredAgent} accounts={accounts} onAddAccount={addAccount} />
       <button className="context-btn" onClick={() => setShowDirPicker(true)} title={draftCwd}>
         <IconFolder size={14} />
         <span>{folderName(draftCwd) || '选择目录'}</span>

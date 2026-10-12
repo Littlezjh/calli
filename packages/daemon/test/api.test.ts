@@ -1579,6 +1579,44 @@ test('agents: instances beyond the built-ins are listed, and PATH discovery offe
   } finally {
     process.env.PATH = oldPath;
   }
+
+  // Account discovery: a signed-in second account is offered ready to link, id and label included.
+  const home = join(dataDir, 'accounts-home');
+  mkdirSync(join(home, '.claude-2'), { recursive: true });
+  const claudeBin = join(home, 'claude');
+  writeFileSync(claudeBin, '#!/bin/sh\necho \'{"loggedIn":true,"email":"second@example.com"}\'\n', { mode: 0o755 });
+  const oldBin = process.env.RAH_CLAUDE_BIN;
+  const oldHome = process.env.HOME;
+  process.env.RAH_CLAUDE_BIN = claudeBin;
+  process.env.HOME = home;
+  try {
+    const accounts = (await (await regApi('/api/agents/accounts/discover')).json()) as Array<{
+      adapter: string; email: string; env: Record<string, string>; id: string; label: string;
+    }>;
+    assert.deepEqual(accounts, [
+      {
+        adapter: 'claude',
+        email: 'second@example.com',
+        env: { CLAUDE_CONFIG_DIR: join(home, '.claude-2') },
+        id: 'claude-2',
+        label: 'Claude Code 2',
+      },
+    ]);
+
+    // Linking it is the existing add-instance route with the env the discovery built.
+    const linked = await regApi('/api/agents', {
+      method: 'POST',
+      body: JSON.stringify({ id: accounts[0].id, adapter: 'claude', label: accounts[0].label, env: accounts[0].env }),
+    });
+    assert.equal(linked.status, 201);
+    const empty = (await (await regApi('/api/agents/accounts/discover')).json()) as unknown[];
+    assert.deepEqual(empty, []);
+  } finally {
+    if (oldBin === undefined) delete process.env.RAH_CLAUDE_BIN;
+    else process.env.RAH_CLAUDE_BIN = oldBin;
+    if (oldHome === undefined) delete process.env.HOME;
+    else process.env.HOME = oldHome;
+  }
   withRegistry.close();
   await withRegistryManager.shutdown();
 });

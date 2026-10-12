@@ -604,6 +604,7 @@ export class PiRpcAdapter implements AgentAdapter {
     history: true,
     fork: true,
     forkAt: true,
+    multiAccount: false,
     // pi has no plan of its own to read: it runs on whatever model account it was given.
     quota: false,
   };

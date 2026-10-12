@@ -142,6 +142,16 @@ export interface HistoryTurn {
   forkRef?: string;
 }
 
+/** An account of an adapter that is already signed in on this host, ready to become an instance. */
+export interface DiscoveredAccount {
+  /** The account's login, as the agent itself reports it, to tell accounts apart. */
+  email: string;
+  /** Instance env that makes an adapter use this account. Built by the adapter, opaque to the UI. */
+  env: Record<string, string>;
+  /** The account an instance without its own env would use; the registry skips it when one exists. */
+  isDefault?: boolean;
+}
+
 export interface StartOptions {
   cwd: string;
   /** Agent-side session id to resume, if the thread already has one. */
@@ -174,6 +184,8 @@ export interface AgentAdapter {
     fork: boolean;
     /** Whether that copy can stop at an earlier turn instead of taking everything. Needs fork and history. */
     forkAt: boolean;
+    /** Whether more accounts of this agent can be linked, each as its own instance with its own login. */
+    multiAccount: boolean;
   };
   /** Whether the agent can be started on this host. */
   available(): Promise<boolean>;
@@ -200,6 +212,11 @@ export interface AgentAdapter {
 
   /** Plan usage, read outside any session. With capabilities.quota. Cached one layer up. */
   fetchQuota?(): Promise<PlanQuota>;
+  /**
+   * Accounts of this agent already signed in on this host, whatever directories they live in. With
+   * capabilities.multiAccount. Never throws: what cannot be read is simply not offered.
+   */
+  discoverAccounts?(home: string): Promise<DiscoveredAccount[]>;
   /**
    * Copies a conversation and returns the id of the copy. With capabilities.fork. Given a turn's
    * forkRef (with capabilities.forkAt), the copy ends where that turn ended.

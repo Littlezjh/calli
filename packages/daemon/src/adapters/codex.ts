@@ -520,6 +520,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
     history: true,
     fork: true,
     forkAt: true,
+    multiAccount: false,
     // Its app-server has no usage request yet.
     quota: false,
   };

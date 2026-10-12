@@ -422,6 +422,7 @@ export class AgyAdapter implements AgentAdapter {
     history: false,
     fork: false,
     forkAt: false,
+    multiAccount: false,
     quota: true,
   };
   private modelCache: { at: number; models: ModelOption[] } | null = null;

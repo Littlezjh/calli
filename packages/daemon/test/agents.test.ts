@@ -104,3 +104,98 @@ test('discover finds extra CLIs on PATH and leaves lookalikes alone', async () =
     process.env.PATH = oldPath;
   }
 });
+
+// The stub claude the account-discovery tests point the adapter at: it answers `auth status`
+// from the config directory it was given, so each directory below stands for one account.
+function fakeClaudeHome(): string {
+  const home = mkdtempSync(join(tmpdir(), 'rah-accounts-home-'));
+  for (const name of ['.claude', '.claude-2', '.claude-3', '.claude-out', '.claude-broken']) {
+    mkdirSync(join(home, name));
+  }
+  return home;
+}
+
+function fakeClaudeBin(home: string): string {
+  const bin = join(home, 'bin');
+  mkdirSync(bin);
+  const script = join(bin, 'claude');
+  writeFileSync(
+    script,
+    [
+      '#!/bin/sh',
+      'name=$(basename "$CLAUDE_CONFIG_DIR")',
+      'case "$name" in',
+      "  .claude-out) echo '{\"loggedIn\":false}' ;;",
+      '  .claude-broken) echo "not json" ;;',
+      "  *) printf '{\"loggedIn\":true,\"email\":\"%s@%s\"}\n' \"$name\" \"$(echo \"$name\" | tr -d .)\" ;;",
+      'esac',
+    ].join('\n'),
+  );
+  chmodSync(script, 0o755);
+  return script;
+}
+
+test('account discovery offers signed-in accounts no instance uses', async () => {
+  const home = fakeClaudeHome();
+  const oldBin = process.env.RAH_CLAUDE_BIN;
+  const oldHome = process.env.HOME;
+  process.env.RAH_CLAUDE_BIN = fakeClaudeBin(home);
+  process.env.HOME = home;
+  try {
+    // The built-in claude has no env of its own, so it claims the default account (~/.claude);
+    // the logged-out and unparseable directories answer nothing usable.
+    const found = await new AgentRegistry(defaults, null).discoverAccounts();
+    assert.deepEqual(found, [
+      {
+        adapter: 'claude',
+        email: '.claude-2@claude-2',
+        env: { CLAUDE_CONFIG_DIR: join(home, '.claude-2') },
+        id: 'claude-2',
+        label: 'Claude Code 2',
+      },
+      {
+        adapter: 'claude',
+        email: '.claude-3@claude-3',
+        env: { CLAUDE_CONFIG_DIR: join(home, '.claude-3') },
+        id: 'claude-3',
+        label: 'Claude Code 3',
+      },
+    ]);
+  } finally {
+    if (oldBin === undefined) delete process.env.RAH_CLAUDE_BIN;
+    else process.env.RAH_CLAUDE_BIN = oldBin;
+    if (oldHome === undefined) delete process.env.HOME;
+    else process.env.HOME = oldHome;
+  }
+});
+
+test('account discovery skips accounts an instance already links, and ids keep counting', async () => {
+  const home = fakeClaudeHome();
+  const oldBin = process.env.RAH_CLAUDE_BIN;
+  const oldHome = process.env.HOME;
+  process.env.RAH_CLAUDE_BIN = fakeClaudeBin(home);
+  process.env.HOME = home;
+  try {
+    const instances: AgentInstance[] = [
+      ...defaults,
+      { id: 'claude-2', adapter: 'claude', env: { CLAUDE_CONFIG_DIR: join(home, '.claude-2') } },
+    ];
+    const found = await new AgentRegistry(instances, null).discoverAccounts();
+    // .claude is claimed by the built-in, .claude-2 by the linked instance; claude-2 is taken,
+    // so the suggestion for .claude-3 moves on to claude-3 / "Claude Code 3".
+    assert.deepEqual(found, [
+      {
+        adapter: 'claude',
+        email: '.claude-3@claude-3',
+        env: { CLAUDE_CONFIG_DIR: join(home, '.claude-3') },
+        id: 'claude-3',
+        label: 'Claude Code 3',
+      },
+    ]);
+  } finally {
+    if (oldBin === undefined) delete process.env.RAH_CLAUDE_BIN;
+    else process.env.RAH_CLAUDE_BIN = oldBin;
+    if (oldHome === undefined) delete process.env.HOME;
+    else process.env.HOME = oldHome;
+  }
+});
