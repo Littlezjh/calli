@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { readdirSync } from 'node:fs';
 import { promisify } from 'node:util';
 import { AcpAdapter } from './acp.js';
+import { TRAE_ICON } from './icons.js';
 import type { PermissionMode } from './types.js';
 
 const execFileAsync = promisify(execFile);
@@ -33,6 +34,7 @@ const TRAEX_EFFORTS = ['low', 'medium', 'high', 'xhigh'] as const;
 export class TraexAcpAdapter extends AcpAdapter {
   readonly id = 'traex';
   readonly label = 'TRAE CLI';
+  readonly icon = TRAE_ICON;
   readonly capabilities = {
     resume: true,
     approvals: true,
@@ -45,6 +47,8 @@ export class TraexAcpAdapter extends AcpAdapter {
     // Not known to take a fork point; whole copies only.
     forkAt: false,
     multiAccount: false,
+    // Not tried against the real CLI yet.
+    forkInto: false,
     // traex is ACP like Claude; a quota probe can follow once its CLI has a usage command.
     quota: false,
   };

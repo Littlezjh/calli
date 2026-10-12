@@ -1,6 +1,7 @@
 // Fake pi RPC process for tests. Speaks pi's JSONL RPC protocol on stdio.
 // Prompt text drives behaviour: "slow" waits until abort, "fail" ends with an error.
 import { readFileSync } from 'node:fs';
+import { basename } from 'node:path';
 import { createInterface } from 'node:readline';
 
 const args = process.argv.slice(2);
@@ -21,6 +22,19 @@ if (!args.includes('--mode') || args[args.indexOf('--mode') + 1] !== 'rpc') {
 const ephemeral = args.includes('--no-session');
 const sessionIdx = args.indexOf('--session');
 let sessionId = sessionIdx >= 0 ? args[sessionIdx + 1] : 'pi-session-1';
+// pi keeps sessions by directory. `--fork <id>` copies one into the directory pi is started in;
+// the copy's id says where it lives: `<id>-in-<directory name>`.
+const here = basename(process.cwd());
+const forkIdx = args.indexOf('--fork');
+if (forkIdx >= 0) sessionId = `${args[forkIdx + 1]}-in-${here}`;
+// Opening such a copy from any other directory is what the real pi refuses to do without asking.
+const home = /-in-([^-]+)(?:-fork-e\d+)?$/.exec(sessionId)?.[1];
+if (sessionIdx >= 0 && home && home !== here) {
+  console.log('Session found in different project');
+  console.log('Fork this session into current directory? [y/N] ');
+  console.log('Aborted.');
+  process.exit(0);
+}
 const out = (obj) => process.stdout.write(JSON.stringify(obj) + '\n');
 let running = false;
 let contextUnknown = false;
@@ -70,6 +84,9 @@ function messagesOf(id) {
     const cut = source.findIndex((m) => m.role === 'user' && ++seen === Number(forked[2]));
     return cut < 0 ? source : source.slice(0, cut);
   }
+  // A copy made into another directory holds what its source holds.
+  const moved = /^(.*)-in-[^-]+$/.exec(String(id));
+  if (moved) return messagesOf(moved[1]);
   if (process.env.FAKE_PI_MESSAGES_FILE) {
     try {
       const scripted = JSON.parse(readFileSync(process.env.FAKE_PI_MESSAGES_FILE, 'utf8'));

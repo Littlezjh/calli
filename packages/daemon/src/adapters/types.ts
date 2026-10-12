@@ -165,6 +165,8 @@ export interface StartOptions {
 export interface AgentAdapter {
   readonly id: string;
   readonly label: string;
+  /** The agent's mark: the path of a 24×24 drawing, filled with the even-odd rule. See icons.ts. */
+  readonly icon?: string;
   readonly capabilities: {
     resume: boolean;
     approvals: boolean;
@@ -186,6 +188,8 @@ export interface AgentAdapter {
     forkAt: boolean;
     /** Whether more accounts of this agent can be linked, each as its own instance with its own login. */
     multiAccount: boolean;
+    /** Whether that copy can go on in another directory, a new worktree of the same repository. Needs fork. */
+    forkInto: boolean;
   };
   /** Whether the agent can be started on this host. */
   available(): Promise<boolean>;
@@ -219,8 +223,9 @@ export interface AgentAdapter {
   discoverAccounts?(home: string): Promise<DiscoveredAccount[]>;
   /**
    * Copies a conversation and returns the id of the copy. With capabilities.fork. Given a turn's
-   * forkRef (with capabilities.forkAt), the copy ends where that turn ended.
+   * forkRef (with capabilities.forkAt), the copy ends where that turn ended. Given `intoCwd` (with
+   * capabilities.forkInto), the copy is one that can be started there instead of in `cwd`.
    */
-  forkSession?(agentSessionId: string, cwd: string, forkRef?: string): Promise<string>;
+  forkSession?(agentSessionId: string, cwd: string, forkRef?: string, intoCwd?: string): Promise<string>;
   start(opts: StartOptions): Promise<AgentSession>;
 }

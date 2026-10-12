@@ -15,8 +15,16 @@ export interface Thread {
   sectionId: string | null;
   /** The thread this one was forked from, if it is a fork. */
   forkedFrom: string | null;
+  /**
+   * The git worktree the thread runs in, when a fork was given one. `of` is the directory it would
+   * be in otherwise, which is the project it is listed under; `ofReal` is that with symlinks
+   * resolved. Missing from daemons that predate worktrees.
+   */
+  worktree?: { root: string; branch: string; of: string; ofReal: string } | null;
   /** A turn finished and nobody has looked at the result yet. */
   unread: boolean;
+  /** The newest thing the user asked, shown under the title. Null until the first ask. */
+  preview: string | null;
   /** The terminal wrote to this session since the hub last did. */
   terminalActivity: boolean;
   /** The agent has stopped to ask for approval. */
@@ -29,6 +37,21 @@ export interface Thread {
   cwdReal: string;
   createdAt: string;
   updatedAt: string;
+}
+
+/** What forking a thread can offer. The worktree is there for a thread in a git repository, with an agent that can move a copy. */
+export interface ForkOptions {
+  worktree: { available: boolean; reason?: string; branch?: string | null; changes?: number };
+}
+
+/** A request the daemon refused. `details` is whatever it sent besides the message, for errors the page handles itself. */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly details: Record<string, unknown> = {},
+  ) {
+    super(message);
+  }
 }
 
 /** How many messages may wait behind a running turn. Matches the daemon's limit. */
@@ -114,6 +137,8 @@ export interface ModelOption {
 export interface AgentInfo {
   id: string;
   label: string;
+  /** The agent's mark: the path of a 24×24 drawing, filled with the even-odd rule. Missing from daemons that predate it. */
+  icon?: string;
   available: boolean;
   capabilities: {
     resume: boolean;
@@ -129,6 +154,8 @@ export interface AgentInfo {
     fork: boolean;
     /** A fork can end at an earlier turn instead of taking the whole thread. Missing from daemons that predate it. */
     forkAt?: boolean;
+    /** A fork can run in a git worktree of its own. Missing from daemons that predate it. */
+    forkInto?: boolean;
   };
 }
 
@@ -207,7 +234,7 @@ export class Api {
     if (res.status === 401) throw new AuthError('unauthorized');
     if (res.status === 204) return undefined as T;
     const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error((json as { error?: string }).error ?? `HTTP ${res.status}`);
+    if (!res.ok) throw new ApiError((json as { error?: string }).error ?? `HTTP ${res.status}`, json as Record<string, unknown>);
     return json as T;
   }
 
@@ -257,6 +284,11 @@ export class Api {
 
   deleteTodo(id: string): Promise<void> {
     return this.request('DELETE', `/api/todos/${id}`);
+  }
+
+  /** Puts an item under `parentId` (null: top level), before the sibling `before` (null: last). */
+  moveTodo(id: string, to: { parentId: string | null; before: string | null }): Promise<void> {
+    return this.request('POST', `/api/todos/${id}/move`, to);
   }
 
   linkTodo(id: string, threadId: string): Promise<void> {
@@ -372,8 +404,13 @@ export class Api {
   }
 
   /** Deletes for good. With `agentSession`, the agent's own copy of the conversation goes too. */
-  deleteThread(threadId: string, opts: { agentSession?: boolean } = {}): Promise<void> {
-    return this.request('DELETE', `/api/threads/${threadId}${opts.agentSession ? '?agentSession=1' : ''}`);
+  /**
+   * `worktree` removes the git worktree the thread runs in as well. Work that exists nowhere else
+   * stops that with an ApiError whose details say how much (`code: 'worktree_dirty'`), until `force`.
+   */
+  deleteThread(threadId: string, opts: { agentSession?: boolean; worktree?: boolean; force?: boolean } = {}): Promise<void> {
+    const query = [opts.agentSession && 'agentSession=1', opts.worktree && 'worktree=1', opts.force && 'force=1'].filter(Boolean).join('&');
+    return this.request('DELETE', `/api/threads/${threadId}${query ? `?${query}` : ''}`);
   }
 
   /** Sessions the agent has in the allowed directories, newest first. */
@@ -390,8 +427,15 @@ export class Api {
    * Copies a thread, on the agent's side too, into a new one that can go its own way. With a turn,
    * the copy ends where that turn ended.
    */
-  forkThread(threadId: string, turnId?: string): Promise<Thread> {
-    return this.request('POST', `/api/threads/${threadId}/fork`, turnId ? { turnId } : undefined);
+  /** With `turnId` the copy ends where that turn ended; with `worktree` it runs in a git worktree of its own. */
+  forkThread(threadId: string, opts: { turnId?: string; worktree?: boolean } = {}): Promise<Thread> {
+    const body = { ...(opts.turnId ? { turnId: opts.turnId } : {}), ...(opts.worktree ? { worktree: true } : {}) };
+    return this.request('POST', `/api/threads/${threadId}/fork`, Object.keys(body).length ? body : undefined);
+  }
+
+  /** What forking this thread can offer besides a copy in the same directory. */
+  forkOptions(threadId: string): Promise<ForkOptions> {
+    return this.request('GET', `/api/threads/${threadId}/fork-options`);
   }
 
   /** Pulls in turns the terminal added to this thread's session. */

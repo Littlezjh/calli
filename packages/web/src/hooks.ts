@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type MouseEvent, type TouchEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type TouchEvent } from 'react';
+import { APPEARANCE_KEY, parseAppearance, resolveTheme, type Appearance, type Theme } from './appearance';
 
 function useMediaQuery(query: string): boolean {
   const [matches, setMatches] = useState(() => typeof window !== 'undefined' && window.matchMedia(query).matches);
@@ -149,4 +150,36 @@ export function useStoredSet(key: string): [Set<string>, (value: string) => void
     });
   };
   return [set, toggle];
+}
+
+/**
+ * The look chosen on this device, kept in localStorage and put on the page as two attributes of
+ * <html>: `data-theme` (light or dark, already resolved against the system) and `data-palette`.
+ * The stylesheet does the rest. Returns the resolved theme too, for what has to follow it.
+ */
+export function useAppearance(): [Appearance, (next: Appearance) => void, Theme] {
+  const [appearance, setAppearance] = useState<Appearance>(() => {
+    try {
+      return parseAppearance(localStorage.getItem(APPEARANCE_KEY));
+    } catch {
+      return parseAppearance(null);
+    }
+  });
+  const theme = resolveTheme(appearance.mode, useMediaQuery('(prefers-color-scheme: dark)'));
+
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    root.setAttribute('data-theme', theme);
+    root.setAttribute('data-palette', appearance.palette);
+  }, [theme, appearance.palette]);
+
+  const save = (next: Appearance) => {
+    setAppearance(next);
+    try {
+      localStorage.setItem(APPEARANCE_KEY, JSON.stringify(next));
+    } catch {
+      // Storage unavailable: the choice lasts until the page reloads.
+    }
+  };
+  return [appearance, save, theme];
 }

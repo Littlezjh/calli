@@ -473,6 +473,40 @@ test('both agents list, replay and fork sessions through their own means', async
   await assert.rejects(pi.forkSession('hist-p', here, 'e9'), /no entry e9/);
 });
 
+test('a copy can be made for another directory, each agent in its own way', async () => {
+  // Where the hub puts a worktree: `<repository>/.worktrees/<name>`.
+  const tree = join(mkdtempSync(join(tmpdir(), 'rah-test-into-')), '.worktrees', 'abcd1234');
+  mkdirSync(tree, { recursive: true });
+  try {
+    // Claude is asked for the copy from where it will run.
+    const claude = new ClaudeAcpAdapter([process.execPath, fakeAcp]);
+    assert.equal(await claude.forkSession('hist-x', here, undefined, tree), 'hist-x-fork-in-abcd1234');
+    assert.equal(await claude.forkSession('hist-x', here, 'm1b', tree), 'hist-x-fork-at-m1b-in-abcd1234');
+
+    // pi keeps sessions by directory: a pi started over there copies the session in with `--fork`.
+    const pi = new PiRpcAdapter([process.execPath, fakePi]);
+    assert.equal(await pi.forkSession('hist-p', here, undefined, tree), 'hist-p-in-abcd1234');
+    assert.deepEqual((await pi.loadHistory('hist-p-in-abcd1234', tree)).map((t) => t.text), ['run the tests', 'and this picture?']);
+    // It will not open that copy from anywhere else, which is why the copy has to be made there.
+    await assert.rejects(pi.loadHistory('hist-p-in-abcd1234', here), /exited/);
+    // Cut at a turn, the copy is cut over there too.
+    assert.equal(await pi.forkSession('hist-p', here, 'e2', tree), 'hist-p-in-abcd1234-fork-e2');
+    assert.deepEqual((await pi.loadHistory('hist-p-in-abcd1234-fork-e2', tree)).map((t) => t.text), ['run the tests']);
+
+    // Codex is told where the copy will work; resuming says it again.
+    const codex = new CodexAppServerAdapter([process.execPath, fakeCodex]);
+    assert.equal(await codex.forkSession('codex-thread-1', here, undefined, tree), 'codex-thread-1-fork-in-abcd1234');
+    assert.equal(await codex.forkSession('hist-thread', here, 'turn-1', tree), 'hist-thread-fork-at-turn-1-in-abcd1234');
+
+    assert.deepEqual(
+      [claude, pi, codex, new TraexAcpAdapter(['traex']), new AgyAdapter(['agy'])].map((a) => [a.id, a.capabilities.forkInto]),
+      [['claude', true], ['pi', true], ['codex', true], ['traex', false], ['agy', false]],
+    );
+  } finally {
+    rmSync(join(tree, '..', '..'), { recursive: true, force: true });
+  }
+});
+
 test('pi fork points are matched to turns by what was asked, not by position', () => {
   const turn = (text: string) => ({ text, images: [], events: [] });
   // pi lists a message that is not one of the turns here (say, from a branch summary): passed over.

@@ -20,14 +20,27 @@ export interface ThreadRecord {
   sectionId: string | null;
   /** The thread this one was forked from. Kept even if that thread is later deleted. */
   forkedFrom: string | null;
+  /** Set when the thread runs in a git worktree the hub made for it, or shares one with the thread it was forked from. */
+  worktree: ThreadWorktree | null;
   /** A turn finished and nobody has looked at the result yet. */
   unread: boolean;
   /** When the hub last started a turn here. Compared with `externalAt` for the terminal warning. */
   hubTurnAt: string | null;
   /** When syncing last found turns the terminal added to this session. */
   externalAt: string | null;
+  /** The newest thing the user asked, kept as the sidebar's second line. Null until the first ask. */
+  preview: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/** A git worktree a thread stands in. See worktrees.ts. */
+export interface ThreadWorktree {
+  /** The root of the checkout. The thread's `cwd` is this, or a directory inside it. */
+  root: string;
+  branch: string;
+  /** The directory the thread would be in without the worktree: the one it is listed under. */
+  of: string;
 }
 
 export interface SectionRecord {
@@ -81,9 +94,11 @@ interface ThreadRow {
   archived_at: string | null;
   section_id: string | null;
   forked_from: string | null;
+  worktree: string | null;
   unread: number;
   hub_turn_at: string | null;
   external_at: string | null;
+  preview: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -111,9 +126,11 @@ const toThread = (r: ThreadRow): ThreadRecord => ({
   archivedAt: r.archived_at,
   sectionId: r.section_id,
   forkedFrom: r.forked_from,
+  worktree: r.worktree ? (JSON.parse(r.worktree) as ThreadWorktree) : null,
   unread: r.unread === 1,
   hubTurnAt: r.hub_turn_at,
   externalAt: r.external_at,
+  preview: r.preview,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
 });
@@ -179,8 +196,12 @@ export class Store {
     // Migration: terminal-activity tracking (turns the terminal added, hub turns).
     if (!cols.some((c) => c.name === 'hub_turn_at')) this.db.exec('ALTER TABLE threads ADD COLUMN hub_turn_at TEXT');
     if (!cols.some((c) => c.name === 'external_at')) this.db.exec('ALTER TABLE threads ADD COLUMN external_at TEXT');
+    // Migration: the sidebar's preview line, the newest thing the user asked.
+    if (!cols.some((c) => c.name === 'preview')) this.db.exec('ALTER TABLE threads ADD COLUMN preview TEXT');
     // Migration: forks.
     if (!cols.some((c) => c.name === 'forked_from')) this.db.exec('ALTER TABLE threads ADD COLUMN forked_from TEXT');
+    // Migration: the git worktree a forked thread stands in, as JSON.
+    if (!cols.some((c) => c.name === 'worktree')) this.db.exec('ALTER TABLE threads ADD COLUMN worktree TEXT');
     // Migration: unread marker.
     if (!cols.some((c) => c.name === 'unread')) this.db.exec('ALTER TABLE threads ADD COLUMN unread INTEGER NOT NULL DEFAULT 0');
     this.db.exec(`
@@ -231,20 +252,38 @@ export class Store {
       | 'archivedAt'
       | 'sectionId'
       | 'forkedFrom'
+      | 'worktree'
       | 'unread'
       | 'hubTurnAt'
       | 'externalAt'
+      | 'preview'
     > & {
       forkedFrom?: string | null;
+      worktree?: ThreadWorktree | null;
       sectionId?: string | null;
     },
   ): ThreadRecord {
     const now = new Date().toISOString();
     this.db
       .prepare(
-        'INSERT INTO threads (id, agent, cwd, title, status, pinned, permission_mode, model, effort, forked_from, section_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO threads (id, agent, cwd, title, status, pinned, permission_mode, model, effort, forked_from, worktree, section_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
-      .run(t.id, t.agent, t.cwd, t.title, 'idle', 0, t.permissionMode, t.model, t.effort, t.forkedFrom ?? null, t.sectionId ?? null, now, now);
+      .run(
+        t.id,
+        t.agent,
+        t.cwd,
+        t.title,
+        'idle',
+        0,
+        t.permissionMode,
+        t.model,
+        t.effort,
+        t.forkedFrom ?? null,
+        t.worktree ? JSON.stringify(t.worktree) : null,
+        t.sectionId ?? null,
+        now,
+        now,
+      );
     return this.getThread(t.id)!;
   }
 
@@ -311,6 +350,7 @@ export class Store {
         | 'archivedAt'
         | 'sectionId'
         | 'unread'
+        | 'preview'
         | 'hubTurnAt'
         | 'externalAt'
       >
@@ -326,7 +366,7 @@ export class Store {
     const next = { ...current, ...patch, updatedAt: opts.touch ? new Date().toISOString() : current.updatedAt };
     this.db
       .prepare(
-        'UPDATE threads SET title = ?, status = ?, agent_session_id = ?, pinned = ?, permission_mode = ?, model = ?, effort = ?, archived_at = ?, section_id = ?, unread = ?, hub_turn_at = ?, external_at = ?, updated_at = ? WHERE id = ?',
+        'UPDATE threads SET title = ?, status = ?, agent_session_id = ?, pinned = ?, permission_mode = ?, model = ?, effort = ?, archived_at = ?, section_id = ?, unread = ?, preview = ?, hub_turn_at = ?, external_at = ?, updated_at = ? WHERE id = ?',
       )
       .run(
         next.title,
@@ -339,6 +379,7 @@ export class Store {
         next.archivedAt,
         next.sectionId,
         next.unread ? 1 : 0,
+        next.preview,
         next.hubTurnAt,
         next.externalAt,
         next.updatedAt,
@@ -419,6 +460,25 @@ export class Store {
     this.db.prepare('DELETE FROM todos WHERE id = ?').run(id);
   }
 
+  /**
+   * Puts an item under `parentId` (null: top level), just before the sibling `beforeId`, or last
+   * when that is null. The new level is renumbered from 1, so positions stay small and unique.
+   */
+  moveTodo(id: string, parentId: string | null, beforeId: string | null): void {
+    this.transaction(() => {
+      const siblings = (
+        this.db
+          .prepare('SELECT id FROM todos WHERE parent_id IS ? AND id != ? ORDER BY position ASC, created_at ASC')
+          .all(parentId, id) as Array<{ id: string }>
+      ).map((r) => r.id);
+      const at = beforeId === null ? -1 : siblings.indexOf(beforeId);
+      siblings.splice(at === -1 ? siblings.length : at, 0, id);
+      this.db.prepare('UPDATE todos SET parent_id = ? WHERE id = ?').run(parentId, id);
+      const place = this.db.prepare('UPDATE todos SET position = ? WHERE id = ?');
+      siblings.forEach((sibling, i) => place.run(i + 1, sibling));
+    });
+  }
+
   todoThreadIds(todoId: string): string[] {
     const rows = this.db.prepare('SELECT thread_id FROM todo_threads WHERE todo_id = ?').all(todoId) as Array<{ thread_id: string }>;
     return rows.map((r) => r.thread_id);
@@ -441,6 +501,11 @@ export class Store {
     this.db
       .prepare('INSERT INTO events (thread_id, seq, turn_id, type, ts, data) VALUES (?, ?, ?, ?, ?, ?)')
       .run(threadId, seq, turnId, type, ts, JSON.stringify(data));
+    // The sidebar's preview line is the newest ask, whatever wrote it — a live turn, an import, a
+    // sync from the terminal. Hub-injected handover turns are not the user asking.
+    if (type === 'turn.started' && typeof data.text === 'string' && data.text.trim() && !data.handover) {
+      this.db.prepare('UPDATE threads SET preview = ? WHERE id = ?').run(data.text.trim().slice(0, 80), threadId);
+    }
     return { threadId, seq, turnId, type, ts, data };
   }
 

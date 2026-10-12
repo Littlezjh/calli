@@ -23,6 +23,8 @@ interface Props {
   /** Where the menu opens on wide screens, in viewport coordinates. Ignored on phones. */
   x: number;
   y: number;
+  /** Which corner of the panel sits at that point. A menu opened from the bottom of the screen grows upwards. */
+  corner?: 'top-left' | 'bottom-right';
   items: MenuEntry[];
   onClose: () => void;
 }
@@ -34,7 +36,7 @@ const EDGE = 8;
  * Wide screens: a floating panel at the pointer, with submenus opening beside their row.
  * Phones: a bottom sheet, where a submenu replaces the list and has a back row.
  */
-export function Menu({ label, x, y, items, onClose }: Props) {
+export function Menu({ label, x, y, corner = 'top-left', items, onClose }: Props) {
   const narrow = useIsNarrow();
   const rootRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -50,12 +52,13 @@ export function Menu({ label, x, y, items, onClose }: Props) {
     // x and y are where the pointer was on screen; the panel is placed within the app's box,
     // which a phone or tablet keyboard can have moved down the page.
     const box = el.closest('.app')?.getBoundingClientRect();
-    const left = Math.max(EDGE, Math.min(x, window.innerWidth - rect.width - EDGE)) - (box?.left ?? 0);
-    const top = Math.max(EDGE, Math.min(y, window.innerHeight - rect.height - EDGE)) - (box?.top ?? 0);
+    const [wantLeft, wantTop] = corner === 'bottom-right' ? [x - rect.width, y - rect.height] : [x, y];
+    const left = Math.max(EDGE, Math.min(wantLeft, window.innerWidth - rect.width - EDGE)) - (box?.left ?? 0);
+    const top = Math.max(EDGE, Math.min(wantTop, window.innerHeight - rect.height - EDGE)) - (box?.top ?? 0);
     // Submenus open to the right unless there is no room for one there.
     const flip = left + rect.width + 220 > window.innerWidth;
     setPos({ left, top, flip, ready: true });
-  }, [x, y, narrow, items]);
+  }, [x, y, corner, narrow, items]);
 
   useEffect(() => {
     // composedPath is captured at dispatch, so it still works if the clicked row is removed by its handler.

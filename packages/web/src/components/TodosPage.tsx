@@ -1,0 +1,533 @@
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
+import type { Api, Thread, Todo } from '../api';
+import { buildTodoBoard, indentPlace, linkableThreads, moveTodo, openRows, outdentPlace, type TodoNode, type TodoPlace } from '../todos';
+import { Dialog } from './Dialog';
+import { Menu, type MenuEntry } from './Menu';
+import { IconArrowDown, IconArrowUp, IconCheck, IconChevron, IconClose, IconGrip, IconList, IconMore, IconPlus } from './icons';
+
+interface Props {
+  api: Api;
+  /** The whole list, owned by App: the thread menu needs it too. */
+  todos: Todo[];
+  /** All live threads, for the link submenu. */
+  threads: Thread[];
+  /** Changes when the daemon broadcasts a plan or thread change, so the list reloads. */
+  refreshKey: number;
+  onReload: () => void;
+  /** Shows a change at once, before the server has it: a move, a deletion. */
+  onChange: (todos: Todo[]) => void;
+  /** Opens a linked thread, which takes the page's place. */
+  onOpenThread: (id: string) => void;
+  onError: (e: unknown) => void;
+}
+
+function below(e: MouseEvent<HTMLElement>): [number, number] {
+  const rect = e.currentTarget.getBoundingClientRect();
+  return [rect.left, rect.bottom + 4];
+}
+
+const MAX_LINK_CHOICES = 30;
+
+/** Whether the done group is open, kept on this device. */
+const SHOW_DONE_KEY = 'rah.todos.showDone';
+
+function readShowDone(): boolean {
+  try {
+    return localStorage.getItem(SHOW_DONE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+/** Where a dragged row would land, and where to draw the line that says so. */
+interface DropTarget {
+  before: string | null;
+  top: number;
+  left: number;
+  width: number;
+}
+
+/**
+ * Enter that means "done typing". While an input method is composing (pinyin picking its
+ * characters), Enter belongs to it and must not submit half a word.
+ */
+const isCommit = (e: ReactKeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => e.key === 'Enter' && !e.nativeEvent.isComposing;
+
+/**
+ * A plan's text while it is being edited: the same line, in the same place, with a caret in it.
+ * It grows with what is typed, so a long plan is edited as it reads, not through a one-line slot.
+ */
+function TodoEditor({
+  value,
+  onChange,
+  onSave,
+  onCancel,
+  onTab,
+  onDeleteEmpty,
+}: {
+  value: string;
+  onChange: (text: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  /** Tab: one level in; Shift+Tab: one level out. */
+  onTab: (out: boolean) => void;
+  /** Backspace on a line with nothing left on it. */
+  onDeleteEmpty: () => void;
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [value]);
+
+  // The caret starts at the end of the line, where the next word goes.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, []);
+
+  return (
+    <textarea
+      ref={ref}
+      className="todo-edit"
+      rows={1}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onBlur={onSave}
+      onKeyDown={(e) => {
+        // A plan is one paragraph: Enter finishes it instead of breaking the line.
+        if (isCommit(e)) {
+          e.preventDefault();
+          onSave();
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          onCancel();
+        }
+        // Like a checklist in a document: Tab nests the line, Shift+Tab takes it back out, and
+        // Backspace on an empty line removes it.
+        if (e.key === 'Tab' && !e.nativeEvent.isComposing) {
+          e.preventDefault();
+          onTab(e.shiftKey);
+        }
+        if (e.key === 'Backspace' && value === '' && !e.nativeEvent.isComposing) {
+          e.preventDefault();
+          onDeleteEmpty();
+        }
+      }}
+      aria-label="编辑计划"
+    />
+  );
+}
+
+/**
+ * The plan page: the user's own long-lived list, laid out as a document in the main area. Plans
+ * can be struck through and linked to threads, so the work happening in threads and the plan it
+ * serves stay side by side.
+ */
+export function TodosPage({ api, todos, threads, refreshKey, onReload, onChange, onOpenThread, onError }: Props) {
+  const [adding, setAdding] = useState('');
+  // The plan a sub-item is being typed under, with what has been typed so far.
+  const [child, setChild] = useState<{ parentId: string; text: string } | null>(null);
+  const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
+  const [menu, setMenu] = useState<{ todo: Todo; x: number; y: number } | null>(null);
+  const [deleting, setDeleting] = useState<Todo | null>(null);
+  const [showDone, setShowDone] = useState(readShowDone);
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [drop, setDrop] = useState<DropTarget | null>(null);
+  const pageRef = useRef<HTMLDivElement>(null);
+  // While a line moves or goes away under the caret, the editor it leaves must not save on blur:
+  // the edit carries on in the line's new place.
+  const holdBlur = useRef(false);
+  const hold = () => {
+    holdBlur.current = true;
+    setTimeout(() => {
+      holdBlur.current = false;
+    });
+  };
+  // On touch there is no handle to drag by; the row's menu moves it up and down instead.
+  const touch = typeof window !== 'undefined' && Boolean(window.matchMedia?.('(hover: none)').matches);
+
+  // Reload when anything changes on the server: plan edits from another device, or thread
+  // states that the chips show.
+  useEffect(() => {
+    if (refreshKey > 0) onReload();
+    // onReload only refetches; it is not a reason to run again.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshKey]);
+
+  const act = async (run: () => Promise<unknown>) => {
+    try {
+      await run();
+      onReload();
+    } catch (e) {
+      onError(e);
+    }
+  };
+
+  const board = buildTodoBoard(todos);
+  const empty = board.open.length === 0 && board.done.length === 0;
+
+  const add = async (parentId: string | null, text: string) => {
+    const value = text.trim();
+    if (!value) return;
+    await act(() => api.createTodo(value, parentId));
+  };
+
+  const toggle = (todo: Todo) => void act(() => api.updateTodo(todo.id, { done: !todo.done }));
+
+  const toggleDone = () =>
+    setShowDone((v) => {
+      try {
+        localStorage.setItem(SHOW_DONE_KEY, v ? '0' : '1');
+      } catch {
+        // Storage unavailable: the choice lasts until the page reloads.
+      }
+      return !v;
+    });
+
+  /** Moves an item, shown at once; `text` is an edit in progress that goes along with it. */
+  const relocate = async (id: string, to: TodoPlace, text?: string) => {
+    const current = todos.find((t) => t.id === id);
+    const value = text?.trim();
+    const edited = Boolean(value && current && value !== current.text);
+    let next = moveTodo(todos, id, to);
+    if (edited) next = next.map((t) => (t.id === id ? { ...t, text: value! } : t));
+    onChange(next);
+    try {
+      if (edited) await api.updateTodo(id, { text: value });
+      await api.moveTodo(id, to);
+    } catch (e) {
+      onError(e);
+    }
+    onReload();
+  };
+
+  const tab = (todo: TodoNode, out: boolean) => {
+    const to = out ? outdentPlace(todos, todo.id) : indentPlace(board, todo.id);
+    if (!to) return;
+    hold();
+    void relocate(todo.id, to, editing?.id === todo.id ? editing.text : undefined);
+  };
+
+  /** Backspace on an emptied line: it goes, and the caret moves up to the end of the line above. */
+  const deleteEmpty = (todo: TodoNode) => {
+    // A plan that still holds sub-items or threads is not thrown away by a stray key.
+    if (todo.children.length > 0 || todo.threads.length > 0) return;
+    const rows = openRows(board);
+    const prev = rows[rows.findIndex((r) => r.id === todo.id) - 1];
+    hold();
+    setEditing(prev ? { id: prev.id, text: prev.text } : null);
+    onChange(todos.filter((t) => t.id !== todo.id));
+    void act(() => api.deleteTodo(todo.id));
+  };
+
+  /** The rows an item sits among, in order; null for finished plans, which sort by when they were done. */
+  const siblingsOf = (todo: Todo): TodoNode[] | null => {
+    if (todo.parentId) return [...board.open, ...board.done].find((p) => p.id === todo.parentId)?.children ?? null;
+    return todo.done ? null : board.open;
+  };
+
+  /**
+   * Dragging by the handle: the row stays where it is, faded, and a line shows where it will land
+   * among its siblings. Levels change with Tab and Shift+Tab, not by dragging.
+   */
+  const startDrag = (e: ReactPointerEvent<HTMLButtonElement>, todo: TodoNode) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const row = e.currentTarget.closest<HTMLElement>('.todo');
+    const list = row?.parentElement;
+    const page = pageRef.current;
+    if (!row || !list || !page) return;
+    const scroller = page.parentElement;
+    const rowsOf = () => [...list.children].filter((el): el is HTMLElement => el instanceof HTMLElement && el.classList.contains('todo'));
+
+    const targetAt = (y: number): DropTarget => {
+      const base = page.getBoundingClientRect();
+      const box = list.getBoundingClientRect();
+      const rows = rowsOf();
+      const left = box.left - base.left;
+      for (const r of rows) {
+        const line = r.querySelector('.todo-line')?.getBoundingClientRect();
+        if (line && y < line.top + line.height / 2) {
+          return { before: r.dataset.id ?? null, top: r.getBoundingClientRect().top - base.top, left, width: box.width };
+        }
+      }
+      const last = rows[rows.length - 1];
+      return { before: null, top: (last ?? row).getBoundingClientRect().bottom - base.top, left, width: box.width };
+    };
+
+    let target: DropTarget | null = null;
+    const move = (ev: PointerEvent) => {
+      // Near the top or bottom edge, the page scrolls along.
+      if (scroller) {
+        const edge = scroller.getBoundingClientRect();
+        if (ev.clientY < edge.top + 40) scroller.scrollBy(0, -12);
+        else if (ev.clientY > edge.bottom - 40) scroller.scrollBy(0, 12);
+      }
+      target = targetAt(ev.clientY);
+      setDrop(target);
+    };
+    const end = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', end);
+      window.removeEventListener('pointercancel', end);
+      setDragging(null);
+      setDrop(null);
+      if (ev.type !== 'pointerup' || !target) return;
+      const rows = rowsOf();
+      const next = rows[rows.indexOf(row) + 1]?.dataset.id ?? null;
+      // Dropped just above itself or just below: it stays where it was.
+      if (target.before === todo.id || target.before === next) return;
+      void relocate(todo.id, { parentId: todo.parentId, before: target.before });
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+    setDragging(todo.id);
+  };
+
+  const saveEdit = () => {
+    if (holdBlur.current) return;
+    const next = editing;
+    setEditing(null);
+    if (!next) return;
+    const value = next.text.trim();
+    const current = todos.find((t) => t.id === next.id);
+    if (!value || !current || current.text === value) return;
+    void act(() => api.updateTodo(next.id, { text: value }));
+  };
+
+  const menuEntries = (todo: Todo): MenuEntry[] => {
+    const isTop = todo.parentId === null;
+    const choices = linkableThreads(todos, todo.id, threads).slice(0, MAX_LINK_CHOICES);
+    const siblings = siblingsOf(todo);
+    const at = siblings ? siblings.findIndex((t) => t.id === todo.id) : -1;
+    const moves: MenuEntry[] =
+      touch && siblings
+        ? [
+            {
+              id: 'up',
+              label: '上移',
+              icon: IconArrowUp,
+              disabled: at <= 0,
+              onSelect: () => void relocate(todo.id, { parentId: todo.parentId, before: siblings[at - 1]?.id ?? null }),
+            },
+            {
+              id: 'down',
+              label: '下移',
+              icon: IconArrowDown,
+              disabled: at === -1 || at >= siblings.length - 1,
+              onSelect: () => void relocate(todo.id, { parentId: todo.parentId, before: siblings[at + 2]?.id ?? null }),
+            },
+            'separator',
+          ]
+        : [];
+    return [
+      ...moves,
+      ...(isTop
+        ? [{ id: 'add-child', label: '加子项', icon: IconPlus, onSelect: () => setChild({ parentId: todo.id, text: '' }) }]
+        : []),
+      {
+        id: 'link',
+        label: '关联线程',
+        icon: IconList,
+        disabled: choices.length === 0,
+        submenu: choices.map((t) => ({
+          id: `link-${t.id}`,
+          label: t.title || t.cwd,
+          onSelect: () => void act(() => api.linkTodo(todo.id, t.id)),
+        })),
+      },
+      'separator',
+      { id: 'delete', label: '删除', icon: IconClose, danger: true, onSelect: () => setDeleting(todo) },
+    ];
+  };
+
+  const chip = (todo: Todo, thread: Thread) => (
+    <span key={thread.id} className={`todo-chip${thread.archivedAt ? ' archived' : ''}`}>
+      <span className={`todo-chip-dot ${thread.status}${thread.waiting ? ' waiting' : ''}`} />
+      <button type="button" className="todo-chip-name" title={`打开线程：${thread.title}`} onClick={() => onOpenThread(thread.id)}>
+        {thread.title || thread.cwd}
+      </button>
+      <button
+        type="button"
+        className="todo-chip-unlink"
+        aria-label="取消关联这个线程"
+        onClick={() => void act(() => api.unlinkTodo(todo.id, thread.id))}
+      >
+        <IconClose size={11} />
+      </button>
+    </span>
+  );
+
+  const row = (todo: TodoNode, isChild: boolean) => {
+    const editingThis = editing?.id === todo.id;
+    return (
+      <div key={todo.id} data-id={todo.id} className={`todo${isChild ? ' child' : ''}${dragging === todo.id ? ' dragging' : ''}`}>
+        <div className="todo-line">
+          {/* Finished plans keep the order they were finished in; everything else can be dragged. */}
+          {!touch && siblingsOf(todo) && (
+            <button
+              type="button"
+              className="todo-grip"
+              aria-label={`拖动“${todo.text}”调整顺序`}
+              tabIndex={-1}
+              onPointerDown={(e) => startDrag(e, todo)}
+            >
+              <IconGrip size={14} />
+            </button>
+          )}
+          <button
+            type="button"
+            className={`todo-check${todo.done ? ' done' : ''}`}
+            aria-label={todo.done ? '标记为未完成' : '标记为已完成'}
+            onClick={() => toggle(todo)}
+          >
+            {todo.done && <IconCheck size={12} />}
+          </button>
+          {editingThis ? (
+            <TodoEditor
+              value={editing.text}
+              onChange={(text) => setEditing({ id: todo.id, text })}
+              onSave={saveEdit}
+              onCancel={() => setEditing(null)}
+              onTab={(out) => tab(todo, out)}
+              onDeleteEmpty={() => deleteEmpty(todo)}
+            />
+          ) : (
+            <button
+              type="button"
+              className={`todo-text${todo.done ? ' done' : ''}`}
+              title="点击编辑"
+              onClick={() => setEditing({ id: todo.id, text: todo.text })}
+            >
+              {todo.text}
+            </button>
+          )}
+          <button
+            type="button"
+            className="row-more"
+            aria-label={`计划“${todo.text}”的更多操作`}
+            onClick={(e) => {
+              const [x, y] = below(e);
+              setMenu({ todo, x, y });
+            }}
+          >
+            <IconMore size={15} />
+          </button>
+        </div>
+        {todo.threads.length > 0 && <div className="todo-chips">{todo.threads.map((t) => chip(todo, t))}</div>}
+        {(todo.children.length > 0 || child?.parentId === todo.id) && (
+          <div className="todo-children">
+            {todo.children.map((c) => row(c, true))}
+            {child?.parentId === todo.id && (
+              <div className="todo-line todo-new">
+                <span className="todo-check blank" aria-hidden="true" />
+                <input
+                  className="todo-add"
+                  autoFocus
+                  placeholder="加一个子项，回车确认"
+                  value={child.text}
+                  onChange={(e) => setChild({ parentId: todo.id, text: e.target.value })}
+                  onKeyDown={(e) => {
+                    // Stays open for the next one: sub-items tend to come several at a time. Enter
+                    // on an empty line, or Escape, is how it is put away. Not losing focus: the menu
+                    // that opened it takes focus back as it closes, which would shut it at once.
+                    if (isCommit(e)) {
+                      if (child.text.trim()) void add(todo.id, child.text);
+                      setChild(child.text.trim() ? { parentId: todo.id, text: '' } : null);
+                    }
+                    if (e.key === 'Escape') {
+                      e.preventDefault();
+                      setChild(null);
+                    }
+                  }}
+                  aria-label="新子项"
+                />
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="todos-page" ref={pageRef}>
+      <header className="todos-head">
+        <h1 className="todos-title">计划</h1>
+        <p className="todos-hint">长期的计划，做完划掉；计划可以关联线程，跟着线程推进。</p>
+      </header>
+
+      <div className="todos-list">
+        {board.open.map((n) => row(n, false))}
+        {/* The next blank line of the document: what is typed here becomes the last plan. */}
+        <div className="todo-line todo-new">
+          <span className="todo-check blank" aria-hidden="true" />
+          <input
+            className="todo-add"
+            placeholder={empty ? '写下第一条计划，回车添加' : '添加一条计划，回车确认'}
+            value={adding}
+            onChange={(e) => setAdding(e.target.value)}
+            onKeyDown={(e) => {
+              if (isCommit(e) && adding.trim()) {
+                void add(null, adding);
+                setAdding('');
+              }
+            }}
+            aria-label="新计划"
+          />
+        </div>
+      </div>
+
+      {board.done.length > 0 && (
+        <div className="todos-done-group">
+          <button type="button" className="todos-done-head" aria-expanded={showDone} onClick={toggleDone}>
+            <IconChevron size={13} open={showDone} />
+            已完成 {board.done.length}
+          </button>
+          {showDone && board.done.map((n) => row(n, false))}
+        </div>
+      )}
+
+      {drop && <div className="todo-drop" style={{ top: drop.top, left: drop.left, width: drop.width }} aria-hidden="true" />}
+
+      {menu && (
+        <Menu
+          label="计划操作"
+          x={menu.x}
+          y={menu.y}
+          items={menuEntries(menu.todo)}
+          onClose={() => setMenu(null)}
+        />
+      )}
+      {deleting && (
+        <Dialog
+          title="删除计划"
+          message={deleting.parentId ? '删除这个子项？' : '删除这条计划？它的子项和线程关联会一起删除。'}
+          confirmLabel="删除"
+          danger
+          onConfirm={() => {
+            setDeleting(null);
+            void act(() => api.deleteTodo(deleting.id));
+          }}
+          onCancel={() => setDeleting(null)}
+        />
+      )}
+    </div>
+  );
+}

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type { EmittedEvent } from '../events.js';
 import { imagePathNote } from '../attachments.js';
 import { commandExists } from '../util.js';
+import { ANTIGRAVITY_ICON } from './icons.js';
 import type {
   AgentAdapter,
   AgentSession,
@@ -412,6 +413,7 @@ class AgySession implements AgentSession {
 export class AgyAdapter implements AgentAdapter {
   readonly id = 'agy';
   readonly label = 'Antigravity';
+  readonly icon = ANTIGRAVITY_ICON;
   readonly capabilities = {
     resume: true,
     approvals: false,
@@ -423,6 +425,7 @@ export class AgyAdapter implements AgentAdapter {
     fork: false,
     forkAt: false,
     multiAccount: false,
+    forkInto: false,
     quota: true,
   };
   private modelCache: { at: number; models: ModelOption[] } | null = null;

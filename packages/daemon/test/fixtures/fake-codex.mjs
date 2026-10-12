@@ -4,6 +4,7 @@
 // file, "approve" asks for a command approval, "deny" offers a plain decline, "slow" waits until
 // interrupted, "crash" exits. Settings ride with turn/start the way the adapter sends them.
 import { appendFileSync } from 'node:fs';
+import { basename } from 'node:path';
 import { createInterface } from 'node:readline';
 
 const rl = createInterface({ input: process.stdin });
@@ -261,7 +262,13 @@ rl.on('line', (line) => {
       if (last && !historyTurns().some((t) => t.id === last)) {
         return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: `unknown turn ${last}` } });
       }
-      return out({ jsonrpc: '2.0', id: msg.id, result: { thread: { id: `${msg.params?.threadId}-fork${last ? `-at-${last}` : ''}`, cwd: '/tmp/one' }, model: currentModel } });
+      // `cwd`: where the copy will work. Its record says so, and here its id does too.
+      const into = msg.params?.cwd ? `-in-${basename(msg.params.cwd)}` : '';
+      return out({
+        jsonrpc: '2.0',
+        id: msg.id,
+        result: { thread: { id: `${msg.params?.threadId}-fork${last ? `-at-${last}` : ''}${into}`, cwd: msg.params?.cwd ?? '/tmp/one' }, model: currentModel },
+      });
     }
     case 'thread/delete':
       if (process.env.FAKE_CODEX_DELETE_LOG) appendFileSync(process.env.FAKE_CODEX_DELETE_LOG, msg.params?.threadId + '\n');

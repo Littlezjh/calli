@@ -121,6 +121,45 @@ test('todos: sub-items nest one level under a real plan, never deeper', async ()
   assert.equal(listed.find((t) => t.id === child.id), undefined);
 });
 
+test('todos: move reorders a level, indents under a plan and back out, one level only', async () => {
+  const make = async (text: string, parentId?: string) =>
+    (await (await api('/api/todos', { method: 'POST', body: JSON.stringify({ text, parentId }) })).json()) as TodoJson;
+  const move = (id: string, body: Record<string, unknown>) =>
+    api(`/api/todos/${id}/move`, { method: 'POST', body: JSON.stringify(body) });
+  const order = async (parentId: string | null, ids: string[]) =>
+    ((await (await api('/api/todos')).json()) as TodoJson[])
+      .filter((t) => t.parentId === parentId && ids.includes(t.id))
+      .sort((x, y) => x.position - y.position)
+      .map((t) => t.text);
+
+  const a = await make('甲');
+  const b = await make('乙');
+  const c = await make('丙');
+  const ids = [a.id, b.id, c.id];
+
+  // Reorder: 丙 before 甲, then 甲 to the end.
+  assert.equal((await move(c.id, { parentId: null, before: a.id })).status, 204);
+  assert.deepEqual(await order(null, ids), ['丙', '甲', '乙']);
+  assert.equal((await move(a.id, { parentId: null, before: null })).status, 204);
+  assert.deepEqual(await order(null, ids), ['丙', '乙', '甲']);
+
+  // Tab: 乙 goes under 丙, last among its sub-items; Shift+Tab: back out, right after 丙.
+  assert.equal((await move(b.id, { parentId: c.id })).status, 204);
+  assert.deepEqual(await order(c.id, ids), ['乙']);
+  assert.deepEqual(await order(null, ids), ['丙', '甲']);
+  assert.equal((await move(b.id, { parentId: null, before: a.id })).status, 204);
+  assert.deepEqual(await order(null, ids), ['丙', '乙', '甲']);
+
+  // One level: a plan with sub-items stays a plan, a sub-item is no parent, nothing goes under itself.
+  const kid = await make('丁', c.id);
+  assert.equal((await move(c.id, { parentId: a.id })).status, 400);
+  assert.equal((await move(a.id, { parentId: kid.id })).status, 400);
+  assert.equal((await move(a.id, { parentId: a.id })).status, 400);
+  // `before` has to be in the list the item lands in.
+  assert.equal((await move(a.id, { parentId: null, before: kid.id })).status, 400);
+  assert.equal((await move('nope', { parentId: null })).status, 404);
+});
+
 test('todos: threads link and unlink, and vanish with the thread', async () => {
   const workdir = join(workroot, 'proj');
   mkdirSync(workdir, { recursive: true });

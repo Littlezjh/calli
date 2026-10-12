@@ -12,13 +12,14 @@ import {
   type Todo,
 } from './api';
 import type { HubAction } from './commands';
-import { useIsCompact, useListSwipe } from './hooks';
+import { useAppearance, useIsCompact, useListSwipe } from './hooks';
 import type { PreparedImage } from './images';
 import { attentionCount, pageTitle, threadNotices } from './notices';
 import { folderName } from './paths';
 import { PERMISSION_LABELS } from './permissions';
 import { buildTimeline, toMarkdown, turnPreviews, type StoredEvent } from './timeline';
 import { newerBuildAvailable } from './version';
+import { AppearancePanel } from './components/AppearancePanel';
 import { ArchivePanel } from './components/ArchivePanel';
 import { Composer } from './components/Composer';
 import { DirectoryPicker } from './components/DirectoryPicker';
@@ -29,7 +30,7 @@ import { StatusPanel } from './components/StatusPanel';
 import { QuotaPanel } from './components/QuotaPanel';
 import { SelectionMenu } from './components/SelectionMenu';
 import { SideChat } from './components/SideChat';
-import { TodosPanel } from './components/TodosPanel';
+import { TodosPage } from './components/TodosPage';
 import { AgentPicker, type DiscoveredAccount, type DiscoveredAgent, effortsForModel, imagesBlocked, imagesNote, modelName, ModelPicker, PermissionPicker, UsageMeter } from './components/Pickers';
 import { Sidebar } from './components/Sidebar';
 import { forkBlocked, useThreadActions } from './components/ThreadActions';
@@ -37,7 +38,7 @@ import { ThreadView } from './components/ThreadView';
 import { TurnRuler } from './components/TurnRuler';
 import { Toast, type ToastState } from './components/Toast';
 import { TokenGate } from './components/TokenGate';
-import { IconArchive, IconArrowDown, IconChevron, IconClose, IconEdit, IconFolder, IconImport, IconList, IconMenu, IconMore, IconSignOut } from './components/icons';
+import { IconArchive, IconArrowDown, IconChevron, IconClose, IconEdit, IconFolder, IconImport, IconList, IconMenu, IconMore, IconPalette, IconSignOut } from './components/icons';
 
 const sleep = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve) => {
@@ -63,6 +64,9 @@ const UPDATE_CHECK_MS = 30_000;
 
 const isNearBottom = (el: HTMLElement) => el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
 
+/** The plan page's address. Threads have none: the main area showing a thread is the plain URL. */
+const TODOS_HASH = '#/todos';
+
 export function App() {
   const [token, setToken] = useState(loadToken);
   const [authMessage, setAuthMessage] = useState<string | undefined>();
@@ -77,8 +81,10 @@ export function App() {
   const [threads, setThreads] = useState<Thread[]>([]);
   const [sections, setSections] = useState<Section[]>([]);
   const [todos, setTodos] = useState<Todo[]>([]);
-  const [todosOpen, setTodosOpen] = useState(false);
-  /** Bumped by daemon broadcasts, so the open plan panel reloads. */
+  /** What the main area shows: a thread (or the blank one a new thread starts from), or the plan page. */
+  // The plan page has an address of its own, so a reload or a bookmark lands back on it.
+  const [view, setView] = useState<'thread' | 'todos'>(() => (window.location.hash === TODOS_HASH ? 'todos' : 'thread'));
+  /** Bumped by daemon broadcasts, so the open plan page reloads. */
   const [todosKey, setTodosKey] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [events, setEvents] = useState<StoredEvent[]>([]);
@@ -96,8 +102,10 @@ export function App() {
   const listOpen = drawer && compact;
   useListSwipe(compact && Boolean(token), listOpen, setDrawer);
   const [confirmSignOut, setConfirmSignOut] = useState(false);
-  /** Where the phone layout's settings menu opened from, while it is open. */
+  /** Where the settings menu opened from, while it is open. */
   const [settingsAt, setSettingsAt] = useState<{ x: number; y: number } | null>(null);
+  const [appearance, setAppearance, theme] = useAppearance();
+  const [appearanceOpen, setAppearanceOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [showDirPicker, setShowDirPicker] = useState(false);
@@ -131,6 +139,30 @@ export function App() {
   const timeline = useMemo(() => buildTimeline(events), [events]);
   const turnPreviewMap = useMemo(() => turnPreviews(timeline.items), [timeline.items]);
   const selected = threads.find((t) => t.id === selectedId) ?? null;
+  const onTodos = view === 'todos' && !selectedId;
+
+  // The address follows what the main area shows. Replaced, not pushed: going between the page and
+  // threads is not a trail for the back button to walk.
+  useEffect(() => {
+    const want = onTodos ? TODOS_HASH : '';
+    if (window.location.hash !== want) {
+      window.history.replaceState(window.history.state, '', want || window.location.pathname + window.location.search);
+    }
+  }, [onTodos]);
+
+  // An address typed or followed while the page is open.
+  useEffect(() => {
+    const onHash = () => {
+      if (window.location.hash === TODOS_HASH) {
+        setSelectedId(null);
+        setView('todos');
+        setDrawer(false);
+      }
+    };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
+
   // Both spellings of the thread's directory; kept stable so the thread view is not re-rendered for nothing.
   const threadRoots = useMemo(() => (selected ? [selected.cwd, selected.cwdReal] : []), [selected?.cwd, selected?.cwdReal]);
   const running = timeline.running || selected?.status === 'running';
@@ -210,7 +242,7 @@ export function App() {
       clearTimeout(timer);
       timer = setTimeout(() => {
         api.threads().then(setThreads).catch(() => undefined);
-        // Plan chips show thread states; a bumped key reloads the open panel.
+        // Plan chips show thread states; a bumped key reloads the open page.
         setTodosKey((k) => k + 1);
       }, 150);
     };
@@ -405,15 +437,10 @@ export function App() {
     root.classList.toggle('list-open', listOpen);
     // The keyboard belongs to the conversation; it goes down when the conversation moves aside.
     if (listOpen && document.activeElement instanceof HTMLElement) document.activeElement.blur();
-    const sync = () => {
-      const colour = getComputedStyle(root).getPropertyValue(listOpen ? '--sidebar' : '--bg').trim();
-      if (colour) document.querySelector('meta[name="theme-color"]')?.setAttribute('content', colour);
-    };
-    sync();
-    const scheme = window.matchMedia('(prefers-color-scheme: dark)');
-    scheme.addEventListener('change', sync);
-    return () => scheme.removeEventListener('change', sync);
-  }, [listOpen]);
+    // Read again whenever the look changes: by then the new palette is on the page.
+    const colour = getComputedStyle(root).getPropertyValue(listOpen ? '--sidebar' : '--bg').trim();
+    if (colour) document.querySelector('meta[name="theme-color"]')?.setAttribute('content', colour);
+  }, [listOpen, theme, appearance.palette]);
 
   // A scroll hands the position over to the user only when their hand caused it. Scroll events
   // also come from the pin itself, from the keyboard resizing the page and from content changing
@@ -685,8 +712,16 @@ export function App() {
     setDrawer(false);
   };
 
+  // The plan page takes the place of a thread, so no thread is open while it is.
+  const openTodos = () => {
+    setSelectedId(null);
+    setView('todos');
+    setDrawer(false);
+  };
+
   const newThread = (opts: { cwd?: string; sectionId?: string | null } = {}) => {
     setSelectedId(null);
+    setView('thread');
     setDrawer(false);
     if (opts.cwd !== undefined) setDraftCwd(opts.cwd);
     setDraftSectionId(opts.sectionId ?? null);
@@ -783,6 +818,7 @@ export function App() {
         ]
       : []),
     ...(importAgents.length ? [{ id: 'import', label: '导入历史', hint: '把终端里聊过的会话接到这里', keywords: ['import', 'resume', 'history'] }] : []),
+    { id: 'appearance', label: '外观', hint: '浅色、深色和主题', keywords: ['theme', 'appearance', 'dark', 'light', '主题'] },
     { id: 'help', label: '全部命令', hint: '这个菜单里就是能用的全部命令', keywords: ['help', 'commands'] },
   ];
 
@@ -794,6 +830,7 @@ export function App() {
     if (id === 'model') return setModelSignal((n) => n + 1);
     if (id === 'permission') return setPermissionSignal((n) => n + 1);
     if (id === 'import') return setImportOpen(true);
+    if (id === 'appearance') return setAppearanceOpen(true);
     if (selected && (id === 'rename' || id === 'pin' || id === 'fork' || id === 'archive')) threadActions.run(id, selected);
   };
 
@@ -802,19 +839,9 @@ export function App() {
 
   const attachBlocked = !activeCaps?.images ? `${agentLabel(activeAgent)} 不支持发图片` : imagesBlocked(models, model);
 
-  // On a phone the top bar names the thread's agent and directory, so the composer does not repeat them.
-  const header = selected ? (
-    compact ? null : (
-      <>
-        <span className="context-text">{agentLabel(selected.agent)}</span>
-        <span className="context-text muted" title={selected.cwd}>
-          <IconFolder size={14} />
-          {folderName(selected.cwd)}
-        </span>
-        {timeline.usage && <UsageMeter usage={timeline.usage} />}
-      </>
-    )
-  ) : (
+  // The top bar names a thread's agent and directory, so the composer does not repeat them: its
+  // strip is only for choosing them, before the thread exists.
+  const header = selected ? null : (
     <>
       <AgentPicker agents={agents} value={draftAgent} onChange={pickAgent} discovered={discovered} onAdd={addDiscoveredAgent} accounts={accounts} onAddAccount={addAccount} />
       <button className="context-btn" onClick={() => setShowDirPicker(true)} title={draftCwd}>
@@ -848,7 +875,7 @@ export function App() {
 
   const right = (
     <>
-      {compact && selected && timeline.usage && <UsageMeter usage={timeline.usage} />}
+      {selected && timeline.usage && <UsageMeter usage={timeline.usage} />}
       <ModelPicker
       models={models}
       model={model}
@@ -880,32 +907,18 @@ export function App() {
         <Sidebar
           threads={threads}
           sections={sections}
+          agents={agents}
           selectedId={selectedId}
           onSelect={pick}
           onNew={() => newThread()}
           onNewIn={newThread}
-          onSignOut={() => signOut()}
           compact={compact}
           onOpenSettings={(x, y) => setSettingsAt({ x, y })}
           onThreadMenu={threadActions.openThreadMenu}
           onSectionMenu={threadActions.openSectionMenu}
           onNewSection={threadActions.newSection}
-          onOpenArchive={() => {
-            setArchiveOpen(true);
-            setDrawer(false);
-          }}
-          onOpenTodos={() => {
-            setTodosOpen(true);
-            setDrawer(false);
-          }}
-          onOpenImport={
-            importAgents.length
-              ? () => {
-                  setImportOpen(true);
-                  setDrawer(false);
-                }
-              : undefined
-          }
+          onOpenTodos={openTodos}
+          todosActive={onTodos}
         />
       </aside>
 
@@ -915,10 +928,11 @@ export function App() {
             <IconMenu />
           </button>
           <div className="topbar-heading">
-            <div className="topbar-title">{selected ? selected.title : '新线程'}</div>
+            {/* The plan page carries its own heading. */}
+            <div className="topbar-title">{onTodos ? '' : selected ? selected.title : '新线程'}</div>
             {selected && (
-              <div className="topbar-sub">
-                {agentLabel(selected.agent)} · {folderName(selected.cwd)}
+              <div className="topbar-sub" title={selected.cwd}>
+                {agentLabel(selected.agent)} · {selected.worktree ? `${folderName(selected.worktree.of)} · ${selected.worktree.branch}` : folderName(selected.cwd)}
               </div>
             )}
           </div>
@@ -950,7 +964,22 @@ export function App() {
           </div>
         )}
 
-        <div className="scroller" ref={scrollerRef} onScroll={onScroll} {...gestureProps}>
+        {onTodos ? (
+          // A scroller of its own: the thread's one pins itself to the bottom, a document starts at the top.
+          <div key="todos" className="scroller">
+            <TodosPage
+              api={api}
+              todos={todos}
+              threads={threads}
+              refreshKey={todosKey}
+              onReload={reloadTodos}
+              onChange={setTodos}
+              onOpenThread={pick}
+              onError={handleError}
+            />
+          </div>
+        ) : (
+        <div key="thread" className="scroller" ref={scrollerRef} onScroll={onScroll} {...gestureProps}>
           {selected && <TurnRuler scrollerRef={scrollerRef} previews={turnPreviewMap} />}
           {selected && eventsLoading && <div className="loading-note">加载中…</div>}
           {selected ? (
@@ -982,6 +1011,7 @@ export function App() {
             </div>
           )}
         </div>
+        )}
 
         <div className="jump-anchor">
           {selected && !atBottom && (
@@ -991,7 +1021,9 @@ export function App() {
           )}
         </div>
 
+        {!onTodos && (
         <Composer
+          draftKey={selectedId ?? 'new'}
           running={running}
           disabled={!selected && !draftCwd}
           placeholder={selected ? (running ? '追加一条，这一轮结束后发送' : '继续这个线程') : `在 ${folderName(draftCwd) || '工作目录'} 中开始`}
@@ -1013,6 +1045,7 @@ export function App() {
           restore={restore}
           quote={quoteSignal}
         />
+        )}
         {/* With the list open, the conversation is a card pushed aside; a tap on it brings it back. */}
         <div className="scrim" onClick={() => setDrawer(false)} aria-hidden="true" />
       </main>
@@ -1025,21 +1058,6 @@ export function App() {
           onRestore={(t) => threadActions.run('restore', t)}
           onDelete={(t) => threadActions.run('delete', t)}
           onClose={() => setArchiveOpen(false)}
-          onError={handleError}
-        />
-      )}
-      {todosOpen && (
-        <TodosPanel
-          api={api}
-          todos={todos}
-          threads={threads}
-          refreshKey={todosKey}
-          onReload={reloadTodos}
-          onOpenThread={(id) => {
-            pick(id);
-            setTodosOpen(false);
-          }}
-          onClose={() => setTodosOpen(false)}
           onError={handleError}
         />
       )}
@@ -1101,8 +1119,18 @@ export function App() {
           label="配置"
           x={settingsAt.x}
           y={settingsAt.y}
+          corner="bottom-right"
           onClose={() => setSettingsAt(null)}
           items={[
+            {
+              id: 'appearance',
+              label: '外观',
+              icon: IconPalette,
+              onSelect: () => {
+                setAppearanceOpen(true);
+                setDrawer(false);
+              },
+            },
             {
               id: 'archive',
               label: '已归档',
@@ -1130,6 +1158,9 @@ export function App() {
             { id: 'sign-out', label: '退出', icon: IconSignOut, danger: true, onSelect: () => setConfirmSignOut(true) },
           ]}
         />
+      )}
+      {appearanceOpen && (
+        <AppearancePanel appearance={appearance} theme={theme} onChange={setAppearance} onClose={() => setAppearanceOpen(false)} />
       )}
       {confirmSignOut && (
         <Dialog

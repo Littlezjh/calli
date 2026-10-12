@@ -81,7 +81,7 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
 
 function sendError(res: ServerResponse, err: unknown): void {
   if (err instanceof HttpError) {
-    sendJson(res, err.status, { error: err.message });
+    sendJson(res, err.status, { ...err.details, error: err.message });
     return;
   }
   const message = err instanceof Error ? err.message : 'internal error';
@@ -284,6 +284,12 @@ export function createHttpServer(deps: HttpDeps): Server {
         return;
       }
     }
+    if (parts[1] === 'todos' && parts[2] && parts[3] === 'move' && method === 'POST') {
+      const body = await readJson(req);
+      manager.moveTodo(parts[2], { parentId: body.parentId, before: body.before });
+      res.writeHead(204).end();
+      return;
+    }
     if (parts[1] === 'todos' && parts[2] && parts[3] === 'threads') {
       if (method === 'POST') {
         manager.linkTodoThread(parts[2], (await readJson(req)).threadId);
@@ -314,7 +320,11 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (method === 'GET' && !sub) return sendJson(res, 200, manager.threadView(threadId));
 
       if (method === 'DELETE' && !sub) {
-        await manager.deleteThread(threadId, { agentSession: url.searchParams.get('agentSession') === '1' });
+        await manager.deleteThread(threadId, {
+          agentSession: url.searchParams.get('agentSession') === '1',
+          worktree: url.searchParams.get('worktree') === '1',
+          force: url.searchParams.get('force') === '1',
+        });
         res.writeHead(204).end();
         return;
       }
@@ -426,10 +436,19 @@ export function createHttpServer(deps: HttpDeps): Server {
         return sendJson(res, 200, await manager.syncThread(threadId));
       }
 
+      if (method === 'GET' && sub === 'fork-options') return sendJson(res, 200, await manager.forkOptions(threadId));
+
       if (method === 'POST' && sub === 'fork') {
         // An empty body copies the whole thread; `turnId` names the turn the copy ends with.
         const body = await readJson(req);
-        return sendJson(res, 201, await manager.forkThread(threadId, typeof body?.turnId === 'string' ? { turnId: body.turnId } : {}));
+        return sendJson(
+          res,
+          201,
+          await manager.forkThread(threadId, {
+            ...(typeof body?.turnId === 'string' ? { turnId: body.turnId } : {}),
+            worktree: body?.worktree === true,
+          }),
+        );
       }
 
       if (method === 'POST' && sub === 'cancel') {

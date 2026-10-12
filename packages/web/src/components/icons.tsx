@@ -13,6 +13,13 @@ function Svg({ size = 18, children }: IconProps) {
   );
 }
 
+/** An agent's own mark, drawn from the path its adapter sends. Filled, unlike the line icons below. */
+export const AgentMark = ({ path, size = 16 }: { path: string; size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" fillRule="evenodd" aria-hidden="true">
+    <path d={path} />
+  </svg>
+);
+
 export const IconMenu = (p: { size?: number }) => (
   <Svg {...p}>
     <path d="M4 7h16M4 12h16M4 17h10" />
@@ -157,6 +164,17 @@ export const IconMore = (p: { size?: number }) => (
     <path d="M6 12h.01M12 12h.01M18 12h.01" strokeWidth={2.6} />
   </Svg>
 );
+/** Six dots: the handle a row is dragged by. */
+export const IconGrip = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" strokeWidth={2.6} />
+  </Svg>
+);
+export const IconArrowUp = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M12 19V5M6 11l6-6 6 6" />
+  </Svg>
+);
 export const IconList = (p: { size?: number }) => (
   <Svg {...p}>
     <path d="M9 7h11M9 12h11M9 17h11M4.5 7h.01M4.5 12h.01M4.5 17h.01" />
@@ -193,6 +211,21 @@ export const IconSettings = (p: { size?: number }) => (
   <Svg {...p}>
     <circle cx="12" cy="12" r="3" />
     <path d="M12 3.5l1.6 2.3 2.7-.6.8 2.7 2.6 1-1 2.6 1 2.6-2.6 1-.8 2.7-2.7-.6L12 20.5l-1.6-2.3-2.7.6-.8-2.7-2.6-1 1-2.6-1-2.6 2.6-1 .8-2.7 2.7.6z" />
+  </Svg>
+);
+/** A git worktree: the fork's branch, ending in a checkout of its own. */
+export const IconWorktree = (p: { size?: number }) => (
+  <Svg {...p}>
+    <circle cx="6.5" cy="5.5" r="2" />
+    <circle cx="6.5" cy="18.5" r="2" />
+    <path d="M6.5 7.5v9M6.5 14.5c7 0 10-1 10-4" />
+    <rect x="12.5" y="3.5" width="8" height="7" rx="1.6" />
+  </Svg>
+);
+export const IconPalette = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M12 3.5a8.5 8.5 0 000 17c1 0 1.7-.8 1.7-1.7 0-.5-.2-.9-.5-1.2-.3-.3-.4-.7-.4-1.1 0-.9.7-1.7 1.7-1.7h1.9a4.1 4.1 0 004.1-4.2c0-3.9-3.8-7.1-8.5-7.1z" />
+    <path d="M8 9.6h.01M11.6 7.4h.01M15.6 8.8h.01M7.6 13.6h.01" />
   </Svg>
 );
 export const IconSignOut = (p: { size?: number }) => (

@@ -27,7 +27,7 @@ import {
   type WorkSection,
 } from '../timeline';
 import { Lightbox } from './Lightbox';
-import { IconCheck, IconChevron, IconClose, IconCopy, IconEdit, IconFile, IconFork, IconGlobe, IconSearch, IconTerminal } from './icons';
+import { IconCheck, IconChevron, IconClose, IconCopy, IconEdit, IconFile, IconFork, IconGlobe, IconSearch, IconTerminal, IconWorktree } from './icons';
 
 interface Props {
   items: Item[];
@@ -68,7 +68,8 @@ export function ThreadView({ items, running, roots, loadImage, loadFile, onDecid
   const hiddenMessages = folded ? groups.slice(0, -RECENT_TURNS).reduce((n, g) => n + g.items.length, 0) : 0;
   // A fork from the last answer copies the whole thread; it is offered while that answer is the
   // last thing in it. Where the agent can end a copy at an earlier turn, every answer offers one.
-  const tail = items[items.length - 1];
+  // The mark a fork starts with is not part of the conversation: the answer above it is still the last.
+  const tail = [...items].reverse().find((it) => it.kind !== 'fork');
   const lastKey = tail?.kind === 'actions' ? tail.key : null;
 
   const renderItems = (list: Item[]) =>
@@ -142,6 +143,16 @@ export function ThreadView({ items, running, roots, loadImage, loadFile, onDecid
           return (
             <div key={item.key} className="row">
               <div className="error-box">{item.message}</div>
+            </div>
+          );
+        case 'fork':
+          return (
+            <div key={item.key} className="row fork-mark" role="separator" aria-label={item.branch ? `从这里分叉，在工作树 ${item.branch}` : '从这里分叉'}>
+              <span className="fork-mark-label">
+                {item.branch ? <IconWorktree size={15} /> : <IconFork size={15} />}
+                从这里分叉
+                {item.branch && <span className="fork-mark-branch">{item.branch}</span>}
+              </span>
             </div>
           );
       }

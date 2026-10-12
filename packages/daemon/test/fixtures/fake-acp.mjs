@@ -4,6 +4,7 @@
 // the effort option is named reasoning_effort, and "delete" on the command line (its CLI,
 // which the adapter runs for deletion) logs to FAKE_ACP_DELETE_LOG and exits.
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
+import { basename } from 'node:path';
 import { createInterface } from 'node:readline';
 
 if (process.argv[2] === 'delete') {
@@ -124,7 +125,10 @@ rl.on('line', (line) => {
         if (at && (at.version !== 1 || !HIST_MESSAGE_IDS.includes(at.messageId))) {
           return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: `Fork point message ${at.messageId} was not found` } });
         }
-        return out({ jsonrpc: '2.0', id: msg.id, result: { sessionId: `${msg.params.sessionId}-fork${at ? `-at-${at.messageId}` : ''}` } });
+        // Asked for from a worktree, the copy is one that runs there; its id says so.
+        const cwd = String(msg.params.cwd ?? '');
+        const into = cwd.includes('/.worktrees/') ? `-in-${basename(cwd)}` : '';
+        return out({ jsonrpc: '2.0', id: msg.id, result: { sessionId: `${msg.params.sessionId}-fork${at ? `-at-${at.messageId}` : ''}${into}` } });
       }
     case 'session/load': {
       const replay = (u) => out({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: msg.params.sessionId, update: u } });

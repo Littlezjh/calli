@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { AgentInfo, ModelOption } from '../api';
 import { usageSummary, type Usage } from '../timeline';
 import { EFFORT_LABELS, PERMISSION_LABELS, PERMISSION_ORDER, permissionHint } from '../permissions';
-import { IconCheck, IconChevron, IconHand, IconPlus, IconShield, IconShieldAlert, IconSparkle } from './icons';
+import { AgentMark, IconCheck, IconChevron, IconHand, IconPlus, IconShield, IconShieldAlert, IconSparkle } from './icons';
 import { Popover } from './Popover';
 
 const PERMISSION_ICON: Record<string, (p: { size?: number }) => JSX.Element> = {
@@ -263,12 +263,15 @@ interface AgentProps {
 export function AgentPicker({ agents, value, onChange, discovered = [], onAdd, accounts = [], onAddAccount }: AgentProps) {
   const current = agents.find((a) => a.id === value);
   const [adding, setAdding] = useState<string | null>(null);
+  // The marks the thread list shows in place of names are introduced here, next to the names.
+  const marks = agents.some((a) => a.icon);
   return (
     <Popover
       label="Agent"
       triggerClassName="context-btn"
       trigger={
         <>
+          {current?.icon && <AgentMark path={current.icon} size={14} />}
           <span>{current?.label ?? value}</span>
           <IconChevron size={12} open />
         </>
@@ -290,6 +293,7 @@ export function AgentPicker({ agents, value, onChange, discovered = [], onAdd, a
                 close();
               }}
             >
+              {marks && <span className="pop-item-icon">{a.icon && <AgentMark path={a.icon} size={16} />}</span>}
               <span className="pop-item-text">
                 <span className="pop-item-label">{a.label}</span>
                 {!a.available && <span className="pop-item-hint">这台主机上没有找到</span>}
@@ -321,6 +325,7 @@ export function AgentPicker({ agents, value, onChange, discovered = [], onAdd, a
                     }
                   }}
                 >
+                  {marks && <span className="pop-item-icon" />}
                   <span className="pop-item-text">
                     <span className="pop-item-label">{d.id}</span>
                     <span className="pop-item-hint">添加后作为新 agent 使用</span>

@@ -51,6 +51,11 @@ test("the project group's + starts a thread with that directory pre-filled", asy
   await page.getByText('hi there hello').waitFor({ timeout: 15_000 });
   // The thread is listed under its project.
   assert.ok(await page.locator('.thread-group', { hasText: 'hello' }).count());
+
+  // The row says which agent runs it with the agent's mark; the name is what a screen reader hears.
+  const row = page.locator('.thread-row', { hasText: 'hello' });
+  assert.equal(await row.getByRole('img', { name: 'pi', exact: true }).locator('svg path').count(), 1);
+  assert.equal(await row.locator('.agent-tag').count(), 0, 'one pi here, so the mark is enough');
 });
 
 test("the section group's + files the new thread into the section", async () => {
@@ -73,4 +78,55 @@ test("the section group's + files the new thread into the section", async () => 
   await filed.waitFor({ timeout: 10_000 });
   const threads = await (await api(daemon, '/api/threads')).json();
   assert.equal(threads.find((t) => t.title === 'a section thread').sectionId, section.id);
+});
+
+test('search sits behind a button, and Escape puts it away', async () => {
+  const list = page.locator('.sidebar');
+  assert.equal(await list.getByLabel('搜索线程').evaluate((el) => el.tagName), 'BUTTON');
+  await list.getByRole('button', { name: '搜索线程' }).click();
+  // The field takes the focus, so typing can start at once.
+  await page.keyboard.type('section');
+  await list.locator('.thread-title', { hasText: 'a section thread' }).waitFor();
+  assert.equal(await list.locator('.thread-title', { hasText: 'hello' }).count(), 0, 'only matches are listed');
+
+  await page.keyboard.press('Escape');
+  await list.locator('.thread-title', { hasText: 'hello' }).waitFor();
+  assert.equal(await list.locator('.brand').isVisible(), true, 'the name is back where the field was');
+});
+
+test('the settings button holds what is not an everyday thing, and signing out asks first', async () => {
+  const list = page.locator('.sidebar');
+  for (const name of ['计划', '新线程', '搜索线程', '配置']) {
+    assert.equal(await list.getByRole('button', { name, exact: true }).isVisible(), true, name);
+  }
+  assert.equal(await list.getByRole('button', { name: '已归档', exact: true }).count(), 0);
+
+  const gear = list.getByRole('button', { name: '配置', exact: true });
+  await gear.click();
+  for (const name of ['外观', '已归档', '导入历史', '退出']) {
+    await page.getByRole('menuitem', { name, exact: true }).waitFor({ timeout: 5_000 });
+  }
+  // The button is at the bottom of the screen, so the menu grows upwards from it and stays whole.
+  const menu = await page.getByRole('menu', { name: '配置' }).boundingBox();
+  const button = await gear.boundingBox();
+  assert.ok(menu.y + menu.height <= button.y, `the menu sits above its button (${menu.y + menu.height} vs ${button.y})`);
+  assert.ok(menu.y >= 0 && menu.x >= 0);
+
+  await page.getByRole('menuitem', { name: '退出', exact: true }).click();
+  await page.getByText('退出登录？').waitFor({ timeout: 5_000 });
+  await page.getByRole('button', { name: '取消' }).click();
+  await page.getByText('退出登录？').waitFor({ state: 'detached', timeout: 5_000 });
+  assert.equal(await list.locator('.brand').isVisible(), true, 'still signed in');
+});
+
+test('an open thread names its agent and directory in the top bar, not on the composer', async () => {
+  await page.locator('.sidebar .thread-title', { hasText: 'hello' }).click();
+  await page.getByText('hi there hello').waitFor({ timeout: 15_000 });
+  const sub = page.locator('.topbar-sub');
+  assert.equal(await sub.isVisible(), true);
+  assert.match(await sub.innerText(), /^pi · /);
+  assert.equal(await page.locator('.composer-context').count(), 0, 'the strip is only for choosing, before the thread exists');
+
+  await page.locator('.sidebar .new-thread').click();
+  await page.locator('.composer-context .context-btn').first().waitFor();
 });

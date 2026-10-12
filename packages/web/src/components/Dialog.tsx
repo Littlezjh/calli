@@ -1,22 +1,22 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 interface Props {
   title: string;
   message?: string;
   /** When set, the dialog asks for text. The value is passed to onConfirm. */
   input?: { initial: string; label: string };
-  /** An optional checkbox, off by default. Its state is the second argument to onConfirm. */
-  option?: { label: string; hint?: string };
+  /** Optional checkboxes, off by default. Their states, in order, are the second argument to onConfirm. */
+  options?: Array<{ label: string; hint?: string }>;
   confirmLabel: string;
   danger?: boolean;
-  onConfirm: (value: string | undefined, optionChecked: boolean) => void;
+  onConfirm: (value: string | undefined, checked: boolean[]) => void;
   onCancel: () => void;
 }
 
 /** In-app modal used instead of window.prompt / window.confirm, so it matches the rest of the UI. */
-export function Dialog({ title, message, input, option, confirmLabel, danger, onConfirm, onCancel }: Props) {
+export function Dialog({ title, message, input, options = [], confirmLabel, danger, onConfirm, onCancel }: Props) {
   const [value, setValue] = useState(input?.initial ?? '');
-  const [checked, setChecked] = useState(false);
+  const [checked, setChecked] = useState<boolean[]>(() => options.map(() => false));
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -64,15 +64,15 @@ export function Dialog({ title, message, input, option, confirmLabel, danger, on
             />
           </label>
         )}
-        {option && (
-          <label className="dialog-option">
-            <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} />
+        {options.map((option, i) => (
+          <label key={option.label} className="dialog-option">
+            <input type="checkbox" checked={checked[i] ?? false} onChange={(e) => setChecked((prev) => options.map((_, j) => (j === i ? e.target.checked : (prev[j] ?? false))))} />
             <span className="dialog-option-text">
               <span>{option.label}</span>
               {option.hint && <span className="dialog-option-hint">{option.hint}</span>}
             </span>
           </label>
-        )}
+        ))}
         <div className="dialog-actions">
           <button className="ghost" onClick={onCancel}>
             取消
@@ -80,6 +80,45 @@ export function Dialog({ title, message, input, option, confirmLabel, danger, on
           <button className={danger ? 'danger' : 'primary'} onClick={submit} disabled={!!input && !value.trim()}>
             {confirmLabel}
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface ChoiceProps {
+  title: string;
+  choices: Array<{ id: string; icon: ReactNode; label: string; hint: string }>;
+  onPick: (id: string) => void;
+  onCancel: () => void;
+}
+
+/** A dialog that asks which way to go: each answer a row with a word on what it means. Picking one is the confirmation. */
+export function ChoiceDialog({ title, choices, onPick, onCancel }: ChoiceProps) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onCancel();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onCancel]);
+
+  return (
+    <div className="dialog-scrim" onClick={onCancel}>
+      <div className="dialog choice-dialog" role="dialog" aria-modal="true" aria-labelledby="choice-title" onClick={(e) => e.stopPropagation()}>
+        <h2 id="choice-title" className="dialog-title">
+          {title}
+        </h2>
+        <div className="choice-list">
+          {choices.map((c, i) => (
+            <button key={c.id} type="button" className="choice-row" autoFocus={i === 0} onClick={() => onPick(c.id)}>
+              <span className="choice-icon">{c.icon}</span>
+              <span className="choice-text">
+                <span className="choice-label">{c.label}</span>
+                <span className="choice-hint">{c.hint}</span>
+              </span>
+            </button>
+          ))}
         </div>
       </div>
     </div>

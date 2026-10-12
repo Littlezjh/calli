@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Section, Thread } from '../src/api.js';
-import { buildSidebar } from '../src/sidebar.js';
+import { buildSidebar, taggedAgents } from '../src/sidebar.js';
 
 let clock = 0;
 function thread(id: string, over: Partial<Thread> = {}): Thread {
@@ -12,6 +12,7 @@ function thread(id: string, over: Partial<Thread> = {}): Thread {
     cwd: '/work/code',
     title: id,
     agentSessionId: null,
+    preview: null,
     status: 'idle',
     pinned: false,
     permissionMode: 'auto_edit',
@@ -86,4 +87,11 @@ test('one folder reached by two spellings is one project', () => {
   assert.deepEqual(model.projects.map((p) => [p.name, ids(p.threads)]), [['code', ['imported', 'older']], ['code-old', ['elsewhere']]]);
   assert.equal(model.projects[0].key, '/data/home/me/code');
   assert.equal(model.projects[0].cwd, '/data/home/me/code', 'the group shows the spelling of its most recent thread');
+});
+
+test('a mark several agents share gets the name only on the agents after its first one', () => {
+  // Two accounts of one CLI, another agent, and one from a daemon that sends no marks.
+  const agents = [{ id: 'claude', icon: 'M0 0h1' }, { id: 'claude-2', icon: 'M0 0h1' }, { id: 'pi', icon: 'M2 2h1' }, {}, {}];
+  assert.deepEqual([...taggedAgents(agents)], ['claude-2']);
+  assert.equal(taggedAgents([{ id: 'claude', icon: 'M0 0h1' }, { id: 'pi', icon: 'M2 2h1' }]).size, 0);
 });

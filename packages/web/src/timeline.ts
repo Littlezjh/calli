@@ -124,7 +124,9 @@ export type Item =
   | { kind: 'changes'; key: string; turnId: string; files: FileChange[]; added: number; removed: number }
   /** The row under a finished answer. `text` is what "copy" copies; `at` is when the turn ended, where the hub saw it end. */
   | { kind: 'actions'; key: string; turnId: string; text: string; at?: string }
-  | { kind: 'error'; key: string; turnId: string | null; message: string };
+  | { kind: 'error'; key: string; turnId: string | null; message: string }
+  /** Where a fork begins: above it is the conversation it was copied from, below it its own. `branch` when it got a worktree. */
+  | { kind: 'fork'; key: string; turnId: null; branch?: string };
 
 /**
  * What to show for a failed turn. Failures the daemon marks with a code get an explanation and a
@@ -434,8 +436,17 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
         running = false;
         break;
 
+      case 'thread.updated': {
+        // Most of these are settings changing, which the thread view does not show. The one a fork
+        // ends its copied history with marks where the copy starts going its own way.
+        if (typeof ev.data.forkedFrom !== 'string') break;
+        const branch = (ev.data.worktree as { branch?: unknown } | undefined)?.branch;
+        items.push({ kind: 'fork', key, turnId: null, ...(typeof branch === 'string' ? { branch } : {}) });
+        break;
+      }
+
       default:
-        break; // thread.created, thread.updated: not rendered in the thread view
+        break; // thread.created: not rendered in the thread view
     }
   }
 
@@ -529,8 +540,10 @@ function addTurnSummaries(items: Item[], finished: Map<string, string | undefine
   };
 
   for (const it of items) {
-    if (it.kind === 'user') flush();
-    turnItems.push(it);
+    // A fork's mark stands between turns: after everything of the turn before it, summaries included.
+    if (it.kind === 'user' || it.kind === 'fork') flush();
+    if (it.kind === 'fork') out.push(it);
+    else turnItems.push(it);
   }
   flush();
   return out;

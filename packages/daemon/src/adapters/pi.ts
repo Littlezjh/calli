@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { EmittedEvent } from '../events.js';
 import { imagePathNote } from '../attachments.js';
 import { commandExists, textOf } from '../util.js';
+import { PI_ICON } from './icons.js';
 import type {
   AgentAdapter,
   AgentSession,
@@ -386,8 +387,10 @@ class PiSession implements AgentSession {
     opts: StartOptions,
     label: string,
     env: Record<string, string> = {},
+    /** Instead of resuming `opts.resumeId`: the arguments that say which session this pi is on. */
+    sessionArgs: string[] = opts.resumeId ? ['--session', opts.resumeId] : [],
   ): Promise<PiSession> {
-    const session = PiSession.spawn(command, opts.resumeId ? ['--session', opts.resumeId] : [], opts.cwd, label, env);
+    const session = PiSession.spawn(command, sessionArgs, opts.cwd, label, env);
     try {
       const state = await session.request('get_state', {});
       const sessionId = String(state?.sessionId ?? '');
@@ -591,6 +594,7 @@ interface Cached<T> {
 export class PiRpcAdapter implements AgentAdapter {
   readonly id = 'pi';
   readonly label = 'pi';
+  readonly icon = PI_ICON;
   // pi has no approval flow, so there is nothing to choose.
   readonly capabilities = {
     resume: true,
@@ -605,6 +609,8 @@ export class PiRpcAdapter implements AgentAdapter {
     fork: true,
     forkAt: true,
     multiAccount: false,
+    // `--fork` copies a session into the directory pi is started in.
+    forkInto: true,
     // pi has no plan of its own to read: it runs on whatever model account it was given.
     quota: false,
   };
@@ -770,12 +776,22 @@ export class PiRpcAdapter implements AgentAdapter {
   /**
    * `clone` copies the conversation into a new session file and switches this pi to it. `fork`
    * does the same up to, and not including, one of its user messages.
+   *
+   * pi keeps sessions by directory and will not open one from another directory: it asks whether
+   * to fork it there instead. Started with `--fork`, it does that without asking, so a copy for
+   * `intoCwd` is made by a pi started there. The copy has every entry of the original under the
+   * same id, so cutting it at a turn works as it does at home; that cut is a second copy, and the
+   * whole one made first stays behind in pi's list for that directory.
    */
-  async forkSession(agentSessionId: string, cwd: string, forkRef?: string): Promise<string> {
-    const session = await PiSession.open(this.command, { cwd, resumeId: agentSessionId }, 'pi', this.env);
+  async forkSession(agentSessionId: string, cwd: string, forkRef?: string, intoCwd?: string): Promise<string> {
+    const session = intoCwd
+      ? await PiSession.open(this.command, { cwd: intoCwd }, 'pi', this.env, ['--fork', agentSessionId])
+      : await PiSession.open(this.command, { cwd, resumeId: agentSessionId }, 'pi', this.env);
     try {
-      const res = forkRef ? await session.request('fork', { entryId: forkRef }) : await session.request('clone', {});
-      if (res?.cancelled) throw new Error('an extension cancelled the fork');
+      if (forkRef || !intoCwd) {
+        const res = forkRef ? await session.request('fork', { entryId: forkRef }) : await session.request('clone', {});
+        if (res?.cancelled) throw new Error('an extension cancelled the fork');
+      }
       const state = await session.request('get_state', {});
       const id = String(state?.sessionId ?? '');
       if (!id || id === agentSessionId) throw new Error('pi did not create a new session for the fork');

@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import type { EmittedEvent } from '../events.js';
 import { commandExists } from '../util.js';
+import { CODEX_ICON } from './icons.js';
 import { JsonRpcPeer } from './jsonrpc.js';
 import type {
   AgentAdapter,
@@ -509,6 +510,7 @@ class CodexSession implements AgentSession {
 export class CodexAppServerAdapter implements AgentAdapter {
   readonly id = 'codex';
   readonly label = 'Codex';
+  readonly icon = CODEX_ICON;
   readonly capabilities = {
     resume: true,
     approvals: true,
@@ -521,6 +523,8 @@ export class CodexAppServerAdapter implements AgentAdapter {
     fork: true,
     forkAt: true,
     multiAccount: false,
+    // A thread is resumed with the directory to work in, whatever directory it was made in.
+    forkInto: true,
     // Its app-server has no usage request yet.
     quota: false,
   };
@@ -618,12 +622,14 @@ export class CodexAppServerAdapter implements AgentAdapter {
     });
   }
 
-  async forkSession(agentSessionId: string, _cwd?: string, forkRef?: string): Promise<string> {
+  async forkSession(agentSessionId: string, _cwd?: string, forkRef?: string, intoCwd?: string): Promise<string> {
     return this.withServer(async (peer) => {
       const res = await peer.request('thread/fork', {
         threadId: agentSessionId,
         // Turns after this one are left out of the copy.
         ...(forkRef ? { lastTurnId: forkRef } : {}),
+        // Where the copy will work, so its own record says so too. Resuming passes it again.
+        ...(intoCwd ? { cwd: intoCwd } : {}),
         ephemeral: false,
         excludeTurns: true,
       });

@@ -53,13 +53,12 @@ test('with the keyboard up, the app fills what is left of the screen, wherever t
   assert.ok(composer.bottom <= 844 && composer.bottom > 844 - 60, `the composer sits just above the keyboard (${composer.bottom})`);
   assert.ok((await box('.topbar')).top === 344, 'the top bar is at the top of what is visible');
 
-  // Layers over the app stay on the visible part too: the plan page, with its own field.
+  // The plan page lives in the same visible part, and its line for a new plan can be typed on.
   await page.locator('.menu-btn').click();
   await page.locator('.sidebar').getByRole('button', { name: '计划' }).click();
-  await page.waitForTimeout(500); // the sheet slides in
-  const sheet = await box('.todos-panel');
-  assert.ok(sheet.top >= 344 && sheet.bottom <= 844, `the sheet is inside the visible part (${sheet.top}–${sheet.bottom})`);
-  await page.locator('.todos-panel .icon-btn').click();
+  await page.waitForTimeout(500); // the list slides away
+  const field = await box('.todos-page .todo-add');
+  assert.ok(field.top >= 344 && field.bottom <= 844, `the new-plan line is inside the visible part (${field.top}–${field.bottom})`);
 
   // Keyboard down again: back to the whole screen.
   await keyboard(844, 0);

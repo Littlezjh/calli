@@ -1,8 +1,12 @@
 /*
  * Design tokens. Light by default; dark follows the system unless data-theme forces a choice.
  * Every colour, radius and shadow in this file comes from here. See AGENTS.md for the rules.
+ *
+ * The app sets data-theme (light or dark) and data-palette on <html>. Any other element carrying
+ * the two attributes gets that look for itself, which is how the appearance panel draws its previews.
  */
-:root {
+:root,
+[data-palette='paper'] {
   --bg: #f8f6f1;
   --sidebar: #f1efe9;
   --surface: #ffffff;
@@ -73,7 +77,8 @@
   }
 }
 
-:root[data-theme='dark'] {
+:root[data-theme='dark'],
+[data-palette='paper'][data-theme='dark'] {
   --bg: #1b1a18;
   --sidebar: #161514;
   --surface: #252422;
@@ -100,6 +105,175 @@
   --shadow-pop: 0 14px 40px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.3);
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.25);
   color-scheme: dark;
+}
+
+/*
+ * Palettes. "paper" above is the default and spells every token out. Each of the others names six
+ * colours for light and six for dark (page, sidebar, text, quiet text, accent, what is written on
+ * the accent) and the rest is mixed from those further down. Status colours, scrims and shadows
+ * stay the theme's own. The names shown for these are in src/appearance.ts.
+ */
+[data-palette='graphite'] {
+  --p-bg: #f7f7f8;
+  --p-side: #efeff1;
+  --p-fg: #1c1c1f;
+  --p-dim: #77777c;
+  --p-accent: #1c1c1f;
+  --p-accent-fg: #ffffff;
+  /* A dark accent is taken down a notch where it fills something large, as in "paper". */
+  --p-soft: color-mix(in srgb, var(--p-accent) 66%, var(--p-bg));
+}
+
+[data-palette='graphite'][data-theme='dark'] {
+  --p-bg: #1a1a1d;
+  --p-side: #131315;
+  --p-fg: #ededf0;
+  --p-dim: #9a9aa1;
+  --p-accent: #ededf0;
+  --p-accent-fg: #1a1a1d;
+}
+
+[data-palette='catppuccin'] {
+  --p-bg: #eff1f5;
+  --p-side: #e6e9ef;
+  --p-fg: #4c4f69;
+  --p-dim: #6c6f85;
+  --p-accent: #8839ef;
+  --p-accent-fg: #ffffff;
+}
+
+[data-palette='catppuccin'][data-theme='dark'] {
+  --p-bg: #1e1e2e;
+  --p-side: #181825;
+  --p-fg: #cdd6f4;
+  --p-dim: #9399b2;
+  --p-accent: #cba6f7;
+  --p-accent-fg: #1e1e2e;
+}
+
+[data-palette='everforest'] {
+  --p-bg: #fdf6e3;
+  --p-side: #f4f0d9;
+  --p-fg: #4a555b;
+  --p-dim: #6f7a71;
+  --p-accent: #5f7f10;
+  --p-accent-fg: #ffffff;
+}
+
+[data-palette='everforest'][data-theme='dark'] {
+  --p-bg: #2d353b;
+  --p-side: #232a2e;
+  --p-fg: #d3c6aa;
+  --p-dim: #9da9a0;
+  --p-accent: #a7c080;
+  --p-accent-fg: #2d353b;
+}
+
+[data-palette='gruvbox'] {
+  --p-bg: #fbf1c7;
+  --p-side: #f2e5bc;
+  --p-fg: #3c3836;
+  --p-dim: #7c6f64;
+  --p-accent: #af3a03;
+  --p-accent-fg: #ffffff;
+}
+
+[data-palette='gruvbox'][data-theme='dark'] {
+  --p-bg: #282828;
+  --p-side: #1d2021;
+  --p-fg: #ebdbb2;
+  --p-dim: #a89984;
+  --p-accent: #fe8019;
+  --p-accent-fg: #282828;
+}
+
+[data-palette='nord'] {
+  --p-bg: #eceff4;
+  --p-side: #e3e8ef;
+  --p-fg: #2e3440;
+  --p-dim: #66728a;
+  --p-accent: #4c6f9c;
+  --p-accent-fg: #ffffff;
+}
+
+[data-palette='nord'][data-theme='dark'] {
+  --p-bg: #2e3440;
+  --p-side: #272c36;
+  --p-fg: #e5e9f0;
+  --p-dim: #9aa5b9;
+  --p-accent: #88c0d0;
+  --p-accent-fg: #2e3440;
+}
+
+[data-palette='rose-pine'] {
+  --p-bg: #faf4ed;
+  --p-side: #f2e9e1;
+  --p-fg: #575279;
+  --p-dim: #797593;
+  --p-accent: #7c6596;
+  --p-accent-fg: #ffffff;
+}
+
+[data-palette='rose-pine'][data-theme='dark'] {
+  --p-bg: #191724;
+  --p-side: #14121d;
+  --p-fg: #e0def4;
+  --p-dim: #908caa;
+  --p-accent: #c4a7e7;
+  --p-accent-fg: #191724;
+}
+
+[data-palette='one'] {
+  --p-bg: #fafafa;
+  --p-side: #f0f0f1;
+  --p-fg: #383a42;
+  --p-dim: #73757d;
+  --p-accent: #3568e0;
+  --p-accent-fg: #ffffff;
+}
+
+[data-palette='one'][data-theme='dark'] {
+  --p-bg: #282c34;
+  --p-side: #21252b;
+  --p-fg: #c8ccd4;
+  --p-dim: #8b93a3;
+  --p-accent: #61afef;
+  --p-accent-fg: #282c34;
+}
+
+[data-palette]:not([data-palette='paper']) {
+  --bg: var(--p-bg);
+  --sidebar: var(--p-side);
+  --surface: color-mix(in srgb, var(--p-bg) 40%, #ffffff);
+  --surface-2: color-mix(in srgb, var(--p-bg) 72%, #ffffff);
+  --text: var(--p-fg);
+  --muted: var(--p-dim);
+  --faint: color-mix(in srgb, var(--p-dim) 67%, var(--p-bg));
+  --border: color-mix(in srgb, var(--p-fg) 10%, var(--p-bg));
+  --border-strong: color-mix(in srgb, var(--p-fg) 17%, var(--p-bg));
+  --hover: color-mix(in srgb, var(--p-fg) 5%, transparent);
+  --active: color-mix(in srgb, var(--p-fg) 9%, transparent);
+  --accent: var(--p-accent);
+  --accent-fg: var(--p-accent-fg);
+  --accent-soft: var(--p-soft, var(--p-accent));
+  --user-bg: color-mix(in srgb, var(--p-fg) 6%, var(--p-bg));
+  --code-bg: color-mix(in srgb, var(--p-fg) 4.5%, var(--p-bg));
+  --positive-bg: color-mix(in srgb, var(--positive) 13%, var(--p-bg));
+  --danger-bg: color-mix(in srgb, var(--danger) 10%, var(--p-bg));
+}
+
+[data-palette]:not([data-palette='paper'])[data-theme='dark'] {
+  --surface: color-mix(in srgb, var(--p-fg) 5%, var(--p-bg));
+  --surface-2: color-mix(in srgb, var(--p-fg) 2.5%, var(--p-bg));
+  --faint: color-mix(in srgb, var(--p-dim) 62%, var(--p-bg));
+  --border: color-mix(in srgb, var(--p-fg) 11%, var(--p-bg));
+  --border-strong: color-mix(in srgb, var(--p-fg) 19%, var(--p-bg));
+  --hover: color-mix(in srgb, var(--p-fg) 6%, transparent);
+  --active: color-mix(in srgb, var(--p-fg) 10%, transparent);
+  --user-bg: color-mix(in srgb, var(--p-fg) 9.5%, var(--p-bg));
+  --code-bg: color-mix(in srgb, var(--p-fg) 2.5%, var(--p-bg));
+  --positive-bg: color-mix(in srgb, var(--positive) 22%, var(--p-bg));
+  --danger-bg: color-mix(in srgb, var(--danger) 18%, var(--p-bg));
 }
 
 /* ---------- Base ---------- */
@@ -480,29 +654,31 @@ html.list-open body {
 
 /* ---------- Sidebar ---------- */
 
+/* One layout for every width: the name and search on top, the list scrolling away under the two
+   floating buttons at the bottom. The sizes here are the desktop's; ".compact" further down is the
+   same thing laid out for thumbs. */
 .sidebar-inner {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  padding: calc(14px + env(safe-area-inset-top)) 10px 10px;
+  padding: calc(12px + env(safe-area-inset-top)) 0 0;
 }
 
 .sidebar-top {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
   gap: 10px;
-  padding: 2px 6px 8px;
+  min-height: 44px;
+  padding: 0 12px 4px 20px;
 }
 
 .brand {
-  font-size: 16px;
-  font-weight: 650;
-  letter-spacing: -0.01em;
-}
-
-.sidebar-actions {
-  display: flex;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .sidebar-search {
@@ -531,48 +707,21 @@ html.list-open body {
 .new-thread {
   display: flex;
   align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-height: 38px;
-  padding: 0 10px;
+  gap: 8px;
+  min-height: 42px;
+  padding: 0 19px 0 15px;
   border: 0;
-  border-radius: 10px;
-  background: transparent;
-  text-align: left;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-fg);
   font-size: 14.5px;
-  font-weight: 550;
+  font-weight: 600;
+  box-shadow: var(--shadow-card);
+  transition: background 0.12s;
 }
 
 .new-thread:hover {
-  background: var(--hover);
-}
-
-.thread-groups {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  margin-top: 10px;
-  padding: 0 0 8px;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-strong) transparent;
-}
-
-.thread-groups > .muted {
-  margin: 12px 10px;
-}
-
-.thread-group + .thread-group {
-  margin-top: 16px;
-}
-
-.group-title {
-  margin: 0 10px 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12.5px;
-  font-weight: 500;
-  color: var(--muted);
+  background: var(--accent);
 }
 
 .thread-item {
@@ -580,8 +729,8 @@ html.list-open body {
   align-items: center;
   gap: 8px;
   width: 100%;
-  min-height: 36px;
-  padding: 0 10px;
+  min-height: 44px;
+  padding: 5px 10px;
   border: 0;
   border-radius: 9px;
   background: transparent;
@@ -593,16 +742,6 @@ html.list-open body {
   background: var(--hover);
 }
 
-.thread-item.active {
-  background: var(--active);
-}
-
-.pin-icon {
-  display: inline-flex;
-  flex-shrink: 0;
-  color: var(--faint);
-}
-
 .thread-fork {
   display: inline-flex;
   flex-shrink: 0;
@@ -610,13 +749,27 @@ html.list-open body {
   color: var(--faint);
 }
 
-.thread-title {
+.thread-text {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.thread-title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 14px;
+}
+
+.thread-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .thread-meta {
@@ -624,6 +777,14 @@ html.list-open body {
   align-items: center;
   gap: 7px;
   flex-shrink: 0;
+}
+
+/* Which agent runs the thread: its own mark, and its name only where the mark alone could not tell. */
+.agent-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--faint);
 }
 
 .agent-tag {
@@ -660,24 +821,6 @@ html.list-open body {
 
 .thread-row.attention .thread-title {
   font-weight: 600;
-}
-
-.sidebar-foot {
-  padding: 8px 8px 0;
-  border-top: 1px solid var(--border);
-}
-
-.link-btn {
-  min-height: 32px;
-  padding: 0 2px;
-  border: 0;
-  background: none;
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.link-btn:hover {
-  color: var(--text);
 }
 
 /* ---------- Thread ---------- */
@@ -828,6 +971,42 @@ html.list-open body {
 }
 
 /* The "上 N 条消息" fold above long threads. */
+/* Where a fork begins: a line across the thread with a word in the middle of it. */
+.fork-mark {
+  flex-direction: row;
+  align-items: center;
+  gap: 14px;
+  margin: 6px 0;
+  color: var(--positive);
+  font-size: 13.5px;
+  font-weight: 550;
+}
+
+.fork-mark::before,
+.fork-mark::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.fork-mark-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.fork-mark-branch {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  font-weight: 400;
+}
+
 .older-messages {
   align-self: center;
   min-height: 32px;
@@ -1245,8 +1424,7 @@ html.list-open body {
   font-size: 13px;
 }
 
-.context-btn,
-.context-text {
+.context-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1501,6 +1679,11 @@ html.list-open body {
   flex-shrink: 0;
   margin-top: 2px;
   color: var(--muted);
+}
+
+/* A row without a mark among rows that have one: the names still line up. */
+.pop-item-icon:empty {
+  width: 16px;
 }
 
 .pop-item-text {
@@ -1963,21 +2146,21 @@ input.picker-search {
 
 .sidebar-search-box {
   display: flex;
+  flex: 1;
   align-items: center;
   gap: 8px;
   height: 36px;
-  padding: 0 11px;
-  border: 1px solid transparent;
-  border-radius: 10px;
-  background: var(--hover);
+  margin-left: -8px;
+  padding: 0 3px 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
   color: var(--faint);
-  transition:
-    background 0.12s,
-    border-color 0.12s;
+  box-shadow: var(--shadow-card);
+  transition: border-color 0.12s;
 }
 
 .sidebar-search-box:focus-within {
-  background: var(--surface);
   border-color: var(--border-strong);
 }
 
@@ -2007,11 +2190,12 @@ input.picker-search {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin: 16px 4px 2px 10px;
+  min-height: 26px;
+  margin: 14px 2px 2px 10px;
 }
 
 .group-label {
-  margin: 16px 10px 2px;
+  margin: 18px 10px 6px;
   color: var(--faint);
   font-size: 12px;
 }
@@ -2032,6 +2216,7 @@ input.picker-search {
   background: transparent;
   color: var(--muted);
   opacity: 0;
+  transition: opacity 0.12s;
 }
 
 .group-head-actions {
@@ -2058,6 +2243,16 @@ input.picker-search {
   color: var(--text);
 }
 
+/* "New section" rides the label row; on a mouse it waits for hover like the other group buttons. */
+.group-label-row .group-add {
+  opacity: 0;
+}
+
+.group-label-row:hover .group-add,
+.group-label-row:focus-within .group-add {
+  opacity: 1;
+}
+
 .group-head-row {
   display: flex;
   align-items: center;
@@ -2068,29 +2263,31 @@ input.picker-search {
   background: var(--hover);
 }
 
+/* A group reads as a heading: its name, then the chevron that folds it. */
 .group-head {
   display: flex;
   flex: 1;
   align-items: center;
-  gap: 7px;
+  gap: 5px;
   min-width: 0;
   min-height: 32px;
-  padding: 0 6px;
+  padding: 0 10px;
   border: 0;
   background: transparent;
   color: var(--text);
-  font-size: 14px;
+  font-size: 13.5px;
+  font-weight: 650;
   text-align: left;
 }
 
 .group-head > svg {
-  flex-shrink: 0;
-  color: var(--muted);
+  display: none;
 }
 
 .group-chevron {
   display: inline-flex;
   flex-shrink: 0;
+  order: 2;
   color: var(--faint);
 }
 
@@ -2101,7 +2298,7 @@ input.picker-search {
 }
 
 .group-empty {
-  margin: 2px 10px 6px 26px;
+  margin: 0 10px 6px;
   color: var(--faint);
   font-size: 12.5px;
 }
@@ -2113,7 +2310,6 @@ input.picker-search {
 .thread-row {
   display: flex;
   align-items: center;
-  margin-left: 12px;
   border-radius: 9px;
   transition: background 0.1s;
 }
@@ -2189,105 +2385,48 @@ input.picker-search {
   }
 }
 
-.sidebar-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 2px;
-}
-
-.sidebar-foot .link-btn {
-  flex: none;
-  padding: 0 6px;
-  white-space: nowrap;
-}
-
-.foot-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 34px;
-  padding: 0 6px;
-  white-space: nowrap;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  font-size: 13.5px;
-}
-
-.foot-link:hover {
-  background: var(--hover);
-}
-
 .topbar-more {
   color: var(--muted);
 }
 
-/* ---------- Sidebar on a phone ---------- */
-
-/* A page of its own, laid out for thumbs: large rows, round buttons, the one main action floating
-   at the bottom. Only as wide as what the pushed-aside conversation leaves in view. */
-.sidebar-inner.compact {
-  position: relative;
-  width: var(--drawer-w);
-  padding: calc(10px + env(safe-area-inset-top)) 0 0;
-}
-
-.compact .sidebar-top {
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  min-height: 52px;
-  padding: 0 14px 4px 22px;
-}
-
-.compact .brand {
-  font-size: 24px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-}
+/* ---------- Sidebar: the top, the nav rows, the floating buttons ---------- */
 
 .round-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 46px;
-  height: 46px;
+  width: 36px;
+  height: 36px;
   flex-shrink: 0;
   border: 1px solid var(--border);
   border-radius: 50%;
   background: var(--surface);
   color: var(--text);
   box-shadow: var(--shadow-card);
+  transition: background 0.12s;
 }
 
+.round-btn:hover,
 .round-btn:active {
   background: var(--surface-2);
-}
-
-.compact .sidebar-search-box {
-  flex: 1;
-  height: 46px;
-  margin-left: -8px;
-  padding: 0 4px 0 16px;
-  border-color: var(--border);
-  border-radius: 999px;
-  background: var(--surface);
-  box-shadow: var(--shadow-card);
 }
 
 .search-close {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 38px;
-  height: 38px;
+  width: 28px;
+  height: 28px;
   flex-shrink: 0;
   border: 0;
   border-radius: 50%;
   background: transparent;
   color: var(--muted);
+}
+
+.search-close:hover {
+  background: var(--hover);
+  color: var(--text);
 }
 
 .sidebar-scroll {
@@ -2295,9 +2434,10 @@ input.picker-search {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 6px 12px calc(104px + env(safe-area-inset-bottom));
+  padding: 4px 10px calc(84px + env(safe-area-inset-bottom));
   -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
 }
 
 .side-nav {
@@ -2309,29 +2449,97 @@ input.picker-search {
 .side-link {
   display: flex;
   align-items: center;
-  gap: 16px;
-  min-height: 50px;
+  gap: 11px;
+  min-height: 36px;
   padding: 0 10px;
   border: 0;
-  border-radius: var(--radius);
+  border-radius: 9px;
   background: transparent;
-  font-size: 17px;
+  font-size: 14px;
   text-align: left;
+  transition: background 0.1s;
 }
 
+.side-link:hover,
 .side-link:active {
   background: var(--hover);
 }
 
-.compact .thread-groups {
-  flex: none;
-  overflow: visible;
-  margin: 0;
-  padding: 0;
+.side-link.active {
+  background: var(--active);
+}
+
+/* The list scrolls away under the floating buttons instead of stopping at a line above them. */
+.sidebar-float {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 30px 12px calc(14px + env(safe-area-inset-bottom));
+  background: linear-gradient(to top, var(--sidebar) 58%, transparent);
+  pointer-events: none;
+}
+
+.sidebar-float > * {
+  pointer-events: auto;
+}
+
+.sidebar-float .round-btn {
+  width: 40px;
+  height: 40px;
+}
+
+/* ---------- Sidebar on a phone ---------- */
+
+/* A page of its own, laid out for thumbs: large rows, round buttons, the one main action floating
+   at the bottom. Only as wide as what the pushed-aside conversation leaves in view. */
+.sidebar-inner.compact {
+  width: var(--drawer-w);
+  padding: calc(10px + env(safe-area-inset-top)) 0 0;
+}
+
+.compact .sidebar-top {
+  min-height: 52px;
+  padding: 0 14px 4px 22px;
+}
+
+.compact .brand {
+  font-size: 24px;
+}
+
+.compact .round-btn {
+  width: 46px;
+  height: 46px;
+}
+
+.compact .sidebar-search-box {
+  height: 46px;
+  padding: 0 4px 0 16px;
+}
+
+.compact .search-close {
+  width: 38px;
+  height: 38px;
+}
+
+.compact .sidebar-scroll {
+  padding: 6px 12px calc(104px + env(safe-area-inset-bottom));
+  scrollbar-width: none;
+}
+
+.compact .side-link {
+  gap: 16px;
+  min-height: 50px;
+  border-radius: var(--radius);
+  font-size: 17px;
 }
 
 .compact .group-label,
 .compact .group-label-row {
+  min-height: 0;
   margin: 18px 4px 2px 10px;
 }
 
@@ -2347,21 +2555,10 @@ input.picker-search {
   margin-top: 4px;
 }
 
-/* A group reads as a heading: its name, then the chevron that folds it. */
 .compact .group-head {
   gap: 6px;
   min-height: 44px;
-  padding: 0 10px;
   font-size: 15px;
-  font-weight: 650;
-}
-
-.compact .group-head > svg {
-  display: none;
-}
-
-.compact .group-chevron {
-  order: 2;
 }
 
 .compact .group-head-row:hover {
@@ -2385,7 +2582,6 @@ input.picker-search {
 }
 
 .compact .thread-row {
-  margin-left: 0;
   border-radius: var(--radius);
   /* A long press is ours here: no text selection, no system callout. */
   -webkit-touch-callout: none;
@@ -2395,12 +2591,16 @@ input.picker-search {
 
 .compact .thread-item {
   gap: 10px;
-  min-height: 48px;
-  padding: 0 10px;
+  min-height: 56px;
+  padding: 6px 10px;
 }
 
 .compact .thread-title {
   font-size: 16.5px;
+}
+
+.compact .thread-preview {
+  font-size: 13px;
 }
 
 .compact .agent-tag {
@@ -2427,34 +2627,15 @@ input.picker-search {
   }
 }
 
-/* The list scrolls away under the floating buttons instead of stopping at a line above them. */
-.sidebar-float {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+.compact .sidebar-float {
   padding: 36px 16px calc(16px + env(safe-area-inset-bottom));
-  background: linear-gradient(to top, var(--sidebar) 58%, transparent);
-  pointer-events: none;
-}
-
-.sidebar-float > * {
-  pointer-events: auto;
 }
 
 .compact .new-thread {
   gap: 10px;
-  width: auto;
   min-height: 52px;
   padding: 0 24px 0 20px;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent-fg);
   font-size: 16.5px;
-  font-weight: 600;
   box-shadow: var(--shadow-pop);
 }
 
@@ -2649,6 +2830,62 @@ input.picker-search {
 
 /* ---------- Dialog extras and panels ---------- */
 
+/* A dialog that asks which way to go: rows to pick from instead of a confirm button. */
+.choice-dialog {
+  width: min(440px, 100%);
+  padding-bottom: 12px;
+}
+
+.choice-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 10px -10px 0;
+}
+
+.choice-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  padding: 11px 12px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  text-align: left;
+  transition: background 0.1s;
+}
+
+.choice-row:hover,
+.choice-row:focus-visible {
+  background: var(--hover);
+}
+
+.choice-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--muted);
+}
+
+.choice-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.choice-label {
+  font-size: 15px;
+  font-weight: 550;
+}
+
+.choice-hint {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
 .dialog-option {
   display: flex;
   align-items: flex-start;
@@ -2803,6 +3040,184 @@ input.picker-search {
 }
 
 /* ---------- Plan page ---------- */
+
+/* ---------- Appearance panel ---------- */
+
+.look-panel {
+  width: min(600px, 100%);
+}
+
+.look-body {
+  padding: 0 22px 22px;
+}
+
+.look-heading {
+  margin: 14px 0 10px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.look-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px 10px;
+}
+
+.look-grid.modes {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.look-card {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+/* The hub in miniature: a sidebar with a few rows, two lines of text and the composer with its button. */
+.look-thumb {
+  display: flex;
+  height: 68px;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg);
+  transition: box-shadow 0.12s;
+}
+
+.look-grid.modes .look-thumb {
+  height: 84px;
+}
+
+.look-card:hover .look-thumb {
+  box-shadow: var(--shadow-card);
+}
+
+/* The ring is drawn in the page's colours, not the preview's. */
+.look-card[aria-checked='true'] > .look-thumb,
+.look-card[aria-checked='true'] > .look-split {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+.look-side {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 30%;
+  padding: 9px 7px;
+  border-right: 1px solid var(--border);
+  background: var(--sidebar);
+}
+
+.look-line {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border-strong);
+}
+
+.look-line:first-child {
+  width: 60%;
+  background: var(--text);
+}
+
+.look-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  padding: 9px 9px 7px;
+}
+
+.look-text {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--faint);
+}
+
+.look-text.short {
+  width: 55%;
+}
+
+.look-box {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  height: 16px;
+  margin-top: auto;
+  padding: 0 3px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.look-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* "Follow the system": the light half and the dark half side by side. */
+.look-split {
+  display: flex;
+  overflow: hidden;
+  border-radius: var(--radius);
+}
+
+.look-split .look-thumb {
+  flex: 1;
+  min-width: 0;
+}
+
+.look-split .look-thumb:first-child {
+  border-right: 0;
+  border-radius: var(--radius) 0 0 var(--radius);
+}
+
+.look-split .look-thumb:last-child {
+  border-left: 0;
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+.look-split .look-thumb:last-child .look-side {
+  display: none;
+}
+
+.look-name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 0 2px;
+  overflow: hidden;
+  font-size: 13.5px;
+  white-space: nowrap;
+}
+
+.look-card[aria-checked='true'] .look-name {
+  font-weight: 600;
+}
+
+@media (max-width: 640px) {
+  .look-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .look-grid.modes .look-thumb {
+    height: 68px;
+  }
+
+  .look-body {
+    padding-bottom: calc(22px + env(safe-area-inset-bottom));
+  }
+}
 
 /* ---------- Quota panel ---------- */
 
@@ -2987,8 +3402,33 @@ input.picker-search {
   overflow-wrap: anywhere;
 }
 
-.todos-panel {
-  width: min(640px, 100%);
+/* ---------- Plan page ---------- */
+
+/* A document in the main area, in the same column as a conversation, starting at the top. */
+.todos-page {
+  position: relative;
+  width: min(var(--content-w), 100%);
+  margin: 0 auto;
+  padding: 32px 0 calc(48px + env(safe-area-inset-bottom));
+}
+
+.todos-head {
+  margin-bottom: 22px;
+}
+
+.todos-title {
+  margin: 0 0 18px;
+  font-size: 30px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.todos-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14.5px;
+  line-height: 1.6;
 }
 
 .todos-list {
@@ -3002,10 +3442,60 @@ input.picker-search {
 }
 
 .todo-line {
+  position: relative;
   display: flex;
   align-items: flex-start;
   gap: 10px;
   padding: 3px 0;
+}
+
+/* The drag handle hangs in the margin to the left of the check, there only while the row is hovered. */
+.todo-grip {
+  position: absolute;
+  left: -26px;
+  top: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--faint);
+  cursor: grab;
+  opacity: 0;
+  touch-action: none;
+  transition: opacity 0.12s;
+}
+
+.todo-line:hover > .todo-grip {
+  opacity: 1;
+}
+
+.todo-grip:hover {
+  background: var(--hover);
+  color: var(--muted);
+}
+
+.todo.dragging {
+  opacity: 0.4;
+}
+
+.todo.dragging .todo-grip {
+  opacity: 1;
+  cursor: grabbing;
+}
+
+/* Where a dragged row will land. */
+.todo-drop {
+  position: absolute;
+  height: 2px;
+  margin-top: -1px;
+  border-radius: 1px;
+  background: var(--accent);
+  pointer-events: none;
 }
 
 .todo-check {
@@ -3013,12 +3503,12 @@ input.picker-search {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 17px;
+  height: 17px;
   margin-top: 6px;
   padding: 0;
   border: 1.5px solid var(--border-strong);
-  border-radius: 50%;
+  border-radius: 4px;
   background: transparent;
   color: var(--on-color);
   transition:
@@ -3038,12 +3528,12 @@ input.picker-search {
 .todo-text {
   flex: 1;
   min-width: 0;
-  padding: 5px 0;
+  padding: 3px 0;
   border: 0;
   background: none;
   color: var(--text);
   text-align: left;
-  font-size: 14.5px;
+  font-size: 15px;
   line-height: 1.5;
   overflow-wrap: anywhere;
   cursor: text;
@@ -3060,20 +3550,41 @@ input.picker-search {
   text-decoration: line-through;
 }
 
+/* Edited in place: the same type and box as the text it replaces, so the line does not jump. */
 .todo-edit {
   flex: 1;
   min-width: 0;
-  height: 32px;
-  padding: 0 10px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
   color: var(--text);
-  font-size: 14px;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.5;
+  resize: none;
+  overflow: hidden;
+}
+
+.todo-edit:focus {
+  outline: none;
+}
+
+.todo.child .todo-edit {
+  font-size: 13.5px;
 }
 
 .todo-line .row-more {
   margin: 2px 0 0;
+}
+
+/* On touch the button is always there; as tall as a line of text, so it does not space the list out. */
+@media (hover: none) {
+  .todo-line .row-more {
+    width: 36px;
+    height: 28px;
+    margin: 0;
+    padding: 0;
+  }
 }
 
 .todo-line:hover .row-more,
@@ -3190,16 +3701,6 @@ input.picker-search {
   color: var(--text);
 }
 
-.todos-foot {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  margin: 0 22px;
-  padding: 9px 0 12px;
-  border-top: 1px solid var(--border);
-  color: var(--muted);
-}
-
 .todo-add {
   flex: 1;
   min-width: 0;
@@ -3219,40 +3720,33 @@ input.picker-search {
   color: var(--faint);
 }
 
-.todo-add.child {
-  flex: none;
-  margin: 3px 0 7px;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
+/* The blank line a new plan is typed on: a dashed box where the check will be. */
+.todo-new {
+  align-items: center;
 }
 
-.todo-add.child:focus {
+.todo-check.blank {
+  margin-top: 0;
+  border-style: dashed;
+  border-color: var(--border);
+}
+
+.todo-new:focus-within .todo-check.blank {
   border-color: var(--border-strong);
 }
 
-/* On a phone the keyboard covers the bottom of the sheet, so the line for a new plan sits under
-   the title instead, and the sheet is tall enough to read a list in. */
+.todo-children .todo-add {
+  font-size: 13.5px;
+}
+
 @media (max-width: 640px) {
-  .todos-panel {
-    min-height: min(62dvh, 100%);
+  .todos-page {
+    padding-top: 16px;
   }
 
-  .todos-foot {
-    order: -1;
-    margin-bottom: 4px;
-    border-top: 0;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .todos-panel .panel-head {
-    order: -3;
-  }
-
-  .todos-panel .panel-hint {
-    order: -2;
-    margin-bottom: 4px;
+  .todos-title {
+    margin-bottom: 10px;
+    font-size: 24px;
   }
 }
 
@@ -4026,15 +4520,24 @@ input.picker-search {
     border-right: 1px solid var(--border);
   }
 
-  /* The sidebar is always there: nothing to open, no second "new thread", and the composer names the agent. */
+  /* The sidebar is always there: nothing to open, and no second "new thread". */
   .menu-btn,
-  .topbar-new,
-  .topbar-sub {
+  .topbar-new {
     display: none;
   }
 
   .topbar {
+    height: 58px;
     padding: 0 24px;
+  }
+
+  .topbar-heading {
+    line-height: 1.35;
+  }
+
+  .topbar-title {
+    font-size: 15.5px;
+    font-weight: 650;
   }
 
   .scroller {
@@ -4118,10 +4621,6 @@ input.picker-search {
 }
 
 /* ---------- Context meter ---------- */
-
-.composer-context .pop:has(> .usage) {
-  margin-left: auto;
-}
 
 .usage {
   display: inline-flex;

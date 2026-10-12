@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { MAX_QUEUED, type QueuedMessage, type SlashCommand } from '../api';
 import { buildMenu, type HubAction, type MenuRow } from '../commands';
+import { readDrafts, writeDraft } from '../drafts';
 import { MAX_IMAGES, prepareImage, type PreparedImage } from '../images';
 import { withQuote } from '../timeline';
 import { Lightbox } from './Lightbox';
@@ -24,7 +25,52 @@ import {
   IconStop,
 } from './icons';
 
+/** What is left unsent in a box: the words, a quote and pictures. */
+interface Draft {
+  text: string;
+  quote: string | null;
+  images: PreparedImage[];
+}
+
+/**
+ * Unsent drafts by thread, so what is typed in one thread stays there: switching away keeps it,
+ * switching back brings it back, and another thread starts with its own. Words and quotes are also
+ * kept on the device and outlast a reload; pictures only last as long as the page.
+ */
+const drafts = new Map<string, Draft>();
+
+const storage = (): Storage | null => {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+};
+
+function loadDraft(key: string): Draft | undefined {
+  const inMemory = drafts.get(key);
+  if (inMemory) return inMemory;
+  const store = storage();
+  const stored = store ? readDrafts(store)[key] : undefined;
+  return stored && { text: stored.text, quote: stored.quote, images: [] };
+}
+
+function keepDraft(key: string, draft: Draft | null): void {
+  if (draft && (draft.text.trim() || draft.quote !== null || draft.images.length)) drafts.set(key, draft);
+  else drafts.delete(key);
+  const store = storage();
+  if (store) writeDraft(store, key, draft);
+}
+
+/** How long typing pauses before the draft is written down. */
+const SAVE_DELAY_MS = 400;
+
 interface Props {
+  /**
+   * Whose draft the box holds: a thread's id, or one key for the new thread being started. Without
+   * one the box keeps nothing once it is gone, as for a side chat, which is new each time.
+   */
+  draftKey?: string;
   running: boolean;
   disabled?: boolean;
   placeholder: string;
@@ -76,6 +122,7 @@ const ACTION_ICONS: Record<string, (p: { size?: number }) => JSX.Element> = {
 type Selectable = Exclude<MenuRow, { type: 'heading' }>;
 
 export function Composer({
+  draftKey,
   running,
   disabled,
   placeholder,
@@ -142,10 +189,44 @@ export function Composer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [restore?.nonce]);
 
-  // Thumbnails are object URLs; release whatever is left when the composer goes away.
-  const imagesRef = useRef(images);
-  imagesRef.current = images;
-  useEffect(() => () => imagesRef.current.forEach((img) => URL.revokeObjectURL(img.previewUrl)), []);
+  // Each thread has its own draft. Swapped before paint, so the old text never flashes in the new
+  // thread. The pictures' object URLs go with the draft; they are released once it is sent.
+  const draftRef = useRef<Draft>({ text, quote: quoteText, images });
+  draftRef.current = { text, quote: quoteText, images };
+  const sendingRef = useRef(false);
+  useLayoutEffect(() => {
+    if (draftKey === undefined) return;
+    const saved = loadDraft(draftKey);
+    setText(saved?.text ?? '');
+    setQuoteText(saved?.quote ?? null);
+    setImages(saved?.images ?? []);
+    return () => {
+      const draft = draftRef.current;
+      // A message on its way out is not a draft: sending a new thread's first message opens the
+      // thread mid-send, and the text must not stay behind in the next new thread.
+      keepDraft(draftKey, sendingRef.current ? null : draft);
+    };
+  }, [draftKey]);
+
+  // Written down shortly after typing pauses, so a reload keeps it. The timer reads the box as it
+  // is when it fires, so a switch to another thread in between saves under the right one.
+  const keyRef = useRef(draftKey);
+  keyRef.current = draftKey;
+  useEffect(() => {
+    if (draftKey === undefined) return;
+    const timer = setTimeout(() => {
+      if (keyRef.current !== undefined && !sendingRef.current) keepDraft(keyRef.current, draftRef.current);
+    }, SAVE_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [draftKey, text, quoteText]);
+  // Without a draft to keep them, thumbnails left in the box are released when it goes away.
+  useEffect(
+    () => () => {
+      if (draftKey === undefined) draftRef.current.images.forEach((img) => URL.revokeObjectURL(img.previewUrl));
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
 
   const addFiles = async (files: File[]) => {
     const pictures = files.filter((f) => f.type.startsWith('image/'));
@@ -212,6 +293,7 @@ export function Composer({
     if (!canSend) return;
     if (images.length && attachBlocked) return onError(attachBlocked);
     setBusy(true);
+    sendingRef.current = true;
     try {
       await onSend(quoteText ? withQuote(quoteText, text) : text.trim(), images);
       setQuoteText(null);
@@ -221,6 +303,7 @@ export function Composer({
     } catch {
       // The caller shows the error; keep the draft and the pictures so nothing is lost.
     } finally {
+      sendingRef.current = false;
       setBusy(false);
       ref.current?.focus();
     }

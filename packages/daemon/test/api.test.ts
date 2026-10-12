@@ -1,5 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -117,6 +118,24 @@ test('agents list reports availability and capabilities', async () => {
   const agents = (await res.json()) as Array<{ id: string; available: boolean; capabilities: { resume: boolean } }>;
   assert.deepEqual(agents.map((a) => a.id).sort(), ['agy', 'claude', 'pi']);
   assert.ok(agents.every((a) => a.available && a.capabilities.resume));
+});
+
+test('agents carry their own mark, and instances of one adapter share it', async () => {
+  const agents = (await (await api('/api/agents')).json()) as Array<{ id: string; icon?: string }>;
+  // A path the page can draw as it is: nothing but path commands and numbers.
+  for (const a of agents) assert.match(a.icon ?? '', /^[Mm][\d\s.,a-zA-Z-]+$/, a.id);
+  assert.equal(new Set(agents.map((a) => a.icon)).size, agents.length, 'different agents, different marks');
+
+  const registry = new AgentRegistry(
+    [
+      { id: 'claude', adapter: 'claude', command: ['claude'] },
+      { id: 'claude-work', adapter: 'claude', label: 'Claude 工作号' },
+    ],
+    null,
+  );
+  const [first, second] = [registry.adapters.get('claude')!, registry.adapters.get('claude-work')!];
+  assert.equal(second.label, 'Claude 工作号');
+  assert.ok(first.icon && first.icon === second.icon);
 });
 
 test('config exposes allowed workdirs', async () => {
@@ -1019,6 +1038,139 @@ test('fork at a turn: the copy ends where that turn ended, on the hub and on the
   assert.deepEqual(agents.map((a) => [a.id, a.capabilities.forkAt]).sort(), [['agy', false], ['claude', true], ['pi', true]]);
 });
 
+test('fork into a worktree: a checkout and a branch of its own, the uncommitted work brought along', async () => {
+  const git = (cwd: string, ...args: string[]) =>
+    execFileSync('git', ['-c', 'user.name=Tester', '-c', 'user.email=tester@example.com', ...args], { cwd, encoding: 'utf8' }).trim();
+  const idle = (id: string) =>
+    waitFor(async () => {
+      const t = (await (await api(`/api/threads/${id}`)).json()) as { status: string };
+      return t.status === 'idle' ? t : null;
+    });
+  const optionsOf = async (id: string) => (await (await api(`/api/threads/${id}/fork-options`)).json()) as { worktree: Record<string, unknown> };
+  const forkInto = (id: string, body: Record<string, unknown> = {}) =>
+    api(`/api/threads/${id}/fork`, { method: 'POST', body: JSON.stringify({ worktree: true, ...body }) });
+
+  // A repository inside the allowed directory, with work in progress: one change, one new file, one ignored.
+  const repo = join(workdir, 'project');
+  mkdirSync(join(repo, 'app'), { recursive: true });
+  git(repo, 'init', '--quiet', '--initial-branch=main');
+  writeFileSync(join(repo, '.gitignore'), 'node_modules/\n');
+  writeFileSync(join(repo, 'README.md'), 'first\n');
+  writeFileSync(join(repo, 'app', 'main.ts'), 'export {};\n');
+  git(repo, 'add', '.');
+  git(repo, 'commit', '--quiet', '-m', 'first');
+  writeFileSync(join(repo, 'README.md'), 'edited by the agent\n');
+  writeFileSync(join(repo, 'notes.md'), 'new\n');
+  mkdirSync(join(repo, 'node_modules'));
+  writeFileSync(join(repo, 'node_modules', 'dep.js'), '');
+
+  const thread = await newThread({ agent: 'claude', cwd: repo });
+  assert.deepEqual(await optionsOf(thread.id), { worktree: { available: true, branch: 'main', changes: 2 } });
+  await api(`/api/threads/${thread.id}/turns`, { method: 'POST', body: JSON.stringify({ text: 'hi' }) });
+  await finishedEvents(thread.id);
+  const source = (await (await api(`/api/threads/${thread.id}`)).json()) as Record<string, any>;
+  assert.equal(source.worktree, null);
+
+  const res = await forkInto(thread.id);
+  assert.equal(res.status, 201);
+  const copy = (await res.json()) as Record<string, any>;
+  const name = copy.id.slice(0, 8);
+  const root = join(repo, '.worktrees', name);
+  assert.equal(copy.cwd, root);
+  assert.deepEqual(copy.worktree, { root, branch: `rah/${name}`, of: repo, ofReal: realpathSync(repo) });
+  assert.equal(copy.forkedFrom, thread.id);
+  // The agent made the copy for that directory.
+  assert.equal(copy.agentSessionId, `${source.agentSessionId}-fork-in-${name}`);
+  // The work in progress is there; what git ignores is not; the original directory is as it was.
+  assert.equal(readFileSync(join(root, 'README.md'), 'utf8'), 'edited by the agent\n');
+  assert.equal(readFileSync(join(root, 'notes.md'), 'utf8'), 'new\n');
+  assert.equal(existsSync(join(root, 'node_modules')), false);
+  assert.equal(git(root, 'symbolic-ref', '--short', 'HEAD'), `rah/${name}`);
+  assert.equal(git(repo, 'status', '--porcelain'), 'M README.md\n?? notes.md');
+  // The log ends with the note the page draws its line from, and it names the branch.
+  assert.deepEqual((await events(copy.id)).at(-1)!.data, { forkedFrom: thread.id, worktree: { branch: `rah/${name}` } });
+
+  // The copy runs there.
+  await api(`/api/threads/${copy.id}/turns`, { method: 'POST', body: JSON.stringify({ text: 'in the worktree' }) });
+  await idle(copy.id);
+  assert.match(((await (await api(`/api/threads/${copy.id}`)).json()) as { resumeCommand: string }).resumeCommand, new RegExp(`^cd .*\\.worktrees/${name}`));
+
+  // Forked again in place, the second copy shares the worktree and is listed under the same project.
+  const twin = (await (await api(`/api/threads/${copy.id}/fork`, { method: 'POST' })).json()) as Record<string, any>;
+  assert.equal(twin.cwd, root);
+  assert.deepEqual(twin.worktree, copy.worktree);
+  assert.equal((await events(twin.id)).at(-1)!.data.worktree, undefined, 'no new worktree was made for it');
+
+  // Forked from inside the worktree into another: beside the first, still listed under the project.
+  const third = (await (await forkInto(copy.id)).json()) as Record<string, any>;
+  assert.equal(third.cwd, join(repo, '.worktrees', third.id.slice(0, 8)));
+  assert.equal(third.worktree.of, repo);
+  assert.equal(readFileSync(join(third.cwd, 'notes.md'), 'utf8'), 'new\n');
+
+  // Deleting: the worktree only goes when asked, when no other thread stands in it, and never
+  // with work that exists nowhere else unless that was confirmed.
+  const remove = (id: string, query = '') => api(`/api/threads/${id}${query}`, { method: 'DELETE' });
+  const shared = await remove(copy.id, '?worktree=1');
+  assert.equal(shared.status, 409);
+  assert.equal(((await shared.json()) as { code: string }).code, 'worktree_shared');
+  assert.equal((await remove(twin.id)).status, 204);
+  assert.equal(existsSync(root), true, 'deleting a thread leaves its worktree alone');
+
+  const dirty = await remove(copy.id, '?worktree=1');
+  assert.equal(dirty.status, 409);
+  assert.deepEqual(await dirty.json(), { code: 'worktree_dirty', changes: 2, commits: 0, error: 'the worktree holds work that exists nowhere else' });
+  assert.equal((await api(`/api/threads/${copy.id}`)).status, 200, 'nothing was deleted');
+  assert.equal((await remove(copy.id, '?worktree=1&force=1')).status, 204);
+  assert.equal(existsSync(root), false);
+  assert.equal(git(repo, 'branch', '--list', `rah/${name}`), '');
+
+  // A clean worktree needs no second confirmation; commits only its branch has count as work.
+  git(third.cwd, 'add', '.');
+  git(third.cwd, 'commit', '--quiet', '-m', 'kept on the branch');
+  const unmerged = await remove(third.id, '?worktree=1');
+  assert.deepEqual([unmerged.status, ((await unmerged.json()) as any).commits], [409, 1]);
+  git(repo, 'stash', '--include-untracked', '--quiet');
+  git(repo, 'merge', '--quiet', `rah/${third.id.slice(0, 8)}`);
+  assert.equal((await remove(third.id, '?worktree=1')).status, 204);
+  assert.equal(existsSync(third.cwd), false);
+
+  // From a directory inside the repository, the copy lands in the same place inside the worktree.
+  const deep = await newThread({ agent: 'pi', cwd: join(repo, 'app') });
+  await api(`/api/threads/${deep.id}/turns`, { method: 'POST', body: JSON.stringify({ text: 'hi' }) });
+  await finishedEvents(deep.id);
+  const deepCopy = (await (await forkInto(deep.id)).json()) as Record<string, any>;
+  assert.equal(deepCopy.cwd, join(repo, '.worktrees', deepCopy.id.slice(0, 8), 'app'));
+  assert.equal(deepCopy.worktree.of, join(repo, 'app'));
+  // pi copied the session into that directory itself, and can run it there.
+  assert.equal(deepCopy.agentSessionId, 'pi-session-1-in-app');
+  await api(`/api/threads/${deepCopy.id}/turns`, { method: 'POST', body: JSON.stringify({ text: 'still here' }) });
+  await idle(deepCopy.id);
+  assert.equal(((await (await api(`/api/threads/${deepCopy.id}`)).json()) as { status: string }).status, 'idle');
+
+  // Where it cannot be offered: outside a repository, and with an agent that cannot fork at all.
+  const loose = await newThread({ agent: 'claude' });
+  assert.deepEqual(await optionsOf(loose.id), { worktree: { available: false, reason: 'not_git' } });
+  await api(`/api/threads/${loose.id}/turns`, { method: 'POST', body: JSON.stringify({ text: 'hi' }) });
+  await finishedEvents(loose.id);
+  const refused = await forkInto(loose.id);
+  assert.equal(refused.status, 400);
+  assert.match(((await refused.json()) as { error: string }).error, /not in a git repository/);
+  assert.equal((await remove(loose.id, '?worktree=1')).status, 400, 'no worktree to remove');
+  const agy = await newThread({ agent: 'agy', cwd: repo });
+  assert.deepEqual(await optionsOf(agy.id), { worktree: { available: false, reason: 'agent' } });
+
+  // A failure on the agent's side takes the half-made worktree away again.
+  const stuck = await manager.createThread({ agent: 'claude', cwd: repo });
+  store.updateThread(stuck.id, { agentSessionId: 'unforkable' });
+  const trees = git(repo, 'worktree', 'list').split('\n').length;
+  assert.equal((await forkInto(stuck.id)).status, 502);
+  assert.equal(git(repo, 'worktree', 'list').split('\n').length, trees);
+  assert.equal(git(repo, 'branch', '--list', 'rah/*').split('\n').filter(Boolean).length, trees - 1);
+
+  const agents = (await (await api('/api/agents')).json()) as Array<{ id: string; capabilities: { forkInto: boolean } }>;
+  assert.deepEqual(agents.map((a) => [a.id, a.capabilities.forkInto]).sort(), [['agy', false], ['claude', true], ['pi', true]]);
+});
+
 test('matchTurns pairs the two histories from the start and gives up when they disagree', () => {
   assert.deepEqual(matchTurns(['a', 'b'], ['a', 'b', 'c'], 3), { hubToAgent: [0, 1, -1], agentNext: 2 });
   // A hub turn the agent never recorded is passed over; the agent's extra turn is new.
@@ -1857,4 +2009,21 @@ test('handover: the agent writes the summary; the log stands in when it cannot',
   assert.match(synthesized.summary, /Antigravity/);
   // The hub-injected handover turn is not one of the asks.
   assert.doesNotMatch(synthesized.summary, /请写一份交接摘要/);
+});
+
+test('the sidebar preview line: the newest ask, not a hub-injected handover turn', async () => {
+  const thread = (await (await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: workdir }) })).json()) as { id: string; preview: string | null };
+  assert.equal(thread.preview, null);
+  await api(`/api/threads/${thread.id}/turns`, { method: 'POST', body: JSON.stringify({ text: '第一个问题' }) });
+  await untilIdle(thread.id);
+  await api(`/api/threads/${thread.id}/turns`, { method: 'POST', body: JSON.stringify({ text: '第二个问题' }) });
+  await untilIdle(thread.id);
+  let listed = (await (await api('/api/threads')).json()) as Array<{ id: string; preview: string | null }>;
+  assert.equal(listed.find((t) => t.id === thread.id)?.preview, '第二个问题');
+
+  // The handover prompt is the hub asking, not the user: the preview stays on the last real ask.
+  await api(`/api/threads/${thread.id}/handover`, { method: 'POST', body: JSON.stringify({ target: 'agy' }) });
+  await untilIdle(thread.id);
+  listed = (await (await api('/api/threads')).json()) as Array<{ id: string; preview: string | null }>;
+  assert.equal(listed.find((t) => t.id === thread.id)?.preview, '第二个问题');
 });

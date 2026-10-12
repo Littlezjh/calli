@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { closeSync, existsSync, openSync, readSync, realpathSync, statSync } from 'node:fs';
-import { isAbsolute, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import {
   EFFORT_LEVELS,
   PERMISSION_MODES,
@@ -22,10 +22,33 @@ import { HttpError } from './errors.js';
 import { handoverPrompt, synthesizeHandover, turnMessage } from './handover.js';
 import { isWithinWorkdirs } from './workdirs.js';
 import { coalesceToolEvents, compactDeltas, type EmittedEvent, type EventType, type StoredEvent } from './events.js';
-import type { SectionRecord, Store, ThreadRecord, TodoRecord } from './store.js';
+import type { SectionRecord, Store, ThreadRecord, ThreadWorktree, TodoRecord } from './store.js';
+import { addWorktree, countChanges, findCheckout, removeWorktree, samePath, worktreeLeftovers, type Checkout, type Worktree } from './worktrees.js';
+
+/** Why a copy cannot get a worktree of its own, said to whoever asked for one anyway. */
+const WORKTREE_REFUSALS = {
+  agent: 'this agent cannot continue a copy in another directory',
+  not_git: 'the thread is not in a git repository with a commit to start a worktree from',
+  outside_workdirs: 'the repository is outside the allowed workdirs, so a worktree in it would be too',
+} as const;
+
+/** What forking a thread can offer besides a copy in the same directory. */
+export interface ForkOptions {
+  worktree: {
+    available: boolean;
+    /** Why not, when it is not: the agent cannot move a copy, the directory is not in a git repository, or the repository lies outside the allowed directories. */
+    reason?: 'agent' | 'not_git' | 'outside_workdirs';
+    /** The branch the thread's directory is on. Null when HEAD is detached. */
+    branch?: string | null;
+    /** How many files there differ from the last commit. They come along. */
+    changes?: number;
+  };
+}
 
 /** A thread as the API returns it: the stored record plus values worked out from it. */
-export type ThreadView = ThreadRecord & {
+export type ThreadView = Omit<ThreadRecord, 'worktree'> & {
+  /** `of` is how the directory was spelled when the worktree was made; `ofReal` has symlinks resolved, like `cwdReal`. */
+  worktree: (ThreadWorktree & { ofReal: string }) | null;
   /** Shell command that continues this conversation in a terminal. Null until the agent session exists. */
   resumeCommand: string | null;
   /**
@@ -88,6 +111,8 @@ export function matchTurns(agentKeys: string[], hubKeys: string[], tolerance: nu
 export interface AgentInfo {
   id: string;
   label: string;
+  /** The agent's mark, when its adapter has one. Instances of one adapter share it. */
+  icon?: string;
   available: boolean;
   capabilities: AgentAdapter['capabilities'];
 }
@@ -151,7 +176,7 @@ export class ThreadManager {
     for (const [id, a] of this.adapters) {
       // The key is the instance id: a second account of the same CLI must not report the
       // adapter's own name, or the picker could not tell the two apart.
-      out.push({ id, label: a.label, available: await a.available(), capabilities: a.capabilities });
+      out.push({ id, label: a.label, icon: a.icon, available: await a.available(), capabilities: a.capabilities });
     }
     return out;
   }
@@ -267,7 +292,7 @@ export class ThreadManager {
    * conversation; the hub copies the event log and the images. With `turnId` the copy ends where
    * that turn ended, on both sides; without it, or when that turn is the last, it is the whole thread.
    */
-  async forkThread(id: string, opts: { turnId?: string } = {}): Promise<ThreadView> {
+  async forkThread(id: string, opts: { turnId?: string; worktree?: boolean } = {}): Promise<ThreadView> {
     const thread = this.getThread(id);
     const adapter = this.adapters.get(thread.agent);
     if (!adapter?.capabilities.fork || !adapter.forkSession) throw new HttpError(400, `${thread.agent} cannot fork a conversation`);
@@ -285,38 +310,87 @@ export class ThreadManager {
       }
     }
 
+    const copyId = randomUUID();
+    // Where the copy runs. In place, it shares whatever worktree its source stands in.
+    let cwd = thread.cwd;
+    let worktree = thread.worktree;
+    let added: { main: string; tree: Worktree } | null = null;
+    const undoWorktree = async () => {
+      if (added) await removeWorktree(added.main, added.tree).catch(() => undefined);
+    };
+
     let forkedSessionId: string;
     try {
       const forkRef = cut ? await this.agentForkRef(thread, adapter, cut.hubIndex, cut.hubKeys) : undefined;
-      forkedSessionId = await adapter.forkSession(thread.agentSessionId, thread.cwd, forkRef);
+      if (opts.worktree) {
+        const plan = await this.worktreePlan(thread);
+        if (!plan.checkout) throw new HttpError(400, WORKTREE_REFUSALS[plan.reason]);
+        const tree = await addWorktree(plan.checkout, copyId.slice(0, 8)).catch((err) => {
+          throw new HttpError(500, `could not add a git worktree: ${err instanceof Error ? err.message : err}`);
+        });
+        added = { main: plan.checkout.main, tree };
+        cwd = plan.checkout.prefix ? join(tree.root, plan.checkout.prefix) : tree.root;
+        // `.worktrees` could be a link to somewhere else; where it really is still has to be allowed.
+        if (!isWithinWorkdirs(cwd, this.workdirs)) throw new HttpError(400, WORKTREE_REFUSALS.outside_workdirs);
+        worktree = { root: tree.root, branch: tree.branch, of: thread.worktree?.of ?? thread.cwd };
+      }
+      forkedSessionId = await adapter.forkSession(thread.agentSessionId, thread.cwd, forkRef, added ? cwd : undefined);
     } catch (err) {
+      await undoWorktree();
       if (err instanceof HttpError) throw err;
       throw new HttpError(502, `could not fork the ${thread.agent} session: ${err instanceof Error ? err.message : err}`);
     }
 
-    const copyId = randomUUID();
     this.attachments.copyThread(thread.id, copyId);
     try {
       this.store.transaction(() => {
         this.store.createThread({
           id: copyId,
           agent: thread.agent,
-          cwd: thread.cwd,
+          cwd,
           title: `${thread.title}（分叉）`,
           permissionMode: thread.permissionMode,
           model: thread.model,
           effort: thread.effort,
           forkedFrom: thread.id,
+          worktree,
         });
         this.store.updateThread(copyId, { agentSessionId: forkedSessionId, sectionId: thread.sectionId }, { touch: true });
         this.store.copyEvents(thread.id, copyId, cut?.upToSeq);
       });
     } catch (err) {
       this.attachments.removeThread(copyId);
+      await undoWorktree();
       throw err;
     }
-    this.emitThreadEvent(copyId, null, 'thread.updated', { forkedFrom: thread.id });
+    // The last event of the copy: what comes before it was copied, what comes after is its own.
+    this.emitThreadEvent(copyId, null, 'thread.updated', { forkedFrom: thread.id, ...(added ? { worktree: { branch: added.tree.branch } } : {}) });
     return this.threadView(copyId);
+  }
+
+  /** What forking this thread can offer. Asked when the user reaches for the fork button, not before. */
+  async forkOptions(id: string): Promise<ForkOptions> {
+    const plan = await this.worktreePlan(this.getThread(id));
+    if (!plan.checkout) return { worktree: { available: false, reason: plan.reason } };
+    return {
+      worktree: {
+        available: true,
+        branch: plan.checkout.branch,
+        changes: await countChanges(plan.checkout.top).catch(() => 0),
+      },
+    };
+  }
+
+  /** Whether a copy of this thread could get a worktree of its own, and where its directory stands in git. */
+  private async worktreePlan(
+    thread: ThreadRecord,
+  ): Promise<{ checkout: Checkout; reason?: undefined } | { checkout: null; reason: NonNullable<ForkOptions['worktree']['reason']> }> {
+    if (!this.adapters.get(thread.agent)?.capabilities.forkInto) return { checkout: null, reason: 'agent' };
+    const checkout = existsSync(thread.cwd) ? await findCheckout(thread.cwd) : null;
+    if (!checkout) return { checkout: null, reason: 'not_git' };
+    // Worktrees go under the repository's own directory, so that is what has to be allowed.
+    if (!isWithinWorkdirs(checkout.main, this.workdirs)) return { checkout: null, reason: 'outside_workdirs' };
+    return { checkout };
   }
 
   /**
@@ -378,7 +452,17 @@ export class ThreadManager {
     const queued = (this.queues.get(thread.id) ?? []).map((q) => ({ id: q.id, text: q.text, images: q.images.length }));
     // The terminal wrote to this session after the hub last did: the UI asks before sending more.
     const terminalActivity = thread.externalAt !== null && (thread.hubTurnAt === null || thread.externalAt > thread.hubTurnAt);
-    return { ...thread, resumeCommand, cwdReal, waiting, queued, terminalActivity };
+    let worktree: ThreadView['worktree'] = null;
+    if (thread.worktree) {
+      let ofReal = thread.worktree.of;
+      try {
+        ofReal = realpathSync(thread.worktree.of);
+      } catch {
+        // As above.
+      }
+      worktree = { ...thread.worktree, ofReal };
+    }
+    return { ...thread, worktree, resumeCommand, cwdReal, waiting, queued, terminalActivity };
   }
 
   /**
@@ -488,6 +572,28 @@ export class ThreadManager {
   deleteTodo(id: string): void {
     if (!this.store.getTodo(id)) throw new HttpError(404, 'todo not found');
     this.store.deleteTodo(id);
+    this.broadcastTodo();
+  }
+
+  /**
+   * Moves an item: reordering among its siblings, a plan becoming a sub-item of another (Tab), or a
+   * sub-item coming back to the top level (Shift+Tab). Still one level: a plan with sub-items of its
+   * own cannot go under another.
+   */
+  moveTodo(id: string, target: { parentId?: unknown; before?: unknown }): void {
+    const todo = this.store.getTodo(id);
+    if (!todo) throw new HttpError(404, 'todo not found');
+    const parent = target.parentId == null ? null : this.todoParent(target.parentId);
+    if (parent?.id === id) throw new HttpError(400, '不能放到自己下面');
+    if (parent && this.store.listTodos().some((t) => t.parentId === id)) throw new HttpError(400, '有子项的计划不能变成子项');
+    let before: string | null = null;
+    if (target.before != null) {
+      if (typeof target.before !== 'string') throw new HttpError(400, 'before must be a string');
+      const sibling = this.store.getTodo(target.before);
+      if (!sibling || sibling.parentId !== (parent?.id ?? null)) throw new HttpError(400, 'before is not in that list');
+      if (sibling.id !== id) before = sibling.id;
+    }
+    this.store.moveTodo(id, parent?.id ?? null, before);
     this.broadcastTodo();
   }
 
@@ -645,10 +751,30 @@ export class ThreadManager {
    * Deletes a thread, its events and its images for good. A running turn must be cancelled first.
    * With `agentSession`, the agent's own copy of the conversation is removed too, where the agent
    * supports that. Without it, the conversation can still be continued from a terminal.
+   *
+   * With `worktree`, the git worktree the thread stands in goes too, branch included. Work that
+   * exists nowhere else (files not committed, commits no other branch has) stops this unless
+   * `force` says the user has seen the count and means it.
    */
-  async deleteThread(id: string, opts: { agentSession?: boolean } = {}): Promise<void> {
+  async deleteThread(id: string, opts: { agentSession?: boolean; worktree?: boolean; force?: boolean } = {}): Promise<void> {
     const thread = this.getThread(id);
     if (this.running.has(id)) throw new HttpError(409, 'cancel the running turn before deleting this thread');
+    let doomed: { main: string; tree: ThreadWorktree } | null = null;
+    if (opts.worktree) {
+      const tree = thread.worktree;
+      if (!tree) throw new HttpError(400, 'this thread has no worktree');
+      const others = [...this.store.listThreads(), ...this.store.listThreads({ archived: true })];
+      if (others.some((t) => t.id !== id && t.worktree && samePath(t.worktree.root, tree.root))) {
+        throw new HttpError(409, 'another thread still runs in this worktree', { code: 'worktree_shared' });
+      }
+      // `<repository>/.worktrees/<name>`: the repository is two levels up.
+      const main = dirname(dirname(tree.root));
+      const left = await worktreeLeftovers(main, tree);
+      if ((left.changes > 0 || left.commits > 0) && !opts.force) {
+        throw new HttpError(409, 'the worktree holds work that exists nowhere else', { code: 'worktree_dirty', ...left });
+      }
+      doomed = { main, tree };
+    }
     await this.dropSession(id);
     if (opts.agentSession && thread.agentSessionId) {
       const adapter = this.adapters.get(thread.agent);
@@ -660,6 +786,13 @@ export class ThreadManager {
       } catch (err) {
         // Nothing has been removed yet, so the user can retry or delete without this option.
         throw new HttpError(502, `could not delete the ${thread.agent} session: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+    if (doomed) {
+      try {
+        await removeWorktree(doomed.main, doomed.tree);
+      } catch (err) {
+        throw new HttpError(502, `could not remove the worktree: ${err instanceof Error ? err.message : err}`);
       }
     }
     this.emitThreadEvent(id, null, 'thread.updated', {});

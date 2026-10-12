@@ -1,11 +1,11 @@
 import { useState, type ReactNode } from 'react';
-import type { AgentInfo, Api, Section, Thread, Todo } from '../api';
+import { ApiError, type AgentInfo, type Api, type Section, type Thread, type Todo } from '../api';
 import { copyText } from '../clipboard';
 import { folderName } from '../paths';
-import { Dialog } from './Dialog';
+import { ChoiceDialog, Dialog } from './Dialog';
 import { HandoverDialog } from './HandoverDialog';
 import { Menu, type MenuEntry } from './Menu';
-import { IconArchive, IconCheck, IconCopy, IconDot, IconEdit, IconFork, IconHand, IconList, IconPin, IconPlus, IconTrash } from './icons';
+import { IconArchive, IconCheck, IconCopy, IconDot, IconEdit, IconFork, IconHand, IconList, IconPin, IconPlus, IconTrash, IconWorktree } from './icons';
 import type { ToastState } from './Toast';
 
 interface Deps {
@@ -36,6 +36,10 @@ type MenuState = { x: number; y: number } & ({ thread: Thread } | { section: Sec
 type DialogState =
   | { kind: 'rename'; thread: Thread }
   | { kind: 'delete'; thread: Thread }
+  /** The worktree to be deleted holds work that exists nowhere else: asked once more, with the count. */
+  | { kind: 'delete-worktree'; thread: Thread; agentSession: boolean; changes: number; commits: number }
+  /** Where the copy should run: beside the original, or in a git worktree of its own. */
+  | { kind: 'fork'; thread: Thread; turnId?: string; branch: string | null; changes: number }
   | { kind: 'new-section'; thread: Thread | null }
   | { kind: 'rename-section'; section: Section }
   | { kind: 'delete-section'; section: Section }
@@ -73,14 +77,25 @@ export function useThreadActions(deps: Deps) {
 
   // The agent copies its side of the conversation, which can take a few seconds. With a turn, the
   // copy ends where that turn ended; the agent's own history is read to find that place.
-  const fork = async (thread: Thread, turnId?: string) => {
+  //
+  // `where` is left out when the user has not been asked yet. They are asked only when there is
+  // something to choose: the agent can move a copy, and the thread stands in a git repository.
+  const fork = async (thread: Thread, turnId?: string, where?: 'here' | 'worktree') => {
     if (!api) return;
     const blocked = forkBlocked(thread);
     if (blocked) return toast({ message: blocked });
-    toast({ message: '正在分叉…', busy: true });
+    if (!where && agents.find((a) => a.id === thread.agent)?.capabilities.forkInto) {
+      // An older daemon has no such question to answer; then the copy is made in place, as before.
+      const options = await api.forkOptions(thread.id).catch(() => null);
+      if (options?.worktree.available) {
+        return setDialog({ kind: 'fork', thread, turnId, branch: options.worktree.branch ?? null, changes: options.worktree.changes ?? 0 });
+      }
+    }
+    toast({ message: where === 'worktree' ? '正在新建工作树并分叉…' : '正在分叉…', busy: true });
     try {
-      onThreadOpen(await api.forkThread(thread.id, turnId));
-      toast({ message: '已分叉，现在在新线程里' });
+      const copy = await api.forkThread(thread.id, { turnId, worktree: where === 'worktree' });
+      onThreadOpen(copy);
+      toast({ message: where === 'worktree' && copy.worktree ? `已分叉到新工作树，分支 ${copy.worktree.branch}` : '已分叉，现在在新线程里' });
     } catch (e) {
       toast(null);
       // The agent keeps its own record of the conversation. A turn it has no record of (one that
@@ -232,6 +247,24 @@ export function useThreadActions(deps: Deps) {
     close();
   };
 
+  const removeThread = async (thread: Thread, opts: { agentSession: boolean; worktree: boolean; force?: boolean }) => {
+    if (!api) return;
+    try {
+      await api.deleteThread(thread.id, opts);
+      onThreadRemove(thread.id);
+      toast({ message: opts.worktree ? '已删除，工作树和分支也删了' : '已删除' });
+    } catch (e) {
+      const details = e instanceof ApiError ? e.details : {};
+      // Nothing has been deleted in either case; the thread is still there to decide about.
+      if (details.code === 'worktree_dirty') {
+        return setDialog({ kind: 'delete-worktree', thread, agentSession: opts.agentSession, changes: Number(details.changes) || 0, commits: Number(details.commits) || 0 });
+      }
+      if (details.code === 'worktree_shared') toast({ message: '还有别的线程在用这个工作树，什么都没删。先删那些线程，或者不勾选删除工作树' });
+      else onError(e);
+    }
+    close();
+  };
+
   let dialogNode: ReactNode = null;
   if (dialog && api) {
     if (dialog.kind === 'rename') {
@@ -249,24 +282,60 @@ export function useThreadActions(deps: Deps) {
       const { thread } = dialog;
       const agent = agents.find((a) => a.id === thread.agent);
       const canDeleteSession = Boolean(agent?.capabilities.deleteSession && thread.agentSessionId);
+      const tree = thread.worktree ?? null;
+      // The checkboxes that apply, in the order they are shown.
+      const extras = [
+        ...(canDeleteSession
+          ? [{ id: 'session', label: `同时删除 ${agent?.label ?? thread.agent} 里的会话`, hint: '删除后在终端里也无法继续这次对话' }]
+          : []),
+        ...(tree ? [{ id: 'worktree', label: '同时删除工作树和分支', hint: `${tree.branch}，在 ${folderName(tree.of)}/.worktrees 下` }] : []),
+      ];
       dialogNode = (
         <Dialog
           title="永久删除这个线程？"
-          message={`“${thread.title}” 在这里的记录和图片会被删除，无法恢复。${agent?.label ?? thread.agent} 自己保存的会话默认不动，还能在终端里继续。`}
-          option={
-            canDeleteSession
-              ? { label: `同时删除 ${agent?.label ?? thread.agent} 里的会话`, hint: '删除后在终端里也无法继续这次对话' }
-              : undefined
-          }
+          message={`“${thread.title}” 在这里的记录和图片会被删除，无法恢复。${agent?.label ?? thread.agent} 自己保存的会话默认不动，还能在终端里继续。${tree ? '工作树里的文件默认也不动。' : ''}`}
+          options={extras}
           confirmLabel="永久删除"
           danger
-          onConfirm={(_, agentSession) =>
-            void guard(async () => {
-              await api.deleteThread(thread.id, { agentSession });
-              onThreadRemove(thread.id);
-              toast({ message: '已删除' });
-            })
-          }
+          onConfirm={(_, checked) => {
+            const picked = (id: string) => checked[extras.findIndex((x) => x.id === id)] === true;
+            void removeThread(thread, { agentSession: picked('session'), worktree: picked('worktree') });
+          }}
+          onCancel={close}
+        />
+      );
+    } else if (dialog.kind === 'delete-worktree') {
+      const { thread, agentSession, changes, commits } = dialog;
+      const left = [changes > 0 && `${changes} 个文件没有提交`, commits > 0 && `${commits} 个提交只在这个分支上`].filter(Boolean).join('，');
+      dialogNode = (
+        <Dialog
+          title="工作树里还有没存到别处的东西"
+          message={`${left}。连工作树一起删除后，这些就找不回来了。`}
+          confirmLabel="仍然删除"
+          danger
+          onConfirm={() => void removeThread(thread, { agentSession, worktree: true, force: true })}
+          onCancel={close}
+        />
+      );
+    } else if (dialog.kind === 'fork') {
+      const { thread, turnId, branch, changes } = dialog;
+      const carried = changes > 0 ? `，${changes} 个没提交的改动一起带过去` : '';
+      dialogNode = (
+        <ChoiceDialog
+          title="从这里分叉"
+          choices={[
+            { id: 'here', icon: <IconFork size={18} />, label: '在当前目录分叉', hint: '和原线程用同一份文件' },
+            {
+              id: 'worktree',
+              icon: <IconWorktree size={18} />,
+              label: '在新工作树分叉',
+              hint: `从${branch ? ` ${branch} ` : '当前提交'}新开一个分支和一份文件${carried}`,
+            },
+          ]}
+          onPick={(id) => {
+            close();
+            void fork(thread, turnId, id === 'worktree' ? 'worktree' : 'here');
+          }}
           onCancel={close}
         />
       );

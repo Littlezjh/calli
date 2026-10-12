@@ -22,6 +22,11 @@
 - 新接口要有测试；适配器的新行为要在 `test/fixtures/` 的假 agent 里有对应实现。
 - 文档中文，代码和注释英文。
 
+## 进程
+
+- 重启 hub 只用 `scripts/restart.sh`。不要 `kill`、`pkill -f` 或 `grep dist/index.js` 找进程：你自己就跑在 hub 里，会把正在用的 hub 和你自己一起杀掉。
+- 测试时起的 daemon，记下 PID，只按这个 PID 或端口清理。
+
 ## 提交前
 
 ```bash

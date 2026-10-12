@@ -3,6 +3,7 @@ import { readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { AcpAdapter, AcpSession } from './acp.js';
+import { CLAUDE_ICON } from './icons.js';
 import type { DiscoveredAccount, ModelOption, PermissionMode, PlanQuota, QuotaWindow, SlashCommand } from './types.js';
 
 /**
@@ -89,6 +90,7 @@ export function parseClaudeUsage(text: string, now = new Date()): QuotaWindow[] 
 export class ClaudeAcpAdapter extends AcpAdapter {
   readonly id = 'claude';
   readonly label = 'Claude Code';
+  readonly icon = CLAUDE_ICON;
   readonly capabilities = {
     resume: true,
     approvals: true,
@@ -101,6 +103,8 @@ export class ClaudeAcpAdapter extends AcpAdapter {
     fork: true,
     forkAt: true,
     multiAccount: true,
+    // Claude Code finds a conversation from any worktree of its repository, so the copy loads there.
+    forkInto: true,
   };
 
   /**

@@ -385,11 +385,13 @@ export abstract class AcpAdapter implements AgentAdapter {
     return undefined;
   }
 
-  async forkSession(agentSessionId: string, cwd: string, forkRef?: string): Promise<string> {
+  async forkSession(agentSessionId: string, cwd: string, forkRef?: string, intoCwd?: string): Promise<string> {
     const meta = forkRef ? this.forkPointMeta(forkRef) : undefined;
     if (forkRef && !meta) throw new Error('this agent can only copy a whole conversation');
-    return this.withAgent(cwd, async (peer) => {
-      const res = await peer.request('session/fork', { sessionId: agentSessionId, cwd, mcpServers: [], ...(meta ? { _meta: meta } : {}) });
+    // The copy is asked for from where it will run, so the agent files it under that directory.
+    const where = intoCwd ?? cwd;
+    return this.withAgent(where, async (peer) => {
+      const res = await peer.request('session/fork', { sessionId: agentSessionId, cwd: where, mcpServers: [], ...(meta ? { _meta: meta } : {}) });
       if (!res?.sessionId) throw new Error('the agent did not return a session id for the fork');
       return String(res.sessionId);
     });

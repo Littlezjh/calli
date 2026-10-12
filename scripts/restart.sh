@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+# Rebuilds and restarts the daemon's systemd user service (see install-service.sh) without
+# cutting off agents mid-turn: it waits until no thread is running, unless --force.
+#
+#   scripts/restart.sh             build, wait for running turns to finish, restart, check health
+#   scripts/restart.sh --force     build and restart now; running turns end with an error
+#   scripts/restart.sh --no-build  skip `npm run build`
+#
+# Run from inside the hub (by an agent in one of its threads), it cannot wait in the foreground:
+# its own turn would never finish. It schedules the restart in the background instead, for when
+# every turn, including the caller's, has ended. Log: $XDG_STATE_HOME/remote-agent-hub/restart.log
+set -euo pipefail
+
+NAME=remote-agent-hub
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/$NAME"
+LOG="$STATE_DIR/restart.log"
+POLL=5
+
+FORCE=0 BUILD=1 BACKGROUND=0
+for arg in "$@"; do
+  case "$arg" in
+    --force) FORCE=1 ;;
+    --no-build) BUILD=0 ;;
+    --background) BACKGROUND=1 ;; # internal: the detached waiter
+    *) echo "Unknown option: $arg" >&2; exit 2 ;;
+  esac
+done
+
+say() { echo "[$(date '+%H:%M:%S')] $*"; }
+die() { echo "$*" >&2; exit 1; }
+
+systemctl --user cat "$NAME" >/dev/null 2>&1 \
+  || die "No $NAME service. Install it first: scripts/install-service.sh"
+
+# The service must run this checkout; restarting it from another worktree would not load this build.
+SERVICE_DIR="$(systemctl --user show -p WorkingDirectory --value "$NAME")"
+[ "$(realpath "$SERVICE_DIR")" = "$REPO" ] \
+  || die "The service runs $SERVICE_DIR, not $REPO. Restart it from there."
+
+ENV_FILE="$(systemctl --user show -p Environment --value "$NAME" | tr ' ' '\n' | sed -n 's/^RAH_ENV_FILE=//p')"
+ENV_FILE="${ENV_FILE:-$HOME/.config/$NAME/.env}"
+env_get() { sed -n "s/^$1=//p" "$ENV_FILE" 2>/dev/null | tail -1 | sed -E "s/^['\"]|['\"]$//g"; }
+HOST="$(env_get RAH_HOST)"; HOST="${HOST:-127.0.0.1}"
+PORT="$(env_get RAH_PORT)"; PORT="${PORT:-8787}"
+TOKEN="$(env_get RAH_TOKEN)"
+case "$HOST" in 0.0.0.0 | ::) HOST=127.0.0.1 ;; esac
+BASE="http://$HOST:$PORT"
+
+# Prints "<title> (<agent>)" for each running thread, archived ones included. Fails if the hub
+# does not answer, which callers treat as "nothing to wait for".
+running_threads() {
+  local active archived
+  active="$(curl -sf -m 5 -H "Authorization: Bearer $TOKEN" "$BASE/api/threads")" || return 1
+  archived="$(curl -sf -m 5 -H "Authorization: Bearer $TOKEN" "$BASE/api/threads?archived=1")" || return 1
+  node -e '
+    for (const list of process.argv.slice(1).map((s) => JSON.parse(s)))
+      for (const t of list) if (t.status === "running") console.log(`${t.title || t.id} (${t.agent})`);
+  ' "$active" "$archived"
+}
+
+wait_until_idle() {
+  local list last=""
+  while list="$(running_threads)" && [ -n "$list" ]; do
+    if [ "$list" != "$last" ]; then
+      say "Waiting for $(echo "$list" | wc -l) running thread(s):"
+      echo "$list" | sed 's/^/  - /'
+      last="$list"
+    fi
+    sleep "$POLL"
+  done
+}
+
+check_health() {
+  for _ in $(seq 1 30); do
+    if body="$(curl -sf -m 2 "$BASE/api/health")"; then
+      say "Up: $body"
+      return 0
+    fi
+    sleep 1
+  done
+  say "No answer from $BASE/api/health after 30s."
+  say "Status: systemctl --user status $NAME    Logs: journalctl --user -u $NAME -n 50"
+  return 1
+}
+
+# Whether this script runs under the service, e.g. an agent's shell inside a hub thread.
+inside_hub() {
+  local main pid
+  main="$(systemctl --user show -p MainPID --value "$NAME")"
+  [ "$main" != 0 ] || return 1
+  pid=$$
+  while [ "$pid" -gt 1 ]; do
+    [ "$pid" = "$main" ] && return 0
+    pid="$(ps -o ppid= -p "$pid" | tr -d ' ')"
+    [ -n "$pid" ] || return 1
+  done
+  return 1
+}
+
+if [ "$BACKGROUND" = 1 ]; then
+  # Only one waiter at a time; a second request is already covered by the first.
+  exec 9>"$STATE_DIR/restart.lock"
+  flock -n 9 || { say "A restart is already scheduled."; exit 0; }
+  wait_until_idle
+  say "Restarting $NAME."
+  # --no-block: restarting stops this process too (it lives in the service's cgroup); the job
+  # itself belongs to systemd and finishes regardless.
+  systemctl --user restart --no-block "$NAME"
+  exit 0
+fi
+
+if [ "$BUILD" = 1 ]; then
+  say "Building."
+  (cd "$REPO" && npm run build >/dev/null) || die "Build failed; the running hub was left alone."
+fi
+
+if inside_hub; then
+  if [ "$FORCE" = 1 ]; then
+    say "Restarting now. This turn ends with an error; send a message in the thread to go on."
+    systemctl --user restart --no-block "$NAME"
+    exit 0
+  fi
+  mkdir -p "$STATE_DIR"
+  setsid nohup "$0" --background --no-build >>"$LOG" 2>&1 </dev/null &
+  say "Scheduled: the hub restarts once every thread is idle, including this one when this turn ends."
+  say "Log: $LOG"
+  exit 0
+fi
+
+if [ "$FORCE" = 0 ]; then
+  wait_until_idle
+fi
+say "Restarting $NAME."
+systemctl --user restart "$NAME"
+check_health

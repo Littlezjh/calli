@@ -9,6 +9,7 @@ const thread = (id: string, over: Partial<Thread> = {}): Thread => ({
   cwd: '/work/code',
   title: `Thread ${id}`,
   agentSessionId: null,
+  preview: null,
   status: 'idle',
   pinned: false,
   permissionMode: 'auto_edit',
