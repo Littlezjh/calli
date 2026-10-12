@@ -20,6 +20,8 @@ const ACTIVE_W = 14;
 
 interface Tick {
   turnId: string;
+  /** Index among the rendered turn rows; differs from the tick's own index once ticks are sampled. */
+  row: number;
   /** The scroll offset clicking this tick jumps to. */
   top: number;
 }
@@ -33,6 +35,8 @@ interface Tick {
 export function TurnRuler({ scrollerRef, previews }: Props) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [ticks, setTicks] = useState<Tick[]>([]);
+  // The scroll handler reads the latest ticks without re-subscribing on every measure.
+  const ticksRef = useRef<Tick[]>([]);
   const [activeIdx, setActiveIdx] = useState(-1);
   const [hoverIdx, setHoverIdx] = useState(-1);
   const [height, setHeight] = useState(0);
@@ -44,7 +48,7 @@ export function TurnRuler({ scrollerRef, previews }: Props) {
     const out: Tick[] = [];
     for (const row of scroller.querySelectorAll<HTMLElement>('[data-turn]')) {
       const top = row.getBoundingClientRect().top - scrollerTop + scroller.scrollTop;
-      out.push({ turnId: row.dataset.turn ?? '', top });
+      out.push({ turnId: row.dataset.turn ?? '', row: out.length, top });
     }
     const h = rootRef.current?.clientHeight ?? 0;
     if (h > 0) setHeight(h);
@@ -52,8 +56,8 @@ export function TurnRuler({ scrollerRef, previews }: Props) {
     const fit = Math.max(MIN_TURNS, Math.floor((h || 600) / MIN_PITCH));
     const step = Math.ceil(out.length / fit);
     const shown = step > 1 ? out.filter((_, i) => i % step === 0 || i === out.length - 1) : out;
+    ticksRef.current = shown;
     setTicks(shown);
-    setActiveIdx((prev) => Math.min(prev, shown.length - 1));
   };
 
   // Positions change as content streams in, images load and groups expand; polling is cheap and
@@ -74,15 +78,20 @@ export function TurnRuler({ scrollerRef, previews }: Props) {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
         const scrollerTop = scroller.getBoundingClientRect().top;
-        let idx = -1;
+        let current = -1;
         let i = 0;
         for (const row of scroller.querySelectorAll<HTMLElement>('[data-turn]')) {
           const top = row.getBoundingClientRect().top - scrollerTop + scroller.scrollTop;
-          if (top <= scroller.scrollTop + 80) idx = i;
+          if (top <= scroller.scrollTop + 80) current = i;
           i++;
         }
         // At the bottom the last turn is the one being read, however short it is.
-        if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4) idx = i - 1;
+        if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4) current = i - 1;
+        // With sampled ticks, the current turn is marked by the last tick at or before it.
+        let idx = -1;
+        ticksRef.current.forEach((t, k) => {
+          if (current >= 0 && t.row <= current) idx = k;
+        });
         setActiveIdx(idx);
       });
     };
