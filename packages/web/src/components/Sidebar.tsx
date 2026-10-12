@@ -94,7 +94,9 @@ export function Sidebar({
       }}
       {...longPress(t)}
     >
-      <button className="thread-item" onClick={() => onSelect(t.id)}>
+      {/* Two accounts of one agent share a mark; which one runs the thread shows on hover and in the
+          open thread's top bar, not as text on every row. */}
+      <button className="thread-item" onClick={() => onSelect(t.id)} title={agent && tagged.has(agent.id) ? agent.label : undefined}>
         {t.worktree ? (
           <span className="thread-fork" role="img" aria-label={`工作树 ${t.worktree.branch}`} title={`在工作树里，分支 ${t.worktree.branch}`}>
             <IconWorktree size={13} />
@@ -114,7 +116,6 @@ export function Sidebar({
           {agent?.icon ? (
             <span className="agent-mark" role="img" aria-label={agent.label} title={agent.label}>
               <AgentMark path={agent.icon} size={compact ? 13 : 12} />
-              {tagged.has(agent.id) && <span className="agent-tag">{t.agent}</span>}
             </span>
           ) : (
             // An agent without a mark, or one this hub no longer has: its name, as before.

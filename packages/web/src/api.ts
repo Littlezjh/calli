@@ -347,8 +347,15 @@ export class Api {
     model?: string | null;
     effort?: string | null;
     sectionId?: string | null;
+    /** Start in a new git worktree under the repository's `.worktrees/`. */
+    worktree?: boolean;
   }): Promise<Thread> {
     return this.request('POST', '/api/threads', input);
+  }
+
+  /** Whether a new thread in this directory could start in a git worktree of its own. */
+  worktreeOptions(cwd: string): Promise<ForkOptions['worktree']> {
+    return this.request('GET', `/api/worktree-options?cwd=${encodeURIComponent(cwd)}`);
   }
 
   /** Sends a message. With `queue`, one sent while a turn is running waits for that turn to finish. */

@@ -780,7 +780,7 @@ html.list-open body {
   flex-shrink: 0;
 }
 
-/* Which agent runs the thread: its own mark, and its name only where the mark alone could not tell. */
+/* Which agent runs the thread: its mark only. Accounts sharing a mark are told apart on hover. */
 .agent-mark {
   display: inline-flex;
   align-items: center;

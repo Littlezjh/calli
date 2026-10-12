@@ -1038,6 +1038,52 @@ test('fork at a turn: the copy ends where that turn ended, on the hub and on the
   assert.deepEqual(agents.map((a) => [a.id, a.capabilities.forkAt]).sort(), [['agy', false], ['claude', true], ['pi', true]]);
 });
 
+test('new thread in a worktree: offered for a git directory, made under .worktrees with a branch of its own', async () => {
+  const git = (cwd: string, ...args: string[]) =>
+    execFileSync('git', ['-c', 'user.name=Tester', '-c', 'user.email=tester@example.com', ...args], { cwd, encoding: 'utf8' }).trim();
+  const optionsFor = async (cwd: string) => (await (await api(`/api/worktree-options?cwd=${encodeURIComponent(cwd)}`)).json()) as Record<string, unknown>;
+
+  const repo = join(workdir, 'fresh-project');
+  mkdirSync(join(repo, 'web'), { recursive: true });
+  git(repo, 'init', '--quiet', '--initial-branch=main');
+  writeFileSync(join(repo, 'web', 'index.ts'), 'export {};\n');
+  git(repo, 'add', '.');
+  git(repo, 'commit', '--quiet', '-m', 'first');
+  writeFileSync(join(repo, 'draft.md'), 'work in progress\n');
+
+  // Offered for the repository and anywhere inside it; not for a plain directory or outside the workdirs.
+  assert.deepEqual(await optionsFor(repo), { available: true, branch: 'main', changes: 1 });
+  assert.equal((await optionsFor(join(repo, 'web'))).available, true);
+  const plain = join(workdir, 'not-a-repo');
+  mkdirSync(plain, { recursive: true });
+  assert.deepEqual(await optionsFor(plain), { available: false, reason: 'not_git' });
+  assert.equal((await api(`/api/worktree-options?cwd=${encodeURIComponent(tmpdir())}`)).status, 400);
+  assert.equal((await api('/api/worktree-options')).status, 400);
+
+  // Any agent: there is no conversation to move. Started in a subdirectory, the thread stays in it.
+  const res = await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: join(repo, 'web'), worktree: true }) });
+  assert.equal(res.status, 201);
+  const thread = (await res.json()) as Record<string, any>;
+  const name = thread.id.slice(0, 8);
+  const root = join(repo, '.worktrees', name);
+  assert.equal(thread.cwd, join(root, 'web'));
+  assert.deepEqual(thread.worktree, { root, branch: `rah/${name}`, of: join(repo, 'web'), ofReal: realpathSync(join(repo, 'web')) });
+  assert.equal(git(root, 'symbolic-ref', '--short', 'HEAD'), `rah/${name}`);
+  assert.equal(readFileSync(join(root, 'draft.md'), 'utf8'), 'work in progress\n', 'uncommitted work comes along, as with a fork');
+  assert.equal(git(repo, 'status', '--porcelain'), '?? draft.md', 'the repository itself is as it was');
+
+  // Without a repository, asking for one is refused and nothing is made.
+  const refused = await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: plain, worktree: true }) });
+  assert.equal(refused.status, 400);
+  assert.match(((await refused.json()) as { error: string }).error, /not in a git repository/);
+  assert.equal(existsSync(join(plain, '.worktrees')), false);
+
+  // Deleted with its worktree, like a fork's: the carried-over file exists nowhere else, so it takes force.
+  assert.equal((await api(`/api/threads/${thread.id}?worktree=1`, { method: 'DELETE' })).status, 409);
+  assert.equal((await api(`/api/threads/${thread.id}?worktree=1&force=1`, { method: 'DELETE' })).status, 204);
+  assert.equal(existsSync(root), false);
+});
+
 test('fork into a worktree: a checkout and a branch of its own, the uncommitted work brought along', async () => {
   const git = (cwd: string, ...args: string[]) =>
     execFileSync('git', ['-c', 'user.name=Tester', '-c', 'user.email=tester@example.com', ...args], { cwd, encoding: 'utf8' }).trim();

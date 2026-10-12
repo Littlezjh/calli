@@ -32,7 +32,7 @@ import { QuotaPanel } from './components/QuotaPanel';
 import { SelectionMenu } from './components/SelectionMenu';
 import { SideChat } from './components/SideChat';
 import { TodosPage } from './components/TodosPage';
-import { AgentPicker, type DiscoveredAccount, type DiscoveredAgent, effortsForModel, imagesBlocked, imagesNote, modelName, ModelPicker, PermissionPicker, UsageMeter } from './components/Pickers';
+import { AgentPicker, type DiscoveredAccount, type DiscoveredAgent, effortsForModel, imagesBlocked, imagesNote, modelName, ModelPicker, PermissionPicker, UsageMeter, WorkspacePicker } from './components/Pickers';
 import { Sidebar } from './components/Sidebar';
 import { forkBlocked, useThreadActions } from './components/ThreadActions';
 import { ThreadView } from './components/ThreadView';
@@ -91,6 +91,9 @@ export function App() {
   const [events, setEvents] = useState<StoredEvent[]>([]);
   const [draftAgent, setDraftAgent] = useState('claude');
   const [draftCwd, setDraftCwd] = useState('');
+  // A new thread may start in a git worktree of its directory; offered only when the directory is in a repository.
+  const [draftWorktree, setDraftWorktree] = useState(false);
+  const [worktreeOffer, setWorktreeOffer] = useState<{ cwd: string; branch: string | null; changes: number } | null>(null);
   const [draftSectionId, setDraftSectionId] = useState<string | null>(null);
   const [draftPermission, setDraftPermission] = useState('auto_edit');
   const [draftModel, setDraftModel] = useState<string | null>(null);
@@ -151,6 +154,22 @@ export function App() {
       window.history.replaceState(window.history.state, '', want || window.location.pathname + window.location.search);
     }
   }, [onTodos]);
+
+  // Whether the directory a new thread would start in is a git repository. Asked once per directory picked.
+  useEffect(() => {
+    if (!api || !draftCwd || selectedId) return;
+    let stale = false;
+    api
+      .worktreeOptions(draftCwd)
+      .then((o) => {
+        if (!stale) setWorktreeOffer(o.available ? { cwd: draftCwd, branch: o.branch ?? null, changes: o.changes ?? 0 } : null);
+      })
+      .catch(() => !stale && setWorktreeOffer(null));
+    return () => {
+      stale = true;
+    };
+  }, [api, draftCwd, selectedId]);
+  const offer = worktreeOffer?.cwd === draftCwd ? worktreeOffer : null;
 
   // An address typed or followed while the page is open.
   useEffect(() => {
@@ -656,10 +675,13 @@ export function App() {
           model: draftModel,
           effort: draftEffort,
           ...(draftSectionId && isNewThread ? { sectionId: draftSectionId } : {}),
+          ...(draftWorktree && offer ? { worktree: true } : {}),
         });
         id = t.id;
         setSelectedId(id);
         setDraftSectionId(null);
+        // Every worktree is a new branch; the next thread starts in place unless asked again.
+        setDraftWorktree(false);
       }
       stickToBottom.current = true;
       // "queue" only matters while a turn is running: then the message waits instead of being refused.
@@ -861,6 +883,7 @@ export function App() {
         <span>{folderName(draftCwd) || '选择目录'}</span>
         <IconChevron size={12} open />
       </button>
+      {offer && <WorkspacePicker branch={offer.branch} changes={offer.changes} worktree={draftWorktree} onChange={setDraftWorktree} />}
       {draftSectionId && sections.some((s) => s.id === draftSectionId) && (
         <button
           className="context-chip"

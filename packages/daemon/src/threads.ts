@@ -28,7 +28,7 @@ import { addWorktree, countChanges, findCheckout, removeWorktree, samePath, work
 /** Why a copy cannot get a worktree of its own, said to whoever asked for one anyway. */
 const WORKTREE_REFUSALS = {
   agent: 'this agent cannot continue a copy in another directory',
-  not_git: 'the thread is not in a git repository with a commit to start a worktree from',
+  not_git: 'the directory is not in a git repository with a commit to start a worktree from',
   outside_workdirs: 'the repository is outside the allowed workdirs, so a worktree in it would be too',
 } as const;
 
@@ -386,7 +386,12 @@ export class ThreadManager {
     thread: ThreadRecord,
   ): Promise<{ checkout: Checkout; reason?: undefined } | { checkout: null; reason: NonNullable<ForkOptions['worktree']['reason']> }> {
     if (!this.adapters.get(thread.agent)?.capabilities.forkInto) return { checkout: null, reason: 'agent' };
-    const checkout = existsSync(thread.cwd) ? await findCheckout(thread.cwd) : null;
+    return this.checkoutFor(thread.cwd);
+  }
+
+  /** Where a directory stands in git, when a worktree can be added to its repository. */
+  private async checkoutFor(cwd: string): Promise<{ checkout: Checkout; reason?: undefined } | { checkout: null; reason: 'not_git' | 'outside_workdirs' }> {
+    const checkout = existsSync(cwd) ? await findCheckout(cwd) : null;
     if (!checkout) return { checkout: null, reason: 'not_git' };
     // Worktrees go under the repository's own directory, so that is what has to be allowed.
     if (!isWithinWorkdirs(checkout.main, this.workdirs)) return { checkout: null, reason: 'outside_workdirs' };
@@ -983,6 +988,8 @@ export class ThreadManager {
     model?: string | null;
     effort?: string | null;
     sectionId?: string | null;
+    /** Start in a new git worktree of the directory's repository, under `.worktrees/`. */
+    worktree?: boolean;
   }): Promise<ThreadView> {
     const adapter = this.adapters.get(input.agent);
     if (!adapter) throw new HttpError(400, `unknown agent: ${input.agent}`);
@@ -1001,18 +1008,54 @@ export class ThreadManager {
     const model = input.model ? await this.validateModel(input.agent, input.model) : null;
     const effort = input.effort ? await this.validateEffort(input.agent, model, input.effort) : null;
     const title = (input.title ?? '').trim() || 'New thread';
-    const thread = this.store.createThread({
-      id: randomUUID(),
-      agent: input.agent,
-      cwd,
-      title,
-      permissionMode,
-      model,
-      effort,
-      ...(input.sectionId ? { sectionId: input.sectionId } : {}),
-    });
+    const id = randomUUID();
+    // A new thread has no conversation to move, so any agent can start in a worktree.
+    let added: { main: string; tree: Worktree; cwd: string } | null = null;
+    if (input.worktree === true) {
+      const plan = await this.checkoutFor(cwd);
+      if (!plan.checkout) throw new HttpError(400, WORKTREE_REFUSALS[plan.reason]);
+      const tree = await addWorktree(plan.checkout, id.slice(0, 8)).catch((err) => {
+        throw new HttpError(500, `could not add a git worktree: ${err instanceof Error ? err.message : err}`);
+      });
+      added = { main: plan.checkout.main, tree, cwd: plan.checkout.prefix ? join(tree.root, plan.checkout.prefix) : tree.root };
+      // `.worktrees` could be a link to somewhere else; where it really is still has to be allowed.
+      if (!isWithinWorkdirs(added.cwd, this.workdirs)) {
+        await removeWorktree(added.main, tree).catch(() => undefined);
+        throw new HttpError(400, WORKTREE_REFUSALS.outside_workdirs);
+      }
+    }
+    let thread: ThreadRecord;
+    try {
+      thread = this.store.createThread({
+        id,
+        agent: input.agent,
+        cwd: added?.cwd ?? cwd,
+        title,
+        permissionMode,
+        model,
+        effort,
+        ...(input.sectionId ? { sectionId: input.sectionId } : {}),
+        ...(added ? { worktree: { root: added.tree.root, branch: added.tree.branch, of: cwd } } : {}),
+      });
+    } catch (err) {
+      if (added) await removeWorktree(added.main, added.tree).catch(() => undefined);
+      throw err;
+    }
     this.emitThreadEvent(thread.id, null, 'thread.created', { agent: thread.agent, cwd: thread.cwd });
     return this.view(thread);
+  }
+
+  /**
+   * Whether a new thread in `cwd` could start in a worktree of its own, asked when a directory is
+   * picked for one. The same answer as for forking, minus the agent: a new thread has nothing to move.
+   */
+  async worktreeOptions(cwdInput: unknown): Promise<ForkOptions['worktree']> {
+    if (typeof cwdInput !== 'string' || !cwdInput) throw new HttpError(400, 'cwd is required');
+    const cwd = resolve(cwdInput);
+    if (!isWithinWorkdirs(cwd, this.workdirs)) throw new HttpError(400, 'cwd is not in the allowed workdirs');
+    const plan = await this.checkoutFor(cwd);
+    if (!plan.checkout) return { available: false, reason: plan.reason };
+    return { available: true, branch: plan.checkout.branch, changes: await countChanges(plan.checkout.top).catch(() => 0) };
   }
 
   /**

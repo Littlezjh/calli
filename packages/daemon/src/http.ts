@@ -236,6 +236,11 @@ export function createHttpServer(deps: HttpDeps): Server {
       return sendJson(res, 201, await manager.importSession({ agent: body.agent, sessionId: body.sessionId }));
     }
 
+    // GET /api/worktree-options?cwd=: whether a new thread there could start in a git worktree
+    if (method === 'GET' && path === '/api/worktree-options') {
+      return sendJson(res, 200, await manager.worktreeOptions(url.searchParams.get('cwd')));
+    }
+
     // GET /api/threads, POST /api/threads
     if (path === '/api/threads') {
       if (method === 'GET') {
@@ -254,6 +259,7 @@ export function createHttpServer(deps: HttpDeps): Server {
             model: body.model,
             effort: body.effort,
             sectionId: body.sectionId,
+            worktree: body.worktree === true,
           }),
         );
       }

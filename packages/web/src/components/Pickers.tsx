@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { AgentInfo, ModelOption } from '../api';
 import { usageSummary, type Usage } from '../timeline';
 import { EFFORT_LABELS, PERMISSION_LABELS, PERMISSION_ORDER, permissionHint } from '../permissions';
-import { AgentMark, IconCheck, IconChevron, IconHand, IconPlus, IconShield, IconShieldAlert, IconSparkle } from './icons';
+import { AgentMark, IconCheck, IconChevron, IconFolder, IconHand, IconPlus, IconShield, IconShieldAlert, IconSparkle, IconWorktree } from './icons';
 import { Popover } from './Popover';
 
 const PERMISSION_ICON: Record<string, (p: { size?: number }) => JSX.Element> = {
@@ -413,6 +413,73 @@ export function UsageMeter({ usage }: { usage: Usage }) {
           </div>
         </>
       )}
+    </Popover>
+  );
+}
+
+interface WorkspaceProps {
+  /** The branch the directory is on, or null when HEAD is detached. */
+  branch: string | null;
+  /** Files there that differ from the last commit; they come along into a worktree. */
+  changes: number;
+  worktree: boolean;
+  onChange: (worktree: boolean) => void;
+}
+
+/**
+ * Where a new thread works: in the directory itself, or in a new git worktree of it under
+ * `.worktrees/`. Offered only when the directory is in a repository, so it is not there otherwise.
+ */
+export function WorkspacePicker({ branch, changes, worktree, onChange }: WorkspaceProps) {
+  const from = branch ? `从 ${branch} ` : '从当前提交';
+  const rows = [
+    { value: false, icon: <IconFolder size={16} />, label: '当前目录', hint: '直接在这个目录里改' },
+    {
+      value: true,
+      icon: <IconWorktree size={16} />,
+      label: '新工作树',
+      hint: `${from}新开一个分支，放在 .worktrees 下${changes > 0 ? `，带上 ${changes} 个没提交的改动` : ''}`,
+    },
+  ];
+  return (
+    <Popover
+      label="在哪里工作"
+      triggerClassName="context-btn"
+      triggerTitle={worktree ? '在新工作树里开始' : '在当前目录里开始'}
+      trigger={
+        <>
+          {worktree ? <IconWorktree size={14} /> : <IconFolder size={14} />}
+          <span>{worktree ? '新工作树' : '当前目录'}</span>
+          <IconChevron size={12} open />
+        </>
+      }
+    >
+      {(close) =>
+        rows.map((row) => (
+          <button
+            key={String(row.value)}
+            type="button"
+            role="menuitemradio"
+            aria-checked={worktree === row.value}
+            className="pop-item"
+            onClick={() => {
+              onChange(row.value);
+              close();
+            }}
+          >
+            <span className="pop-item-icon">{row.icon}</span>
+            <span className="pop-item-text">
+              <span className="pop-item-label">{row.label}</span>
+              <span className="pop-item-hint">{row.hint}</span>
+            </span>
+            {worktree === row.value && (
+              <span className="pop-item-check">
+                <IconCheck size={16} />
+              </span>
+            )}
+          </button>
+        ))
+      }
     </Popover>
   );
 }
