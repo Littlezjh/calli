@@ -20,7 +20,7 @@ interface Deps {
   onThreadChange: (thread: Thread) => void;
   onThreadRemove: (id: string) => void;
   /** A thread was made here and should be shown. */
-  onThreadOpen: (thread: Thread) => void;
+  onThreadOpen: (thread: Thread, draft?: string) => void;
   /** The user marked a thread unread by hand. If it is the one on screen, it has to be left to stay unread. */
   onMarkedUnread: (thread: Thread) => void;
   /** Sections were added, renamed or removed: reload them (and the threads filed under them). */
@@ -379,7 +379,7 @@ export function useThreadActions(deps: Deps) {
     } else if (dialog.kind === 'handover') {
       const { thread } = dialog;
       dialogNode = (
-        <HandoverDialog api={api} thread={thread} onClose={close} />
+        <HandoverDialog api={api} thread={thread} agents={agents} onOpen={onThreadOpen} onClose={close} />
       );
     } else {
       const { section } = dialog;

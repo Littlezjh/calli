@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import { execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -83,5 +83,87 @@ test('handover GET assembles exact Claude instance and session coordinates witho
     await manager.shutdown();
     store.close();
     rmSync(root,{recursive:true,force:true});
+  }
+});
+
+
+test('handover-thread creates an unsent conversation in the same worktree, including scratch and external checkouts', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'rah-handover-start-'));
+  const cwd = join(root, 'project');
+  const scratch = join(root, 'scratch');
+  mkdirSync(cwd);
+  const git = (args: string[]) => execFileSync('git', args, {cwd, stdio:'pipe'}).toString();
+  git(['init','-q']);
+  writeFileSync(join(cwd,'task.txt'),'original\n');
+  git(['add','.']);
+  git(['-c','user.name=Test','-c','user.email=test@example.com','-c','commit.gpgsign=false','commit','-qm','initial']);
+  const registry = new AgentRegistry(['source','successor'].map((name) => ({
+    id:name, adapter:'claude', label:'Claude '+name, command:[process.execPath,fixture],
+    env:{CLAUDE_CONFIG_DIR:join(root,name),FAKE_SESSION_ROOT:join(root,name),FAKE_ACP_SESSION:name+'-session'},
+  })),null);
+  const store = new Store(join(root,'data'));
+  const manager = new ThreadManager(store,registry.adapters,new Workdirs([cwd],null,scratch),new AttachmentStore(join(root,'data')));
+  const server = createHttpServer({manager,token:'handover-test-token',webDir:null,version:'test'});
+  await new Promise<void>((r)=>server.listen(0,'127.0.0.1',r));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const api = (path: string, body?: unknown) => fetch(base+path,{method:body?'POST':'GET',headers:{Authorization:'Bearer handover-test-token','Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
+  try {
+    const section = manager.createSection('待完成');
+    const source = await manager.createThread({agent:'source',cwd,title:'原任务',sectionId:section.id,worktree:true});
+    writeFileSync(join(source.cwd,'task.txt'),'keep these changes\n');
+    writeFileSync(join(source.cwd,'unsaved.txt'),'keep me too\n');
+    const checkoutBefore = git(['worktree','list','--porcelain']);
+    const eventsBefore = manager.listEventsSince(source.id,0);
+    const res = await api(`/api/threads/${source.id}/handover-thread`,{agent:'successor',cwd:root,worktree:true});
+    assert.equal(res.status,201);
+    const next = await res.json() as ReturnType<ThreadManager['threadView']>;
+    assert.notEqual(next.id,source.id);
+    assert.equal(next.agent,'successor');
+    assert.equal(next.cwd,source.cwd,'client cannot redirect the successor to another directory');
+    assert.deepEqual(next.worktree,source.worktree);
+    assert.equal(next.sectionId,source.sectionId);
+    assert.equal(next.agentSessionId,null);
+    assert.equal(next.forkedFrom,null,'handover does not copy the native session');
+    assert.equal(next.status,'idle');
+    assert.equal(next.title,'原任务（接手）');
+    assert.equal(manager.listEventsSince(next.id,0).some(e=>e.type==='turn.started'),false);
+    assert.deepEqual(manager.listEventsSince(source.id,0),eventsBefore);
+    assert.equal(existsSync(join(root,'successor','projects')),false,'the successor agent has not run');
+    assert.equal(git(['worktree','list','--porcelain']),checkoutBefore);
+    assert.equal(readFileSync(join(next.cwd,'task.txt'),'utf8'),'keep these changes\n');
+    assert.equal(readFileSync(join(next.cwd,'unsaved.txt'),'utf8'),'keep me too\n');
+    await assert.rejects(manager.deleteThread(source.id,{worktree:true,force:true}),/another thread still runs/);
+    await assert.rejects(manager.deleteThread(next.id,{worktree:true,force:true}),/another thread still runs/);
+    assert.equal((await api(`/api/threads/${next.id}/turns`,{text:'edited handover'})).status,202);
+    for(let n=0;n<100 && manager.getThread(next.id).status==='running';n++) await new Promise(r=>setTimeout(r,20));
+    assert.equal(manager.getThread(next.id).status,'idle');
+    assert.equal(manager.getThread(next.id).agentSessionId,'successor-session');
+    const nativePath=join(root,'successor','projects',source.cwd.replace(/[^a-zA-Z0-9]/g,'-'),'successor-session.jsonl');
+    assert.ok(existsSync(nativePath),'new agent session uses the exact source worktree');
+    assert.deepEqual(manager.listEventsSince(source.id,0),eventsBefore);
+
+    // A normal directory and an externally-created worktree subdirectory are also kept exactly.
+    const external=join(cwd,'.worktrees','external');git(['worktree','add','-b','external',external]);
+    const subdir=join(external,'src');mkdirSync(subdir);
+    for(const location of [cwd,subdir]) {
+      const original=await manager.createThread({agent:'source',cwd:location});
+      const created=await api(`/api/threads/${original.id}/handover-thread`,{agent:'source'});
+      assert.equal(created.status,201,'the same agent instance may start an independent conversation');
+      const successor=await created.json() as ReturnType<ThreadManager['threadView']>;
+      assert.equal(successor.cwd,location);assert.equal(successor.agentSessionId,null);
+    }
+    const outside=await manager.createThread({agent:'source',cwd:'',scratch:true});
+    const resumed=await manager.createHandoverThread(outside.id,'successor');
+    assert.equal(resumed.cwd,outside.cwd);assert.equal(resumed.scratch,true);
+
+    const count=manager.listThreads().length;
+    assert.equal((await fetch(base+`/api/threads/${source.id}/handover-thread`,{method:'POST',body:'{}'})).status,401);
+    assert.equal((await api('/api/threads/missing/handover-thread',{agent:'successor'})).status,404);
+    assert.equal((await api(`/api/threads/${source.id}/handover-thread`,{agent:'missing'})).status,400);
+    assert.equal((await api(`/api/threads/${source.id}/handover-thread`,{})).status,400);
+    assert.equal(manager.listThreads().length,count,'invalid requests leave no empty thread');
+  } finally {
+    server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));
+    await manager.shutdown();store.close();rmSync(root,{recursive:true,force:true});
   }
 });

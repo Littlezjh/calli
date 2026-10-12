@@ -56,6 +56,8 @@ daemon 在 `packages/daemon` 目录里运行，所以用 `RAH_ENV_FILE` 指向�
 
 添加流程读取的是 **hub 所在机器**的 SSH 配置，不是手机或电脑浏览器的配置。目标上的 daemon 要先启动；第一期不自动安装和启动。远端 daemon 负责调用该机器上的 agent、读取会话与文件，浏览器仍只访问主 hub；远端无需单独部署前端或开放 HTTP 端口。
 
+更新主 hub 不会自动更新远端 daemon，每台机器需要分别更新。源码安装先同步代码、安装依赖，再运行 `scripts/restart.sh` 构建并等待线程空闲后重启；仅安装运行包的机器需要同步新版 daemon 构建产物，依赖有变化时安装生产依赖，再运行 `scripts/restart.sh --no-build`。保留原有配置和数据目录即可保留 token、线程与会话。涉及新接口的功能（例如新建接手对话）需要目标机器的 daemon 也更新。
+
 | 配置 | 默认与用途 |
 | --- | --- |
 | `RAH_SOCKET` | 默认 `~/.local/state/remote-agent-hub/daemon.sock`；`off` 关闭私有监听。自定义路径用于隔离实例，当前远端发现只支持默认路径 |

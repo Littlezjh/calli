@@ -36,6 +36,8 @@ interface Draft {
   images: PreparedImage[];
   /** The message is on its way out. See `StoredDraft.sending`. */
   sending?: Sending;
+  /** A newly prepared handover should put the cursor in its input. */
+  focus?: boolean;
 }
 
 /** A box's content as the one text it is sent as: the notes, numbered, then the words. */
@@ -75,6 +77,11 @@ function keepDraft(key: string, draft: Draft | null): void {
   else drafts.delete(key);
   const store = storage();
   if (store) writeDraft(store, key, draft);
+}
+
+/** Seeds a newly created thread before the composer opens it, including an immediate durable copy. */
+export function prefillComposerDraft(key: string, text: string): void {
+  keepDraft(key, { text, notes: [], images: [], focus: true });
 }
 
 /** How long typing pauses before the draft is written down. */
@@ -233,6 +240,10 @@ export function Composer({
     setText(saved?.text ?? '');
     setNotes(saved?.notes ?? []);
     setImages(saved?.images ?? []);
+    if (saved?.focus) {
+      saved.focus = false;
+      ref.current?.focus();
+    }
     return () => {
       const draft = draftRef.current;
       // A message on its way out is not a draft: sending a new thread's first message opens the

@@ -1058,7 +1058,7 @@ export class ThreadManager {
     worktree?: boolean;
     /** In no project: the thread gets a fresh folder of its own in the hub's scratch area; `cwd` is ignored. */
     scratch?: boolean;
-  }): Promise<ThreadView> {
+  }, inheritedWorktree?: ThreadWorktree | null): Promise<ThreadView> {
     const adapter = this.adapters.get(input.agent);
     if (!adapter) throw new HttpError(400, `unknown agent: ${input.agent}`);
     const id = randomUUID();
@@ -1110,7 +1110,7 @@ export class ThreadManager {
         model,
         effort,
         ...(input.sectionId ? { sectionId: input.sectionId } : {}),
-        ...(added ? { worktree: { root: added.tree.root, branch: added.tree.branch, of: cwd } } : {}),
+        ...(added ? { worktree: { root: added.tree.root, branch: added.tree.branch, of: cwd } } : inheritedWorktree ? { worktree: inheritedWorktree } : {}),
       });
     } catch (err) {
       if (added) await removeWorktree(added.main, added.tree).catch(() => undefined);
@@ -1118,6 +1118,17 @@ export class ThreadManager {
     }
     this.emitThreadEvent(thread.id, null, 'thread.created', { agent: thread.agent, cwd: thread.cwd });
     return this.view(thread);
+  }
+
+  /** A fresh conversation in the source's exact directory, sharing its existing worktree. No agent is started. */
+  async createHandoverThread(threadId: string, agent: string): Promise<ThreadView> {
+    const source = this.getThread(threadId);
+    return this.createThread({
+      agent,
+      cwd: source.cwd,
+      title: `${source.title}（接手）`,
+      sectionId: source.sectionId,
+    }, source.worktree);
   }
 
   /** The project roots, each with whether it was added from the page and so can be removed there. */

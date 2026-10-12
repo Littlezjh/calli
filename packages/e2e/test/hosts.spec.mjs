@@ -86,7 +86,7 @@ test('a machine is added by its name in the ssh config; one ssh cannot get into 
 
 test('switching shows that machine, and a thread started there runs there', async () => {
   await page.getByRole('tab', { name: 'devbox' }).click();
-  await page.locator('.sidebar .thread-title', { hasText: '开发机上的线程' }).waitFor({ timeout: 10_000 });
+  await page.locator('.sidebar .thread-title', { hasText: /^开发机上的线程$/ }).waitFor({ timeout: 10_000 });
   assert.equal(await page.getByText('本机的线程').count(), 0);
   assert.equal(await page.getByRole('tab', { name: 'devbox' }).getAttribute('aria-selected'), 'true');
 
@@ -106,19 +106,19 @@ test('switching shows that machine, and a thread started there runs there', asyn
 
   // The device remembers which machine it was looking at.
   await page.reload();
-  await page.locator('.sidebar .thread-title', { hasText: '开发机上的线程' }).waitFor({ timeout: 10_000 });
+  await page.locator('.sidebar .thread-title', { hasText: /^开发机上的线程$/ }).waitFor({ timeout: 10_000 });
   assert.equal(await page.getByRole('tab', { name: 'devbox' }).getAttribute('aria-selected'), 'true');
 
   await page.getByRole('tab', { name: '本机' }).click();
   await page.getByText('本机的线程').waitFor({ timeout: 10_000 });
-  assert.equal(await page.locator('.sidebar .thread-title', { hasText: '开发机上的线程' }).count(), 0);
+  assert.equal(await page.locator('.sidebar .thread-title', { hasText: /^开发机上的线程$/ }).count(), 0);
 });
 
 test('new drafts belong to their machine and survive switching and reloading', async () => {
   const composer = page.locator('.composer textarea');
   await composer.fill('只发给本机的草稿');
   await page.getByRole('tab', { name: 'devbox' }).click();
-  await page.locator('.sidebar .thread-title', { hasText: '开发机上的线程' }).waitFor();
+  await page.locator('.sidebar .thread-title', { hasText: /^开发机上的线程$/ }).waitFor();
   assert.equal(await composer.inputValue(), '');
   await composer.fill('只发给开发机的草稿');
   await page.getByRole('tab', { name: '本机' }).click();
@@ -129,13 +129,13 @@ test('new drafts belong to their machine and survive switching and reloading', a
   assert.equal(await composer.inputValue(), '只发给本机的草稿');
   await composer.fill('');
   await page.getByRole('tab', { name: 'devbox' }).click();
-  await page.locator('.sidebar .thread-title', { hasText: '开发机上的线程' }).waitFor();
+  await page.locator('.sidebar .thread-title', { hasText: /^开发机上的线程$/ }).waitFor();
   assert.equal(await composer.inputValue(), '只发给开发机的草稿');
   await composer.fill('');
 });
 
 test('images sent through the hub are stored and displayed on the other machine', async () => {
-  await page.locator('.thread-item', { hasText: '开发机上的线程' }).click();
+  await page.locator('.thread-item', { hasText: /^开发机上的线程$/ }).click();
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=', 'base64');
   await page.setInputFiles('.composer input[type=file]', { name: 'dot.png', mimeType: 'image/png', buffer: png });
   await page.locator('.composer textarea').fill('remote image');
@@ -178,9 +178,37 @@ test('on a phone, switching machines stays on the thread list', async () => {
   }
 });
 
+test('handover creates and persists a draft only on the selected remote machine', async () => {
+  await page.getByRole('tab',{name:'devbox'}).click();
+  await page.locator('.sidebar .thread-item',{hasText:'开发机上的线程'}).click();
+  const beforeLocal=await (await api(hub,'/api/threads')).json();
+  const beforeRemote=await (await api(node,'/api/threads')).json();
+  await page.getByLabel('这个线程的更多操作').click();
+  await page.getByRole('menuitem',{name:'交接',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'交接',exact:true});
+  await dialog.locator('.handover-summary').waitFor();
+  const summary=await dialog.locator('.handover-summary').innerText();
+  assert.ok(summary.includes('远端机器（ID：devbox）'));
+  await dialog.getByRole('button',{name:'新建接手对话'}).click();
+  await dialog.waitFor({state:'detached'});
+  await page.locator('.topbar-title',{hasText:'开发机上的线程（接手）'}).waitFor();
+  assert.equal(await page.locator('.composer textarea').inputValue(),summary);
+  const created=(await (await api(node,'/api/threads')).json()).filter(t=>!beforeRemote.some(old=>old.id===t.id));
+  assert.equal(created.length,1);assert.equal(created[0].cwd,node.workdir);assert.equal(created[0].agentSessionId,null);
+  assert.equal((await (await api(hub,'/api/threads')).json()).length,beforeLocal.length);
+  const key=`host:devbox:${created[0].id}`;
+  assert.equal(await page.evaluate(key=>JSON.parse(localStorage.getItem('rah.drafts'))[key].text,key),summary);
+  await page.getByRole('tab',{name:'本机'}).click();
+  await page.locator('.sidebar .thread-title',{hasText:'本机的线程'}).waitFor();
+  assert.equal(await page.locator('.composer textarea').inputValue(),'');
+  await page.getByRole('tab',{name:'devbox'}).click();
+  await page.locator('.sidebar .thread-item',{hasText:'开发机上的线程（接手）'}).click();
+  assert.equal(await page.locator('.composer textarea').inputValue(),summary);
+});
+
 test('a machine that drops says so in place of its threads, and is back after a retry', async () => {
   await page.getByRole('tab', { name: 'devbox' }).click();
-  await page.locator('.sidebar .thread-title', { hasText: '开发机上的线程' }).waitFor({ timeout: 10_000 });
+  await page.locator('.sidebar .thread-title', { hasText: /^开发机上的线程$/ }).waitFor({ timeout: 10_000 });
   await node.stop();
 
   const down = page.locator('.host-down');

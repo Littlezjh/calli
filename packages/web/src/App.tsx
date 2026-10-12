@@ -26,7 +26,7 @@ import { buildTimeline, toMarkdown, turnPreviews, type StoredEvent } from './tim
 import { newerBuildAvailable } from './version';
 import { AppearancePanel } from './components/AppearancePanel';
 import { ArchivePanel } from './components/ArchivePanel';
-import { Composer, type DraftNote } from './components/Composer';
+import { Composer, prefillComposerDraft, type DraftNote } from './components/Composer';
 import { DirectoryPicker } from './components/DirectoryPicker';
 import { Dialog } from './components/Dialog';
 import { HostDown, HostsPanel } from './components/Hosts';
@@ -745,9 +745,11 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
   }, [api, selectedId, selectedUnread, pageHidden]);
 
   /** Shows a thread that was just made here: imported, forked, or brought back from the archive. */
-  const openThread = (thread: Thread) => {
+  const openThread = (thread: Thread, draft?: string) => {
+    if (draft !== undefined) prefillComposerDraft(hostId ? `host:${hostId}:${thread.id}` : thread.id, draft);
     setThreads((prev) => [thread, ...prev.filter((t) => t.id !== thread.id)]);
     setSelectedId(thread.id);
+    setView('thread');
     setDrawer(false);
     void refreshThreads(); // the server decides the order
   };

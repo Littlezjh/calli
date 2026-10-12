@@ -599,6 +599,11 @@ export class Api {
     return this.request('GET', `/api/threads/${threadId}/preview-link?path=${encodeURIComponent(path)}`);
   }
 
+  /** Creates an empty successor in the same directory and worktree, without starting an agent turn. */
+  createHandoverThread(threadId: string, agent: string): Promise<Thread> {
+    return this.request('POST', `/api/threads/${threadId}/handover-thread`, { agent });
+  }
+
   /** Asks the thread's agent to write a handover summary for another agent, in its own session. */
   startHandover(threadId: string, target: string): Promise<{ turnId: string }> {
     return this.request('POST', `/api/threads/${threadId}/handover`, { target });
