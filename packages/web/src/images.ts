@@ -100,3 +100,16 @@ export async function prepareImage(file: File): Promise<PreparedImage> {
   }
   throw new Error(`${name} 压缩后仍然太大`);
 }
+
+/** A picture that was already sent (a queued message taken back to edit), back in the box. */
+export function restoreImage(img: { data: string; mimeType: string }, index: number): PreparedImage {
+  const bytes = Uint8Array.from(atob(img.data), (c) => c.charCodeAt(0));
+  const blob = new Blob([bytes], { type: img.mimeType });
+  return {
+    id: `${Date.now()}-${index}-${Math.random().toString(36).slice(2)}`,
+    name: '图片',
+    data: img.data,
+    mimeType: img.mimeType,
+    previewUrl: URL.createObjectURL(blob),
+  };
+}

@@ -435,11 +435,10 @@ export function createHttpServer(deps: HttpDeps): Server {
         return sendJson(res, 202, await manager.startTurn(threadId, { text: body.text, images: body.images, queue: body.queue }));
       }
 
-      // DELETE /api/threads/:id/queue/:queuedId: take back a message that is waiting
+      // DELETE /api/threads/:id/queue/:queuedId: take back a message that is waiting; it comes back
+      // whole (text and images), for putting it in the box to edit
       if (method === 'DELETE' && sub === 'queue' && parts[4] && !parts[5]) {
-        manager.removeQueued(threadId, parts[4]);
-        res.writeHead(204).end();
-        return;
+        return sendJson(res, 200, manager.removeQueued(threadId, parts[4]));
       }
 
       // POST /api/threads/:id/queue/:queuedId/now: interrupt the running turn and send this one next

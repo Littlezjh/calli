@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
-import { MAX_QUEUED, type QueuedMessage, type SlashCommand } from '../api';
+import { ApiError, MAX_QUEUED, type OutgoingImage, type QueuedMessage, type SlashCommand } from '../api';
 import { buildMenu, type HubAction, type MenuRow } from '../commands';
 import { readDrafts, writeDraft } from '../drafts';
-import { MAX_IMAGES, prepareImage, type PreparedImage } from '../images';
+import { MAX_IMAGES, prepareImage, restoreImage, type PreparedImage } from '../images';
 import { withQuote } from '../timeline';
 import { Lightbox } from './Lightbox';
 import {
@@ -97,6 +97,8 @@ interface Props {
   /** Messages sent while a turn was running, waiting to go out. */
   queued: QueuedMessage[];
   onRemoveQueued: (id: string) => void;
+  /** Takes a waiting message out of the queue and returns it, to be edited in the box. */
+  onEditQueued: (id: string) => Promise<{ text: string; images: OutgoingImage[] }>;
   /** Interrupt the running turn and send this waiting message next. */
   onSendQueuedNow: (id: string) => void;
   /** Text to put back in the box, such as messages that were waiting when the user pressed stop. */
@@ -140,6 +142,7 @@ export function Composer({
   onError,
   queued,
   onRemoveQueued,
+  onEditQueued,
   onSendQueuedNow,
   restore,
   quote,
@@ -246,6 +249,23 @@ export function Composer({
     if (failed) onError(failed.reason instanceof Error ? failed.reason.message : '有图片无法添加');
     if (ready.length) setImages((prev) => [...prev, ...ready]);
     ref.current?.focus();
+  };
+
+  // A waiting message goes back in the box, in front of anything typed, pictures included.
+  const editQueued = async (id: string) => {
+    try {
+      const taken = await onEditQueued(id);
+      setText((current) => [taken.text, current].filter((s) => s.trim()).join('\n\n'));
+      const room = MAX_IMAGES - images.length - preparing;
+      if (taken.images.length > room) onError(`一条消息最多 ${MAX_IMAGES} 张图片，多出的没有放回`);
+      const back = taken.images.slice(0, Math.max(0, room)).map(restoreImage);
+      if (back.length) setImages((prev) => [...back, ...prev]);
+      ref.current?.focus();
+    } catch (e) {
+      // The turn ahead of it may have ended in the meantime, taking the message out with it.
+      if (e instanceof ApiError && e.status === 404) onError('这条消息已经发出去了，不能再编辑');
+      else onError(e instanceof Error ? e.message : '没能取回这条消息');
+    }
   };
 
   const removeImage = (id: string) => {
@@ -439,6 +459,9 @@ export function Composer({
                   </span>
                   <button type="button" className="queue-now" title="打断当前这一轮，马上发送这条" onClick={() => onSendQueuedNow(q.id)}>
                     立即发送
+                  </button>
+                  <button type="button" className="queue-remove" aria-label="撤回到输入框里编辑" title="编辑" onClick={() => void editQueued(q.id)}>
+                    <IconEdit size={13} />
                   </button>
                   <button type="button" className="queue-remove" aria-label="取消这条排队的消息" onClick={() => onRemoveQueued(q.id)}>
                     <IconClose size={13} />

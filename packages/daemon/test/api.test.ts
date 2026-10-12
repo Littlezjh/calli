@@ -1367,6 +1367,11 @@ test('queue: a message sent while a turn runs waits, and goes out by itself when
   assert.equal(isQueued, true);
   await post(`/api/threads/${thread.id}/turns`, { text: 'third', queue: true, images: [{ data: PNG, mimeType: 'image/png' }] });
   assert.deepEqual((await viewOf(thread.id)).queued.map((q) => [q.text, q.images]), [['second', 0], ['third', 1]]);
+  // Taking one back (to edit it) returns its pictures too, and it can go back in line as it was.
+  const thirdId = (await viewOf(thread.id)).queued[1].id;
+  const taken = (await (await api(`/api/threads/${thread.id}/queue/${thirdId}`, { method: 'DELETE' })).json()) as { text: string; images: unknown[] };
+  assert.deepEqual(taken, { text: 'third', images: [{ data: PNG, mimeType: 'image/png' }] });
+  await post(`/api/threads/${thread.id}/turns`, { ...taken, queue: true });
   assert.equal((await viewOf(thread.id)).queued[0].id, queuedId);
   assert.deepEqual(await turnTexts(thread.id), ['please approve first'], 'nothing is sent yet');
 
@@ -1398,7 +1403,9 @@ test('queue: a waiting message can be taken back, the queue has a limit, and sto
   }
   assert.equal((await post(`/api/threads/${thread.id}/turns`, { text: 'f', queue: true })).status, 409, 'five is the limit');
 
-  assert.equal((await api(`/api/threads/${thread.id}/queue/${ids[1]}`, { method: 'DELETE' })).status, 204);
+  const taken = await api(`/api/threads/${thread.id}/queue/${ids[1]}`, { method: 'DELETE' });
+  assert.equal(taken.status, 200);
+  assert.deepEqual(await taken.json(), { text: 'b', images: [] }, 'the message comes back, for editing');
   assert.equal((await api(`/api/threads/${thread.id}/queue/${ids[1]}`, { method: 'DELETE' })).status, 404);
   assert.equal((await api(`/api/threads/no-such/queue/${ids[0]}`, { method: 'DELETE' })).status, 404);
   assert.deepEqual((await viewOf(thread.id)).queued.map((q) => q.text), ['a', 'c', 'd', 'e']);

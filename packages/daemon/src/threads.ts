@@ -1107,12 +1107,14 @@ export class ThreadManager {
     return { summary: synthesizeHandover(events, { title: thread.title, from, target: successor }), source: 'log' };
   }
 
-  /** Takes a waiting message out of the queue. */
-  removeQueued(threadId: string, queuedId: string): void {
+  /** Takes a waiting message out of the queue and hands it back, so the page can edit and resend it. */
+  removeQueued(threadId: string, queuedId: string): { text: string; images: unknown[] } {
     this.getThread(threadId);
     const queue = this.queues.get(threadId) ?? [];
-    if (!queue.some((q) => q.id === queuedId)) throw new HttpError(404, 'no such waiting message');
+    const taken = queue.find((q) => q.id === queuedId);
+    if (!taken) throw new HttpError(404, 'no such waiting message');
     this.setQueue(threadId, queue.filter((q) => q.id !== queuedId));
+    return { text: taken.text, images: taken.images };
   }
 
   /** Interrupts the running turn so that this waiting message goes out next, ahead of the others. */

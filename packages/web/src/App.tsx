@@ -701,6 +701,13 @@ export function App() {
     if (selectedId) api.removeQueued(selectedId, queuedId).then(refreshThreads).catch(handleError);
   };
 
+  const editQueued = async (queuedId: string) => {
+    if (!selectedId) throw new Error('没有打开的线程');
+    const taken = await api.removeQueued(selectedId, queuedId);
+    refreshThreads();
+    return taken;
+  };
+
   const sendQueuedNow = (queuedId: string) => {
     if (selectedId) api.sendQueuedNow(selectedId, queuedId).then(refreshThreads).catch(handleError);
   };
@@ -1051,6 +1058,7 @@ export function App() {
           onError={setError}
           queued={selected?.queued ?? []}
           onRemoveQueued={removeQueued}
+          onEditQueued={editQueued}
           onSendQueuedNow={sendQueuedNow}
           restore={restore}
           quote={quoteSignal}

@@ -49,6 +49,7 @@ export class ApiError extends Error {
   constructor(
     message: string,
     readonly details: Record<string, unknown> = {},
+    readonly status = 0,
   ) {
     super(message);
   }
@@ -247,7 +248,7 @@ export class Api {
     if (res.status === 401) throw new AuthError('unauthorized');
     if (res.status === 204) return undefined as T;
     const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new ApiError((json as { error?: string }).error ?? `HTTP ${res.status}`, json as Record<string, unknown>);
+    if (!res.ok) throw new ApiError((json as { error?: string }).error ?? `HTTP ${res.status}`, json as Record<string, unknown>, res.status);
     return json as T;
   }
 
@@ -364,7 +365,8 @@ export class Api {
     });
   }
 
-  removeQueued(threadId: string, queuedId: string): Promise<void> {
+  /** Takes a waiting message out of the queue; it comes back whole, so it can be edited. */
+  removeQueued(threadId: string, queuedId: string): Promise<{ text: string; images: OutgoingImage[] }> {
     return this.request('DELETE', `/api/threads/${threadId}/queue/${queuedId}`);
   }
 

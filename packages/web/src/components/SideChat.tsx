@@ -250,6 +250,10 @@ export function SideChat({
           onError={(message) => onError(new Error(message))}
           queued={thread?.queued ?? []}
           onRemoveQueued={(id) => threadId && api.removeQueued(threadId, id).catch(onError)}
+          onEditQueued={async (id) => {
+            if (!threadId) throw new Error('没有打开的线程');
+            return api.removeQueued(threadId, id);
+          }}
           onSendQueuedNow={(id) => threadId && api.sendQueuedNow(threadId, id).catch(onError)}
           restore={null}
           quote={{ text: quoteText, nonce: 1 }}
