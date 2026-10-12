@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { readdirSync } from 'node:fs';
 import { promisify } from 'node:util';
-import { AcpAdapter } from './acp.js';
+import { AcpAdapter, airForkPoint } from './acp.js';
 import { TRAE_ICON } from './icons.js';
 import type { PermissionMode } from './types.js';
 
@@ -19,6 +19,8 @@ const execFileAsync = promisify(execFile);
  * - the effort config option is called `reasoning_effort` and offers low..xhigh. The shared code
  *   finds it by its category, so nothing here has to know the id;
  * - its ACP server cannot delete a session, but its CLI can (`traex delete --force`);
+ * - `session/fork` takes the same fork point as claude-agent-acp, and a copy asked for from another
+ *   directory is filed and loads there (both tried against traecli 0.209);
  * - it keeps a per-session folder of files it generated, next to its session log.
  */
 
@@ -44,16 +46,18 @@ export class TraexAcpAdapter extends AcpAdapter {
     deleteSession: true,
     history: true,
     fork: true,
-    // Not known to take a fork point; whole copies only.
-    forkAt: false,
+    forkAt: true,
     multiAccount: false,
-    // Not tried against the real CLI yet.
-    forkInto: false,
+    forkInto: true,
     // traex is ACP like Claude; a quota probe can follow once its CLI has a usage command.
     quota: false,
   };
 
   protected readonly modeIds = TRAEX_MODE_IDS;
+
+  protected forkPointMeta(forkRef: string): Record<string, unknown> {
+    return airForkPoint(forkRef);
+  }
 
   /** The plain CLI, for the one job its ACP server cannot do: `traex delete --force`. */
   private readonly cli: string[];

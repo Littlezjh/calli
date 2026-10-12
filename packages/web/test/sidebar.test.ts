@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Section, Thread } from '../src/api.js';
-import { buildSidebar, taggedAgents } from '../src/sidebar.js';
+import { buildActivity, buildSidebar, taggedAgents } from '../src/sidebar.js';
 
 let clock = 0;
 function thread(id: string, over: Partial<Thread> = {}): Thread {
@@ -94,4 +94,43 @@ test('a mark several agents share gets the name only on the agents after its fir
   const agents = [{ id: 'claude', icon: 'M0 0h1' }, { id: 'claude-2', icon: 'M0 0h1' }, { id: 'pi', icon: 'M2 2h1' }, {}, {}];
   assert.deepEqual([...taggedAgents(agents)], ['claude-2']);
   assert.equal(taggedAgents([{ id: 'claude', icon: 'M0 0h1' }, { id: 'pi', icon: 'M2 2h1' }]).size, 0);
+});
+
+test('by activity: what wants attention or is at work comes first, the rest by the day it last moved', () => {
+  // Local times, so the days fall the same in any time zone.
+  const now = new Date(2026, 9, 12, 15, 0);
+  const at = (daysAgo: number, hour = 12) => new Date(2026, 9, 12 - daysAgo, hour).toISOString();
+  const list = [
+    thread('pinned-old', { pinned: true, sectionId: 's1', updatedAt: at(40) }),
+    thread('running', { status: 'running', updatedAt: at(0, 14) }),
+    thread('today-late', { updatedAt: at(0, 13) }),
+    thread('unread-old', { unread: true, updatedAt: at(3) }),
+    thread('today-early', { updatedAt: at(0, 1) }),
+    thread('yesterday', { updatedAt: at(1, 23) }),
+    thread('waiting', { status: 'running', waiting: true, updatedAt: at(0, 9) }),
+    thread('week', { updatedAt: at(7) }),
+    thread('unread-new', { unread: true, status: 'error', updatedAt: at(0, 10) }),
+    thread('month', { updatedAt: at(8) }),
+    thread('failed-and-seen', { status: 'error', updatedAt: at(2) }),
+  ];
+  const model = buildActivity(list, '', now, null);
+  assert.deepEqual(model.groups.map((g) => [g.label, ids(g.threads)]), [
+    ['优先级', ['waiting', 'unread-new', 'unread-old', 'running']],
+    ['今天', ['today-late', 'today-early']],
+    ['昨天', ['yesterday']],
+    ['过去 7 天', ['failed-and-seen', 'week']],
+    ['过去 30 天', ['month']],
+    ['更早', ['pinned-old']],
+  ]);
+  assert.equal(model.count, list.length);
+
+  // The thread on screen is being read: its unread mark does not hold it at the top.
+  const reading = buildActivity(list, '', now, 'unread-old');
+  assert.deepEqual(ids(reading.groups[0].threads), ['waiting', 'unread-new', 'running']);
+  assert.deepEqual(ids(reading.groups.find((g) => g.key === 'week')!.threads), ['failed-and-seen', 'unread-old', 'week']);
+
+  const found = buildActivity(list, 'UNREAD', now, null);
+  assert.deepEqual(found.groups.map((g) => [g.label, ids(g.threads)]), [['优先级', ['unread-new', 'unread-old']]]);
+  assert.equal(found.count, 2);
+  assert.deepEqual(buildActivity([], '', now, null), { groups: [], count: 0 });
 });

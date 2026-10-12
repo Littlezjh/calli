@@ -1,9 +1,10 @@
 import { useState, type MouseEvent } from 'react';
 import type { AgentInfo, Section, Thread } from '../api';
-import { useLongPress, useStoredSet } from '../hooks';
-import { threadMark } from '../notices';
-import { buildSidebar, taggedAgents } from '../sidebar';
-import { AgentMark, IconChevron, IconClose, IconEdit, IconFolder, IconFork, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconWorktree, IconSidebar } from './icons';
+import { useLongPress, useStoredFlag, useStoredSet } from '../hooks';
+import { attentionCount, threadMark } from '../notices';
+import { folderName } from '../paths';
+import { buildActivity, buildSidebar, projectDir, taggedAgents } from '../sidebar';
+import { AgentMark, IconBell, IconChevron, IconClose, IconEdit, IconFolder, IconFork, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconWorktree, IconSidebar } from './icons';
 
 export { folderName } from '../paths';
 
@@ -79,7 +80,11 @@ export function Sidebar({
   // A long press on a row is the phone's right click.
   const longPress = useLongPress<Thread>(onThreadMenu);
   const [collapsed, toggle] = useStoredSet('rah.sidebar.collapsed');
+  // The other way to read the list: by what is going on, not by where a thread is filed. Like Codex's "查看活动".
+  const [byActivity, setByActivity] = useStoredFlag('rah.sidebar.activity');
   const model = buildSidebar(threads, sections, search);
+  const activity = byActivity ? buildActivity(threads, search, new Date(), selectedId) : null;
+  const wanted = attentionCount(threads, selectedId);
   // While searching, everything is expanded so matches are never hidden inside a closed group.
   const isOpen = (key: string) => Boolean(search.trim()) || !collapsed.has(key);
 
@@ -115,7 +120,11 @@ export function Sidebar({
           )
         )}
         <span className="thread-text">
-          <span className="thread-title">{t.title}</span>
+          <span className="thread-head">
+            <span className="thread-title">{t.title}</span>
+            {/* Out of its project group, a thread says where it is. */}
+            {byActivity && <span className="thread-dir">{folderName(projectDir(t).cwd)}</span>}
+          </span>
           {t.preview && <span className="thread-preview">{t.preview}</span>}
         </span>
         <span className="thread-meta">
@@ -152,13 +161,25 @@ export function Sidebar({
     </section>
   );
 
-  const groups = (
+  const empty = (
+    <p className="group-empty top">
+      {search.trim() ? '没有找到匹配的线程。' : compact ? '还没有线程。点“新线程”开始第一个。' : '还没有线程。在右边输入第一条消息就会创建。'}
+    </p>
+  );
+
+  const groups = activity ? (
+    <nav className="thread-groups activity" aria-label="线程，按活动">
+      {activity.count === 0 && empty}
+      {activity.groups.map((g) => (
+        <section key={g.key} className="thread-group" aria-label={g.label}>
+          <div className="group-label">{g.label}</div>
+          {g.threads.map(row)}
+        </section>
+      ))}
+    </nav>
+  ) : (
     <nav className="thread-groups" aria-label="线程">
-      {model.count === 0 && (
-        <p className="group-empty top">
-          {search.trim() ? '没有找到匹配的线程。' : compact ? '还没有线程。点“新线程”开始第一个。' : '还没有线程。在右边输入第一条消息就会创建。'}
-        </p>
-      )}
+      {model.count === 0 && empty}
 
       {model.pinned.length > 0 &&
         group(
@@ -250,6 +271,16 @@ export function Sidebar({
                   <IconSidebar size={16} />
                 </button>
               )}
+              <button
+                className={`round-btn activity-btn${byActivity ? ' on' : ''}`}
+                aria-label="按活动查看"
+                aria-pressed={byActivity}
+                title={byActivity ? '回到按项目查看' : wanted > 0 ? `按活动查看（${wanted} 个线程有新动静）` : '按活动查看'}
+                onClick={() => setByActivity(!byActivity)}
+              >
+                <IconBell size={compact ? 20 : 16} />
+                {wanted > 0 && <span className="activity-badge" aria-hidden="true" />}
+              </button>
               <button className="round-btn" aria-label="搜索线程" title="搜索线程" onClick={() => setSearching(true)}>
                 <IconSearch size={compact ? 20 : 16} />
               </button>

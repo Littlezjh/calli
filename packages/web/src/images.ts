@@ -113,3 +113,15 @@ export function restoreImage(img: { data: string; mimeType: string }, index: num
     previewUrl: URL.createObjectURL(blob),
   };
 }
+
+/**
+ * An address an <img> can show a fetched picture from. A bitmap gets a blob: address, for the
+ * caller to revoke when it is done with it. An SVG gets a data: address: it is a document that can
+ * carry scripts, and while an <img> runs none, a blob: address opened in a tab of its own ("open
+ * image in new tab") belongs to this page's origin and would run them with the hub's token in
+ * reach. A data: document belongs to no origin.
+ */
+export async function pictureUrl(blob: Blob): Promise<string> {
+  if (blob.type !== 'image/svg+xml') return URL.createObjectURL(blob);
+  return `data:image/svg+xml;base64,${await toBase64(blob)}`;
+}

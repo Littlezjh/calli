@@ -13,7 +13,7 @@ import { AgyAdapter } from '../src/adapters/agy.js';
 import { ClaudeAcpAdapter } from '../src/adapters/claude.js';
 import { PiRpcAdapter } from '../src/adapters/pi.js';
 import type { AgentAdapter } from '../src/adapters/types.js';
-import { AttachmentStore, sniffImageType } from '../src/attachments.js';
+import { AttachmentStore, sniffImageType, sniffSvg } from '../src/attachments.js';
 import { createHttpServer, tokenMatches } from '../src/http.js';
 import { Store } from '../src/store.js';
 import { matchTurns, ThreadManager } from '../src/threads.js';
@@ -427,6 +427,14 @@ test('creating a thread with an effort the chosen model lacks is rejected; unusa
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 // Only the header matters to the daemon, which reads the type from the first bytes.
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]).toString('base64');
+
+test('sniffSvg recognises an SVG document by how it starts', () => {
+  const yes = ['<svg xmlns="http://www.w3.org/2000/svg">', '<svg>', '\uFEFF<?xml version="1.0"?>\n<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">\n<!-- a -->\n<!-- b -->\n<SVG width="1">'];
+  const no = ['', '<html><svg>', 'text then <svg>', '<svgfoo>', '<!-- never closed <svg>', '<?xml version="1.0"?><plist>'];
+  for (const text of yes) assert.equal(sniffSvg(Buffer.from(text)), true, text);
+  for (const text of no) assert.equal(sniffSvg(Buffer.from(text)), false, text);
+  assert.equal(sniffImageType(Buffer.from(yes[0])), null, 'not one of the formats an agent can be sent');
+});
 
 test('sniffImageType recognises the four image formats and nothing else', () => {
   assert.equal(sniffImageType(Buffer.from(PNG, 'base64')), 'image/png');
@@ -1546,6 +1554,20 @@ test('files: an image in the thread directory is served; anything else, or anywh
     assert.equal(res.status, 200, path);
     await res.arrayBuffer();
   }
+
+  // An SVG is served too, told by how it starts, and locked down in case it is opened on its own.
+  const svg = '<?xml version="1.0" encoding="UTF-8"?>\n<!-- drawn by an agent -->\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><script>alert(1)</script></svg>\n';
+  writeFileSync(join(workdir, 'out', 'drawing.svg'), svg);
+  writeFileSync(join(workdir, 'out', 'page.svg'), '<html><body><svg></svg></body></html>');
+  const drawing = await get('out/drawing.svg');
+  assert.equal(drawing.status, 200);
+  assert.equal(drawing.headers.get('content-type'), 'image/svg+xml');
+  assert.match(drawing.headers.get('content-security-policy') ?? '', /^sandbox;/);
+  assert.equal(await drawing.text(), svg);
+  assert.equal((await get('out/page.svg')).status, 404, 'named like an SVG, but a web page');
+  // What an agent draws cannot be sent to one as a picture: models take bitmaps.
+  const asAttachment = await post(`/api/threads/${thread.id}/turns`, { text: 'look', images: [{ data: Buffer.from(svg).toString('base64') }] });
+  assert.equal(asAttachment.status, 400);
 
   assert.equal((await get('out/notes.txt')).status, 404, 'not an image');
   assert.equal((await get('out/fake.png')).status, 404, 'the bytes decide, not the name');

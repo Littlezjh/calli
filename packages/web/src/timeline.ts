@@ -3,6 +3,7 @@
  * Pure: no React, no I/O, so it can be unit-tested directly.
  */
 import { diffStats } from './diff';
+import { IMAGE_FILE } from './paths';
 
 export interface StoredEvent {
   threadId: string;
@@ -537,7 +538,6 @@ export function usageSummary(usage: Usage): { percent: number; high: boolean; de
   return { percent, high: percent >= 80, detail: `上下文已用 ${compactTokens(usage.used)} / ${compactTokens(usage.size)}${cost}` };
 }
 
-const IMAGE_FILE = /\.(?:png|jpe?g|gif|webp)$/i;
 const MAX_IMAGE_PATHS = 6;
 
 /**
@@ -547,14 +547,21 @@ const MAX_IMAGE_PATHS = 6;
 export function imagePathsIn(text: string): string[] {
   const found: string[] = [];
   const add = (raw: string) => {
-    const path = raw.replace(/^file:\/\//, '');
+    let path = raw.replace(/^file:\/\//, '');
+    if (path !== raw) {
+      try {
+        path = decodeURIComponent(path); // an address, so a space in the name was written as %20
+      } catch {
+        // Not encoded after all.
+      }
+    }
     if (/^[a-z][a-z0-9+.-]*:/i.test(path) || path.startsWith('//')) return; // http:, data:, …
     if (!IMAGE_FILE.test(path) || found.includes(path) || found.length >= MAX_IMAGE_PATHS) return;
     found.push(path);
   };
   for (const m of text.matchAll(/!\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/g)) add(m[1]);
   // A path stands on its own: after a space, a quote, a bracket or CJK punctuation, never mid-word or inside a URL.
-  for (const m of text.matchAll(/(?<=^|[\s`'"(（：，。])((?:file:\/\/)?[\p{L}\p{N}_@%+.~\-/]+\.(?:png|jpe?g|gif|webp))(?=$|[\s`'")）：，。,;；!?]|[.:](?:\s|$))/gimu)) {
+  for (const m of text.matchAll(/(?<=^|[\s`'"(（：，。])((?:file:\/\/)?[\p{L}\p{N}_@%+.~\-/]+\.(?:png|jpe?g|gif|webp|svg))(?=$|[\s`'")）：，。,;；!?]|[.:](?:\s|$))/gimu)) {
     add(m[1]);
   }
   return found;

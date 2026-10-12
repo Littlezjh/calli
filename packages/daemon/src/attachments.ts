@@ -55,6 +55,22 @@ export function sniffImageType(buf: Buffer): string | null {
   return null;
 }
 
+/**
+ * Whether a file's first bytes are the start of an SVG document: `<svg` after nothing but a byte
+ * order mark, an XML declaration, comments and a doctype. Kept apart from `sniffImageType`: an
+ * SVG is text that can carry scripts, so it is only ever served for viewing (see `getThreadImage`),
+ * never accepted as an attachment.
+ */
+export function sniffSvg(head: Buffer): boolean {
+  let text = head.toString('utf8').replace(/^\uFEFF/, '');
+  for (;;) {
+    const skipped = text.replace(/^\s+/, '').replace(/^<\?xml[^>]*\?>|^<!--[\s\S]*?-->|^<!DOCTYPE[^>[]*(?:\[[^\]]*\])?\s*>/i, '');
+    if (skipped.length === text.length) break;
+    text = skipped;
+  }
+  return /^<svg[\s>]/i.test(text);
+}
+
 /** Image files attached to turns, kept under `<dataDir>/attachments/<threadId>/`. */
 export class AttachmentStore {
   private readonly root: string;

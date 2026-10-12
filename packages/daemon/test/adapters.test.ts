@@ -493,6 +493,12 @@ test('a copy can be made for another directory, each agent in its own way', asyn
     assert.equal(await pi.forkSession('hist-p', here, 'e2', tree), 'hist-p-in-abcd1234-fork-e2');
     assert.deepEqual((await pi.loadHistory('hist-p-in-abcd1234-fork-e2', tree)).map((t) => t.text), ['run the tests']);
 
+    // TRAE CLI takes Claude's fork point and, like Claude, is asked for the copy from where it will run.
+    const traex = new TraexAcpAdapter([process.execPath, fakeAcp], { FAKE_ACP_FLAVOR: 'traex' });
+    assert.equal(await traex.forkSession('hist-x', here, undefined, tree), 'hist-x-fork-in-abcd1234');
+    assert.equal(await traex.forkSession('hist-x', here, 'm1b', tree), 'hist-x-fork-at-m1b-in-abcd1234');
+    assert.equal(await traex.forkSession('hist-x', here, 'm1b'), 'hist-x-fork-at-m1b');
+
     // Codex is told where the copy will work; resuming says it again.
     const codex = new CodexAppServerAdapter([process.execPath, fakeCodex]);
     assert.equal(await codex.forkSession('codex-thread-1', here, undefined, tree), 'codex-thread-1-fork-in-abcd1234');
@@ -500,7 +506,7 @@ test('a copy can be made for another directory, each agent in its own way', asyn
 
     assert.deepEqual(
       [claude, pi, codex, new TraexAcpAdapter(['traex']), new AgyAdapter(['agy'])].map((a) => [a.id, a.capabilities.forkInto]),
-      [['claude', true], ['pi', true], ['codex', true], ['traex', false], ['agy', false]],
+      [['claude', true], ['pi', true], ['codex', true], ['traex', true], ['agy', false]],
     );
   } finally {
     rmSync(join(tree, '..', '..'), { recursive: true, force: true });

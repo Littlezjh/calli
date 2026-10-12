@@ -42,3 +42,39 @@ const ATTACHMENT_PATH = /(?:\/[^\s"'`]*)?\/attachments\/[0-9a-f-]{36}\/[0-9a-f-]
 export function nameAttachments(text: string): string {
   return text.replace(ATTACHMENT_PATH, '发送的图片');
 }
+
+/** File names the hub can show as pictures. Whether a file really is one is for the daemon to say. */
+export const IMAGE_FILE = /\.(?:png|jpe?g|gif|webp|svg)$/i;
+
+export type LinkTarget =
+  /** An address on the web: opens in a tab of its own, so the hub stays where it is. */
+  | { kind: 'web'; url: string }
+  /** A file on the agent's host. The browser cannot go there; `path` is what the daemon is asked for. */
+  | { kind: 'file'; path: string }
+  /** A place on this page, such as a footnote. */
+  | { kind: 'anchor' }
+  /** Nothing that should be followed. */
+  | { kind: 'none' };
+
+/**
+ * Where a link in an answer leads. Agents link the files they wrote, as `file://` addresses or as
+ * bare paths; followed like a web link, either would take the browser away from the thread, to a
+ * page that is not there.
+ */
+export function linkTarget(href: string): LinkTarget {
+  const raw = href.trim();
+  if (!raw) return { kind: 'none' };
+  if (raw.startsWith('#')) return { kind: 'anchor' };
+  if (/^(?:https?:\/\/|mailto:|tel:)/i.test(raw)) return { kind: 'web', url: raw };
+  const isFileUrl = /^file:\/\//i.test(raw);
+  // Anything else with a scheme is not ours to follow. `a.ts:12` is a path with a line number, not a scheme.
+  if (!isFileUrl && /^(?:[a-z][a-z0-9+.-]*:\/\/|(?:javascript|vbscript|data|blob):)/i.test(raw)) return { kind: 'none' };
+  let path = isFileUrl ? raw.slice('file://'.length) : raw;
+  try {
+    // Markdown links arrive percent-encoded (spaces, Chinese file names).
+    path = decodeURIComponent(path);
+  } catch {
+    // A stray "%" in a real file name: use it as written.
+  }
+  return path ? { kind: 'file', path } : { kind: 'none' };
+}

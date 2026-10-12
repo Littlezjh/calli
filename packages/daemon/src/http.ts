@@ -463,6 +463,9 @@ export function createHttpServer(deps: HttpDeps): Server {
           // Unlike attachments, these are the agent's working files and can change.
           'Cache-Control': 'private, max-age=30',
           'X-Content-Type-Options': 'nosniff',
+          // An SVG is a document that can carry scripts. Opened on its own it runs none of them
+          // and reaches nothing of the hub's.
+          'Content-Security-Policy': "sandbox; default-src 'none'; style-src 'unsafe-inline'",
         });
         createReadStream(file.path).pipe(res);
         return;

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { folderName, relativePath, shortenPaths } from '../src/paths.js';
+import { folderName, linkTarget, relativePath, shortenPaths } from '../src/paths.js';
 
 test('folderName is the last segment', () => {
   assert.equal(folderName('/work/code'), 'code');
@@ -48,4 +48,19 @@ test('nameAttachments names the pictures the user sent instead of showing their 
   assert.equal(nameAttachments(`Read /srv/hub/data/attachments/${id}/${img}.png`), 'Read 发送的图片');
   assert.equal(nameAttachments(`view_file "/x/attachments/${id}/${img}.JPG" and /x/attachments/${id}/${img}.webp`), 'view_file "发送的图片" and 发送的图片');
   assert.equal(nameAttachments('Read /work/app/attachments/logo.png'), 'Read /work/app/attachments/logo.png', 'only the hub\'s own layout');
+});
+
+test('linkTarget: web addresses open elsewhere, files on the host are never navigated to', () => {
+  assert.deepEqual(linkTarget('https://example.com/a?b=1#c'), { kind: 'web', url: 'https://example.com/a?b=1#c' });
+  assert.deepEqual(linkTarget('mailto:me@example.com'), { kind: 'web', url: 'mailto:me@example.com' });
+  assert.deepEqual(linkTarget('file:///work/app/dino.svg'), { kind: 'file', path: '/work/app/dino.svg' });
+  assert.deepEqual(linkTarget('FILE:///work/a%20b/%E5%9B%BE.png'), { kind: 'file', path: '/work/a b/图.png' });
+  assert.deepEqual(linkTarget('out/chart.png'), { kind: 'file', path: 'out/chart.png' });
+  assert.deepEqual(linkTarget('/work/app/src/main.ts:12'), { kind: 'file', path: '/work/app/src/main.ts:12' });
+  assert.deepEqual(linkTarget('main.ts:12'), { kind: 'file', path: 'main.ts:12' }, 'a line number is not a scheme');
+  assert.deepEqual(linkTarget('100%.txt'), { kind: 'file', path: '100%.txt' }, 'a name that is not encoded');
+  assert.deepEqual(linkTarget('#user-content-fn-1'), { kind: 'anchor' });
+  for (const href of ['', '  ', 'javascript:alert(1)', 'JavaScript:alert(1)', 'data:text/html,<script>', 'vscode://file/x', 'ftp://host/x', 'file://']) {
+    assert.deepEqual(linkTarget(href), { kind: 'none' }, href);
+  }
 });

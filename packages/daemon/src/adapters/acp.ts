@@ -93,6 +93,15 @@ export function effortConfigIdOf(configOptions: ConfigOption[] | undefined): str
 }
 
 /**
+ * The fork point claude-agent-acp and TRAE CLI both read from `session/fork`'s `_meta` (JetBrains
+ * Air's extension): the id of the last message to keep, which is the `messageId` their message and
+ * thought chunks carry.
+ */
+export function airForkPoint(messageId: string): Record<string, unknown> {
+  return { jetbrains: { air: { fork: { version: 1, messageId } } } };
+}
+
+/**
  * Groups the updates an agent replays when a session is loaded into past turns.
  * A user message starts a turn; everything until the next user message belongs to it.
  */
@@ -379,7 +388,8 @@ export abstract class AcpAdapter implements AgentAdapter {
 
   /**
    * How this agent is told where a copy stops, as the `_meta` of `session/fork`. ACP itself has no
-   * field for it, so each agent has its own; the default is that there is no way.
+   * field for it, so each agent has its own; the default is that there is no way. See airForkPoint
+   * for the one Claude and TRAE CLI share.
    */
   protected forkPointMeta(_forkRef: string): Record<string, unknown> | undefined {
     return undefined;

@@ -1,9 +1,10 @@
-import { Children, isValidElement, memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Children, createContext, isValidElement, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { copyText } from '../clipboard';
 import { diffLines, numberLines } from '../diff';
-import { nameAttachments, relativePath, shortenPaths } from '../paths';
+import { pictureUrl } from '../images';
+import { IMAGE_FILE, linkTarget, nameAttachments, relativePath, shortenPaths } from '../paths';
 import {
   clockLabel,
   durationLabel,
@@ -61,6 +62,26 @@ const NEAR_TOP_PX = 600;
 
 export function ThreadView({ items, running, roots, loadImage, loadFile, onDecide, hasOlder, loadingOlder, onLoadOlder, onFork, forkAnyTurn }: Props) {
   const [lightbox, setLightbox] = useState<string | null>(null);
+  // A picture opened from a link in an answer is fetched for the occasion, and let go of when it is closed.
+  const fetched = useRef<string | null>(null);
+  const release = () => {
+    if (fetched.current) URL.revokeObjectURL(fetched.current);
+    fetched.current = null;
+  };
+  const closeLightbox = useCallback(() => {
+    setLightbox(null);
+    release();
+  }, []);
+  const openPicture = useCallback(
+    async (path: string) => {
+      const url = await pictureUrl(await loadFile(path));
+      release();
+      fetched.current = url;
+      setLightbox(url);
+    },
+    [loadFile],
+  );
+  useEffect(() => release, []);
   const groups = useMemo(() => groupByTurn(items), [items]);
   // "Show everything" is remembered per thread; switching threads starts folded again.
   const threadKey = items[0]?.key ?? '';
@@ -225,32 +246,34 @@ export function ThreadView({ items, running, roots, loadImage, loadFile, onDecid
 
   return (
     <div className="thread" ref={threadRef}>
-      {/* Scrolling up loads these on its own; the buttons stay for keyboards and screen readers. */}
-      {folded && (
-        <div className="row">
-          <button className="older-messages" onClick={expand}>
-            上 {hiddenMessages} 条消息
-          </button>
-        </div>
-      )}
-      {!folded && hasOlder && (
-        <div className="row older-row">
-          {loadingOlder ? (
-            <span className="spinner" role="status" aria-label="正在加载更早的消息" />
-          ) : (
-            <button className="older-messages" onClick={onLoadOlder}>
-              加载更早的消息
+      <FilePictures.Provider value={openPicture}>
+        {/* Scrolling up loads these on its own; the buttons stay for keyboards and screen readers. */}
+        {folded && (
+          <div className="row">
+            <button className="older-messages" onClick={expand}>
+              上 {hiddenMessages} 条消息
             </button>
-          )}
-        </div>
-      )}
-      {shown.map((g) => renderItems(g.items))}
-      {running && (
-        <div className="row">
-          <div className="working">工作中…</div>
-        </div>
-      )}
-      {lightbox && <Lightbox url={lightbox} onClose={() => setLightbox(null)} />}
+          </div>
+        )}
+        {!folded && hasOlder && (
+          <div className="row older-row">
+            {loadingOlder ? (
+              <span className="spinner" role="status" aria-label="正在加载更早的消息" />
+            ) : (
+              <button className="older-messages" onClick={onLoadOlder}>
+                加载更早的消息
+              </button>
+            )}
+          </div>
+        )}
+        {shown.map((g) => renderItems(g.items))}
+        {running && (
+          <div className="row">
+            <div className="working">工作中…</div>
+          </div>
+        )}
+      </FilePictures.Provider>
+      {lightbox && <Lightbox url={lightbox} onClose={closeLightbox} />}
     </div>
   );
 }
@@ -308,8 +331,77 @@ function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
   return <img src={src} alt={alt ?? ''} loading="lazy" />;
 }
 
-const MARKDOWN_COMPONENTS = { pre: CodeBlock, img: MarkdownImage };
+/**
+ * Opens a picture on the agent's host at full size; rejects when the daemon has no such picture.
+ * Reaches the links through context: the components Markdown is given stay the same objects, so a
+ * message is not parsed again for it.
+ */
+const FilePictures = createContext<((path: string) => Promise<void>) | null>(null);
+
+/**
+ * A link in an answer. One to the web opens in a tab of its own, so the hub stays where it is.
+ * One to a file is on the agent's host, where the browser cannot follow: a picture opens at full
+ * size, anything else gives its path to the clipboard, for a terminal or an editor.
+ */
+function MarkdownLink({ href, title, children }: { href?: string; title?: string; children?: ReactNode }) {
+  const openPicture = useContext(FilePictures);
+  const [note, setNote] = useState<string | null>(null);
+  useEffect(() => {
+    if (!note) return;
+    const timer = setTimeout(() => setNote(null), 1600);
+    return () => clearTimeout(timer);
+  }, [note]);
+
+  const target = linkTarget(href ?? '');
+  if (target.kind === 'web') {
+    return (
+      <a href={target.url} title={title} target="_blank" rel="noopener noreferrer">
+        {children}
+      </a>
+    );
+  }
+  if (target.kind === 'anchor') return <a href={href}>{children}</a>;
+  if (target.kind === 'none') return <>{children}</>;
+
+  const { path } = target;
+  const picture = openPicture && IMAGE_FILE.test(path);
+  const copy = async () => setNote((await copyText(path)) ? '已复制路径' : '复制失败，请手动选中');
+  const act = () => {
+    // The path is copied in the click itself where it can be: a browser may refuse once a fetch has come between.
+    if (picture) openPicture(path).catch(copy);
+    else void copy();
+  };
+  return (
+    <a
+      className="file-link"
+      role="button"
+      tabIndex={0}
+      title={title ?? (picture ? `查看图片：${path}` : `复制路径：${path}`)}
+      onClick={act}
+      onKeyDown={(e: KeyboardEvent) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        e.preventDefault();
+        act();
+      }}
+    >
+      {children}
+      {note && (
+        <span className="file-link-note" role="status">
+          {note}
+        </span>
+      )}
+    </a>
+  );
+}
+
+const MARKDOWN_COMPONENTS = { pre: CodeBlock, img: MarkdownImage, a: MarkdownLink };
 const MARKDOWN_PLUGINS = [remarkGfm];
+/**
+ * Markdown drops addresses it does not know, `file://` among them, leaving a link that reloads
+ * the page. Every address is kept instead: links and images are drawn by the components above,
+ * which decide what each may do.
+ */
+const keepUrl = (url: string) => url;
 
 interface AssistantProps {
   text: string;
@@ -329,7 +421,7 @@ const AssistantMessage = memo(function AssistantMessage({ text, done, roots, loa
   return (
     <div className="row assistant">
       <div className="markdown">
-        <Markdown remarkPlugins={MARKDOWN_PLUGINS} components={MARKDOWN_COMPONENTS}>
+        <Markdown remarkPlugins={MARKDOWN_PLUGINS} components={MARKDOWN_COMPONENTS} urlTransform={keepUrl}>
           {text}
         </Markdown>
       </div>
@@ -352,9 +444,10 @@ function FileImage({ path, roots, load, onOpen }: { path: string; roots: string[
     let alive = true;
     let made: string | null = null;
     load(path)
-      .then((blob) => {
-        if (!alive) return;
-        made = URL.createObjectURL(blob);
+      .then(pictureUrl)
+      .then((address) => {
+        if (!alive) return void URL.revokeObjectURL(address);
+        made = address;
         setUrl(made);
       })
       .catch(() => undefined); // not an image, not in this thread's directory, or gone
@@ -474,7 +567,7 @@ function WorkGroup({ item, roots }: { item: Extract<Item, { kind: 'work' }>; roo
 const WorkNote = memo(function WorkNote({ text }: { text: string }) {
   return (
     <div className="work-note markdown">
-      <Markdown remarkPlugins={MARKDOWN_PLUGINS} components={MARKDOWN_COMPONENTS}>
+      <Markdown remarkPlugins={MARKDOWN_PLUGINS} components={MARKDOWN_COMPONENTS} urlTransform={keepUrl}>
         {text}
       </Markdown>
     </div>

@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { AcpAdapter, AcpSession } from './acp.js';
+import { AcpAdapter, AcpSession, airForkPoint } from './acp.js';
 import { CLAUDE_ICON } from './icons.js';
 import type { DiscoveredAccount, ModelOption, PermissionMode, PlanQuota, QuotaWindow, SlashCommand } from './types.js';
 
@@ -107,12 +107,8 @@ export class ClaudeAcpAdapter extends AcpAdapter {
     forkInto: true,
   };
 
-  /**
-   * claude-agent-acp reads the point to fork at from this extension field: the id of the last
-   * message to keep, which is the `messageId` its message and thought chunks carry.
-   */
   protected forkPointMeta(forkRef: string): Record<string, unknown> {
-    return { jetbrains: { air: { fork: { version: 1, messageId: forkRef } } } };
+    return airForkPoint(forkRef);
   }
 
   protected readonly modeIds = CLAUDE_MODE_IDS;

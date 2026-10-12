@@ -365,6 +365,7 @@ test('imagePathsIn finds local image files in an answer and leaves web addresses
   assert.deepEqual(imagePathsIn('![the chart](out/chart.png "Chart")\n\n![remote](https://example.com/a.png)'), ['out/chart.png']);
   assert.deepEqual(imagePathsIn('图片在：/work/图表/结果.jpg。另一张是 ./a b.png'), ['/work/图表/结果.jpg', 'b.png']);
   assert.deepEqual(imagePathsIn('see file:///work/app/shot.jpeg\nor "~/x/y.gif"'), ['/work/app/shot.jpeg', '~/x/y.gif']);
+  assert.deepEqual(imagePathsIn('saved to:\n👉 [dino.svg](file:///work/app/dino.svg)\n\nand [二](file:///work/app/a%20b/%E5%9B%BE.svg)'), ['/work/app/dino.svg', '/work/app/a b/图.svg'], 'a linked SVG, with the address decoded');
   assert.deepEqual(imagePathsIn('https://example.com/pic.png and http://x.test/a/b.jpg'), [], 'part of a URL is not a path');
   assert.deepEqual(imagePathsIn('edit main.ts and style.css, then run npm test'), []);
   assert.deepEqual(imagePathsIn('a.png a.png A.PNG'), ['a.png', 'A.PNG'], 'each file once');

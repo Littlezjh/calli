@@ -152,6 +152,27 @@ export function useStoredSet(key: string): [Set<string>, (value: string) => void
   return [set, toggle];
 }
 
+/** A switch kept in localStorage, for a choice about how this device shows things. */
+export function useStoredFlag(key: string): [boolean, (on: boolean) => void] {
+  const [on, setOn] = useState(() => {
+    try {
+      return localStorage.getItem(key) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const save = (next: boolean) => {
+    setOn(next);
+    try {
+      if (next) localStorage.setItem(key, '1');
+      else localStorage.removeItem(key);
+    } catch {
+      // Storage unavailable: the choice lasts until the page reloads.
+    }
+  };
+  return [on, save];
+}
+
 /**
  * The look chosen on this device, kept in localStorage and put on the page as two attributes of
  * <html>: `data-theme` (light or dark, already resolved against the system) and `data-palette`.

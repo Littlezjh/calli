@@ -17,7 +17,7 @@ import {
   type TurnHooks,
   type TurnInput,
 } from './adapters/types.js';
-import { MAX_IMAGES, sniffImageType, type AttachmentStore, type StoredAttachment } from './attachments.js';
+import { MAX_IMAGES, sniffImageType, sniffSvg, type AttachmentStore, type StoredAttachment } from './attachments.js';
 import { HttpError } from './errors.js';
 import { handoverPrompt, synthesizeHandover, turnMessage } from './handover.js';
 import { isWithinWorkdirs } from './workdirs.js';
@@ -75,6 +75,10 @@ interface QueuedTurn {
 export const MAX_QUEUED = 5;
 /** The largest image file the hub will serve from a thread's directory. */
 const MAX_SERVED_IMAGE_BYTES = 20 * 1024 * 1024;
+/** An SVG is text, and the page holds it whole to show it; a drawing is far smaller than this. */
+const MAX_SERVED_SVG_BYTES = 5 * 1024 * 1024;
+/** How much of a file is read to tell what it is. An SVG may open with a declaration and a comment. */
+const SNIFF_BYTES = 4096;
 /** How long a plan-usage answer is reused. The probes spawn a CLI; a minute is fresh enough. */
 const QUOTA_TTL_MS = 60_000;
 
@@ -476,7 +480,8 @@ export class ThreadManager {
 
   /**
    * An image file the agent made or mentioned, for showing it in the thread. Only files inside the
-   * thread's directory, or the agent's own folder for this session, and only real images.
+   * thread's directory, or the agent's own folder for this session, and only real images: one of
+   * the four bitmap formats, or an SVG.
    */
   getThreadImage(threadId: string, rawPath: unknown): { path: string; mimeType: string; size: number } {
     const thread = this.getThread(threadId);
@@ -505,14 +510,14 @@ export class ThreadManager {
 
     const stat = statSync(real);
     if (!stat.isFile() || stat.size === 0 || stat.size > MAX_SERVED_IMAGE_BYTES) throw notFound;
-    const head = Buffer.alloc(16);
+    let head = Buffer.alloc(SNIFF_BYTES);
     const fd = openSync(real, 'r');
     try {
-      readSync(fd, head, 0, head.length, 0);
+      head = head.subarray(0, readSync(fd, head, 0, head.length, 0));
     } finally {
       closeSync(fd);
     }
-    const mimeType = sniffImageType(head);
+    const mimeType = sniffImageType(head) ?? (sniffSvg(head) && stat.size <= MAX_SERVED_SVG_BYTES ? 'image/svg+xml' : null);
     if (!mimeType) throw notFound;
     return { path: real, mimeType, size: stat.size };
   }

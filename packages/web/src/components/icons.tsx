@@ -251,3 +251,10 @@ export const IconSidebar = (p: { size?: number }) => (
     <path d="M9.5 4.5v15" />
   </Svg>
 );
+/** What is going on across the threads: the list by activity. */
+export const IconBell = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M6.5 16.5v-5.6a5.5 5.5 0 0111 0v5.6l1.5 1.5H5z" />
+    <path d="M10 20.5a2.2 2.2 0 004 0" />
+  </Svg>
+);
