@@ -115,3 +115,14 @@ test('answers are shared for a minute, so the probe runs once', async () => {
   const runs = readFileSync(usageLog, 'utf8').trim().split('\n').filter(Boolean);
   assert.ok(runs.length <= 2, `probe ran ${runs.length} times`);
 });
+
+test('?refresh=1 skips the minute cache: the probe runs again right away', async () => {
+  const runsBefore = readFileSync(usageLog, 'utf8').trim().split('\n').filter(Boolean).length;
+  const first = (await (await fetch(`${base}/api/agents/claude/quota`, { headers: auth })).json()) as { checkedAt: string };
+  const cached = (await (await fetch(`${base}/api/agents/claude/quota`, { headers: auth })).json()) as { checkedAt: string };
+  assert.equal(cached.checkedAt, first.checkedAt, 'without the flag the cached answer comes back');
+  const forced = (await (await fetch(`${base}/api/agents/claude/quota?refresh=1`, { headers: auth })).json()) as { checkedAt: string };
+  const runsAfter = readFileSync(usageLog, 'utf8').trim().split('\n').filter(Boolean).length;
+  assert.equal(runsAfter, runsBefore + 1, 'the forced read is one new probe');
+  assert.notEqual(forced.checkedAt, first.checkedAt);
+});

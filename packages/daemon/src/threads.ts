@@ -213,12 +213,12 @@ export class ThreadManager {
    * Plan usage of an agent instance. The probe costs a CLI run (claude's takes seconds), so the
    * answer is reused for a minute and concurrent callers share one run.
    */
-  agentQuota(agent: string): Promise<PlanQuota> {
+  agentQuota(agent: string, refresh = false): Promise<PlanQuota> {
     const adapter = this.adapters.get(agent);
     if (!adapter) throw new HttpError(404, `unknown agent: ${agent}`);
     if (!adapter.capabilities.quota || !adapter.fetchQuota) throw new HttpError(400, `${agent} has no plan usage to read`);
     const hit = this.quotaCache.get(agent);
-    if (hit && Date.now() - hit.at < QUOTA_TTL_MS) return hit.value;
+    if (!refresh && hit && Date.now() - hit.at < QUOTA_TTL_MS) return hit.value;
     const value = adapter.fetchQuota().catch((err) => {
       // A failed probe is not worth caching; the next caller can try again right away.
       if (this.quotaCache.get(agent)?.value === value) this.quotaCache.delete(agent);

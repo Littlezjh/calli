@@ -634,9 +634,9 @@ export class Api {
     return this.request('GET', `/api/agents/${agent}/commands${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''}`);
   }
 
-  /** Plan usage of an agent instance, read outside any session. */
-  agentQuota(agent: string): Promise<PlanQuota> {
-    return this.request('GET', `/api/agents/${agent}/quota`);
+  /** Plan usage of an agent instance, read outside any session. `refresh` asks again now. */
+  agentQuota(agent: string, refresh = false): Promise<PlanQuota> {
+    return this.request('GET', `/api/agents/${agent}/quota${refresh ? '?refresh=1' : ''}`);
   }
 
   /** Live web terminals on this daemon. */

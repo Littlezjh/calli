@@ -3836,7 +3836,51 @@ input.picker-search {
   }
 }
 
+/* An add-agent dialog is a plain list of what was found, one row per CLI. */
+.add-agent {
+  width: min(360px, 100%);
+}
+
+.dialog-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.dialog-title-row .dialog-title {
+  margin: 0;
+}
+
 /* ---------- Quota panel ---------- */
+
+/* A dashboard row: the agent's name above its windows, separated from the next agent. */
+.quota-board-row {
+  padding: 14px 2px;
+  border-bottom: 1px solid var(--border);
+}
+
+.quota-board-row:last-child {
+  border-bottom: 0;
+}
+
+.quota-board-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.quota-board-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14.5px;
+  font-weight: 600;
+}
 
 .quota-panel {
   width: min(440px, 100%);

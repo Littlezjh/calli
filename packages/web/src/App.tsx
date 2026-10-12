@@ -37,7 +37,8 @@ import { TerminalPanel } from './components/TerminalPanel';
 import { FilesPanel, type FilesTarget } from './components/FilesPanel';
 import { PreviewPanel } from './components/PreviewPanel';
 import { fileRef } from './files';
-import { QuotaPanel } from './components/QuotaPanel';
+import { AddAgentDialog } from './components/AddAgentDialog';
+import { QuotaBoard } from './components/QuotaBoard';
 import { SelectionMenu } from './components/SelectionMenu';
 import { SideChat } from './components/SideChat';
 import { TodosPage } from './components/TodosPage';
@@ -50,7 +51,7 @@ import { NewProjectDialog, ProjectPicker, RootsDialog, type ProjectOption } from
 import { NoteMarks, type NoteMark } from './components/NoteMarks';
 import { Toast, type ToastState } from './components/Toast';
 import { TokenGate } from './components/TokenGate';
-import { IconArchive, IconArrowDown, IconChevron, IconClose, IconEdit, IconFiles, IconFolder, IconImport, IconList, IconMenu, IconMore, IconPalette, IconServer, IconSidebar, IconSignOut, IconTerminal } from './components/icons';
+import { IconArchive, IconArrowDown, IconChevron, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconImport, IconList, IconMenu, IconMore, IconPalette, IconPlus, IconServer, IconSidebar, IconSignOut, IconTerminal } from './components/icons';
 
 const sleep = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve) => {
@@ -197,7 +198,10 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
   const [statusOpen, setStatusOpen] = useState(false);
   const [termOpen, setTermOpen] = useState(false);
   /** The agent whose plan usage the quota panel shows. */
-  const [quotaAgent, setQuotaAgent] = useState<{ id: string; label: string } | null>(null);
+  /** The quota dashboard, over every agent that can report usage. */
+  const [quotaOpen, setQuotaOpen] = useState(false);
+  /** Other agent CLIs found on this host, added from the settings menu — not the picker. */
+  const [addAgentOpen, setAddAgentOpen] = useState(false);
   // Counters that open the composer's pickers from elsewhere (the slash menu).
   const [permissionSignal, setPermissionSignal] = useState(0);
   const [modelSignal, setModelSignal] = useState(0);
@@ -972,8 +976,8 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
     { id: 'new', label: '新线程', hint: '开始一个新的对话', keywords: ['new', 'clear'] },
     { id: 'status', label: '状态', hint: '会话、模型、上下文和终端恢复命令', keywords: ['status', 'info'] },
     { id: 'term', label: '终端', hint: '在这台主机上开一个真的终端', keywords: ['term', 'terminal', 'shell', '命令行'] },
-    ...(activeCaps?.quota
-      ? [{ id: 'usage', label: '额度', hint: '套餐用量和重置时间', keywords: ['usage', 'quota', '额度', 'cost'] }]
+    ...(agents.some((a) => a.capabilities.quota)
+      ? [{ id: 'usage', label: '额度', hint: '所有 agent 的用量、重置时间和刷新', keywords: ['usage', 'quota', '额度', 'cost'] }]
       : []),
     ...(models.length || effortLevels.length
       ? [{ id: 'model', label: '模型与思考强度', hint: modelName(models, model), keywords: ['model', 'effort', 'thinking'] }]
@@ -1001,7 +1005,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
     if (id === 'new') return newThread();
     if (id === 'status') return setStatusOpen(true);
     if (id === 'term') return setTermOpen(true);
-    if (id === 'usage' && activeCaps?.quota) return setQuotaAgent({ id: activeAgent, label: agentLabel(activeAgent) });
+    if (id === 'usage') return setQuotaOpen(true);
     if (id === 'export' && selected) return threadActions.copyConversation(selected);
     if (id === 'model') return setModelSignal((n) => n + 1);
     if (id === 'permission') return setPermissionSignal((n) => n + 1);
@@ -1019,7 +1023,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
   // strip is only for choosing them, before the thread exists.
   const header = selected ? null : (
     <>
-      <AgentPicker agents={agents} value={draftAgent} onChange={pickAgent} discovered={discovered} onAdd={addDiscoveredAgent} accounts={accounts} onAddAccount={addAccount} />
+      <AgentPicker agents={agents} value={draftAgent} onChange={pickAgent} accounts={accounts} onAddAccount={addAccount} />
       <ProjectPicker
         projects={projectOptions}
         cwd={draftCwd}
@@ -1337,18 +1341,19 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           directory={activeCwd}
           usage={selected ? timeline.usage : null}
           usageCommand={['usage', 'cost', 'session'].find((name) => (commandsByKey[commandsKey] ?? []).some((c) => c.name === name)) ?? null}
-          onOpenQuota={activeCaps?.quota ? () => setQuotaAgent({ id: activeAgent, label: agentLabel(activeAgent) }) : undefined}
+          onOpenQuota={agents.some((a) => a.capabilities.quota) ? () => setQuotaOpen(true) : undefined}
           onRunCommand={(text) => void send(text, []).catch(() => undefined)}
           onClose={() => setStatusOpen(false)}
         />
       )}
-      {quotaAgent && api && (
-        <QuotaPanel
-          api={api}
-          agentId={quotaAgent.id}
-          agentLabel={quotaAgent.label}
-          onClose={() => setQuotaAgent(null)}
-          onError={handleError}
+      {quotaOpen && api && <QuotaBoard api={api} agents={agents} onClose={() => setQuotaOpen(false)} onError={handleError} />}
+      {addAgentOpen && (
+        <AddAgentDialog
+          found={discovered}
+          onAdd={addDiscoveredAgent}
+          onClose={() => {
+            setAddAgentOpen(false);
+          }}
         />
       )}
       {importOpen && (
@@ -1407,6 +1412,32 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
                 setDrawer(false);
               },
             },
+            ...(agents.some((a) => a.capabilities.quota)
+              ? [
+                  {
+                    id: 'quota',
+                    label: '额度',
+                    icon: IconGauge,
+                    onSelect: () => {
+                      setQuotaOpen(true);
+                      setDrawer(false);
+                    },
+                  },
+                ]
+              : []),
+            ...(discovered.length > 0
+              ? [
+                  {
+                    id: 'add-agent',
+                    label: '添加 agent',
+                    icon: IconPlus,
+                    onSelect: () => {
+                      setAddAgentOpen(true);
+                      setDrawer(false);
+                    },
+                  },
+                ]
+              : []),
             {
               id: 'hosts',
               label: '机器',

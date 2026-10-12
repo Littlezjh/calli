@@ -233,15 +233,12 @@ interface AgentProps {
   agents: AgentInfo[];
   value: string;
   onChange: (id: string) => void;
-  /** Extra CLIs found on this host; picking one adds it as a new instance. */
-  discovered?: DiscoveredAgent[];
-  onAdd?: (agent: DiscoveredAgent) => Promise<void>;
   /** Signed-in accounts found on this host; picking one links it as a new instance. */
   accounts?: DiscoveredAccount[];
   onAddAccount?: (account: DiscoveredAccount) => Promise<void>;
 }
 
-export function AgentPicker({ agents, value, onChange, discovered = [], onAdd, accounts = [], onAddAccount }: AgentProps) {
+export function AgentPicker({ agents, value, onChange, accounts = [], onAddAccount }: AgentProps) {
   const current = agents.find((a) => a.id === value);
   const [adding, setAdding] = useState<string | null>(null);
   // The marks the thread list shows in place of names are introduced here, next to the names.
@@ -286,38 +283,6 @@ export function AgentPicker({ agents, value, onChange, discovered = [], onAdd, a
               )}
             </button>
           ))}
-          {onAdd && discovered.length > 0 && (
-            <>
-              <div className="pop-sep">在这台主机上发现</div>
-              {discovered.map((d) => (
-                <button
-                  key={d.id}
-                  type="button"
-                  className="pop-item compact"
-                  disabled={adding !== null}
-                  onClick={async () => {
-                    setAdding(d.id);
-                    try {
-                      await onAdd(d);
-                      onChange(d.id);
-                      close();
-                    } finally {
-                      setAdding(null);
-                    }
-                  }}
-                >
-                  {marks && <span className="pop-item-icon" />}
-                  <span className="pop-item-text">
-                    <span className="pop-item-label">{d.id}</span>
-                    <span className="pop-item-hint">添加后作为新 agent 使用</span>
-                  </span>
-                  <span className="pop-item-check">
-                    {adding === d.id ? <IconSparkle size={13} /> : <IconPlus size={14} />}
-                  </span>
-                </button>
-              ))}
-            </>
-          )}
           {onAddAccount && accounts.length > 0 && (
             <>
               <div className="pop-sep">已登录的账号</div>
