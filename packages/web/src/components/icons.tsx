@@ -207,6 +207,14 @@ export const IconGlobe = (p: { size?: number }) => (
     <path d="M3.5 12h17M12 3.5c2.6 2.4 3.9 5.2 3.9 8.5s-1.3 6.1-3.9 8.5c-2.6-2.4-3.9-5.2-3.9-8.5s1.3-6.1 3.9-8.5z" />
   </Svg>
 );
+/** A machine: two units in a rack. */
+export const IconServer = (p: { size?: number }) => (
+  <Svg {...p}>
+    <rect x="4" y="4.5" width="16" height="6.5" rx="2" />
+    <rect x="4" y="13" width="16" height="6.5" rx="2" />
+    <path d="M7.6 7.75h.01M7.6 16.25h.01" />
+  </Svg>
+);
 export const IconSettings = (p: { size?: number }) => (
   <Svg {...p}>
     <circle cx="12" cy="12" r="3" />

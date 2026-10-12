@@ -1,8 +1,10 @@
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { EmittedEvent } from '../events.js';
 import { commandExists } from '../util.js';
 import { CODEX_ICON } from './icons.js';
+import { configDirectory, findSessionFile, quoteArg } from './session-location.js';
 import { JsonRpcPeer } from './jsonrpc.js';
 import type {
   AgentAdapter,
@@ -570,6 +572,14 @@ export class CodexAppServerAdapter implements AgentAdapter {
 
   resumeCommand(agentSessionId: string): string {
     return `codex resume ${agentSessionId}`;
+  }
+
+  async sessionLocation(agentSessionId: string | null, cwd: string) {
+    const configDir = configDirectory(this.env, 'CODEX_HOME', ['.codex'], cwd);
+    const matches = (name: string, id: string) => name.startsWith('rollout-') && name.endsWith(`-${id}.jsonl`);
+    const sessionPath = await findSessionFile(join(configDir, 'sessions'), agentSessionId, 3, matches)
+      ?? await findSessionFile(join(configDir, 'archived_sessions'), agentSessionId, 3, matches);
+    return { configDir, sessionPath, ...(agentSessionId ? { resumeCommand: `env CODEX_HOME=${quoteArg(configDir)} codex resume ${quoteArg(agentSessionId)}` } : {}) };
   }
 
   async deleteSession(agentSessionId: string): Promise<void> {

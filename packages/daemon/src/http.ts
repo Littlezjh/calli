@@ -1,12 +1,14 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { createReadStream, existsSync, readdirSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { extname, join, normalize, resolve, sep } from 'node:path';
+import { connect } from 'node:net';
+import { dirname, extname, join, normalize, resolve, sep } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import type { ApprovalDecision } from './adapters/types.js';
 import type { AgentRegistry } from './agents.js';
 import type { StoredEvent } from './events.js';
 import { HttpError } from './errors.js';
+import type { HostRegistry } from './hosts.js';
 import type { TerminalEvent, TerminalManager } from './terminals.js';
 import type { ThreadManager } from './threads.js';
 import { isWithinWorkdirs } from './workdirs.js';
@@ -17,6 +19,13 @@ export interface HttpDeps {
   registry?: AgentRegistry;
   /** Web terminals. Optional so deployments and tests can run without them. */
   terminals?: TerminalManager;
+  /** Other machines this hub shows. Optional so simple setups and tests need none. */
+  hosts?: HostRegistry;
+  /**
+   * Requests need no token: the server listens on a socket only this user can open, and a hub
+   * reaches it over SSH. Such a server shows this machine only, never the machines added to it.
+   */
+  trusted?: boolean;
   token: string;
   webDir: string | null;
   version: string;
@@ -151,7 +160,7 @@ function serveStatic(res: ServerResponse, webDir: string, urlPath: string): void
 }
 
 export function createHttpServer(deps: HttpDeps): Server {
-  const { manager, registry, terminals, token, webDir, version } = deps;
+  const { manager, registry, terminals, hosts, trusted, token, webDir, version } = deps;
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? '/', 'http://localhost');
@@ -166,11 +175,40 @@ export function createHttpServer(deps: HttpDeps): Server {
 
     if (path === '/api/health') return sendJson(res, 200, { ok: true, version });
 
-    const auth = req.headers.authorization ?? '';
-    const bearer = auth.startsWith('Bearer ') ? auth.slice(7) : undefined;
-    if (!tokenMatches(bearer, token)) return sendJson(res, 401, { error: 'unauthorized' });
+    if (!trusted) {
+      const auth = req.headers.authorization ?? '';
+      const bearer = auth.startsWith('Bearer ') ? auth.slice(7) : undefined;
+      if (!tokenMatches(bearer, token)) return sendJson(res, 401, { error: 'unauthorized' });
+    }
 
     const parts = path.split('/').filter(Boolean); // ['api', ...]
+
+    // Other machines. One level only: a machine reached through its socket does not pass requests on.
+    if (parts[1] === 'hosts' && hosts && !trusted) {
+      // GET /api/hosts, POST /api/hosts { target, label? }
+      if (path === '/api/hosts') {
+        if (method === 'GET') return sendJson(res, 200, hosts.list());
+        if (method === 'POST') return sendJson(res, 201, await hosts.add(await readJson(req)));
+      }
+      // GET /api/hosts/candidates: aliases in this user's ssh config that could be added
+      if (method === 'GET' && path === '/api/hosts/candidates') return sendJson(res, 200, hosts.candidates());
+      // DELETE /api/hosts/:id
+      if (method === 'DELETE' && parts[2] && !parts[3]) {
+        hosts.remove(parts[2]);
+        res.writeHead(204).end();
+        return;
+      }
+      // POST /api/hosts/:id/reconnect: try now, not when the next retry is due
+      if (method === 'POST' && parts[2] && parts[3] === 'reconnect' && !parts[4]) {
+        return sendJson(res, 200, await hosts.reconnect(parts[2]));
+      }
+      // /api/hosts/:id/proxy/...: the same API, answered by that machine's daemon
+      if (parts[2] && parts[3] === 'proxy' && parts[4]) {
+        if (parts[4] === 'hosts') throw new HttpError(400, 'a machine does not pass requests on to others');
+        const rest = path.slice(`/api/hosts/${parts[2]}/proxy/`.length);
+        return hosts.proxy(decodeURIComponent(parts[2]), `/api/${rest}${url.search}`, req, res);
+      }
+    }
 
     // GET /api/agents
     if (method === 'GET' && path === '/api/agents') return sendJson(res, 200, await manager.listAgents());
@@ -607,6 +645,45 @@ function resolveAndValidate(allowedWorkdirs: string[], inputPath: string): strin
   const path = resolve(inputPath);
   if (!isWithinWorkdirs(path, allowedWorkdirs)) throw new HttpError(403, 'path is not in allowed workdirs');
   return path;
+}
+
+/**
+ * Listens on a unix socket that only this user can open, for the server whose requests need no
+ * token. A socket another live daemon holds is left to it, and false is returned; one nobody
+ * answers on is a leftover and is replaced.
+ */
+export async function listenPrivate(server: Server, path: string): Promise<boolean> {
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  if (existsSync(path)) {
+    const held = await new Promise<boolean>((done) => {
+      const probe = connect(path);
+      probe.on('connect', () => {
+        probe.destroy();
+        done(true);
+      });
+      probe.on('error', () => done(false));
+    });
+    if (held) return false;
+    rmSync(path, { force: true });
+  }
+  // bind() happens inside listen(), so the mask is narrowed for that call alone: the socket is
+  // never there with wider permissions, and nothing started meanwhile inherits the mask.
+  const umask = process.umask(0o077);
+  let listening: Promise<void>;
+  try {
+    listening = new Promise<void>((done, fail) => {
+      server.once('error', fail);
+      server.listen(path, () => {
+        server.off('error', fail);
+        done();
+      });
+    });
+  } finally {
+    process.umask(umask);
+  }
+  await listening;
+  server.on('close', () => rmSync(path, { force: true }));
+  return true;
 }
 
 function finishStream(req: IncomingMessage, res: ServerResponse, off: () => void): void {

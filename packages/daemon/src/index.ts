@@ -1,11 +1,13 @@
 import { loadConfig, loadDotEnv } from './config.js';
-import { createHttpServer } from './http.js';
+import { createHttpServer, listenPrivate } from './http.js';
+import { HostRegistry } from './hosts.js';
 import { AgentRegistry, defaultInstances } from './agents.js';
 import { AttachmentStore } from './attachments.js';
 import { Store } from './store.js';
 import { TerminalManager } from './terminals.js';
 import { ThreadManager } from './threads.js';
 import { Workdirs } from './workdirs.js';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 export const VERSION = '0.1.0';
@@ -47,7 +49,21 @@ async function main(): Promise<void> {
   const manager = new ThreadManager(store, adapters, dirs, new AttachmentStore(config.dataDir));
   manager.recoverInterrupted();
   const terminals = new TerminalManager({ workdirs: () => dirs.all(), shell: config.termShell ?? undefined });
-  const server = createHttpServer({ manager, registry, terminals, token: config.token, webDir: config.webDir, version: VERSION });
+  // Other machines, each reached over SSH through its daemon's socket.
+  const hosts = new HostRegistry({ file: join(config.dataDir, 'hosts.json'), ssh: config.sshCommand });
+  hosts.start();
+  const server = createHttpServer({ manager, registry, terminals, hosts, token: config.token, webDir: config.webDir, version: VERSION });
+  // The same API on a socket only this user can open: how a hub on another machine reaches this one.
+  const local = config.socket ? createHttpServer({ manager, registry, terminals, trusted: true, token: config.token, webDir: null, version: VERSION }) : null;
+  let ownsSocket = false;
+  if (local && config.socket) {
+    listenPrivate(local, config.socket)
+      .then((ok) => {
+        ownsSocket = ok;
+        console.log(ok ? `socket: ${config.socket}` : `socket: ${config.socket} belongs to another daemon, not listening on it`);
+      })
+      .catch((err) => console.warn(`warning: could not listen on ${config.socket}: ${err instanceof Error ? err.message : err}`));
+  }
 
   server.listen(config.port, config.host, () => {
     console.log(`remote-agent-hub daemon ${VERSION} listening on http://${config.host}:${config.port}`);
@@ -60,6 +76,11 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string) => {
     console.log(`${signal} received, shutting down`);
     server.close();
+    local?.close();
+    // Open event streams keep the server from closing by itself; the socket goes now, so a hub
+    // that looks does not take a stopped daemon for a running one.
+    if (ownsSocket && config.socket) rmSync(config.socket, { force: true });
+    hosts.dispose();
     await manager.shutdown();
     terminals.dispose();
     store.close();

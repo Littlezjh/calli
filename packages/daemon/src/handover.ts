@@ -1,10 +1,47 @@
 import type { StoredEvent } from './events.js';
 
+/** Authoritative session coordinates, prepended regardless of how the progress summary was written. */
+export function handoverContext(info: {
+  threadId: string;
+  agentId: string;
+  agentLabel: string;
+  adapter: string;
+  cwd: string;
+  cwdReal: string;
+  worktree?: { root: string; branch: string | null; main: string } | null;
+  sessionId: string | null;
+  configDir?: string;
+  sessionPath?: string | null;
+  resumeCommand: string | null;
+}): string {
+  const lines = [
+    '# 交接信息', '',
+    `- Agent 实例：${info.agentLabel}（实例 ID：${info.agentId}；类型：${info.adapter}）`,
+    `- 项目工作目录（cwd）：${info.cwd}`,
+    ...(info.cwdReal !== info.cwd ? [`- 工作目录真实路径：${info.cwdReal}`] : []),
+    ...(info.worktree ? [
+      `- 当前 worktree：${info.worktree.root}`,
+      `- 当前分支：${info.worktree.branch ?? '游离 HEAD'}`,
+      `- 主仓库（仅供定位）：${info.worktree.main}`,
+    ] : []),
+    `- Agent 配置/数据目录：${info.configDir ?? '未能确定'}`,
+    `- Session ID：${info.sessionId ?? '尚未创建（还没有 agent 会话）'}`,
+    `- Session 文件地址：${info.sessionPath ?? (info.sessionId ? '未找到实际会话文件；请使用上面的实例与 Session ID 定位' : '尚未创建')}`,
+    `- Hub 线程 ID：${info.threadId}`, '',
+    '## 接手要求', '',
+    '请直接接着完成任务，将命令执行和文件操作的工作目录设为上面的 cwd。原线程使用 worktree 时，沿用同一个 worktree、当前分支及未提交改动，不要切回主仓库或另建 worktree。',
+    '使用你自己的 agent 会话继续工作；上面的原 agent 实例、配置目录和 Session ID 用于只读查阅原始历史。不要要求用户重新配置工作目录或手动新开会话。',
+    '多个同类 agent 使用各自的配置/数据目录，读取历史时请按实例和 Session ID 定位。',
+  ];
+  if (info.resumeCommand) lines.push('', '## 原 agent 的恢复命令（仅供参考，接手无需执行）', '', info.resumeCommand);
+  return lines.join('\n');
+}
+
 /**
  * Handing a thread's task to another agent: the current agent writes a summary for its successor
  * while it still can (it knows its own context best), and when that is no longer possible — the
  * quota ran out, the agent is gone — the hub writes one from the event log, which holds every
- * turn, tool call and diff anyway. The summary is text for a person to paste into a new thread;
+ * turn, tool call and diff anyway. The summary is text for a person to give to a successor;
  * the hub does not create that thread or leave files behind.
  */
 

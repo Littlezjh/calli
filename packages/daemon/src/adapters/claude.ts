@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { AcpAdapter, AcpSession, airForkPoint } from './acp.js';
 import { CLAUDE_ICON } from './icons.js';
+import { configDirectory, findSessionFile, quoteArg } from './session-location.js';
 import type { DiscoveredAccount, ModelOption, PermissionMode, PlanQuota, QuotaWindow, SlashCommand } from './types.js';
 
 /**
@@ -138,6 +139,17 @@ export class ClaudeAcpAdapter extends AcpAdapter {
 
   resumeCommand(agentSessionId: string): string {
     return `claude --resume ${agentSessionId}`;
+  }
+
+  async sessionLocation(agentSessionId: string | null, cwd: string) {
+    const configDir = configDirectory(this.env, 'CLAUDE_CONFIG_DIR', ['.claude'], cwd);
+    // A resumed or forked session can belong to another worktree within this account.
+    const sessionPath = await findSessionFile(join(configDir, 'projects'), agentSessionId, 1, (name, id) => name === `${id}.jsonl`);
+    return {
+      configDir,
+      sessionPath,
+      ...(agentSessionId ? { resumeCommand: `env CLAUDE_CONFIG_DIR=${quoteArg(configDir)} ${quoteArg(this.env.RAH_CLAUDE_BIN || claudeCli())} --resume ${quoteArg(agentSessionId)}` } : {}),
+    };
   }
 
   /** One `claude -p "/usage"` run. A local command, so no session is written and no turn spent. */

@@ -6,6 +6,7 @@ import type { EmittedEvent } from '../events.js';
 import { imagePathNote } from '../attachments.js';
 import { commandExists, textOf } from '../util.js';
 import { PI_ICON } from './icons.js';
+import { configDirectory, findSessionFile, quoteArg } from './session-location.js';
 import type {
   AgentAdapter,
   AgentSession,
@@ -725,6 +726,12 @@ export class PiRpcAdapter implements AgentAdapter {
 
   resumeCommand(agentSessionId: string): string {
     return `pi --session ${agentSessionId}`;
+  }
+
+  async sessionLocation(agentSessionId: string | null, cwd: string) {
+    const configDir = configDirectory(this.env, 'PI_CODING_AGENT_DIR', ['.pi', 'agent'], cwd);
+    const sessionPath = await findSessionFile(join(configDir, 'sessions'), agentSessionId, 1, (name, id) => name.endsWith(`_${id}.jsonl`));
+    return { configDir, sessionPath, ...(agentSessionId ? { resumeCommand: `env PI_CODING_AGENT_DIR=${quoteArg(configDir)} pi --session ${quoteArg(sessionPath ?? agentSessionId)}` } : {}) };
   }
 
   /**

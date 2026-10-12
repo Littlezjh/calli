@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Api,
+  ApiError,
   AuthError,
   loadToken,
   saveToken,
@@ -15,6 +16,7 @@ import {
 import type { HubAction } from './commands';
 import { projectDir } from './sidebar';
 import { useAppearance, useIsCompact, useListSwipe } from './hooks';
+import { useHosts } from './hosts';
 import type { PreparedImage } from './images';
 import { attentionCount, pageTitle, threadNotices } from './notices';
 import { folderName } from './paths';
@@ -26,6 +28,7 @@ import { ArchivePanel } from './components/ArchivePanel';
 import { Composer, type DraftNote } from './components/Composer';
 import { DirectoryPicker } from './components/DirectoryPicker';
 import { Dialog } from './components/Dialog';
+import { HostDown, HostsPanel } from './components/Hosts';
 import { ImportPanel } from './components/ImportPanel';
 import { Menu } from './components/Menu';
 import { StatusPanel } from './components/StatusPanel';
@@ -43,7 +46,7 @@ import { NewProjectDialog, ProjectPicker, RootsDialog, type ProjectOption } from
 import { NoteMarks, type NoteMark } from './components/NoteMarks';
 import { Toast, type ToastState } from './components/Toast';
 import { TokenGate } from './components/TokenGate';
-import { IconArchive, IconArrowDown, IconChevron, IconClose, IconEdit, IconFolder, IconImport, IconList, IconMenu, IconMore, IconPalette, IconSidebar, IconSignOut, IconTerminal } from './components/icons';
+import { IconArchive, IconArrowDown, IconChevron, IconClose, IconEdit, IconFolder, IconImport, IconList, IconMenu, IconMore, IconPalette, IconServer, IconSidebar, IconSignOut, IconTerminal } from './components/icons';
 
 const sleep = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve) => {
@@ -75,10 +78,33 @@ const TODOS_HASH = '#/todos';
 /** Whether the thread list is put away on a wide screen. */
 const SIDEBAR_HIDDEN_KEY = 'rah.sidebar.hidden';
 
-export function App() {
+interface AppProps {
+  /** The machine on screen: one of the hub's other machines, or null for the hub's own. */
+  hostId?: string | null;
+  /** Switches machines. The app starts over on the new one, with what the switch was made from still open. */
+  onHost?: (id: string | null, start?: AppStart) => void;
+  start?: AppStart;
+}
+
+/** What is open when the app starts over on another machine: the phone's thread list, or the machines panel. */
+export type AppStart = 'list' | 'machines';
+
+export function App({ hostId = null, onHost, start }: AppProps = {}) {
   const [token, setToken] = useState(loadToken);
   const [authMessage, setAuthMessage] = useState<string | undefined>();
-  const api = useMemo(() => (token ? new Api(token) : null), [token]);
+  // Looking at another machine, every call is answered by its daemon, through the hub.
+  const { hosts, loaded: hostsLoaded, reload: reloadHosts } = useHosts(token);
+  const host = hostId ? hosts.find((h) => h.id === hostId) : undefined;
+  // Until the hub has said how the machine is, it is taken to be up: asking it is how the page finds out.
+  const hostUp = !hostId || !hostsLoaded || host?.status === 'online';
+  // A machine that comes back gets a new client, so everything is read from it again.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const api = useMemo(() => (token ? new Api(token, '', hostId) : null), [token, hostId, hostUp]);
+  const [hostsOpen, setHostsOpen] = useState(start === 'machines');
+  // A machine that was removed (here or on another device) has nothing to show: back to the hub's own.
+  useEffect(() => {
+    if (hostId && hostsLoaded && !host) onHost?.(null, hostsOpen ? 'machines' : undefined);
+  }, [hostId, hostsLoaded, host, onHost, hostsOpen]);
 
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   /** CLIs on PATH that look like extra agents, offered in the picker. */
@@ -107,7 +133,7 @@ export function App() {
   const [todosKey, setTodosKey] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [events, setEvents] = useState<StoredEvent[]>([]);
-  const [draftAgent, setDraftAgent] = useState('claude');
+  const [draftAgent, setDraftAgent] = useState('');
   const [draftCwd, setDraftCwd] = useState('');
   // A new thread may start in a git worktree of its directory; offered only when the directory is in a repository.
   const [draftWorktree, setDraftWorktree] = useState(false);
@@ -118,7 +144,7 @@ export function App() {
   const [draftEffort, setDraftEffort] = useState<string | null>(null);
   const [modelsByAgent, setModelsByAgent] = useState<Record<string, ModelOption[]>>({});
   const [commandsByKey, setCommandsByKey] = useState<Record<string, SlashCommand[]>>({});
-  const [drawer, setDrawer] = useState(false);
+  const [drawer, setDrawer] = useState(start === 'list');
   // On a wide screen the list can be put away for room, like Codex; remembered on this device.
   const [sidebarHidden, setSidebarHidden] = useState(() => {
     try {
@@ -284,6 +310,8 @@ export function App() {
 
   const handleError = (e: unknown) => {
     if (e instanceof AuthError) signOut('token 无效或已过期，请重新输入');
+    // A machine that dropped is explained in the main area; the hub is asked at once how it is.
+    else if (e instanceof ApiError && e.details.code === 'host_offline') void reloadHosts();
     else setError(message(e));
   };
 
@@ -312,7 +340,7 @@ export function App() {
         setTodos(td);
         setDraftCwd((cur) => cur || c.workdirs[0] || '');
         const first = a.find((x) => x.available);
-        setDraftAgent(first?.id ?? 'claude');
+        setDraftAgent(first?.id ?? '');
         if (first) setDraftPermission(startingPermission(first.capabilities));
         // Cheap enough to do once: PATH scan for other copies of known CLIs.
         api
@@ -359,6 +387,8 @@ export function App() {
           await api.stream('/api/stream', refresh, ctrl.signal);
         } catch (e) {
           if (e instanceof AuthError) return signOut('token 无效或已过期，请重新输入');
+          // On another machine, a stream that will not open is how its dropping first shows.
+          if (api.host && !ctrl.signal.aborted) void reloadHosts();
         }
         await sleep(2000, ctrl.signal);
       }
@@ -1058,6 +1088,10 @@ export function App() {
           onNewIn={newThread}
           compact={compact}
           onOpenSettings={(x, y) => setSettingsAt({ x, y })}
+          hosts={hosts}
+          hostId={hostId}
+          onHost={onHost && ((id) => id !== hostId && onHost(id, 'list'))}
+          hostDown={Boolean(host) && !hostUp}
           onHide={compact ? undefined : toggleSidebar}
           onThreadMenu={threadActions.openThreadMenu}
           onSectionMenu={threadActions.openSectionMenu}
@@ -1085,11 +1119,12 @@ export function App() {
           )}
           <div className="topbar-heading">
             {/* The plan page carries its own heading. */}
-            <div className="topbar-title">{onTodos ? '' : selected ? selected.title : '新线程'}</div>
+            <div className="topbar-title">{host && !hostUp ? host.label : onTodos ? '' : selected ? selected.title : '新线程'}</div>
             {selected && (
               <div className="topbar-sub" title={selected.cwd}>
                 {agentLabel(selected.agent)} ·{' '}
                 {selected.scratch ? '不在项目中' : selected.worktree ? `${folderName(selected.worktree.of)} · ${selected.worktree.branch}` : folderName(selected.cwd)}
+                {host && ` · ${host.label}`}
               </div>
             )}
           </div>
@@ -1126,7 +1161,12 @@ export function App() {
           </div>
         )}
 
-        {onTodos ? (
+        {host && !hostUp ? (
+          // The machine's threads are over there; until it is back there is only this to say.
+          <div key="host-down" className="scroller">
+            <HostDown host={host} onRetry={() => api.reconnectHost(host.id).catch(() => undefined).then(reloadHosts)} />
+          </div>
+        ) : onTodos ? (
           // A scroller of its own: the thread's one pins itself to the bottom, a document starts at the top.
           <div key="todos" className="scroller">
             <TodosPage
@@ -1183,9 +1223,9 @@ export function App() {
           )}
         </div>
 
-        {!onTodos && (
+        {!onTodos && !(host && !hostUp) && (
         <Composer
-          draftKey={selectedId ?? 'new'}
+          draftKey={hostId ? `host:${hostId}:${selectedId ?? 'new'}` : selectedId ?? 'new'}
           running={running}
           disabled={!selected && !draftCwd}
           placeholder={selected ? (running ? '追加一条，这一轮结束后发送' : '继续这个线程') : draftScratch ? '随便问点什么' : `在 ${folderName(draftCwd) || '工作目录'} 中开始`}
@@ -1313,6 +1353,15 @@ export function App() {
                 setDrawer(false);
               },
             },
+            {
+              id: 'hosts',
+              label: '机器',
+              icon: IconServer,
+              onSelect: () => {
+                setHostsOpen(true);
+                setDrawer(false);
+              },
+            },
             ...(importAgents.length
               ? [
                   {
@@ -1332,6 +1381,7 @@ export function App() {
           ]}
         />
       )}
+      {hostsOpen && <HostsPanel api={api} hosts={hosts} onChanged={reloadHosts} onClose={() => setHostsOpen(false)} onError={handleError} />}
       {appearanceOpen && (
         <AppearancePanel appearance={appearance} theme={theme} onChange={setAppearance} onClose={() => setAppearanceOpen(false)} />
       )}

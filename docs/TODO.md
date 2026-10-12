@@ -87,7 +87,7 @@
 - [ ] **P3** zcode：`zcode app-server`
 [x] 多账号：一个适配器可配多个实例（`data/agents.json` 或 `RAH_AGENTS_JSON`：id、adapter、label、command、env），线程存实例 id，默认实例沿用原名不迁移；实例 env 合并进它起的所有进程（如第二个 Claude 账号带自己的 `CLAUDE_CONFIG_DIR`）；扫描 PATH 发现同类 CLI（`agy2` 这类，`ping`/`pix` 不算），Agent picker 里一键添加，添加后立刻可用并写回 agents.json
 - [x] 链接另一个账号（发现已登录的）：终端里 `CLAUDE_CONFIG_DIR=~/.claude-2 claude` 登录好的账号，Agent picker「已登录的账号」一节里一键接进来，不用 SSH。`GET /api/agents/accounts/discover`：适配器各自找已登录的账号（Claude 扫 `~/.claude` 和 `~/.claude-2` 这类目录、只认目录，逐个 `claude auth status` 问邮箱，登录过期的自然掉出列表；`env.CLAUDE_CONFIG_DIR` 由适配器构造，前端不认变量名），registry 补上只有它知道的——已被实例占用的账号不列（无 env 的实例占用默认账号），建议 id/label 取第一个空闲的 `claude-N`/「Claude Code N」，同一次发现里也不撞。点一下即 `POST /api/agents` 注册并选中。本地跑 claude 的命令统一走 `RAH_CLAUDE_BIN`（原 `RAH_CLAUDE_QUOTA_BIN` 仍认）。页面里直接完成 OAuth 授权的向导（daemon 起登录进程、贴授权码）以后再做
-- [x] 交接：把线程的任务交给另一个 agent 续做，hub 只生成交接摘要，不自动建新线程、不写文件到仓库。线程菜单「交接」→ 选接手实例（排除自己和不可用的）→ 两条路：「让 agent 写」在原会话里按模板（任务/已完成/未完成/改过的文件/关键决定）发一轮，交接轮在 `turn.started` 上带 `handover` 标记，界面里能看到它写的过程；「用记录合成」不花额度，hub 从事件日志拼（用户的要求、改过的文件去重、最后一次计划清单、最后一轮真实回答、中断原因；交接轮和导入轮不算要求，交接轮的话不算回答）。接口：`POST /api/threads/:id/handover`（返回 turnId）、`GET …/handover?turn=&target=`（pending 或摘要，agent 写失败自动落到合成）。摘要展示在 Dialog 里，一键复制（execCommand 降级），用户自己粘到新线程当第一条消息
+- [x] 交接：线程菜单「交接」打开后直接整理可复制内容，无需选择接手 agent 或额外发送一轮。包含来源机器、具体 agent 实例名/实例 ID/类型、项目工作目录及真实路径、agent 配置/数据目录、session ID、实际 session 文件地址、hub 线程 ID、原会话恢复命令（仅供参考），以及从事件日志合成的任务进度。接手要求明确写入复制内容：使用接手 agent 自己的会话，在原 cwd 继续；保留原 worktree、分支和未提交改动，不让用户手动新开会话。只读 Git 探测能识别非 hub 创建的 worktree，并保留子目录 cwd。多个 Claude 各自在自己的 `CLAUDE_CONFIG_DIR` 下查会话，恢复命令显式携带该目录；只读查找，不修改 agent 文件，不导出任意环境变量。尚无 session 或找不到文件时明确说明，不猜路径；运行中或只剩一个 agent 也能复制。原有 agent 写摘要接口保留，返回内容同样附带定位信息。覆盖同名 Claude/相同 session ID 的账号隔离、文件未创建/缺失和复制全文；真实无头 Chromium 看过桌面/手机、亮暗四组合，实体手机未测。
 
 ## 5. 通知与手机
 
@@ -169,6 +169,22 @@
 - [ ] **P2** 滚动搜索；审批卡片「在终端运行」（把命令粘进终端不自动回车）；`RAH_NO_TERMINAL` 整体关闭
 
 已知风险：node-pty 装不上要编译工具链（有 script 退路）；中文 IME 在 xterm 里勉强能用（命令行基本 ASCII，真机验证）；POST 转发击键在慢 VPN 上可能粘滞（先合并批，不行再评估 WS）
+
+## 12. 多机管理
+
+第一期采用 SSH 隧道连接每台机器自己的 daemon，一次查看一台；架构和限制见 `multi-host-design.md`。
+
+- [x] 私有 Unix socket（默认 `~/.local/state/remote-agent-hub/daemon.sock`）：仅本机用户可访问，免 token；已有 daemon 占用时不抢占，支持 `RAH_SOCKET=off`
+- [x] 主 hub 读取 SSH 别名，探测目标默认 socket，保存机器表；隧道健康检查、断线退避重连、手动重试和移除
+- [x] `/api/hosts/:id/proxy/…` 流式代理 HTTP/SSE，移除 hub token，浏览器取消时关闭上游请求，不做级联
+- [x] 线程列表顶部切换机器、对话顶栏显示机器名、「配置 → 机器」添加与移除；离线说明与重试，手机切换后保留线程列表
+- [x] 草稿按机器和线程隔离，保留本机已有草稿；页面刷新和切换后恢复
+- [x] 单元/API 测试 324/324；`hosts`、`smoke`、`sidebar`、`phone`、`reopen` 共 25 条浏览器回归通过，包含经代理发图片、显示图片、打开远端终端与断线恢复；类型检查、构建、发布检查通过。修正旧 e2e 选择器和分页测试，以及假 ACP 在 worktree 路径下误判分叉目标的问题
+- [x] 界面在真实无头 Chromium 中截图检查：桌面 1440×960、手机 390×844，亮色/深色，机器切换、管理面板、失败原因、移除确认与离线状态；截图在忽略目录 `packages/e2e/shots/hosts-*.png`。未在实体手机上验收
+- [ ] 实际目标机器验收：需要已运行 daemon 的 SSH 目标，并验证 hub 服务环境中的免交互认证与重连。本机真实 OpenSSH 隔离试验已验证 40 MB 请求、并发与 SSE，不能替代部署验收
+- [ ] 合并与部署：主工作区有其他未提交改动，合并时处理 `App.tsx`、样式与 e2e harness；部署只用 `scripts/restart.sh`
+- [ ] **P1** 协议版本与能力协商、重命名机器、离线线程缓存
+- [ ] **P2** 「全部」线程列表、跨机器未读与计划；SSH 启动远端 daemon；节点主动连出（笔记本、NAT 或无法长期免交互 SSH 的环境）
 
 ## 参考了哪些项目
 

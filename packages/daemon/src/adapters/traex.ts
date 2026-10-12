@@ -5,6 +5,7 @@ import { readdirSync } from 'node:fs';
 import { promisify } from 'node:util';
 import { AcpAdapter, airForkPoint } from './acp.js';
 import { TRAE_ICON } from './icons.js';
+import { configDirectory, findSessionFile } from './session-location.js';
 import type { PermissionMode } from './types.js';
 
 const execFileAsync = promisify(execFile);
@@ -75,6 +76,12 @@ export class TraexAcpAdapter extends AcpAdapter {
 
   resumeCommand(agentSessionId: string): string {
     return `traex resume ${agentSessionId}`;
+  }
+
+  async sessionLocation(agentSessionId: string | null, cwd: string) {
+    const configDir = configDirectory(this.env, 'RAH_TRAEX_HOME', ['.trae', 'cli'], cwd);
+    const sessionPath = await findSessionFile(join(configDir, 'sessions'), agentSessionId, 3, (name, id) => name.startsWith('rollout-') && name.endsWith(`-${id}.jsonl`));
+    return { configDir, sessionPath };
   }
 
   /** The ACP server has no session/delete; the CLI does it in one short run. */

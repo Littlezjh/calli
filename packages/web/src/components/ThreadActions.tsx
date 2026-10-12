@@ -45,7 +45,7 @@ type DialogState =
   | { kind: 'new-section'; thread: Thread | null }
   | { kind: 'rename-section'; section: Section }
   | { kind: 'delete-section'; section: Section }
-  /** Pick another agent and get a summary to hand the thread's task over to it. */
+  /** Get source-session coordinates and progress for another agent to continue in the same directory. */
   | { kind: 'handover'; thread: Thread };
 
 export type ThreadAction = 'rename' | 'pin' | 'fork' | 'archive' | 'restore' | 'delete';
@@ -379,7 +379,7 @@ export function useThreadActions(deps: Deps) {
     } else if (dialog.kind === 'handover') {
       const { thread } = dialog;
       dialogNode = (
-        <HandoverDialog api={api} thread={thread} agents={agents} onClose={close} onError={onError} />
+        <HandoverDialog api={api} thread={thread} onClose={close} />
       );
     } else {
       const { section } = dialog;

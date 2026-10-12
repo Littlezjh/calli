@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -24,7 +25,18 @@ export interface Config {
   termShell: string | null;
   /** Directory of the built web UI, served at `/` when present. */
   webDir: string | null;
+  /** Unix socket a hub on another machine reaches this daemon through, over SSH. Null when turned off. */
+  socket: string | null;
+  /** argv that starts OpenSSH, for reaching the daemons of other machines. */
+  sshCommand: string[];
 }
+
+/**
+ * Where a daemon's socket is, under the home directory, unless RAH_SOCKET says otherwise. A hub
+ * looks for it there on a machine it is given, so it is a fixed place and not an XDG one: the
+ * environment of an `ssh host command` is not the one the daemon was started in.
+ */
+export const SOCKET_IN_HOME = '.local/state/remote-agent-hub/daemon.sock';
 
 /**
  * Loads `.env` from the current directory if it exists, without overriding
@@ -86,6 +98,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const webDirEnv = env.RAH_WEB_DIR;
   const webDir = webDirEnv ? resolve(webDirEnv) : existsSync(bundledWebDir) ? bundledWebDir : null;
 
+  const socketEnv = env.RAH_SOCKET?.trim();
+  const socket = socketEnv === 'off' ? null : socketEnv ? resolve(socketEnv) : join(env.HOME || homedir(), SOCKET_IN_HOME);
+
   return {
     host: env.RAH_HOST || '127.0.0.1',
     port: Number(env.RAH_PORT || 8787),
@@ -99,5 +114,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     codexCommand,
     termShell,
     webDir,
+    socket,
+    sshCommand: [env.RAH_SSH_BIN || 'ssh'],
   };
 }

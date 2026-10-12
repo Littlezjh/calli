@@ -44,6 +44,23 @@ daemon 在 `packages/daemon` 目录里运行，所以用 `RAH_ENV_FILE` 指向�
 - 使用 HTTP + token。VPN 已加密传输，项目不额外处理证书。
 - 注意：`http://<IP>` 不是安全上下文，因此 PWA 的离线缓存和"添加到主屏幕"不可用，网页里的"拷贝"按钮需要降级处理。
 
+## 管理另一台机器
+
+浏览器只连主 hub；主 hub 通过 SSH 隧道访问另一台机器上的 daemon。线程、文件和 agent 都留在各自机器上。
+
+1. **目标机器**：按上面的快速开始安装、配置并构建，再用 `scripts/install-service.sh` 启动服务。保持默认的私有 socket，不必对外开放 HTTP 端口。
+2. **主 hub**：以 daemon 的运行用户配置 SSH 别名和凭据，先手动连接、核实主机密钥，再确认 `ssh -o BatchMode=yes <SSH别名> true` 能成功。服务需要能持续免交互认证；只在当前终端可用的 ssh-agent 或临时票据不一定能被服务使用。
+3. **浏览器**：打开「配置 → 机器」，从 SSH 别名列表添加，或输入别名 / `user@host`。成功后在线程列表顶部切换机器。
+
+添加流程读取的是 **hub 所在机器**的 SSH 配置，不是手机或电脑浏览器的配置。目标上的 daemon 要先启动；第一期不自动安装和启动。
+
+| 配置 | 默认与用途 |
+| --- | --- |
+| `RAH_SOCKET` | 默认 `~/.local/state/remote-agent-hub/daemon.sock`；`off` 关闭私有监听。自定义路径用于隔离实例，当前远端发现只支持默认路径 |
+| `RAH_SSH_BIN` | 默认 PATH 中的 `ssh`，用于主 hub 连接其他机器 |
+
+私有 socket 依赖文件权限和 SSH 认证，免 token。主 hub 的 token 因此能操作所有已添加的机器。移除机器只断开连接，远端线程继续保留。连不上时，机器面板会显示原因；常见原因是服务环境缺少 SSH 凭据、未知主机密钥、目标 daemon 没启动或 sshd 不允许 Unix socket 转发。架构与限制见 [多机管理设计](docs/multi-host-design.md)。
+
 ## 开机自启
 
 ```bash
@@ -83,7 +100,7 @@ npm run typecheck
 
 ## 安全
 
-- 所有 API 需要 `Authorization: Bearer <RAH_TOKEN>`，`/api/health` 除外。
+- HTTP 监听上的 API 需要 `Authorization: Bearer <RAH_TOKEN>`，`/api/health` 除外；仅本机用户能访问的私有 Unix socket 免 token，由文件权限和 SSH 认证保护。
 - daemon 等同于远程 shell。只把它暴露在可信网络（VPN）中。
 - 工作目录必须在 `RAH_WORKDIRS` 白名单内。
 

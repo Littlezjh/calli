@@ -5,6 +5,7 @@ import type { EmittedEvent } from '../events.js';
 import { imagePathNote } from '../attachments.js';
 import { commandExists } from '../util.js';
 import { ANTIGRAVITY_ICON } from './icons.js';
+import { configDirectory, findSessionFile } from './session-location.js';
 import type {
   AgentAdapter,
   AgentSession,
@@ -517,6 +518,15 @@ export class AgyAdapter implements AgentAdapter {
 
   resumeCommand(agentSessionId: string): string {
     return `agy --conversation ${agentSessionId}`;
+  }
+
+  async sessionLocation(agentSessionId: string | null, cwd: string) {
+    const configDir = configDirectory(this.env, 'RAH_AGY_HOME', ['.gemini', 'antigravity-cli'], cwd);
+    const safeId = agentSessionId && /^[a-z0-9_-]+$/i.test(agentSessionId) ? agentSessionId : null;
+    const sessionPath = safeId
+      ? await findSessionFile(join(configDir, 'brain', safeId, '.system_generated', 'logs'), safeId, 0, (name) => name === 'transcript.jsonl')
+      : null;
+    return { configDir, sessionPath };
   }
 
   /** agy saves what it generates (images, among other things) in a folder of its own per conversation. */

@@ -63,6 +63,8 @@ export async function startDaemon(env = {}) {
   shim(binDir, 'fake-pi', 'fake-pi.mjs');
   shim(binDir, 'fake-claude', 'fake-acp.mjs');
   shim(binDir, 'fake-agy', 'fake-agy.mjs');
+  // For the tests of other machines: `RAH_SSH_BIN: 'fake-ssh'` makes directories stand in for them.
+  shim(binDir, 'fake-ssh', 'fake-ssh.mjs');
   // An extra CLI for the discovery tests: looks like another copy of agy on PATH.
   if (env.RAH_E2E_DISCOVER_AGY2 === '1') shim(binDir, 'agy2', 'fake-agy.mjs');
 
@@ -83,6 +85,8 @@ export async function startDaemon(env = {}) {
     RAH_AGY_BIN: 'fake-agy',
     PI_CODING_AGENT_DIR: join(dataDir, 'pi-agent'),
     RAH_AGY_HOME: join(dataDir, 'agy-home'),
+    // Its own socket, never the one in the home directory that a real hub on this machine holds.
+    RAH_SOCKET: join(dataDir, 'daemon.sock'),
     ...env,
   };
   const child = spawn(process.execPath, [join(repoRoot, 'daemon', 'dist', 'index.js')], {
@@ -158,8 +162,8 @@ export async function openUi(page, daemon) {
     await input.fill(daemon.token);
     await page.getByRole('button', { name: '进入' }).click();
   }
-  // On phones the sidebar is a drawer: the button exists but is not visible until opened.
-  await page.locator('.new-thread').waitFor({ state: 'attached', timeout: 15_000 });
+  // On phones the sidebar is a drawer: it exists but is not visible until opened.
+  await page.locator('.sidebar-inner').waitFor({ state: 'attached', timeout: 15_000 });
 }
 
 /** Signed fetch against the daemon's API, for arranging state outside the UI. */

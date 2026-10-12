@@ -204,6 +204,13 @@ export interface AgentAdapter {
   commands(cwd?: string): Promise<SlashCommand[]>;
   /** The command that continues this session in a terminal, to be run from the thread's directory. */
   resumeCommand(agentSessionId: string): string;
+  /** Read-only location of this instance's native session, without starting an agent. */
+  sessionLocation?(agentSessionId: string | null, cwd: string): Promise<{
+    configDir: string;
+    sessionPath: string | null;
+    /** Account-scoped command, to run in the thread's working directory. */
+    resumeCommand?: string;
+  }>;
   /** Removes the agent's own record of a session. Present only when capabilities.deleteSession is true. */
   deleteSession?(agentSessionId: string, cwd: string): Promise<void>;
   /** Every conversation the agent has on record, in any directory. With capabilities.history. */

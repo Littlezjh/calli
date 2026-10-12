@@ -1,9 +1,10 @@
 import { useState, type MouseEvent } from 'react';
-import type { AgentInfo, Section, Thread } from '../api';
+import type { AgentInfo, HostInfo, Section, Thread } from '../api';
 import { useLongPress, useStoredFlag, useStoredSet } from '../hooks';
 import { attentionCount, threadMark } from '../notices';
 import { folderName } from '../paths';
 import { buildActivity, buildSidebar, projectDir, taggedAgents } from '../sidebar';
+import { HostSwitcher } from './Hosts';
 import { AgentMark, IconBell, IconChevron, IconClose, IconEdit, IconFolder, IconFork, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconWorktree, IconSidebar } from './icons';
 
 export { folderName } from '../paths';
@@ -30,6 +31,12 @@ interface Props {
   compact?: boolean;
   /** Opens the settings menu, where the look, the archive, importing and signing out are. It grows up and to the left from the point given. */
   onOpenSettings: (x: number, y: number) => void;
+  /** Other machines the hub shows, and the one this list is of (null: the hub's own). */
+  hosts?: HostInfo[];
+  hostId?: string | null;
+  onHost?: (id: string | null) => void;
+  /** The machine this list is of cannot be reached: its threads are over there, so there is no list. */
+  hostDown?: boolean;
 }
 
 /** Where a menu opened from a "more" button should appear: just under the button. */
@@ -69,6 +76,10 @@ export function Sidebar({
   compact = false,
   onOpenSettings,
   onHide,
+  hosts = [],
+  hostId = null,
+  onHost,
+  hostDown = false,
 }: Props) {
   const [search, setSearch] = useState('');
   // The search field is put away behind a button until it is asked for.
@@ -297,7 +308,9 @@ export function Sidebar({
       </div>
 
       <div className="sidebar-scroll">
-        {!search.trim() && (
+        {onHost && !search.trim() && <HostSwitcher hosts={hosts} current={hostId} onPick={onHost} />}
+        {hostDown && <p className="group-empty top">这台机器现在连不上，它的线程要等连上才看得到。</p>}
+        {!hostDown && !search.trim() && (
           <div className="side-nav">
             {/* On a wide screen a new thread is the first row, like Codex; a phone keeps the floating button by the thumb. */}
             {!compact && (
@@ -310,11 +323,11 @@ export function Sidebar({
             </button>
           </div>
         )}
-        {groups}
+        {!hostDown && groups}
       </div>
 
       <div className="sidebar-float">
-        {compact && (
+        {compact && !hostDown && (
           <button className="new-thread" onClick={onNew}>
             <IconEdit size={19} /> 新线程
           </button>

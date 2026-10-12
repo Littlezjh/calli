@@ -76,7 +76,14 @@ test('the newest turn opens whole and at the bottom; older turns page in from th
   assert.equal((await view()).dist, 0, 'a reopened thread sits at its newest line');
   assert.deepEqual(requests, ['tail=1']);
 
-  // Up to the top by hand, then one page back: the turn before, and the view does not jump.
+  // Scrolling near the top loads a page automatically. Hold its response to measure the
+  // viewport before prepending, rather than clicking again and inadvertently loading two pages.
+  let releaseOlder;
+  const holdOlder = new Promise((resolve) => { releaseOlder = resolve; });
+  await page.route('**/events?before=*', async (route) => {
+    await holdOlder;
+    await route.continue();
+  });
   const toTop = async () => {
     await page.mouse.move(195, 400);
     await page.mouse.wheel(0, -200_000);
@@ -84,9 +91,8 @@ test('the newest turn opens whole and at the bottom; older turns page in from th
   };
   await toTop();
   const older = page.getByRole('button', { name: '加载更早的消息' });
-  await older.waitFor({ timeout: 5000 });
   const before = await view();
-  await older.click();
+  releaseOlder();
   await page.getByText('second question').waitFor({ timeout: 15_000 });
   await page.waitForTimeout(300);
   assert.deepEqual(await questions(), ['second question', 'latest question']);
@@ -95,7 +101,6 @@ test('the newest turn opens whole and at the bottom; older turns page in from th
 
   // The last page reaches the start of the log, and the button goes away.
   await toTop();
-  await older.click();
   await page.getByText('first question').waitFor({ timeout: 15_000 });
   assert.deepEqual(await questions(), ['first question', 'second question', 'latest question']);
   await page.waitForTimeout(300);

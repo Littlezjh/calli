@@ -54,6 +54,6 @@ test('a page left open says when a newer build is being served, and reloads into
 
   await page.unroute(daemon.base + '/');
   await page.getByRole('button', { name: '刷新' }).click();
-  await page.locator('.new-thread').waitFor({ timeout: 15_000 });
+  await page.locator('.sidebar-inner').waitFor({ timeout: 15_000 });
   assert.equal(await page.getByText('有新版本').count(), 0);
 });

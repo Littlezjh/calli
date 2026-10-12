@@ -215,6 +215,27 @@ export interface TerminalInfo {
 /** One SSE frame of a terminal stream. Output is base64: programs may emit non-UTF-8 bytes. */
 export type TerminalFrame = { type: 'backlog'; data: string } | { type: 'out'; data: string } | { type: 'exit'; code: number };
 
+/** Why a machine cannot be reached, as the hub sorts what ssh said. */
+export type HostFailure = 'no_ssh' | 'host_key' | 'auth' | 'unreachable' | 'ssh_failed' | 'daemon_missing' | 'forward_denied';
+
+/** Another machine this hub shows: the same daemon over there, reached over SSH. */
+export interface HostInfo {
+  id: string;
+  label: string;
+  /** What ssh calls it. */
+  target: string;
+  status: 'connecting' | 'online' | 'offline';
+  code?: HostFailure;
+  /** The failure in ssh's own words. */
+  error?: string;
+  version?: string;
+}
+
+/** Where a path of the API is when another machine answers it: the same path, behind the hub's proxy. */
+export function hostPath(host: string, path: string): string {
+  return path.startsWith('/api/') ? `/api/hosts/${encodeURIComponent(host)}/proxy/${path.slice('/api/'.length)}` : path;
+}
+
 const TOKEN_KEY = 'rah.token';
 
 /** Token lives in localStorage on this device only. Storage can be blocked, so every access is guarded. */
@@ -246,14 +267,24 @@ export class Api {
   constructor(
     private readonly token: string,
     private readonly base = '',
+    /** Another machine's id: every call is then answered by that machine's daemon, through the hub. */
+    readonly host: string | null = null,
   ) {}
 
   private headers(extra: Record<string, string> = {}): Record<string, string> {
     return { Authorization: `Bearer ${this.token}`, ...extra };
   }
 
-  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
-    const res = await fetch(this.base + path, {
+  private url(path: string): string {
+    return this.base + (this.host ? hostPath(this.host, path) : path);
+  }
+
+  private request<T>(method: string, path: string, body?: unknown): Promise<T> {
+    return this.send(method, this.url(path), body);
+  }
+
+  private async send<T>(method: string, url: string, body?: unknown): Promise<T> {
+    const res = await fetch(url, {
       method,
       headers: this.headers(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -263,6 +294,31 @@ export class Api {
     const json = await res.json().catch(() => ({}));
     if (!res.ok) throw new ApiError((json as { error?: string }).error ?? `HTTP ${res.status}`, json as Record<string, unknown>, res.status);
     return json as T;
+  }
+
+  // The machines themselves are the hub's own, whichever machine this client is for.
+
+  hosts(): Promise<HostInfo[]> {
+    return this.send('GET', `${this.base}/api/hosts`);
+  }
+
+  /** Aliases in the hub user's ssh config that are not machines yet. */
+  hostCandidates(): Promise<string[]> {
+    return this.send('GET', `${this.base}/api/hosts/candidates`);
+  }
+
+  /** Signs in to the machine once to find its daemon; refused with a `code` when that fails. */
+  addHost(target: string, label?: string): Promise<HostInfo> {
+    return this.send('POST', `${this.base}/api/hosts`, { target, label });
+  }
+
+  removeHost(id: string): Promise<void> {
+    return this.send('DELETE', `${this.base}/api/hosts/${encodeURIComponent(id)}`);
+  }
+
+  /** Tries the machine again now, and says how that went. */
+  reconnectHost(id: string): Promise<HostInfo> {
+    return this.send('POST', `${this.base}/api/hosts/${encodeURIComponent(id)}/reconnect`);
   }
 
   health(): Promise<{ ok: boolean; version: string }> {
@@ -414,7 +470,7 @@ export class Api {
 
   /** An image file in the thread's directory that the agent made or mentioned. Rejects if there is none. */
   async threadFile(threadId: string, path: string): Promise<Blob> {
-    const res = await fetch(`${this.base}/api/threads/${threadId}/files?path=${encodeURIComponent(path)}`, { headers: this.headers() });
+    const res = await fetch(this.url(`/api/threads/${threadId}/files?path=${encodeURIComponent(path)}`), { headers: this.headers() });
     if (res.status === 401) throw new AuthError('unauthorized');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.blob();
@@ -422,7 +478,7 @@ export class Api {
 
   /** An image attached to a turn. Fetched with the token, since an <img> tag cannot send it. */
   async attachment(threadId: string, attachmentId: string): Promise<Blob> {
-    const res = await fetch(`${this.base}/api/threads/${threadId}/attachments/${attachmentId}`, { headers: this.headers() });
+    const res = await fetch(this.url(`/api/threads/${threadId}/attachments/${attachmentId}`), { headers: this.headers() });
     if (res.status === 401) throw new AuthError('unauthorized');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.blob();
@@ -503,8 +559,8 @@ export class Api {
   /** The handover summary: `{ pending: true }` while the handover turn is still running. */
   handoverSummary(
     threadId: string,
-    turn: string,
-    target: string,
+    turn = '',
+    target = '',
   ): Promise<{ pending: true } | { summary: string; source: 'agent' | 'log' }> {
     const q = `turn=${encodeURIComponent(turn)}&target=${encodeURIComponent(target)}`;
     return this.request('GET', `/api/threads/${threadId}/handover?${q}`);
@@ -585,7 +641,7 @@ export class Api {
    * silent for a few seconds is not waited on at all.
    */
   async stream<T = StoredEvent>(path: string, onEvent: (ev: T) => void, signal: AbortSignal, idleMs = STREAM_IDLE_MS): Promise<void> {
-    const res = await fetch(this.base + path, { headers: this.headers({ Accept: 'text/event-stream' }), signal });
+    const res = await fetch(this.url(path), { headers: this.headers({ Accept: 'text/event-stream' }), signal });
     if (res.status === 401) throw new AuthError('unauthorized');
     if (!res.ok || !res.body) throw new Error(`stream failed: HTTP ${res.status}`);
     const reader = res.body.getReader();

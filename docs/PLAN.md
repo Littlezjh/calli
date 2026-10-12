@@ -9,7 +9,8 @@
    │  HTTP + SSE，Authorization: Bearer <token>
    ▼
 daemon（Node.js，跑在远程主机上）
-   ├─ http.ts         路由、鉴权、SSE、静态文件
+   ├─ http.ts         路由、鉴权、SSE、静态文件、私有 Unix socket
+   ├─ hosts.ts        机器登记、SSH 隧道、健康检查与流式代理
    ├─ threads.ts      线程生命周期、turn、审批、设置
    ├─ store.ts        SQLite：threads、events、sections
    ├─ attachments.ts  图片落盘与校验
@@ -46,6 +47,8 @@ daemon（Node.js，跑在远程主机上）
 
 ## 定下来的事
 
+- **多机管理：** 每台机器运行同一个 daemon，主 hub 通过 SSH 隧道接入目标的私有 Unix socket；agent、线程、图片和计划留在目标机器。浏览器一次查看一台机器，切换时整体替换 API 前缀，草稿按机器隔离。目标 daemon 需先安装并启动，不做级联。详见 `multi-host-design.md`。
+
 - **事件日志是唯一真相。** 每个事件有递增的 `seq`，SSE 断线后用 `after=<seq>` 续传。
 - **上下文占用和累计用量分开。** Codex 取 `tokenUsage.last.totalTokens`，不能取会话累计的 `total`；pi 取 `contextUsage`，压缩后返回 `tokens: null` 时隐藏旧占用，等下一次响应更新；Claude 和 TRAE 取 ACP 的 `usage_update.used / size`。agy 尚未提供占用数据。前端只消费统一事件，不按 agent 分支；80% 提示只是界面阈值，不表示 agent 已触发自动压缩。
 - **读回来按轮次分页。** 文字和思考是一个片段存一条，长轮次有上万条。打开线程只取最新几轮（`events?tail`），更早的从顶部一页页取（`events?before=<seq>`）；一页总是从某一轮的开头开始，单轮再长也整轮给。读回时把同一轮里连续的同类片段合并成首尾两条，存储不变。SSE 续传把游标之后的全部补完再接实时事件，不按页截断。
@@ -74,7 +77,12 @@ daemon（Node.js，跑在远程主机上）
 - **agent 实例（多账号）：** 一个适配器可以起多个实例。实例来自 `data/agents.json`（或 `RAH_AGENTS_JSON` 内联 JSON）：`{ id, adapter, label?, command?, env? }`，adapter 指到 `adapters/` 里的实现，command 不写就继承该适配器的默认。实例 env 合并进它起的所有进程（第二个 Claude 账号带自己的 `CLAUDE_CONFIG_DIR`），所以账号隔离和会话目录隔离都是实例属性。线程的 `agent` 字段存实例 id；内置实例沿用 claude/pi/agy(/traex) 这些名字，老数据零迁移。`GET /api/agents/discover` 扫 PATH 找同类 CLI（前缀匹配且后缀是数字或分隔符，所以 `ping`、`pix` 不算 pi），`POST /api/agents` 添加后立即生效并写回 agents.json。已登录账号的发现：`GET /api/agents/accounts/discover` 让适配器找自己已登录的账号（Claude 扫 `~/.claude*` 目录、逐个 `claude auth status` 验证），已挂到实例上的不列，前端一键链接，差异（找哪里、用什么环境变量）都在适配器里。
 - **终端同步：** 打开线程时和每 30 秒（页面可见时）调 `POST /api/threads/:id/sync`，把 agent 那边的历史读回来（临时进程，只读），从头部逐轮和 hub 的事件对齐：hub 独有的取消轮最多跳过 3 条，对不齐就什么都不写。对齐之后多出的轮次整段补进事件日志，带 `fromTerminal` 标记（界面上一个小"终端"徽标），并记下 `externalAt`。`externalAt` 晚于最近一次 hub 轮（`hubTurnAt`）时，网页发送前弹确认——两边同时写同一个会话会乱序；从网页再发一轮后警告自动解除。同步本身有去重锁，轮询和手动拉不会重复导入。
 
+- **交接定位：** 打开交接即由 hub 只读拼接实例 ID、项目 cwd、agent 配置/数据目录、原生 session ID 和实际文件地址，再附日志摘要。原生目录布局由适配器的 `sessionLocation()` 负责，前端不按 agent 名分支。Claude 恢复命令带对应 `CLAUDE_CONFIG_DIR`，不混用同名实例；找不到文件则明确标注，不回退到其他账号。复制内容要求接手 agent 使用自己的会话在原 cwd 继续；已有 worktree 通过只读 Git 探测定位，保留分支与未提交改动，不另建目录或要求用户手动开会话。
+
 ## 网络与安全
+
+- TCP HTTP API 验证 token（健康检查除外）；私有 Unix socket 免 token，目录与 socket 权限均为 `0700`。默认位于 `~/.local/state/remote-agent-hub/daemon.sock`，`RAH_SOCKET=off` 可关闭。
+- SSH 由 hub 的服务用户发起，使用其 SSH 配置和凭据，要求免交互认证。代理不转发 hub token，不在机器表保存密钥；主 hub token 的权限覆盖所有已添加机器。
 
 - 通过 VPN 访问，HTTP + token。daemon 绑定内网地址，不绑 `0.0.0.0`。
 - daemon 相当于远程 shell，只放在可信网络里。

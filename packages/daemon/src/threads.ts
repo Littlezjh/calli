@@ -19,7 +19,7 @@ import {
 } from './adapters/types.js';
 import { MAX_IMAGES, sniffImageType, sniffSvg, type AttachmentStore, type StoredAttachment } from './attachments.js';
 import { HttpError } from './errors.js';
-import { handoverPrompt, synthesizeHandover, turnMessage } from './handover.js';
+import { handoverContext, handoverPrompt, synthesizeHandover, turnMessage } from './handover.js';
 import { isWithinWorkdirs, Workdirs } from './workdirs.js';
 import { coalesceToolEvents, compactDeltas, type EmittedEvent, type EventType, type StoredEvent } from './events.js';
 import type { SectionRecord, Store, ThreadRecord, ThreadWorktree, TodoRecord } from './store.js';
@@ -1210,23 +1210,40 @@ export class ThreadManager {
    * The handover summary: what the agent wrote in its handover turn, or — when the turn failed or
    * none was run — one the hub synthesizes from the event log, which holds the whole process.
    */
-  handoverSummary(
+  async handoverSummary(
     threadId: string,
     turnId: string | null,
     target?: string,
-  ): { pending: true } | { summary: string; source: 'agent' | 'log' } {
-    const thread = this.getThread(threadId);
+  ): Promise<{ pending: true } | { summary: string; source: 'agent' | 'log' }> {
+    const thread = this.threadView(threadId);
     const events = this.listEventsSince(threadId, 0);
+    const adapter = this.adapters.get(thread.agent);
+    const location = await adapter?.sessionLocation?.(thread.agentSessionId, thread.cwd);
+    const checkout = await findCheckout(thread.cwd);
+    const context = handoverContext({
+      threadId,
+      agentId: thread.agent,
+      agentLabel: adapter?.label ?? thread.agent,
+      adapter: adapter?.id ?? '未知',
+      cwd: thread.cwd,
+      cwdReal: thread.cwdReal,
+      worktree: checkout && !samePath(checkout.top, checkout.main)
+        ? { root: checkout.top, branch: checkout.branch, main: checkout.main }
+        : thread.worktree ? { root: thread.worktree.root, branch: thread.worktree.branch, main: thread.worktree.of } : null,
+      sessionId: thread.agentSessionId,
+      ...location,
+      resumeCommand: location?.resumeCommand ? `cd ${shellQuote(thread.cwd)} && ${location.resumeCommand}` : thread.resumeCommand,
+    });
     if (turnId) {
       const turnEvents = events.filter((e) => e.turnId === turnId);
       if (turnEvents.length === 0) throw new HttpError(404, 'no such turn');
       if (!turnEvents.some((e) => e.type === 'turn.done' || e.type === 'turn.error')) return { pending: true };
       const written = turnMessage(turnEvents).trim();
-      if (written) return { summary: written, source: 'agent' };
+      if (written) return { summary: `${context}\n\n${written}`, source: 'agent' };
     }
     const successor = (target ? this.adapters.get(target)?.label ?? target : '另一个 agent');
     const from = this.adapters.get(thread.agent)?.label ?? thread.agent;
-    return { summary: synthesizeHandover(events, { title: thread.title, from, target: successor }), source: 'log' };
+    return { summary: `${context}\n\n${synthesizeHandover(events, { title: thread.title, from, target: successor })}`, source: 'log' };
   }
 
   /** Takes a waiting message out of the queue and hands it back, so the page can edit and resend it. */

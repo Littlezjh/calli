@@ -4,8 +4,9 @@
 // the effort option is named reasoning_effort, and "delete" on the command line (its CLI,
 // which the adapter runs for deletion) logs to FAKE_ACP_DELETE_LOG and exits.
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
-import { basename } from 'node:path';
+import { basename, dirname } from 'node:path';
 import { createInterface } from 'node:readline';
+import { recordSession } from './fake-session-store.mjs';
 
 if (process.argv[2] === 'delete') {
   // CLI mode, not an ACP server: the traex adapter deletes sessions this way.
@@ -127,7 +128,7 @@ rl.on('line', (line) => {
         }
         // Asked for from a worktree, the copy is one that runs there; its id says so.
         const cwd = String(msg.params.cwd ?? '');
-        const into = cwd.includes('/.worktrees/') ? `-in-${basename(cwd)}` : '';
+        const into = basename(dirname(cwd)) === '.worktrees' ? `-in-${basename(cwd)}` : '';
         return out({ jsonrpc: '2.0', id: msg.id, result: { sessionId: `${msg.params.sessionId}-fork${at ? `-at-${at.messageId}` : ''}${into}` } });
       }
     case 'session/load': {
@@ -179,6 +180,7 @@ rl.on('line', (line) => {
       }
       return;
     case 'session/prompt': {
+      recordSession(traex ? 'traex' : 'claude', msg.params.sessionId);
       const blocks = msg.params.prompt;
       const text = blocks.filter((p) => p.type === 'text').map((p) => p.text).join('');
       const images = blocks.filter((p) => p.type === 'image');
