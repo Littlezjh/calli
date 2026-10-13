@@ -97,7 +97,7 @@ test('zcode supports cancellation, compact and rejects custom commands before se
     assert.equal((await s.prompt(input('/compact keep details'), hooks(events))).stopReason, 'end_turn');
     assert.ok(events.some((e) => e.data.text === '已压缩'));
     assert.equal((await s.prompt(input('/compact already-running'), hooks(events))).stopReason, 'error');
-    await assert.rejects(s.prompt(input('/expert solve'), hooks(events)), /只支持/);
+    await assert.rejects(s.prompt(input('/expert solve'), hooks(events)), /不执行/);
     assert.ok(!f.log().some((r) => r.params?.content === '/expert solve'));
   } finally { await s.close(); f.clean(); }
 });
@@ -134,4 +134,22 @@ test('zcode sends the selected model default reasoning level at creation', async
     assert.equal(created.params.model.options.reasoningLevel, 'low');
     assert.deepEqual(f.adapter.capabilities.permissionModes, []);
   } finally { f.clean(); }
+});
+
+
+test('zcode exposes and handles local query commands without sending prompts', async () => {
+  const f = setup(); const s = await f.adapter.start({ cwd: f.dir });
+  try {
+    assert.deepEqual((await f.adapter.commands()).map((c) => c.name), ['compact', 'help', 'session', 'usage']);
+    for (const [command, expected] of [['/help', '/compact'], ['/session', 'api / small'], ['  /usage  ', '1,500 tokens']]) {
+      const events: EmittedEvent[] = [];
+      assert.equal((await s.prompt(input(command), hooks(events))).stopReason, 'end_turn');
+      assert.ok(events.some((e) => e.type === 'message.delta' && String(e.data.text).includes(expected)));
+    }
+    await assert.rejects(s.prompt(input('/usage extra'), hooks([])), /不接受参数/);
+    await assert.rejects(s.prompt(input('/workflow'), hooks([])), /不执行/);
+    assert.equal(f.log().some((r) => r.method === 'session/send'), false);
+    assert.equal(f.log().find((r) => r.method === 'session/usage').params.sessionId, s.agentSessionId);
+    assert.equal(f.adapter.capabilities.quota, false);
+  } finally { await s.close(); f.clean(); }
 });

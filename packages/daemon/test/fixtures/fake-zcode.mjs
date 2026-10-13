@@ -37,6 +37,7 @@ async function handle(message) {
     case 'session/setMode': mode = p.mode; return reply(id, snapshot());
     case 'session/setModel': model = p.model; return reply(id, snapshot());
     case 'session/setThoughtLevel': return reply(id, snapshot());
+    case 'session/usage': return reply(id, { sessionId, totalTokens: 1500, inputTokens: 1200, outputTokens: 300, reasoningTokens: 100, cacheCreationTokens: 200, cacheReadTokens: 700, modelRequestCount: 2, modelErrorCount: 0, inputBaselineBySource: {} });
     case 'session/read': return reply(id, snapshot());
     case 'session/close': reply(id, { closed: true }); return;
     case 'session/stop': reply(id, { stopped: true }); done('cancelled', ''); return;

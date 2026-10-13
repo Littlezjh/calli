@@ -8,7 +8,12 @@ import { EFFORT_LEVELS, sessionEnvironment, type AgentAdapter, type AgentSession
 
 export const ZCODE_BASIC_TOOLS = ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob'];
 const DELIVERY = 'desktop-continuous';
-const COMMANDS = [{ name: 'compact', description: '压缩当前会话上下文' }];
+const COMMANDS = [
+  { name: 'compact', description: '压缩当前会话上下文', hint: '[压缩说明]' },
+  { name: 'help', description: '查看精简接入支持的命令' },
+  { name: 'session', description: '查看当前会话、模型和记忆状态' },
+  { name: 'usage', description: '查看会话 token 用量（非套餐剩余额度）' },
+];
 
 function selection(id: string, effort?: EffortLevel): { providerId: string; modelId: string; options?: { reasoningLevel: string } } {
   try {
@@ -132,15 +137,35 @@ class ZcodeSession implements AgentSession {
     if (this.closed) throw new Error('zcode 连接已关闭');
     if (this.active) throw new Error('zcode 已有正在运行的轮次');
     if (input.images.length) throw new Error('zcode 适配器暂不支持图片');
-    const compact = /^\/compact(?:\s|$)/.test(input.text);
-    if (input.text.trimStart().startsWith('/') && !compact) throw new Error('精简接入只支持 /compact，不执行 zcode 自定义命令');
+    const text = input.text.trim();
+    const match = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(text);
+    const name = match?.[1];
+    const compact = name === 'compact';
+    if (text.startsWith('/') && !COMMANDS.some((command) => command.name === name)) throw new Error('精简接入不执行此命令，请用 /help 查看支持的命令');
+    if (name && !compact) {
+      if (match?.[2]) throw new Error(`/${name} 不接受参数`);
+      let response: string;
+      if (name === 'help') {
+        response = COMMANDS.map((command) => `/${command.name}：${command.description}`).join('\n\n');
+      } else if (name === 'session') {
+        const snapshot = await this.wire.request('session/read', { sessionId: this.agentSessionId, messageLimit: 1 });
+        const model = snapshot?.settings?.model?.current;
+        response = [`会话：${this.agentSessionId}`, `模型：${model?.providerId ?? '未知'} / ${model?.modelId ?? '未知'}`, '自动记忆：关闭', '工具范围：基础编码工具', '套餐额度：暂不支持查询，请在 zcode 或供应商端查看'].join('\n\n');
+      } else {
+        const usage = await this.wire.request('session/usage', { sessionId: this.agentSessionId });
+        const count = (key: string) => typeof usage?.[key] === 'number' && Number.isFinite(usage[key]) && usage[key] >= 0 ? usage[key].toLocaleString('en-US') : '未知';
+        response = ['当前会话累计用量', `总计：${count('totalTokens')} tokens`, `输入：${count('inputTokens')} · 输出：${count('outputTokens')}`, `推理：${count('reasoningTokens')}`, `缓存读取：${count('cacheReadTokens')} · 缓存写入：${count('cacheCreationTokens')}`, `模型请求：${count('modelRequestCount')} · 错误：${count('modelErrorCount')}`, '套餐剩余额度暂不支持查询，请在 zcode 或供应商端查看。'].join('\n\n');
+      }
+      hooks.emit({ type: 'message.delta', data: { text: response } });
+      return { stopReason: 'end_turn' };
+    }
     const inputId = randomUUID();
     return new Promise<TurnResult>((resolve, reject) => {
       const active = { inputId, hooks, resolve, reject, text: '', seen: new Set<string>() };
       this.active = active;
       this.submission = this.wire.request(compact ? 'session/compact' : 'session/send', {
         sessionId: this.agentSessionId, inputId,
-        ...(compact ? { instructions: input.text.slice('/compact'.length).trim() } : { content: input.text }),
+        ...(compact ? { instructions: text.slice('/compact'.length).trim() } : { content: input.text }),
       }).then((result) => {
         if (compact && result?.compact?.state === 'already_running' && this.active === active) {
           this.finish({ stopReason: 'error', error: 'zcode 已在压缩，请稍后重试' });

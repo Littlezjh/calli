@@ -64,6 +64,12 @@ test('real zcode: memory stays disabled across create, resume and compact', { sk
     assert.equal(session.agentSessionId, id);
     assert.equal((await session.prompt({ text: 'Reply hello again.', images: [] }, hooks)).stopReason, 'end_turn');
     assert.equal((await session.prompt({ text: '/compact', images: [] }, hooks)).stopReason, 'end_turn');
+    for (const text of ['/help', '/session', '/usage']) {
+      let response = '';
+      assert.equal((await session.prompt({ text, images: [] }, { ...hooks, emit: (event) => { if (event.type === 'message.delta') response += event.data.text; } })).stopReason, 'end_turn');
+      assert.ok(response.length > 0);
+      if (text === '/usage') assert.match(response, /总计：[0-9,]+ tokens/);
+    }
     await session.close(); session = undefined;
     assert.equal(JSON.stringify(requests).includes(sentinel), false);
     assert.equal(readFileSync(join(memory, 'MEMORY.md'), 'utf8'), sentinel);

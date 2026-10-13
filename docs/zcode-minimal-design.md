@@ -17,7 +17,7 @@
 | 自动回答提问 | `askUserQuestionAutoResolutionEnabled` | false；额外提问工具不在白名单内 |
 | 自动标题 | create 的 `titleGenerationEnabled` | 新会话为 false；resume 协议没有同等字段，不承诺所有历史会话完全无标题请求 |
 | 会话 MCP | create/resume 的 `mcpServers: []` | 空数组会被本机 CLI 当作未覆盖；用户配置和插件 MCP 仍可能初始化，只有模型调用面受工具白名单限制 |
-| 命令 | adapter 的命令入口 | 仅 `/compact`；其他斜杠命令报错，不展开自定义命令或工作流 |
+| 命令 | adapter 的命令入口 | `/compact`、`/help`、`/session`、`/usage`；查询命令本地处理，不提交模型；不展开自定义命令或工作流 |
 | 原生长期目标 | 恢复 snapshot 的 target | 活跃目标拒绝接入，请用户在 zcode 停止目标或另建线程；adapter 不改写目标状态 |
 
 模型实际看到的工具范围受白名单限制，但 Shell 仍是通用执行能力，白名单不是操作系统沙箱。
@@ -82,3 +82,10 @@ zcode 帧不含标准 JSON-RPC 的 jsonrpc 字段，因此使用 `adapters/zcode
 - 未修改的真实 zcode 0.16.9 + 本地模拟 OpenAI API：模型发现、新建、恢复、流式回复、压缩和模型工具列表；在项目配置显式开启记忆、预置 MEMORY.md 标记时，请求中无该标记、文件不变且无额外记忆提取请求。复验命令：`RAH_ZCODE_REAL_BIN=zcode npx tsx --test packages/daemon/test/zcode-real.test.ts`。
 - Chromium：桌面 1440×1000、手机 390×844，亮色与深色；四张截图实际查看。
 - `npm run typecheck && npm test && npm run build`。构建保留仓库已有的大 bundle 提示。
+
+## 与其他 adapter 的能力对齐
+
+- 与 pi 的 `/session` 对齐：读取会话信息；模型和强度仍通过共用选择器修改。
+- `/usage` 使用原生 `session/usage` 查询会话累计 token、缓存和请求数，不代表套餐剩余额度；不会发送模型请求。
+- Codex 的套餐额度来自 `account/rateLimits/read`；zcode 当前 app-server 没有相应接口。zcode 桌面端通过独立供应商服务和鉴权查询套餐额度，因此本 adapter 保持 `quota: false`，不把 token 消耗转换成额度百分比。
+- 记忆关闭、工具白名单和精简模式保持不变。`/help` 列出实际支持命令，不暴露无法执行的 TUI、Skills 或工作流命令。

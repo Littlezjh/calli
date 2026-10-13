@@ -16,11 +16,20 @@ test('ZCode threads use the shared interface in desktop/phone and both themes', 
   const agents = await (await api(daemon, '/api/agents')).json();
   const agent = agents.find((a) => a.id === 'zcode');
   assert.ok(agent?.capabilities.resume);
+  const commands = await (await api(daemon, '/api/agents/zcode/commands')).json();
+  assert.ok(commands.some((command) => command.name === 'usage'));
   const response = await api(daemon, '/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'zcode', cwd: daemon.workdir, title: 'ZCode 基础编码' }) });
   assert.equal(response.status, 201);
   const thread = await response.json();
   assert.ok((await api(daemon, `/api/threads/${thread.id}/turns`, { method: 'POST', body: JSON.stringify({ text: 'tool' }) })).ok);
   let current;
+  for (let i = 0; i < 100; i++) {
+    current = await (await api(daemon, `/api/threads/${thread.id}`)).json();
+    if (current.status !== 'running') break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.equal(current.status, 'idle');
+  assert.ok((await api(daemon, `/api/threads/${thread.id}/turns`, { method: 'POST', body: JSON.stringify({ text: '/usage' }) })).ok);
   for (let i = 0; i < 100; i++) {
     current = await (await api(daemon, `/api/threads/${thread.id}`)).json();
     if (current.status !== 'running') break;
@@ -35,6 +44,7 @@ test('ZCode threads use the shared interface in desktop/phone and both themes', 
       if (mobile) await page.locator('.menu-btn').click();
       await page.locator('.thread-title', { hasText: 'ZCode 基础编码' }).first().click();
       await page.getByText('你好', { exact: true }).waitFor();
+      await page.getByText('总计：1,500 tokens', { exact: false }).waitFor();
       await page.waitForTimeout(300);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
       if (process.env.RAH_E2E_SHOTS_DIR) {
