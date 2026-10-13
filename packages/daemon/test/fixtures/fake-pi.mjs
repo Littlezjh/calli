@@ -1,3 +1,4 @@
+let pendingCompact = null;
 // Fake pi RPC process for tests. Speaks pi's JSONL RPC protocol on stdio.
 // Prompt text drives behaviour: "slow" waits until abort, "fail" ends with an error.
 import { coordinationFixture } from './coordination.mjs';
@@ -145,7 +146,16 @@ rl.on('line', (line) => {
     case 'compact':
       if (cmd.customInstructions === 'explode') return reply(null, false, 'nothing to compact');
       contextUnknown = true;
-      return reply({ summary: `summary ${cmd.customInstructions ?? ''}`.trim(), tokensBefore: 150000, estimatedTokensAfter: 32000 });
+      const complete = () => reply({ summary: `summary ${cmd.customInstructions ?? ''}`.trim(), tokensBefore: 150000, estimatedTokensAfter: 32000 });
+      const cancelCompact = () => reply(null, false, 'compaction aborted');
+      pendingCompact = cancelCompact;
+      setTimeout(() => {
+        if (pendingCompact !== cancelCompact) return;
+        pendingCompact = null;
+        if (process.env.FAKE_COMPACT_FAIL) reply(null, false, 'compaction failed');
+        else complete();
+      }, Number(process.env.FAKE_COMPACT_DELAY ?? 20));
+      return;
     case 'get_session_stats':
       return reply({
         sessionId,
@@ -269,6 +279,7 @@ rl.on('line', (line) => {
       return out({ type: 'agent_settled', aborted: false });
     }
     case 'abort':
+      if (pendingCompact) { const cancelCompact = pendingCompact; pendingCompact = null; cancelCompact(); }
       reply({});
       if (running) {
         running = false;

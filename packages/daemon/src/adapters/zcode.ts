@@ -1,3 +1,4 @@
+import { isCompaction, trackCompaction } from './compaction.js';
 import { ZCODE_ICON } from './icons.js';
 import { randomUUID } from 'node:crypto';
 import { commandExists } from '../util.js';
@@ -134,6 +135,10 @@ class ZcodeSession implements AgentSession {
     await this.wire.request('session/setThoughtLevel', { sessionId: this.agentSessionId, thoughtLevel: effort, persistAsWorkspaceLastUsed: false }); return true;
   }
   async prompt(input: TurnInput, hooks: TurnHooks): Promise<TurnResult> {
+    return isCompaction(input.text) ? trackCompaction(hooks, () => this.promptInternal(input, hooks)) : this.promptInternal(input, hooks);
+  }
+
+  private async promptInternal(input: TurnInput, hooks: TurnHooks): Promise<TurnResult> {
     if (this.closed) throw new Error('zcode 连接已关闭');
     if (this.active) throw new Error('zcode 已有正在运行的轮次');
     if (input.images.length) throw new Error('zcode 适配器暂不支持图片');
@@ -172,6 +177,7 @@ class ZcodeSession implements AgentSession {
           return;
         }
         if (compact && !result?.compact && this.active === active) {
+          if (typeof result?.response !== 'string' || !result?.snapshot) throw new Error('zcode 未返回可识别的压缩状态');
           if (result?.response) hooks.emit({ type: 'message.delta', data: { text: result.response } });
           this.finish({ stopReason: 'end_turn' });
         }

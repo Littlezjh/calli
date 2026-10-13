@@ -1,3 +1,4 @@
+import { trackCompaction } from './compaction.js';
 import { sessionEnvironment } from './types.js';
 import { spawn } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
@@ -501,7 +502,6 @@ class CodexSession implements AgentSession {
     const turn = this.turn;
     if (!turn) return;
     if (turn.compact) {
-      this.emit({ type: 'tool.end', data: { id: 'codex-compaction', status: stopReason === 'end_turn' ? 'completed' : 'failed', output: stopReason === 'cancelled' ? '压缩已停止' : turn.error ?? '' } });
       if (stopReason === 'end_turn') this.emit({ type: 'message.delta', data: { text: '上下文压缩完成。' } });
     }
     this.turn = null;
@@ -528,20 +528,21 @@ class CodexSession implements AgentSession {
     const name = command?.[1];
     const args = command?.[2]?.trim() ?? '';
     if (name === 'compact' && !input.images.length && !args) {
-      let resolveCompact!: (result: TurnResult) => void;
-      const result = new Promise<TurnResult>((resolve) => { resolveCompact = resolve; });
-      // Register before the RPC: notifications may arrive before its acknowledgement.
-      this.turn = { id: '', resolve: resolveCompact, compact: true };
-      this.emit({ type: 'tool.start', data: { id: 'codex-compaction', title: '压缩上下文', kind: 'other', status: 'in_progress' } });
-      try {
-        await this.peer.request('thread/compact/start', { threadId: this.agentSessionId });
-      } catch (error) {
-        if (this.turn?.compact) {
-          this.turn.error = error instanceof Error ? error.message : String(error);
-          this.finishTurn('error');
+      return trackCompaction(hooks, async () => {
+        let resolveCompact!: (result: TurnResult) => void;
+        const result = new Promise<TurnResult>((resolve) => { resolveCompact = resolve; });
+        // Register before the RPC: notifications may arrive before its acknowledgement.
+        this.turn = { id: '', resolve: resolveCompact, compact: true };
+        try {
+          await this.peer.request('thread/compact/start', { threadId: this.agentSessionId });
+        } catch (error) {
+          if (this.turn?.compact) {
+            this.turn.error = error instanceof Error ? error.message : String(error);
+            this.finishTurn('error');
+          }
         }
-      }
-      return result;
+        return result;
+      });
     }
     if (name && CODEX_LOCAL_COMMANDS.some((c) => c.name === name) && name !== 'review') {
       try {

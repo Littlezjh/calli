@@ -1,3 +1,4 @@
+import { isCompaction, trackCompaction } from './compaction.js';
 import { sessionEnvironment } from './types.js';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from 'node:fs';
@@ -529,13 +530,23 @@ class PiSession implements AgentSession {
       }
       return { stopReason: 'end_turn' };
     } catch (err) {
+      if (this.compactCancelRequested) return { stopReason: 'cancelled' };
       return { stopReason: 'error', error: err instanceof Error ? err.message : String(err) };
     }
   }
 
+  private compacting = false;
+  private compactCancelRequested = false;
+
   async prompt(input: TurnInput, hooks: TurnHooks): Promise<TurnResult> {
-    if (this.turn) throw new Error('a turn is already running');
+    if (this.turn || this.compacting) throw new Error('a turn is already running');
     if (input.images.length === 0) {
+      if (isCompaction(input.text)) {
+        this.compacting = true;
+        this.compactCancelRequested = false;
+        try { return await trackCompaction(hooks, async () => (await this.local(input.text, hooks))!); }
+        finally { this.compacting = false; this.compactCancelRequested = false; }
+      }
       const answered = await this.local(input.text, hooks);
       if (answered) return answered;
     }
@@ -578,7 +589,8 @@ class PiSession implements AgentSession {
   }
 
   async cancel(): Promise<void> {
-    if (!this.turn) return;
+    if (!this.turn && !this.compacting) return;
+    if (this.compacting) this.compactCancelRequested = true;
     await this.request('abort', {}).catch(() => undefined);
   }
 

@@ -194,6 +194,17 @@ rl.on('line', (line) => {
       recordSession(traex ? 'traex' : 'claude', msg.params.sessionId);
       const blocks = msg.params.prompt;
       const text = blocks.filter((p) => p.type === 'text').map((p) => p.text).join('');
+      if (/^\/compact(?:\s|$)/.test(text)) {
+        pendingPrompt = msg;
+        setTimeout(() => {
+          if (pendingPrompt !== msg) return;
+          pendingPrompt = null;
+          if (process.env.FAKE_COMPACT_FAIL) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: 'compaction failed' } });
+          update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '上下文压缩完成。' } });
+          out({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });
+        }, Number(process.env.FAKE_COMPACT_DELAY ?? 20));
+        return;
+      }
       const collaboration = coordinationFixture(text);
       if (collaboration !== null) {
         update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: collaboration } });

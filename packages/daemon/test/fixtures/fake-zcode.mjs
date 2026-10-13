@@ -51,6 +51,11 @@ async function handle(message) {
       // Completion may precede the response to send; the adapter must already be listening.
       if (p.content === 'early') { done('success', '提前完成'); reply(id, { accepted: true }); return; }
       reply(id, method === 'session/compact' ? { compact: { state: 'accepted', inputId: p.inputId } } : { accepted: true });
+      if (method === 'session/compact') {
+        await new Promise((resolve) => setTimeout(resolve, Number(process.env.FAKE_COMPACT_DELAY ?? 20)));
+        if (turn !== activeTurn) return;
+        if (process.env.FAKE_COMPACT_FAIL) { emit('turn.failed', { error: { message: 'compaction failed' } }); turn = null; return; }
+      }
       if (p.content === 'crash') return process.exit(7);
       if (p.content === 'slow') return;
       if (p.content === 'fail') { emit('turn.failed', { error: { message: '模型请求失败' } }); turn = null; return; }

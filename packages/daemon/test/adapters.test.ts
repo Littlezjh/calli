@@ -765,9 +765,9 @@ test('pi: /compact and /session are answered through its requests, and listed fi
   try {
     const compact = collectingHooks();
     assert.deepEqual(await session.prompt(turn('/compact keep the API notes'), compact.hooks), { stopReason: 'end_turn' });
-    assert.deepEqual(compact.events.map((e) => e.type), ['message.delta', 'usage.updated']);
-    assert.equal(compact.events[0].data.text, '已压缩上下文：150.0k → 约 32.0k tokens。');
-    assert.deepEqual(compact.events[1].data, { used: null, size: 200000, cost: { amount: 0.02, currency: 'USD' } });
+    assert.deepEqual(compact.events.map((e) => e.type), ['tool.start', 'message.delta', 'usage.updated', 'tool.end']);
+    assert.equal(compact.events[1].data.text, '已压缩上下文：150.0k → 约 32.0k tokens。');
+    assert.deepEqual(compact.events[2].data, { used: null, size: 200000, cost: { amount: 0.02, currency: 'USD' } });
 
     const stats = collectingHooks();
     await session.prompt(turn('/session'), stats.hooks);

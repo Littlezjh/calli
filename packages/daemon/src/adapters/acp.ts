@@ -1,3 +1,4 @@
+import { isCompaction, trackCompaction } from './compaction.js';
 import { sessionEnvironment } from './types.js';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -234,6 +235,10 @@ export class AcpSession implements AgentSession {
   }
 
   async prompt(input: TurnInput, hooks: TurnHooks): Promise<TurnResult> {
+    return isCompaction(input.text) ? trackCompaction(hooks, () => this.promptInternal(input, hooks)) : this.promptInternal(input, hooks);
+  }
+
+  private async promptInternal(input: TurnInput, hooks: TurnHooks): Promise<TurnResult> {
     this.hooks = hooks;
     try {
       const res = await this.peer.request('session/prompt', {
