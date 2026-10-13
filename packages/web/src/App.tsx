@@ -274,7 +274,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
   // The first page of the open thread is still on its way from the daemon.
   const [eventsLoading, setEventsLoading] = useState(false);
   // Text handed back to the composer: messages that were waiting when the user pressed stop.
-  const [restore, setRestore] = useState<{ text: string; nonce: number } | null>(null);
+  const [restore, setRestore] = useState<{ text: string; nonce: number; mentions?: AgentMention[] } | null>(null);
   // Text quoted out of a message by selecting it.
   const [noteSignal, setNoteSignal] = useState<(DraftNote & { nonce: number }) | null>(null);
   // Where each noted passage stands in the conversation, for as long as its note waits in the box.
@@ -985,8 +985,8 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
     if (!selectedId) return;
     api
       .cancel(selectedId)
-      .then(({ dropped }) => {
-        if (dropped.length) setRestore({ text: dropped.join('\n\n'), nonce: Date.now() });
+      .then(({ dropped, mentions }) => {
+        if (dropped.length || mentions?.length) setRestore({ text: dropped.join('\n\n'), mentions, nonce: Date.now() });
       })
       .catch(handleError);
   };

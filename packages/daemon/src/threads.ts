@@ -72,6 +72,7 @@ export type ThreadView = Omit<ThreadRecord, 'worktree'> & {
 };
 
 interface QueuedTurn {
+  mentions?: unknown[];
   id: string;
   text: string;
   images: unknown[];
@@ -1254,11 +1255,13 @@ export class ThreadManager {
    */
   async startTurn(
     threadId: string,
-    input: { text?: unknown; images?: unknown; queue?: unknown; handover?: unknown; scheduled?: unknown },
+    input: { text?: unknown; images?: unknown; queue?: unknown; mentions?: unknown; handover?: unknown; scheduled?: unknown },
     delivery?: { turnId: string; source: Record<string, unknown>; displayText: string; claim: () => void },
   ): Promise<{ turnId: string } | { queued: true; id: string }> {
     const thread = this.getThread(threadId);
-    const rawText = typeof input.text === 'string' ? input.text.trim() : '';
+    const originalText = typeof input.text === 'string' ? input.text.trim() : '';
+    const mentions = Array.isArray(input.mentions) && input.mentions.length ? input.mentions : undefined;
+    const rawText = this.coordination?.mentionText(threadId, originalText, mentions) ?? originalText;
     const text = rawText ? (this.coordination?.instructions(threadId, rawText) ?? rawText) : '';
     const rawImages = Array.isArray(input.images) ? input.images : [];
     if (!text && rawImages.length === 0) throw new HttpError(400, 'text is empty');
@@ -1268,7 +1271,7 @@ export class ThreadManager {
       const queue = this.queues.get(threadId) ?? [];
       if (queue.length >= MAX_QUEUED) throw new HttpError(409, `at most ${MAX_QUEUED} messages can wait in a thread`);
       this.attachments.check(rawImages); // a bad image is refused now, not when its turn comes
-      const queued: QueuedTurn = { id: randomUUID(), text: rawText, images: rawImages };
+      const queued: QueuedTurn = { id: randomUUID(), text: originalText, images: rawImages, ...(mentions ? { mentions } : {}) };
       this.queues.set(threadId, [...queue, queued]);
       this.emitThreadEvent(threadId, null, 'thread.updated', {});
       return { queued: true, id: queued.id };
@@ -1363,13 +1366,13 @@ export class ThreadManager {
   }
 
   /** Takes a waiting message out of the queue and hands it back, so the page can edit and resend it. */
-  removeQueued(threadId: string, queuedId: string): { text: string; images: unknown[] } {
+  removeQueued(threadId: string, queuedId: string): { text: string; images: unknown[]; mentions?: unknown[] } {
     this.getThread(threadId);
     const queue = this.queues.get(threadId) ?? [];
     const taken = queue.find((q) => q.id === queuedId);
     if (!taken) throw new HttpError(404, 'no such waiting message');
     this.setQueue(threadId, queue.filter((q) => q.id !== queuedId));
-    return { text: taken.text, images: taken.images };
+    return { text: taken.text, images: taken.images, ...(taken.mentions ? { mentions: taken.mentions } : {}) };
   }
 
   /** Interrupts the running turn so that this waiting message goes out next, ahead of the others. */
@@ -1395,7 +1398,7 @@ export class ThreadManager {
     const [next, ...rest] = queue;
     if (rest.length) this.queues.set(threadId, rest);
     else this.queues.delete(threadId);
-    this.startTurn(threadId, { text: next.text, images: next.images }).catch((err) => {
+    this.startTurn(threadId, { text: next.text, images: next.images, mentions: next.mentions }).catch((err) => {
       // The thread was archived or deleted in the meantime, or the message is no longer acceptable.
       console.error(`could not send a queued message: ${err instanceof Error ? err.message : err}`);
       this.queues.delete(threadId);
@@ -1407,13 +1410,14 @@ export class ThreadManager {
    * Stops the running turn. Stopping means stopping: messages waiting behind it are not sent, they
    * are handed back (their text) so the caller can put them in front of the user again.
    */
-  async cancelTurn(threadId: string, opts: { keepQueue?: boolean } = {}): Promise<{ dropped: string[] }> {
+  async cancelTurn(threadId: string, opts: { keepQueue?: boolean } = {}): Promise<{ dropped: string[]; mentions?: unknown[] }> {
     this.getThread(threadId);
     if (!opts.keepQueue) await this.coordination?.beforeStop(threadId);
+    const mentions = opts.keepQueue ? [] : (this.queues.get(threadId) ?? []).flatMap(q => q.mentions ?? []);
     const dropped = opts.keepQueue ? [] : (this.queues.get(threadId) ?? []).map((q) => q.text).filter(Boolean);
     if (!opts.keepQueue && this.queues.has(threadId)) this.setQueue(threadId, []);
     await this.stopTurn(threadId);
-    return { dropped };
+    return { dropped, ...(mentions.length ? { mentions } : {}) };
   }
 
   private async stopTurn(threadId: string): Promise<void> {

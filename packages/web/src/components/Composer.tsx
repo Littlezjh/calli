@@ -129,11 +129,11 @@ interface Props {
   queued: QueuedMessage[];
   onRemoveQueued: (id: string) => void;
   /** Takes a waiting message out of the queue and returns it, to be edited in the box. */
-  onEditQueued: (id: string) => Promise<{ text: string; images: OutgoingImage[] }>;
+  onEditQueued: (id: string) => Promise<{ text: string; images: OutgoingImage[]; mentions?: AgentMention[] }>;
   /** Interrupt the running turn and send this waiting message next. */
   onSendQueuedNow: (id: string) => void;
   /** Text to put back in the box, such as messages that were waiting when the user pressed stop. */
-  restore: { text: string; nonce: number } | null;
+  restore: { text: string; nonce: number; mentions?: AgentMention[] } | null;
   /** A passage noted out of a message, to go along with what is typed. Each one adds to the list. */
   note: (DraftNote & { nonce: number }) | null;
   /** Told which notes are in the box, so their passages can stay highlighted in the conversation. */
@@ -255,6 +255,7 @@ export function Composer({
   // Text handed back goes in front of whatever is being typed, so nothing is lost either way.
   useEffect(() => {
     if (!restore) return;
+    if (restore.mentions?.length) setMentions(current => [...restore.mentions!, ...current]);
     setText((current) => [restore.text, current].filter((s) => s.trim()).join('\n\n'));
     ref.current?.focus();
     // Keyed on the nonce: the same text can be handed back twice.
@@ -349,6 +350,7 @@ export function Composer({
   const editQueued = async (id: string) => {
     try {
       const taken = await onEditQueued(id);
+      if (taken.mentions?.length) setMentions(current => [...taken.mentions!, ...current]);
       setText((current) => [taken.text, current].filter((s) => s.trim()).join('\n\n'));
       const room = MAX_IMAGES - images.length - preparing;
       if (taken.images.length > room) onError(`一条消息最多 ${MAX_IMAGES} 张图片，多出的没有放回`);
@@ -667,7 +669,7 @@ export function Composer({
           {mentions.length > 0 && (
             <div className="coord-rows">
               {mentions.map((m, i) => (
-                <div className="coord-row" key={`${m.kind}:${m.id}`}>
+                <div className="coord-row" key={`${m.kind}:${m.id}:${i}`}>
                   {m.kind === 'member' ? (
                     <span className="coord-row-name">@{m.label}</span>
                   ) : (

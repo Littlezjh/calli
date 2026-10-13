@@ -680,7 +680,7 @@ export class Api {
   }
 
   /** Takes a waiting message out of the queue; it comes back whole, so it can be edited. */
-  removeQueued(threadId: string, queuedId: string): Promise<{ text: string; images: OutgoingImage[] }> {
+  removeQueued(threadId: string, queuedId: string): Promise<{ text: string; images: OutgoingImage[]; mentions?: AgentMention[] }> {
     return this.request('DELETE', `/api/threads/${threadId}/queue/${queuedId}`);
   }
 
@@ -721,7 +721,7 @@ export class Api {
   }
 
   /** Stops the running turn. Messages that were waiting are not sent; their text comes back. */
-  cancel(threadId: string): Promise<{ dropped: string[] }> {
+  cancel(threadId: string): Promise<{ dropped: string[]; mentions?: AgentMention[] }> {
     return this.request('POST', `/api/threads/${threadId}/cancel`);
   }
 

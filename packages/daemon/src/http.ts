@@ -579,9 +579,9 @@ export function createHttpServer(deps: HttpDeps): Server {
 
       if (method === 'POST' && sub === 'turns') {
         const body = await readJson(req, MAX_TURN_BODY);
-        const text = manager.coordination?.mentionText(threadId, body.text, body.mentions) ?? body.text;
+        manager.coordination?.mentionText(threadId, body.text, body.mentions);
         await manager.coordination?.userSpoke(threadId);
-        return sendJson(res, 202, await manager.startTurn(threadId, { text, images: body.images, queue: body.queue }));
+        return sendJson(res, 202, await manager.startTurn(threadId, { text: body.text, images: body.images, queue: body.queue, mentions: body.mentions }));
       }
 
       // DELETE /api/threads/:id/queue/:queuedId: take back a message that is waiting; it comes back

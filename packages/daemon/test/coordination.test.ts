@@ -301,3 +301,31 @@ test('members run with full access unless the team says otherwise, and a change 
     await assert.rejects(h.team.setPermission(h.root.id, 'root'), /权限/);
   } finally { await h.close(); }
 });
+
+test('queued collaboration restores structured targets and compiles them once on dispatch', async () => {
+  const h = await setup();
+  try {
+    await h.team.enable(h.root.id);
+    await h.manager.startTurn(h.root.id, { text: 'slow' });
+    const mentions = [{ id: 'claude', label: 'Claude Code', kind: 'agent', cwd: h.cwd, task: '只给建议' }];
+    const response = await h.api(`/api/threads/${h.root.id}/turns`, { text: '一起分析', mentions, queue: true });
+    assert.equal(response.status, 202);
+    const queued = await response.json() as { id: string };
+    assert.equal(h.manager.threadView(h.root.id).queued[0].text, '一起分析');
+    const taken = h.manager.removeQueued(h.root.id, queued.id);
+    assert.deepEqual(taken, { text: '一起分析', images: [], mentions });
+    await h.manager.startTurn(h.root.id, { ...taken, queue: true });
+    const stopped = await h.manager.cancelTurn(h.root.id);
+    assert.deepEqual(stopped, { dropped: ['一起分析'], mentions });
+    await wait(() => h.manager.threadView(h.root.id).status !== 'running');
+    await h.manager.startTurn(h.root.id, { text: 'slow' });
+    const next = await h.manager.startTurn(h.root.id, { ...taken, queue: true });
+    assert.ok('id' in next);
+    await h.manager.sendQueuedNow(h.root.id, (next as { id: string }).id);
+    await wait(() => h.manager.threadView(h.root.id).status !== 'running' && h.manager.threadView(h.root.id).queued.length === 0);
+    const event = h.store.listEvents(h.root.id, 0, -1).find(e => e.type === 'turn.started' && String(e.data.text).includes('一起分析'));
+    assert.ok(event);
+    assert.equal(String(event.data.text).split('[指定协作对象]').length - 1, 1);
+    assert.match(String(event.data.text), /只给建议/);
+  } finally { await h.close(); }
+});
