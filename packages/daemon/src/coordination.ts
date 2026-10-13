@@ -31,7 +31,7 @@ export function turnAnswer(events: StoredEvent[], turnId: string | null): string
 }
 
 /** The model and thinking effort members of one instance start with; null leaves the agent's own. */
-type MemberDefault = { model: string | null; effort: string | null };
+type MemberDefault = { model: string | null; effort: string | null; /** Set where this instance's members differ from the team's level. */ permission?: string };
 type Team = { rootId: string; paused: boolean; directories: string[]; agents: string[]; members: Member[]; deliveries: Delivery[]; defaults?: Record<string, MemberDefault>;
   /** How much members may do without asking. Unset means full access: nobody watches a member's thread to approve. */
   permission?: string };
@@ -118,26 +118,36 @@ export class CoordinationManager {
         if (typeof v !== 'string' || v.length > 200) throw new HttpError(400, '成员默认设置无效');
         return v;
       };
-      const chosen = { model: pick(value?.model), effort: pick(value?.effort) };
-      if (chosen.model || chosen.effort) out[agent] = chosen;
+      const permission = memberPermission(value?.permission);
+      const chosen = { model: pick(value?.model), effort: pick(value?.effort), ...(permission ? { permission } : {}) };
+      if (chosen.model || chosen.effort || permission) out[agent] = chosen;
     }
     return out;
   }
   async setDefaults(id: string, defaults: unknown) {
-    return this.serial(() => {
+    return this.serial(async () => {
       const t = this.team(id);
       if (!t || t.rootId !== id) throw new HttpError(400, '请在主线程设置成员默认值');
       t.defaults = this.memberDefaults(defaults, t.agents);
+      await this.applyPermission(t);
       this.changed(t);
       return this.view(id);
     });
   }
 
-  /** The level an instance's members run at: the team's where the agent has it, else the agent's own. */
+  /** The level an instance's members run at: its own if set, else the team's; the agent's own where it has neither. */
   private async permissionFor(t: Team, agent: string): Promise<string | undefined> {
     const modes: readonly string[] = (await this.manager.listAgents()).find(a => a.id === agent)?.capabilities.permissionModes ?? [];
-    const wanted = t.permission ?? 'full_access';
+    const wanted = t.defaults?.[agent]?.permission ?? t.permission ?? 'full_access';
     return modes.includes(wanted) ? wanted : undefined;
+  }
+  /** Moves the members there are to the level their instance now has. */
+  private async applyPermission(t: Team): Promise<void> {
+    for (const m of t.members) {
+      const thread = this.store.getThread(m.id);
+      const mode = thread && await this.permissionFor(t, thread.agent);
+      if (mode && thread.permissionMode !== mode) await this.manager.updateThread(m.id, { permissionMode: mode }).catch(() => undefined);
+    }
   }
   /** Sets the level for members to come and moves the members there are to it. */
   async setPermission(id: string, permission: unknown) {
@@ -145,11 +155,9 @@ export class CoordinationManager {
       const t = this.team(id);
       if (!t || t.rootId !== id) throw new HttpError(400, '请在主线程设置成员权限');
       t.permission = memberPermission(permission) ?? 'full_access';
-      for (const m of t.members) {
-        const thread = this.store.getThread(m.id);
-        const mode = thread && await this.permissionFor(t, thread.agent);
-        if (mode && thread.permissionMode !== mode) await this.manager.updateThread(m.id, { permissionMode: mode }).catch(() => undefined);
-      }
+      // One level for everyone: what single instances were given goes with it.
+      for (const value of Object.values(t.defaults ?? {})) delete value.permission;
+      await this.applyPermission(t);
       this.changed(t);
       return this.view(id);
     });

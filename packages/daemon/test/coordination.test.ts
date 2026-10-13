@@ -284,6 +284,14 @@ test('members run with full access unless the team says otherwise, and a change 
     assert.equal(h.manager.threadView(await member('second')).permissionMode, 'ask');
     // traex cannot ask before everything, so its members stay at its own default.
     assert.notEqual(h.manager.threadView(await member('third', 'traex')).permissionMode, 'ask');
+    // One instance can differ from the team; setting the team's level again takes that away.
+    assert.deepEqual((await h.team.setDefaults(h.root.id, { claude: { permission: 'auto_edit' } }))!.defaults, { claude: { model: null, effort: null, permission: 'auto_edit' } });
+    assert.equal(h.manager.threadView(first).permissionMode, 'auto_edit');
+    assert.equal(h.manager.threadView(await member('fourth')).permissionMode, 'auto_edit');
+    assert.equal(h.manager.threadView(await member('fifth', 'codex')).permissionMode, 'ask');
+    assert.deepEqual((await h.team.setPermission(h.root.id, 'full_access'))!.defaults, { claude: { model: null, effort: null } });
+    assert.equal(h.manager.threadView(first).permissionMode, 'full_access');
+    await assert.rejects(h.team.setDefaults(h.root.id, { claude: { permission: 'root' } }), /权限/);
     await assert.rejects(h.team.setPermission(first, 'ask'), /主线程/);
     await assert.rejects(h.team.setPermission(h.root.id, 'root'), /权限/);
   } finally { await h.close(); }

@@ -7511,7 +7511,8 @@ input.picker-search {
 .member-model.set { color: var(--muted); }
 .member-model span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .member-model svg { flex: none; }
-.agent-panel-head > .pop, .coord-default > .pop { flex: none; max-width: 50%; }
+.agent-panel-head > .pop, .coord-default > .pop { flex: none; max-width: 40%; }
+@media (max-width: 640px) { .coord-row .member-model span { display: none; } }
 /* At the top of the panel there is no room above the mark: its panel opens below it. */
 @media (min-width: 641px) {
   .agent-panel-head .pop-panel { top: calc(100% + 8px); bottom: auto; }

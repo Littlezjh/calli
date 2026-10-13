@@ -101,12 +101,15 @@ function savedMemberDefaults(key: string): Record<string, MemberDefault> {
 }
 
 /** The model and thinking effort for one instance's members: a quiet mark until something is chosen. */
-function MemberModel({ agent, models, value, onNeed, onChange }: {
+function MemberModel({ agent, models, value, permission, onNeed, onChange, onPermission }: {
   agent: AgentInfo; models: ModelOption[]; value: MemberDefault; onNeed: (agent: string) => void; onChange: (value: MemberDefault) => void;
+  /** The level in force, and how to change it; left out where the agent has no levels. */
+  permission?: string; onPermission?: (mode: string) => void;
 }) {
   useEffect(() => { onNeed(agent.id); }, [agent.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const efforts = agent.capabilities.effortLevels ?? [];
-  return (
+  return (<>
+    {permission && onPermission && <PermissionPicker quietFor={agent.label} modes={agent.capabilities.permissionModes} value={permission} canAsk={agent.capabilities.approvals ?? true} onChange={onPermission} />}
     <ModelPicker
       quietFor={agent.label}
       models={models}
@@ -114,10 +117,10 @@ function MemberModel({ agent, models, value, onNeed, onChange }: {
       efforts={efforts}
       effort={value.effort}
       // An effort the newly picked model does not take goes back to the default with it.
-      onModel={(model) => onChange({ model, effort: value.effort && effortsForModel(models, model, efforts).includes(value.effort) ? value.effort : null })}
-      onEffort={(effort) => onChange({ model: value.model, effort })}
+      onModel={(model) => onChange({ ...value, model, effort: value.effort && effortsForModel(models, model, efforts).includes(value.effort) ? value.effort : null })}
+      onEffort={(effort) => onChange({ ...value, effort })}
     />
-  );
+  </>);
 }
 
 interface AppProps {
@@ -906,6 +909,8 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
         setDraftWorktree(false);
       }
       // Bringing an agent in with @ is itself the request to collaborate; there is no switch to find first.
+      // A team paused by a stop or a restart goes on when the user brings an agent in again.
+      if (mentions?.length && selected?.coordination?.paused && selected.coordination.rootId === id) await api.configureCoordination(id, { action: 'resume' });
       if ((draftCollaboration || mentions?.length) && !selected?.coordination) await api.configureCoordination(id, { directories: collaborationDirectories.length ? collaborationDirectories : undefined, defaults: startingDefaults, permission: memberPermission });
       stickToBottom.current = true;
       // "queue" only matters while a turn is running: then the message waits instead of being refused.
@@ -1177,17 +1182,26 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
     const remembered = { ...memberDefaults, [agent]: value };
     setMemberDefaults(remembered);
     localStorage.setItem(memberDefaultsKey, JSON.stringify(remembered));
-    if (leading && api) void api.configureCoordination(coordination!.rootId, { action: 'defaults', defaults: { ...teamDefaults, [agent]: value } }).then(setCoordination).catch(handleError);
+    if (leading && api) void api.configureCoordination(coordination!.rootId, { action: 'defaults', defaults: { ...teamDefaults, [agent]: value } }).then((team) => { setCoordination(team); void refreshThreads(); }).catch(handleError);
   };
   const teamPermission = leading ? coordination!.permission ?? 'full_access' : memberPermission;
   const chooseMemberPermission = (mode: string) => {
     setMemberPermission(mode);
     localStorage.setItem(`${memberDefaultsKey}.permission`, mode);
+    // One level for everyone: what single instances were given goes with it.
+    const cleared = Object.fromEntries(Object.entries(memberDefaults).map(([id, { permission: _, ...rest }]) => [id, rest]));
+    setMemberDefaults(cleared);
+    localStorage.setItem(memberDefaultsKey, JSON.stringify(cleared));
     if (leading && api) void api.configureCoordination(coordination!.rootId, { action: 'permission', permission: mode }).then((value) => { setCoordination(value); void refreshThreads(); }).catch(handleError);
   };
-  const memberModel = (agent: AgentInfo) => (
-    <MemberModel agent={agent} models={modelsByAgent[agent.id] ?? []} value={teamDefaults[agent.id] ?? { model: null, effort: null }} onNeed={needModels} onChange={(value) => setMemberDefault(agent.id, value)} />
-  );
+  const memberModel = (agent: AgentInfo) => {
+    const value = teamDefaults[agent.id] ?? { model: null, effort: null };
+    const level = value.permission ?? teamPermission;
+    return (
+      <MemberModel agent={agent} models={modelsByAgent[agent.id] ?? []} value={value} onNeed={needModels} onChange={(next) => setMemberDefault(agent.id, next)}
+        permission={agent.capabilities.permissionModes.includes(level) ? level : undefined} onPermission={(permission) => setMemberDefault(agent.id, { ...value, permission })} />
+    );
+  };
 
   const left = (<>
     {(activeCaps?.coordination || selected?.coordination) && <CoordinationPopover label="协作设置" triggerClassName={`tool-btn coord-tool${selected?.coordination || draftCollaboration ? ' on' : ''}`} triggerLabel="协作" triggerTitle={selected?.coordination || draftCollaboration ? '协作已启用' : '协作'} trigger={<><IconAgents size={16} /><span>协作</span></>}>
@@ -1460,8 +1474,9 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           )}
         </div>
 
-        {/* Collaboration, once on, is one quiet line above the composer, like Codex's. */}
-        {selected?.coordination && !onTodos && !onSkills && hostUp && (
+        {/* A team at work is one quiet line above the composer, like Codex's. Switched on with nobody
+            in it yet, collaboration shows only in its button: there is nothing to look at or resume. */}
+        {selected?.coordination && (selected.coordination.rootId !== selected.id || selected.coordination.children > 0) && !onTodos && !onSkills && hostUp && (
           <div className="coord-bar">
             {selected.coordination.rootId !== selected.id ? (
               <button className="coord-status" onClick={() => pick(selected.coordination!.rootId)}>
@@ -1470,7 +1485,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
             ) : (
               <button className={`coord-status${teamWaiting ? ' attention' : ''}`} aria-label="查看智能体" aria-pressed={agentsOpen} onClick={() => { setAgentsOpen((v) => !v); setFiles(null); }}>
                 <IconAgents size={15} />
-                <span>{selected.coordination.children ? `${selected.coordination.children} 个智能体` : '协作已启用'}</span>
+                <span>{selected.coordination.children} 个智能体</span>
                 {teamNote && <span className="coord-status-note">{teamNote}</span>}
               </button>
             )}
@@ -1516,7 +1531,8 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
 
       {agentsOpen && coordination && <AgentPanel key={coordination.rootId} api={api} team={coordination} agents={agents} memberModel={(thread) => {
         const a = agents.find((v) => v.id === thread.agent);
-        return a ? <MemberModel agent={a} models={modelsByAgent[a.id] ?? []} value={{ model: thread.model ?? null, effort: thread.effort ?? null }} onNeed={needModels} onChange={(value) => { void api.updateThread(thread.id, value).then(() => refreshThreads()).catch(handleError); }} /> : null;
+        return a ? <MemberModel agent={a} models={modelsByAgent[a.id] ?? []} value={{ model: thread.model ?? null, effort: thread.effort ?? null }} onNeed={needModels} onChange={({ model, effort }) => { void api.updateThread(thread.id, { model, effort }).then(() => refreshThreads()).catch(handleError); }}
+          permission={a.capabilities.permissionModes.length ? thread.permissionMode : undefined} onPermission={(permissionMode) => { void api.updateThread(thread.id, { permissionMode }).then(() => refreshThreads()).catch(handleError); }} /> : null;
       }} leadAgent={threads.find((t) => t.id === coordination.rootId)?.agent} phone={compact} onClose={() => setAgentsOpen(false)} onOpen={thread => { openThread(thread); setAgentsOpen(false); }} onAdjust={name => { setAgentsOpen(false); setSelectedId(coordination.rootId); setRestore({ text: `请调整「${name}」的任务：`, nonce: Date.now() }); }} onRefresh={() => { void refreshThreads(); }} onError={handleError} />}
       {files && selected && api && <FilesPanel api={api} threadId={selected.id} target={files} phone={compact} onClose={() => setFiles(null)} />}
       {preview && api && (

@@ -35,7 +35,9 @@ for (const phone of [false, true]) for (const colorScheme of ['light', 'dark']) 
       if (!phone) {
         await page.getByRole('button', { name: '协作', exact: true }).click();
         await page.getByRole('button', { name: '启用协作', exact: true }).click();
-        await page.getByRole('button', { name: '查看智能体', exact: true }).waitFor();
+        // Nobody is in the team yet: the button says it is on, and no line is added above the box.
+        await page.locator('.coord-tool.on').waitFor();
+        assert.equal(await page.locator('.coord-bar').count(), 0);
       }
       const box = page.getByRole('textbox', { name: '消息', exact: true });
       const list = page.getByRole('listbox', { name: '选择协作智能体' });
@@ -89,6 +91,12 @@ for (const phone of [false, true]) for (const colorScheme of ['light', 'dark']) 
       await page.keyboard.press('Escape');
       await control.waitFor({ state: 'detached' });
       await row.locator('.member-model.set', { hasText: picked }).waitFor();
+      // Its level sits beside the model: full access unless changed, here to asking first.
+      const level = row.getByRole('button', { name: /的权限$/ });
+      assert.match(await level.getAttribute('title'), /不再询问/);
+      await level.click();
+      await page.getByRole('menuitemradio', { name: /^请求批准/ }).click();
+      await row.locator('button[title*="都先询问"]').waitFor();
       await task.press('Enter');
       assert.ok(await box.evaluate(el => el === document.activeElement));
       await box.fill('请审查接口文档');
@@ -100,7 +108,7 @@ for (const phone of [false, true]) for (const colorScheme of ['light', 'dark']) 
       assert.equal(mention.task, '只看异常处理');
       await waitIdle(root.id);
       await page.waitForFunction(() => document.querySelector('.composer textarea')?.value === '');
-      await page.getByRole('button', { name: '查看智能体', exact: true }).waitFor();
+      await page.locator('.coord-tool.on').waitFor();
       await page.locator('.coord-row').waitFor({ state: 'detached' });
       await page.locator('.row.user .bubble', { hasText: '只看异常处理' }).waitFor();
 
@@ -116,8 +124,8 @@ for (const phone of [false, true]) for (const colorScheme of ['light', 'dark']) 
       const team = await (await api(daemon, `/api/threads/${root.id}/coordination`)).json();
       const child = team.members[0].id;
       // The member was made with what was chosen on its line, whether the team existed yet or not.
-      // Nobody sits in a member's thread to approve things: it starts with full access.
-      assert.equal((await (await api(daemon, `/api/threads/${child}`)).json()).permissionMode, 'full_access');
+      // The member runs at the level chosen on its line, not the team's full access.
+      assert.equal((await (await api(daemon, `/api/threads/${child}`)).json()).permissionMode, 'ask');
       const offered = await (await api(daemon, '/api/agents/claude/models')).json();
       assert.equal((await (await api(daemon, `/api/threads/${child}`)).json()).model, offered.find(m => m.label === picked).id);
       if (!phone) {

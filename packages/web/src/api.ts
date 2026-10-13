@@ -50,7 +50,7 @@ export interface SearchHit {
 }
 
 /** The model and thinking effort members of one instance start with; null leaves the agent's own. */
-export interface MemberDefault { model: string | null; effort: string | null }
+export interface MemberDefault { model: string | null; effort: string | null; /** Set where this instance's members differ from the team's level. */ permission?: string }
 export interface Coordination {
   rootId: string; paused: boolean; directories: string[]; agents: string[];
   /** By instance id. Absent from older daemons. */

@@ -20,10 +20,12 @@ interface PermissionProps {
   canAsk: boolean;
   /** Opens the panel when this number changes. */
   openSignal?: number;
+  /** Whose level this is, where it is not the thread's own: the trigger is then a quiet mark with a short word. */
+  quietFor?: string;
 }
 
 /** How much the agent may do without asking. Hidden for agents that have no permission modes. */
-export function PermissionPicker({ modes, value, onChange, canAsk, openSignal }: PermissionProps) {
+export function PermissionPicker({ modes, value, onChange, canAsk, openSignal, quietFor }: PermissionProps) {
   const ordered = PERMISSION_ORDER.filter((m) => modes.includes(m));
   if (ordered.length === 0) return null;
   const Icon = PERMISSION_ICON[value] ?? IconShield;
@@ -31,7 +33,9 @@ export function PermissionPicker({ modes, value, onChange, canAsk, openSignal }:
     <Popover
       label="权限"
       openSignal={openSignal}
-      triggerClassName={`tool-btn keep${value === 'full_access' ? ' warn' : ''}`}
+      align={quietFor === undefined ? undefined : 'end'}
+      triggerClassName={quietFor === undefined ? `tool-btn keep${value === 'full_access' ? ' warn' : ''}` : 'member-model set'}
+      triggerLabel={quietFor === undefined ? undefined : `${quietFor} 的权限`}
       triggerTitle={permissionHint(value, canAsk)}
       trigger={
         <>
