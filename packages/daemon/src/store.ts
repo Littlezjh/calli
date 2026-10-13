@@ -32,6 +32,8 @@ export interface ThreadRecord {
   externalAt: string | null;
   /** The newest thing the user asked, kept as the sidebar's second line. Null until the first ask. */
   preview: string | null;
+  /** The schedule that started this thread, if any: what ran it, for the sidebar's badge. */
+  schedule: { id: string; name: string } | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -49,6 +51,43 @@ export interface SectionRecord {
   id: string;
   name: string;
   position: number;
+}
+
+/** A recurring task: a prompt an agent runs in a directory on a cron schedule. See scheduler.ts. */
+export interface ScheduleRecord {
+  id: string;
+  name: string;
+  agent: string;
+  cwd: string;
+  prompt: string;
+  /** Five-field cron expression, matched in the schedule's timezone (or daemon local when null). */
+  cron: string;
+  /** `new`: a fresh thread each run. `same`: one thread, context builds up. */
+  mode: 'new' | 'same';
+  /** The bound thread for `same` mode. Null until its first run created one, or when rebound. */
+  threadId: string | null;
+  permissionMode: string;
+  enabled: boolean;
+  /** IANA timezone for cron matching, e.g. "Asia/Shanghai". Null = daemon local time. */
+  timezone: string | null;
+  /** When true: if runs were missed while the daemon was down, fire once on restart. */
+  catchUp: boolean;
+  /** When a scheduled fire last went out, for de-duplicating ticks in one minute. */
+  lastFiredAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** One firing of a schedule: what happened, and where to look at it. */
+export interface ScheduleRunRecord {
+  id: string;
+  scheduleId: string;
+  status: 'running' | 'done' | 'error' | 'skipped' | 'missed';
+  threadId: string | null;
+  turnId: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  message: string | null;
 }
 
 /** One entry on the plan page. `parentId` is only ever a top-level todo: one level of nesting. */
@@ -71,6 +110,67 @@ interface TodoRow {
   created_at: string;
   done_at: string | null;
 }
+
+interface ScheduleRow {
+  id: string;
+  name: string;
+  agent: string;
+  cwd: string;
+  prompt: string;
+  cron: string;
+  mode: string;
+  thread_id: string | null;
+  permission_mode: string;
+  enabled: number;
+  timezone: string | null;
+  catch_up: number;
+  last_fired_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface ScheduleRunRow {
+  id: string;
+  schedule_id: string;
+  status: string;
+  thread_id: string | null;
+  turn_id: string | null;
+  started_at: string;
+  finished_at: string | null;
+  message: string | null;
+}
+
+const toSchedule = (r: ScheduleRow): ScheduleRecord => ({
+  id: r.id,
+  name: r.name,
+  agent: r.agent,
+  cwd: r.cwd,
+  prompt: r.prompt,
+  cron: r.cron,
+  mode: r.mode === 'same' ? 'same' : 'new',
+  threadId: r.thread_id,
+  permissionMode: r.permission_mode,
+  enabled: r.enabled === 1,
+  timezone: r.timezone ?? null,
+  catchUp: r.catch_up === 1,
+  lastFiredAt: r.last_fired_at,
+  createdAt: r.created_at,
+  updatedAt: r.updated_at,
+});
+
+const toScheduleRun = (r: ScheduleRunRow): ScheduleRunRecord => ({
+  id: r.id,
+  scheduleId: r.schedule_id,
+  status: r.status as ScheduleRunRecord['status'],
+  threadId: r.thread_id,
+  turnId: r.turn_id,
+  startedAt: r.started_at,
+  finishedAt: r.finished_at,
+  message: r.message,
+});
+
+/** How many runs of one schedule are kept. History is for looking at, not bookkeeping. */
+const SCHEDULE_RUN_HISTORY = 50;
 
 const toTodo = (r: TodoRow): TodoRecord => ({
   id: r.id,
@@ -102,6 +202,7 @@ interface ThreadRow {
   hub_turn_at: string | null;
   external_at: string | null;
   preview: string | null;
+  schedule: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -135,6 +236,7 @@ const toThread = (r: ThreadRow): ThreadRecord => ({
   hubTurnAt: r.hub_turn_at,
   externalAt: r.external_at,
   preview: r.preview,
+  schedule: r.schedule ? (JSON.parse(r.schedule) as ThreadRecord['schedule']) : null,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
 });
@@ -232,6 +334,8 @@ export class Store {
     if (!cols.some((c) => c.name === 'worktree')) this.db.exec('ALTER TABLE threads ADD COLUMN worktree TEXT');
     // Migration: unread marker.
     if (!cols.some((c) => c.name === 'unread')) this.db.exec('ALTER TABLE threads ADD COLUMN unread INTEGER NOT NULL DEFAULT 0');
+    // Migration: the schedule a thread was started by, if any, as JSON { id, name }.
+    if (!cols.some((c) => c.name === 'schedule')) this.db.exec('ALTER TABLE threads ADD COLUMN schedule TEXT');
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS sections (
         id TEXT PRIMARY KEY,
@@ -263,6 +367,45 @@ export class Store {
         PRIMARY KEY (todo_id, thread_id)
       );
     `);
+    // Scheduled tasks and their runs. Run history points at threads without a foreign key: a
+    // thread can be deleted long after the run that made it, and the history stays.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS schedules (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        agent TEXT NOT NULL,
+        cwd TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        cron TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        thread_id TEXT,
+        permission_mode TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        last_fired_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS schedule_runs (
+        id TEXT PRIMARY KEY,
+        schedule_id TEXT NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
+        status TEXT NOT NULL,
+        thread_id TEXT,
+        turn_id TEXT,
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        message TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_schedules_runs ON schedule_runs(schedule_id, started_at DESC);
+    `);
+    // Migration: IANA timezone for cron matching ("Asia/Shanghai", etc.). Null means daemon local.
+    const schedCols = this.db.prepare('PRAGMA table_info(schedules)').all() as Array<{ name: string }>;
+    if (!schedCols.some((c) => c.name === 'timezone')) {
+      this.db.exec('ALTER TABLE schedules ADD COLUMN timezone TEXT');
+    }
+    // Migration: catch-up flag — fire once on restart when runs were missed during downtime.
+    if (!schedCols.some((c) => c.name === 'catch_up')) {
+      this.db.exec('ALTER TABLE schedules ADD COLUMN catch_up INTEGER NOT NULL DEFAULT 0');
+    }
     if (!cols.some((c) => c.name === 'handover')) this.recoverHandovers();
     // What was said in each turn, whole: the user's words and the agent's. An answer is stored as
     // it streamed, a few characters an event, so nothing can be found in the log itself.
@@ -394,16 +537,18 @@ export class Store {
       | 'hubTurnAt'
       | 'externalAt'
       | 'preview'
+      | 'schedule'
     > & {
       forkedFrom?: string | null;
       worktree?: ThreadWorktree | null;
       sectionId?: string | null;
+      schedule?: { id: string; name: string } | null;
     },
   ): ThreadRecord {
     const now = new Date().toISOString();
     this.db
       .prepare(
-        'INSERT INTO threads (id, agent, cwd, title, status, pinned, permission_mode, model, effort, forked_from, worktree, section_id, created_at, updated_at, handover) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO threads (id, agent, cwd, title, status, pinned, permission_mode, model, effort, forked_from, worktree, section_id, created_at, updated_at, handover, schedule) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         t.id,
@@ -421,6 +566,7 @@ export class Store {
         now,
         now,
         t.handover ? JSON.stringify(t.handover) : null,
+        t.schedule ? JSON.stringify(t.schedule) : null,
       );
     return this.getThread(t.id)!;
   }
@@ -710,5 +856,100 @@ export class Store {
       .prepare("SELECT 1 AS yes FROM events WHERE thread_id = ? AND seq > ? AND turn_id = ? AND type IN ('turn.done', 'turn.error') LIMIT 1")
       .get(threadId, last.seq, last.turn_id);
     return ended ? null : last.turn_id;
+  }
+
+  // ---------- Scheduled tasks ----------
+
+  listSchedules(): ScheduleRecord[] {
+    return (this.db.prepare('SELECT * FROM schedules ORDER BY created_at ASC').all() as unknown as ScheduleRow[]).map(toSchedule);
+  }
+
+  getSchedule(id: string): ScheduleRecord | null {
+    const row = this.db.prepare('SELECT * FROM schedules WHERE id = ?').get(id) as ScheduleRow | undefined;
+    return row ? toSchedule(row) : null;
+  }
+
+  createSchedule(s: ScheduleRecord): ScheduleRecord {
+    this.db
+      .prepare(
+        'INSERT INTO schedules (id, name, agent, cwd, prompt, cron, mode, thread_id, permission_mode, enabled, timezone, catch_up, last_fired_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      )
+      .run(s.id, s.name, s.agent, s.cwd, s.prompt, s.cron, s.mode, s.threadId, s.permissionMode, s.enabled ? 1 : 0, s.timezone, s.catchUp ? 1 : 0, s.lastFiredAt, s.createdAt, s.updatedAt);
+    return this.getSchedule(s.id)!;
+  }
+
+  updateSchedule(id: string, patch: Partial<Omit<ScheduleRecord, 'id' | 'createdAt'>>): ScheduleRecord | null {
+    const current = this.getSchedule(id);
+    if (!current) return null;
+    const next = { ...current, ...patch, updatedAt: new Date().toISOString() };
+    this.db
+      .prepare('UPDATE schedules SET name = ?, agent = ?, cwd = ?, prompt = ?, cron = ?, mode = ?, thread_id = ?, permission_mode = ?, enabled = ?, timezone = ?, catch_up = ?, last_fired_at = ?, updated_at = ? WHERE id = ?')
+      .run(next.name, next.agent, next.cwd, next.prompt, next.cron, next.mode, next.threadId, next.permissionMode, next.enabled ? 1 : 0, next.timezone, next.catchUp ? 1 : 0, next.lastFiredAt, next.updatedAt, id);
+    return this.getSchedule(id);
+  }
+
+  deleteSchedule(id: string): void {
+    this.db.prepare('DELETE FROM schedules WHERE id = ?').run(id);
+  }
+
+  /** A schedule's runs, newest first. */
+  listScheduleRuns(scheduleId: string, limit = 20): ScheduleRunRecord[] {
+    return (
+      this.db.prepare('SELECT * FROM schedule_runs WHERE schedule_id = ? ORDER BY started_at DESC, id DESC LIMIT ?').all(scheduleId, limit) as unknown as ScheduleRunRow[]
+    ).map(toScheduleRun);
+  }
+
+  /** The newest run of each schedule, keyed by schedule id. */
+  latestScheduleRuns(): Map<string, ScheduleRunRecord> {
+    const rows = this.db.prepare('SELECT r.* FROM schedule_runs r JOIN (SELECT schedule_id, MAX(started_at) AS latest FROM schedule_runs GROUP BY schedule_id) m ON r.schedule_id = m.schedule_id AND r.started_at = m.latest').all() as unknown as ScheduleRunRow[];
+    const out = new Map<string, ScheduleRunRecord>();
+    for (const row of rows) {
+      const run = toScheduleRun(row);
+      if (!out.has(run.scheduleId) || out.get(run.scheduleId)!.startedAt < run.startedAt) out.set(run.scheduleId, run);
+    }
+    return out;
+  }
+
+  insertScheduleRun(run: ScheduleRunRecord): ScheduleRunRecord {
+    this.db
+      .prepare('INSERT INTO schedule_runs (id, schedule_id, status, thread_id, turn_id, started_at, finished_at, message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(run.id, run.scheduleId, run.status, run.threadId, run.turnId, run.startedAt, run.finishedAt, run.message);
+    // History is for looking at, not bookkeeping: keep the newest slice only.
+    this.db
+      .prepare(`DELETE FROM schedule_runs WHERE schedule_id = ? AND id NOT IN (SELECT id FROM schedule_runs WHERE schedule_id = ? ORDER BY started_at DESC, id DESC LIMIT ?)`)
+      .run(run.scheduleId, run.scheduleId, SCHEDULE_RUN_HISTORY);
+    return run;
+  }
+
+  updateScheduleRun(id: string, patch: Partial<Pick<ScheduleRunRecord, 'status' | 'finishedAt' | 'message' | 'threadId'>>): void {
+    const sets: string[] = [];
+    const args: Array<string | number | null> = [];
+    for (const [key, column] of [['status', 'status'], ['finishedAt', 'finished_at'], ['message', 'message'], ['threadId', 'thread_id']] as const) {
+      if (patch[key] !== undefined) {
+        sets.push(`${column} = ?`);
+        args.push(patch[key]);
+      }
+    }
+    if (sets.length === 0) return;
+    args.push(id);
+    this.db.prepare(`UPDATE schedule_runs SET ${sets.join(', ')} WHERE id = ?`).run(...args);
+  }
+
+  /** A run that is still going, if the schedule has one. */
+  runningScheduleRun(scheduleId: string): ScheduleRunRecord | null {
+    const row = this.db
+      .prepare("SELECT * FROM schedule_runs WHERE schedule_id = ? AND status = 'running' ORDER BY started_at DESC, id DESC LIMIT 1")
+      .get(scheduleId) as ScheduleRunRow | undefined;
+    return row ? toScheduleRun(row) : null;
+  }
+
+  /** Every run still marked running: what a restart has to close out. */
+  runningScheduleRuns(): ScheduleRunRecord[] {
+    return (this.db.prepare("SELECT * FROM schedule_runs WHERE status = 'running'").all() as unknown as ScheduleRunRow[]).map(toScheduleRun);
+  }
+
+  findScheduleRunByTurn(turnId: string): ScheduleRunRecord | null {
+    const row = this.db.prepare('SELECT * FROM schedule_runs WHERE turn_id = ? LIMIT 1').get(turnId) as ScheduleRunRow | undefined;
+    return row ? toScheduleRun(row) : null;
   }
 }

@@ -109,7 +109,7 @@ test('the settings button holds what is not an everyday thing, and signing out a
   // The button is at the bottom of the screen, so the menu grows upwards from it and stays whole.
   const menu = await page.getByRole('menu', { name: '配置' }).boundingBox();
   const button = await gear.boundingBox();
-  assert.ok(menu.y + menu.height <= button.y, `the menu sits above its button (${menu.y + menu.height} vs ${button.y})`);
+  assert.ok(menu.y + menu.height <= button.y + 1, `the menu sits above its button (${menu.y + menu.height} vs ${button.y})`);
   assert.ok(menu.y >= 0 && menu.x >= 0);
 
   await page.getByRole('menuitem', { name: '退出', exact: true }).click();

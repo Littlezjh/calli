@@ -183,12 +183,14 @@ export function ThreadView({ items, running, roots, loadImage, loadFile, onOpenF
               {body && (
                 <div className="bubble">
                   {item.fromTerminal && <span className="term-chip" title="这轮是在终端里发的">终端</span>}
+                  {item.scheduled && <span className="term-chip" title="这轮是定时任务发的">定时</span>}
                   {body}
                 </div>
               )}
-              {!body && item.fromTerminal && (
+              {!body && (item.fromTerminal || item.scheduled) && (
                 <div className="bubble">
-                  <span className="term-chip" title="这轮是在终端里发的">终端</span>
+                  {item.fromTerminal && <span className="term-chip" title="这轮是在终端里发的">终端</span>}
+                  {item.scheduled && <span className="term-chip" title="这轮是定时任务发的">定时</span>}
                 </div>
               )}
             </div>

@@ -110,7 +110,7 @@ test('a long press on a row opens its menu, and is not a tap', async () => {
   await touch({ x: box.x + 60, y: box.y + box.height / 2 }, null, 700);
   await page.getByRole('menuitem', { name: '重命名' }).waitFor({ timeout: 5_000 });
   assert.equal(await listOpen(), true, 'the list is still open: the press did not open the thread');
-  assert.equal((await page.locator('.topbar-title').innerText()).trim(), '新线程');
+  assert.equal((await page.locator('.topbar-title').textContent()).trim(), '新线程');
   await page.keyboard.press('Escape');
   await page.getByRole('menuitem', { name: '重命名' }).waitFor({ state: 'detached', timeout: 5_000 });
 });

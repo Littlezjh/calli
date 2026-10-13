@@ -94,6 +94,8 @@ export interface Thread {
   unread: boolean;
   /** The newest thing the user asked, shown under the title. Null until the first ask. */
   preview: string | null;
+  /** The scheduled task that started this thread, if any. Missing from older daemons. */
+  schedule?: { id: string; name: string } | null;
   /** The terminal wrote to this session since the hub last did. */
   terminalActivity: boolean;
   /** The agent has stopped to ask for approval. */
@@ -111,6 +113,42 @@ export interface Thread {
 /** What forking a thread can offer. The worktree is there for a thread in a git repository, with an agent that can move a copy. */
 export interface ForkOptions {
   worktree: { available: boolean; reason?: string; branch?: string | null; changes?: number };
+}
+
+/** One firing of a scheduled task: how it went, and which thread to look at. */
+export interface ScheduleRun {
+  id: string;
+  scheduleId: string;
+  status: 'running' | 'done' | 'error' | 'skipped' | 'missed';
+  threadId: string | null;
+  turnId: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  message: string | null;
+}
+
+/** A recurring task: a prompt an agent runs in a directory on a cron schedule. */
+export interface Schedule {
+  id: string;
+  name: string;
+  agent: string;
+  cwd: string;
+  prompt: string;
+  cron: string;
+  mode: 'new' | 'same';
+  threadId: string | null;
+  permissionMode: string;
+  enabled: boolean;
+  timezone: string | null;
+  catchUp: boolean;
+  /** The cron in words. Empty for uncommon shapes: show the raw expression. */
+  description: string;
+  nextRunAt: string | null;
+  lastRun: ScheduleRun | null;
+  /** Why this cannot run as-is: a broken expression, a gone agent, a gone thread. */
+  problem: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 /** A request the daemon refused. `details` is whatever it sent besides the message, for errors the page handles itself. */
@@ -525,6 +563,48 @@ export class Api {
 
   unlinkTodo(id: string, threadId: string): Promise<void> {
     return this.request('DELETE', `/api/todos/${id}/threads?threadId=${encodeURIComponent(threadId)}`);
+  }
+
+  schedules(): Promise<Schedule[]> {
+    return this.request('GET', '/api/schedules');
+  }
+
+  createSchedule(input: {
+    name?: string;
+    agent: string;
+    cwd: string;
+    prompt: string;
+    cron: string;
+    mode: 'new' | 'same';
+    threadId?: string | null;
+    permissionMode?: string;
+    enabled?: boolean;
+    timezone?: string | null;
+    catchUp?: boolean;
+  }): Promise<Schedule> {
+    return this.request('POST', '/api/schedules', input);
+  }
+
+  updateSchedule(id: string, patch: Record<string, unknown>): Promise<Schedule> {
+    return this.request('PATCH', `/api/schedules/${id}`, patch);
+  }
+
+  deleteSchedule(id: string): Promise<void> {
+    return this.request('DELETE', `/api/schedules/${id}`);
+  }
+
+  /** Fires now, whatever the clock says and whether the schedule is enabled. */
+  runSchedule(id: string): Promise<{ status: string; message?: string }> {
+    return this.request('POST', `/api/schedules/${id}/run`);
+  }
+
+  scheduleRuns(id: string): Promise<ScheduleRun[]> {
+    return this.request('GET', `/api/schedules/${id}/runs`);
+  }
+
+  /** What a cron expression means: for the form's live preview. */
+  previewCron(cron: string, timezone?: string | null): Promise<{ description: string; fires: string[] }> {
+    return this.request('POST', '/api/schedules/preview', { cron, ...(timezone ? { timezone } : {}) });
   }
 
   thread(id: string): Promise<Thread> {

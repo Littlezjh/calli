@@ -6,7 +6,7 @@ import { attentionCount, threadMark } from '../notices';
 import { folderName } from '../paths';
 import { buildActivity, buildSidebar, handoverGroups, markTerms, projectDir, SEARCH_MIN, taggedAgents } from '../sidebar';
 import { HostSwitcher } from './Hosts';
-import { AgentMark, IconBell, IconChevron, IconClose, IconEdit, IconFolder, IconFork, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconWorktree, IconSidebar } from './icons';
+import { AgentMark, IconBell, IconChevron, IconClock, IconClose, IconEdit, IconFolder, IconFork, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconWorktree, IconSidebar } from './icons';
 
 export { folderName } from '../paths';
 
@@ -28,6 +28,9 @@ interface Props {
   onOpenTodos: () => void;
   /** The plan page is what the main area shows. */
   todosActive?: boolean;
+  onOpenSchedules: () => void;
+  /** The scheduled-task page is what the main area shows. */
+  schedulesActive?: boolean;
   /** The phone layout: the list is a page of its own under the conversation, laid out for thumbs. */
   compact?: boolean;
   /** Opens the settings menu, where the look, the archive, importing and signing out are. It grows up and to the left from the point given. */
@@ -78,6 +81,8 @@ export function Sidebar({
   onNewSection,
   onOpenTodos,
   todosActive = false,
+  onOpenSchedules,
+  schedulesActive = false,
   compact = false,
   onOpenSettings,
   onHide,
@@ -143,10 +148,14 @@ export function Sidebar({
           <span className="thread-fork" role="img" aria-label={`工作树 ${t.worktree.branch}`} title={`在工作树里，分支 ${t.worktree.branch}`}>
             <IconWorktree size={13} />
           </span>
+        ) : t.forkedFrom ? (
+          <span className="thread-fork" role="img" aria-label="分叉">
+            <IconFork size={13} />
+          </span>
         ) : (
-          t.forkedFrom && (
-            <span className="thread-fork" role="img" aria-label="分叉">
-              <IconFork size={13} />
+          t.schedule && (
+            <span className="thread-fork" role="img" aria-label={`定时任务 ${t.schedule.name}`} title={`定时任务「${t.schedule.name}」运行`}>
+              <IconClock size={13} />
             </span>
           )
         )}
@@ -362,6 +371,9 @@ export function Sidebar({
             )}
             <button className={`side-link${todosActive ? ' active' : ''}`} aria-current={todosActive ? 'page' : undefined} onClick={onOpenTodos}>
               <IconList size={compact ? 21 : 17} /> 计划
+            </button>
+            <button className={`side-link${schedulesActive ? ' active' : ''}`} aria-current={schedulesActive ? 'page' : undefined} onClick={onOpenSchedules}>
+              <IconClock size={compact ? 21 : 17} /> 定时任务
             </button>
           </div>
         )}

@@ -223,6 +223,8 @@
 | acp-ui | ACP 客户端的做法：权限、模式、模型选择 |
 | CloudCLI | 手机体验；工具权限默认收紧。它是 AGPL，不抄代码 |
 | Happy | 手机上接着电脑的会话继续 |
+| AionUi | 定时任务：cron 预设生成、每次新会话/固定会话两种执行模式、启用开关与立即运行 |
+| Trigger.dev | 运行历史状态机（running/done/error/skipped）、重叠时跳过并记录 |
 
 ## 13. 技能管理
 
@@ -253,3 +255,16 @@
 - [x] 搜索对话内容：侧栏搜索除标题和目录外，还搜每一轮里用户的话和智能体的回复（不含工具输出和思考），归档线程也在内；结果显示命中片段，点开跳到那一轮。daemon 另存一张按轮拼好的文本表（`turn_text`），首次启动时从已有记录补建，接口 `GET /api/search?q=`。
 - [ ] 真实 agent 的沙箱与 shell 环境联调、实体手机触控和部署验收；适配器能力标记只表示运行期环境支持
 - [ ] 后续按需补充：多结果合并投递、启用后调整实例范围、派发记录跳转、审批汇总与归档成员清理
+
+## 15. 定时任务
+
+方案与开源调研见 [scheduled-tasks-design.md](scheduled-tasks-design.md)。第一版已实现。
+
+- [x] 后端：`cron.ts`（自写 5 字段 cron，无新依赖）+ `scheduler.ts`（30 秒 tick、重叠跳过、错过记 `missed`、重启收尾）+ SQLite 两张表（schedules、schedule_runs，历史每任务留 50 条）+ REST API（增删改查、立即运行、历史、cron 预览）+ 单测（cron 10 项、调度器 9 项，含重启恢复、同线程换绑、删除保留线程）
+- [x] 执行模式：`new`（每次新线程）和 `same`（固定线程继续，可换绑）；线程带时钟徽标，`turn.started` 带 `scheduled` 标记（气泡里「定时」徽章，同终端徽标）；权限档位默认「请求批准」，无人值守选「完全访问」并提示风险；提示词 `{{date}}` 替换为当天日期
+- [x] 界面：侧边栏「定时任务」入口，任务卡片（频率人话、下次运行、上次结果、开关、立即运行）、新建/编辑 Dialog（预设频率生成 cron、自定义实时预览下三次触发、目录选择、绑定已有会话、运行记录点跳线程）
+- [x] 验证：类型检查、daemon 270 项 + web 152 项测试、新增 2 项浏览器回归（表单创建→立即运行→线程带定时徽章与日期替换；开关与删除确认）；无头 Chromium 桌面 1400×900 / 手机 390×844 × 亮色深色，用 DOM 度量（无溢出、开关垂直居中）和截图检查过；真机 iOS 未看（无触摸手势的 e2e 在本机环境本就跑不了，HEAD 上同样失败）
+- [x] 时区：任务可存 IANA 时区（空 = daemon 本地），`cron.ts` 用 `Intl.DateTimeFormat` 取分量，匹配/下次触发/错过计数/preview 全按时区；表单时区输入（非法即时提示），卡片非本机时区时显示时区名（daemon + web + 测试 + 界面四组合验证）
+- [x] 错过可选补跑：任务可勾「停机错过后，启动时补跑一次」，恢复阶段除记 `missed` 外补跑一次；默认关（daemon + 测试 + 表单选项）
+- [x] e2e 修复：phone.spec 在本机挂 4 项的根因是 Drawer 打开时 `.main` 为 `visibility: hidden`，`innerText()` 按规范返回空串，且测试 3 报错后菜单未关引发级联失败；断言改 `textContent()`，sidebar.spec 坐标判断加 1px 亚像素容差。phone.spec 连续两次 6/6，smoke/sidebar/schedules 回归全过
+- [ ] 之后：对话内让 agent 自己建任务（MCP/工具调 `POST /api/schedules`，参考 nyx-builds/agent-scheduler；需先决定给 agent 什么入口）

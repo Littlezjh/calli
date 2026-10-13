@@ -1108,6 +1108,8 @@ export class ThreadManager {
     worktree?: boolean;
     /** In no project: the thread gets a fresh folder of its own in the hub's scratch area; `cwd` is ignored. */
     scratch?: boolean;
+    /** The scheduled task that starts this thread, if any: shown as its badge. */
+    schedule?: { id: string; name: string } | null;
   }, inheritedWorktree?: ThreadWorktree | null, handover?: ThreadRecord['handover']): Promise<ThreadView> {
     const adapter = this.adapters.get(input.agent);
     if (!adapter) throw new HttpError(400, `unknown agent: ${input.agent}`);
@@ -1160,6 +1162,7 @@ export class ThreadManager {
         model,
         effort,
         handover,
+        schedule: input.schedule ?? null,
         ...(input.sectionId ? { sectionId: input.sectionId } : {}),
         ...(added ? { worktree: { root: added.tree.root, branch: added.tree.branch, of: cwd } } : inheritedWorktree ? { worktree: inheritedWorktree } : {}),
       });
@@ -1251,7 +1254,7 @@ export class ThreadManager {
    */
   async startTurn(
     threadId: string,
-    input: { text?: unknown; images?: unknown; queue?: unknown; handover?: unknown },
+    input: { text?: unknown; images?: unknown; queue?: unknown; handover?: unknown; scheduled?: unknown },
     delivery?: { turnId: string; source: Record<string, unknown>; displayText: string; claim: () => void },
   ): Promise<{ turnId: string } | { queued: true; id: string }> {
     const thread = this.getThread(threadId);
@@ -1297,6 +1300,7 @@ export class ThreadManager {
           ...(text !== rawText ? { displayText: delivery?.displayText ?? rawText.split('\n\n[指定协作对象]')[0] } : {}),
           ...(stored.length ? { images: stored } : {}),
           ...(typeof input.handover === 'string' && input.handover ? { handover: input.handover } : {}),
+          ...(input.scheduled === true ? { scheduled: true } : {}),
         });
       });
     } catch (err) { this.running.delete(threadId); throw err; }

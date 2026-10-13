@@ -30,6 +30,21 @@ export const IconPlus = (p: { size?: number }) => (
     <path d="M12 5v14M5 12h14" />
   </Svg>
 );
+
+/** A clock face with hands, for scheduled tasks. */
+export const IconClock = (p: { size?: number }) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="M12 7.5V12l3 2" />
+  </Svg>
+);
+
+/** A play triangle, for "run now". */
+export const IconPlay = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M8 5.5v13l10-6.5z" />
+  </Svg>
+);
 export const IconSend = (p: { size?: number }) => (
   <Svg {...p}>
     <path d="M12 19V5M6 11l6-6 6 6" />

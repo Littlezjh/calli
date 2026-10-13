@@ -4,6 +4,7 @@ import { createHttpServer, listenPrivate } from './http.js';
 import { HostRegistry } from './hosts.js';
 import { AgentRegistry, defaultInstances } from './agents.js';
 import { AttachmentStore } from './attachments.js';
+import { Scheduler } from './scheduler.js';
 import { Store } from './store.js';
 import { TerminalManager } from './terminals.js';
 import { ThreadManager } from './threads.js';
@@ -49,6 +50,9 @@ async function main(): Promise<void> {
   const dirs = new Workdirs(workdirs, join(config.dataDir, 'workdirs.json'), join(config.dataDir, 'scratch'));
   const manager = new ThreadManager(store, adapters, dirs, new AttachmentStore(config.dataDir), () => registry.list());
   manager.recoverInterrupted();
+  // Scheduled tasks tick on their own, on the machine where their threads live.
+  const scheduler = new Scheduler(store, manager, adapters);
+  scheduler.start();
   const coordinationPath = join(config.dataDir, 'coordination', 'limi.sock');
   const coordination = new CoordinationManager(store, manager, coordinationPath);
   const collaborationServer = coordinationServer(coordination);
@@ -60,16 +64,16 @@ async function main(): Promise<void> {
   // Previews are served on a port of their own: the iframe needs an origin separate from the app
   // (see preview.ts). One port past the app's is the default; RAH_PREVIEW_PORT picks another.
   const previewPort = Number(process.env.RAH_PREVIEW_PORT) || config.port + 1;
-  const server = createHttpServer({ manager, registry, terminals, hosts, token: config.token, webDir: config.webDir, version: VERSION, previewPort });
+  const server = createHttpServer({ manager, registry, terminals, hosts, scheduler, token: config.token, webDir: config.webDir, version: VERSION, previewPort });
   // Same requests, other origin: preview frames load from here so their pages cannot reach the
   // app, while their own CSS and scripts load same-origin. Without the port, previews say so.
-  const preview = createHttpServer({ manager, registry, terminals, hosts, token: config.token, webDir: null, version: VERSION, previewPort });
+  const preview = createHttpServer({ manager, registry, terminals, hosts, scheduler, token: config.token, webDir: null, version: VERSION, previewPort });
   preview.on('error', (err: NodeJS.ErrnoException) => {
     console.warn(`warning: preview port ${previewPort} unavailable (${err.code}); previews disabled`);
   });
   preview.listen(previewPort, config.host, () => console.log(`previews on http://${config.host}:${previewPort}`));
   // The same API on a socket only this user can open: how a hub on another machine reaches this one.
-  const local = config.socket ? createHttpServer({ manager, registry, terminals, trusted: true, token: config.token, webDir: null, version: VERSION }) : null;
+  const local = config.socket ? createHttpServer({ manager, registry, terminals, scheduler, trusted: true, token: config.token, webDir: null, version: VERSION }) : null;
   let ownsSocket = false;
   if (local && config.socket) {
     listenPrivate(local, config.socket)
@@ -101,6 +105,7 @@ async function main(): Promise<void> {
     collaborationServer.close();
     rmSync(coordinationPath, { force: true });
     await manager.shutdown();
+    scheduler.dispose();
     terminals.dispose();
     store.close();
     process.exit(0);

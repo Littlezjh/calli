@@ -10,6 +10,7 @@ import type { StoredEvent } from './events.js';
 import { HttpError } from './errors.js';
 import type { HostRegistry } from './hosts.js';
 import { checkGrant, cookieValue, makeGrant, PREVIEW_COOKIE, readPreviewFile } from './preview.js';
+import type { Scheduler } from './scheduler.js';
 import type { TerminalEvent, TerminalManager } from './terminals.js';
 import type { ThreadManager } from './threads.js';
 import { isWithinWorkdirs } from './workdirs.js';
@@ -23,6 +24,8 @@ export interface HttpDeps {
   terminals?: TerminalManager;
   /** Other machines this hub shows. Optional so simple setups and tests need none. */
   hosts?: HostRegistry;
+  /** Scheduled tasks. Optional so tests can run without one. */
+  scheduler?: Scheduler;
   /**
    * Requests need no token: the server listens on a socket only this user can open, and a hub
    * reaches it over SSH. Such a server shows this machine only, never the machines added to it.
@@ -168,7 +171,7 @@ function serveStatic(res: ServerResponse, webDir: string, urlPath: string): void
 }
 
 export function createHttpServer(deps: HttpDeps): Server {
-  const { manager, registry, terminals, hosts, trusted, token, webDir, version } = deps;
+  const { manager, registry, terminals, hosts, scheduler, trusted, token, webDir, version } = deps;
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? '/', 'http://localhost');
@@ -408,6 +411,27 @@ export function createHttpServer(deps: HttpDeps): Server {
       }
     }
 
+    // Scheduled tasks: CRUD, manual run, run history, and a cron preview for the form.
+    if (scheduler && parts[0] === 'api' && parts[1] === 'schedules') {
+      if (method === 'GET' && !parts[2]) return sendJson(res, 200, scheduler.list());
+      if (method === 'POST' && !parts[2]) return sendJson(res, 201, await scheduler.create(await readJson(req)));
+      if (method === 'POST' && parts[2] === 'preview' && !parts[3]) {
+        const body = await readJson(req);
+        return sendJson(res, 200, scheduler.preview(body.cron, body.timezone));
+      }
+      if (method === 'GET' && parts[2] && parts[3] === 'runs' && !parts[4]) {
+        const tail = Number(url.searchParams.get('tail'));
+        return sendJson(res, 200, scheduler.runs(parts[2], Number.isFinite(tail) && tail > 0 ? tail : undefined));
+      }
+      if (method === 'POST' && parts[2] && parts[3] === 'run' && !parts[4]) return sendJson(res, 202, await scheduler.runNow(parts[2]));
+      if (method === 'PATCH' && parts[2] && !parts[3]) return sendJson(res, 200, await scheduler.update(parts[2], await readJson(req)));
+      if (method === 'DELETE' && parts[2] && !parts[3]) {
+        scheduler.remove(parts[2]);
+        res.writeHead(204).end();
+        return;
+      }
+    }
+
     // Web terminals: a real PTY each, output over SSE and keystrokes over POST.
     if (terminals) {
       if (path === '/api/terminals') {
@@ -448,10 +472,17 @@ export function createHttpServer(deps: HttpDeps): Server {
     // GET /api/stream: lightweight stream of thread-list changes.
     if (method === 'GET' && path === '/api/stream') {
       openSse(res);
-      const off = manager.subscribe((ev) => {
+      const offThreads = manager.subscribe((ev) => {
         if (GLOBAL_EVENT_TYPES.has(ev.type)) writeEvent(res, ev);
       });
-      return finishStream(req, res, off);
+      // Schedule changes ride the same stream: the list page refreshes like the thread list does.
+      const offSchedules = scheduler?.subscribe(() =>
+        writeEvent(res, { threadId: '', seq: 0, turnId: null, type: 'schedules.changed', ts: new Date().toISOString(), data: {} }),
+      );
+      return finishStream(req, res, () => {
+        offThreads();
+        offSchedules?.();
+      });
     }
 
     // /api/threads/:id ...

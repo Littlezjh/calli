@@ -13,6 +13,7 @@ import {
   type SlashCommand,
   type Thread,
   type Todo,
+  type Schedule,
   type WorkdirsConfig,
 } from './api';
 import type { HubAction } from './commands';
@@ -46,6 +47,7 @@ import type { AgentMention, Coordination, MemberDefault, SearchHit } from './api
 import { Popover as CoordinationPopover } from './components/Popover';
 import { SideChat } from './components/SideChat';
 import { SkillsPage } from './components/SkillsPage';
+import { SchedulesPage } from './components/SchedulesPage';
 import { TodosPage } from './components/TodosPage';
 import { AgentPicker, type DiscoveredAccount, type DiscoveredAgent, effortsForModel, imagesBlocked, imagesNote, modelName, ModelPicker, PermissionPicker, UsageMeter, WorkspacePicker } from './components/Pickers';
 import { Sidebar, SIDEBAR_SHORTCUT } from './components/Sidebar';
@@ -85,6 +87,7 @@ const isNearBottom = (el: HTMLElement) => el.scrollHeight - el.scrollTop - el.cl
 /** The plan page's address. Threads have none: the main area showing a thread is the plain URL. */
 const TODOS_HASH = '#/todos';
 const SKILLS_HASH = '#/skills';
+const SCHEDULES_HASH = '#/schedules';
 
 /** Whether the thread list is put away on a wide screen. */
 const SIDEBAR_HIDDEN_KEY = 'rah.sidebar.hidden';
@@ -171,13 +174,22 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
   const [threads, setThreads] = useState<Thread[]>([]);
   const [sections, setSections] = useState<Section[]>([]);
   const [todos, setTodos] = useState<Todo[]>([]);
-  /** What the main area shows: a thread (or the blank one a new thread starts from), the plan page, or the skills page. */
+  const [schedules, setSchedules] = useState<Schedule[]>([]);
+  /** What the main area shows: a thread (or the blank one a new thread starts from), the plan page, the scheduled-task page, or the skills page. */
   // Those pages have addresses of their own, so a reload or a bookmark lands back on them.
-  const [view, setView] = useState<'thread' | 'todos' | 'skills'>(() =>
-    window.location.hash === TODOS_HASH ? 'todos' : window.location.hash === SKILLS_HASH ? 'skills' : 'thread',
+  const [view, setView] = useState<'thread' | 'todos' | 'schedules' | 'skills'>(() =>
+    window.location.hash === TODOS_HASH
+      ? 'todos'
+      : window.location.hash === SCHEDULES_HASH
+        ? 'schedules'
+        : window.location.hash === SKILLS_HASH
+          ? 'skills'
+          : 'thread',
   );
   /** Bumped by daemon broadcasts, so the open plan page reloads. */
   const [todosKey, setTodosKey] = useState(0);
+  /** The same, for the open scheduled-task page. */
+  const [schedulesKey, setSchedulesKey] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [coordination, setCoordination] = useState<Coordination | null>(null);
   const memberDefaultsKey = hostId ? `${MEMBER_DEFAULTS_KEY}:${hostId}` : MEMBER_DEFAULTS_KEY;
@@ -303,16 +315,17 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
   }, [api, selectedId, threads]);
   useEffect(() => { setAgentsOpen(false); setDraftCollaboration(false); setCollaborationDirectories([]); }, [selectedId, hostId]);
   const onTodos = view === 'todos' && !selectedId;
+  const onSchedules = view === 'schedules' && !selectedId;
   const onSkills = view === 'skills' && !selectedId;
 
   // The address follows what the main area shows. Replaced, not pushed: going between the pages and
   // threads is not a trail for the back button to walk.
   useEffect(() => {
-    const want = onTodos ? TODOS_HASH : onSkills ? SKILLS_HASH : '';
+    const want = onTodos ? TODOS_HASH : onSchedules ? SCHEDULES_HASH : onSkills ? SKILLS_HASH : '';
     if (window.location.hash !== want) {
       window.history.replaceState(window.history.state, '', want || window.location.pathname + window.location.search);
     }
-  }, [onTodos, onSkills]);
+  }, [onTodos, onSkills, onSchedules]);
 
   // Whether the directory a new thread would start in is a git repository. Asked once per directory picked.
   useEffect(() => {
@@ -338,6 +351,11 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
       if (window.location.hash === TODOS_HASH) {
         setSelectedId(null);
         setView('todos');
+        setDrawer(false);
+      }
+      if (window.location.hash === SCHEDULES_HASH) {
+        setSelectedId(null);
+        setView('schedules');
         setDrawer(false);
       }
       if (window.location.hash === SKILLS_HASH) {
@@ -395,6 +413,10 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
 
   const refreshThreads = () => api?.threads().then(setThreads).catch(() => undefined);
   const reloadTodos = useCallback(() => api?.todos().then(setTodos).catch(() => undefined), [api]);
+  const reloadSchedules = useCallback(
+    () => api?.schedules().then(setSchedules).catch(() => setSchedules([])),
+    [api],
+  );
   const dismissToast = useCallback(() => setToast(null), []);
 
   // Initial data once we have a token.
@@ -403,12 +425,13 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
     let cancelled = false;
     (async () => {
       try {
-        const [a, c, t, s, td] = await Promise.all([
+        const [a, c, t, s, td, sc] = await Promise.all([
           api.agents(),
           api.workdirs(),
           api.threads(),
           api.sections(),
           api.todos().catch(() => []),
+          api.schedules().catch(() => []),
         ]);
         if (cancelled) return;
         setAgents(a);
@@ -416,6 +439,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
         setThreads(t);
         setSections(s);
         setTodos(td);
+        setSchedules(sc);
         setDraftCwd((cur) => cur || c.workdirs[0] || '');
         const first = a.find((x) => x.available);
         setDraftAgent(first?.id ?? '');
@@ -451,6 +475,9 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
         api.threads().then(setThreads).catch(() => undefined);
         // Plan chips show thread states; a bumped key reloads the open page.
         setTodosKey((k) => k + 1);
+        // Scheduled runs finish and problems appear the same way.
+        api.schedules().then(setSchedules).catch(() => undefined);
+        setSchedulesKey((k) => k + 1);
       }, 150);
     };
     (async () => {
@@ -993,6 +1020,11 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
     setView('todos');
     setDrawer(false);
   };
+  const openSchedules = () => {
+    setSelectedId(null);
+    setView('schedules');
+    setDrawer(false);
+  };
 
   const openSkills = () => {
     setSelectedId(null);
@@ -1345,6 +1377,8 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           onNewSection={threadActions.newSection}
           onOpenTodos={openTodos}
           todosActive={onTodos}
+          onOpenSchedules={openSchedules}
+          schedulesActive={onSchedules}
         />
       </aside>
 
@@ -1366,8 +1400,8 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           )}
           <div className="topbar-heading">
             {/* The plan page carries its own heading. */}
-            <div className="topbar-title">{host && !hostUp ? host.label : onTodos || onSkills ? '' : selected ? selected.title : '新线程'}</div>
-            {!selected && !onTodos && !onSkills && host && hostUp && <div className="topbar-sub">{host.label}</div>}
+            <div className="topbar-title">{host && !hostUp ? host.label : onTodos || onSkills || onSchedules ? '' : selected ? selected.title : '新线程'}</div>
+            {!selected && !onTodos && !onSkills && !onSchedules && host && hostUp && <div className="topbar-sub">{host.label}</div>}
             {selected && (
               <div className="topbar-sub" title={selected.cwd}>
                 {agentLabel(selected.agent)} ·{' '}
@@ -1421,7 +1455,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           )}
         </header>
 
-        {selected && !onTodos && !onSkills && hostUp && <HandoverTrail thread={selected} threads={threads} agentLabel={agentLabel} onSelect={pick} />}
+        {selected && !onTodos && !onSkills && !onSchedules && hostUp && <HandoverTrail thread={selected} threads={threads} agentLabel={agentLabel} onSelect={pick} />}
 
         {error && (
           <div className="banner" role="alert">
@@ -1441,6 +1475,20 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           // The skills page spans the machines from the hub, so it carries its own scroller too.
           <div key="skills" className="scroller">
             <SkillsPage api={api} token={token} hostId={hostId} hosts={hosts} agents={agents} onError={handleError} />
+          </div>
+        ) : onSchedules ? (
+          // The same: a document-style page with a scroller of its own.
+          <div key="schedules" className="scroller">
+            <SchedulesPage
+              api={api}
+              schedules={schedules}
+              agents={agents}
+              workdirs={workdirs}
+              refreshKey={schedulesKey}
+              onReload={reloadSchedules}
+              onOpenThread={(id) => pick(id)}
+              onError={handleError}
+            />
           </div>
         ) : onTodos ? (
           // A scroller of its own: the thread's one pins itself to the bottom, a document starts at the top.
