@@ -1,3 +1,4 @@
+import { fetchZcodeQuota } from './zcode-quota.js';
 import { isCompaction, trackCompaction } from './compaction.js';
 import { ZCODE_ICON } from './icons.js';
 import { randomUUID } from 'node:crypto';
@@ -58,7 +59,7 @@ export class ZcodeAdapter implements AgentAdapter {
     coordination: true, resume: true, approvals: true,
     // ZCode also treats toolAllowlist as approval exemptions, so permission tiers would mislead.
     permissionModes: [], effortLevels: EFFORT_LEVELS,
-    images: false, deleteSession: false, history: false, quota: false,
+    images: false, deleteSession: false, history: false, quota: true,
     compact: true, fork: false, forkAt: false, multiAccount: false, forkInto: false,
   };
   private cachedModels: ModelOption[] | null = null;
@@ -70,6 +71,7 @@ export class ZcodeAdapter implements AgentAdapter {
     this.command = base.includes('app-server') || base.includes('agent-server') ? [...base] : [...base, 'app-server'];
   }
   async available(): Promise<boolean> { return commandExists(this.command[0]); }
+  fetchQuota() { return fetchZcodeQuota(this.env); }
   commands() { return Promise.resolve(COMMANDS); }
   // Native terminal sessions do not inherit limi's runtime preferences.
   resumeCommand(id: string): string { return `zcode --resume ${quoteArg(id)}`; }
@@ -155,11 +157,11 @@ class ZcodeSession implements AgentSession {
       } else if (name === 'session') {
         const snapshot = await this.wire.request('session/read', { sessionId: this.agentSessionId, messageLimit: 1 });
         const model = snapshot?.settings?.model?.current;
-        response = [`会话：${this.agentSessionId}`, `模型：${model?.providerId ?? '未知'} / ${model?.modelId ?? '未知'}`, '自动记忆：关闭', '工具范围：基础编码工具', '套餐额度：暂不支持查询，请在 zcode 或供应商端查看'].join('\n\n');
+        response = [`会话：${this.agentSessionId}`, `模型：${model?.providerId ?? '未知'} / ${model?.modelId ?? '未知'}`, '自动记忆：关闭', '工具范围：基础编码工具', '套餐额度：请在左下角额度看板查看（默认账号）'].join('\n\n');
       } else {
         const usage = await this.wire.request('session/usage', { sessionId: this.agentSessionId });
         const count = (key: string) => typeof usage?.[key] === 'number' && Number.isFinite(usage[key]) && usage[key] >= 0 ? usage[key].toLocaleString('en-US') : '未知';
-        response = ['当前会话累计用量', `总计：${count('totalTokens')} tokens`, `输入：${count('inputTokens')} · 输出：${count('outputTokens')}`, `推理：${count('reasoningTokens')}`, `缓存读取：${count('cacheReadTokens')} · 缓存写入：${count('cacheCreationTokens')}`, `模型请求：${count('modelRequestCount')} · 错误：${count('modelErrorCount')}`, '套餐剩余额度暂不支持查询，请在 zcode 或供应商端查看。'].join('\n\n');
+        response = ['当前会话累计用量', `总计：${count('totalTokens')} tokens`, `输入：${count('inputTokens')} · 输出：${count('outputTokens')}`, `推理：${count('reasoningTokens')}`, `缓存读取：${count('cacheReadTokens')} · 缓存写入：${count('cacheCreationTokens')}`, `模型请求：${count('modelRequestCount')} · 错误：${count('modelErrorCount')}`, '套餐额度请在左下角额度看板查看；此处仅为会话 token 用量。'].join('\n\n');
       }
       hooks.emit({ type: 'message.delta', data: { text: response } });
       return { stopReason: 'end_turn' };

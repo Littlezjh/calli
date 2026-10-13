@@ -150,6 +150,6 @@ test('zcode exposes and handles local query commands without sending prompts', a
     await assert.rejects(s.prompt(input('/workflow'), hooks([])), /不执行/);
     assert.equal(f.log().some((r) => r.method === 'session/send'), false);
     assert.equal(f.log().find((r) => r.method === 'session/usage').params.sessionId, s.agentSessionId);
-    assert.equal(f.adapter.capabilities.quota, false);
+    assert.equal(f.adapter.capabilities.quota, true);
   } finally { await s.close(); f.clean(); }
 });

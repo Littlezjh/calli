@@ -87,5 +87,5 @@ zcode 帧不含标准 JSON-RPC 的 jsonrpc 字段，因此使用 `adapters/zcode
 
 - 与 pi 的 `/session` 对齐：读取会话信息；模型和强度仍通过共用选择器修改。
 - `/usage` 使用原生 `session/usage` 查询会话累计 token、缓存和请求数，不代表套餐剩余额度；不会发送模型请求。
-- Codex 的套餐额度来自 `account/rateLimits/read`；zcode 当前 app-server 没有相应接口。zcode 桌面端通过独立供应商服务和鉴权查询套餐额度，因此本 adapter 保持 `quota: false`，不把 token 消耗转换成额度百分比。
+- Codex 的套餐额度来自 `account/rateLimits/read`；zcode 当前 app-server 没有相应接口。zcode 桌面端通过独立供应商服务和鉴权查询套餐额度，本 adapter 通过只读解析 CLI 默认供应商及其匹配账号的缓存凭据查询 BigModel / Z.ai 个人 Coding Plan，并接入左下角额度看板。查询不创建会话、不刷新或写入凭据；团队套餐、Start Plan 和自定义供应商暂显示未支持。可沿用原生 `ZCODE_BIGMODEL_USAGE_API_KEY` / `BIGMODEL_USAGE_API_KEY` 与额度 URL 环境覆盖。额度是默认账号的套餐数据，不是当前会话 token 的换算值。
 - 记忆关闭、工具白名单和精简模式保持不变。`/help` 列出实际支持命令，不暴露无法执行的 TUI、Skills 或工作流命令。
