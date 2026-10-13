@@ -161,7 +161,8 @@ export type Item =
   | { kind: 'changes'; key: string; turnId: string; files: FileChange[]; added: number; removed: number }
   /** The row under a finished answer. `text` is what "copy" copies; `at` is when the turn ended, where the hub saw it end. */
   | { kind: 'actions'; key: string; turnId: string; text: string; at?: string }
-  | { kind: 'error'; key: string; turnId: string | null; message: string }
+  /** `planExhausted`: the agent's account ran out of usage, so another agent can be asked to take over. */
+  | { kind: 'error'; key: string; turnId: string | null; message: string; planExhausted?: boolean }
   /** Where a fork begins: above it is the conversation it was copied from, below it its own. `branch` when it got a worktree. */
   | { kind: 'fork'; key: string; turnId: null; branch?: string };
 
@@ -171,6 +172,7 @@ export type Item =
  */
 export function errorText(data: Record<string, any>): string {
   if (data.code === 'interrupted') return 'hub 重启时这一轮还在运行，被中断了。再发一条消息可以接着做。';
+  if (data.code === 'plan_exhausted') return `这个账号的额度用完了（${String(data.message ?? '').replace(/^Internal error:\s*/, '')}）。可以交给另一个智能体接着做。`;
   if (data.code === 'permission_refused') {
     const what = Array.isArray(data.refused) && data.refused.length ? `（${data.refused.join('、')}）` : '';
     return `这一步需要批准${what}，但这个 agent 在后台运行时没法询问，所以拒绝后停下了。把输入框下方的权限切到"完全访问"，再发一次。`;
@@ -543,7 +545,7 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
 
       case 'turn.error':
         closeTurn(ev.ts);
-        items.push({ kind: 'error', key, turnId: turn, message: errorText(ev.data) });
+        items.push({ kind: 'error', key, turnId: turn, message: errorText(ev.data), ...(ev.data.code === 'plan_exhausted' ? { planExhausted: true } : {}) });
         running = false;
         break;
 

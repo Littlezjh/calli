@@ -99,6 +99,9 @@
 - [x] 链接另一个账号（发现已登录的）：终端里 `CLAUDE_CONFIG_DIR=~/.claude-2 claude` 登录好的账号，Agent picker「已登录的账号」一节里一键接进来，不用 SSH。`GET /api/agents/accounts/discover`：适配器各自找已登录的账号（Claude 扫 `~/.claude` 和 `~/.claude-2` 这类目录、只认目录，逐个 `claude auth status` 问邮箱，登录过期的自然掉出列表；`env.CLAUDE_CONFIG_DIR` 由适配器构造，前端不认变量名），registry 补上只有它知道的——已被实例占用的账号不列（无 env 的实例占用默认账号），建议 id/label 取第一个空闲的 `claude-N`/「Claude Code N」，同一次发现里也不撞。点一下即 `POST /api/agents` 注册并选中。本地跑 claude 的命令统一走 `RAH_CLAUDE_BIN`（原 `RAH_CLAUDE_QUOTA_BIN` 仍认）。页面里直接完成 OAuth 授权的向导（daemon 起登录进程、贴授权码）以后再做
 - [x] 交接：线程菜单「交接」打开后直接整理可复制内容，无需额外发送一轮；复制不要求选择接手 agent。另可选择接手实例后点「新建接手对话」，在原 cwd 和已有 worktree 创建独立空线程，交接内容预填到可编辑输入框，用户点击发送后才开始一轮。新草稿按机器与线程隔离并立即保存，保留原线程和普通新线程的草稿。包含来源机器、具体 agent 实例名/实例 ID/类型、项目工作目录及真实路径、agent 配置/数据目录、session ID、实际 session 文件地址、hub 线程 ID、原会话恢复命令（仅供参考），以及从事件日志合成的任务进度。接手要求明确写入复制内容：使用接手 agent 自己的会话，在原 cwd 继续；保留原 worktree、分支和未提交改动，不让用户手动新开会话。只读 Git 探测能识别非 hub 创建的 worktree，并保留子目录 cwd。多个 Claude 各自在自己的 `CLAUDE_CONFIG_DIR` 下查会话，恢复命令显式携带该目录；只读查找，不修改 agent 文件，不导出任意环境变量。尚无 session 或找不到文件时明确说明，不猜路径；运行中或只剩一个 agent 也能复制。原有 agent 写摘要接口保留，返回内容同样附带定位信息。覆盖同名 Claude/相同 session ID 的账号隔离、文件未创建/缺失和复制全文；真实无头 Chromium 看过桌面/手机、亮暗四组合，实体手机未测。
 - [x] 交接会话归组：同分组内折叠交接链，按整组最近活跃排序，展开查看各 agent 会话；顶部交接记录支持返回原会话及打开接手会话。单独持久化来源与快照，兼容旧记录的明确本机交接信息，普通 fork 保持独立。
+- [x] 交接列表改成 Orca 式卡片：最新会话在上，下面一行「N 个会话」可展开，每个会话一行（状态、实例图标、名称、原始/接手、多久前）。
+- [x] 额度用完时一键接手：适配器 `planExhausted` 识别「session/usage limit」类报错（Claude、Codex），轮次错误带 `plan_exhausted`；报错卡片上「交给 X 接手」直接新建接手对话并发出 hub 拼好的交接内容，优先同类型的另一个实例，「选择其他智能体」打开交接弹窗。
+- [ ] `@实例 /handoff 补充说明`：同一动作的命令入口；接手对话成为协作的新主控，原有成员结果改投给它。
 
 ## 5. 通知与手机
 

@@ -697,6 +697,11 @@ export class CodexAppServerAdapter implements AgentAdapter {
     return `codex resume ${agentSessionId}`;
   }
 
+  /** "You've hit your usage limit. … try again at …" */
+  planExhausted(message: string): boolean {
+    return /hit your (?:\w+ )?limit|usage limit/i.test(message);
+  }
+
   async sessionLocation(agentSessionId: string | null, cwd: string) {
     const configDir = configDirectory(this.env, 'CODEX_HOME', ['.codex'], cwd);
     const matches = (name: string, id: string) => name.startsWith('rollout-') && name.endsWith(`-${id}.jsonl`);

@@ -169,3 +169,29 @@ test('handover-thread creates an unsent conversation in the same worktree, inclu
     await manager.shutdown();store.close();rmSync(root,{recursive:true,force:true});
   }
 });
+
+test('a turn that fails because the plan ran out is marked so another agent can take over', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'rah-plan-exhausted-'));
+  const cwd = join(root, 'project');
+  mkdirSync(cwd);
+  const registry = new AgentRegistry([{ id: 'claude', adapter: 'claude', label: 'Claude Code', command: [process.execPath, fixture], env: { CLAUDE_CONFIG_DIR: join(root, 'claude'), FAKE_SESSION_ROOT: join(root, 'claude') } }], null);
+  const store = new Store(join(root, 'data'));
+  const manager = new ThreadManager(store, registry.adapters, new Workdirs([cwd], null), new AttachmentStore(join(root, 'data')));
+  try {
+    const thread = await manager.createThread({ agent: 'claude', cwd });
+    const ended = async () => {
+      for (let n = 0; n < 200 && manager.getThread(thread.id).status === 'running'; n++) await new Promise((r) => setTimeout(r, 25));
+      return manager.listEventsSince(thread.id, 0).filter((e) => e.type === 'turn.error').at(-1);
+    };
+    await manager.startTurn(thread.id, { text: 'out of plan' });
+    const error = await ended();
+    assert.equal(error?.data.code, 'plan_exhausted');
+    assert.match(String(error?.data.message), /session limit/);
+    // Any other failure keeps no code: the button is only for a plan that ran out.
+    assert.equal(registry.adapters.get('claude')!.planExhausted!('Internal error'), false);
+  } finally {
+    await manager.shutdown();
+    store.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});

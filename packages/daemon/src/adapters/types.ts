@@ -222,6 +222,11 @@ export interface AgentAdapter {
   commands(cwd?: string): Promise<SlashCommand[]>;
   /** The command that continues this session in a terminal, to be run from the thread's directory. */
   resumeCommand(agentSessionId: string): string;
+  /**
+   * Whether a failed turn's message says the account's plan has run out (a session or usage limit),
+   * so the hub can offer another agent to take over. Agents word this differently; each says its own.
+   */
+  planExhausted?(message: string): boolean;
   /** Read-only location of this instance's native session, without starting an agent. */
   sessionLocation?(agentSessionId: string | null, cwd: string): Promise<{
     configDir: string;

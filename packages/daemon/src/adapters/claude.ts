@@ -143,6 +143,11 @@ export class ClaudeAcpAdapter extends AcpAdapter {
     return `claude --resume ${agentSessionId}`;
   }
 
+  /** "You've hit your session limit · resets 10:10am (UTC)", and the weekly and usage variants. */
+  planExhausted(message: string): boolean {
+    return /hit your (?:\w+ )?limit|usage limit reached/i.test(message);
+  }
+
   async sessionLocation(agentSessionId: string | null, cwd: string) {
     const configDir = configDirectory(this.env, 'CLAUDE_CONFIG_DIR', ['.claude'], cwd);
     // A resumed or forked session can belong to another worktree within this account.

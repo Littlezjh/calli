@@ -3,7 +3,7 @@ import { ApiError, type AgentInfo, type Api, type Section, type Thread, type Tod
 import { copyText } from '../clipboard';
 import { folderName } from '../paths';
 import { ChoiceDialog, Dialog } from './Dialog';
-import { HandoverDialog } from './HandoverDialog';
+import { HandoverDialog, handoverMessage } from './HandoverDialog';
 import { Menu, type MenuEntry } from './Menu';
 import { IconArchive, IconCheck, IconCopy, IconDot, IconEdit, IconFork, IconHand, IconList, IconPin, IconPlus, IconTerminal, IconTrash, IconWorktree } from './icons';
 import type { ToastState } from './Toast';
@@ -421,6 +421,24 @@ export function useThreadActions(deps: Deps) {
     openSectionMenu: (section: Section, x: number, y: number) => setMenu({ section, x, y }),
     copyConversation: (thread: Thread) => void copy(markdownOf(thread), '对话'),
     newSection: () => setDialog({ kind: 'new-section', thread: null }),
+    /** Opens the handover, to pick who takes over or copy what it says. */
+    handover: (thread: Thread) => setDialog({ kind: 'handover', thread }),
+    /**
+     * Hands the thread to `agent` at once: a new conversation in the same place, sent the handover the
+     * hub assembles from the log. For when the thread's own agent cannot go on, so it is not asked.
+     */
+    takeOver: async (thread: Thread, agent: string) => {
+      if (!api) return;
+      try {
+        const result = await api.handoverSummary(thread.id);
+        if (!('summary' in result)) throw new Error('交接信息尚未就绪，请重试。');
+        const successor = await api.createHandoverThread(thread.id, agent);
+        await api.startTurn(successor.id, handoverMessage(api, result.summary));
+        onThreadOpen(successor);
+      } catch (e) {
+        onError(e);
+      }
+    },
     /** Forks so that the copy ends with the given turn. */
     forkAt: (thread: Thread, turnId: string) => void fork(thread, turnId),
     run,

@@ -12,6 +12,12 @@ interface Props {
   onClose: () => void;
 }
 
+/** The handover as it is sent: which machine it came from, then what the hub assembled. */
+export function handoverMessage(api: Api, summary: string): string {
+  const machine = api.host ? `远端机器（ID：${api.host}）` : '本机（当前 hub）';
+  return `来源机器：${machine}\n\n${summary}`;
+}
+
 /** Assemble the source session and progress as soon as the dialog opens; no agent turn is needed. */
 export function HandoverDialog({ api, thread, agents, onOpen, onClose }: Props) {
   const [summary, setSummary] = useState<string | null>(null);
@@ -31,8 +37,7 @@ export function HandoverDialog({ api, thread, agents, onOpen, onClose }: Props) 
     void api.handoverSummary(thread.id).then((result) => {
       if (!active) return;
       if ('summary' in result) {
-        const machine = api.host ? `远端机器（ID：${api.host}）` : '本机（当前 hub）';
-        setSummary(`来源机器：${machine}\n\n${result.summary}`);
+        setSummary(handoverMessage(api, result.summary));
       } else setError('交接信息尚未就绪，请重试。');
     }).catch((e: unknown) => {
       if (active) setError(e instanceof Error ? e.message : String(e));

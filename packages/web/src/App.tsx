@@ -372,6 +372,8 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
   const threadRoots = useMemo(() => (selected ? [selected.cwd, selected.cwdReal] : []), [selected?.cwd, selected?.cwdReal]);
   const running = timeline.running || selected?.status === 'running';
 
+  // A takeover under way, from the button on a turn that failed because the plan ran out.
+  const [takingOver, setTakingOver] = useState(false);
   const scrollerRef = useRef<HTMLDivElement>(null);
   // Whether the margin beside the conversation is wide enough to hold the team's card.
   const mainRef = useRef<HTMLElement>(null);
@@ -1287,6 +1289,12 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
     />
   </>);
 
+  // Who takes over when the thread's agent has run out of plan: another instance of the same agent
+  // first (its own account, the same tools), otherwise any other agent that is up.
+  const current = agents.find((a) => a.id === selected?.agent);
+  const others = agents.filter((a) => a.available && a.id !== selected?.agent);
+  const successor = others.find((a) => current?.adapter && a.adapter === current.adapter) ?? others[0] ?? null;
+
   const teamWaiting = Boolean(coordination?.members.some((m) => m.thread?.waiting));
   const teamRunning = coordination?.members.filter((m) => m.thread?.status === 'running').length ?? 0;
   const teamShown = Boolean(selected?.coordination && (selected.coordination.rootId !== selected.id || selected.coordination.children > 0) && !onTodos && !onSkills && hostUp);
@@ -1532,6 +1540,15 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
                   : undefined
               }
               forkAnyTurn={Boolean(activeCaps?.forkAt)}
+              takeover={successor ? {
+                label: successor.label,
+                busy: takingOver,
+                go: () => {
+                  setTakingOver(true);
+                  void threadActions.takeOver(selected, successor.id).finally(() => setTakingOver(false));
+                },
+                choose: () => threadActions.handover(selected),
+              } : null}
             />
           ) : (
             <div className="empty">

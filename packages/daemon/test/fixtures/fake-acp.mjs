@@ -257,6 +257,9 @@ rl.on('line', (line) => {
           },
         });
       }
+      if (text.includes('out of plan')) {
+        return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: "Internal error: You've hit your session limit · resets 10:10am (UTC)" } });
+      }
       if (text.includes('slow')) {
         pendingPrompt = { id: msg.id };
         return;

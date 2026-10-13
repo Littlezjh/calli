@@ -636,6 +636,20 @@ test('a turn the hub restart interrupted says so in plain words', () => {
 });
 
 
+test('a turn that failed because the plan ran out is marked for a takeover, and says why', () => {
+  seq = 0;
+  const tl = buildTimeline([
+    ev('turn.started', { text: 'q' }),
+    ev('turn.error', { message: "Internal error: You've hit your session limit · resets 10:10am (UTC)", code: 'plan_exhausted' }),
+    ev('turn.started', { text: 'again' }),
+    ev('turn.error', { message: 'something else' }),
+  ]);
+  const [ran, other] = tl.items.filter((i) => i.kind === 'error');
+  assert.ok(ran?.kind === 'error' && ran.planExhausted);
+  assert.match(ran?.kind === 'error' ? ran.message : '', /额度用完了（You've hit your session limit/);
+  assert.ok(other?.kind === 'error' && !other.planExhausted);
+});
+
 const step = (id: string, kind: string, extra: Partial<Step> = {}): Step => ({ id, title: id, kind, status: 'completed', diffs: [], ...extra });
 
 test('workSections keeps what was said apart and gathers the calls and thinking between into runs', () => {

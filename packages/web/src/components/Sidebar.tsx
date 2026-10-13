@@ -5,6 +5,7 @@ import { useLongPress, useStoredFlag, useStoredSet } from '../hooks';
 import { attentionCount, threadMark } from '../notices';
 import { folderName } from '../paths';
 import { buildActivity, buildSidebar, handoverGroups, markTerms, projectDir, SEARCH_MIN, taggedAgents } from '../sidebar';
+import { timeAgo } from '../sessions';
 import { HostSwitcher } from './Hosts';
 import { AgentMark, IconBell, IconChevron, IconClock, IconClose, IconEdit, IconFolder, IconFork, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconWorktree, IconSidebar } from './icons';
 
@@ -186,25 +187,43 @@ export function Sidebar({
     );
   };
 
+  const now = Date.now();
   const groupedRows = (list: Thread[]) => handoverGroups(list).map(({ key, latest, members }) => {
     if (members.length === 1) return row(latest);
     const storageKey = `${hostId ?? 'local'}:${key}`;
     const expanded = Boolean(search.trim()) || expandedHandovers.has(storageKey);
     const marks = [...new Set(members.filter((t) => t.id !== latest.id).map((t) => threadMark(t, t.id === selectedId)).filter(Boolean))];
-    return <div key={key} className="handover-group">
-      <div className={`handover-head${members.some((t) => t.id === selectedId) ? ' selected' : ''}`}>
-        <button className="handover-toggle" aria-label={`${expanded ? '收起' : '展开'}交接记录：${latest.title}`} aria-expanded={expanded} onClick={() => setExpandedHandovers((old) => {
-          const next = new Set(old);
-          if (next.has(storageKey)) next.delete(storageKey); else next.add(storageKey);
-          return next;
-        })}><IconChevron size={13} open={expanded} /></button>
-        {row(latest, latest.title.replace(/(?:（接手）)+$/, ''))}
+    const current = members.some((t) => t.id === selectedId);
+    // Like Orca's agents under a task: one card, the latest conversation on top, the chain folded below it.
+    return <div key={key} className={`handover-group${expanded ? ' open' : ''}${current ? ' selected' : ''}`}>
+      {row(latest, latest.title.replace(/(?:（接手）)+$/, ''))}
+      <button className="handover-toggle" aria-label={`${expanded ? '收起' : '展开'}交接记录：${latest.title}`} aria-expanded={expanded} onClick={() => setExpandedHandovers((old) => {
+        const next = new Set(old);
+        if (next.has(storageKey)) next.delete(storageKey); else next.add(storageKey);
+        return next;
+      })}>
+        <span>{members.length} 个会话</span>
         {!expanded && marks.length > 0 && <span className="handover-marks">{marks.map((mark) => <span key={mark} className={`dot ${mark}`} role="img" aria-label={`其他交接会话：${MARK_LABELS[mark!]}`} title={`其他交接会话：${MARK_LABELS[mark!]}`} />)}</span>}
-      </div>
-      {expanded && <div className="handover-members">{members.map((t) => row(t,
-        agentById.get(t.agent)?.label ?? t.agent,
-        `${t.handover ? '接手会话' : '原始会话'}${t.id === selectedId ? ' · 当前' : ''}`,
-      ))}</div>}
+        <IconChevron size={13} open={expanded} />
+      </button>
+      {expanded && <div className="handover-members">{members.map((t) => {
+        const agent = agentById.get(t.agent);
+        const mark = threadMark(t, t.id === selectedId);
+        return <button
+          key={t.id}
+          className={`handover-member${t.id === selectedId ? ' active' : ''}`}
+          aria-current={t.id === selectedId ? 'true' : undefined}
+          onClick={() => onSelect(t.id)}
+          onContextMenu={(e) => { e.preventDefault(); onThreadMenu(t, e.clientX, e.clientY); }}
+          {...longPress(t)}
+        >
+          <span className={`dot ${mark ?? 'idle'}`} role="img" aria-label={mark ? MARK_LABELS[mark] : '空闲'} />
+          {agent?.icon ? <span className="agent-mark"><AgentMark path={agent.icon} size={compact ? 14 : 13} /></span> : null}
+          <span className="handover-member-name">{agent?.label ?? t.agent}</span>
+          <span className="handover-member-role">{t.handover ? '接手' : '原始'}</span>
+          <time className="handover-member-time" dateTime={t.updatedAt}>{timeAgo(t.updatedAt, now)}</time>
+        </button>;
+      })}</div>}
     </div>;
   });
 

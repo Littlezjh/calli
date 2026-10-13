@@ -1468,9 +1468,11 @@ export class ThreadManager {
       if (result.stopReason === 'cancelled') unread = false;
       if (result.stopReason === 'error') {
         finalStatus = 'error';
+        const message = result.error ?? 'agent error';
+        const code = result.errorCode ?? (this.adapters.get(thread.agent)?.planExhausted?.(message) ? 'plan_exhausted' : undefined);
         this.emitThreadEvent(thread.id, turnId, 'turn.error', {
-          message: result.error ?? 'agent error',
-          ...(result.errorCode ? { code: result.errorCode, refused: result.refused ?? [] } : {}),
+          message,
+          ...(code ? { code, ...(code === 'permission_refused' ? { refused: result.refused ?? [] } : {}) } : {}),
         });
       } else {
         this.emitThreadEvent(thread.id, turnId, 'turn.done', { stopReason: result.stopReason });
@@ -1478,7 +1480,8 @@ export class ThreadManager {
     } catch (err) {
       finalStatus = 'error';
       const message = err instanceof Error ? err.message : String(err);
-      this.emitThreadEvent(thread.id, turnId, 'turn.error', { message });
+      const exhausted = this.adapters.get(thread.agent)?.planExhausted?.(message);
+      this.emitThreadEvent(thread.id, turnId, 'turn.error', { message, ...(exhausted ? { code: 'plan_exhausted' } : {}) });
       await this.dropSession(thread.id);
     } finally {
       this.running.delete(thread.id);

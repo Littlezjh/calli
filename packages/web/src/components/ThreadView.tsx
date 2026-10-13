@@ -33,7 +33,7 @@ import {
   type WorkSection,
 } from '../timeline';
 import { Lightbox } from './Lightbox';
-import { IconAgents, IconCheck, IconChevron, IconClose, IconCopy, IconEdit, IconFile, IconFork, IconGlobe, IconQuote, IconSearch, IconTerminal, IconWorktree } from './icons';
+import { IconAgents, IconCheck, IconChevron, IconClose, IconCopy, IconEdit, IconFile, IconFork, IconGlobe, IconHand, IconQuote, IconSearch, IconTerminal, IconWorktree } from './icons';
 
 interface Props {
   items: Item[];
@@ -55,6 +55,11 @@ interface Props {
   onLoadOlder?: () => void;
   /** Copies the thread as it stands and opens the copy. Missing when the agent cannot fork, or there is no session yet. */
   onFork?: (turnId: string) => void;
+  /**
+   * When the last turn failed because the agent's plan ran out: hand the thread to another agent.
+   * `label` names the agent one click goes to; `choose` opens the handover to pick another.
+   */
+  takeover?: { label: string; go: () => void; choose: () => void; busy?: boolean } | null;
   /** The agent can end a copy at any finished turn, so every answer gets the button, not only the last. */
   forkAnyTurn?: boolean;
 }
@@ -67,7 +72,7 @@ const RECENT_TURNS = 30;
 /** Scrolling up to within this distance of the top unfolds or fetches the earlier turns. */
 const NEAR_TOP_PX = 600;
 
-export function ThreadView({ items, running, roots, loadImage, loadFile, onOpenFile, onPreview, onDecide, hasOlder, loadingOlder, onLoadOlder, onFork, forkAnyTurn }: Props) {
+export function ThreadView({ items, running, roots, loadImage, loadFile, onOpenFile, onPreview, onDecide, hasOlder, loadingOlder, onLoadOlder, onFork, forkAnyTurn, takeover }: Props) {
   const [lightbox, setLightbox] = useState<{ url: string; name?: string } | null>(null);
   const show = useCallback((url: string, name?: string) => setLightbox({ url, name }), []);
   // A picture opened from a link in an answer is fetched for the occasion, and let go of when it is closed.
@@ -240,7 +245,17 @@ export function ThreadView({ items, running, roots, loadImage, loadFile, onOpenF
         case 'error':
           return (
             <div key={item.key} className="row">
-              <div className="error-box">{item.message}</div>
+              <div className="error-box">
+                {item.message}
+                {item.planExhausted && takeover && item === items[items.length - 1] && (
+                  <div className="error-actions">
+                    <button className="primary" onClick={takeover.go} disabled={takeover.busy}>
+                      <IconHand size={15} /> {takeover.busy ? '正在交接…' : `交给 ${takeover.label} 接手`}
+                    </button>
+                    <button className="ghost" onClick={takeover.choose} disabled={takeover.busy}>选择其他智能体</button>
+                  </div>
+                )}
+              </div>
             </div>
           );
         case 'fork':

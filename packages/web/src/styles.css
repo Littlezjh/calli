@@ -1521,6 +1521,12 @@ html.list-open body {
   overflow-wrap: anywhere;
 }
 
+/* A plan that ran out: the way on is another agent, offered right where the failure is read. */
+.error-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; white-space: normal; }
+.error-actions button { gap: 6px; min-height: 32px; padding: 0 14px; font-size: 13px; }
+.error-actions .ghost { border-color: color-mix(in srgb, var(--danger) 30%, transparent); color: var(--text); }
+.error-actions button:disabled { opacity: 0.6; }
+
 .working {
   color: var(--muted);
   font-size: 14px;
@@ -7383,13 +7389,23 @@ input.picker-search {
 }
 
 /* A handover keeps its conversations independent, with one expandable sidebar entry. */
-.handover-head { display: flex; align-items: center; border-radius: var(--radius-sm); }
-.handover-head.selected { background: var(--active); }
-.handover-head > .thread-row { flex: 1; min-width: 0; }
-.handover-toggle { flex: 0 0 24px; align-self: stretch; color: var(--muted); background: none; border: 0; cursor: pointer; border-radius: var(--radius-sm); }
-.handover-toggle:hover { background: var(--hover); }
-.handover-marks { display: flex; gap: 4px; padding-right: 6px; }
-.handover-members { margin: 2px 0 10px 12px; padding-left: 10px; border-left: 1px solid var(--border-strong); }
+.handover-group { margin: 1px 0; border: 1px solid transparent; border-radius: var(--radius); }
+.handover-group.open { margin: 4px 0; padding: 2px; border-color: var(--border); background: var(--surface-2); }
+.handover-toggle { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 26px; padding: 0 12px 0 10px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--muted); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.handover-toggle:hover { background: var(--hover); color: var(--text); }
+.handover-toggle > svg { margin-left: auto; flex: none; }
+.handover-marks { display: flex; gap: 4px; }
+.handover-members { display: flex; flex-direction: column; padding: 0 0 2px; }
+.handover-member { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 30px; padding: 0 12px 0 10px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.handover-member:hover { background: var(--hover); }
+.handover-member.active { background: var(--active); }
+.handover-member .dot { flex: none; }
+.dot.idle { background: var(--border-strong); }
+.handover-member .agent-mark { flex: none; }
+.handover-member-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; color: var(--muted); }
+.handover-member.active .handover-member-name { color: var(--text); }
+.handover-member-role { flex: none; font-size: 11px; color: var(--faint); }
+.handover-member-time { flex: none; margin-left: auto; padding-left: 6px; font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .handover-trail { padding: 0 24px 8px; color: var(--muted); font-size: 12px; }
 .handover-link { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 4px 0; font: inherit; }
 .handover-link:hover { color: var(--text); }
@@ -7402,7 +7418,9 @@ input.picker-search {
 @media (max-width: 700px) {
   .handover-trail { padding: 0 16px 6px; }
   .handover-trail .handover-panel { top: auto; bottom: 0; width: auto; max-width: none; }
-  .handover-toggle { flex-basis: 32px; }
+  .handover-toggle { min-height: 32px; font-size: 13px; }
+  .handover-member { min-height: 38px; }
+  .handover-member-name { font-size: 14px; }
 }
 
 /* Project navigation stays on the selected machine; only the list scrolls. */
