@@ -6,6 +6,7 @@ import { attentionCount, threadMark } from '../notices';
 import { folderName } from '../paths';
 import { buildActivity, buildSidebar, handoverGroups, markTerms, projectDir, SEARCH_MIN, taggedAgents } from '../sidebar';
 import { timeAgo } from '../sessions';
+import { deliveredPreview } from '../timeline';
 import { HostSwitcher } from './Hosts';
 import { AgentMark, IconBell, IconChevron, IconClock, IconClose, IconEdit, IconFolder, IconFork, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconWorktree, IconSidebar } from './icons';
 
@@ -15,6 +16,8 @@ interface Props {
   /** Puts the list away on a wide screen; the top bar then has the button to bring it back. */
   onHide?: () => void;
   threads: Thread[];
+  /** Each lead thread's team members, by the lead's id: rows under the lead instead of threads of their own. */
+  members?: Map<string, Thread[]>;
   sections: Section[];
   /** For the mark each row shows in place of its agent's name. */
   agents: AgentInfo[];
@@ -71,6 +74,7 @@ export const SIDEBAR_SHORTCUT = typeof navigator !== 'undefined' && /Mac|iPhone|
 
 export function Sidebar({
   threads,
+  members,
   sections,
   agents,
   selectedId,
@@ -108,6 +112,8 @@ export function Sidebar({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query]);
   const [expandedHandovers, setExpandedHandovers] = useState<Set<string>>(new Set());
+  // A team is open on its own while a member works or waits, or is the one on screen; a click overrides that.
+  const [teamOpen, setTeamOpen] = useState<Map<string, boolean>>(new Map());
   // The search field is put away behind a button until it is asked for.
   const [searching, setSearching] = useState(false);
   const closeSearch = () => {
@@ -188,8 +194,52 @@ export function Sidebar({
   };
 
   const now = Date.now();
+  /** Who in a team comes first: whoever is at work or waiting, then whoever was last heard from. */
+  const busy = (t: Thread) => (t.waiting ? 2 : t.status === 'running' ? 1 : 0);
+  const teamOrder = (a: Thread, b: Thread) => busy(b) - busy(a) || b.updatedAt.localeCompare(a.updatedAt);
+
+  // Like Orca's agents under a task: the lead's row, then one line per member saying what it is doing.
+  const entry = (t: Thread) => {
+    const team = members?.get(t.id);
+    if (!team?.length) return row(t);
+    const sorted = [...team].sort(teamOrder);
+    const auto = sorted.some((m) => busy(m) > 0 || m.id === selectedId);
+    const open = Boolean(search.trim()) || (teamOpen.get(t.id) ?? auto);
+    const working = sorted.filter((m) => m.status === 'running').length;
+    const waiting = sorted.filter((m) => m.waiting).length;
+    const marks = [...new Set(sorted.map((m) => threadMark(m, m.id === selectedId)).filter(Boolean))];
+    const current = t.id === selectedId || sorted.some((m) => m.id === selectedId);
+    return <div key={t.id} className={`handover-group team-group${open ? ' open' : ''}${current ? ' selected' : ''}`}>
+      {row(t)}
+      <button className="handover-toggle" aria-label={`${open ? '收起' : '展开'}智能体：${t.title}`} aria-expanded={open} onClick={() => setTeamOpen((old) => new Map(old).set(t.id, !open))}>
+        <span>{sorted.length} 个智能体</span>
+        {(waiting || working) > 0 && <span className="team-note">{waiting ? `${waiting} 待批准` : `${working} 运行中`}</span>}
+        {!open && marks.length > 0 && <span className="handover-marks">{marks.map((mark) => <span key={mark} className={`dot ${mark}`} role="img" aria-label={MARK_LABELS[mark!]} title={MARK_LABELS[mark!]} />)}</span>}
+        <IconChevron size={13} open={open} />
+      </button>
+      {open && <div className="handover-members">{sorted.map((m) => {
+        const agent = agentById.get(m.agent);
+        const mark = threadMark(m, m.id === selectedId);
+        return <button
+          key={m.id}
+          className={`handover-member${m.id === selectedId ? ' active' : ''}`}
+          aria-current={m.id === selectedId ? 'true' : undefined}
+          title={m.title}
+          onClick={() => onSelect(m.id)}
+          onContextMenu={(e) => { e.preventDefault(); onThreadMenu(m, e.clientX, e.clientY); }}
+          {...longPress(m)}
+        >
+          <span className={`dot ${mark ?? 'idle'}`} role="img" aria-label={mark ? MARK_LABELS[mark] : '空闲'} />
+          {agent?.icon ? <span className="agent-mark" role="img" aria-label={agent.label}><AgentMark path={agent.icon} size={compact ? 14 : 13} /></span> : null}
+          <span className="handover-member-name team-member-text">{deliveredPreview(m.coordination?.doing ?? '') || m.title}</span>
+          <time className="handover-member-time" dateTime={m.updatedAt}>{timeAgo(m.updatedAt, now)}</time>
+        </button>;
+      })}</div>}
+    </div>;
+  };
+
   const groupedRows = (list: Thread[]) => handoverGroups(list).map(({ key, latest, members }) => {
-    if (members.length === 1) return row(latest);
+    if (members.length === 1) return entry(latest);
     const storageKey = `${hostId ?? 'local'}:${key}`;
     const expanded = Boolean(search.trim()) || expandedHandovers.has(storageKey);
     const marks = [...new Set(members.filter((t) => t.id !== latest.id).map((t) => threadMark(t, t.id === selectedId)).filter(Boolean))];
@@ -254,7 +304,7 @@ export function Sidebar({
       {activity.groups.map((g) => (
         <section key={g.key} className="thread-group" aria-label={g.label}>
           <div className="group-label">{g.label}</div>
-          {g.threads.map((t) => row(t))}
+          {g.threads.map((t) => entry(t))}
         </section>
       ))}
     </nav>

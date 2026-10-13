@@ -66,7 +66,8 @@ export interface CoordinationMessage {
   replyTo?: string | null;
 }
 export interface Thread {
-  coordination?: { rootId: string; children: number; paused: boolean };
+  /** `doing`, on a member: its latest task while it works, the opening of its answer once it has returned. */
+  coordination?: { rootId: string; children: number; paused: boolean; doing?: string };
   id: string;
   agent: string;
   cwd: string;

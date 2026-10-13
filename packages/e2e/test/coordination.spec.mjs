@@ -123,6 +123,15 @@ for (const phone of [false, true]) for (const colorScheme of ['light', 'dark']) 
       await page.waitForFunction(() => document.querySelector('.agent-member')?.textContent?.includes('已返回'));
       const team = await (await api(daemon, `/api/threads/${root.id}/coordination`)).json();
       const child = team.members[0].id;
+      if (!phone) {
+        // Members are rows under their lead in the sidebar, saying what they did, not threads of their own.
+        const lead = page.locator('.sidebar .team-group', { has: page.locator('.thread-title', { hasText: title }) });
+        await lead.waitFor();
+        if (!(await lead.locator('.handover-member').count())) await lead.locator('.handover-toggle').click();
+        await lead.locator('.handover-member', { hasText: '文档审查完成' }).waitFor();
+        assert.equal(await page.locator('.sidebar .thread-row').filter({ hasText: '文档审查完成' }).count(), 0);
+        await page.screenshot({ path: `${shots}/desktop-${colorScheme}-sidebar-team.png` });
+      }
       // The member was made with what was chosen on its line, whether the team existed yet or not.
       // The member runs at the level chosen on its line, not the team's full access.
       assert.equal((await (await api(daemon, `/api/threads/${child}`)).json()).permissionMode, 'ask');

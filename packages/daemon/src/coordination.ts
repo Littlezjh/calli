@@ -95,7 +95,13 @@ export class CoordinationManager {
   }
   metadata(id: string) {
     const t = this.team(id);
-    return t ? { rootId: t.rootId, children: t.members.length, paused: t.paused } : undefined;
+    if (!t) return undefined;
+    if (id === t.rootId) return { rootId: t.rootId, children: t.members.length, paused: t.paused };
+    // What a member is about, for its line under the lead in the sidebar.
+    const latest = [...t.deliveries].reverse().find(d => d.to === id);
+    const settled = latest && latest.state !== 'queued' && latest.state !== 'running';
+    const doing = (settled && latest.result ? latest.result : latest?.text ?? '').split('<limi-coordination>')[0].trim().slice(0, 200);
+    return { rootId: t.rootId, children: t.members.length, paused: t.paused, ...(doing ? { doing } : {}) };
   }
   view(id: string) {
     const t = this.team(id);

@@ -51,7 +51,8 @@ export interface ForkOptions {
 
 /** A thread as the API returns it: the stored record plus values worked out from it. */
 export type ThreadView = Omit<ThreadRecord, 'worktree'> & {
-  coordination?: { rootId: string; children: number; paused: boolean };
+  /** `doing`, on a member: its latest task while it works, the opening of its answer once it has returned. */
+  coordination?: { rootId: string; children: number; paused: boolean; doing?: string };
   /** Working in the hub's scratch area: a thread that is in no project. */
   scratch: boolean;
   /** `of` is how the directory was spelled when the worktree was made; `ofReal` has symlinks resolved, like `cwdReal`. */

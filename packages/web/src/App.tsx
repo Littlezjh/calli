@@ -372,6 +372,15 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
   const threadRoots = useMemo(() => (selected ? [selected.cwd, selected.cwdReal] : []), [selected?.cwd, selected?.cwdReal]);
   const running = timeline.running || selected?.status === 'running';
 
+  // Members are listed under their lead in the sidebar, not as threads of their own.
+  const teamMembers = useMemo(() => {
+    const byLead = new Map<string, Thread[]>();
+    for (const t of threads) {
+      if (t.coordination && t.coordination.rootId !== t.id) byLead.set(t.coordination.rootId, [...(byLead.get(t.coordination.rootId) ?? []), t]);
+    }
+    return byLead;
+  }, [threads]);
+
   // A takeover under way, from the button on a turn that failed because the plan ran out.
   const [takingOver, setTakingOver] = useState(false);
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -1364,7 +1373,8 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
       {projectDialog === 'roots' && <RootsDialog api={api} roots={roots} onChange={applyWorkdirs} onCancel={() => setProjectDialog(null)} />}
       <aside className="sidebar">
         <Sidebar
-          threads={threads.filter(t => !t.coordination || t.coordination.rootId === t.id || t.id === selectedId)}
+          threads={threads.filter((t) => !t.coordination || t.coordination.rootId === t.id || !threads.some((r) => r.id === t.coordination!.rootId))}
+          members={teamMembers}
           sections={sections}
           agents={agents}
           selectedId={selectedId}

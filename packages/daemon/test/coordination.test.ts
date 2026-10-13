@@ -84,6 +84,11 @@ test('Codex writes a file, Claude reviews it, and peer feedback resumes the orig
     await h.team.enable(h.root.id);
     await h.team.command(h.root.id, spawn('reviewer', 'claude'));
     await wait(() => h.team.view(h.root.id)!.members[0].latest?.state === 'returned');
+    // A member's line in the sidebar says what it came back with; the lead's carries no such line.
+    const first = h.team.view(h.root.id)!.members[0];
+    assert.equal(h.manager.threadView(first.id).coordination!.doing, first.latest!.result.split('<limi-coordination>')[0].trim().slice(0, 200));
+    assert.ok(h.manager.threadView(first.id).coordination!.doing);
+    assert.equal(h.manager.threadView(h.root.id).coordination!.doing, undefined);
     await h.team.command(h.root.id, spawn('writer', 'codex', 'LIMI_WRITE'));
     await wait(() => {
       try { return readFileSync(join(h.cwd, 'review-document.md'), 'utf8').includes('## Errors'); } catch { return false; }

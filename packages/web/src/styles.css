@@ -7405,6 +7405,8 @@ input.picker-search {
 .handover-member-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; color: var(--muted); }
 .handover-member.active .handover-member-name { color: var(--text); }
 .handover-member-role { flex: none; font-size: 11px; color: var(--faint); }
+.team-member-text { flex: 1; }
+.team-note { color: var(--positive); }
 .handover-member-time { flex: none; margin-left: auto; padding-left: 6px; font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .handover-trail { padding: 0 24px 8px; color: var(--muted); font-size: 12px; }
 .handover-link { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 4px 0; font: inherit; }
