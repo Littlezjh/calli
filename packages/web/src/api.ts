@@ -55,6 +55,8 @@ export interface Coordination {
   rootId: string; paused: boolean; directories: string[]; agents: string[];
   /** By instance id. Absent from older daemons. */
   defaults?: Record<string, MemberDefault>;
+  /** How much members may do without asking. Absent from older daemons. */
+  permission?: string;
   members: Array<{ id: string; name: string; thread: Thread | null; latest: CoordinationMessage | null }>;
   messages: CoordinationMessage[];
 }
@@ -578,7 +580,7 @@ export class Api {
     return this.request('GET', `/api/search?q=${encodeURIComponent(query)}`);
   }
 
-  configureCoordination(id: string, body: { action?: string; directories?: string[]; defaults?: Record<string, MemberDefault> }): Promise<Coordination> {
+  configureCoordination(id: string, body: { action?: string; directories?: string[]; defaults?: Record<string, MemberDefault>; permission?: string }): Promise<Coordination> {
     return this.request('POST', `/api/threads/${id}/coordination`, body);
   }
 

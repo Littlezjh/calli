@@ -139,6 +139,8 @@ test('three-member concurrency limit, durable queue, approval visibility and sto
     assert.ok(h.team.view(h.root.id)!.messages.every(d => d.state !== 'queued'));
     await assert.rejects(h.team.command(h.root.id, spawn('late')), /暂停/);
     await h.team.resume(h.root.id);
+    // A member only stops to ask where the team has it ask.
+    await h.team.setPermission(h.root.id, 'ask');
     await h.team.command(h.root.id, spawn('approver', 'claude', 'approve'));
     await wait(() => Boolean(h.team.view(h.root.id)!.members.find(m => m.name === 'approver')?.thread?.waiting));
     await h.manager.cancelTurn(h.root.id);
@@ -263,5 +265,26 @@ test('members start with the model and effort chosen for their instance, unless 
     assert.equal((await member('later')).model, null);
     const member2 = h.team.view(h.root.id)!.members[0].id;
     await assert.rejects(h.team.setDefaults(member2, {}), /主线程/);
+  } finally { await h.close(); }
+});
+
+test('members run with full access unless the team says otherwise, and a change reaches the members there are', async () => {
+  const h = await setup();
+  try {
+    await assert.rejects(h.team.enable(h.root.id, { permission: 'anything' }), /权限/);
+    assert.equal((await h.team.enable(h.root.id))!.permission, 'full_access');
+    const member = async (name: string, agent = 'claude') => ((await h.team.command(h.root.id, spawn(name, agent))) as any).to as string;
+    const first = await member('first');
+    assert.equal(h.manager.threadView(first).permissionMode, 'full_access');
+    // pi has no levels to choose from; it keeps its own.
+    const plain = await member('plain', 'pi');
+    assert.equal(h.manager.threadView(plain).permissionMode, 'auto_edit');
+    assert.equal((await h.team.setPermission(h.root.id, 'ask'))!.permission, 'ask');
+    assert.equal(h.manager.threadView(first).permissionMode, 'ask');
+    assert.equal(h.manager.threadView(await member('second')).permissionMode, 'ask');
+    // traex cannot ask before everything, so its members stay at its own default.
+    assert.notEqual(h.manager.threadView(await member('third', 'traex')).permissionMode, 'ask');
+    await assert.rejects(h.team.setPermission(first, 'ask'), /主线程/);
+    await assert.rejects(h.team.setPermission(h.root.id, 'root'), /权限/);
   } finally { await h.close(); }
 });

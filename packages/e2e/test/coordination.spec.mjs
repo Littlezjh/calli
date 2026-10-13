@@ -116,6 +116,8 @@ for (const phone of [false, true]) for (const colorScheme of ['light', 'dark']) 
       const team = await (await api(daemon, `/api/threads/${root.id}/coordination`)).json();
       const child = team.members[0].id;
       // The member was made with what was chosen on its line, whether the team existed yet or not.
+      // Nobody sits in a member's thread to approve things: it starts with full access.
+      assert.equal((await (await api(daemon, `/api/threads/${child}`)).json()).permissionMode, 'full_access');
       const offered = await (await api(daemon, '/api/agents/claude/models')).json();
       assert.equal((await (await api(daemon, `/api/threads/${child}`)).json()).model, offered.find(m => m.label === picked).id);
       if (!phone) {

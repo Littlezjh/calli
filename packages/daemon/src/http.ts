@@ -467,6 +467,7 @@ export function createHttpServer(deps: HttpDeps): Server {
         if (method === 'POST') {
           const body = await readJson(req);
           if (body.action === 'resume') return sendJson(res, 200, await collaboration.resume(threadId));
+          if (body.action === 'permission') return sendJson(res, 200, await collaboration.setPermission(threadId, body.permission));
           if (body.action === 'defaults') return sendJson(res, 200, await collaboration.setDefaults(threadId, body.defaults));
           if (body.action === 'stop') { await manager.cancelTurn(threadId); return sendJson(res, 200, collaboration.view(threadId)); }
           return sendJson(res, 200, await collaboration.enable(threadId, body));

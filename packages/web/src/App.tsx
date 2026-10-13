@@ -22,7 +22,7 @@ import { useHosts } from './hosts';
 import type { PreparedImage } from './images';
 import { attentionCount, pageTitle, threadNotices } from './notices';
 import { folderName } from './paths';
-import { PERMISSION_LABELS, startingPermission } from './permissions';
+import { PERMISSION_LABELS, PERMISSION_ORDER, permissionHint, startingPermission } from './permissions';
 import { buildTimeline, toMarkdown, turnPreviews, type StoredEvent } from './timeline';
 import { newerBuildAvailable } from './version';
 import { AppearancePanel } from './components/AppearancePanel';
@@ -56,7 +56,7 @@ import { NewProjectDialog, ProjectPicker, RootsDialog } from './components/Proje
 import { NoteMarks, type NoteMark } from './components/NoteMarks';
 import { Toast, type ToastState } from './components/Toast';
 import { TokenGate } from './components/TokenGate';
-import { AgentMark, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconImport, IconList, IconMenu, IconMore, IconPalette, IconPlus, IconServer, IconSidebar, IconSignOut, IconSparkle, IconTerminal } from './components/icons';
+import { IconCheck, AgentMark, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconImport, IconList, IconMenu, IconMore, IconPalette, IconPlus, IconServer, IconSidebar, IconSignOut, IconSparkle, IconTerminal } from './components/icons';
 
 const sleep = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve) => {
@@ -179,6 +179,8 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
   const [coordination, setCoordination] = useState<Coordination | null>(null);
   const memberDefaultsKey = hostId ? `${MEMBER_DEFAULTS_KEY}:${hostId}` : MEMBER_DEFAULTS_KEY;
   const [memberDefaults, setMemberDefaults] = useState(() => savedMemberDefaults(memberDefaultsKey));
+  // Members work unattended, so they start with full access unless this device was told otherwise.
+  const [memberPermission, setMemberPermission] = useState(() => localStorage.getItem(`${memberDefaultsKey}.permission`) ?? 'full_access');
   const [agentsOpen, setAgentsOpen] = useState(false);
   const [draftCollaboration, setDraftCollaboration] = useState(false);
   const [collaborationDirectories, setCollaborationDirectories] = useState<string[]>([]);
@@ -904,7 +906,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
         setDraftWorktree(false);
       }
       // Bringing an agent in with @ is itself the request to collaborate; there is no switch to find first.
-      if ((draftCollaboration || mentions?.length) && !selected?.coordination) await api.configureCoordination(id, { directories: collaborationDirectories.length ? collaborationDirectories : undefined, defaults: startingDefaults });
+      if ((draftCollaboration || mentions?.length) && !selected?.coordination) await api.configureCoordination(id, { directories: collaborationDirectories.length ? collaborationDirectories : undefined, defaults: startingDefaults, permission: memberPermission });
       stickToBottom.current = true;
       // "queue" only matters while a turn is running: then the message waits instead of being refused.
       await api.startTurn(
@@ -1177,6 +1179,12 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
     localStorage.setItem(memberDefaultsKey, JSON.stringify(remembered));
     if (leading && api) void api.configureCoordination(coordination!.rootId, { action: 'defaults', defaults: { ...teamDefaults, [agent]: value } }).then(setCoordination).catch(handleError);
   };
+  const teamPermission = leading ? coordination!.permission ?? 'full_access' : memberPermission;
+  const chooseMemberPermission = (mode: string) => {
+    setMemberPermission(mode);
+    localStorage.setItem(`${memberDefaultsKey}.permission`, mode);
+    if (leading && api) void api.configureCoordination(coordination!.rootId, { action: 'permission', permission: mode }).then((value) => { setCoordination(value); void refreshThreads(); }).catch(handleError);
+  };
   const memberModel = (agent: AgentInfo) => (
     <MemberModel agent={agent} models={modelsByAgent[agent.id] ?? []} value={teamDefaults[agent.id] ?? { model: null, effort: null }} onNeed={needModels} onChange={(value) => setMemberDefault(agent.id, value)} />
   );
@@ -1190,11 +1198,16 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           <div className="coord-caption">允许使用的目录</div>
           {[...new Set([activeCwd, ...workdirs].filter(Boolean))].map(dir => <button className="pop-item compact" role="menuitemcheckbox" aria-checked={(collaborationDirectories.length ? collaborationDirectories : [activeCwd]).includes(dir)} key={dir} onClick={() => setCollaborationDirectories(prev => { const current = prev.length ? prev : [activeCwd]; return current.includes(dir) ? current.filter(v => v !== dir) : [...current, dir]; })}>{(collaborationDirectories.length ? collaborationDirectories : [activeCwd]).includes(dir) ? '已选 · ' : ''}{dir}</button>)}
           <button className="pop-item compact" disabled={running} onClick={() => {
-            if (selected) void api.configureCoordination(selected.id, { directories: collaborationDirectories.length ? collaborationDirectories : [selected.cwd], defaults: startingDefaults }).then(value => { setCoordination(value); void refreshThreads(); close(); }).catch(handleError);
+            if (selected) void api.configureCoordination(selected.id, { directories: collaborationDirectories.length ? collaborationDirectories : [selected.cwd], defaults: startingDefaults, permission: memberPermission }).then(value => { setCoordination(value); void refreshThreads(); close(); }).catch(handleError);
             else { setDraftCollaboration(v => !v); close(); }
           }}>{draftCollaboration ? '关闭协作' : running ? '当前轮结束后可启用' : '启用协作'}</button>
         </>}
         {(!selected?.coordination || leading) && teamAgents.length > 0 && <>
+          <div className="coord-caption">成员的权限</div>
+          {PERMISSION_ORDER.map((mode) => <button type="button" className="pop-item compact" role="menuitemradio" aria-checked={mode === teamPermission} key={mode} title={permissionHint(mode, true)} onClick={() => chooseMemberPermission(mode)}>
+            <span className="pop-item-text"><span className="pop-item-label">{PERMISSION_LABELS[mode].label}</span></span>
+            {mode === teamPermission && <span className="pop-item-check"><IconCheck size={15} /></span>}
+          </button>)}
           <div className="coord-caption">成员的模型与思考强度</div>
           {teamAgents.map((a) => <div className="coord-default" key={a.id}>
             <span className="pop-item-icon">{a.icon ? <AgentMark path={a.icon} size={15} /> : null}</span>

@@ -32,7 +32,15 @@ export function turnAnswer(events: StoredEvent[], turnId: string | null): string
 
 /** The model and thinking effort members of one instance start with; null leaves the agent's own. */
 type MemberDefault = { model: string | null; effort: string | null };
-type Team = { rootId: string; paused: boolean; directories: string[]; agents: string[]; members: Member[]; deliveries: Delivery[]; defaults?: Record<string, MemberDefault> };
+type Team = { rootId: string; paused: boolean; directories: string[]; agents: string[]; members: Member[]; deliveries: Delivery[]; defaults?: Record<string, MemberDefault>;
+  /** How much members may do without asking. Unset means full access: nobody watches a member's thread to approve. */
+  permission?: string };
+const MEMBER_PERMISSIONS = ['ask', 'auto_edit', 'full_access'];
+const memberPermission = (v: unknown): string | undefined => {
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== 'string' || !MEMBER_PERMISSIONS.includes(v)) throw new HttpError(400, '成员权限无效');
+  return v;
+};
 
 /** A small durable mailbox. All mutations are serialized; turns still belong to ThreadManager. */
 export class CoordinationManager {
@@ -91,7 +99,7 @@ export class CoordinationManager {
     const t = this.team(id);
     if (!t) return null;
     return {
-      rootId: t.rootId, paused: t.paused, directories: t.directories, agents: t.agents, defaults: t.defaults ?? {},
+      rootId: t.rootId, paused: t.paused, directories: t.directories, agents: t.agents, defaults: t.defaults ?? {}, permission: t.permission ?? 'full_access',
       members: t.members.map(m => ({ ...m, thread: this.store.getThread(m.id) ? this.manager.threadView(m.id) : null,
         latest: [...t.deliveries].reverse().find(d => d.to === m.id) ?? null })),
       messages: t.deliveries.slice(-100).map(d => ({ ...d, replyTo: this.answered(t, d)?.id ?? null })),
@@ -125,7 +133,29 @@ export class CoordinationManager {
     });
   }
 
-  async enable(id: string, input: { directories?: string[]; agents?: string[]; defaults?: unknown } = {}) {
+  /** The level an instance's members run at: the team's where the agent has it, else the agent's own. */
+  private async permissionFor(t: Team, agent: string): Promise<string | undefined> {
+    const modes: readonly string[] = (await this.manager.listAgents()).find(a => a.id === agent)?.capabilities.permissionModes ?? [];
+    const wanted = t.permission ?? 'full_access';
+    return modes.includes(wanted) ? wanted : undefined;
+  }
+  /** Sets the level for members to come and moves the members there are to it. */
+  async setPermission(id: string, permission: unknown) {
+    return this.serial(async () => {
+      const t = this.team(id);
+      if (!t || t.rootId !== id) throw new HttpError(400, '请在主线程设置成员权限');
+      t.permission = memberPermission(permission) ?? 'full_access';
+      for (const m of t.members) {
+        const thread = this.store.getThread(m.id);
+        const mode = thread && await this.permissionFor(t, thread.agent);
+        if (mode && thread.permissionMode !== mode) await this.manager.updateThread(m.id, { permissionMode: mode }).catch(() => undefined);
+      }
+      this.changed(t);
+      return this.view(id);
+    });
+  }
+
+  async enable(id: string, input: { directories?: string[]; agents?: string[]; defaults?: unknown; permission?: unknown } = {}) {
     return this.serial(async () => {
       if (this.team(id)) return this.view(id);
       const parent = this.manager.threadView(id);
@@ -142,7 +172,7 @@ export class CoordinationManager {
       if (!Array.isArray(agents) || !agents.length || agents.some(id => !available.some(a => a.id === id))) throw new HttpError(400, '请选择可用实例');
       await this.manager.refreshRuntime(id);
       const defaults = this.memberDefaults(input.defaults, agents);
-      const t: Team = { rootId: id, paused: false, directories: roots, agents, members: [], deliveries: [], defaults };
+      const t: Team = { rootId: id, paused: false, directories: roots, agents, members: [], deliveries: [], defaults, permission: memberPermission(input.permission) };
       this.teams.set(id, t);
       this.changed(t);
       return this.view(id);
@@ -248,7 +278,8 @@ export class CoordinationManager {
         // What the lead asks for wins; otherwise what the user set for this instance. A stored choice
         // the agent no longer offers, or one that does not go with what the lead asked for, must not
         // stop the member from starting, so it is dropped then.
-        const make = (model: string | null, effort: string | null) => this.manager.createThread({ agent, cwd, title: name, sectionId: parent.sectionId, model, effort });
+        const permissionMode = await this.permissionFor(t, agent);
+        const make = (model: string | null, effort: string | null) => this.manager.createThread({ agent, cwd, title: name, sectionId: parent.sectionId, model, effort, permissionMode });
         const usual = t.defaults?.[agent];
         const leaned = Boolean(usual && ((!asked.model && usual.model) || (!asked.effort && usual.effort)));
         const child = await make(asked.model ?? usual?.model ?? null, asked.effort ?? usual?.effort ?? null).catch((err) => {
