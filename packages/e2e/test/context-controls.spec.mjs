@@ -111,7 +111,7 @@ test('effort slider, model subview, reset and compression work in both themes an
       await shot(page, `compact-${tag}`);
       await fits(page, page.getByRole('menu', { name: '上下文用量' }));
       await page.getByRole('button', { name: '压缩 精简较早的对话，释放上下文' }).click();
-      await page.getByText('已开始压缩上下文。', { exact: true }).waitFor();
+      await page.getByText('上下文压缩完成。', { exact: true }).waitFor();
       assert.equal(await input.inputValue(), '这段草稿需要保留');
       await input.fill('/usage');
       await input.press('Enter');
@@ -146,7 +146,7 @@ test('compression queues once during a turn and preserves a draft; pi uses its o
     await page.locator('.usage:visible').click();
     assert.ok(await page.getByRole('button', { name: /已排队压缩/ }).isDisabled());
     await page.keyboard.press('Escape');
-    await page.getByText('已开始压缩上下文。', { exact: true }).waitFor();
+    await page.getByText('上下文压缩完成。', { exact: true }).waitFor();
     assert.equal(await page.locator('.composer textarea').inputValue(), '下一轮草稿');
     const pi = await makeThread('pi 压缩操作', 'pi');
     await select(page, pi);

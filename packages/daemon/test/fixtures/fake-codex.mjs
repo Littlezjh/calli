@@ -11,7 +11,7 @@ import { createInterface } from 'node:readline';
 const rl = createInterface({ input: process.stdin });
 const out = (obj) => process.stdout.write(JSON.stringify(obj) + '\n');
 
-const threadId = process.env.FAKE_CODEX_THREAD ?? 'codex-thread-1';
+let threadId = process.env.FAKE_CODEX_THREAD ?? 'codex-thread-1';
 let nextTurnSeq = 1;
 let nextServerRequestId = 1000;
 let activeTurn = null; // { id }
@@ -264,10 +264,12 @@ rl.on('line', (line) => {
       if (typeof msg.params?.model === 'string') currentModel = msg.params.model;
       return out({ jsonrpc: '2.0', id: msg.id, result: { thread: { id: threadId, cwd: '/tmp/one' }, model: currentModel, reasoningEffort: currentEffort, sandbox: { type: 'readOnly' }, approvalPolicy: currentApproval } });
     case 'thread/resume':
+      threadId = msg.params?.threadId ?? threadId;
       if (typeof msg.params?.sandbox === 'string') currentSandbox = msg.params.sandbox.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
       if (typeof msg.params?.approvalPolicy === 'string') currentApproval = msg.params.approvalPolicy;
       return out({ jsonrpc: '2.0', id: msg.id, result: { thread: { id: msg.params?.threadId ?? threadId, cwd: '/tmp/one' }, model: currentModel, reasoningEffort: currentEffort, sandbox: { type: 'readOnly' }, approvalPolicy: currentApproval } });
     case 'turn/start': {
+      if (activeTurn) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: 'ActiveTurnNotSteerable' } });
       applyTurnOverrides(msg.params ?? {});
       const turnId = `turn-${nextTurnSeq++}`;
       const text = (msg.params?.input ?? []).filter((i) => i.type === 'text').map((i) => i.text).join('');
@@ -288,8 +290,32 @@ rl.on('line', (line) => {
         finishTurn(turnId, 'interrupted', { message: 'interrupted' });
       }
       return out({ jsonrpc: '2.0', id: msg.id, result: {} });
-    case 'thread/compact/start':
-      return out({ jsonrpc: '2.0', id: msg.id, result: {} });
+    case 'thread/compact/start': {
+      if (process.env.FAKE_CODEX_COMPACT_REJECT) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: 'compact rejected' } });
+      const turnId = `compact-${nextTurnSeq++}`;
+      const delay = Number(process.env.FAKE_CODEX_COMPACT_DELAY ?? 20);
+      const start = () => {
+        activeTurn = turnId;
+        notify('turn/started', { turn: { id: turnId, status: 'inProgress' } });
+        notify('item/started', { turnId, item: { id: 'compact-item', type: 'contextCompaction' } });
+        notify('turn/completed', { threadId: 'another-thread', turn: { id: turnId, status: 'completed' } });
+        notify('turn/completed', { turn: { id: 'stale-turn', status: 'completed' } });
+        if (process.env.FAKE_CODEX_COMPACT_CRASH) return process.exit(2);
+        setTimeout(() => {
+          if (activeTurn !== turnId) return;
+          notify('item/completed', { turnId, item: { id: 'compact-item', type: 'contextCompaction' } });
+        }, delay);
+        setTimeout(() => {
+          if (activeTurn !== turnId) return;
+          activeTurn = null;
+          finishTurn(turnId, process.env.FAKE_CODEX_COMPACT_FAIL ? 'failed' : 'completed', process.env.FAKE_CODEX_COMPACT_FAIL ? { message: 'compaction failed' } : null);
+        }, delay * 2);
+      };
+      if (process.env.FAKE_CODEX_COMPACT_EARLY) start();
+      out({ jsonrpc: '2.0', id: msg.id, result: {} });
+      if (!process.env.FAKE_CODEX_COMPACT_EARLY) setTimeout(start, delay);
+      return;
+    }
     case 'thread/list': {
       if (!msg.params?.useStateDbOnly) {
         return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: 'listing must not scan rollouts' } });

@@ -379,7 +379,7 @@ async function readSkills(peer: JsonRpcPeer, cwd: string): Promise<CodexSkill[]>
 /** A live Codex thread: one process, one thread id, any number of turns. */
 class CodexSession implements AgentSession {
   private hooks: TurnHooks | null = null;
-  private turn: { id: string; resolve(r: TurnResult): void; error?: string } | null = null;
+  private turn: { id: string; resolve(r: TurnResult): void; error?: string; compact?: boolean; cancelRequested?: boolean } | null = null;
   /** Command output streamed so far, so each update carries the whole text like other agents do. */
   private readonly outputSoFar = new Map<string, string>();
   /** File changes by item id, for approval cards that need to show the patch. */
@@ -396,8 +396,16 @@ class CodexSession implements AgentSession {
   /** Called by the peer for every notification. Ignores anything about another thread. */
   onNotification(method: string, params: any): void {
     if (params?.threadId !== undefined && params.threadId !== this.agentSessionId) return;
+    if (this.turn?.compact && this.turn.id && params?.turnId && params.turnId !== this.turn.id) return;
     switch (method) {
+      case 'turn/started':
+        if (this.turn?.compact && !this.turn.id && params?.turn?.id) {
+          this.turn.id = String(params.turn.id);
+          if (this.turn.cancelRequested) void this.cancel();
+        }
+        break;
       case 'item/started': {
+        if (this.turn?.compact && params?.item?.type === 'contextCompaction') break;
         if (params?.item?.type === 'fileChange') this.fileChanges.set(params.item.id, params.item.changes ?? []);
         if (params?.item?.type === 'plan') break; // the structured turn/plan/updated is used instead
         const ev = mapCodexItemStart(params?.item);
@@ -405,6 +413,7 @@ class CodexSession implements AgentSession {
         break;
       }
       case 'item/completed': {
+        if (this.turn?.compact && params?.item?.type === 'contextCompaction') break;
         if (params?.item?.type === 'exitedReviewMode' && params.item.review) {
           this.emit({ type: 'message.delta', data: { text: String(params.item.review) } });
         }
@@ -491,6 +500,10 @@ class CodexSession implements AgentSession {
   private finishTurn(stopReason: string): void {
     const turn = this.turn;
     if (!turn) return;
+    if (turn.compact) {
+      this.emit({ type: 'tool.end', data: { id: 'codex-compaction', status: stopReason === 'end_turn' ? 'completed' : 'failed', output: stopReason === 'cancelled' ? '压缩已停止' : turn.error ?? '' } });
+      if (stopReason === 'end_turn') this.emit({ type: 'message.delta', data: { text: '上下文压缩完成。' } });
+    }
     this.turn = null;
     this.hooks = null;
     this.outputSoFar.clear();
@@ -514,14 +527,27 @@ class CodexSession implements AgentSession {
     const command = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(input.text.trim());
     const name = command?.[1];
     const args = command?.[2]?.trim() ?? '';
+    if (name === 'compact' && !input.images.length && !args) {
+      let resolveCompact!: (result: TurnResult) => void;
+      const result = new Promise<TurnResult>((resolve) => { resolveCompact = resolve; });
+      // Register before the RPC: notifications may arrive before its acknowledgement.
+      this.turn = { id: '', resolve: resolveCompact, compact: true };
+      this.emit({ type: 'tool.start', data: { id: 'codex-compaction', title: '压缩上下文', kind: 'other', status: 'in_progress' } });
+      try {
+        await this.peer.request('thread/compact/start', { threadId: this.agentSessionId });
+      } catch (error) {
+        if (this.turn?.compact) {
+          this.turn.error = error instanceof Error ? error.message : String(error);
+          this.finishTurn('error');
+        }
+      }
+      return result;
+    }
     if (name && CODEX_LOCAL_COMMANDS.some((c) => c.name === name) && name !== 'review') {
       try {
         if (input.images.length || args) throw new Error(`/${name} 不接受参数或图片。`);
         let text: string;
-        if (name === 'compact') {
-          await this.peer.request('thread/compact/start', { threadId: this.agentSessionId });
-          text = '已开始压缩上下文。';
-        } else if (name === 'skills') {
+        if (name === 'skills') {
           const skills = await readSkills(this.peer, this.cwd);
           text = skills.length ? skills.map((s) => `- /${s.name}：${s.description}`).join('\n') : '当前目录没有可用技能。';
         } else if (name === 'mcp') {
@@ -602,6 +628,7 @@ class CodexSession implements AgentSession {
 
   async cancel(): Promise<void> {
     if (!this.turn) return;
+    if (!this.turn.id) { this.turn.cancelRequested = true; return; }
     await this.peer.request('turn/interrupt', { threadId: this.agentSessionId, turnId: this.turn.id }).catch(() => undefined);
   }
 

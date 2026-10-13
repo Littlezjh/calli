@@ -75,7 +75,7 @@ test('local queries, paginated MCP, reviews and explicit skills route correctly 
     assert.equal((await send('/disabled')).result.stopReason, 'error');
     assert.equal((await send('/compact extra')).result.stopReason, 'error');
     assert.equal((await send('/compact-other')).result.stopReason, 'error');
-    assert.equal((await send('/compact')).text, '已开始压缩上下文。');
+    assert.equal((await send('/compact')).text, '上下文压缩完成。');
     assert.equal((await send('hello')).result.stopReason, 'end_turn');
   } finally {
     await session.close();
@@ -99,4 +99,40 @@ test('weekly-only quota reports the missing upstream window without fabricating 
 test('a model with no reasoning levels does not inherit the agent-wide slider choices', async () => {
   const models = await new CodexAppServerAdapter(command, { FAKE_CODEX_NO_EFFORT_MODEL: '1' }).models();
   assert.deepEqual(models.find((model) => model.id === 'gpt-basic')?.efforts, []);
+});
+
+
+test('compact waits beyond acknowledgement and item completion, then releases the session', async () => {
+  for (const early of ['', '1']) {
+    const session = await new CodexAppServerAdapter(command, { FAKE_CODEX_COMPACT_DELAY: '100', FAKE_CODEX_COMPACT_EARLY: early }).start({ cwd: here });
+    const events: EmittedEvent[] = [];
+    const hooks = { emit: (event: EmittedEvent) => events.push(event), requestApproval: async () => ({ cancelled: true as const }) };
+    try {
+      let settled = false;
+      const pending = session.prompt({ text: '/compact', images: [] }, hooks).then((result) => { settled = true; return result; });
+      await new Promise((resolve) => setTimeout(resolve, early ? 150 : 250));
+      assert.equal(settled, false, 'acknowledgement, unrelated turns and item completion do not finish compaction');
+      assert.ok(events.some((event) => event.type === 'tool.start'));
+      assert.equal(events.some((event) => event.type === 'tool.end'), false);
+      await assert.rejects(session.prompt({ text: 'next', images: [] }, hooks), /already running/);
+      assert.equal((await pending).stopReason, 'end_turn');
+      assert.ok(events.some((event) => event.type === 'tool.end' && event.data.status === 'completed'));
+      assert.equal((await session.prompt({ text: 'next', images: [] }, hooks)).stopReason, 'end_turn');
+    } finally { await session.close(); }
+  }
+});
+
+test('compact settles on failure, rejection, disconnect and cancellation before its turn id arrives', async () => {
+  for (const mode of ['FAIL', 'REJECT', 'CRASH', 'CANCEL']) {
+    const session = await new CodexAppServerAdapter(command, { [`FAKE_CODEX_COMPACT_${mode}`]: '1' }).start({ cwd: here });
+    const events: EmittedEvent[] = [];
+    try {
+      const pending = session.prompt({ text: '/compact', images: [] }, { emit: (event) => events.push(event), requestApproval: async () => ({ cancelled: true }) });
+      if (mode === 'CANCEL') await session.cancel();
+      const result = await pending;
+      assert.equal(result.stopReason, mode === 'CANCEL' ? 'cancelled' : 'error');
+      assert.ok(events.some((event) => event.type === 'tool.end' && event.data.status === 'failed'));
+      assert.equal(events.some((event) => event.type === 'message.delta'), false);
+    } finally { await session.close(); }
+  }
 });

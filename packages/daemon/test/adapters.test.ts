@@ -1232,7 +1232,7 @@ test('CodexAppServerAdapter: resume keeps the thread id, /compact is answered lo
   const { hooks, events } = collectingHooks();
   const result = await session.prompt(turn('/compact'), hooks);
   assert.deepEqual(result, { stopReason: 'end_turn' });
-  assert.equal(textFrom(events), '已开始压缩上下文。');
+  assert.equal(textFrom(events), '上下文压缩完成。');
   await session.close();
 });
 
