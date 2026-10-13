@@ -14,7 +14,7 @@ import { CodexAppServerAdapter } from '../src/adapters/codex.js';
 import { AgyAdapter } from '../src/adapters/agy.js';
 import { TraexAcpAdapter } from '../src/adapters/traex.js';
 import type { AgentAdapter } from '../src/adapters/types.js';
-import { CoordinationManager, coordinationServer } from '../src/coordination.js';
+import { CoordinationManager, coordinationServer, turnAnswer } from '../src/coordination.js';
 import { createHttpServer, listenPrivate } from '../src/http.js';
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
@@ -93,6 +93,10 @@ test('Codex writes a file, Claude reviews it, and peer feedback resumes the orig
     const reviewer = state.members.find(m => m.name === 'reviewer')!;
     assert.ok(state.messages.some(d => d.from === writer.id && d.to === reviewer.id && d.text === 'LIMI_REVIEW'));
     assert.ok(state.messages.some(d => d.from === reviewer.id && d.to === writer.id && d.kind === 'result'));
+    // Every result names the message it answers, so a reader can hang it under that message.
+    const asked = state.messages.find(d => d.from === writer.id && d.to === reviewer.id && d.text === 'LIMI_REVIEW')!;
+    assert.equal(state.messages.find(d => d.from === reviewer.id && d.to === writer.id && d.kind === 'result')!.replyTo, asked.id);
+    assert.equal(asked.replyTo, null);
     await wait(() => h.manager.threadView(writer.id).status === 'idle');
     assert.equal(h.manager.threadView(writer.id).agentSessionId, 'codex-thread-1');
   } finally { await h.close(); }
@@ -209,5 +213,30 @@ test('restart reconstructs a result committed before its notification, only once
         assert.equal(state.paused, true);
       } finally { recovered.dispose(); }
     }
+  } finally { await h.close(); }
+});
+
+test('a member returns its closing answer, not the remarks made on the way', () => {
+  let seq = 0;
+  const ev = (type: string, text = '', turnId = 't1') => ({ threadId: 'th', seq: ++seq, turnId, type, ts: '', data: { text } });
+  const worked = [ev('message.delta', '先看 diff。'), ev('tool.start'), ev('tool.end'), ev('message.delta', '## 结论\n'), ev('message.delta', '没有问题。'), ev('message.delta', '别的轮次', 't2')];
+  assert.equal(turnAnswer(worked, 't1'), '## 结论\n没有问题。');
+  // Ending on a tool call leaves no closing text; what was said before it is all there is.
+  assert.equal(turnAnswer([ev('message.delta', '正在跑测试。'), ev('tool.start')], 't1'), '正在跑测试。');
+  assert.equal(turnAnswer([ev('tool.start')], 't1'), '');
+});
+
+test('a message can carry a task for one member alone', async () => {
+  const h = await setup();
+  try {
+    await h.team.enable(h.root.id);
+    const text = h.team.mentionText(h.root.id, '审查代码', [{ id: 'pi', kind: 'agent', label: 'pi', task: ' 看 daemon ' }, { id: 'claude', kind: 'agent', label: 'Claude Code' }]);
+    const [said, rest] = text.split('\n\n[指定协作对象]\n');
+    assert.equal(said, '审查代码\n\n@pi：看 daemon');
+    assert.deepEqual(JSON.parse(rest.split('\n')[0]), [{ agent: 'pi', cwd: h.cwd, task: '看 daemon' }, { agent: 'claude', cwd: h.cwd }]);
+    // The tasks alone are a message; nothing at all is not.
+    assert.match(h.team.mentionText(h.root.id, '', [{ id: 'pi', kind: 'agent', task: '看 daemon' }]), /^@pi：看 daemon\n\n\[指定协作对象\]/);
+    assert.throws(() => h.team.mentionText(h.root.id, '', [{ id: 'pi', kind: 'agent', task: ' ' }]), /请说明协作任务/);
+    assert.throws(() => h.team.mentionText(h.root.id, 'x', [{ id: 'pi', kind: 'agent', task: 'a'.repeat(4001) }]), /4000/);
   } finally { await h.close(); }
 });

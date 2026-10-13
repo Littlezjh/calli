@@ -1,5 +1,5 @@
-// The phone layout: the thread list is a page under the conversation (Codex's way). Opening it
-// slides the conversation aside as a card; a tap on the card or a swipe brings it back. Rows have
+// The phone layout: the thread list is a page of its own (Codex's way). The arrow in the top bar
+// slides the conversation off to show it; picking a thread or a swipe brings it back. Rows have
 // no "more" button: a long press opens their menu.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -53,7 +53,7 @@ async function touch(from, to, holdMs = 0) {
   await settle();
 }
 
-test('opening the list slides the conversation aside; a tap on it brings it back', async () => {
+test('the list is a page of its own; the arrow in the top bar goes to it, a swipe comes back', async () => {
   await openUi(page, daemon);
   assert.equal(await listOpen(), false);
   assert.equal(await left('.main'), 0);
@@ -62,18 +62,15 @@ test('opening the list slides the conversation aside; a tap on it brings it back
   await page.locator('.menu-btn').click();
   await settle();
   assert.equal(await listOpen(), true);
-  // Most of the screen is the list; a strip of the conversation stays in view on the right.
-  const mainLeft = await left('.main');
-  assert.ok(mainLeft > WIDTH * 0.7 && mainLeft < WIDTH - 30, `the conversation is pushed aside, not away (${mainLeft})`);
+  // The whole screen is the list: nothing of the conversation stays in view.
+  assert.ok((await left('.main')) >= WIDTH, 'the conversation has slid off');
+  assert.equal(await page.locator('.main').isVisible(), false);
   await page.locator('.sidebar .brand').waitFor();
   await page.locator('.sidebar .thread-title', { hasText: 'first thread' }).waitFor();
+  const box = await page.locator('.sidebar-inner').boundingBox();
+  assert.ok(box.x === 0 && Math.abs(box.width - WIDTH) < 2, `the list fills the width (${box.width})`);
 
-  // Nothing of the list is hidden under the card.
-  const widest = await page.locator('.sidebar-inner').evaluate((el) => Math.round(el.getBoundingClientRect().right));
-  assert.ok(widest <= mainLeft + 1, `the list ends where the card begins (${widest} vs ${mainLeft})`);
-
-  await page.touchscreen.tap(WIDTH - 12, 300);
-  await settle();
+  await touch({ x: 250, y: 400 }, { x: 110, y: 400 });
   assert.equal(await listOpen(), false);
   assert.equal(await left('.main'), 0);
 });

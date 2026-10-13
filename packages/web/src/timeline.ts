@@ -84,8 +84,40 @@ export type WorkEntry =
   /** Something the agent said on the way, before going on to do more. */
   | { kind: 'note'; key: string; text: string };
 
+/** A turn another agent of the team started: who sent it and what it is, apart from its text. */
+export interface CoordinationNote {
+  /** The sender's name in the team; empty when the turn does not say. */
+  from: string;
+  kind: 'result' | 'task';
+  failed: boolean;
+}
+
+/**
+ * Splits what the daemon shows for a delivered message ("来自 NAME 的结果", a blank line, then the
+ * text) into who and what. Text in any other shape is kept whole.
+ */
+export function coordinationNote(shown: string): { note: CoordinationNote; text: string } {
+  const m = /^来自 (.+?) 的(结果|任务)(?:\n\n([\s\S]*))?$/.exec(shown);
+  if (!m) return { note: { from: '', kind: 'result', failed: false }, text: shown };
+  const kind = m[2] === '结果' ? 'result' : 'task';
+  // Only a result opens with how the turn went; a task's first line is the sender's own words.
+  const state = kind === 'result' ? /^状态：(失败|本轮已返回，仍需验收)(?:\n|$)/.exec(m[3] ?? '') : null;
+  return { note: { from: m[1], kind, failed: state?.[1] === '失败' }, text: (m[3] ?? '').slice(state?.[0].length ?? 0).trim() };
+}
+
+/** The opening of a delivered message as plain words, for the folded card: Markdown marks taken off. */
+export function deliveredPreview(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => line.replace(/^\s*(#{1,6}|[-*+>]|\d+\.)\s+/, '').replace(/[*_`]/g, '').trim())
+    .filter((line) => line && !line.startsWith('|') && !/^[-=]+$/.test(line))
+    .slice(0, 3)
+    .join(' ')
+    .slice(0, 200);
+}
+
 export type Item =
-  | { kind: 'user'; key: string; turnId: string; text: string; images: ImageRef[]; fromTerminal?: boolean; coordination?: boolean }
+  | { kind: 'user'; key: string; turnId: string; text: string; images: ImageRef[]; fromTerminal?: boolean; coordination?: CoordinationNote }
   /** The turn's answer: the text after everything the agent did. */
   | { kind: 'assistant'; key: string; turnId: string; text: string; done: boolean }
   /**
@@ -370,7 +402,7 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
     const turn = ev.turnId ?? '';
 
     switch (ev.type) {
-      case 'turn.started':
+      case 'turn.started': {
         // A turn that never got its ending (the daemon died under it) ends where the next begins,
         // or it would read as working for the rest of the thread.
         if (open.turn !== null) closeTurn();
@@ -378,16 +410,19 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
         open.startedAt = ev.ts;
         running = true;
         if (ev.data.imported) imported.add(turn);
+        const shown = String(ev.data.displayText ?? ev.data.text ?? '');
+        const delivered = ev.data.coordination ? coordinationNote(shown) : null;
         items.push({
           kind: 'user',
           key,
           turnId: turn,
-          text: String(ev.data.displayText ?? ev.data.text ?? ''),
+          text: delivered ? delivered.text : shown,
           images: Array.isArray(ev.data.images) ? ev.data.images : [],
           ...(ev.data.fromTerminal ? { fromTerminal: true } : {}),
-          ...(ev.data.coordination ? { coordination: true } : {}),
+          ...(delivered ? { coordination: delivered.note } : {}),
         });
         break;
+      }
 
       case 'message.delta':
         if (!open.answer) {

@@ -18,6 +18,12 @@ export function formatReset(window: QuotaWindow, now = new Date()): string {
   return sameDay ? `${hm} 重置` : `${at.getMonth() + 1}月${at.getDate()}日 ${hm} 重置`;
 }
 
+/** The board's rows: agents that report quota, with the one in use moved to the top. */
+export function quotaRows<T extends { id: string; capabilities: { quota: boolean } }>(agents: T[], current?: string): T[] {
+  const rows = agents.filter((a) => a.capabilities.quota);
+  return [...rows.filter((a) => a.id === current), ...rows.filter((a) => a.id !== current)];
+}
+
 /** What the panel headline says: the most-used window's level, so the user sees the worst first. */
 export function quotaHeadline(quota: PlanQuota): string {
   if (quota.windows.length === 0) return '没有读到额度信息';

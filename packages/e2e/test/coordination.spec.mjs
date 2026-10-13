@@ -31,19 +31,64 @@ for (const phone of [false, true]) for (const colorScheme of ['light', 'dark']) 
       await openUi(page, daemon);
       if (phone) await page.locator('.menu-btn').click();
       await page.locator('.thread-row', { hasText: title }).click();
-      await page.getByRole('button', { name: '协作', exact: true }).click();
-      await page.getByRole('button', { name: '启用协作', exact: true }).click();
-      await page.getByRole('button', { name: '查看智能体', exact: true }).waitFor();
-      const box = page.locator('.composer textarea');
+      // On the desktop collaboration is switched on first; on the phone the @ alone starts it.
+      if (!phone) {
+        await page.getByRole('button', { name: '协作', exact: true }).click();
+        await page.getByRole('button', { name: '启用协作', exact: true }).click();
+        await page.getByRole('button', { name: '查看智能体', exact: true }).waitFor();
+      }
+      const box = page.getByRole('textbox', { name: '消息', exact: true });
+      const list = page.getByRole('listbox', { name: '选择协作智能体' });
+      // An @ is only a character until an agent is picked: a word nobody goes by, an address, and a
+      // list turned away all leave it as text, and the list stays away while that word is typed.
+      await box.fill('@nobody');
+      assert.equal(await list.count(), 0);
+      await box.fill('mail a@b');
+      assert.equal(await list.count(), 0);
       await box.fill('@');
+      await list.waitFor();
+      await list.getByRole('button', { name: '不选择智能体' }).click();
+      await list.waitFor({ state: 'detached' });
+      await box.pressSequentially('c');
+      assert.equal(await box.inputValue(), '@c');
+      assert.equal(await list.count(), 0);
+      if (!phone) {
+        await box.fill('');
+        await box.fill('@');
+        await list.waitFor();
+        await box.press('Escape');
+        await list.waitFor({ state: 'detached' });
+        await box.pressSequentially('c');
+        assert.equal(await list.count(), 0);
+      }
+      assert.equal(await page.locator('.coord-row').count(), 0);
+      await box.fill('');
+      await box.fill('@');
+      await list.waitFor();
+      assert.ok(await page.getByRole('option', { name: /claude/i }).first().locator('svg').count());
+      const shots = '/tmp/limi-coordination-shots'; mkdirSync(shots, { recursive: true });
+      await page.screenshot({ path: `${shots}/${phone ? 'phone' : 'desktop'}-${colorScheme}-menu.png` });
       await page.getByRole('option', { name: /claude/i }).first().click();
-      assert.match(await page.locator('.coord-mentions').innerText(), /claude/i);
+      // The agent gets a line of its own, and the caret is there for its task; Enter goes back to the message.
+      const row = page.locator('.coord-row');
+      assert.match(await row.innerText(), /claude/i);
+      const task = row.getByRole('textbox');
+      assert.ok(await task.evaluate(el => el === document.activeElement));
+      await task.fill('只看异常处理');
+      await task.press('Enter');
+      assert.ok(await box.evaluate(el => el === document.activeElement));
       await box.fill('请审查接口文档');
+      await page.screenshot({ path: `${shots}/${phone ? 'phone' : 'desktop'}-${colorScheme}-rows.png` });
       const sent = page.waitForRequest(req => req.url().endsWith(`/threads/${root.id}/turns`) && req.method() === 'POST');
       await page.getByRole('button', { name: '发送', exact: true }).click();
-      assert.equal((await sent).postDataJSON().mentions[0].id, 'claude');
+      const mention = (await sent).postDataJSON().mentions[0];
+      assert.equal(mention.id, 'claude');
+      assert.equal(mention.task, '只看异常处理');
       await waitIdle(root.id);
       await page.waitForFunction(() => document.querySelector('.composer textarea')?.value === '');
+      await page.getByRole('button', { name: '查看智能体', exact: true }).waitFor();
+      await page.locator('.coord-row').waitFor({ state: 'detached' });
+      await page.locator('.row.user .bubble', { hasText: '只看异常处理' }).waitFor();
 
       // The fixture invokes the actual injected CLI, creating a normal member thread.
       const directive = Buffer.from(JSON.stringify({ args: ['spawn', '--agent', 'claude', '--name', '文档审查', '--message-file', '-', '--request-id', 'review'], text: '检查接口与异常处理 LIMI_REPORT' })).toString('base64');
@@ -67,15 +112,37 @@ for (const phone of [false, true]) for (const colorScheme of ['light', 'dark']) 
         const rect = await panel.boundingBox();
         assert.ok(rect && rect.x === 0 && Math.abs(rect.width - 390) < 2);
       }
-      const shots = '/tmp/limi-coordination-shots'; mkdirSync(shots, { recursive: true });
       await page.screenshot({ path: `${shots}/${phone ? 'phone' : 'desktop'}-${colorScheme}-detail.png` });
       await panel.getByRole('button', { name: '返回智能体列表' }).click();
       await card.waitFor();
       await panel.locator('.coord-unread').waitFor({ state: 'detached' });
       await page.screenshot({ path: `${shots}/${phone ? 'phone' : 'desktop'}-${colorScheme}-list.png` });
+      // The team's messages read like a chat: the task with who sent it, and its answer folded under it.
+      await panel.getByRole('tab', { name: /^消息/ }).click();
+      const talk = panel.locator('.talk');
+      assert.equal(await talk.count(), 1);
+      assert.match(await talk.locator('.talk-said').first().innerText(), /主智能体[\s\S]*发给 文档审查[\s\S]*检查接口与异常处理/);
+      assert.equal(await talk.locator('.talk-mark svg').first().count(), 1);
+      const replies = talk.getByRole('button', { name: /1 条回复/ });
+      assert.equal(await replies.getAttribute('aria-expanded'), 'true');
+      assert.match(await talk.locator('.talk-thread').innerText(), /文档审查[\s\S]*文档审查完成。/);
+      await page.screenshot({ path: `${shots}/${phone ? 'phone' : 'desktop'}-${colorScheme}-talk.png` });
+      await replies.click();
+      assert.equal(await talk.locator('.talk-thread').count(), 0);
+      await panel.getByRole('tab', { name: /^成员/ }).click();
+      await card.waitFor();
       await panel.getByRole('button', { name: '关闭智能体面板' }).click();
       await panel.waitFor({ state: 'detached' });
       assert.equal(await box.inputValue(), '保留这段主线程草稿');
+      // What the member returned sits in the thread as a folded card, opened to its text as Markdown.
+      const delivered = page.locator('.row.delivered', { hasText: '文档审查' });
+      await delivered.waitFor();
+      assert.equal(await delivered.locator('.delivered-body').count(), 0);
+      assert.match(await delivered.locator('.delivered-preview').innerText(), /^文档审查完成。/);
+      await page.screenshot({ path: `${shots}/${phone ? 'phone' : 'desktop'}-${colorScheme}-result.png` });
+      await delivered.getByRole('button').click();
+      assert.equal(await delivered.locator('.delivered-body p').count(), 2);
+      await page.screenshot({ path: `${shots}/${phone ? 'phone' : 'desktop'}-${colorScheme}-result-open.png` });
       const after = await (await api(daemon, `/api/threads/${child}/events`)).json();
       assert.equal(after.filter(e => e.type === 'turn.started').length, before.filter(e => e.type === 'turn.started').length, 'viewing output does not start work');
       await page.getByRole('button', { name: '查看智能体', exact: true }).click();

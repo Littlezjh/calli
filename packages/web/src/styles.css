@@ -393,10 +393,6 @@ button:disabled {
   background: var(--sidebar);
 }
 
-.scrim {
-  display: none;
-}
-
 .main {
   position: relative;
   flex: 1;
@@ -449,14 +445,14 @@ button:disabled {
   flex-shrink: 0;
 }
 
-/* ---------- Phones: the thread list lies under the conversation ---------- */
+/* ---------- Phones: the thread list is a page of its own ---------- */
 
-/* Codex's way: opening the list slides the conversation aside as a card and the list is the page
-   under it. Nothing dark is drawn over the screen, so the top of it stays one colour up to the
-   status bar. */
+/* Codex's way: the list fills the screen and the conversation slides in over it; the arrow in the
+   top bar slides it back out. Nothing dark is drawn over the screen, so the top of it stays one
+   colour up to the status bar. */
 @media (max-width: 899.98px) {
   .app {
-    --drawer-w: min(84vw, 340px);
+    --drawer-w: 100%;
     background: var(--sidebar);
   }
 
@@ -489,27 +485,18 @@ button:disabled {
   .main {
     z-index: 2;
     overflow: hidden;
-    transform-origin: left center;
     transition:
       transform 0.32s cubic-bezier(0.2, 0.8, 0.2, 1),
-      border-radius 0.32s cubic-bezier(0.2, 0.8, 0.2, 1),
-      box-shadow 0.32s ease-out;
+      visibility 0s;
   }
 
+  /* Off screen, and out of the tab order once it has gone. */
   .app.drawer-open .main {
-    transform: translateX(var(--drawer-w)) scale(0.94);
-    border-radius: var(--radius-xl);
-    box-shadow: var(--shadow-pop);
-  }
-
-  /* What a tap on the pushed-aside conversation hits. It also quietens the card a little. */
-  .app.drawer-open .scrim {
-    display: block;
-    position: absolute;
-    inset: 0;
-    z-index: 30;
-    background: color-mix(in srgb, var(--bg) 45%, transparent);
-    animation: fade-in 0.24s ease-out;
+    transform: translateX(100%);
+    visibility: hidden;
+    transition:
+      transform 0.32s cubic-bezier(0.2, 0.8, 0.2, 1),
+      visibility 0s 0.32s;
   }
 
   /* The bar floats: round buttons on the page, and the thread fades out under it instead of
@@ -772,11 +759,16 @@ html.list-open body {
   background: var(--hover);
 }
 
+/* After the title, so every title starts at the same edge. */
 .thread-fork {
+  order: 1;
   display: inline-flex;
   flex-shrink: 0;
-  margin-right: -2px;
   color: var(--faint);
+}
+
+.thread-meta {
+  order: 2;
 }
 
 .thread-text {
@@ -1534,6 +1526,8 @@ html.list-open body {
   font-weight: 500;
   letter-spacing: -0.015em;
   line-height: 1.35;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
 }
 
 /* ---------- Composer ---------- */
@@ -4010,8 +4004,21 @@ input.picker-search {
 }
 
 .quota-reset {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
   color: var(--faint);
   font-size: 12px;
+}
+
+.quota-load {
+  flex: none;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.quota-load.high {
+  color: var(--warn);
 }
 
 .quota-checked {
@@ -7445,9 +7452,18 @@ input.picker-search {
   .project-browser input.picker-search { font-size: 16px; }
 }
 
-/* Keep the run location visible alongside the project, including on small screens. */
-.composer-context { flex-wrap: wrap; }
+/* Keep the run location visible alongside the project, including on small screens: one line, and
+   the names give way before anything wraps. */
 .composer-context > .pop { min-width: 0; max-width: 100%; }
+.composer-context .context-btn { max-width: 100%; }
+.composer-context .context-btn > span:not(.host-dot) { min-width: 0; }
+@media (max-width: 640px) {
+  /* The mark says which agent; its name is in the menu it opens. */
+  .agent-btn.has-mark > span { display: none; }
+  /* The bar is short of room: these two keep their icons and say the rest when opened. */
+  .composer-bar .coord-tool > span,
+  .composer-bar .usage > span { display: none; }
+}
 .machine-trigger { max-width: 100%; }
 .machine-trigger > span:not(.host-dot) { max-width: 180px; }
 .machine-trigger > svg, .machine-trigger .host-dot { flex-shrink: 0; }
@@ -7460,8 +7476,15 @@ input.picker-search {
 .project-machine.remote > svg { color: var(--positive); }
 
 /* Collaboration: one list and a readable transcript alongside the main conversation. */
-.coord-trigger { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 6px 10px; font: inherit; font-size: 12px; cursor: pointer; }
-.coord-trigger[aria-pressed='true'] { color: var(--text); background: var(--active); }
+/* Off, it is one more quiet tool; on, it only darkens. */
+.coord-tool.on { color: var(--text); }
+/* Once on: one small line above the composer says how many agents there are and opens them. */
+.coord-bar { flex-shrink: 0; display: flex; justify-content: center; padding: 0 16px 8px; }
+.coord-status { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 12px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface); color: var(--muted); font: inherit; font-size: 12.5px; white-space: nowrap; cursor: pointer; }
+.coord-status:hover, .coord-status[aria-pressed='true'] { color: var(--text); border-color: var(--border-strong); }
+.coord-status-note { color: var(--faint); }
+.coord-status-note::before { content: '· '; }
+.coord-status.attention .coord-status-note { color: var(--warn); }
 .agent-panel { width: min(390px, 45vw); flex: 0 0 auto; display: flex; flex-direction: column; background: var(--bg); border-left: 1px solid var(--border); min-height: 0; overflow: hidden; }
 .agent-panel.detail { width: min(600px, 50vw); }
 .agent-panel-head { display: flex; align-items: center; gap: 8px; padding: 20px; border-bottom: 1px solid var(--border); }
@@ -7486,23 +7509,58 @@ input.picker-search {
 .agent-panel-footer { padding: 14px 16px; border-top: 1px solid var(--border); display: flex; gap: 8px; flex-wrap: wrap; }
 .agent-panel-footer button, .agent-panel-latest { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 7px 10px; background: var(--surface); color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
 .coord-back { display: flex; transform: rotate(180deg); }
-.coord-messages { margin-top: 24px; font-size: 12px; color: var(--muted); }
-.coord-messages summary { cursor: pointer; padding: 8px 0; }
-.coord-messages > div { padding: 12px 0; border-bottom: 1px solid var(--border); }
-.coord-messages strong { color: var(--text); margin-right: 8px; }
-.coord-messages p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; }
-.coord-mentions { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 0; }
-.coord-mention { display: inline-flex; align-items: center; border-radius: var(--radius-sm); background: var(--active); color: var(--text); padding: 2px 4px 2px 8px; }
-.coord-mention .icon-btn { width: 24px; height: 24px; }
-.coord-mention-label { background: none; border: none; padding: 3px 0; font: inherit; font-size: 12px; color: inherit; cursor: pointer; }
+/* The team's messages, read like a chat channel: who said it, when, then the words; answers fold under. */
+.agent-tabs { display: flex; gap: 4px; margin-bottom: 14px; padding: 3px; border-radius: var(--radius-sm); background: var(--hover); }
+.agent-tabs button { flex: 1; min-height: 30px; border: 0; border-radius: 6px; background: none; color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; }
+.agent-tabs button[aria-selected='true'] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-card); }
+.talks { display: flex; flex-direction: column; }
+.talk { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.talk:first-child { padding-top: 2px; }
+.talk:last-child { border-bottom: 0; }
+.talk-said { display: flex; gap: 10px; min-width: 0; }
+.talk-mark { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: var(--radius-sm); background: var(--hover); color: var(--muted); }
+.talk-mark.lead { background: var(--active); color: var(--text); }
+.talk-main { flex: 1; min-width: 0; }
+.talk-line { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 7px; font-size: 12px; color: var(--faint); }
+.talk-line strong { font-size: 14px; color: var(--text); overflow-wrap: anywhere; }
+.talk-tag { padding: 0 6px; border-radius: var(--radius-pill); background: var(--hover); color: var(--muted); font-size: 11px; line-height: 18px; }
+.talk-line time { margin-left: auto; font-variant-numeric: tabular-nums; }
+.talk-preview { margin: 3px 0 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; font-size: 13.5px; line-height: 1.6; color: var(--text); overflow-wrap: anywhere; }
+.talk-text { margin-top: 3px; font-size: 13.5px; line-height: 1.6; }
+.talk-foot { display: flex; align-items: center; gap: 10px; margin-top: 4px; font-size: 12px; color: var(--muted); }
+.talk-foot .text-btn { min-height: 0; padding: 0; font-size: 12px; color: var(--muted); }
+.talk-failed { padding: 0 7px; border-radius: var(--radius-pill); background: var(--danger-bg); color: var(--danger); }
+.talk-replies { display: inline-flex; align-items: center; gap: 5px; margin: 8px 0 0 42px; padding: 3px 8px 3px 4px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--muted); font: inherit; font-size: 12.5px; cursor: pointer; }
+.talk-replies:hover { background: var(--hover); color: var(--text); }
+.talk-thread { display: flex; flex-direction: column; gap: 12px; margin: 8px 0 0 15px; padding-left: 26px; border-left: 2px solid var(--border); }
+.talk-thread .talk-mark { width: 26px; height: 26px; }
+/* One line per agent brought into the message: its name, then what is asked of it alone. */
+.coord-rows { display: flex; flex-direction: column; gap: 4px; margin: 4px 10px 2px; }
+.coord-row { display: flex; align-items: flex-start; gap: 6px; padding: 3px 4px 3px 10px; border-radius: var(--radius-sm); background: var(--surface-2); }
+.coord-row > .pop, .coord-row > .coord-row-name { flex: none; min-width: 0; max-width: 45%; }
+.coord-row-name { display: block; max-width: 100%; padding: 0; border: 0; background: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: inherit; font-size: 13px; font-weight: 600; line-height: 30px; color: var(--text); }
+button.coord-row-name { cursor: pointer; }
+.composer-box .coord-row textarea { flex: 1; min-width: 0; min-height: 30px; max-height: 96px; padding: 5px 0; font-size: 14px; line-height: 1.45; }
+.coord-row .icon-btn { flex: none; width: 30px; height: 30px; color: var(--muted); }
+
+/* What another agent of the team sent in: a card, folded until asked for. */
+.row.delivered { align-items: stretch; margin-top: 6px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }
+.delivered-head { display: flex; flex-direction: column; gap: 4px; width: 100%; padding: 10px 14px; border: 0; background: none; font: inherit; color: var(--text); text-align: left; cursor: pointer; }
+.delivered-title { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 13.5px; color: var(--muted); }
+.delivered-from { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--text); }
+.delivered-title > :last-child { margin-left: auto; flex: none; }
+.delivered-failed { flex: none; padding: 1px 7px; border-radius: var(--radius-pill); background: var(--danger-bg); color: var(--danger); font-size: 12px; }
+.delivered-preview { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: 13.5px; line-height: 1.55; color: var(--muted); overflow-wrap: anywhere; }
+.delivered-body { padding: 4px 14px 14px; border-top: 1px solid var(--border); padding-top: 12px; font-size: 14.5px; }
 .coord-mention-menu { position: absolute; bottom: 100%; left: 12px; width: min(340px, calc(100% - 24px)); max-height: 300px; overflow-y: auto; padding: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-pop); z-index: 15; }
-.coord-mention-menu .coord-caption { padding: 8px; }
+.coord-mention-menu .coord-caption { display: flex; align-items: center; justify-content: space-between; min-height: 30px; padding: 0 4px 0 10px; }
+.coord-mention-menu .coord-caption .icon-btn { width: 28px; height: 28px; color: var(--muted); }
+.coord-mention-menu .pop-item-icon { margin-top: 0; align-self: center; }
 .coord-mention-menu .selected { background: var(--active); }
 .coord-setup { padding: 10px; min-width: 260px; }
 .coord-setup p { font-size: 12px; color: var(--muted); line-height: 1.6; }
-.coord-setup .menu-item { overflow-wrap: anywhere; white-space: normal; }
+.coord-setup .pop-item { overflow-wrap: anywhere; white-space: normal; }
 @media (max-width: 900px) {
   .agent-panel, .agent-panel.detail { position: absolute; inset: 0; width: 100%; z-index: 45; border-left: 0; }
-  .coord-trigger .coord-trigger-label { display: none; }
   .agent-panel-head { padding: 16px; }
 }

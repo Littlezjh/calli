@@ -36,9 +36,18 @@ test('TRAE model load and weekly quota appear in existing controls in both theme
       await page.getByRole('menuitem', { name: '额度', exact: true }).click();
       const row = page.locator('.quota-board-row', { hasText: 'TRAE CLI' });
       await row.getByText('Big 1.0', { exact: true }).waitFor();
+      assert.match(await page.locator('.quota-board-row').first().innerText(), /TRAE CLI/);
       assert.equal(await row.locator('.quota-percent').innerText(), '1%');
+      assert.equal(await row.locator('.quota-load').innerText(), '负载 184%');
       await row.getByRole('button', { name: '刷新 TRAE CLI 的额度' }).click();
       await row.getByText(/按模型显示每周额度/).waitFor();
+      const settled = () => row.locator('button:enabled[aria-label="刷新 TRAE CLI 的额度"]').waitFor();
+      await settled();
+      await Promise.all([
+        page.waitForRequest((r) => r.url().includes('/api/agents/traex/quota?refresh=1')),
+        page.getByRole('button', { name: '全部刷新' }).click(),
+      ]);
+      await settled();
       await page.waitForTimeout(300);
       if (shots) await page.screenshot({ path: join(shots, `${phone ? 'phone' : 'desktop'}-${theme}-quota.png`) });
       await context.close();

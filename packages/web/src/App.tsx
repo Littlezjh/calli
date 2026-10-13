@@ -56,7 +56,7 @@ import { NewProjectDialog, ProjectPicker, RootsDialog } from './components/Proje
 import { NoteMarks, type NoteMark } from './components/NoteMarks';
 import { Toast, type ToastState } from './components/Toast';
 import { TokenGate } from './components/TokenGate';
-import { IconAgents, IconArchive, IconArrowDown, IconChevron, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconImport, IconList, IconMenu, IconMore, IconPalette, IconPlus, IconServer, IconSidebar, IconSignOut, IconSparkle, IconTerminal } from './components/icons';
+import { IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconImport, IconList, IconMenu, IconMore, IconPalette, IconPlus, IconServer, IconSidebar, IconSignOut, IconSparkle, IconTerminal } from './components/icons';
 
 const sleep = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve) => {
@@ -180,7 +180,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
       return !hidden;
     });
   }, []);
-  // On a phone the thread list is a page under the conversation; `drawer` slides the conversation aside.
+  // On a phone the thread list is a page of its own; `drawer` slides the conversation off to show it.
   const compact = useIsCompact();
   // ⇧⌘S (Ctrl+Shift+S elsewhere), Codex's key for it. Only where there is a sidebar to put away.
   useEffect(() => {
@@ -838,7 +838,8 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
         // Every worktree is a new branch; the next thread starts in place unless asked again.
         setDraftWorktree(false);
       }
-      if (draftCollaboration && !selected?.coordination) await api.configureCoordination(id, { directories: collaborationDirectories.length ? collaborationDirectories : undefined });
+      // Bringing an agent in with @ is itself the request to collaborate; there is no switch to find first.
+      if ((draftCollaboration || mentions?.length) && !selected?.coordination) await api.configureCoordination(id, { directories: collaborationDirectories.length ? collaborationDirectories : undefined });
       stickToBottom.current = true;
       // "queue" only matters while a turn is running: then the message waits instead of being refused.
       await api.startTurn(
@@ -1083,19 +1084,19 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
   );
 
   const left = (<>
-    {(activeCaps?.coordination || selected?.coordination) && <CoordinationPopover label="协作设置" triggerClassName="coord-trigger" triggerLabel="协作" trigger={<><IconAgents size={15} />协作{selected?.coordination || draftCollaboration ? ' · 已启用' : ''}</>}>
+    {(activeCaps?.coordination || selected?.coordination) && <CoordinationPopover label="协作设置" triggerClassName={`tool-btn coord-tool${selected?.coordination || draftCollaboration ? ' on' : ''}`} triggerLabel="协作" triggerTitle={selected?.coordination || draftCollaboration ? '协作已启用' : '协作'} trigger={<><IconAgents size={16} /><span>协作</span></>}>
       {close => <div className="coord-setup">
         <strong>{selected?.coordination ? '当前协作' : '让多个智能体一起工作'}</strong>
-        <p>输入 @ 选择助手，由当前智能体安排分工。默认在当前目录工作。</p>
+        <p>在输入框输入 @ 选择助手就会开始协作，由当前智能体安排分工。默认在当前目录工作。</p>
         {!selected?.coordination && <>
           <div className="coord-caption">允许使用的目录</div>
-          {[...new Set([activeCwd, ...workdirs].filter(Boolean))].map(dir => <button className="menu-item" role="menuitemcheckbox" aria-checked={(collaborationDirectories.length ? collaborationDirectories : [activeCwd]).includes(dir)} key={dir} onClick={() => setCollaborationDirectories(prev => { const current = prev.length ? prev : [activeCwd]; return current.includes(dir) ? current.filter(v => v !== dir) : [...current, dir]; })}>{(collaborationDirectories.length ? collaborationDirectories : [activeCwd]).includes(dir) ? '已选 · ' : ''}{dir}</button>)}
-          <button className="menu-item" disabled={running} onClick={() => {
+          {[...new Set([activeCwd, ...workdirs].filter(Boolean))].map(dir => <button className="pop-item compact" role="menuitemcheckbox" aria-checked={(collaborationDirectories.length ? collaborationDirectories : [activeCwd]).includes(dir)} key={dir} onClick={() => setCollaborationDirectories(prev => { const current = prev.length ? prev : [activeCwd]; return current.includes(dir) ? current.filter(v => v !== dir) : [...current, dir]; })}>{(collaborationDirectories.length ? collaborationDirectories : [activeCwd]).includes(dir) ? '已选 · ' : ''}{dir}</button>)}
+          <button className="pop-item compact" disabled={running} onClick={() => {
             if (selected) void api.configureCoordination(selected.id, { directories: collaborationDirectories.length ? collaborationDirectories : [selected.cwd] }).then(value => { setCoordination(value); void refreshThreads(); close(); }).catch(handleError);
             else { setDraftCollaboration(v => !v); close(); }
           }}>{draftCollaboration ? '关闭协作' : running ? '当前轮结束后可启用' : '启用协作'}</button>
         </>}
-        {selected?.coordination && <button className="menu-item" onClick={() => { setAgentsOpen(true); setFiles(null); close(); }}>查看智能体</button>}
+        {selected?.coordination && <button className="pop-item compact" onClick={() => { setAgentsOpen(true); setFiles(null); close(); }}>查看智能体</button>}
       </div>}
     </CoordinationPopover>}
     <PermissionPicker
@@ -1106,6 +1107,10 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
       onChange={(m) => (selected ? updateSelected({ permissionMode: m }) : setDraftPermission(m))}
     />
   </>);
+
+  const teamWaiting = Boolean(coordination?.members.some((m) => m.thread?.waiting));
+  const teamRunning = coordination?.members.filter((m) => m.thread?.status === 'running').length ?? 0;
+  const teamNote = teamWaiting ? '待批准' : teamRunning ? `${teamRunning} 运行中` : selected?.coordination?.paused ? '已暂停' : '';
 
   // Older daemons advertise /compact before they expose the dedicated capability.
   const canCompact = activeCaps?.compact ?? (commandsByKey[commandsKey] ?? []).some((command) => command.name === 'compact' && command.kind !== 'skill');
@@ -1196,7 +1201,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
       <main className="main">
         <header className="topbar">
           <button className="icon-btn menu-btn" aria-label="打开线程列表" aria-expanded={listOpen} onClick={() => setDrawer((v) => !v)}>
-            <IconMenu />
+            {compact ? <IconBack size={22} /> : <IconMenu />}
           </button>
           {/* With the list put away, the way back and a new thread move up here. */}
           {sidebarHidden && !compact && (
@@ -1223,8 +1228,6 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           </div>
           {selected && (
             <div className="topbar-actions">
-              {selected.coordination && <button className="coord-trigger" aria-label="查看智能体" aria-pressed={agentsOpen} onClick={() => { setAgentsOpen(v => !v); setFiles(null); }}><IconAgents size={16} /><span className="coord-trigger-label">智能体</span>{selected.coordination.children}</button>}
-              {selected.coordination && selected.coordination.rootId !== selected.id && <button className="coord-trigger" onClick={() => pick(selected.coordination!.rootId)}>返回主线程</button>}
               <button
                 className={`icon-btn topbar-files${files ? ' on' : ''}`}
                 aria-label="文件"
@@ -1336,6 +1339,23 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           )}
         </div>
 
+        {/* Collaboration, once on, is one quiet line above the composer, like Codex's. */}
+        {selected?.coordination && !onTodos && !onSkills && hostUp && (
+          <div className="coord-bar">
+            {selected.coordination.rootId !== selected.id ? (
+              <button className="coord-status" onClick={() => pick(selected.coordination!.rootId)}>
+                <IconBack size={14} />返回主线程
+              </button>
+            ) : (
+              <button className={`coord-status${teamWaiting ? ' attention' : ''}`} aria-label="查看智能体" aria-pressed={agentsOpen} onClick={() => { setAgentsOpen((v) => !v); setFiles(null); }}>
+                <IconAgents size={15} />
+                <span>{selected.coordination.children ? `${selected.coordination.children} 个智能体` : '协作已启用'}</span>
+                {teamNote && <span className="coord-status-note">{teamNote}</span>}
+              </button>
+            )}
+          </div>
+        )}
+
         {!onTodos && !onSkills && !(host && !hostUp) && (
         <Composer
           draftKey={hostId ? `host:${hostId}:${selectedId ?? 'new'}` : selectedId ?? 'new'}
@@ -1343,10 +1363,11 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           disabled={!selected && !draftCwd}
           placeholder={selected ? (running ? '追加一条，这一轮结束后发送' : '继续这个线程') : draftScratch ? '随便问点什么' : `在 ${folderName(draftCwd) || '工作目录'} 中开始`}
           onSend={send}
-          mentionOptions={(selected?.coordination?.rootId === selected?.id && selected?.coordination) || draftCollaboration ? [
+          mentionOptions={(selected?.coordination ? selected.coordination.rootId === selected.id : activeCaps?.coordination && !(selected && running)) ? [
             ...(coordination?.members.map(m => ({ id: m.id, label: m.name, kind: 'member' as const })) ?? []),
             ...agents.filter(a => a.available && a.capabilities.coordination && (!coordination || coordination.agents.includes(a.id))).map(a => ({ id: a.id, label: a.label, kind: 'agent' as const })),
           ] : []}
+          mentionIcon={(m) => agents.find((a) => a.id === (m.kind === 'agent' ? m.id : coordination?.members.find((v) => v.id === m.id)?.thread?.agent))?.icon}
           mentionDirectories={coordination?.directories ?? (collaborationDirectories.length ? collaborationDirectories : [activeCwd])}
           onStop={stop}
           header={header}
@@ -1369,11 +1390,9 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           lastSent={selected ? lastSent : null}
         />
         )}
-        {/* With the list open, the conversation is a card pushed aside; a tap on it brings it back. */}
-        <div className="scrim" onClick={() => setDrawer(false)} aria-hidden="true" />
       </main>
 
-      {agentsOpen && coordination && <AgentPanel key={coordination.rootId} api={api} team={coordination} phone={compact} onClose={() => setAgentsOpen(false)} onOpen={thread => { openThread(thread); setAgentsOpen(false); }} onAdjust={name => { setAgentsOpen(false); setSelectedId(coordination.rootId); setRestore({ text: `请调整「${name}」的任务：`, nonce: Date.now() }); }} onRefresh={() => { void refreshThreads(); }} onError={handleError} />}
+      {agentsOpen && coordination && <AgentPanel key={coordination.rootId} api={api} team={coordination} agents={agents} leadAgent={threads.find((t) => t.id === coordination.rootId)?.agent} phone={compact} onClose={() => setAgentsOpen(false)} onOpen={thread => { openThread(thread); setAgentsOpen(false); }} onAdjust={name => { setAgentsOpen(false); setSelectedId(coordination.rootId); setRestore({ text: `请调整「${name}」的任务：`, nonce: Date.now() }); }} onRefresh={() => { void refreshThreads(); }} onError={handleError} />}
       {files && selected && api && <FilesPanel api={api} threadId={selected.id} target={files} phone={compact} onClose={() => setFiles(null)} />}
       {preview && api && (
         <PreviewPanel api={api} threadId={preview.threadId} path={preview.path} onClose={() => setPreview(null)} onError={handleError} />
@@ -1412,7 +1431,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           onClose={() => setStatusOpen(false)}
         />
       )}
-      {quotaOpen && api && <QuotaBoard api={api} agents={agents} onClose={() => setQuotaOpen(false)} onError={handleError} />}
+      {quotaOpen && api && <QuotaBoard api={api} agents={agents} current={onTodos || onSkills ? undefined : activeAgent} onClose={() => setQuotaOpen(false)} onError={handleError} />}
       {addAgentOpen && (
         <AddAgentDialog
           found={discovered}

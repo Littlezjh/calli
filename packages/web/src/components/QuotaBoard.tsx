@@ -1,19 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AgentInfo, Api, PlanQuota } from '../api';
-import { formatReset, quotaHeadline, quotaLevel } from '../quota';
+import { formatReset, quotaHeadline, quotaLevel, quotaRows } from '../quota';
 import { AgentMark } from './icons';
 import { IconClose, IconInfo, IconRefresh } from './icons';
 
 /**
  * Every agent's plan usage on one screen: each instance that can report quota gets a row with its
  * windows (a 5-hour session, a week), when that reading was taken, and a refresh of its own.
- * Reading costs a CLI run per agent on the server — the dashboard keeps to the daemon's cache and
- * a refresh button that means "ask again now" — and a failed refresh keeps the last reading up.
+ * Reading costs a CLI run per agent on the server — an open board keeps to the daemon's cache, and
+ * the refresh buttons mean "ask again now" — and a failed refresh keeps the last reading up.
  */
 
 interface Props {
   api: Api;
   agents: AgentInfo[];
+  /** The agent of the thread on screen; its row comes first. */
+  current?: string;
   onClose: () => void;
   onError: (e: unknown) => void;
 }
@@ -25,7 +27,7 @@ const clock = (iso: string): string => new Date(iso).toLocaleTimeString([], { ho
 
 type Reading = { quota: PlanQuota } | { failedAt: string; quota: PlanQuota | null } | null;
 
-function QuotaRow({ api, agent, onError, refreshAll }: { api: Api; agent: AgentInfo; onError: (e: unknown) => void; refreshAll: number }) {
+function QuotaRow({ api, agent, onError, refreshAll, askAll }: { api: Api; agent: AgentInfo; onError: (e: unknown) => void; refreshAll: number; askAll: number }) {
   const [reading, setReading] = useState<Reading>(null);
   const [loading, setLoading] = useState(true);
   const inFlight = useRef(false);
@@ -48,10 +50,14 @@ function QuotaRow({ api, agent, onError, refreshAll }: { api: Api; agent: AgentI
     [api, agent.id, onError],
   );
 
-  // Read on mount and whenever the board's refresh-all fires; the daemon's cache rides along.
+  // Read on mount and on the board's minute tick, where the daemon's cache rides along;
+  // the board's refresh-all button asks every agent again, like a row's own button.
+  const asked = useRef(askAll);
   useEffect(() => {
-    void read(false);
-  }, [read, refreshAll]);
+    const again = asked.current !== askAll;
+    asked.current = askAll;
+    void read(again);
+  }, [read, refreshAll, askAll]);
 
   const quota = reading && 'quota' in reading ? reading.quota : null;
   const failedAt = reading && 'failedAt' in reading ? reading.failedAt : null;
@@ -84,7 +90,10 @@ function QuotaRow({ api, agent, onError, refreshAll }: { api: Api; agent: AgentI
               <div className="quota-bar">
                 <div className={`quota-bar-fill ${quotaLevel(w.usedPercent)}`} style={{ width: `${Math.min(100, w.usedPercent)}%` }} />
               </div>
-              <div className="quota-reset">{formatReset(w)}</div>
+              <div className="quota-reset">
+                <span>{formatReset(w)}</span>
+                {w.loadPercent !== undefined && <span className={`quota-load${w.loadPercent >= 100 ? ' high' : ''}`}>负载 {w.loadPercent}%</span>}
+              </div>
             </div>
           ))}
           <p className="quota-checked">
@@ -98,9 +107,10 @@ function QuotaRow({ api, agent, onError, refreshAll }: { api: Api; agent: AgentI
   );
 }
 
-export function QuotaBoard({ api, agents, onClose, onError }: Props) {
+export function QuotaBoard({ api, agents, current, onClose, onError }: Props) {
   const [refreshAll, setRefreshAll] = useState(0);
-  const rows = agents.filter((a) => a.capabilities.quota);
+  const [askAll, setAskAll] = useState(0);
+  const rows = quotaRows(agents, current);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -124,7 +134,7 @@ export function QuotaBoard({ api, agents, onClose, onError }: Props) {
             <IconInfo size={20} /> 额度看板
           </h2>
           <span className="status-actions">
-            <button type="button" className="text-btn strong" onClick={() => setRefreshAll((n) => n + 1)}>
+            <button type="button" className="text-btn strong" onClick={() => setAskAll((n) => n + 1)}>
               <IconRefresh size={14} /> 全部刷新
             </button>
             <button className="icon-btn" aria-label="关闭" onClick={onClose}>
@@ -135,7 +145,7 @@ export function QuotaBoard({ api, agents, onClose, onError }: Props) {
         <div className="panel-list quota-list">
           {rows.length === 0 && <p className="panel-empty">这台主机上还没有能报告额度的 agent。</p>}
           {rows.map((agent) => (
-            <QuotaRow key={agent.id} api={api} agent={agent} onError={onError} refreshAll={refreshAll} />
+            <QuotaRow key={agent.id} api={api} agent={agent} onError={onError} refreshAll={refreshAll} askAll={askAll} />
           ))}
         </div>
       </div>

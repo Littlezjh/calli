@@ -15,6 +15,21 @@ type Delivery = {
   text: string; kind: 'message' | 'result'; state: 'queued' | 'running' | 'returned' | 'failed' | 'stopped' | 'interrupted';
   turnId: string | null; result: string; createdAt: string;
 };
+/**
+ * What a turn ended up saying: the text after the last thing it did. Remarks made on the way
+ * ("reading the diff next") stay in the member's own thread. A turn that ends on a tool call
+ * has no closing text, so everything it said is returned instead.
+ */
+export function turnAnswer(events: StoredEvent[], turnId: string | null): string {
+  let all = '', last = '';
+  for (const e of events) {
+    if (e.turnId !== turnId) continue;
+    if (e.type === 'message.delta') { const text = String(e.data.text ?? ''); all += text; last += text; }
+    else if (e.type === 'tool.start' || e.type === 'reasoning.delta' || e.type === 'approval.request') last = '';
+  }
+  return (last.trim() ? last : all).trim().slice(-16000);
+}
+
 type Team = { rootId: string; paused: boolean; directories: string[]; agents: string[]; members: Member[]; deliveries: Delivery[] };
 
 /** A small durable mailbox. All mutations are serialized; turns still belong to ThreadManager. */
@@ -35,7 +50,7 @@ export class CoordinationManager {
         const end = store.listEvents(job.to, 0, -1).find(e => e.turnId === job.turnId && (e.type === 'turn.done' || e.type === 'turn.error'));
         if (!end || end.data.code === 'interrupted') { job.state = 'interrupted'; continue; }
         job.state = end.data.stopReason === 'cancelled' ? 'stopped' : end.type === 'turn.error' ? 'failed' : 'returned';
-        job.result = store.listEvents(job.to, 0, -1).filter(e => e.turnId === job.turnId && e.type === 'message.delta').map(e => String(e.data.text ?? '')).join('').slice(-16000) || String(end.data.message ?? '');
+        job.result = turnAnswer(store.listEvents(job.to, 0, -1), job.turnId) || String(end.data.message ?? '');
         const key = `result:${job.to}:${job.turnId}`;
         if (job.to !== team.rootId && job.state !== 'stopped' && !team.deliveries.some(d => d.key === key)) {
           this.enqueue(team, job.to, job.kind === 'message' ? job.from : team.rootId, `重启前的结果：${job.result}`, 'result', key);
@@ -77,7 +92,7 @@ export class CoordinationManager {
       rootId: t.rootId, paused: t.paused, directories: t.directories, agents: t.agents,
       members: t.members.map(m => ({ ...m, thread: this.store.getThread(m.id) ? this.manager.threadView(m.id) : null,
         latest: [...t.deliveries].reverse().find(d => d.to === m.id) ?? null })),
-      messages: t.deliveries.slice(-100),
+      messages: t.deliveries.slice(-100).map(d => ({ ...d, replyTo: this.answered(t, d)?.id ?? null })),
     };
   }
 
@@ -121,23 +136,32 @@ export class CoordinationManager {
 
   mentionText(id: string, text: string, mentions: unknown): string {
     if (!Array.isArray(mentions) || !mentions.length) return text;
-    if (typeof text !== 'string' || !text.trim()) throw new HttpError(400, '请说明协作任务');
+    const tasks = mentions.map(m => typeof m?.task === 'string' ? m.task.trim() : '');
+    if (tasks.some(task => task.length > 4000)) throw new HttpError(400, '单个成员的任务最多 4000 字符');
+    if (typeof text !== 'string' || (!text.trim() && !tasks.some(Boolean))) throw new HttpError(400, '请说明协作任务');
     const team = this.team(id);
     if (!team || team.rootId !== id) throw new HttpError(400, '请在启用协作的主线程使用 @');
     if (mentions.length > 12) throw new HttpError(400, '协作对象过多');
-    const targets = mentions.map(m => {
+    // What the user wrote for one member alone: shown under their message, and kept with its target.
+    const lines: string[] = [];
+    const targets = mentions.map((m, i) => {
       if (!m || typeof m.id !== 'string') throw new HttpError(400, '无效的协作对象');
+      const task = tasks[i] ? { task: tasks[i] } : {};
       if (m.kind === 'member') {
         const target = team.members.find(c => c.id === m.id);
         if (!target) throw new HttpError(400, '成员不在本次协作中');
-        return { member: target.name, threadId: target.id };
+        if (tasks[i]) lines.push(`@${target.name}：${tasks[i]}`);
+        return { member: target.name, threadId: target.id, ...task };
       }
       if (m.kind !== 'agent' || !team.agents.includes(m.id)) throw new HttpError(400, '实例不在本次协作中');
       const cwd = m.cwd ?? this.manager.threadView(id).cwd;
       if (typeof cwd !== 'string' || !isWithinWorkdirs(cwd, team.directories)) throw new HttpError(400, '目录不在本次协作中');
-      return { agent: m.id, cwd };
+      const label = typeof m.label === 'string' && /^[^\n]{1,40}$/.test(m.label) ? m.label : m.id;
+      if (tasks[i]) lines.push(`@${label}：${tasks[i]}`);
+      return { agent: m.id, cwd, ...task };
     });
-    return `${text}\n\n[指定协作对象]\n${JSON.stringify(targets)}\n请按用户要求安排上述对象，member 表示继续已有成员，agent 表示创建新成员。`;
+    const said = [text.trim(), lines.join('\n')].filter(Boolean).join('\n\n');
+    return `${said}\n\n[指定协作对象]\n${JSON.stringify(targets)}\n请按用户要求安排上述对象，member 表示继续已有成员，agent 表示创建新成员。带 task 的对象是用户单独给它的要求，其余由你分工。`;
   }
 
   /** Auth is scoped to one member. The browser continues to use the ordinary authenticated API. */
@@ -212,13 +236,21 @@ export class CoordinationManager {
     t.deliveries.push(d);
     return d;
   }
+  /** The message a result came out of: the one whose turn produced it, or the one that could not start. */
+  private answered(t: Team, d: Delivery): Delivery | undefined {
+    if (d.kind !== 'result') return undefined;
+    const failed = /^start-error:(.+)$/.exec(d.key);
+    if (failed) return t.deliveries.find(v => v.id === failed[1]);
+    const done = /^result:(.+):([^:]+)$/.exec(d.key);
+    return done ? t.deliveries.find(v => v.to === done[1] && v.turnId === done[2]) : undefined;
+  }
   private name(t: Team, id: string): string { return id === t.rootId ? '主智能体' : t.members.find(m => m.id === id)?.name ?? id; }
 
   private finished(ev: StoredEvent): void {
     const t = this.team(ev.threadId);
     if (!t || !ev.turnId) return;
     const job = t.deliveries.find(d => d.to === ev.threadId && d.turnId === ev.turnId);
-    const result = this.store.listEvents(ev.threadId, 0, -1).filter(e => e.turnId === ev.turnId && e.type === 'message.delta').map(e => String(e.data.text ?? '')).join('').slice(-16000);
+    const result = turnAnswer(this.store.listEvents(ev.threadId, 0, -1), ev.turnId);
     const stopped = ev.data.stopReason === 'cancelled';
     const state = stopped ? 'stopped' : ev.type === 'turn.error' ? 'failed' : 'returned';
     if (job) { job.state = state; job.result = result || String(ev.data.message ?? ''); }

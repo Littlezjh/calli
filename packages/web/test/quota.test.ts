@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { PlanQuota, QuotaWindow } from '../src/api.js';
-import { formatReset, quotaHeadline, quotaLevel } from '../src/quota.js';
+import { formatReset, quotaHeadline, quotaLevel, quotaRows } from '../src/quota.js';
 
 const win = (over: Partial<QuotaWindow> = {}): QuotaWindow => ({ label: '5H', usedPercent: 0, ...over });
 
@@ -27,4 +27,12 @@ test('quotaHeadline reports the tightest window', () => {
   };
   assert.equal(quotaHeadline(quota), '最紧的一档用了 95%');
   assert.equal(quotaHeadline({ windows: [], checkedAt: '2026-10-10T00:00:00Z' }), '没有读到额度信息');
+});
+
+test('quotaRows keeps agents that report quota and puts the one in use first', () => {
+  const agents = [['claude', true], ['codex', true], ['plain', false], ['traex', true]].map(([id, quota]) => ({ id: id as string, capabilities: { quota: quota as boolean } }));
+  const ids = (current?: string) => quotaRows(agents, current).map((a) => a.id);
+  assert.deepEqual(ids(), ['claude', 'codex', 'traex']);
+  assert.deepEqual(ids('traex'), ['traex', 'claude', 'codex']);
+  assert.deepEqual(ids('plain'), ['claude', 'codex', 'traex']);
 });

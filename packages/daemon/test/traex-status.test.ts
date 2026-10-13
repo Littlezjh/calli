@@ -41,9 +41,28 @@ test('TRAE enriches ACP models, retains defaults, refreshes metadata and reports
     assert.match(models[1].description!, /模型负载 184%.*每周额度剩余 99%/);
     assert.equal(adapter.capabilities.quota, true);
     assert.equal((await adapter.fetchQuota()).windows[0].usedPercent, 1);
+    assert.equal((await adapter.fetchQuota()).windows[0].loadPercent, 184);
     seed(23, 10);
     assert.match((await adapter.models())[1].description!, /模型负载 23%.*每周额度剩余 90%/);
     assert.equal((await adapter.fetchQuota()).windows[0].usedPercent, 10);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('TRAE quota windows carry their own model\'s load, and none when the CLI reports none', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'rah-traex-load-'));
+  try {
+    const file = join(root, 'models.json');
+    const weeklyQuota = { applies: true, usedPercent: 5 };
+    writeFileSync(file, JSON.stringify([
+      { name: 'Big 1.0', config_name: 'big', _meta: { trae: { load: { percent: 184 }, weeklyQuota } } },
+      { name: 'Free', _meta: { trae: { load: { percent: 60 } } } },
+      { name: 'Small 1.0', config_name: 'small', _meta: { trae: { load: { percent: 100 }, weeklyQuota } } },
+      { name: 'Quiet', _meta: { trae: { weeklyQuota } } },
+    ]));
+    const adapter = new TraexAcpAdapter([process.execPath, fake], { FAKE_ACP_FLAVOR: 'traex', FAKE_TRAEX_MODELS_FILE: file });
+    const { windows } = await adapter.fetchQuota();
+    assert.deepEqual(windows.map((w) => [w.scope, w.loadPercent]), [['Big 1.0', 184], ['Small 1.0', 100], ['Quiet', undefined]]);
+    assert.equal('loadPercent' in windows[2], false);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

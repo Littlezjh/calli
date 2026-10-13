@@ -270,7 +270,7 @@ export function AgentPicker({ agents, value, onChange, accounts = [], onAddAccou
   return (
     <Popover
       label="Agent"
-      triggerClassName="context-btn"
+      triggerClassName={`context-btn agent-btn${current?.icon ? ' has-mark' : ''}`}
       trigger={
         <>
           {current?.icon && <AgentMark path={current.icon} size={14} />}

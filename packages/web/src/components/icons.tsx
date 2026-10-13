@@ -45,6 +45,11 @@ export const IconChevron = (p: { size?: number; open?: boolean }) => (
     <path d={p.open ? 'M6 9l6 6 6-6' : 'M9 6l6 6-6 6'} />
   </Svg>
 );
+export const IconBack = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M15 5l-7 7 7 7" />
+  </Svg>
+);
 export const IconTerminal = (p: { size?: number }) => (
   <Svg {...p}>
     <path d="M5 7l4 4-4 4M12 17h7" />

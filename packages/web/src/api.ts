@@ -35,7 +35,7 @@ export interface WorkdirsConfig {
   scratch?: boolean;
 }
 
-export interface AgentMention { id: string; label: string; kind: 'agent' | 'member'; cwd?: string }
+export interface AgentMention { id: string; label: string; kind: 'agent' | 'member'; cwd?: string; /** What the user asks of this one alone. */ task?: string }
 export interface Coordination {
   rootId: string; paused: boolean; directories: string[]; agents: string[];
   members: Array<{ id: string; name: string; thread: Thread | null; latest: CoordinationMessage | null }>;
@@ -43,6 +43,8 @@ export interface Coordination {
 }
 export interface CoordinationMessage {
   id: string; from: string; to: string; text: string; kind: string; state: string; result: string; createdAt: string; turnId: string | null;
+  /** For a result: the message it answers. Absent from older daemons. */
+  replyTo?: string | null;
 }
 export interface Thread {
   coordination?: { rootId: string; children: number; paused: boolean };
@@ -234,6 +236,8 @@ export interface QuotaWindow {
   usedPercent: number;
   /** When the window resets, if the agent said so. ISO. */
   resetsAt?: string;
+  /** How busy the model behind this window is right now; above 100 means overloaded. */
+  loadPercent?: number;
 }
 
 /** Plan usage of an agent instance, read outside any session. */

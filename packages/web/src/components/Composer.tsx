@@ -8,6 +8,7 @@ import { Popover } from './Popover';
 import { Lightbox } from './Lightbox';
 import {
   IconArchive,
+  AgentMark,
   IconClose,
   IconCopy,
   IconCube,
@@ -100,6 +101,8 @@ interface Props {
   placeholder: string;
   mentionOptions?: AgentMention[];
   mentionDirectories?: string[];
+  /** The mark of the agent behind a choice, for the @ list. */
+  mentionIcon?: (mention: AgentMention) => string | undefined;
   onSend: (text: string, images: PreparedImage[], mentions?: AgentMention[]) => Promise<void> | void;
   onStop: () => void;
   /** Strip above the text area: which agent and which directory. */
@@ -180,6 +183,7 @@ export function Composer({
   lastSent = null,
   mentionOptions = [],
   mentionDirectories = [],
+  mentionIcon,
 }: Props) {
   const [text, setText] = useState('');
   const [mentions, setMentions] = useState<AgentMention[]>([]);
@@ -207,12 +211,23 @@ export function Composer({
   const mentionMatch = /(?:^|\s)@([^\s@]*)$/.exec(text);
   const mentionRows = mentionOptions.filter(m => !mentions.some(v => v.id === m.id && v.kind === m.kind) && (!mentionMatch?.[1] || `${m.label} ${m.id}`.toLowerCase().includes(mentionMatch[1].toLowerCase())));
   const mentionOpen = Boolean(mentionMatch && mentionRows.length && !mentionDismissed);
+  const taskRefs = useRef<Array<HTMLTextAreaElement | null>>([]);
+  const focusTask = useRef(false);
   const chooseMention = (mention: AgentMention) => {
     setMentions(prev => [...prev, mention]);
     setText(prev => prev.replace(/@[^\s@]*$/, ''));
-    ref.current?.focus();
+    focusTask.current = true;
   };
-  useEffect(() => { setMentionActive(0); setMentionDismissed(false); }, [text]);
+  // The agent just brought in gets its own line; the caret goes there, ready for its task.
+  useEffect(() => {
+    if (!focusTask.current) return;
+    focusTask.current = false;
+    taskRefs.current[mentions.length - 1]?.focus();
+  }, [mentions.length]);
+  // Turned away once, the list stays away for that @: the word after it is the user's own. A new @ asks again.
+  const mentioning = mentionMatch !== null;
+  useEffect(() => { setMentionActive(0); }, [text]);
+  useEffect(() => { if (!mentioning) setMentionDismissed(false); }, [mentioning]);
 
   // Typing changes the list, so the highlight goes back to the first row and a dismissed menu can reopen.
   useEffect(() => {
@@ -380,7 +395,7 @@ export function Composer({
     choose(row);
   };
 
-  const hasContent = text.trim() !== '' || images.length > 0 || notes.length > 0;
+  const hasContent = text.trim() !== '' || images.length > 0 || notes.length > 0 || mentions.some((m) => m.task?.trim());
   // While a turn runs, sending means queueing, up to a limit.
   const queueFull = running && queued.length >= MAX_QUEUED;
   const canSend = hasContent && !busy && !disabled && preparing === 0 && !queueFull;
@@ -617,16 +632,18 @@ export function Composer({
             </div>
           )}
 
-          {mentions.length > 0 && <div className="coord-mentions">{mentions.map(m => <span className="coord-mention" key={`${m.kind}:${m.id}`}>
-            {m.kind === 'member' ? <span className="coord-mention-label">@{m.label}</span> : <Popover label="成员工作目录" triggerClassName="coord-mention-label" trigger={<span>@{m.label}{m.cwd ? ` · ${m.cwd.split('/').pop()}` : ''}</span>}>
-              {close => <>{mentionDirectories.map(dir => <button className="menu-item" key={dir} onClick={() => { setMentions(prev => prev.map(v => v === m ? { ...v, cwd: dir } : v)); close(); }}>{dir}</button>)}</>}
-            </Popover>}
-            <button className="icon-btn" aria-label={`移除 ${m.label}`} onClick={() => setMentions(prev => prev.filter(v => v !== m))}><IconClose size={12} /></button>
-          </span>)}</div>}
           {mentionOpen && <div className="coord-mention-menu" role="listbox" aria-label="选择协作智能体">
             {(['member', 'agent'] as const).map(kind => <div key={kind}>
-              {mentionRows.some(m => m.kind === kind) && <div className="coord-caption">{kind === 'member' ? '本次协作' : '可用实例 · 新建成员'}</div>}
-              {mentionRows.map((m, i) => m.kind === kind && <button role="option" aria-selected={i === mentionActive} className={`menu-item${i === mentionActive ? ' selected' : ''}`} key={m.id} onClick={() => chooseMention(m)}>{m.label}</button>)}
+              {mentionRows.some(m => m.kind === kind) && <div className="coord-caption">
+                <span>{kind === 'member' ? '本次协作' : '可用实例 · 新建成员'}</span>
+                {kind === mentionRows[0]?.kind && <button type="button" className="icon-btn" aria-label="不选择智能体" title="不选择，@ 留作文字" onClick={() => { setMentionDismissed(true); ref.current?.focus(); }}><IconClose size={13} /></button>}
+              </div>}
+              {mentionRows.map((m, i) => m.kind === kind && (
+                <button type="button" role="option" aria-selected={i === mentionActive} className={`pop-item compact${i === mentionActive ? ' selected' : ''}`} key={m.id} onClick={() => chooseMention(m)}>
+                  <span className="pop-item-icon">{mentionIcon?.(m) ? <AgentMark path={mentionIcon(m)!} size={16} /> : null}</span>
+                  <span className="pop-item-label">{m.label}</span>
+                </button>
+              ))}
             </div>)}
           </div>}
           <textarea
@@ -642,6 +659,37 @@ export function Composer({
             aria-expanded={menuOpen}
             aria-autocomplete="list"
           />
+
+          {/* One line per agent brought in: what is written there is for that one alone. */}
+          {mentions.length > 0 && (
+            <div className="coord-rows">
+              {mentions.map((m, i) => (
+                <div className="coord-row" key={`${m.kind}:${m.id}`}>
+                  {m.kind === 'member' ? (
+                    <span className="coord-row-name">@{m.label}</span>
+                  ) : (
+                    <Popover label="成员工作目录" triggerClassName="coord-row-name" triggerTitle="选择工作目录" trigger={<span>@{m.label}{m.cwd ? ` · ${m.cwd.split('/').pop()}` : ''}</span>}>
+                      {close => <>{mentionDirectories.map(dir => <button className="pop-item compact" key={dir} onClick={() => { setMentions(prev => prev.map(v => v === m ? { ...v, cwd: dir } : v)); close(); }}>{dir}</button>)}</>}
+                    </Popover>
+                  )}
+                  <textarea
+                    ref={(el) => { taskRefs.current[i] = el; }}
+                    rows={1}
+                    value={m.task ?? ''}
+                    placeholder="只给它的任务，留空由主智能体分工"
+                    aria-label={`给 ${m.label} 的任务`}
+                    disabled={disabled}
+                    onChange={(e) => { const task = e.target.value; setMentions(prev => prev.map(v => v === m ? { ...v, task } : v)); }}
+                    onKeyDown={(e) => {
+                      // Enter leaves the line for the message; a task is one line of intent, not an essay.
+                      if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); ref.current?.focus(); }
+                    }}
+                  />
+                  <button type="button" className="icon-btn" aria-label={`移除 ${m.label}`} onClick={() => setMentions(prev => prev.filter(v => v !== m))}><IconClose size={13} /></button>
+                </div>
+              ))}
+            </div>
+          )}
 
           <div className="composer-bar">
             <input

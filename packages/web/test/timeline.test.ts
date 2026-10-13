@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildTimeline,
+  coordinationNote,
+  deliveredPreview,
   clockLabel,
   durationLabel,
   groupByTurn,
@@ -29,12 +31,21 @@ function ev(type: string, data: Record<string, any> = {}, turnId: string | null 
 }
 
 test('collaboration turns expose their source and hide runtime instructions', () => {
-  const tl = buildTimeline([ev('turn.started', { text: 'internal instructions', displayText: '来自审查成员的结果', coordination: { from: 'reviewer' } })]);
+  const tl = buildTimeline([ev('turn.started', { text: 'internal instructions', displayText: '来自 审查成员 的结果\n\n状态：本轮已返回，仍需验收\n完成', coordination: { from: 'reviewer' } })]);
   const item = tl.items[0];
   assert.equal(item.kind, 'user');
   if (item.kind !== 'user') return;
-  assert.equal(item.text, '来自审查成员的结果');
-  assert.equal(item.coordination, true);
+  assert.equal(item.text, '完成');
+  assert.deepEqual(item.coordination, { from: '审查成员', kind: 'result', failed: false });
+});
+
+test('a delivered message is split into who sent it, how it went and its text', () => {
+  assert.deepEqual(coordinationNote('来自 pi-daemon 的结果\n\n状态：本轮已返回，仍需验收\n## 结论\n\n没有问题。'), { note: { from: 'pi-daemon', kind: 'result', failed: false }, text: '## 结论\n\n没有问题。' });
+  assert.deepEqual(coordinationNote('来自 主智能体 的任务\n\n状态：先别动\n再说'), { note: { from: '主智能体', kind: 'task', failed: false }, text: '状态：先别动\n再说' });
+  assert.deepEqual(coordinationNote('来自 w 的结果\n\n状态：失败\nboom').note, { from: 'w', kind: 'result', failed: true });
+  assert.deepEqual(coordinationNote('来自 w 的结果\n\n无法启动任务：x'), { note: { from: 'w', kind: 'result', failed: false }, text: '无法启动任务：x' });
+  assert.deepEqual(coordinationNote('something else'), { note: { from: '', kind: 'result', failed: false }, text: 'something else' });
+  assert.equal(deliveredPreview('## 结论\n\n- **没有**问题\n| a | b |\n|---|---|\n1. `x` 要改'), '结论 没有问题 x 要改');
 });
 
 test('user text and streamed assistant text are grouped per turn', () => {

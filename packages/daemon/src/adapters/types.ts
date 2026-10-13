@@ -97,6 +97,8 @@ export interface QuotaWindow {
   usedPercent: number;
   /** When the window resets, if the agent said so. ISO. */
   resetsAt?: string;
+  /** How busy the model behind this window is right now; above 100 means overloaded. */
+  loadPercent?: number;
 }
 
 /** Plan usage of an agent instance, read outside any session so nothing is left behind. */

@@ -8,6 +8,7 @@ import { pictureUrl, svgPicture } from '../images';
 import { IMAGE_FILE, linkTarget, nameAttachments, relativePath, shortenPaths } from '../paths';
 import {
   clockLabel,
+  deliveredPreview,
   durationLabel,
   groupByTurn,
   imagePathsIn,
@@ -21,6 +22,7 @@ import {
   stepStatusLabel,
   workSections,
   type ApprovalOption,
+  type CoordinationNote,
   type FileChange,
   type FileDiff,
   type ImageRef,
@@ -31,7 +33,7 @@ import {
   type WorkSection,
 } from '../timeline';
 import { Lightbox } from './Lightbox';
-import { IconCheck, IconChevron, IconClose, IconCopy, IconEdit, IconFile, IconFork, IconGlobe, IconQuote, IconSearch, IconTerminal, IconWorktree } from './icons';
+import { IconAgents, IconCheck, IconChevron, IconClose, IconCopy, IconEdit, IconFile, IconFork, IconGlobe, IconQuote, IconSearch, IconTerminal, IconWorktree } from './icons';
 
 interface Props {
   items: Item[];
@@ -159,6 +161,7 @@ export function ThreadView({ items, running, roots, loadImage, loadFile, onOpenF
     list.map((item) => {
       switch (item.kind) {
         case 'user': {
+          if (item.coordination) return <DeliveredNote key={item.key} turnId={item.turnId} note={item.coordination} text={item.text} />;
           // Notes (and the older single quote) ride in the message text; drawn apart here.
           const noted = splitNotes(item.text);
           const { quote, body } = noted.notes.length ? { quote: null, body: noted.body } : splitUserQuote(item.text);
@@ -505,6 +508,41 @@ const AssistantMessage = memo(function AssistantMessage({ text, done, roots, loa
           ))}
         </div>
       )}
+    </div>
+  );
+});
+
+/** Text an agent wrote, read as Markdown, for places outside a thread's own timeline. */
+export function Prose({ text, className = '' }: { text: string; className?: string }) {
+  return (
+    <div className={`markdown ${className}`.trim()}>
+      <Markdown remarkPlugins={MARKDOWN_PLUGINS} components={MARKDOWN_COMPONENTS} urlTransform={keepUrl}>
+        {text}
+      </Markdown>
+    </div>
+  );
+}
+
+/**
+ * What another agent of the team sent into this thread. It is not the user's words, so it is not
+ * a bubble: a card folded to who sent it and how it opens, and read as Markdown once opened.
+ */
+const DeliveredNote = memo(function DeliveredNote({ turnId, note, text }: { turnId: string; note: CoordinationNote; text: string }) {
+  const [open, setOpen] = useState(false);
+  const preview = useMemo(() => deliveredPreview(text), [text]);
+  return (
+    <div className={`row delivered${open ? ' open' : ''}`} data-turn={turnId}>
+      <button type="button" className="delivered-head" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        <span className="delivered-title">
+          <IconAgents size={15} />
+          <span className="delivered-from">{note.from || '成员'}</span>
+          <span className="muted">的{note.kind === 'result' ? '结果' : '任务'}</span>
+          {note.failed && <span className="delivered-failed">失败</span>}
+          <IconChevron size={14} open={open} />
+        </span>
+        {!open && preview && <span className="delivered-preview">{preview}</span>}
+      </button>
+      {open && <Prose className="delivered-body" text={text || '没有文字输出。'} />}
     </div>
   );
 });

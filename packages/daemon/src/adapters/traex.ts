@@ -136,9 +136,9 @@ export class TraexAcpAdapter extends AcpAdapter {
 
   async fetchQuota(): Promise<PlanQuota> {
     const status = await this.readModelStatus();
-    const windows = status.flatMap((s) => s.quota ? [s.quota] : []);
+    const windows = status.flatMap((s) => s.quota ? [{ ...s.quota, ...(s.loadPercent !== undefined ? { loadPercent: s.loadPercent } : {}) }] : []);
     return { windows, checkedAt: new Date().toISOString(),
-      note: windows.length ? '按模型显示每周额度；模型负载请在模型列表查看，不代表排队人数或等待时间。'
+      note: windows.length ? '按模型显示每周额度和当前负载；负载越高响应可能越慢，不代表排队人数或等待时间。'
         : 'TRAE 当前未报告每周额度；模型负载请在模型列表查看。' };
   }
 

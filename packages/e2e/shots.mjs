@@ -64,7 +64,7 @@ for (const theme of ['light', 'dark']) {
   await phone.waitForTimeout(300);
   await phone.screenshot({ path: join(outDir, `phone-${theme}.png`) });
 }
-// The thread list: the conversation slid aside as a card, the list under it.
+// The thread list: a page of its own.
 await phone.locator('.menu-btn').click();
 await phone.locator('.drawer-open').waitFor({ timeout: 5000 });
 await phone.waitForTimeout(500);

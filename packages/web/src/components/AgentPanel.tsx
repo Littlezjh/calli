@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { Api, Coordination, Thread } from '../api';
-import { buildTimeline, type StoredEvent } from '../timeline';
-import { ThreadView } from './ThreadView';
-import { IconAgents, IconChevron, IconClose } from './icons';
+import type { AgentInfo, Api, Coordination, Thread } from '../api';
+import { buildTalks } from '../coordination';
+import { buildTimeline, clockLabel, deliveredPreview, type StoredEvent } from '../timeline';
+import { Prose, ThreadView } from './ThreadView';
+import { AgentMark, IconAgents, IconChevron, IconClose } from './icons';
 
 const labels: Record<string, string> = { queued: '排队中', running: '运行中', returned: '已返回', failed: '失败', stopped: '已停止', interrupted: '中断' };
 export function memberStatus(m: Coordination['members'][number]): string {
@@ -12,11 +13,53 @@ export function memberStatus(m: Coordination['members'][number]): string {
   return labels[m.latest?.state ?? ''] ?? '尚未派发';
 }
 
-export function AgentPanel({ api, team, phone, onClose, onOpen, onAdjust, onRefresh, onError }: {
-  api: Api; team: Coordination; phone: boolean; onClose: () => void; onOpen: (thread: Thread) => void;
+/** Who said something in the team: the name it goes by, and the agent behind it for its mark and tag. */
+interface Speaker { name: string; tag: string; icon: string | null; lead: boolean }
+
+/** One thing said, the way a chat shows it: a mark, who and when on a line, then the words. */
+function Said({ who, to, at, state, text, failed }: { who: Speaker; to?: string; at: string | null; state?: string; text: string; failed?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const preview = useMemo(() => deliveredPreview(text), [text]);
+  // Short words are shown as they are; only what would not fit three lines is folded.
+  const long = text.length > 160 || text.split('\n').length > 3;
+  return (
+    <div className="talk-said">
+      <span className={`talk-mark${who.lead ? ' lead' : ''}`}>{who.icon ? <AgentMark path={who.icon} size={16} /> : <IconAgents size={16} />}</span>
+      <div className="talk-main">
+        <div className="talk-line">
+          <strong>{who.name}</strong>
+          <span className="talk-tag">{who.tag}</span>
+          {to && <span className="talk-to">发给 {to}</span>}
+          {at && <time dateTime={at}>{clockLabel(at)}</time>}
+        </div>
+        {long && !open ? <p className="talk-preview">{preview}</p> : <Prose className="talk-text" text={text || '没有文字输出。'} />}
+        {(long || state || failed) && (
+          <div className="talk-foot">
+            {failed && <span className="talk-failed">失败</span>}
+            {state && <span>{state}</span>}
+            {long && <button type="button" className="text-btn" aria-expanded={open} onClick={() => setOpen((v) => !v)}>{open ? '收起' : '展开全文'}</button>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function AgentPanel({ api, team, agents, leadAgent, phone, onClose, onOpen, onAdjust, onRefresh, onError }: {
+  api: Api; team: Coordination; agents: AgentInfo[]; leadAgent?: string; phone: boolean; onClose: () => void; onOpen: (thread: Thread) => void;
   onAdjust: (name: string) => void; onRefresh: () => void; onError: (err: unknown) => void;
 }) {
   const [memberId, setMemberId] = useState<string | null>(null);
+  const [tab, setTab] = useState<'members' | 'talk'>('members');
+  // Answers are folded under their message; the newest conversation starts open.
+  const [opened, setOpened] = useState<Record<string, boolean>>({});
+  const talks = useMemo(() => buildTalks(team.messages), [team.messages]);
+  const speaker = (id: string): Speaker => {
+    const m = team.members.find(v => v.id === id);
+    const agent = agents.find(a => a.id === (m ? m.thread?.agent : leadAgent));
+    return m ? { name: m.name, tag: agent?.label ?? m.thread?.agent ?? '成员', icon: agent?.icon ?? null, lead: false }
+      : { name: '主智能体', tag: agent?.label ?? '主控', icon: agent?.icon ?? null, lead: true };
+  };
   const [events, setEvents] = useState<StoredEvent[]>([]);
   const [connected, setConnected] = useState(true);
   const [older, setOlder] = useState(false);
@@ -108,7 +151,26 @@ export function AgentPanel({ api, team, phone, onClose, onOpen, onAdjust, onRefr
       stick.current = body.current.scrollHeight - body.current.scrollTop - body.current.clientHeight < 80;
       setAtBottom(stick.current);
     }}>
-      {!memberId ? <>
+      {!memberId && team.messages.length > 0 && <div className="agent-tabs" role="tablist" aria-label="智能体面板内容">
+        <button role="tab" aria-selected={tab === 'members'} onClick={() => setTab('members')}>成员 · {team.members.length}</button>
+        <button role="tab" aria-selected={tab === 'talk'} onClick={() => setTab('talk')}>消息 · {talks.length}</button>
+      </div>}
+      {!memberId && tab === 'talk' && team.messages.length > 0 ? <div className="talks">
+        {talks.map((talk, i) => {
+          const { root } = talk;
+          const open = opened[root.id] ?? i === talks.length - 1;
+          const waiting = root.kind === 'message' && !talk.replies.length;
+          return <section className="talk" key={root.id}>
+            <Said who={speaker(root.from)} to={speaker(root.to).name} at={root.createdAt} text={talk.text} state={waiting ? labels[root.state] ?? root.state : undefined} failed={waiting && root.state === 'failed'} />
+            {talk.replies.length > 0 && <button type="button" className="talk-replies" aria-expanded={open} onClick={() => setOpened(prev => ({ ...prev, [root.id]: !open }))}>
+              <IconChevron size={13} open={open} />{talk.replies.length} 条回复{talk.replies.some(r => r.failed) ? ' · 有失败' : ''}
+            </button>}
+            {open && talk.replies.length > 0 && <div className="talk-thread">
+              {talk.replies.map(r => <Said key={r.id} who={speaker(r.from)} at={r.at} text={r.text} failed={r.failed} />)}
+            </div>}
+          </section>;
+        })}
+      </div> : !memberId ? <>
         {!team.members.length && <div className="agent-panel-empty"><IconAgents size={32} /><strong>尚未派发任务</strong><p>在输入框输入 @ 选择助手，<br />告诉主智能体如何分工。</p></div>}
         {team.members.map(m => <button className="agent-member" key={m.id} onClick={() => setMemberId(m.id)}>
           <div className="agent-member-line"><strong>{m.name}</strong><span className={m.thread?.waiting ? 'coord-attention' : ''}>{memberStatus(m)}</span></div>
@@ -116,10 +178,6 @@ export function AgentPanel({ api, team, phone, onClose, onOpen, onAdjust, onRefr
           <p>{m.latest?.result?.split('<limi-coordination>')[0].slice(-160) || m.latest?.text.slice(0, 160) || '等待任务'}</p>
           {m.thread?.unread && <span className="coord-unread">有新输出</span>}
         </button>)}
-        {team.messages.length > 0 && <details className="coord-messages"><summary>成员消息 · {team.messages.length}</summary>{team.messages.slice(-20).map(m => <div key={m.id}>
-          <strong>{team.members.find(v => v.id === m.from)?.name ?? '主智能体'} → {team.members.find(v => v.id === m.to)?.name ?? '主智能体'}</strong>
-          <span>{labels[m.state] ?? m.state}</span><p>{m.text.slice(0, 300)}</p>
-        </div>)}</details>}
       </> : thread ? <ThreadView items={timeline.items} running={timeline.running && !timeline.awaitingApproval} roots={[thread.cwd, thread.cwdReal]} loadImage={id => api.attachment(thread.id, id)} loadFile={path => api.threadFile(thread.id, path)} onDecide={(id, option) => { api.decide(id, option === null ? { cancel: true } : { optionId: option }).then(onRefresh).catch(onError); }} hasOlder={older} loadingOlder={loadingOlder} onLoadOlder={() => void loadOlder()} /> : <div className="agent-panel-empty">该子线程已不可用</div>}
     </div>
     {memberId && !atBottom && <button className="agent-panel-latest" onClick={() => { stick.current = true; if (body.current) body.current.scrollTop = body.current.scrollHeight; }}>查看最新输出</button>}
