@@ -138,7 +138,12 @@ test('three-member concurrency limit, durable queue, approval visibility and sto
     assert.equal(h.team.view(h.root.id)!.paused, true);
     assert.ok(h.team.view(h.root.id)!.messages.every(d => d.state !== 'queued'));
     await assert.rejects(h.team.command(h.root.id, spawn('late')), /暂停/);
-    await h.team.resume(h.root.id);
+    // The user writing to the lead again is enough to go on; a member's thread does not count.
+    await h.api(`/api/threads/${first}/turns`, { text: 'hello' });
+    assert.equal(h.team.view(h.root.id)!.paused, true);
+    assert.equal((await h.api(`/api/threads/${h.root.id}/turns`, { text: 'hello' })).status, 202);
+    assert.equal(h.team.view(h.root.id)!.paused, false);
+    await wait(() => h.manager.threadView(h.root.id).status !== 'running' && h.manager.threadView(first).status !== 'running');
     // A member only stops to ask where the team has it ask.
     await h.team.setPermission(h.root.id, 'ask');
     await h.team.command(h.root.id, spawn('approver', 'claude', 'approve'));
@@ -147,7 +152,7 @@ test('three-member concurrency limit, durable queue, approval visibility and sto
   } finally { await h.close(); }
 });
 
-test('restart preserves queued work, marks in-flight work interrupted and requires explicit resume', async () => {
+test('restart preserves queued work, marks in-flight work interrupted and does not pause the team', async () => {
   const h = await setup();
   try {
     await h.team.enable(h.root.id);
@@ -162,7 +167,7 @@ test('restart preserves queued work, marks in-flight work interrupted and requir
     const restored = new CoordinationManager(h.store, nextManager, join(h.dir, 'unused.sock'));
     try {
       const state = restored.view(h.root.id)!;
-      assert.equal(state.paused, true);
+      assert.equal(state.paused, false);
       assert.equal(state.messages.find(d => d.id === job.id)!.state, 'interrupted');
       assert.ok(state.messages.some(d => d.state === 'queued' && d.text === 'next'));
     } finally { restored.dispose(); }
@@ -212,7 +217,7 @@ test('restart reconstructs a result committed before its notification, only once
         const state = recovered.view(h.root.id)!;
         assert.equal(state.messages.filter(d => d.kind === 'result').length, 1);
         assert.equal(state.messages[0].state, 'returned');
-        assert.equal(state.paused, true);
+        assert.equal(state.paused, false);
       } finally { recovered.dispose(); }
     }
   } finally { await h.close(); }

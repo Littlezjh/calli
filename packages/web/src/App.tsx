@@ -41,7 +41,7 @@ import { fileRef } from './files';
 import { AddAgentDialog } from './components/AddAgentDialog';
 import { QuotaBoard } from './components/QuotaBoard';
 import { SelectionMenu } from './components/SelectionMenu';
-import { AgentPanel } from './components/AgentPanel';
+import { AgentPanel, TeamCard } from './components/AgentPanel';
 import type { AgentMention, Coordination, MemberDefault, SearchHit } from './api';
 import { Popover as CoordinationPopover } from './components/Popover';
 import { SideChat } from './components/SideChat';
@@ -355,6 +355,22 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
   const running = timeline.running || selected?.status === 'running';
 
   const scrollerRef = useRef<HTMLDivElement>(null);
+  // Whether the margin beside the conversation is wide enough to hold the team's card.
+  const mainRef = useRef<HTMLElement>(null);
+  const [roomy, setRoomy] = useState(false);
+  useEffect(() => {
+    const el = mainRef.current;
+    if (!el) return;
+    const read = () => {
+      const column = parseFloat(getComputedStyle(el).getPropertyValue('--content-w')) || 760;
+      setRoomy((el.clientWidth - column) / 2 >= 272);
+    };
+    read();
+    const watch = new ResizeObserver(read);
+    watch.observe(el);
+    return () => watch.disconnect();
+  });
+  const [agentsStart, setAgentsStart] = useState<string | null>(null);
   const stickToBottom = useRef(true);
   // The thread on screen, for answers that arrive after the user has moved on.
   const shownThread = useRef<string | null>(null);
@@ -909,8 +925,6 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
         setDraftWorktree(false);
       }
       // Bringing an agent in with @ is itself the request to collaborate; there is no switch to find first.
-      // A team paused by a stop or a restart goes on when the user brings an agent in again.
-      if (mentions?.length && selected?.coordination?.paused && selected.coordination.rootId === id) await api.configureCoordination(id, { action: 'resume' });
       if ((draftCollaboration || mentions?.length) && !selected?.coordination) await api.configureCoordination(id, { directories: collaborationDirectories.length ? collaborationDirectories : undefined, defaults: startingDefaults, permission: memberPermission });
       stickToBottom.current = true;
       // "queue" only matters while a turn is running: then the message waits instead of being refused.
@@ -1243,6 +1257,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
 
   const teamWaiting = Boolean(coordination?.members.some((m) => m.thread?.waiting));
   const teamRunning = coordination?.members.filter((m) => m.thread?.status === 'running').length ?? 0;
+  const teamShown = Boolean(selected?.coordination && (selected.coordination.rootId !== selected.id || selected.coordination.children > 0) && !onTodos && !onSkills && hostUp);
   const teamNote = teamWaiting ? '待批准' : teamRunning ? `${teamRunning} 运行中` : selected?.coordination?.paused ? '已暂停' : '';
 
   // Older daemons advertise /compact before they expose the dedicated capability.
@@ -1333,7 +1348,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
         />
       </aside>
 
-      <main className="main">
+      <main className="main" ref={mainRef}>
         <header className="topbar">
           <button className="icon-btn menu-btn" aria-label="打开线程列表" aria-expanded={listOpen} onClick={() => setDrawer((v) => !v)}>
             {compact ? <IconBack size={22} /> : <IconMenu />}
@@ -1363,6 +1378,18 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           </div>
           {selected && (
             <div className="topbar-actions">
+              {teamShown && selected.coordination!.rootId !== selected.id && (
+                <button className="coord-status" onClick={() => pick(selected.coordination!.rootId)}>
+                  <IconBack size={14} /><span>返回主线程</span>
+                </button>
+              )}
+              {teamShown && selected.coordination!.rootId === selected.id && !(roomy && !agentsOpen && !files && coordination) && (
+                <button className={`coord-status${teamWaiting ? ' attention' : ''}`} aria-label="查看智能体" aria-pressed={agentsOpen} title={`${selected.coordination!.children} 个智能体`} onClick={() => { setAgentsStart(null); setAgentsOpen((v) => !v); setFiles(null); }}>
+                  <IconAgents size={15} />
+                  <span>{selected.coordination!.children}</span>
+                  {teamNote && <span className="coord-status-note">{teamNote}</span>}
+                </button>
+              )}
               <button
                 className={`icon-btn topbar-files${files ? ' on' : ''}`}
                 aria-label="文件"
@@ -1474,22 +1501,10 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           )}
         </div>
 
-        {/* A team at work is one quiet line above the composer, like Codex's. Switched on with nobody
-            in it yet, collaboration shows only in its button: there is nothing to look at or resume. */}
-        {selected?.coordination && (selected.coordination.rootId !== selected.id || selected.coordination.children > 0) && !onTodos && !onSkills && hostUp && (
-          <div className="coord-bar">
-            {selected.coordination.rootId !== selected.id ? (
-              <button className="coord-status" onClick={() => pick(selected.coordination!.rootId)}>
-                <IconBack size={14} />返回主线程
-              </button>
-            ) : (
-              <button className={`coord-status${teamWaiting ? ' attention' : ''}`} aria-label="查看智能体" aria-pressed={agentsOpen} onClick={() => { setAgentsOpen((v) => !v); setFiles(null); }}>
-                <IconAgents size={15} />
-                <span>{selected.coordination.children} 个智能体</span>
-                {teamNote && <span className="coord-status-note">{teamNote}</span>}
-              </button>
-            )}
-          </div>
+        {/* A team at work is shown where there is room to spare: a card in the margin on a wide
+            screen, otherwise a mark in the top bar. Nothing is added above the composer. */}
+        {teamShown && roomy && !agentsOpen && !files && coordination && coordination.rootId === selected!.id && (
+          <TeamCard team={coordination} agents={agents} onOpen={(member) => { setAgentsStart(member ?? null); setAgentsOpen(true); setFiles(null); }} />
         )}
 
         {!onTodos && !onSkills && !(host && !hostUp) && (
@@ -1529,7 +1544,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
         )}
       </main>
 
-      {agentsOpen && coordination && <AgentPanel key={coordination.rootId} api={api} team={coordination} agents={agents} memberModel={(thread) => {
+      {agentsOpen && coordination && <AgentPanel key={`${coordination.rootId}:${agentsStart ?? ''}`} start={agentsStart} api={api} team={coordination} agents={agents} memberModel={(thread) => {
         const a = agents.find((v) => v.id === thread.agent);
         return a ? <MemberModel agent={a} models={modelsByAgent[a.id] ?? []} value={{ model: thread.model ?? null, effort: thread.effort ?? null }} onNeed={needModels} onChange={({ model, effort }) => { void api.updateThread(thread.id, { model, effort }).then(() => refreshThreads()).catch(handleError); }}
           permission={a.capabilities.permissionModes.length ? thread.permissionMode : undefined} onPermission={(permissionMode) => { void api.updateThread(thread.id, { permissionMode }).then(() => refreshThreads()).catch(handleError); }} /> : null;

@@ -20,6 +20,33 @@ export function memberStatus(m: Coordination['members'][number]): string {
   return labels[m.latest?.state ?? ''] ?? '尚未派发';
 }
 
+/**
+ * The team at a glance, for the empty margin beside a conversation on a wide screen: who is in it,
+ * what each is on and how that stands. A row opens that member; the heading opens the whole panel.
+ */
+export function TeamCard({ team, agents, onOpen }: { team: Coordination; agents: AgentInfo[]; onOpen: (memberId?: string) => void }) {
+  const running = team.members.filter(m => m.thread?.status === 'running').length;
+  return <aside className="team-card" aria-label="协作智能体">
+    <button type="button" className="team-card-head" aria-label="查看智能体" onClick={() => onOpen()}>
+      <IconAgents size={15} /><strong>智能体</strong>
+      <span>{team.paused ? '已暂停' : running ? `${running} 运行中` : `${team.members.length} 个`}</span>
+    </button>
+    {team.members.map(m => {
+      const icon = agents.find(a => a.id === m.thread?.agent)?.icon;
+      const state = m.thread?.waiting ? 'waiting' : m.thread?.status === 'running' ? 'running' : m.latest?.state === 'failed' ? 'failed' : 'idle';
+      // What it was last asked, or what it last answered once it has.
+      const doing = deliveredPreview(state === 'running' || state === 'waiting' ? m.latest?.text ?? '' : m.latest?.result || m.latest?.text || '');
+      return <button type="button" className="team-card-row" key={m.id} title={doing} onClick={() => onOpen(m.id)}>
+        <span className="team-card-mark">{icon ? <AgentMark path={icon} size={14} /> : <IconAgents size={14} />}</span>
+        <span className="team-card-text">
+          <span className="team-card-line"><strong>{m.name}</strong><span className={`team-card-state ${state}`}>{memberStatus(m)}</span></span>
+          {doing && <span className="team-card-doing">{doing}</span>}
+        </span>
+      </button>;
+    })}
+  </aside>;
+}
+
 /** Who said something in the team: the name it goes by, and the agent behind it for its mark and tag. */
 interface Speaker { name: string; tag: string; icon: string | null; lead: boolean }
 
@@ -52,14 +79,16 @@ function Said({ who, to, at, state, text, failed }: { who: Speaker; to?: string;
   );
 }
 
-export function AgentPanel({ api, team, agents, leadAgent, memberModel, phone, onClose, onOpen, onAdjust, onRefresh, onError }: {
+export function AgentPanel({ api, team, agents, leadAgent, memberModel, start, phone, onClose, onOpen, onAdjust, onRefresh, onError }: {
   api: Api; team: Coordination; agents: AgentInfo[]; leadAgent?: string;
   /** The control for a member's own model and thinking effort, shown with its details. */
   memberModel?: (thread: Thread) => ReactNode;
+  /** The member to open on, when the panel is opened from that member's row elsewhere. */
+  start?: string | null;
   phone: boolean; onClose: () => void; onOpen: (thread: Thread) => void;
   onAdjust: (name: string) => void; onRefresh: () => void; onError: (err: unknown) => void;
 }) {
-  const [memberId, setMemberId] = useState<string | null>(null);
+  const [memberId, setMemberId] = useState<string | null>(start ?? null);
   const [width, setWidth] = useState<number | null>(() => { const saved = Number(localStorage.getItem(WIDTH_KEY)); return saved > 0 ? clampWidth(saved) : null; });
   const panel = useRef<HTMLElement>(null);
   const startResize = (e: ReactPointerEvent) => {
@@ -174,7 +203,7 @@ export function AgentPanel({ api, team, agents, leadAgent, memberModel, phone, o
     <div className="agent-panel-resize" onPointerDown={startResize} onDoubleClick={() => { setWidth(null); localStorage.removeItem(WIDTH_KEY); }} role="separator" aria-orientation="vertical" aria-label="调整宽度" title="拖动调整宽度，双击恢复" />
     <header className="agent-panel-head">
       {memberId && <button className="icon-btn" aria-label="返回智能体列表" onClick={() => setMemberId(null)}><span className="coord-back"><IconChevron /></span></button>}
-      <div className="agent-panel-heading"><strong>{member?.name ?? '智能体'}</strong><span>{thread ? (agents.find(a => a.id === thread.agent)?.label ?? thread.agent) : team.paused ? '协作已暂停' : `${team.members.filter(m => m.thread?.status === 'running').length} 运行中 · ${team.members.length} 个成员`}</span></div>
+      <div className="agent-panel-heading"><strong>{member?.name ?? '智能体'}</strong><span>{thread ? (agents.find(a => a.id === thread.agent)?.label ?? thread.agent) : team.paused ? '已暂停，发消息即可继续' : `${team.members.filter(m => m.thread?.status === 'running').length} 运行中 · ${team.members.length} 个成员`}</span></div>
       {thread && memberModel?.(thread)}
       <button className="icon-btn" aria-label="关闭智能体面板" onClick={onClose}><IconClose /></button>
     </header>
@@ -221,7 +250,7 @@ export function AgentPanel({ api, team, agents, leadAgent, memberModel, phone, o
         <button onClick={() => onAdjust(member.name)}>让主智能体调整</button>
         <button onClick={() => onOpen(thread)}>展开查看</button>
         {thread.status === 'running' && <button onClick={() => { api.cancel(thread.id).then(onRefresh).catch(onError); }}>停止任务</button>}
-      </> : <button onClick={() => { api.configureCoordination(team.rootId, { action: team.paused ? 'resume' : 'stop' }).then(onRefresh).catch(onError); }}>{team.paused ? '继续协作' : '停止协作'}</button>}
+      </> : <button title={team.paused ? '让排队的消息继续投递；给主智能体发消息也会继续' : '停下主智能体和所有成员正在做的事，排队的消息不再投递'} onClick={() => { api.configureCoordination(team.rootId, { action: team.paused ? 'resume' : 'stop' }).then(onRefresh).catch(onError); }}>{team.paused ? '继续协作' : '全部停止'}</button>}
     </footer>
   </aside>;
 }

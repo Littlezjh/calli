@@ -54,8 +54,8 @@ export class CoordinationManager {
 
   constructor(private store: Store, private manager: ThreadManager, private socket: string) {
     for (const row of store.coordinationRecords()) {
+      // A team is paused only by the user stopping it; a restart leaves it as it was and goes on.
       const team = JSON.parse(row.data) as Team;
-      team.paused = true;
       for (const job of [...team.deliveries]) if (job.state === 'running') {
         const end = store.listEvents(job.to, 0, -1).find(e => e.turnId === job.turnId && (e.type === 'turn.done' || e.type === 'turn.error'));
         if (!end || end.data.code === 'interrupted') { job.state = 'interrupted'; continue; }
@@ -76,6 +76,8 @@ export class CoordinationManager {
       }
       if (event.type === 'thread.updated') this.schedule();
     });
+    // Messages that were waiting when the daemon went down go out now.
+    this.schedule();
   }
 
   private serial<T>(fn: () => Promise<T> | T): Promise<T> {
@@ -335,7 +337,7 @@ export class CoordinationManager {
     const stopped = ev.data.stopReason === 'cancelled';
     const state = stopped ? 'stopped' : ev.type === 'turn.error' ? 'failed' : 'returned';
     if (job) { job.state = state; job.result = result || String(ev.data.message ?? ''); }
-    if (!t.paused && !stopped && ev.threadId !== t.rootId) {
+    if (!this.closed && !t.paused && !stopped && ev.threadId !== t.rootId) {
       // Replies to a peer go back to that peer. Result notifications never create reply loops.
       const to = job?.kind === 'message' ? job.from : t.rootId;
       const key = `result:${ev.threadId}:${ev.turnId}`;
@@ -402,7 +404,19 @@ export class CoordinationManager {
       t.paused = false; this.changed(t); this.schedule(); return this.view(id);
     });
   }
-  suspendAll(): void { this.closed = true; for (const t of this.teams.values()) { t.paused = true; this.save(t); } }
+  /**
+   * The user writing to the lead again is the word to go on: a team paused by a stop or a restart
+   * picks up there, with no button to find first. Messages between agents never do this.
+   */
+  async userSpoke(id: string): Promise<void> {
+    await this.serial(() => {
+      const t = this.teams.get(id);
+      if (!t?.paused || this.closed) return;
+      t.paused = false; this.changed(t); this.schedule();
+    });
+  }
+  /** Shutting down: nothing more is delivered by this daemon. What the teams were doing is kept for the next. */
+  suspendAll(): void { this.closed = true; }
   dispose(): void { this.suspendAll(); this.unsubscribe(); }
 }
 

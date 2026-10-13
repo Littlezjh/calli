@@ -7495,7 +7495,24 @@ input.picker-search {
 /* Off, it is one more quiet tool; on, it only darkens. */
 .coord-tool.on { color: var(--text); }
 /* Once on: one small line above the composer says how many agents there are and opens them. */
-.coord-bar { flex-shrink: 0; display: flex; justify-content: center; padding: 0 16px 8px; }
+.topbar-actions .coord-status { margin-right: 6px; }
+@media (max-width: 700px) { .topbar-actions .coord-status { padding: 0 9px; } .topbar-actions .coord-status-note { display: none; } }
+/* The team in the margin beside the conversation, where a wide screen leaves it empty. */
+.team-card { position: absolute; top: 76px; right: 20px; z-index: 2; width: 232px; max-height: calc(100% - 260px); overflow-y: auto; padding: 6px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }
+.team-card-head { display: flex; align-items: center; gap: 7px; width: 100%; min-height: 32px; padding: 0 8px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--muted); font: inherit; font-size: 12.5px; cursor: pointer; }
+.team-card-head strong { color: var(--text); font-size: 13px; }
+.team-card-head span { margin-left: auto; white-space: nowrap; }
+.team-card-row { display: flex; align-items: flex-start; gap: 9px; width: 100%; padding: 7px 8px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.team-card-head:hover, .team-card-row:hover { background: var(--hover); }
+.team-card-mark { flex: none; display: inline-flex; margin-top: 3px; color: var(--muted); }
+.team-card-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.team-card-line { display: flex; align-items: baseline; gap: 8px; }
+.team-card-line strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
+.team-card-state { flex: none; font-size: 11.5px; color: var(--faint); white-space: nowrap; }
+.team-card-state.running { color: var(--positive); }
+.team-card-state.waiting { color: var(--warn); }
+.team-card-state.failed { color: var(--danger); }
+.team-card-doing { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: 12px; line-height: 1.5; color: var(--muted); overflow-wrap: anywhere; }
 .coord-status { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 12px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface); color: var(--muted); font: inherit; font-size: 12.5px; white-space: nowrap; cursor: pointer; }
 .coord-status:hover, .coord-status[aria-pressed='true'] { color: var(--text); border-color: var(--border-strong); }
 .coord-status-note { color: var(--faint); }
