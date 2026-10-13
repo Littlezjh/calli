@@ -1,3 +1,4 @@
+import { ZCODE_ICON } from './icons.js';
 import { randomUUID } from 'node:crypto';
 import { commandExists } from '../util.js';
 import type { EmittedEvent } from '../events.js';
@@ -46,6 +47,7 @@ export function mapZcodeEvent(event: any): EmittedEvent | null {
 export class ZcodeAdapter implements AgentAdapter {
   readonly id = 'zcode';
   readonly label = 'ZCode';
+  readonly icon = ZCODE_ICON;
   readonly capabilities = {
     coordination: true, resume: true, approvals: true,
     // ZCode also treats toolAllowlist as approval exemptions, so permission tiers would mislead.
