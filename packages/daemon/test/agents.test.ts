@@ -29,7 +29,7 @@ after(() => {
 
 test('the built-in instances are one adapter each, keyed by instance id', () => {
   const registry = new AgentRegistry(defaults, null);
-  assert.deepEqual([...registry.adapters.keys()].sort(), ['agy', 'claude', 'codex', 'pi', 'traex']);
+  assert.deepEqual([...registry.adapters.keys()].sort(), ['agy', 'claude', 'codex', 'pi', 'traex', 'zcode']);
   assert.equal(registry.adapters.get('claude')!.capabilities.approvals, true);
   // The traex default command carries "acp serve"; the adapter keeps the plain CLI for deletions.
   assert.equal(registry.adapters.get('traex')!.label, 'TRAE CLI');
@@ -58,7 +58,7 @@ test('add persists to agents.json and a later fromEnv reads it back', async () =
   // The file holds every instance, including the built-ins it was seeded with.
   assert.deepEqual(
     reloaded.list().map((i) => i.id),
-    ['claude', 'pi', 'agy', 'traex', 'codex', 'agy2'],
+    ['claude', 'pi', 'agy', 'traex', 'codex', 'zcode', 'agy2'],
   );
   rmSync(dataDir, { recursive: true, force: true });
 });
@@ -100,6 +100,27 @@ test('discover finds extra CLIs on PATH and leaves lookalikes alone', async () =
     );
     assert.equal(ours[0].adapter, 'agy');
     assert.equal(ours[2].adapter, 'traex', "traecli is traex's compatibility name");
+  } finally {
+    process.env.PATH = oldPath;
+  }
+});
+
+test('discover offers zcode for existing installations and add makes it available', async () => {
+  const bin = join(dir, 'zcode-bin');
+  mkdirSync(bin);
+  for (const name of ['zcode', 'zcode-2', 'zcodec']) {
+    writeFileSync(join(bin, name), '#!/bin/sh\nexit 0\n');
+    chmodSync(join(bin, name), 0o755);
+  }
+  const oldPath = process.env.PATH;
+  process.env.PATH = `${bin}:${oldPath}`;
+  try {
+    const registry = new AgentRegistry(defaults.filter((i) => i.adapter !== 'zcode'), null);
+    const found = (await registry.discover()).filter((f) => f.command.startsWith(bin));
+    assert.deepEqual(found.map((f) => [f.id, f.adapter]), [['zcode', 'zcode'], ['zcode-2', 'zcode']]);
+    await registry.add({ id: found[0].id, adapter: found[0].adapter, command: [found[0].command] });
+    assert.equal(await registry.adapters.get('zcode')!.available(), true);
+    assert.equal((await registry.discover()).some((f) => f.id === 'zcode'), false);
   } finally {
     process.env.PATH = oldPath;
   }

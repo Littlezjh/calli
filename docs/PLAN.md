@@ -27,7 +27,7 @@ daemon（Node.js，跑在远程主机上）
 | pi | `pi --mode rpc`（stdin/stdout JSON 行） | 流式、图片输入、`set_model`、`set_thinking_level`、`get_available_models`（含每个模型的强度映射和是否支持图片）、`get_commands`、`clone`、`fork`、`get_messages`；没有审批 |
 | Antigravity | `agy --input-format stream-json --output-format stream-json … -p=` | 流式、多轮（一个进程，每行输入一轮）、`--conversation` 恢复、`--model`、SIGINT 停止。输入是 `{"event":"user","message":{"content":…}}`，输出是 `init`、`step_update`、`result`。无界面模式不能询问权限，需要批准的操作会被拒绝；输入只有文字；流里没有思考过程和文件内容 |
 | Codex | `codex app-server`（自有 JSON-RPC v2 线程协议，stdio） | 流式、审批（`item/commandExecution/requestApproval`、`item/fileChange/requestApproval`，选项按 `availableDecisions` 生成）、`thread/resume`、`model/list`（含强度和图片输入）、`thread/turns/list`（回放历史）、`thread/fork`、`thread/delete`、`thread/compact/start`（`/compact`）；`turn/start` 携带模型/强度/沙箱覆盖，`thread/tokenUsage/updated` 映射上下文占用 |
-| zcode | `zcode app-server`（stdio） | 未接入 |
+| zcode | `zcode app-server`（无 jsonrpc 字段的 NDJSON） | 精简协议接入：关闭自动记忆、基础工具白名单、流式、审批回调、取消、恢复、模型/强度、`/compact`；无权限档位，扩展全局关闭需另配，见 `zcode-minimal-design.md` |
 
 注意：`@zed-industries/claude-agent-acp` 已停更（0.23.1，模型列表过时），不要用回去。
 

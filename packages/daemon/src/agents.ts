@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { delimiter } from 'node:path';
 import { AgyAdapter } from './adapters/agy.js';
 import { ClaudeAcpAdapter } from './adapters/claude.js';
+import { ZcodeAdapter } from './adapters/zcode.js';
 import { CodexAppServerAdapter } from './adapters/codex.js';
 import { PiRpcAdapter } from './adapters/pi.js';
 import { TraexAcpAdapter } from './adapters/traex.js';
@@ -18,7 +19,7 @@ import { HttpError } from './errors.js';
 export interface AgentInstance {
   /** What threads store; also the key in the adapter map. */
   id: string;
-  adapter: 'claude' | 'pi' | 'agy' | 'traex' | 'codex';
+  adapter: 'claude' | 'pi' | 'agy' | 'traex' | 'codex' | 'zcode';
   label?: string;
   /** Full argv. Defaults to the adapter's own default command. */
   command?: string[];
@@ -38,6 +39,7 @@ const ADAPTER_LABELS: Record<AgentInstance['adapter'], string> = {
   agy: 'Antigravity',
   traex: 'TRAE CLI',
   codex: 'Codex',
+  zcode: 'ZCode',
 };
 
 /** How each adapter is built. One line per protocol; instances differ only in command and env. */
@@ -62,6 +64,9 @@ function buildAdapter(
     case 'traex':
       adapter = new TraexAcpAdapter(command, env);
       break;
+    case 'zcode':
+      adapter = new ZcodeAdapter(command, env);
+      break;
     case 'codex':
       adapter = new CodexAppServerAdapter(command, env);
       break;
@@ -78,6 +83,7 @@ export function defaultInstances(opts: {
   agyCommand: string[];
   traexCommand: string[];
   codexCommand: string[];
+  zcodeCommand?: string[];
 }): AgentInstance[] {
   return [
     { id: 'claude', adapter: 'claude', command: opts.claudeCommand },
@@ -85,6 +91,7 @@ export function defaultInstances(opts: {
     { id: 'agy', adapter: 'agy', command: opts.agyCommand },
     { id: 'traex', adapter: 'traex', command: opts.traexCommand },
     { id: 'codex', adapter: 'codex', command: opts.codexCommand },
+    { id: 'zcode', adapter: 'zcode', command: opts.zcodeCommand ?? ['zcode', 'app-server'] },
   ];
 }
 
@@ -114,6 +121,7 @@ const KNOWN_PREFIXES: Array<[AgentInstance['adapter'], RegExp]> = [
   ['pi', /^pi(?=$|[0-9]|[-_.])/],
   ['agy', /^agy(?=$|[0-9]|[-_.])/],
   ['codex', /^codex(?=$|[0-9]|[-_.])/],
+  ['zcode', /^zcode(?=$|[0-9]|[-_.])/],
   // traex and the compatibility names its installer creates for the same CLI
   ['traex', /^traex(?=$|[0-9]|[-_.])/],
   ['traex', /^traecli(?=$|[0-9]|[-_.])/],
