@@ -11,10 +11,13 @@ let mode = 'build';
 let turn = null;
 let seq = 0;
 let nextId = 10000;
+let goal = null;
+let goalRun = false;
 const pending = new Map();
 const request = (method, params) => new Promise((resolve) => { const id = nextId++; pending.set(id, resolve); output({ id, method, params }); });
 const emit = (type, payload, turnId = turn?.id) => output({ method: 'session/event', params: { sessionId, eventId: `ev-${++seq}`, seq, turnId, type, payload, deliveryKind: 'desktop-continuous' } });
-const snapshot = () => ({ session: { sessionId, ...(process.env.FAKE_ZCODE_GOAL ? { target: { status: 'active' } } : {}) }, settings: { mode: { current: mode }, model: { current: model, available: [{ ref: { providerId: 'api', modelId: 'small' }, label: 'Small', reasoning: { defaultLevel: 'low', levels: [{ value: 'low' }, { value: 'high' }] } }, { ref: { providerId: 'api', modelId: 'large' }, label: 'Large' }] } } });
+const snapshot = () => ({ session: { sessionId, target: process.env.FAKE_ZCODE_GOAL ? { status: 'active' } : goal }, settings: { mode: { current: mode }, model: { current: model, available: [{ ref: { providerId: 'api', modelId: 'small' }, label: 'Small', reasoning: { defaultLevel: 'low', levels: [{ value: 'low' }, { value: 'high' }] } }, { ref: { providerId: 'api', modelId: 'large' }, label: 'Large' }] } } });
+const goalSettled = (failed = false) => { goalRun = false; output({ method: 'state.updated', params: { sessionId, reason: failed ? 'goal_continuation_failed' : 'goal_continuation_completed' } }); };
 const preferences = async () => {
   const result = await request('session/requestRuntimePreferences', { sessionId, scope: 'runtime-materialization' });
   if (process.env.FAKE_ZCODE_LOG) appendFileSync(process.env.FAKE_ZCODE_LOG, JSON.stringify({ preferences: result }) + '\n');
@@ -27,6 +30,41 @@ async function handle(message) {
   const { id, method, params: p = {} } = message;
   if (process.env.FAKE_ZCODE_LOG) appendFileSync(process.env.FAKE_ZCODE_LOG, JSON.stringify({ method, params: p }) + '\n');
   switch (method) {
+    case 'session/goal': {
+      if (process.env.FAKE_ZCODE_NO_GOALS) return error(id, 'goal unsupported');
+      if (p.action === 'pause') { if (goal) goal.status = 'paused'; done('cancelled', ''); if (goalRun) goalSettled(); }
+      if (p.action === 'clear') goal = null;
+      if (p.action === 'set') goal = { objective: p.objective, status: 'active' };
+      if (p.action === 'resume' && goal) goal.status = 'active';
+      const startedTurn = ['set', 'resume'].includes(p.action) && goal?.status === 'active';
+      if (!startedTurn) return reply(id, { snapshot: snapshot(), startedTurn, response: '' });
+      goalRun = true;
+      const run = async () => {
+        for (let round = 1; round <= 2; round++) {
+          if (!goalRun) return;
+          turn = { id: `goal-${++seq}` };
+          emit('turn.started', { inputId: round === 1 ? p.inputId : 'native-continuation' });
+          if (goal.objective.includes('crash')) return process.exit(2);
+          if (goal.objective.includes('slow')) return;
+          if (goal.objective.includes('turn-fail')) {
+            emit('turn.failed', { error: { message: '模型请求失败' } }); turn = null;
+            await new Promise((r) => setTimeout(r, 20));
+            goal.status = 'paused'; goalSettled(true); return;
+          }
+          if (round === 2 && goal.objective.includes('approve')) {
+            const answer = await request('interaction/requestPermission', { sessionId, reason: '目标审批', options: [{ optionId: 'once', name: '允许一次', kind: 'allow_once', response: { decision: 'allow' } }] });
+            if (!goalRun) return;
+            emit('model.streaming', { kind: 'text_delta', delta: `decision:${answer.decision}` });
+          }
+          done('success', `目标第 ${round} 轮`);
+          await new Promise((r) => setTimeout(r, 20));
+        }
+        if (!goalRun) return;
+        goal.status = 'completed'; goalSettled(goal.objective.includes('fail'));
+      };
+      void run();
+      reply(id, { snapshot: snapshot(), startedTurn, response: '' }); return;
+    }
     case 'session/create': case 'session/resume': {
       sessionId = p.sessionId ?? sessionId;
       if (!process.env.FAKE_ZCODE_NO_PREFERENCES) await preferences();
@@ -40,7 +78,7 @@ async function handle(message) {
     case 'session/usage': return reply(id, { sessionId, totalTokens: 1500, inputTokens: 1200, outputTokens: 300, reasoningTokens: 100, cacheCreationTokens: 200, cacheReadTokens: 700, modelRequestCount: 2, modelErrorCount: 0, inputBaselineBySource: {} });
     case 'session/read': return reply(id, snapshot());
     case 'session/close': reply(id, { closed: true }); return;
-    case 'session/stop': reply(id, { stopped: true }); done('cancelled', ''); return;
+    case 'session/stop': reply(id, { stopped: true }); done('cancelled', ''); if (goalRun) { goal.status = 'paused'; goalSettled(); } return;
     case 'session/send': case 'session/compact': {
       if (method === 'session/compact' && p.instructions === 'already-running') return reply(id, { compact: { state: 'already_running' } });
       turn = { id: `turn-${++seq}`, inputId: p.inputId };

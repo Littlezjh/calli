@@ -1,4 +1,5 @@
 import { fetchZcodeQuota } from './zcode-quota.js';
+import { goalSummary, parseGoalCommand, type GoalControl } from './native-goal.js';
 import { isCompaction, trackCompaction } from './compaction.js';
 import { ZCODE_ICON } from './icons.js';
 import { randomUUID } from 'node:crypto';
@@ -11,6 +12,7 @@ import { EFFORT_LEVELS, sessionEnvironment, type AgentAdapter, type AgentSession
 export const ZCODE_BASIC_TOOLS = ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob'];
 const DELIVERY = 'desktop-continuous';
 const COMMANDS = [
+  { name: 'goal', description: '设置原生目标并持续执行；可查看、暂停、继续或清除', hint: '[目标 | pause | resume | clear]' },
   { name: 'compact', description: '压缩当前会话上下文', hint: '[压缩说明]' },
   { name: 'help', description: '查看精简接入支持的命令' },
   { name: 'session', description: '查看当前会话、模型和记忆状态' },
@@ -56,6 +58,7 @@ export class ZcodeAdapter implements AgentAdapter {
   readonly label = 'ZCode';
   readonly icon = ZCODE_ICON;
   readonly capabilities = {
+    goal: { controls: ['pause'] as const },
     coordination: true, resume: true, approvals: true,
     // ZCode also treats toolAllowlist as approval exemptions, so permission tiers would mislead.
     permissionModes: [], effortLevels: EFFORT_LEVELS,
@@ -100,8 +103,9 @@ export class ZcodeAdapter implements AgentAdapter {
 class ZcodeSession implements AgentSession {
   agentSessionId = '';
   private preferenceRequests = 0;
-  private active: { inputId: string; turnId?: string; hooks: TurnHooks; resolve(result: TurnResult): void; reject(error: Error): void; text: string; seen: Set<string> } | null = null;
+  private active: { inputId: string; turnId?: string; goal?: boolean; error?: string; hooks: TurnHooks; resolve(result: TurnResult): void; reject(error: Error): void; text: string; seen: Set<string> } | null = null;
   private closed = false;
+  private goalActive = false;
   private submission: Promise<void> | null = null;
   constructor(private readonly wire: ZcodeWire, private readonly probe: boolean) {
     wire.onEvent = (method, params) => this.event(method, params);
@@ -119,9 +123,7 @@ class ZcodeSession implements AgentSession {
     if (!this.preferenceRequests) throw new Error('此 zcode 未请求运行时偏好，无法保证关闭记忆，请升级 zcode');
     if (typeof snapshot?.session?.sessionId !== 'string') throw new Error('zcode 未返回会话 ID');
     this.agentSessionId = snapshot.session.sessionId;
-    if (snapshot.session.target?.status === 'active' || snapshot.projection?.target?.status === 'active') {
-      throw new Error('此 zcode 会话有正在运行的目标，请先在 zcode 中停止目标，或创建新会话');
-    }
+    this.goalActive = (snapshot.session.target ?? snapshot.projection?.target)?.status === 'active';
     if (opts.resumeId) {
       await this.wire.request('session/setMode', { sessionId: this.agentSessionId, mode: 'build' });
       if (opts.model) await this.setModel(opts.model);
@@ -147,9 +149,10 @@ class ZcodeSession implements AgentSession {
     const text = input.text.trim();
     const match = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(text);
     const name = match?.[1];
+    const goal = parseGoalCommand(text);
     const compact = name === 'compact';
     if (text.startsWith('/') && !COMMANDS.some((command) => command.name === name)) throw new Error('精简接入不执行此命令，请用 /help 查看支持的命令');
-    if (name && !compact) {
+    if (name && !compact && !goal) {
       if (match?.[2]) throw new Error(`/${name} 不接受参数`);
       let response: string;
       if (name === 'help') {
@@ -168,12 +171,20 @@ class ZcodeSession implements AgentSession {
     }
     const inputId = randomUUID();
     return new Promise<TurnResult>((resolve, reject) => {
-      const active = { inputId, hooks, resolve, reject, text: '', seen: new Set<string>() };
+      const active = { inputId, hooks, resolve, reject, goal: !!goal || (!compact && this.goalActive), text: '', seen: new Set<string>() };
       this.active = active;
-      this.submission = this.wire.request(compact ? 'session/compact' : 'session/send', {
+      this.submission = this.wire.request(goal ? 'session/goal' : compact ? 'session/compact' : 'session/send', {
         sessionId: this.agentSessionId, inputId,
-        ...(compact ? { instructions: text.slice('/compact'.length).trim() } : { content: input.text }),
+        ...(goal ? goal : compact ? { instructions: text.slice('/compact'.length).trim() } : { content: input.text }),
       }).then((result) => {
+        if (goal && this.active === active) {
+          if (typeof result?.startedTurn !== 'boolean' || !result.snapshot) throw new Error('zcode 未返回可识别的目标状态');
+          this.goalActive = (result.snapshot.session?.target ?? result.snapshot.projection?.target)?.status === 'active';
+          if (!result.startedTurn) {
+            hooks.emit({ type: 'message.delta', data: { text: goalSummary(result.snapshot.session?.target ?? result.snapshot.projection?.target) } });
+            this.finish({ stopReason: 'end_turn' });
+          }
+        }
         if (compact && result?.compact?.state === 'already_running' && this.active === active) {
           this.finish({ stopReason: 'error', error: 'zcode 已在压缩，请稍后重试' });
           return;
@@ -183,7 +194,13 @@ class ZcodeSession implements AgentSession {
           if (result?.response) hooks.emit({ type: 'message.delta', data: { text: result.response } });
           this.finish({ stopReason: 'end_turn' });
         }
-      }).catch((error) => { if (this.active === active) { this.active = null; reject(error); } });
+      }).catch(async (error) => {
+        // Setting a native target may persist it before model admission fails.
+        if (goal?.action === 'set' || goal?.action === 'resume') {
+          await this.wire.request('session/goal', { sessionId: this.agentSessionId, action: 'pause' }).catch(() => undefined);
+        }
+        if (this.active === active) { this.active = null; reject(error); }
+      });
     });
   }
   async cancel(): Promise<void> {
@@ -194,6 +211,12 @@ class ZcodeSession implements AgentSession {
     if (this.active !== active) return;
     await this.wire.request('session/stop', { sessionId: this.agentSessionId });
   }
+  async controlGoal(action: GoalControl): Promise<string> {
+    if (action !== 'pause') throw new Error('请先停止当前执行，再查看或清除目标。');
+    await this.submission;
+    await this.wire.request('session/goal', { sessionId: this.agentSessionId, action: 'pause' });
+    return '目标已暂停。';
+  }
   async close(): Promise<void> {
     try { if (!this.closed && this.agentSessionId) await this.wire.request('session/close', { sessionId: this.agentSessionId, ...(this.probe ? { expectedPersistence: 'deferred' } : {}) }, 5_000); }
     finally { this.wire.close(); }
@@ -201,12 +224,27 @@ class ZcodeSession implements AgentSession {
   private finish(result: TurnResult): void { const active = this.active; this.active = null; active?.resolve(result); }
   private event(method: string, event: any): void {
     const active = this.active;
+    if (method === 'state.updated' && active?.goal && event?.sessionId === this.agentSessionId
+      && ['goal_continuation_completed', 'goal_continuation_failed', 'prompt_completed', 'prompt_failed'].includes(event.reason)) {
+      // Native continuation owns all its turns, including verification between turns.
+      void this.wire.request('session/read', { sessionId: this.agentSessionId, messageLimit: 1 }).then((snapshot) => {
+        if (this.active !== active) return;
+        const target = snapshot.session?.target ?? snapshot.projection?.target;
+        this.goalActive = target?.status === 'active';
+        active.hooks.emit({ type: 'message.delta', data: { text: `\n\n${goalSummary(target)}` } });
+        this.finish(event.reason.endsWith('_failed') ? { stopReason: 'error', error: active.error ?? 'zcode 目标执行失败' }
+          : { stopReason: target?.status === 'paused' ? 'cancelled' : 'end_turn' });
+      }).catch((error) => { if (this.active === active) { this.active = null; active.reject(error); } });
+      return;
+    }
     if (method !== 'session/event' || !active || event?.sessionId !== this.agentSessionId) return;
     if (event.eventId) { if (active.seen.has(event.eventId)) return; active.seen.add(event.eventId); }
     const p = event.payload ?? {};
     if (event.type === 'turn.started') {
-      if (p.inputId !== active.inputId) return;
+      if (!active.goal && p.inputId !== active.inputId) return;
+      if (active.goal && active.turnId && active.turnId !== event.turnId) active.hooks.emit({ type: 'message.delta', data: { text: '\n\n' } });
       active.turnId = event.turnId;
+      active.text = '';
     }
     const terminal = event.type === 'turn.completed' || event.type === 'turn.failed';
     if ((!active.turnId || event.turnId !== active.turnId) && !(terminal && p.inputId === active.inputId)) return;
@@ -214,8 +252,13 @@ class ZcodeSession implements AgentSession {
     if (mapped) { active.hooks.emit(mapped); if (mapped.type === 'message.delta') active.text += mapped.data.text; }
     if (event.type === 'turn.completed') {
       if (!active.text && p.response) active.hooks.emit({ type: 'message.delta', data: { text: p.response } });
+      if (active.goal) return;
       this.finish(p.resultType === 'success' ? { stopReason: 'end_turn' } : p.resultType === 'cancelled' ? { stopReason: 'cancelled' } : { stopReason: 'error', error: `zcode：${p.resultType}` });
-    } else if (event.type === 'turn.failed') this.finish({ stopReason: 'error', error: p.error?.message ?? 'zcode 执行失败' });
+    } else if (event.type === 'turn.failed') {
+      const error = p.error?.message ?? 'zcode 执行失败';
+      if (active.goal) active.error = error;
+      else this.finish({ stopReason: 'error', error });
+    }
   }
   private async request(method: string, params: any): Promise<unknown> {
     if (method === 'session/requestRuntimePreferences') {

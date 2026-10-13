@@ -276,6 +276,7 @@ export interface AgentInfo {
     /** Can read plan usage outside a session, for the quota panel. */
     quota: boolean;
     compact?: boolean;
+    goal?: { controls: Array<'show' | 'pause' | 'clear'> };
     fork: boolean;
     /** A fork can end at an earlier turn instead of taking the whole thread. Missing from daemons that predate it. */
     forkAt?: boolean;

@@ -20,6 +20,38 @@ let currentModel = 'gpt-big';
 let currentEffort = 'high';
 let currentSandbox = 'read-only';
 let currentApproval = 'on-request';
+let goal = process.env.FAKE_CODEX_ACTIVE_GOAL ? { objective: 'Saved target', status: 'active' } : null;
+let goalGeneration = 0;
+
+const runGoal = (generation, round = 1) => {
+  if (generation !== goalGeneration || goal?.status !== 'active') return;
+  const turnId = `goal-${nextTurnSeq++}`;
+  activeTurn = turnId;
+  notify('turn/started', { turn: { id: turnId, status: 'inProgress' } });
+  if (goal.objective.includes('crash')) return process.exit(2);
+  if (goal.objective.includes('slow')) return;
+  setTimeout(() => {
+    if (generation !== goalGeneration || activeTurn !== turnId) return;
+    runTurn(round === 2 && goal.objective.includes('approve') ? 'approve' : `目标第 ${round} 轮`, turnId, () => {
+      if (activeTurn !== turnId) return;
+      activeTurn = null;
+      if (round === 2) {
+        goal = { ...goal, status: goal.objective.includes('blocked') ? 'blocked' : 'complete', tokensUsed: 42 };
+        // Both notification orders occur across server versions.
+        if (process.env.FAKE_CODEX_GOAL_LATE) {
+          finishTurn(turnId, 'completed');
+          notify('thread/goal/updated', { goal });
+        } else {
+          notify('thread/goal/updated', { goal });
+          finishTurn(turnId, 'completed');
+        }
+      } else {
+        finishTurn(turnId, 'completed');
+        setTimeout(() => runGoal(generation, 2), 30);
+      }
+    });
+  }, 20);
+};
 
 const sandboxName = () => ({ readOnly: 'read-only', workspaceWrite: 'workspace-write', dangerFullAccess: 'danger-full-access' })[currentSandbox] ?? currentSandbox;
 
@@ -219,6 +251,27 @@ rl.on('line', (line) => {
   }
 
   switch (msg.method) {
+    case 'thread/settings/update':
+      applyTurnOverrides(msg.params);
+      return out({ jsonrpc: '2.0', id: msg.id, result: {} });
+    case 'thread/goal/get':
+      if (process.env.FAKE_CODEX_NO_GOALS) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: 'goals not supported' } });
+      return out({ jsonrpc: '2.0', id: msg.id, result: { goal } });
+    case 'thread/goal/clear':
+      goal = null; goalGeneration++;
+      out({ jsonrpc: '2.0', id: msg.id, result: { cleared: true } });
+      notify('thread/goal/cleared', {}); return;
+    case 'thread/goal/set': {
+      if (process.env.FAKE_CODEX_NO_GOALS) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: 'goals not supported' } });
+      if (!goal && !msg.params.objective) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: 'no goal exists' } });
+      goal = { threadId, tokensUsed: 0, ...goal, ...msg.params };
+      const generation = ++goalGeneration;
+      const start = () => { notify('thread/goal/updated', { goal }); if (goal.status === 'active') runGoal(generation); };
+      if (process.env.FAKE_CODEX_GOAL_EARLY) start();
+      out({ jsonrpc: '2.0', id: msg.id, result: { goal } });
+      if (!process.env.FAKE_CODEX_GOAL_EARLY) start();
+      return;
+    }
     case 'initialize':
       return out({ jsonrpc: '2.0', id: msg.id, result: { userAgent: 'fake-codex/0.160', codexHome: '/tmp/codex' } });
     case 'model/list':
@@ -280,7 +333,10 @@ rl.on('line', (line) => {
       notify('turn/started', { turn: { id: turnId, items: [], itemsView: 'notLoaded', status: 'inProgress', error: null } });
       if (images.length) say(`images:${images.map((i) => i.path).join(',')}`);
       if (skills.length) say(`skills:${skills.map((s) => `${s.name}@${s.path}`).join(',')};`);
-      setTimeout(() => runTurn(text, turnId, () => { activeTurn = null; finishTurn(turnId, 'completed'); }), 15);
+      setTimeout(() => runTurn(text, turnId, () => {
+        activeTurn = null; finishTurn(turnId, 'completed');
+        if (goal?.status === 'active') setTimeout(() => runGoal(goalGeneration), 15);
+      }), 15);
       return;
     }
     case 'turn/interrupt':

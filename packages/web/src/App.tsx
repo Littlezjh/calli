@@ -1601,6 +1601,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           left={left}
           right={right}
           commands={commandsByKey[commandsKey] ?? []}
+          goalControls={activeCaps?.goal?.controls}
           actions={hubActions}
           hiddenCommands={hiddenCommands}
           onAction={runHubAction}

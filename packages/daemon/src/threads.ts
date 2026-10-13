@@ -1263,11 +1263,35 @@ export class ThreadManager {
     const originalText = typeof input.text === 'string' ? input.text.trim() : '';
     const mentions = Array.isArray(input.mentions) && input.mentions.length ? input.mentions : undefined;
     const rawText = this.coordination?.mentionText(threadId, originalText, mentions) ?? originalText;
-    const text = rawText ? (this.coordination?.instructions(threadId, rawText) ?? rawText) : '';
+    const nativeGoal = this.adapters.get(thread.agent)?.capabilities.goal && /^\/goal(?:\s|$)/.test(rawText);
+    const text = nativeGoal ? rawText : rawText ? (this.coordination?.instructions(threadId, rawText) ?? rawText) : '';
     const rawImages = Array.isArray(input.images) ? input.images : [];
     if (!text && rawImages.length === 0) throw new HttpError(400, 'text is empty');
     if (thread.archivedAt) throw new HttpError(409, 'this thread is archived; restore it first');
     if (this.running.has(threadId)) {
+      const goalAction = originalText === '/goal' ? 'show' : originalText === '/goal pause' ? 'pause' : originalText === '/goal clear' ? 'clear' : null;
+      const adapter = this.adapters.get(thread.agent);
+      const session = this.sessions.get(threadId);
+      if (!delivery && goalAction && !rawImages.length && !mentions && adapter?.capabilities.goal?.controls.includes(goalAction)) {
+        if (!session?.controlGoal) throw new HttpError(409, '智能体正在启动，请稍后重试目标操作。');
+        // A control must not wait behind the work it is supposed to stop. It has its own
+        // transcript entry, but does not claim or release the running turn's lock/hooks.
+        const turnId = randomUUID();
+        this.emitThreadEvent(threadId, turnId, 'turn.started', { text: originalText });
+        if (goalAction === 'pause') {
+          for (const [id, approval] of this.approvals) {
+            if (approval.threadId === threadId) this.resolveApproval(id, { cancelled: true });
+          }
+        }
+        void session.controlGoal(goalAction).then((text) => {
+          if (!this.store.getThread(threadId)) return;
+          this.emitThreadEvent(threadId, turnId, 'message.delta', { text });
+          this.emitThreadEvent(threadId, turnId, 'turn.done', { stopReason: 'end_turn' });
+        }).catch((error) => {
+          if (this.store.getThread(threadId)) this.emitThreadEvent(threadId, turnId, 'turn.error', { message: String(error) });
+        });
+        return { turnId };
+      }
       if (input.queue !== true) throw new HttpError(409, 'a turn is already running in this thread');
       const queue = this.queues.get(threadId) ?? [];
       if (queue.length >= MAX_QUEUED) throw new HttpError(409, `at most ${MAX_QUEUED} messages can wait in a thread`);

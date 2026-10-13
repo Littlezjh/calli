@@ -155,6 +155,7 @@ export function modelsFromConfig(configOptions: ConfigOption[] | undefined): Mod
 
 /** A live ACP session bound to one thread. */
 export class AcpSession implements AgentSession {
+  controlGoal?: AgentSession['controlGoal'];
   private hooks: TurnHooks | null = null;
 
   constructor(
@@ -268,6 +269,8 @@ export class AcpSession implements AgentSession {
 
 /** Everything an ACP agent has in common. The agent-specific parts are the abstract members. */
 export abstract class AcpAdapter implements AgentAdapter {
+  /** Optional protocol extensions supplied by a concrete adapter. */
+  protected configureSession(_session: AcpSession, _peer: JsonRpcPeer): void {}
   abstract readonly id: string;
   abstract readonly label: string;
   abstract readonly capabilities: AgentAdapter['capabilities'];
@@ -471,6 +474,7 @@ export abstract class AcpAdapter implements AgentAdapter {
       const configOptions: ConfigOption[] = info?.configOptions ?? [];
 
       const session = new AcpSession(sessionId, peer, this.modeIds, offeredModes, effortConfigIdOf(configOptions));
+      this.configureSession(session, peer);
       holder.session = session;
       if (opts.permissionMode && opts.permissionMode !== 'ask') await session.setPermissionMode(opts.permissionMode);
       if (opts.model) await session.setModel(opts.model);
@@ -482,4 +486,3 @@ export abstract class AcpAdapter implements AgentAdapter {
     }
   }
 }
-

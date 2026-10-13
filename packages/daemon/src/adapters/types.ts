@@ -1,5 +1,6 @@
 import type { ImageInput } from '../attachments.js';
 import type { EmittedEvent } from '../events.js';
+import type { GoalControl } from './native-goal.js';
 
 /** What the user sent in one turn. `text` may be empty when there are images. */
 export interface TurnInput {
@@ -51,6 +52,8 @@ export interface AgentSession {
   /** Returns true if the change applied to the live session; false means the session must restart. */
   setEffort?(effort: EffortLevel): Promise<boolean>;
   prompt(input: TurnInput, hooks: TurnHooks): Promise<TurnResult>;
+  /** Native controls that can run without queueing behind the current goal. */
+  controlGoal?(action: GoalControl): Promise<string>;
   cancel(): Promise<void>;
   close(): Promise<void>;
 }
@@ -202,6 +205,8 @@ export interface AgentAdapter {
     quota: boolean;
     /** Whether /compact can compress the current context. */
     compact?: boolean;
+    /** Native goal controls supported while a turn is running. */
+    goal?: { controls: readonly GoalControl[] };
     /** Whether a conversation can be copied into a new, independent one. */
     fork: boolean;
     /** Whether that copy can stop at an earlier turn instead of taking everything. Needs fork and history. */

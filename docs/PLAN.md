@@ -27,6 +27,7 @@ daemon（Node.js，跑在远程主机上）
 | pi | `pi --mode rpc`（stdin/stdout JSON 行） | 流式、图片输入、`set_model`、`set_thinking_level`、`get_available_models`（含每个模型的强度映射和是否支持图片）、`get_commands`、`clone`、`fork`、`get_messages`；没有审批 |
 | Antigravity | `agy --input-format stream-json --output-format stream-json … -p=` | 流式、多轮（一个进程，每行输入一轮）、`--conversation` 恢复、`--model`、SIGINT 停止。输入是 `{"event":"user","message":{"content":…}}`，输出是 `init`、`step_update`、`result`。无界面模式不能询问权限，需要批准的操作会被拒绝；输入只有文字；流里没有思考过程和文件内容 |
 | Codex | `codex app-server`（自有 JSON-RPC v2 线程协议，stdio） | 流式、审批（`item/commandExecution/requestApproval`、`item/fileChange/requestApproval`，选项按 `availableDecisions` 生成）、`thread/resume`、`model/list`（含强度和图片输入）、`thread/turns/list`（回放历史）、`thread/fork`、`thread/delete`、`thread/compact/start`（`/compact`）；`turn/start` 携带模型/强度/沙箱覆盖，`thread/tokenUsage/updated` 映射上下文占用 |
+| TraeX | 执行与命令走 `traex app-server`，复用 Codex 线程协议；模型、历史、分叉仍走 ACP | 原生 `/goal`、多轮流式、审批、恢复、压缩、模型/强度/权限；额度保留 `traex models --json`。已有 ACP 会话通过同一原生会话 ID 恢复，入口命令配置无需迁移 |
 | zcode | `zcode app-server`（无 jsonrpc 字段的 NDJSON） | 精简协议接入：关闭自动记忆、基础工具白名单、流式、审批回调、取消、恢复、模型/强度、`/compact`；无权限档位，扩展全局关闭需另配，见 `zcode-minimal-design.md` |
 
 注意：`@zed-industries/claude-agent-acp` 已停更（0.23.1，模型列表过时），不要用回去。
@@ -64,6 +65,10 @@ daemon（Node.js，跑在远程主机上）
 - **审批：** 只接受 agent 给出的选项 ID，其他一律拒绝。取消 turn 时，未决的审批自动按取消处理。
 - **图片：** 类型按文件头判断，不信客户端声明；只收 PNG、JPEG、GIF、WebP；每条消息最多 6 张，每张 5 MB；文件存在数据目录，事件里只有引用。
 - **斜杠命令按目录取**，因为项目级命令各不相同。
+- **原生目标：** `/goal` 复用 agent 自己的目标状态和续跑。Codex、TraeX 使用 `thread/goal/get|set|clear`，目标启动前通过 `thread/settings/update` 同步线程设置；Claude 使用 ACP 的 `/goal` 和 `_session/goal`；zcode 使用 `session/goal`，等待原生整个续跑结束再释放线程。多轮输出、审批、错误继续走统一事件，Hub 不另做续跑循环、不写 agent 的状态文件。
+  - Codex、TraeX、zcode：`/goal 目标` 设置，`/goal` 查看，`/goal pause` 暂停，`/goal resume` 继续，`/goal clear` 清除。Claude 支持设置、查看、清除，停止用现有停止按钮。
+  - `capabilities.goal.controls` 声明运行中可立即执行的操作：Codex/TraeX 查看/暂停/清除、Claude 清除、zcode 暂停。这些操作复用发送接口，单独记录结果，不排到目标后面，也不抢占原轮次的输出或审批。会话尚未启动时返回可重试的错误，避免操作排队后无法执行；其他消息沿用原有排队规则。
+  - 目标完成只表示原生 agent 的判断，Codex/TraeX/zcode 的状态摘要写「原生 agent 报告已完成」，Claude 保留原生回复。不支持原生目标的 agent 不补造能力；旧版本 RPC 不支持时显示错误。
 - **Codex 命令走正式协议：** 额度通过 `account/rateLimits/read` 接入统一面板，优先读取多额度池，兼容旧版单池；`/review` 调用 `review/start`，`/mcp` 分页读取服务状态，`/skills` 和技能菜单按当前目录调用 `skills/list`。选择技能后发送结构化 `skill` 输入；查询命令不触发模型推理。终端专用操作仍由 hub 的模型、权限、状态等入口承接，不把未知斜杠命令当普通提示词发送。
 - **归档不删东西：** 归档只是从侧边栏隐藏并停掉 agent 进程，随时能恢复。永久删除默认只删 hub 的记录，可以勾选同时删 agent 自己的会话（agent 支持时）。
 - **导入：** 只列出白名单目录里、目录还在的会话。历史由 agent 回放后一次写入事件日志（`turn.started` 带 `imported: true`）。导入后的线程继续用原来的会话 ID，一个会话只能对应一个线程。

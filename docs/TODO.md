@@ -93,6 +93,7 @@
 - [ ] **P2** agy 导入历史（`brain/<会话>/.system_generated/logs/transcript.jsonl`）和文件改动 diff（流里只有路径，没有内容）
 - [x] Codex：`codex app-server`（v2 线程协议）。流式、审批（命令/文件改动）、切模型和强度、三档权限、图片按路径发、导入历史、分叉、`/compact`
 - [x] Codex 命令补齐：额度面板（`/usage`）、`/review [审查说明]`、`/mcp`、`/skills`，按项目目录发现技能并通过正式协议调用；`/approvals` 搜索权限入口。支持多额度池、重置时间和旧版单池数据。
+- [x] 原生 `/goal`：接入 Codex、TraeX、Claude Code、zcode 的目标接口和续跑生命周期，运行中按能力立即查看/暂停/清除，保留审批与线程设置；不增加 Hub 续跑。TraeX 执行切到兼容 Codex 的 app-server，模型/历史/分叉保留 ACP，真实验证已有 ACP 会话用相同 ID 恢复并完成目标。假 agent 覆盖多轮、停止、失败与通知顺序；真实 Codex、Claude、TraeX 执行已验证，真实 zcode 使用隔离模型服务验证多轮；Chromium 看过四种 agent 的桌面/手机、亮/暗组合，实体手机未测。
 - [x] 上下文弹层增加「压缩」：由适配器能力决定是否显示，复用现有命令，运行中排队执行，不清空草稿；模型与思考强度改成紧凑卡片、分档滑杆和模型子列表，支持拖动、触控、方向键和恢复默认。Codex 只返回周额度时说明未提供 5 小时窗口，不补造数据。
 - [x] **P3** zcode：`zcode app-server`，原版协议精简接入（自动记忆关闭、基础工具、流式/恢复/取消/压缩）；扩展全局设置与桌面账号鉴权边界见 `zcode-minimal-design.md`
 [x] 多账号：一个适配器可配多个实例（`data/agents.json` 或 `RAH_AGENTS_JSON`：id、adapter、label、command、env），线程存实例 id，默认实例沿用原名不迁移；实例 env 合并进它起的所有进程（如第二个 Claude 账号带自己的 `CLAUDE_CONFIG_DIR`）；扫描 PATH 发现同类 CLI（`agy2` 这类，`ping`/`pix` 不算），Agent picker 里一键添加，添加后立刻可用并写回 agents.json

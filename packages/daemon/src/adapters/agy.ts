@@ -509,6 +509,8 @@ export class AgyAdapter implements AgentAdapter {
   private async answer(cwd: string, text: string): Promise<string | null> {
     const name = /^\/([\w:-]+)/.exec(text.trim())?.[1];
     if (!name) return null;
+    // A native goal belongs to the current conversation, never the short-lived query process.
+    if (name === 'goal') return null;
     let cli: AgyCliCommand[];
     try {
       cli = (await this.loadCommands(cwd)).cli;

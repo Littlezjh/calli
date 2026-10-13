@@ -115,6 +115,7 @@ interface Props {
   right: ReactNode;
   /** The agent's own slash commands. */
   commands: SlashCommand[];
+  goalControls?: Array<'show' | 'pause' | 'clear'>;
   /** Things the hub does itself, offered in the same menu. */
   actions: HubAction[];
   /** Agent commands left out because a hub action replaces them. */
@@ -169,6 +170,7 @@ export function Composer({
   left,
   right,
   commands,
+  goalControls = [],
   actions,
   hiddenCommands,
   onAction,
@@ -401,8 +403,9 @@ export function Composer({
   };
 
   const hasContent = text.trim() !== '' || images.length > 0 || notes.length > 0 || mentions.some((m) => m.task?.trim());
-  // While a turn runs, sending means queueing, up to a limit.
-  const queueFull = running && queued.length >= MAX_QUEUED;
+  const goalControl = text.trim() === '/goal' ? 'show' : text.trim() === '/goal pause' ? 'pause' : text.trim() === '/goal clear' ? 'clear' : null;
+  const immediate = !!goalControl && goalControls.includes(goalControl) && !images.length && !notes.length && !mentions.length;
+  const queueFull = running && !immediate && queued.length >= MAX_QUEUED;
   const canSend = hasContent && !busy && !disabled && preparing === 0 && !queueFull;
 
   const submit = async () => {
@@ -733,8 +736,8 @@ export function Composer({
                 className={`send-btn${slow ? ' sending' : ''}`}
                 onClick={() => void submit()}
                 disabled={!canSend}
-                aria-label={slow ? '正在发送' : running ? '排队发送' : '发送'}
-                title={slow ? '正在发送…' : queueFull ? `最多排 ${MAX_QUEUED} 条` : running ? '这一轮结束后发送' : undefined}
+                aria-label={slow ? '正在发送' : running && !immediate ? '排队发送' : '发送'}
+                title={slow ? '正在发送…' : queueFull ? `最多排 ${MAX_QUEUED} 条` : running ? immediate ? '立即执行目标操作' : '这一轮结束后发送' : undefined}
               >
                 {slow ? <span className="send-spinner" aria-hidden="true" /> : <IconSend size={16} />}
               </button>

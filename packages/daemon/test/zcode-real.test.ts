@@ -9,16 +9,21 @@ import { ZcodeAdapter, ZCODE_BASIC_TOOLS } from '../src/adapters/zcode.js';
 import type { AgentSession, TurnHooks } from '../src/adapters/types.js';
 
 // Opt-in: an unmodified installed CLI, isolated storage, and a local model endpoint. No real API keys.
-test('real zcode: memory stays disabled across create, resume and compact', { skip: !process.env.RAH_ZCODE_REAL_BIN, timeout: 60_000 }, async () => {
+test('real zcode: memory stays disabled across create, resume, compact and native goals', { skip: !process.env.RAH_ZCODE_REAL_BIN, timeout: 60_000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'rah-zcode-real-'));
   const requests: any[] = [];
+  let goalMode = false;
+  let goalReplies = 0;
   const server = createServer(async (req, res) => {
     let body = '';
     for await (const chunk of req) body += chunk;
     requests.push(JSON.parse(body));
+    const verification = goalMode && body.includes('Verify whether the active session goal is actually complete.');
+    const content = verification ? JSON.stringify({ passed: goalReplies >= 2, reason: 'Local test verdict', nextAction: goalReplies >= 2 ? '' : 'Reply once more.' }) : '本地验证完成';
+    if (goalMode && !verification) goalReplies++;
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     for (const chunk of [
-      { choices: [{ index: 0, delta: { role: 'assistant', content: '本地验证完成' }, finish_reason: null }] },
+      { choices: [{ index: 0, delta: { role: 'assistant', content }, finish_reason: null }] },
       { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } },
     ]) res.write(`data: ${JSON.stringify({ id: 'fixture', object: 'chat.completion.chunk', created: 1, model: 'fixture', ...chunk })}\n\n`);
     res.end('data: [DONE]\n\n');
@@ -70,13 +75,21 @@ test('real zcode: memory stays disabled across create, resume and compact', { sk
       assert.ok(response.length > 0);
       if (text === '/usage') assert.match(response, /总计：[0-9,]+ tokens/);
     }
+    assert.equal(requests.length, 3, 'No extra title or memory extraction calls');
+    goalMode = true;
+    let goalText = '';
+    const goalHooks: TurnHooks = { ...hooks, emit: (event) => { if (event.type === 'message.delta') goalText += event.data.text; } };
+    assert.equal((await session.prompt({ text: '/goal Reply twice for the local protocol test.', images: [] }, goalHooks)).stopReason, 'end_turn');
+    assert.ok(goalReplies >= 2, 'The native runtime must continue through multiple turns');
+    assert.match(goalText, /报告已完成/);
+    assert.equal((await session.prompt({ text: '/goal clear', images: [] }, goalHooks)).stopReason, 'end_turn');
     await session.close(); session = undefined;
     assert.equal(JSON.stringify(requests).includes(sentinel), false);
     assert.equal(readFileSync(join(memory, 'MEMORY.md'), 'utf8'), sentinel);
     assert.deepEqual(readdirSync(memory), ['MEMORY.md']);
     assert.equal(readFileSync(join(dir, '.zcode/config.json'), 'utf8'), projectConfig);
-    assert.equal(requests.length, 3, 'No extra title or memory extraction calls');
     for (const request of requests) {
+      if (!request.tools?.length) continue; // The native goal verifier cannot call tools.
       const tools = request.tools.map((tool: any) => tool.function.name);
       assert.ok(tools.length > 0);
       assert.ok(tools.every((tool: string) => ZCODE_BASIC_TOOLS.includes(tool)));

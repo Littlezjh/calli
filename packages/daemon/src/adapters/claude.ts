@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { AcpAdapter, AcpSession, airForkPoint } from './acp.js';
 import { CLAUDE_ICON } from './icons.js';
+import type { JsonRpcPeer } from './jsonrpc.js';
 import { configDirectory, findSessionFile, quoteArg } from './session-location.js';
 import type { DiscoveredAccount, ModelOption, PermissionMode, PlanQuota, QuotaWindow, SkillDir, SlashCommand } from './types.js';
 
@@ -37,6 +38,7 @@ const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
  * environment"; the hub offers its own status panel instead.
  */
 const UNLISTED_COMMANDS: SlashCommand[] = [
+  { name: 'goal', description: '设置原生目标并持续执行；不带参数查看，clear 清除', hint: '[目标 | clear]', kind: 'command' },
   { name: 'cost', description: 'Show plan usage limits and what is using them' },
   { name: 'stats', description: 'Show plan usage limits and what is using them' },
 ];
@@ -93,6 +95,7 @@ export class ClaudeAcpAdapter extends AcpAdapter {
   readonly label = 'Claude Code';
   readonly icon = CLAUDE_ICON;
   readonly capabilities = {
+    goal: { controls: ['clear'] as const },
     coordination: true,
     resume: true,
     approvals: true,
@@ -115,6 +118,22 @@ export class ClaudeAcpAdapter extends AcpAdapter {
   }
 
   protected readonly modeIds = CLAUDE_MODE_IDS;
+
+  protected configureSession(session: AcpSession, peer: JsonRpcPeer): void {
+    const prompt = session.prompt.bind(session);
+    session.prompt = async (input, hooks) => {
+      if (/^\/goal(?:\s|$)/.test(input.text.trim())) {
+        if (input.images.length) return { stopReason: 'error', error: '/goal 不接受图片。' };
+        if (/^\/goal\s+(pause|resume)$/.test(input.text.trim())) return { stopReason: 'error', error: '此原生目标支持 /goal 查看和 /goal clear 清除；停止请使用停止按钮。' };
+      }
+      return prompt(input, hooks);
+    };
+    session.controlGoal = async (action) => {
+      if (action !== 'clear') throw new Error('此 agent 不支持运行中执行该目标操作');
+      await peer.request('_session/goal', { sessionId: session.agentSessionId, action: 'clear' });
+      return '已请求清除原生目标。';
+    };
+  }
 
   /**
    * Selects each model in turn to learn which effort levels it offers and to drop models this

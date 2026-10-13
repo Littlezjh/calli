@@ -16,6 +16,7 @@ const promptIndex = args.indexOf('-p');
 if (promptIndex >= 0 && args[promptIndex + 1] !== undefined) {
   const text = args[promptIndex + 1];
   if (text === '/help') {
+    if (process.env.FAKE_AGY_GOAL) process.stdout.write('/goal\tSet a native goal\n');
     process.stdout.write('/config (settings)\tOpen settings panel\n/effort\tSet the reasoning effort\n/model\tSet a model\n/skills\tList available skills\n/usage (quota)\tView model quota usage\n/broken\tAlways fails\n');
   } else if (text === '/skills') {
     process.stdout.write('make-video\tTurn a brief into a video\nreview\tReview the current change\n');

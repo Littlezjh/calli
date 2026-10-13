@@ -41,11 +41,21 @@ test('zcode creation and resume send restrictive protocol preferences without ch
   } finally { f.clean(); }
 });
 
-test('zcode refuses older servers that do not request memory preferences and active goals', async () => {
-  for (const env of [{ FAKE_ZCODE_NO_PREFERENCES: '1' }, { FAKE_ZCODE_GOAL: '1' }]) {
+test('zcode refuses older servers that do not request memory preferences', async () => {
+  for (const env of [{ FAKE_ZCODE_NO_PREFERENCES: '1' }]) {
     const f = setup(env);
     try { await assert.rejects(f.adapter.start({ cwd: f.dir }), /记忆|目标/); } finally { f.clean(); }
   }
+});
+
+test('zcode can reopen a session with a native goal without starting another loop', async () => {
+  const f = setup({ FAKE_ZCODE_GOAL: '1' });
+  try {
+    const s = await f.adapter.start({ cwd: f.dir, resumeId: 'sess-goal' });
+    assert.equal((await s.prompt(input('/compact'), hooks([]))).stopReason, 'end_turn');
+    await s.close();
+    assert.equal(f.log().some(r => r.method === 'session/send' || r.method === 'session/goal'), false);
+  } finally { f.clean(); }
 });
 
 test('zcode probes models with deferred persistence and closes the probe', async () => {
@@ -140,7 +150,7 @@ test('zcode sends the selected model default reasoning level at creation', async
 test('zcode exposes and handles local query commands without sending prompts', async () => {
   const f = setup(); const s = await f.adapter.start({ cwd: f.dir });
   try {
-    assert.deepEqual((await f.adapter.commands()).map((c) => c.name), ['compact', 'help', 'session', 'usage']);
+    assert.deepEqual((await f.adapter.commands()).map((c) => c.name), ['goal', 'compact', 'help', 'session', 'usage']);
     for (const [command, expected] of [['/help', '/compact'], ['/session', 'api / small'], ['  /usage  ', '1,500 tokens']]) {
       const events: EmittedEvent[] = [];
       assert.equal((await s.prompt(input(command), hooks(events))).stopReason, 'end_turn');

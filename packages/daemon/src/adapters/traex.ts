@@ -4,15 +4,17 @@ import { join } from 'node:path';
 import { readdirSync } from 'node:fs';
 import { promisify } from 'node:util';
 import { AcpAdapter, airForkPoint } from './acp.js';
+import { CodexAppServerAdapter } from './codex.js';
 import { TRAE_ICON } from './icons.js';
 import { configDirectory, findSessionFile } from './session-location.js';
-import type { ModelOption, PermissionMode, PlanQuota, QuotaWindow } from './types.js';
+import type { AgentSession, ModelOption, PermissionMode, PlanQuota, QuotaWindow, SlashCommand, StartOptions } from './types.js';
 
 const execFileAsync = promisify(execFile);
 
 /**
- * TRAE CLI ("traex", the command-line agent of Trae X), through its own ACP server
- * (`traex acp serve`). The protocol handling lives in acp.ts; what is TRAE-specific:
+ * TRAE CLI uses the Codex-compatible app-server for live turns and native goals.
+ * ACP remains the metadata/history/fork transport; both address the same native sessions.
+ * What is TRAE-specific:
  *
  * - it has no mode that asks before every action. "Workspace Edit" (its default) already approves
  *   edits in the workspace and asks only for what leaves it, which is what the hub calls
@@ -72,6 +74,8 @@ export class TraexAcpAdapter extends AcpAdapter {
   readonly label = 'TRAE CLI';
   readonly icon = TRAE_ICON;
   readonly capabilities = {
+    goal: { controls: ['show', 'pause', 'clear'] as const },
+    compact: true,
     coordination: true,
     resume: true,
     approvals: true,
@@ -93,8 +97,9 @@ export class TraexAcpAdapter extends AcpAdapter {
     return airForkPoint(forkRef);
   }
 
-  /** The plain CLI, for the one job its ACP server cannot do: `traex delete --force`. */
+  /** Plain CLI used for app-server, model metadata and session deletion. */
   private readonly cli: string[];
+  private readonly execution: CodexAppServerAdapter;
 
   constructor(
     command: string[],
@@ -105,6 +110,15 @@ export class TraexAcpAdapter extends AcpAdapter {
     super(command, env);
     const endsWithServe = command.length > 2 && command.at(-2) === 'acp' && command.at(-1) === 'serve';
     this.cli = cli ?? (endsWithServe ? command.slice(0, -2) : command);
+    this.execution = new CodexAppServerAdapter([...this.cli, 'app-server'], env);
+  }
+
+  override start(opts: StartOptions): Promise<AgentSession> {
+    return this.execution.start(opts);
+  }
+
+  override commands(cwd?: string): Promise<SlashCommand[]> {
+    return this.execution.commands(cwd);
   }
 
   private statusRead: Promise<TraexModelStatus[]> | null = null;

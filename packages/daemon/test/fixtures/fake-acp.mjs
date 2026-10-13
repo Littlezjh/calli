@@ -9,6 +9,11 @@ import { basename, dirname } from 'node:path';
 import { createInterface } from 'node:readline';
 import { recordSession } from './fake-session-store.mjs';
 
+// TRAE exposes both ACP metadata and a Codex-compatible app-server on one CLI.
+if (process.argv.includes('app-server')) {
+  await import('./fake-codex.mjs');
+} else {
+
 if (process.argv[2] === 'models') {
   if (process.env.FAKE_TRAEX_MODELS_FAIL === '1') process.exit(1);
   const rows = process.env.FAKE_TRAEX_MODELS_FILE ? JSON.parse(readFileSync(process.env.FAKE_TRAEX_MODELS_FILE, 'utf8')) : [
@@ -190,10 +195,23 @@ rl.on('line', (line) => {
         pendingPrompt = null;
       }
       return;
+    case '_session/goal': {
+      if (msg.params.action !== 'clear') throw new Error('unsupported goal control');
+      if (pendingPrompt) {
+        out({ jsonrpc: '2.0', id: pendingPrompt.id, result: { stopReason: 'end_turn' } });
+        pendingPrompt = null;
+      }
+      out({ jsonrpc: '2.0', id: msg.id, result: {} }); return;
+    }
     case 'session/prompt': {
       recordSession(traex ? 'traex' : 'claude', msg.params.sessionId);
       const blocks = msg.params.prompt;
       const text = blocks.filter((p) => p.type === 'text').map((p) => p.text).join('');
+      if (!traex && /^\/goal(?:\s|$)/.test(text)) {
+        if (text.includes('slow')) { pendingPrompt = msg; return; }
+        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: text === '/goal' ? '当前没有目标。' : text === '/goal clear' ? '目标已清除。' : '原生目标完成。' } });
+        out({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } }); return;
+      }
       if (/^\/compact(?:\s|$)/.test(text)) {
         pendingPrompt = msg;
         setTimeout(() => {
@@ -281,3 +299,5 @@ rl.on('line', (line) => {
       if (msg.id !== undefined) out({ jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: 'not found' } });
   }
 });
+
+}

@@ -90,13 +90,15 @@ test('ClaudeAcpAdapter: prompt streams events and returns end_turn', async () =>
   await session.close();
 });
 
-test('Claude and TRAE: ACP context updates preserve current occupancy and cumulative cost', async (t) => {
+test('Claude and TRAE: context updates use each live protocol without inventing cost', async (t) => {
   for (const adapter of [new ClaudeAcpAdapter([process.execPath, fakeAcp]), new TraexAcpAdapter([process.execPath, fakeAcp], { FAKE_ACP_FLAVOR: 'traex' })]) {
     const session = await adapter.start({ cwd: here });
     t.after(() => session.close());
     const { hooks, events } = collectingHooks();
     await session.prompt(turn('usage'), hooks);
-    assert.deepEqual(events.find((e) => e.type === 'usage.updated')?.data, { used: 52000, size: 200000, cost: { amount: 0.42, currency: 'USD' } });
+    assert.deepEqual(events.find((e) => e.type === 'usage.updated')?.data, adapter.id === 'claude'
+      ? { used: 52000, size: 200000, cost: { amount: 0.42, currency: 'USD' } }
+      : { used: 183510, size: 258400 });
   }
 });
 
@@ -204,7 +206,7 @@ test('ClaudeAcpAdapter: model list and slash commands come from the agent', asyn
   assert.deepEqual(models.map((m) => m.efforts), [['low', 'high', 'max'], ['low', 'high'], []]);
   assert.equal(await adapter.models(), models, 'the probe runs once and is cached');
   // What the agent announced, then the commands it answers without announcing them.
-  assert.deepEqual((await adapter.commands()).map((c) => c.name), ['compact', 'review', 'cost', 'stats']);
+  assert.deepEqual((await adapter.commands()).map((c) => c.name), ['compact', 'review', 'goal', 'cost', 'stats']);
 });
 
 test('ClaudeAcpAdapter: permission mode, model and effort are applied at start', async () => {
@@ -324,7 +326,7 @@ test('ClaudeAcpAdapter: commands keep the argument hint and are tracked per dire
   assert.deepEqual(commands[0], { name: 'compact', description: 'Summarise the conversation', hint: '<instructions>' });
   assert.equal('hint' in commands[1], false);
   // A directory with no session yet falls back to a known list instead of nothing.
-  assert.deepEqual((await adapter.commands('/somewhere/else')).map((c) => c.name), ['compact', 'review', 'cost', 'stats']);
+  assert.deepEqual((await adapter.commands('/somewhere/else')).map((c) => c.name), ['compact', 'review', 'goal', 'cost', 'stats']);
   await session.close();
 });
 
@@ -800,7 +802,7 @@ test('formatPiCompact and formatPiStats cope with partial answers', () => {
 test('Claude: commands it answers but does not announce are added, once', () => {
   assert.deepEqual(withUnlistedCommands([]), [], 'nothing known yet');
   const listed = [{ name: 'compact', description: '' }, { name: 'stats', description: 'already there' }];
-  assert.deepEqual(withUnlistedCommands(listed).map((c) => c.name), ['compact', 'stats', 'cost']);
+  assert.deepEqual(withUnlistedCommands(listed).map((c) => c.name), ['compact', 'stats', 'goal', 'cost']);
 });
 
 // TRAE CLI speaks ACP too (see acp.ts); these tests cover what is its own. The fake agent takes
@@ -812,22 +814,22 @@ import { tmpdir } from 'node:os';
 const traexEnv = { FAKE_ACP_FLAVOR: 'traex' };
 
 
-test('TraexAcpAdapter: two permission levels mapped to its own mode ids, effort through reasoning_effort', async () => {
+test('TraexAcpAdapter: live settings use the native app-server sandbox, approval and effort fields', async (t) => {
   const adapter = new TraexAcpAdapter([process.execPath, fakeAcp], traexEnv);
   assert.deepEqual(adapter.capabilities.permissionModes, ['auto_edit', 'full_access']);
   assert.deepEqual(adapter.capabilities.effortLevels, ['low', 'medium', 'high', 'xhigh']);
   assert.equal(adapter.resumeCommand('s1'), 'traex resume s1');
 
-  // session/new reports no modes at all; the adapter still switches, to TRAE CLI's own ids.
   const session = await adapter.start({ cwd: here, permissionMode: 'auto_edit', model: 'big', effort: 'high' });
+  t.after(() => session.close());
   const { hooks, events } = collectingHooks();
   await session.prompt(turn('model?'), hooks);
-  assert.equal(events.at(-1)?.data.text, 'model:big;mode:default;effort:high');
+  assert.equal(events.filter(e => e.type === 'message.delta').map(e => e.data.text).join(''), 'model:big;effort:high;sandbox:workspace-write;approval:on-request');
   await session.setPermissionMode!('full_access');
   await session.setEffort!('low');
   const second = collectingHooks();
   await session.prompt(turn('model?'), second.hooks);
-  assert.equal(second.events.at(-1)?.data.text, 'model:big;mode:bypass_permissions;effort:low');
+  assert.equal(second.events.filter(e => e.type === 'message.delta').map(e => e.data.text).join(''), 'model:big;effort:low;sandbox:danger-full-access;approval:never');
   await session.close();
 });
 
@@ -841,7 +843,8 @@ test('TraexAcpAdapter: the model list is taken as reported, with the current pic
     ['default'],
     'the model the agent is on is marked',
   );
-  assert.deepEqual((await adapter.commands()).map((c) => c.name), ['compact', 'review'], 'no unlisted commands added');
+  const commands = (await adapter.commands()).map((c) => c.name);
+  assert.ok(['goal', 'compact', 'review', 'skills'].every(c => commands.includes(c)), 'commands use the live app-server transport');
 });
 
 test('TraexAcpAdapter: sessions are deleted through the CLI, not the protocol', async () => {
@@ -1246,7 +1249,7 @@ test('CodexAppServerAdapter: models come from the agent, commands are the local 
   assert.deepEqual(models[0].efforts, ['low', 'high', 'max']);
   assert.equal(await adapter.models(), models, 'the probe runs once and is cached');
   assert.deepEqual(await adapter.commands(), CODEX_LOCAL_COMMANDS);
-  assert.deepEqual(CODEX_LOCAL_COMMANDS.map((c) => c.name), ['compact', 'review', 'skills', 'mcp', 'usage']);
+  assert.deepEqual(CODEX_LOCAL_COMMANDS.map((c) => c.name), ['goal', 'compact', 'review', 'skills', 'mcp', 'usage']);
 });
 
 test('CodexAppServerAdapter: listing, history, forking and deleting go through one-off servers', async () => {
