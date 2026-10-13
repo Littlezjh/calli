@@ -4,7 +4,7 @@ import { request } from 'node:http';
 const args = process.argv.slice(2);
 if (!args.length || args.includes('--help')) {
   console.log(`limi agents | status | result ID | stop NAME
-limi spawn --agent ID --name NAME [--cwd DIR] --message-file FILE --request-id KEY
+limi spawn --agent ID --name NAME [--cwd DIR] [--model ID] [--effort LEVEL] --message-file FILE --request-id KEY
 limi send NAME --message-file FILE --request-id KEY
 FILE may be - for stdin. Reuse the request ID only when retrying the same request.
 Members can message existing teammates; only the lead can spawn or stop members.`);
@@ -14,7 +14,7 @@ try {
   const [op, ...rest] = args;
   const input = { op };
   if (rest[0] && !rest[0].startsWith('--')) input.target = rest.shift();
-  const names = { '--agent': 'agent', '--name': 'name', '--cwd': 'cwd', '--request-id': 'requestId', '--message-file': 'file' };
+  const names = { '--agent': 'agent', '--name': 'name', '--cwd': 'cwd', '--model': 'model', '--effort': 'effort', '--request-id': 'requestId', '--message-file': 'file' };
   while (rest.length) {
     const flag = rest.shift(); const key = names[flag]; const value = rest.shift();
     if (!key || value === undefined) throw new Error(`Invalid argument: ${flag}`);

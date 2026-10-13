@@ -173,3 +173,34 @@ export function handoverGroups(threads: Thread[]): Array<{ key: string; latest: 
     return newest(b.members).localeCompare(newest(a.members));
   });
 }
+
+/** A search needs this much typed before conversations are looked through; a single letter is in all of them. */
+export const SEARCH_MIN = 2;
+
+/** The words of a search, as the daemon takes them: split at spaces, case put aside. */
+export function searchTerms(search: string): string[] {
+  return [...new Set(search.toLowerCase().split(/\s+/).filter(Boolean))];
+}
+
+/** A found passage cut where the searched words are, so they can be marked. Nothing is marked for an empty search. */
+export function markTerms(text: string, search: string): Array<{ text: string; hit: boolean }> {
+  const terms = searchTerms(search).sort((a, b) => b.length - a.length);
+  if (!terms.length) return [{ text, hit: false }];
+  const lower = text.toLowerCase();
+  const parts: Array<{ text: string; hit: boolean }> = [];
+  let at = 0;
+  while (at < text.length) {
+    let next = -1;
+    let len = 0;
+    for (const term of terms) {
+      const i = lower.indexOf(term, at);
+      if (i >= 0 && (next < 0 || i < next)) { next = i; len = term.length; }
+    }
+    if (next < 0) break;
+    if (next > at) parts.push({ text: text.slice(at, next), hit: false });
+    parts.push({ text: text.slice(next, next + len), hit: true });
+    at = next + len;
+  }
+  if (at < text.length) parts.push({ text: text.slice(at), hit: false });
+  return parts;
+}

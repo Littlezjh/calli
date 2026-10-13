@@ -36,8 +36,25 @@ export interface WorkdirsConfig {
 }
 
 export interface AgentMention { id: string; label: string; kind: 'agent' | 'member'; cwd?: string; /** What the user asks of this one alone. */ task?: string }
+/** One turn a search found: where it is, who said it, and the words around the match. */
+export interface SearchHit {
+  threadId: string;
+  turnId: string;
+  role: 'user' | 'assistant';
+  ts: string;
+  snippet: string;
+  title: string;
+  agent: string;
+  cwd: string;
+  archived: boolean;
+}
+
+/** The model and thinking effort members of one instance start with; null leaves the agent's own. */
+export interface MemberDefault { model: string | null; effort: string | null }
 export interface Coordination {
   rootId: string; paused: boolean; directories: string[]; agents: string[];
+  /** By instance id. Absent from older daemons. */
+  defaults?: Record<string, MemberDefault>;
   members: Array<{ id: string; name: string; thread: Thread | null; latest: CoordinationMessage | null }>;
   messages: CoordinationMessage[];
 }
@@ -556,7 +573,12 @@ export class Api {
   }
 
   coordination(id: string): Promise<Coordination | null> { return this.request('GET', `/api/threads/${id}/coordination`); }
-  configureCoordination(id: string, body: { action?: string; directories?: string[] }): Promise<Coordination> {
+  /** Turns of any thread on this machine, archived ones too, in which the words were said. */
+  search(query: string): Promise<SearchHit[]> {
+    return this.request('GET', `/api/search?q=${encodeURIComponent(query)}`);
+  }
+
+  configureCoordination(id: string, body: { action?: string; directories?: string[]; defaults?: Record<string, MemberDefault> }): Promise<Coordination> {
     return this.request('POST', `/api/threads/${id}/coordination`, body);
   }
 

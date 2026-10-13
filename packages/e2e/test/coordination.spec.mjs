@@ -75,6 +75,20 @@ for (const phone of [false, true]) for (const colorScheme of ['light', 'dark']) 
       const task = row.getByRole('textbox');
       assert.ok(await task.evaluate(el => el === document.activeElement));
       await task.fill('只看异常处理');
+      // The model its member starts with is a quiet mark at the end of the line, worded once chosen.
+      const quiet = row.getByRole('button', { name: /的模型与思考强度$/ });
+      assert.equal((await quiet.innerText()).trim(), '');
+      await quiet.click();
+      const control = page.locator('.model-control-panel');
+      const toModels = control.getByRole('button', { name: /切换模型/ });
+      await control.getByRole('menuitemradio').or(toModels).first().waitFor();
+      if (await toModels.count()) await toModels.click();
+      const choice = control.getByRole('menuitemradio').nth(1);
+      const picked = (await choice.locator('.pop-item-label').innerText()).trim();
+      await choice.click();
+      await page.keyboard.press('Escape');
+      await control.waitFor({ state: 'detached' });
+      await row.locator('.member-model.set', { hasText: picked }).waitFor();
       await task.press('Enter');
       assert.ok(await box.evaluate(el => el === document.activeElement));
       await box.fill('请审查接口文档');
@@ -101,11 +115,41 @@ for (const phone of [false, true]) for (const colorScheme of ['light', 'dark']) 
       await page.waitForFunction(() => document.querySelector('.agent-member')?.textContent?.includes('已返回'));
       const team = await (await api(daemon, `/api/threads/${root.id}/coordination`)).json();
       const child = team.members[0].id;
+      // The member was made with what was chosen on its line, whether the team existed yet or not.
+      const offered = await (await api(daemon, '/api/agents/claude/models')).json();
+      assert.equal((await (await api(daemon, `/api/threads/${child}`)).json()).model, offered.find(m => m.label === picked).id);
+      if (!phone) {
+        // On a wide screen the panel's edge drags; a double click gives the width back.
+        const edge = panel.getByRole('separator', { name: '调整宽度' });
+        const wide = async () => Math.round((await panel.boundingBox()).width);
+        const usual = await wide();
+        const at = await edge.boundingBox();
+        await page.mouse.move(at.x + 2, at.y + 200);
+        await page.mouse.down();
+        await page.mouse.move(at.x - 118, at.y + 200, { steps: 4 });
+        await page.mouse.up();
+        assert.ok(Math.abs((await wide()) - usual - 120) <= 2, `the panel grew by the drag (${usual} to ${await wide()})`);
+        await edge.dblclick();
+        assert.equal(await wide(), usual);
+      }
       const before = await (await api(daemon, `/api/threads/${child}/events`)).json();
       // The detail retries even if its first history request fails.
       await page.route(`**/threads/${child}/events?tail=1`, route => route.fulfill({ status: 503, body: '{"error":"offline"}' }), { times: 1 });
       await card.click();
       await panel.getByText('文档审查完成。', { exact: false }).waitFor();
+      const own = panel.locator('.agent-panel-head .member-model.set', { hasText: picked });
+      await own.waitFor();
+      // Opened from the top of the panel, the member's own setting is all on screen.
+      await own.click();
+      const ownPanel = panel.locator('.agent-panel-head .pop-panel');
+      await ownPanel.waitFor();
+      await page.waitForTimeout(250);
+      const shown = await ownPanel.boundingBox();
+      const screen = page.viewportSize();
+      assert.ok(shown.y >= 0 && shown.x >= 0 && shown.y + shown.height <= screen.height + 1 && shown.x + shown.width <= screen.width + 1, `the setting fits the screen (${JSON.stringify(shown)})`);
+      await page.screenshot({ path: `${shots}/${phone ? 'phone' : 'desktop'}-${colorScheme}-own-model.png` });
+      await page.keyboard.press('Escape');
+      await ownPanel.waitFor({ state: 'detached' });
       assert.equal(await panel.locator('textarea').count(), 0);
       assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), colorScheme);
       if (phone) {

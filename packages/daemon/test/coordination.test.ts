@@ -240,3 +240,28 @@ test('a message can carry a task for one member alone', async () => {
     assert.throws(() => h.team.mentionText(h.root.id, 'x', [{ id: 'pi', kind: 'agent', task: 'a'.repeat(4001) }]), /4000/);
   } finally { await h.close(); }
 });
+
+test('members start with the model and effort chosen for their instance, unless the lead names others', async () => {
+  const h = await setup();
+  try {
+    const models = (await (h.manager as any).adapters.get('claude').models()).map((m: any) => m.id).filter((id: string) => id !== 'default');
+    assert.ok(models.length >= 2, 'the fixture offers models to choose from');
+    await assert.rejects(h.team.enable(h.root.id, { defaults: { nobody: { model: 'x' } } }), /实例/);
+    const view = await h.team.enable(h.root.id, { defaults: { claude: { model: models[0], effort: 'high' }, pi: { model: '', effort: null } } });
+    assert.deepEqual(view!.defaults, { claude: { model: models[0], effort: 'high' } });
+    const member = async (name: string, extra = {}, agent = 'claude') => h.manager.threadView(((await h.team.command(h.root.id, spawn(name, agent, 'hello', extra))) as any).to);
+    const usual = await member('usual');
+    assert.deepEqual([usual.model, usual.effort], [models[0], 'high']);
+    const named = await member('named', { model: models[1] });
+    // The usual effort stays where the named model takes it, and is dropped where it does not.
+    assert.equal(named.model, models[1]);
+    assert.ok(named.effort === 'high' || named.effort === null);
+    assert.equal((await member('plain', {}, 'pi')).model, null);
+    await assert.rejects(h.team.command(h.root.id, spawn('wrong', 'claude', 'hello', { model: 'no-such-model' })), /unknown model/);
+    // A choice the agent no longer offers is dropped rather than keeping the member from starting.
+    assert.deepEqual((await h.team.setDefaults(h.root.id, { claude: { model: 'gone' } }))!.defaults, { claude: { model: 'gone', effort: null } });
+    assert.equal((await member('later')).model, null);
+    const member2 = h.team.view(h.root.id)!.members[0].id;
+    await assert.rejects(h.team.setDefaults(member2, {}), /主线程/);
+  } finally { await h.close(); }
+});

@@ -1,9 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import type { AgentInfo, Api, Coordination, Thread } from '../api';
 import { buildTalks } from '../coordination';
 import { buildTimeline, clockLabel, deliveredPreview, type StoredEvent } from '../timeline';
 import { Prose, ThreadView } from './ThreadView';
 import { AgentMark, IconAgents, IconChevron, IconClose } from './icons';
+
+/** The width the user dragged the panel to, on a wide screen. Unset, the panel keeps its own. */
+const WIDTH_KEY = 'rah.agents.width';
+const MIN_WIDTH = 320;
+/** What the conversation beside the panel is always left with. */
+const MIN_MAIN = 380;
+const clampWidth = (w: number) => Math.max(MIN_WIDTH, Math.min(w, window.innerWidth - MIN_MAIN));
 
 const labels: Record<string, string> = { queued: '排队中', running: '运行中', returned: '已返回', failed: '失败', stopped: '已停止', interrupted: '中断' };
 export function memberStatus(m: Coordination['members'][number]): string {
@@ -45,11 +52,36 @@ function Said({ who, to, at, state, text, failed }: { who: Speaker; to?: string;
   );
 }
 
-export function AgentPanel({ api, team, agents, leadAgent, phone, onClose, onOpen, onAdjust, onRefresh, onError }: {
-  api: Api; team: Coordination; agents: AgentInfo[]; leadAgent?: string; phone: boolean; onClose: () => void; onOpen: (thread: Thread) => void;
+export function AgentPanel({ api, team, agents, leadAgent, memberModel, phone, onClose, onOpen, onAdjust, onRefresh, onError }: {
+  api: Api; team: Coordination; agents: AgentInfo[]; leadAgent?: string;
+  /** The control for a member's own model and thinking effort, shown with its details. */
+  memberModel?: (thread: Thread) => ReactNode;
+  phone: boolean; onClose: () => void; onOpen: (thread: Thread) => void;
   onAdjust: (name: string) => void; onRefresh: () => void; onError: (err: unknown) => void;
 }) {
   const [memberId, setMemberId] = useState<string | null>(null);
+  const [width, setWidth] = useState<number | null>(() => { const saved = Number(localStorage.getItem(WIDTH_KEY)); return saved > 0 ? clampWidth(saved) : null; });
+  const panel = useRef<HTMLElement>(null);
+  const startResize = (e: ReactPointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = panel.current?.getBoundingClientRect().width ?? MIN_WIDTH;
+    const at = (ev: PointerEvent) => clampWidth(startW + startX - ev.clientX);
+    const move = (ev: PointerEvent) => setWidth(at(ev));
+    const up = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      localStorage.setItem(WIDTH_KEY, String(at(ev)));
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+  // A window made narrower must not leave the panel wider than the room there is.
+  useEffect(() => {
+    const fit = () => setWidth((w) => (w === null ? w : clampWidth(w)));
+    window.addEventListener('resize', fit);
+    return () => window.removeEventListener('resize', fit);
+  }, []);
   const [tab, setTab] = useState<'members' | 'talk'>('members');
   // Answers are folded under their message; the newest conversation starts open.
   const [opened, setOpened] = useState<Record<string, boolean>>({});
@@ -78,7 +110,8 @@ export function AgentPanel({ api, team, agents, leadAgent, phone, onClose, onOpe
   }, [api, thread?.id, thread?.unread]);
   useEffect(() => {
     focus.current = document.activeElement as HTMLElement;
-    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') latest.current.onClose(); };
+    // Escape closes what is on top: a setting opened in the panel goes first, the panel after it.
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape' && !panel.current?.querySelector('.pop-panel')) latest.current.onClose(); };
     document.addEventListener('keydown', key);
     return () => { document.removeEventListener('keydown', key); focus.current?.focus(); };
   }, []);
@@ -137,10 +170,12 @@ export function AgentPanel({ api, team, agents, leadAgent, phone, onClose, onOpe
       requestAnimationFrame(() => { if (el) el.scrollTop += el.scrollHeight - height; });
     } catch (err) { onError(err); } finally { setLoadingOlder(false); }
   };
-  return <aside className={`agent-panel${memberId ? ' detail' : ''}`} role="region" aria-label="智能体面板">
+  return <aside ref={panel} className={`agent-panel${memberId ? ' detail' : ''}`} role="region" aria-label="智能体面板" style={width === null ? undefined : { ['--agent-panel-width' as string]: `${width}px` }}>
+    <div className="agent-panel-resize" onPointerDown={startResize} onDoubleClick={() => { setWidth(null); localStorage.removeItem(WIDTH_KEY); }} role="separator" aria-orientation="vertical" aria-label="调整宽度" title="拖动调整宽度，双击恢复" />
     <header className="agent-panel-head">
       {memberId && <button className="icon-btn" aria-label="返回智能体列表" onClick={() => setMemberId(null)}><span className="coord-back"><IconChevron /></span></button>}
-      <div className="agent-panel-heading"><strong>{member?.name ?? '智能体'}</strong><span>{thread ? `${thread.agent} · ${thread.model ?? '默认模型'}` : team.paused ? '协作已暂停' : `${team.members.filter(m => m.thread?.status === 'running').length} 运行中 · ${team.members.length} 个成员`}</span></div>
+      <div className="agent-panel-heading"><strong>{member?.name ?? '智能体'}</strong><span>{thread ? (agents.find(a => a.id === thread.agent)?.label ?? thread.agent) : team.paused ? '协作已暂停' : `${team.members.filter(m => m.thread?.status === 'running').length} 运行中 · ${team.members.length} 个成员`}</span></div>
+      {thread && memberModel?.(thread)}
       <button className="icon-btn" aria-label="关闭智能体面板" onClick={onClose}><IconClose /></button>
     </header>
     {thread && <div className="agent-panel-location" title={thread.cwd}>{memberStatus(member!)} · {thread.cwd}</div>}

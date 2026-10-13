@@ -25,7 +25,7 @@ import { handoverContext, handoverPrompt, synthesizeHandover, turnMessage } from
 import { SkillsManager } from './skills.js';
 import { isWithinWorkdirs, Workdirs } from './workdirs.js';
 import { coalesceToolEvents, compactDeltas, type EmittedEvent, type EventType, type StoredEvent } from './events.js';
-import type { SectionRecord, Store, ThreadRecord, ThreadWorktree, TodoRecord } from './store.js';
+import type { SearchHit, SectionRecord, Store, ThreadRecord, ThreadWorktree, TodoRecord } from './store.js';
 import { askedText } from './util.js';
 import { addWorktree, countChanges, findCheckout, initRepository, removeWorktree, samePath, worktreeLeftovers, type Checkout, type Worktree } from './worktrees.js';
 
@@ -496,6 +496,11 @@ export class ThreadManager {
     const adapter = this.adapters.get(agent);
     if (!adapter) throw new HttpError(404, `unknown agent: ${agent}`);
     return adapter.models();
+  }
+
+  /** Turns of any thread, archived ones too, in which the words were said. */
+  search(query: unknown): SearchHit[] {
+    return typeof query === 'string' ? this.store.searchText(query.slice(0, 200)) : [];
   }
 
   listThreads(opts: { archived?: boolean } = {}): ThreadView[] {

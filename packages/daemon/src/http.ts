@@ -246,6 +246,11 @@ export function createHttpServer(deps: HttpDeps): Server {
       return sendJson(res, 200, await manager.listAgentSessions(parts[2]));
     }
 
+    // GET /api/search?q=: turns in which the words were said, across every thread.
+    if (method === 'GET' && parts[0] === 'api' && parts[1] === 'search' && !parts[2]) {
+      return sendJson(res, 200, manager.search(url.searchParams.get('q')));
+    }
+
     // GET /api/agents/:id/quota: plan usage, read outside any session and cached briefly.
     // ?refresh=1 skips the cache: the dashboard's refresh button means "ask again now".
     if (method === 'GET' && parts[0] === 'api' && parts[1] === 'agents' && parts[2] && parts[3] === 'quota') {
@@ -462,6 +467,7 @@ export function createHttpServer(deps: HttpDeps): Server {
         if (method === 'POST') {
           const body = await readJson(req);
           if (body.action === 'resume') return sendJson(res, 200, await collaboration.resume(threadId));
+          if (body.action === 'defaults') return sendJson(res, 200, await collaboration.setDefaults(threadId, body.defaults));
           if (body.action === 'stop') { await manager.cancelTurn(threadId); return sendJson(res, 200, collaboration.view(threadId)); }
           return sendJson(res, 200, await collaboration.enable(threadId, body));
         }

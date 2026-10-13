@@ -42,7 +42,7 @@ import { AddAgentDialog } from './components/AddAgentDialog';
 import { QuotaBoard } from './components/QuotaBoard';
 import { SelectionMenu } from './components/SelectionMenu';
 import { AgentPanel } from './components/AgentPanel';
-import type { AgentMention, Coordination } from './api';
+import type { AgentMention, Coordination, MemberDefault, SearchHit } from './api';
 import { Popover as CoordinationPopover } from './components/Popover';
 import { SideChat } from './components/SideChat';
 import { SkillsPage } from './components/SkillsPage';
@@ -56,7 +56,7 @@ import { NewProjectDialog, ProjectPicker, RootsDialog } from './components/Proje
 import { NoteMarks, type NoteMark } from './components/NoteMarks';
 import { Toast, type ToastState } from './components/Toast';
 import { TokenGate } from './components/TokenGate';
-import { IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconImport, IconList, IconMenu, IconMore, IconPalette, IconPlus, IconServer, IconSidebar, IconSignOut, IconSparkle, IconTerminal } from './components/icons';
+import { AgentMark, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconImport, IconList, IconMenu, IconMore, IconPalette, IconPlus, IconServer, IconSidebar, IconSignOut, IconSparkle, IconTerminal } from './components/icons';
 
 const sleep = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve) => {
@@ -88,6 +88,37 @@ const SKILLS_HASH = '#/skills';
 
 /** Whether the thread list is put away on a wide screen. */
 const SIDEBAR_HIDDEN_KEY = 'rah.sidebar.hidden';
+
+/** What members of each instance start with, remembered on this device for the next team. */
+const MEMBER_DEFAULTS_KEY = 'rah.coord.defaults';
+function savedMemberDefaults(key: string): Record<string, MemberDefault> {
+  try {
+    const saved = JSON.parse(localStorage.getItem(key) ?? '{}');
+    return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+  } catch {
+    return {};
+  }
+}
+
+/** The model and thinking effort for one instance's members: a quiet mark until something is chosen. */
+function MemberModel({ agent, models, value, onNeed, onChange }: {
+  agent: AgentInfo; models: ModelOption[]; value: MemberDefault; onNeed: (agent: string) => void; onChange: (value: MemberDefault) => void;
+}) {
+  useEffect(() => { onNeed(agent.id); }, [agent.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const efforts = agent.capabilities.effortLevels ?? [];
+  return (
+    <ModelPicker
+      quietFor={agent.label}
+      models={models}
+      model={value.model}
+      efforts={efforts}
+      effort={value.effort}
+      // An effort the newly picked model does not take goes back to the default with it.
+      onModel={(model) => onChange({ model, effort: value.effort && effortsForModel(models, model, efforts).includes(value.effort) ? value.effort : null })}
+      onEffort={(effort) => onChange({ model: value.model, effort })}
+    />
+  );
+}
 
 interface AppProps {
   /** The machine on screen: one of the hub's other machines, or null for the hub's own. */
@@ -146,6 +177,8 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
   const [todosKey, setTodosKey] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [coordination, setCoordination] = useState<Coordination | null>(null);
+  const memberDefaultsKey = hostId ? `${MEMBER_DEFAULTS_KEY}:${hostId}` : MEMBER_DEFAULTS_KEY;
+  const [memberDefaults, setMemberDefaults] = useState(() => savedMemberDefaults(memberDefaultsKey));
   const [agentsOpen, setAgentsOpen] = useState(false);
   const [draftCollaboration, setDraftCollaboration] = useState(false);
   const [collaborationDirectories, setCollaborationDirectories] = useState<string[]>([]);
@@ -621,6 +654,30 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
     setAtBottom(near);
   };
 
+  // The turn a search led to: shown once it is on the page, which for an old turn means fetching back to it.
+  const [jump, setJump] = useState<{ threadId: string; turnId: string } | null>(null);
+  useEffect(() => {
+    if (!jump || jump.threadId !== selectedId || eventsLoading) return;
+    const row = scrollerRef.current?.querySelector<HTMLElement>(`[data-turn="${CSS.escape(jump.turnId)}"]`);
+    if (row) {
+      stickToBottom.current = false;
+      setAtBottom(false);
+      row.scrollIntoView({ block: 'start' });
+      row.classList.add('found');
+      setTimeout(() => row.classList.remove('found'), 2200);
+      setJump(null);
+      return;
+    }
+    // Loaded but not drawn yet: the next render has it.
+    if (events.some((e) => e.threadId === jump.threadId && e.turnId === jump.turnId)) return;
+    // A thread opens at its end; an old turn is pages back, fetched until it is there.
+    if (events.length === 0 || events[0].threadId !== jump.threadId) return;
+    stickToBottom.current = false;
+    if (hasOlder) { if (!loadingOlder) void loadOlder(); }
+    else setJump(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jump, selectedId, events, hasOlder, loadingOlder, eventsLoading]);
+
   const jumpToBottom = () => {
     const el = scrollerRef.current;
     if (!el) return;
@@ -633,6 +690,14 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
   const activeAgent = selected?.agent ?? draftAgent;
   const activeCwd = selected?.cwd ?? draftCwd;
   const commandsKey = `${activeAgent}\n${activeCwd}`;
+
+  // Models of an agent other than the thread's own, for choosing what its members start with.
+  const modelsAsked = useRef(new Set<string>());
+  const needModels = (agent: string) => {
+    if (!api || modelsByAgent[agent] || modelsAsked.current.has(agent)) return;
+    modelsAsked.current.add(agent);
+    api.models(agent).then((list) => setModelsByAgent((prev) => ({ ...prev, [agent]: list }))).catch(() => { modelsAsked.current.delete(agent); });
+  };
 
   // Models for that agent, loaded once per agent.
   useEffect(() => {
@@ -839,7 +904,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
         setDraftWorktree(false);
       }
       // Bringing an agent in with @ is itself the request to collaborate; there is no switch to find first.
-      if ((draftCollaboration || mentions?.length) && !selected?.coordination) await api.configureCoordination(id, { directories: collaborationDirectories.length ? collaborationDirectories : undefined });
+      if ((draftCollaboration || mentions?.length) && !selected?.coordination) await api.configureCoordination(id, { directories: collaborationDirectories.length ? collaborationDirectories : undefined, defaults: startingDefaults });
       stickToBottom.current = true;
       // "queue" only matters while a turn is running: then the message waits instead of being refused.
       await api.startTurn(
@@ -924,6 +989,24 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
     }
     if (opts.scratch) setDraftScratch(true);
     setDraftSectionId(opts.sectionId ?? null);
+  };
+
+  // A turn a search found: its thread is opened and the conversation is brought to that turn. An
+  // archived thread comes back out of the archive, as it does when opened from anywhere else.
+  const openHit = async (hit: SearchHit) => {
+    if (!api) return;
+    try {
+      let thread = threads.find((t) => t.id === hit.threadId) ?? (await api.thread(hit.threadId));
+      if (thread.archivedAt) {
+        thread = await api.updateThread(hit.threadId, { archived: false });
+        setArchiveKey((k) => k + 1);
+        setToast({ message: '已从归档恢复' });
+      }
+      openThread(thread);
+      setJump({ threadId: hit.threadId, turnId: hit.turnId });
+    } catch (e) {
+      handleError(e);
+    }
   };
 
   // A session that is already a thread may have been archived since; opening it brings it back.
@@ -1083,6 +1166,21 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
     </>
   );
 
+  // The team's own choices once there is a team; until then, what this device remembers.
+  const leading = Boolean(coordination && selected && coordination.rootId === selected.id);
+  const teamAgents = agents.filter((a) => a.available && a.capabilities.coordination && (!leading || coordination!.agents.includes(a.id)));
+  const teamDefaults: Record<string, MemberDefault> = leading ? coordination!.defaults ?? {} : memberDefaults;
+  const startingDefaults = Object.fromEntries(Object.entries(memberDefaults).filter(([id]) => teamAgents.some((a) => a.id === id)));
+  const setMemberDefault = (agent: string, value: MemberDefault) => {
+    const remembered = { ...memberDefaults, [agent]: value };
+    setMemberDefaults(remembered);
+    localStorage.setItem(memberDefaultsKey, JSON.stringify(remembered));
+    if (leading && api) void api.configureCoordination(coordination!.rootId, { action: 'defaults', defaults: { ...teamDefaults, [agent]: value } }).then(setCoordination).catch(handleError);
+  };
+  const memberModel = (agent: AgentInfo) => (
+    <MemberModel agent={agent} models={modelsByAgent[agent.id] ?? []} value={teamDefaults[agent.id] ?? { model: null, effort: null }} onNeed={needModels} onChange={(value) => setMemberDefault(agent.id, value)} />
+  );
+
   const left = (<>
     {(activeCaps?.coordination || selected?.coordination) && <CoordinationPopover label="协作设置" triggerClassName={`tool-btn coord-tool${selected?.coordination || draftCollaboration ? ' on' : ''}`} triggerLabel="协作" triggerTitle={selected?.coordination || draftCollaboration ? '协作已启用' : '协作'} trigger={<><IconAgents size={16} /><span>协作</span></>}>
       {close => <div className="coord-setup">
@@ -1092,9 +1190,17 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           <div className="coord-caption">允许使用的目录</div>
           {[...new Set([activeCwd, ...workdirs].filter(Boolean))].map(dir => <button className="pop-item compact" role="menuitemcheckbox" aria-checked={(collaborationDirectories.length ? collaborationDirectories : [activeCwd]).includes(dir)} key={dir} onClick={() => setCollaborationDirectories(prev => { const current = prev.length ? prev : [activeCwd]; return current.includes(dir) ? current.filter(v => v !== dir) : [...current, dir]; })}>{(collaborationDirectories.length ? collaborationDirectories : [activeCwd]).includes(dir) ? '已选 · ' : ''}{dir}</button>)}
           <button className="pop-item compact" disabled={running} onClick={() => {
-            if (selected) void api.configureCoordination(selected.id, { directories: collaborationDirectories.length ? collaborationDirectories : [selected.cwd] }).then(value => { setCoordination(value); void refreshThreads(); close(); }).catch(handleError);
+            if (selected) void api.configureCoordination(selected.id, { directories: collaborationDirectories.length ? collaborationDirectories : [selected.cwd], defaults: startingDefaults }).then(value => { setCoordination(value); void refreshThreads(); close(); }).catch(handleError);
             else { setDraftCollaboration(v => !v); close(); }
           }}>{draftCollaboration ? '关闭协作' : running ? '当前轮结束后可启用' : '启用协作'}</button>
+        </>}
+        {(!selected?.coordination || leading) && teamAgents.length > 0 && <>
+          <div className="coord-caption">成员的模型与思考强度</div>
+          {teamAgents.map((a) => <div className="coord-default" key={a.id}>
+            <span className="pop-item-icon">{a.icon ? <AgentMark path={a.icon} size={15} /> : null}</span>
+            <span className="coord-default-name">{a.label}</span>
+            {memberModel(a)}
+          </div>)}
         </>}
         {selected?.coordination && <button className="pop-item compact" onClick={() => { setAgentsOpen(true); setFiles(null); close(); }}>查看智能体</button>}
       </div>}
@@ -1184,6 +1290,8 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           onNew={() => newThread()}
           onNewIn={newThread}
           compact={compact}
+          onSearch={api ? (q) => api.search(q) : undefined}
+          onOpenHit={(hit) => void openHit(hit)}
           onOpenSettings={(x, y) => setSettingsAt({ x, y })}
           hosts={hosts}
           hostId={hostId}
@@ -1368,6 +1476,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
             ...agents.filter(a => a.available && a.capabilities.coordination && (!coordination || coordination.agents.includes(a.id))).map(a => ({ id: a.id, label: a.label, kind: 'agent' as const })),
           ] : []}
           mentionIcon={(m) => agents.find((a) => a.id === (m.kind === 'agent' ? m.id : coordination?.members.find((v) => v.id === m.id)?.thread?.agent))?.icon}
+          mentionExtra={(m) => { const a = agents.find((v) => v.id === m.id); return a ? memberModel(a) : null; }}
           mentionDirectories={coordination?.directories ?? (collaborationDirectories.length ? collaborationDirectories : [activeCwd])}
           onStop={stop}
           header={header}
@@ -1392,7 +1501,10 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
         )}
       </main>
 
-      {agentsOpen && coordination && <AgentPanel key={coordination.rootId} api={api} team={coordination} agents={agents} leadAgent={threads.find((t) => t.id === coordination.rootId)?.agent} phone={compact} onClose={() => setAgentsOpen(false)} onOpen={thread => { openThread(thread); setAgentsOpen(false); }} onAdjust={name => { setAgentsOpen(false); setSelectedId(coordination.rootId); setRestore({ text: `请调整「${name}」的任务：`, nonce: Date.now() }); }} onRefresh={() => { void refreshThreads(); }} onError={handleError} />}
+      {agentsOpen && coordination && <AgentPanel key={coordination.rootId} api={api} team={coordination} agents={agents} memberModel={(thread) => {
+        const a = agents.find((v) => v.id === thread.agent);
+        return a ? <MemberModel agent={a} models={modelsByAgent[a.id] ?? []} value={{ model: thread.model ?? null, effort: thread.effort ?? null }} onNeed={needModels} onChange={(value) => { void api.updateThread(thread.id, value).then(() => refreshThreads()).catch(handleError); }} /> : null;
+      }} leadAgent={threads.find((t) => t.id === coordination.rootId)?.agent} phone={compact} onClose={() => setAgentsOpen(false)} onOpen={thread => { openThread(thread); setAgentsOpen(false); }} onAdjust={name => { setAgentsOpen(false); setSelectedId(coordination.rootId); setRestore({ text: `请调整「${name}」的任务：`, nonce: Date.now() }); }} onRefresh={() => { void refreshThreads(); }} onError={handleError} />}
       {files && selected && api && <FilesPanel api={api} threadId={selected.id} target={files} phone={compact} onClose={() => setFiles(null)} />}
       {preview && api && (
         <PreviewPanel api={api} threadId={preview.threadId} path={preview.path} onClose={() => setPreview(null)} onError={handleError} />

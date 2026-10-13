@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Section, Thread } from '../src/api.js';
-import { buildActivity, buildSidebar, handoverGroups, taggedAgents } from '../src/sidebar.js';
+import { buildActivity, buildSidebar, handoverGroups, markTerms, searchTerms, taggedAgents } from '../src/sidebar.js';
 
 let clock = 0;
 function thread(id: string, over: Partial<Thread> = {}): Thread {
@@ -174,4 +174,15 @@ test('forks stay separate, and corrupt handover cycles terminate', () => {
   a.handover = { sourceId: b.id, title: b.title, agent: b.agent };
   b.handover = { sourceId: a.id, title: a.title, agent: a.agent };
   assert.equal(handoverGroups([a, b]).length, 1);
+});
+
+test('the searched words are marked in a found passage, whatever their case and however they overlap', () => {
+  assert.deepEqual(searchTerms('  Quota  额度 quota '), ['quota', '额度']);
+  assert.deepEqual(markTerms('The Quota Board 的额度', 'quota 额度'), [
+    { text: 'The ', hit: false }, { text: 'Quota', hit: true }, { text: ' Board 的', hit: false }, { text: '额度', hit: true },
+  ]);
+  // The longer word wins where two start at the same place.
+  assert.deepEqual(markTerms('额度看板', '额度 额度看板'), [{ text: '额度看板', hit: true }]);
+  assert.deepEqual(markTerms('没有命中', '别的'), [{ text: '没有命中', hit: false }]);
+  assert.deepEqual(markTerms('原样', '  '), [{ text: '原样', hit: false }]);
 });

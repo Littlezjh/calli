@@ -794,6 +794,22 @@ html.list-open body {
   line-height: 1.3;
 }
 
+/* Turns a search found in what was said: the thread, then the words around the match. */
+.search-hits { margin-top: 14px; }
+.search-hits-head { padding: 4px 10px 6px; font-size: 12px; color: var(--faint); }
+.search-hit { display: flex; flex-direction: column; gap: 3px; width: 100%; padding: 8px 10px; border: 0; border-radius: 9px; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.search-hit:hover, .search-hit.active { background: var(--hover); }
+.search-hit-top { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.search-hit-top .thread-title { flex: 1; }
+.search-hit-top time { flex: none; font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.search-hit-tag { flex: none; padding: 0 6px; border-radius: var(--radius-pill); background: var(--hover); color: var(--muted); font-size: 11px; line-height: 17px; }
+.search-hit-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: 12px; line-height: 1.5; color: var(--muted); overflow-wrap: anywhere; }
+.search-hit-who { color: var(--faint); }
+.search-hit-text mark { padding: 0 1px; border-radius: 3px; background: var(--positive-bg); color: var(--text); }
+/* The turn a search led to, shown for a moment so the eye lands on it. */
+.row[data-turn] { scroll-margin-top: 76px; }
+.row.found > .bubble, .row.found.delivered { box-shadow: 0 0 0 2px var(--positive); transition: box-shadow 0.2s; }
+
 /* By activity a thread is out of its project group, so the row names the project after the title.
    The title comes first: when the two do not fit, the project gives way until little of it is left. */
 .thread-dir {
@@ -7485,8 +7501,24 @@ input.picker-search {
 .coord-status-note { color: var(--faint); }
 .coord-status-note::before { content: '· '; }
 .coord-status.attention .coord-status-note { color: var(--warn); }
-.agent-panel { width: min(390px, 45vw); flex: 0 0 auto; display: flex; flex-direction: column; background: var(--bg); border-left: 1px solid var(--border); min-height: 0; overflow: hidden; }
-.agent-panel.detail { width: min(600px, 50vw); }
+.agent-panel { position: relative; width: var(--agent-panel-width, min(390px, 45vw)); flex: 0 0 auto; display: flex; flex-direction: column; background: var(--bg); border-left: 1px solid var(--border); min-height: 0; overflow: hidden; }
+.agent-panel.detail { width: var(--agent-panel-width, min(600px, 50vw)); }
+.agent-panel-resize { position: absolute; top: 0; bottom: 0; left: 0; z-index: 3; width: 7px; cursor: col-resize; }
+.agent-panel-resize:hover, .agent-panel-resize:active { background: linear-gradient(to right, var(--border-strong) 2px, transparent 2px); }
+/* A member's model and thinking effort: a mark that stays out of the way until a choice gives it words. */
+.member-model { flex: none; display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-height: 30px; padding: 0 7px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--faint); font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer; }
+.member-model:hover, .member-model[aria-expanded='true'] { background: var(--hover); color: var(--text); }
+.member-model.set { color: var(--muted); }
+.member-model span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.member-model svg { flex: none; }
+.agent-panel-head > .pop, .coord-default > .pop { flex: none; max-width: 50%; }
+/* At the top of the panel there is no room above the mark: its panel opens below it. */
+@media (min-width: 641px) {
+  .agent-panel-head .pop-panel { top: calc(100% + 8px); bottom: auto; }
+}
+.member-model-empty { margin: 0; padding: 12px 14px; font-size: 13px; color: var(--muted); }
+.coord-default { display: flex; align-items: center; gap: 9px; min-height: 34px; padding: 0 2px 0 10px; }
+.coord-default-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
 .agent-panel-head { display: flex; align-items: center; gap: 8px; padding: 20px; border-bottom: 1px solid var(--border); }
 .agent-panel-heading { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 5px; }
 .agent-panel-heading strong { font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -7562,5 +7594,6 @@ button.coord-row-name { cursor: pointer; }
 .coord-setup .pop-item { overflow-wrap: anywhere; white-space: normal; }
 @media (max-width: 900px) {
   .agent-panel, .agent-panel.detail { position: absolute; inset: 0; width: 100%; z-index: 45; border-left: 0; }
+  .agent-panel-resize { display: none; }
   .agent-panel-head { padding: 16px; }
 }

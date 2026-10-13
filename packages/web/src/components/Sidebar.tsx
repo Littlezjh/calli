@@ -1,9 +1,10 @@
-import { useState, type MouseEvent } from 'react';
-import type { AgentInfo, HostInfo, Section, Thread } from '../api';
+import { useEffect, useState, type MouseEvent } from 'react';
+import type { AgentInfo, HostInfo, SearchHit, Section, Thread } from '../api';
+import { clockLabel } from '../timeline';
 import { useLongPress, useStoredFlag, useStoredSet } from '../hooks';
 import { attentionCount, threadMark } from '../notices';
 import { folderName } from '../paths';
-import { buildActivity, buildSidebar, handoverGroups, projectDir, taggedAgents } from '../sidebar';
+import { buildActivity, buildSidebar, handoverGroups, markTerms, projectDir, SEARCH_MIN, taggedAgents } from '../sidebar';
 import { HostSwitcher } from './Hosts';
 import { AgentMark, IconBell, IconChevron, IconClose, IconEdit, IconFolder, IconFork, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconWorktree, IconSidebar } from './icons';
 
@@ -37,6 +38,10 @@ interface Props {
   onHost?: (id: string | null) => void;
   /** The machine this list is of cannot be reached: its threads are over there, so there is no list. */
   hostDown?: boolean;
+  /** Looks through what was said in every thread; without it the search is of titles and folders only. */
+  onSearch?: (query: string) => Promise<SearchHit[]>;
+  /** Opens the thread a found turn is in, at that turn. */
+  onOpenHit?: (hit: SearchHit) => void;
 }
 
 /** Where a menu opened from a "more" button should appear: just under the button. */
@@ -80,8 +85,22 @@ export function Sidebar({
   hostId = null,
   onHost,
   hostDown = false,
+  onSearch,
+  onOpenHit,
 }: Props) {
   const [search, setSearch] = useState('');
+  // What was said, looked up a moment after the typing stops. `for` is the search the hits answer.
+  const [found, setFound] = useState<{ for: string; hits: SearchHit[] } | null>(null);
+  const query = search.trim();
+  useEffect(() => {
+    if (!onSearch || query.length < SEARCH_MIN) { setFound(null); return; }
+    let stale = false;
+    const timer = setTimeout(() => {
+      onSearch(query).then((hits) => { if (!stale) setFound({ for: query, hits }); }).catch(() => { if (!stale) setFound({ for: query, hits: [] }); });
+    }, 220);
+    return () => { stale = true; clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query]);
   const [expandedHandovers, setExpandedHandovers] = useState<Set<string>>(new Set());
   // The search field is put away behind a button until it is asked for.
   const [searching, setSearching] = useState(false);
@@ -197,7 +216,7 @@ export function Sidebar({
 
   const empty = (
     <p className="group-empty top">
-      {search.trim() ? '没有找到匹配的线程。' : compact ? '还没有线程。点“新线程”开始第一个。' : '还没有线程。在右边输入第一条消息就会创建。'}
+      {search.trim() ? '没有标题或目录匹配的线程。' : compact ? '还没有线程。点“新线程”开始第一个。' : '还没有线程。在右边输入第一条消息就会创建。'}
     </p>
   );
 
@@ -281,7 +300,7 @@ export function Sidebar({
     <input
       type="search"
       className="sidebar-search"
-      placeholder="搜索线程"
+      placeholder={onSearch ? "搜索标题和对话内容" : "搜索线程"}
       value={search}
       onChange={(e) => setSearch(e.target.value)}
       aria-label="搜索线程"
@@ -347,6 +366,30 @@ export function Sidebar({
           </div>
         )}
         {!hostDown && groups}
+        {!hostDown && onSearch && query.length >= SEARCH_MIN && (
+          <section className="search-hits" aria-label="对话内容">
+            <div className="search-hits-head">对话内容</div>
+            {found?.for !== query ? (
+              <p className="group-empty">正在搜索…</p>
+            ) : found.hits.length === 0 ? (
+              <p className="group-empty">对话里没有找到。</p>
+            ) : (
+              found.hits.map((hit) => (
+                <button type="button" className={`search-hit${hit.threadId === selectedId ? ' active' : ''}`} key={`${hit.threadId}:${hit.turnId}:${hit.role}`} onClick={() => onOpenHit?.(hit)}>
+                  <span className="search-hit-top">
+                    <span className="thread-title">{hit.title}</span>
+                    {hit.archived && <span className="search-hit-tag">已归档</span>}
+                    <time dateTime={hit.ts}>{clockLabel(hit.ts)}</time>
+                  </span>
+                  <span className="search-hit-text">
+                    <span className="search-hit-who">{hit.role === 'user' ? '我：' : '回复：'}</span>
+                    {markTerms(hit.snippet, query).map((part, i) => (part.hit ? <mark key={i}>{part.text}</mark> : part.text))}
+                  </span>
+                </button>
+              ))
+            )}
+          </section>
+        )}
       </div>
 
       <div className="sidebar-float">

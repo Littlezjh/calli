@@ -87,6 +87,11 @@ interface ModelProps {
   onEffort: (effort: string | null) => void;
   /** Opens the panel when this number changes. */
   openSignal?: number;
+  /**
+   * Whose setting this is, where it is not the thread's own. The trigger is then a quiet mark that
+   * only spells the choice out once one has been made, and it is there before the models are known.
+   */
+  quietFor?: string;
 }
 
 /** The id some agents use for "whatever you would pick yourself". */
@@ -149,10 +154,26 @@ export function modelRows(models: ModelOption[]): Array<{ value: string | null; 
 
 /** Model and thinking effort in a compact card; the model list is a second view. */
 export function ModelPicker(props: ModelProps) {
-  const { models, model, efforts, effort, openSignal } = props;
-  if (models.length === 0 && efforts.length === 0) return null;
+  const { models, model, efforts, effort, openSignal, quietFor } = props;
+  if (models.length === 0 && efforts.length === 0 && quietFor === undefined) return null;
   const levels = effortsForModel(models, model, efforts);
   const shownEffort = effort && levels.includes(effort) ? effort : null;
+  if (quietFor !== undefined) {
+    const chosen = [model ? modelName(models, model) : '', shownEffort ? (EFFORT_LABELS[shownEffort] ?? shownEffort) : ''].filter(Boolean).join(' · ');
+    return (
+      <Popover
+        label="模型与思考强度"
+        align="end"
+        panelClassName="model-control-panel"
+        triggerClassName={`member-model${chosen ? ' set' : ''}`}
+        triggerLabel={`${quietFor} 的模型与思考强度`}
+        triggerTitle={chosen || '模型与思考强度：默认'}
+        trigger={<><IconBolt size={14} />{chosen && <span>{chosen}</span>}</>}
+      >
+        {() => (models.length === 0 && efforts.length === 0 ? <p className="member-model-empty">这个实例没有可选的模型或思考强度。</p> : <ModelControl {...props} />)}
+      </Popover>
+    );
+  }
   return (
     <Popover
       label="模型与思考强度"

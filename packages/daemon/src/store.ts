@@ -149,6 +149,29 @@ const toEvent = (r: EventRow): StoredEvent => ({
 });
 
 /** SQLite-backed store for threads and their event logs. Uses node:sqlite (no native build). */
+/** One turn a search found: where it is, who said it, and the words around the match. */
+export interface SearchHit {
+  threadId: string;
+  turnId: string;
+  role: 'user' | 'assistant';
+  ts: string;
+  snippet: string;
+  title: string;
+  agent: string;
+  cwd: string;
+  archived: boolean;
+}
+
+/** The stretch of a text around the first word found in it, on one line. */
+function snippetAround(text: string, terms: string[]): string {
+  const lower = text.toLowerCase();
+  const found = terms.map((t) => lower.indexOf(t)).filter((i) => i >= 0);
+  const at = found.length ? Math.min(...found) : 0;
+  const start = Math.max(0, at - 28);
+  const end = Math.min(text.length, at + 110);
+  return `${start > 0 ? '…' : ''}${text.slice(start, end).replace(/\s+/g, ' ').trim()}${end < text.length ? '…' : ''}`;
+}
+
 export class Store {
   private readonly db: DatabaseSync;
 
@@ -241,6 +264,85 @@ export class Store {
       );
     `);
     if (!cols.some((c) => c.name === 'handover')) this.recoverHandovers();
+    // What was said in each turn, whole: the user's words and the agent's. An answer is stored as
+    // it streamed, a few characters an event, so nothing can be found in the log itself.
+    const indexed = this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'turn_text'").get();
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS turn_text (
+        thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+        turn_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        ts TEXT NOT NULL,
+        text TEXT NOT NULL,
+        PRIMARY KEY (thread_id, turn_id, role)
+      );
+    `);
+    if (!indexed) this.indexText();
+  }
+
+  /** Where each open turn began, so its answer is read from there and not from the thread's start. */
+  private readonly turnStarts = new Map<string, number>();
+
+  private saveText(threadId: string, turnId: string, role: 'user' | 'assistant', ts: string, text: string): void {
+    if (!text.trim()) return;
+    this.db
+      .prepare('INSERT INTO turn_text (thread_id, turn_id, role, ts, text) VALUES (?, ?, ?, ?, ?) ON CONFLICT(thread_id, turn_id, role) DO UPDATE SET ts = excluded.ts, text = excluded.text')
+      .run(threadId, turnId, role, ts, text);
+  }
+
+  /**
+   * Reads turns out of the log into the searchable text: all of them, one thread's, or one turn
+   * from a sequence number on. Turns the hub started itself (a handover, a teammate's message)
+   * are not the user's words and are left out; what the agent answered is kept either way.
+   */
+  indexText(threadId?: string, turnId?: string, afterSeq = 0): void {
+    const rows = this.db
+      .prepare(`SELECT thread_id, turn_id, type, ts, data FROM events
+        WHERE type IN ('turn.started', 'message.delta') AND turn_id IS NOT NULL AND seq > ?
+        ${threadId ? 'AND thread_id = ?' : ''} ${turnId ? 'AND turn_id = ?' : ''} ORDER BY thread_id, seq`)
+      .iterate(...[afterSeq, ...(threadId ? [threadId] : []), ...(turnId ? [turnId] : [])]) as Iterable<{ thread_id: string; turn_id: string; type: string; ts: string; data: string }>;
+    const said = new Map<string, { threadId: string; turnId: string; ts: string; text: string }>();
+    const flush = () => { for (const a of said.values()) this.saveText(a.threadId, a.turnId, 'assistant', a.ts, a.text); said.clear(); };
+    let current = '';
+    for (const row of rows) {
+      if (row.thread_id !== current) { flush(); current = row.thread_id; }
+      const data = JSON.parse(row.data) as Record<string, unknown>;
+      if (row.type === 'turn.started') {
+        const text = typeof data.displayText === 'string' ? data.displayText : data.text;
+        if (typeof text === 'string' && !data.handover && !data.coordination) this.saveText(row.thread_id, row.turn_id, 'user', row.ts, text);
+        continue;
+      }
+      const answer = said.get(row.turn_id) ?? { threadId: row.thread_id, turnId: row.turn_id, ts: row.ts, text: '' };
+      answer.text += typeof data.text === 'string' ? data.text : '';
+      said.set(row.turn_id, answer);
+    }
+    flush();
+  }
+
+  /**
+   * Turns in which every word of the query was said, newest first: at most three a thread, so one
+   * long thread does not crowd out the rest. Words are matched as they are written, anywhere in
+   * the text, which is what works for Chinese; case is ignored for Latin letters.
+   */
+  searchText(query: string, limit = 40): SearchHit[] {
+    const terms = [...new Set(query.toLowerCase().split(/\s+/).filter(Boolean))].slice(0, 6);
+    if (terms.join('').length < 2) return [];
+    const rows = this.db
+      .prepare(`SELECT tt.thread_id, tt.turn_id, tt.role, tt.ts, tt.text, t.title, t.agent, t.cwd, t.archived_at
+        FROM turn_text tt JOIN threads t ON t.id = tt.thread_id
+        WHERE ${terms.map(() => 'instr(lower(tt.text), ?) > 0').join(' AND ')} ORDER BY tt.ts DESC LIMIT 600`)
+      .all(...terms) as Array<{ thread_id: string; turn_id: string; role: string; ts: string; text: string; title: string; agent: string; cwd: string; archived_at: string | null }>;
+    const perThread = new Map<string, number>();
+    const hits: SearchHit[] = [];
+    for (const row of rows) {
+      const seen = perThread.get(row.thread_id) ?? 0;
+      if (seen >= 3) continue;
+      perThread.set(row.thread_id, seen + 1);
+      hits.push({ threadId: row.thread_id, turnId: row.turn_id, role: row.role === 'user' ? 'user' : 'assistant', ts: row.ts,
+        snippet: snippetAround(row.text, terms), title: row.title, agent: row.agent, cwd: row.cwd, archived: row.archived_at !== null });
+      if (hits.length >= limit) break;
+    }
+    return hits;
   }
 
   /** Recover only the hub's explicit local handover envelope, never title similarity. */
@@ -343,6 +445,7 @@ export class Store {
         'INSERT INTO events (thread_id, seq, turn_id, type, ts, data) SELECT ?, seq, turn_id, type, ts, data FROM events WHERE thread_id = ? AND seq <= ?',
       )
       .run(toThreadId, fromThreadId, upToSeq);
+    this.indexText(toThreadId);
   }
 
   /** Runs several writes as one: all of them happen, or none. Also much faster for bulk inserts. */
@@ -537,6 +640,15 @@ export class Store {
     this.db
       .prepare('INSERT INTO events (thread_id, seq, turn_id, type, ts, data) VALUES (?, ?, ?, ?, ?, ?)')
       .run(threadId, seq, turnId, type, ts, JSON.stringify(data));
+    if (turnId && type === 'turn.started') {
+      this.turnStarts.set(turnId, seq);
+      const text = typeof data.displayText === 'string' ? data.displayText : data.text;
+      if (typeof text === 'string' && !data.handover && !data.coordination) this.saveText(threadId, turnId, 'user', ts, text);
+    } else if (turnId && (type === 'turn.done' || type === 'turn.error')) {
+      // Without the start (the daemon was restarted mid-turn) the whole thread is read for it.
+      this.indexText(threadId, turnId, (this.turnStarts.get(turnId) ?? 1) - 1);
+      this.turnStarts.delete(turnId);
+    }
     // The sidebar's preview line is the newest ask, whatever wrote it — a live turn, an import, a
     // sync from the terminal. Hub-injected handover turns are not the user asking.
     if (type === 'turn.started' && typeof data.text === 'string' && data.text.trim() && !data.handover && !data.coordination) {

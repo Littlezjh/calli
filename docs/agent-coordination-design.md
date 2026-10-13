@@ -45,7 +45,7 @@ limi 借鉴独立会话和邮箱，先不做共享任务依赖图。消息保存
 | 命令 | 用途 |
 |---|---|
 | `limi agents` | 本次协作允许的实例及能力 |
-| `limi spawn --agent ID --name NAME [--cwd DIR] --message-file FILE --request-id KEY` | 创建成员并派发首轮，立即返回消息 ID 与成员线程 ID |
+| `limi spawn --agent ID --name NAME [--cwd DIR] [--model ID] [--effort LEVEL] --message-file FILE --request-id KEY` | 创建成员并派发首轮，立即返回消息 ID 与成员线程 ID；不指定模型和思考强度时用用户为该实例设的默认值 |
 | `limi send NAME --message-file FILE --request-id KEY` | 向成员或 `lead` 追加要求；忙时排队 |
 | `limi status` | 查看成员、状态及最近消息 |
 | `limi result ID` | 读取指定消息的状态和结果摘要 |

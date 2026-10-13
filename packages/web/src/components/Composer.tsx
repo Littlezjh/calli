@@ -101,6 +101,8 @@ interface Props {
   placeholder: string;
   mentionOptions?: AgentMention[];
   mentionDirectories?: string[];
+  /** A control of the app's own on an agent's line, such as the model its member starts with. */
+  mentionExtra?: (mention: AgentMention) => ReactNode;
   /** The mark of the agent behind a choice, for the @ list. */
   mentionIcon?: (mention: AgentMention) => string | undefined;
   onSend: (text: string, images: PreparedImage[], mentions?: AgentMention[]) => Promise<void> | void;
@@ -184,6 +186,7 @@ export function Composer({
   mentionOptions = [],
   mentionDirectories = [],
   mentionIcon,
+  mentionExtra,
 }: Props) {
   const [text, setText] = useState('');
   const [mentions, setMentions] = useState<AgentMention[]>([]);
@@ -685,6 +688,7 @@ export function Composer({
                       if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); ref.current?.focus(); }
                     }}
                   />
+                  {m.kind === 'agent' && mentionExtra?.(m)}
                   <button type="button" className="icon-btn" aria-label={`移除 ${m.label}`} onClick={() => setMentions(prev => prev.filter(v => v !== m))}><IconClose size={13} /></button>
                 </div>
               ))}
