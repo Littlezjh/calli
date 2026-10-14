@@ -138,6 +138,11 @@ export function Sidebar({
   const row = (t: Thread, title = t.title, preview = t.preview) => {
     const mark = threadMark(t, t.id === selectedId);
     const agent = agentById.get(t.agent);
+    // Filed by project, the list is for scanning: a title per row, as in Codex. The latest ask
+    // shows where it helps finding something, by activity and in a search. A thread that needs a
+    // hand says so in every view.
+    const detail = byActivity || query ? preview : null;
+    const note = mark === 'waiting' ? '等待批准' : mark === 'error' ? '出错了' : null;
     return (
     <div
       key={t.id}
@@ -169,10 +174,12 @@ export function Sidebar({
         <span className="thread-text">
           <span className="thread-head">
             <span className="thread-title">{title}</span>
+            {/* Beside the title, so the row stays one line like the rest. */}
+            {note && <span className={`thread-note ${mark}`}>{note}</span>}
             {/* Out of its project group, a thread says where it is. */}
             {byActivity && <span className="thread-dir">{folderName(projectDir(t).cwd)}</span>}
           </span>
-          {preview && <span className="thread-preview">{preview}</span>}
+          {detail && <span className="thread-preview">{detail}</span>}
         </span>
         <span className="thread-meta">
           {agent?.icon ? (

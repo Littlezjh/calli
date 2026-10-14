@@ -130,3 +130,32 @@ test('an open thread names its agent and directory in the top bar, not on the co
   await page.locator('.sidebar').getByRole('button', { name: '新线程', exact: true }).click();
   await page.locator('.composer-context .context-btn').first().waitFor();
 });
+
+test('filed by project a row is its title; activity and search add the latest ask; trouble is said in words', async () => {
+  const make = async (title, text) => {
+    const t = await (await api(daemon, '/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: daemon.workdir, title }) })).json();
+    await api(daemon, `/api/threads/${t.id}/turns`, { method: 'POST', body: JSON.stringify({ text }) });
+    return t;
+  };
+  await make('一行标题', 'hello rows');
+  const broken = await make('会出错的线程', 'please fail');
+  for (let i = 0; i < 100 && (await (await api(daemon, `/api/threads/${broken.id}`)).json()).status !== 'error'; i++) await new Promise((r) => setTimeout(r, 50));
+  await openUi(page, daemon);
+
+  const rowOf = (title) => page.locator('.thread-row', { has: page.locator('.thread-title', { hasText: title }) });
+  await rowOf('一行标题').waitFor();
+  assert.equal(await rowOf('一行标题').locator('.thread-preview').count(), 0, 'no second line in the project view');
+  assert.equal(await rowOf('会出错的线程').locator('.thread-note').innerText(), '出错了');
+  assert.equal(await rowOf('会出错的线程').locator('.thread-preview').count(), 0);
+
+  // By activity: the latest ask comes back.
+  await page.getByRole('button', { name: '按活动查看' }).click();
+  assert.equal(await rowOf('一行标题').locator('.thread-preview').innerText(), 'hello rows');
+  await page.getByRole('button', { name: '按活动查看' }).click();
+
+  // In a search too.
+  await page.getByRole('button', { name: '搜索线程' }).click();
+  await page.locator('.sidebar-search').fill('一行');
+  assert.equal(await rowOf('一行标题').locator('.thread-preview').innerText(), 'hello rows');
+  await page.keyboard.press('Escape');
+});

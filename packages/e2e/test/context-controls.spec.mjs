@@ -90,6 +90,10 @@ test('effort slider, model subview, reset and compression work in both themes an
       // The button shows the level as a dial; its name says it in words. A phone shows the dial alone.
       assert.equal(await page.locator('.model-control-trigger').getAttribute('aria-label'), '模型与思考强度：GPT Big · 最大');
       assert.equal(await page.locator('.model-control-trigger .model-trigger-name').count(), mobile ? 0 : 1);
+      if (mobile) {
+        const dial = await page.locator('.model-control-trigger').boundingBox();
+        assert.equal(Math.round(dial.width), Math.round(dial.height), `the dial button is a circle (${dial.width}×${dial.height})`);
+      }
       await page.getByRole('button', { name: '恢复默认强度' }).click();
       await waitFor(async () => (await read(thread)).effort === null);
       await page.getByRole('button', { name: /切换模型/ }).click();

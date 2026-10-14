@@ -833,6 +833,19 @@ html.list-open body {
   color: var(--muted);
 }
 
+/* A thread that needs a hand: said in words beside the title, in the colour of its dot. The title
+   gives way first, so the words are never cut. */
+.thread-note {
+  flex: none;
+  font-size: 12px;
+}
+
+.thread-note.waiting { color: var(--warn); }
+.thread-note.error { color: var(--danger); }
+
+/* Which agent runs a thread matters less than what the thread is: the mark stays out of the way. */
+.thread-meta .agent-mark { opacity: 0.7; }
+
 .thread-meta {
   display: flex;
   align-items: center;
@@ -3314,6 +3327,10 @@ input.picker-search {
 
 .compact .thread-preview {
   font-size: 12.5px;
+}
+
+.compact .thread-note {
+  font-size: 13.5px;
 }
 
 .compact .agent-tag {
@@ -7383,11 +7400,12 @@ input.picker-search {
 
 .gauge-fill { stroke: var(--positive); }
 
-/* The dial alone: a circle, not a pill. */
+/* The dial alone: a circle, not a pill. As tall as the phone's other tool buttons (40px), and as wide. */
 .model-control-trigger.dial-only {
   justify-content: center;
-  width: 34px;
-  height: 34px;
+  width: 40px;
+  height: 40px;
+  min-height: 0;
   padding: 0;
 }
 
