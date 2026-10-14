@@ -2412,6 +2412,61 @@ html.list-open body {
   background: var(--accent-soft);
 }
 
+/* On a touch screen the field takes the composer's place at the bottom of the app, just above the
+   keyboard, with the passage it is about shown above it. */
+.selection-menu.commenting.docked {
+  left: 16px;
+  right: 16px;
+  bottom: calc(14px + env(safe-area-inset-bottom));
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  max-width: calc(var(--content-w) + 8px);
+  margin: 0 auto;
+  padding: 10px 6px 6px 14px;
+  border-radius: var(--radius-lg);
+}
+
+.app:has(.selection-menu.docked) .composer-box {
+  visibility: hidden;
+}
+
+.selection-quote {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding-right: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.selection-quote svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.selection-quote span {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+}
+
+.selection-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 16px keeps iOS from zooming the page when the field takes the focus. */
+@media (hover: none) {
+  .selection-comment {
+    font-size: 16px;
+  }
+}
+
 /* The open thread's first page is still arriving. */
 .loading-note {
   padding: 28px 0 8px;
@@ -5822,15 +5877,12 @@ input.picker-search {
   }
 }
 
-/* On a phone the side chat is not a docked column but the whole screen, following the visual
-   viewport like the app does so the keyboard cannot cover the composer. */
+/* On a phone the side chat is not a docked column but the whole screen: it fills the app's box,
+   which already follows the visual viewport, so the keyboard cannot cover the composer. */
 @media (max-width: 899px) {
   .side-chat-scrim {
     place-items: stretch;
-    top: 0;
-    bottom: auto;
-    height: var(--vvh, 100dvh);
-    transform: translateY(var(--vvt, 0px));
+    inset: 0;
     padding-top: env(safe-area-inset-top);
   }
 
@@ -5847,14 +5899,13 @@ input.picker-search {
 /* ---------- Terminal ---------- */
 
 /* The terminal is the whole app, not a card: same box the app draws in, so a phone keyboard can
-   never sit on top of it. These rules come last so they win over the bottom-sheet treatment the
-   compact media query gives .panel inside .dialog-scrim. */
+   never sit on top of it. The app box already follows the keyboard (--vvh, --vvt), and fixed
+   layers inside it are placed in it, so filling it is enough; moving by --vvt again here would
+   push the terminal below the screen. These rules come last so they win over the bottom-sheet
+   treatment the compact media query gives .panel inside .dialog-scrim. */
 .term-scrim {
   place-items: stretch;
-  top: 0;
-  bottom: auto;
-  height: var(--vvh, 100dvh);
-  transform: translateY(var(--vvt, 0px));
+  inset: 0;
   padding: 0;
   padding-top: env(safe-area-inset-top);
   background: var(--bg);
@@ -5911,6 +5962,13 @@ input.picker-search {
   height: 100%;
 }
 
+/* The rows are painted in the theme's background; the padding round them and the sliver below
+   the last whole row are the same colour, not the panel's or xterm's black. */
+.term-body,
+.term-body .xterm-viewport {
+  background-color: var(--bg) !important;
+}
+
 .term-note {
   position: absolute;
   inset: 0;
@@ -5937,6 +5995,87 @@ input.picker-search {
 
 .term-note button:hover {
   background: var(--hover);
+}
+
+/* Touch screens: a row of the keys a phone keyboard lacks, and a field a line is typed into. */
+.term-input {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 12px calc(10px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border);
+}
+
+.term-keys {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.term-keys::-webkit-scrollbar {
+  display: none;
+}
+
+.term-keys button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+.term-keys button:active {
+  background: var(--active);
+}
+
+.term-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 4px 4px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+}
+
+.term-line input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--mono);
+  /* 16px keeps iOS from zooming the page when the field takes the focus. */
+  font-size: 16px;
+}
+
+.term-line input::placeholder {
+  color: var(--faint);
+  font-family: var(--font);
+}
+
+.term-send {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-fg);
 }
 
 /* ---------- Other machines ---------- */
@@ -7236,6 +7375,22 @@ input.picker-search {
   color: var(--text);
 }
 
+.model-trigger-gauge {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--text);
+}
+
+.gauge-fill { stroke: var(--positive); }
+
+/* The dial alone: a circle, not a pill. */
+.model-control-trigger.dial-only {
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+}
+
 .model-control-panel {
   width: 310px;
   border-radius: var(--radius-lg);
@@ -7317,7 +7472,8 @@ input.picker-search {
 .effort-fill {
   position: absolute;
   inset: 0 auto 0 0;
-  width: calc(16px + (100% - 32px) * var(--effort-fraction, 0));
+  /* Out to the thumb's far edge plus the same gap it keeps from the track's edges. */
+  width: calc(32px + (100% - 32px) * var(--effort-fraction, 0));
   background: var(--positive);
   border-radius: var(--radius-xl);
 }
@@ -7345,9 +7501,9 @@ input.picker-search {
   position: absolute;
   left: var(--effort-position);
   top: 50%;
-  width: 36px;
-  height: 36px;
-  border: 1px solid var(--border);
+  /* Smaller than the track, so it sits inside it (and inside the fill) with a gap all round. */
+  width: 24px;
+  height: 24px;
   border-radius: var(--radius-xl);
   background: var(--on-color);
   box-shadow: var(--shadow-card);
@@ -7356,6 +7512,10 @@ input.picker-search {
 }
 
 .effort-slider.is-default .effort-fill { background: transparent; }
+
+/* Under the finger the thumb moves with it; let go, it glides to the nearest level. */
+.effort-slider:not(.dragging) .effort-thumb { transition: left 0.16s ease-out; }
+.effort-slider:not(.dragging) .effort-fill { transition: width 0.16s ease-out; }
 
 .model-list-head {
   display: flex;
@@ -7383,9 +7543,9 @@ input.picker-search {
   .effort-card { padding: 10px 12px 12px; }
   .effort-card-head { margin-bottom: 24px; }
   .effort-slider { height: 38px; }
-  .effort-thumb { width: 40px; height: 40px; }
-  .effort-rail { inset-inline: 20px; }
-  .effort-fill { width: calc(20px + (100% - 40px) * var(--effort-fraction, 0)); }
+  .effort-thumb { width: 30px; height: 30px; }
+  .effort-rail { inset-inline: 19px; }
+  .effort-fill { width: calc(38px + (100% - 38px) * var(--effort-fraction, 0)); }
 }
 
 /* A handover keeps its conversations independent, with one expandable sidebar entry. */

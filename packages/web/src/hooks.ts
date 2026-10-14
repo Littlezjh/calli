@@ -18,6 +18,11 @@ export function useIsNarrow(): boolean {
   return useMediaQuery('(max-width: 640px)');
 }
 
+/** True on touch screens, where typing brings up an on-screen keyboard over the bottom of the page. */
+export function useIsTouch(): boolean {
+  return useMediaQuery('(hover: none)');
+}
+
 /** True where the thread list is a layer under the conversation, not a column beside it. The stylesheet draws the line at the same width. */
 export function useIsCompact(): boolean {
   return !useMediaQuery('(min-width: 900px)');

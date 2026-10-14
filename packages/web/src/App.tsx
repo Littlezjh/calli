@@ -1104,10 +1104,17 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
 
   const updateSelected = (patch: { permissionMode?: string; model?: string | null; effort?: string | null }) => {
     if (!selected) return;
+    // Shown at once: a control that waits for the round trip snaps back to the old value first.
+    const id = selected.id;
+    const before = { permissionMode: selected.permissionMode, model: selected.model, effort: selected.effort };
+    setThreads((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
     api
-      .updateThread(selected.id, patch)
+      .updateThread(id, patch)
       .then((updated) => setThreads((prev) => prev.map((t) => (t.id === updated.id ? updated : t))))
-      .catch(handleError);
+      .catch((e) => {
+        setThreads((prev) => prev.map((t) => (t.id === id ? { ...t, ...before } : t)));
+        handleError(e);
+      });
   };
 
   const pickAgent = (id: string) => {

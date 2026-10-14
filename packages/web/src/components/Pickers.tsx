@@ -2,9 +2,10 @@ import { useMemo, useState } from 'react';
 import type { AgentInfo, ModelOption } from '../api';
 import { usageSummary, type Usage } from '../timeline';
 import { EFFORT_LABELS, PERMISSION_LABELS, PERMISSION_ORDER, permissionHint } from '../permissions';
-import { AgentMark, IconBolt, IconCompress, IconRefresh, IconCheck, IconChevron, IconFolder, IconHand, IconPlus, IconShield, IconShieldAlert, IconSparkle, IconWorktree } from './icons';
+import { AgentMark, IconBolt, IconEffortGauge, IconCompress, IconRefresh, IconCheck, IconChevron, IconFolder, IconHand, IconPlus, IconShield, IconShieldAlert, IconSparkle, IconWorktree } from './icons';
 import { Popover } from './Popover';
 import { EffortSlider } from './EffortSlider';
+import { useIsNarrow } from '../hooks';
 
 const PERMISSION_ICON: Record<string, (p: { size?: number }) => JSX.Element> = {
   ask: IconHand,
@@ -159,6 +160,7 @@ export function modelRows(models: ModelOption[]): Array<{ value: string | null; 
 /** Model and thinking effort in a compact card; the model list is a second view. */
 export function ModelPicker(props: ModelProps) {
   const { models, model, efforts, effort, openSignal, quietFor } = props;
+  const narrow = useIsNarrow();
   if (models.length === 0 && efforts.length === 0 && quietFor === undefined) return null;
   const levels = effortsForModel(models, model, efforts);
   const shownEffort = effort && levels.includes(effort) ? effort : null;
@@ -184,12 +186,14 @@ export function ModelPicker(props: ModelProps) {
       openSignal={openSignal}
       align="end"
       panelClassName="model-control-panel"
-      triggerClassName="tool-btn model-control-trigger"
+      triggerClassName={`tool-btn model-control-trigger${narrow && levels.length > 0 ? ' dial-only' : ''}`}
       triggerTitle={`${modelName(models, model)} · ${shownEffort ? (EFFORT_LABELS[shownEffort] ?? shownEffort) : '默认强度'}`}
+      triggerLabel={`模型与思考强度：${modelName(models, model)} · ${shownEffort ? (EFFORT_LABELS[shownEffort] ?? shownEffort) : '默认强度'}`}
       trigger={<>
-        <span className="model-trigger-name">{modelName(models, model)}</span>
-        {levels.length > 0 && <span className="tool-btn-sub">{shownEffort ? (EFFORT_LABELS[shownEffort] ?? shownEffort) : '默认'}</span>}
-        <IconChevron size={13} open />
+        {/* A phone has room for the dial alone; the card it opens names the model. */}
+        {!(narrow && levels.length > 0) && <span className="model-trigger-name">{modelName(models, model)}</span>}
+        {levels.length > 0 && <span className="model-trigger-gauge"><IconEffortGauge size={narrow ? 20 : 17} level={shownEffort ? (levels.indexOf(shownEffort) + 1) / levels.length : null} /></span>}
+        {!narrow && <IconChevron size={13} open />}
       </>}
     >
       {() => <ModelControl {...props} />}

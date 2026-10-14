@@ -10,7 +10,8 @@ import type { Api, TerminalFrame, TerminalInfo } from '../api';
 import { copyText } from '../clipboard';
 import { folderName } from '../paths';
 import type { ToastState } from './Toast';
-import { IconClose, IconTerminal } from './icons';
+import { useIsTouch } from '../hooks';
+import { IconArrowDown, IconArrowLeft, IconArrowRight, IconArrowUp, IconClose, IconSend, IconTerminal } from './icons';
 
 interface Props {
   api: Api;
@@ -57,6 +58,20 @@ function themeFromPage(): { theme: Record<string, string>; dark: boolean } {
   return { theme, dark };
 }
 
+/** The keys a phone keyboard lacks, as the bytes a terminal sends for them. */
+function keys(appCursor: boolean): Array<[string, string, JSX.Element?]> {
+  const arrow = (c: string) => (appCursor ? `\x1bO${c}` : `\x1b[${c}`);
+  return [
+    ['Esc', '\x1b'],
+    ['Tab', '\t'],
+    ['Ctrl+C', '\x03'],
+    ['上', arrow('A'), <IconArrowUp size={16} />],
+    ['下', arrow('B'), <IconArrowDown size={16} />],
+    ['左', arrow('D'), <IconArrowLeft size={16} />],
+    ['右', arrow('C'), <IconArrowRight size={16} />],
+  ];
+}
+
 export function TerminalPanel({ api, cwd, toast, onClose, onError }: Props) {
   // Bumped by 重新打开/重试: the whole terminal (xterm and stream) is rebuilt from scratch.
   const [nonce, setNonce] = useState(0);
@@ -64,6 +79,15 @@ export function TerminalPanel({ api, cwd, toast, onClose, onError }: Props) {
   const [failure, setFailure] = useState('');
   const [info, setInfo] = useState<TerminalInfo | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
+  // On a touch screen typing goes through a field of our own, not xterm's hidden one: iOS keyboards
+  // (Chinese input, autocorrect) lose track of a field whose value the page changes under them,
+  // and xterm empties its field on every Enter. This field is only emptied once a line is sent.
+  const touch = useIsTouch();
+  const touchRef = useRef(touch);
+  touchRef.current = touch;
+  const [line, setLine] = useState('');
+  const sendRef = useRef<((data: string) => void) | null>(null);
+  const appCursorRef = useRef<() => boolean>(() => false);
 
   useEffect(() => {
     let disposed = false;
@@ -84,6 +108,9 @@ export function TerminalPanel({ api, cwd, toast, onClose, onError }: Props) {
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon());
     term.open(host);
+    // Touching the screen selects and scrolls; it does not bring up a keyboard for xterm's field.
+    if (touchRef.current) term.textarea?.setAttribute('inputmode', 'none');
+    appCursorRef.current = () => term.modes.applicationCursorKeysMode;
 
     // Themes can change while the panel is open (light/dark switch, another palette).
     const observer = new MutationObserver(() => {
@@ -130,11 +157,23 @@ export function TerminalPanel({ api, cwd, toast, onClose, onError }: Props) {
         ro.observe(host);
         applyFit();
 
-        term.onData((data) => {
+        const send = (data: string) => {
           pending += data;
           if (flushTimer === null) flushTimer = window.setTimeout(() => flush(t.id), 16);
+        };
+        sendRef.current = send;
+        // xterm answers queries it finds in the output (background colour, cursor position) through
+        // the same channel as typing. Two kinds of answer reach nobody who asked, and the shell
+        // would read them as typed: those to old output being replayed, and those from a page that
+        // is not the one in use. Every page attached to the terminal (another tab, the phone)
+        // answers; the program reads the first and the rest land at the prompt. A page without
+        // the focus cannot be typed into, so whatever its xterm sends then is such an answer.
+        let replaying = false;
+        term.onData((data) => {
+          if (replaying || !document.hasFocus()) return;
+          send(data);
         });
-        term.focus();
+        if (!touchRef.current) term.focus();
         phaseNow('running');
 
         // Reconnect until the shell exits or the panel closes. Every connect replays the backlog,
@@ -143,7 +182,8 @@ export function TerminalPanel({ api, cwd, toast, onClose, onError }: Props) {
         const onFrame = (f: TerminalFrame) => {
           if (f.type === 'backlog') {
             term.reset();
-            term.write(bytes(f.data));
+            replaying = true;
+            term.write(bytes(f.data), () => void (replaying = false));
           } else if (f.type === 'out') {
             term.write(bytes(f.data));
           } else {
@@ -183,6 +223,7 @@ export function TerminalPanel({ api, cwd, toast, onClose, onError }: Props) {
 
     return () => {
       disposed = true;
+      sendRef.current = null;
       abort.abort();
       observer.disconnect();
       if (flushTimer !== null) window.clearTimeout(flushTimer);
@@ -220,6 +261,54 @@ export function TerminalPanel({ api, cwd, toast, onClose, onError }: Props) {
           </button>
         </header>
         <div className="term-body" ref={hostRef} />
+        {touch && (
+          <div className="term-input">
+            <div className="term-keys" role="toolbar" aria-label="按键">
+              {keys(false).map(([label, , icon], i) => (
+                <button
+                  key={label}
+                  type="button"
+                  aria-label={label}
+                  disabled={phase !== 'running'}
+                  // Keeps the focus (and the keyboard) in the field below.
+                  onPointerDown={(e) => e.preventDefault()}
+                  // Arrows depend on the mode the program running now has asked for.
+                  onClick={() => sendRef.current?.(keys(appCursorRef.current())[i][1])}
+                >
+                  {icon ?? label}
+                </button>
+              ))}
+            </div>
+            <form
+              className="term-line"
+              onSubmit={(e) => {
+                e.preventDefault();
+                sendRef.current?.(line + '\r');
+                setLine('');
+              }}
+            >
+              <input
+                value={line}
+                onChange={(e) => setLine(e.target.value)}
+                onKeyDown={(e) => {
+                  // An empty field passes Backspace on, to rub out what is already at the prompt.
+                  if (e.key === 'Backspace' && line === '' && !e.nativeEvent.isComposing) sendRef.current?.('\x7f');
+                }}
+                placeholder="输入命令，回车发送"
+                aria-label="终端输入"
+                disabled={phase !== 'running'}
+                enterKeyHint="send"
+                autoCapitalize="off"
+                autoCorrect="off"
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <button type="submit" className="term-send" aria-label="发送" disabled={phase !== 'running'}>
+                <IconSend size={16} />
+              </button>
+            </form>
+          </div>
+        )}
         {phase !== 'running' && (
           <div className="term-note" role="status">
             {phase === 'connecting' && <p>连接中…</p>}

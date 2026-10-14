@@ -216,6 +216,16 @@ export const IconArrowUp = (p: { size?: number }) => (
     <path d="M12 19V5M6 11l6-6 6 6" />
   </Svg>
 );
+export const IconArrowLeft = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M19 12H5M11 6l-6 6 6 6" />
+  </Svg>
+);
+export const IconArrowRight = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M5 12h14M13 6l6 6-6 6" />
+  </Svg>
+);
 export const IconList = (p: { size?: number }) => (
   <Svg {...p}>
     <path d="M9 7h11M9 12h11M9 17h11M4.5 7h.01M4.5 12h.01M4.5 17h.01" />
@@ -341,3 +351,21 @@ export const IconFiles = (p: { size?: number }) => (
 export const IconAgents = (p: { size?: number }) => (
   <Svg {...p}><circle cx="9" cy="7" r="3" /><path d="M3 20v-2a6 6 0 0 1 12 0v2M16 4a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 4v2" /></Svg>
 );
+
+/**
+ * A dial for thinking effort: the arc fills and the needle turns as `level` goes from 0 to 1.
+ * Null is the agent's own default: no fill, the needle upright and quiet.
+ */
+export const IconEffortGauge = ({ level, size = 18 }: { level: number | null; size?: number }) => {
+  // The dial runs clockwise from bottom-left (135°) over the top to bottom-right (405°).
+  const angle = ((135 + 270 * (level ?? 0.5)) * Math.PI) / 180;
+  const arc = 'M5.99 18.01A8.5 8.5 0 1 1 18.01 18.01';
+  return (
+    <Svg size={size}>
+      <path d={arc} opacity={0.3} />
+      {level !== null && level > 0 && <path d={arc} pathLength={100} strokeDasharray={`${level * 100} 100`} className="gauge-fill" />}
+      <path d={`M12 12L${(12 + 5 * Math.cos(angle)).toFixed(2)} ${(12 + 5 * Math.sin(angle)).toFixed(2)}`} opacity={level === null ? 0.55 : 1} />
+      <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" />
+    </Svg>
+  );
+};

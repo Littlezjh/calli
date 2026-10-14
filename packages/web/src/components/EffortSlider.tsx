@@ -8,22 +8,27 @@ interface Props {
   onPreview: (value: string | null | undefined) => void;
 }
 
-/** A discrete, pointer- and keyboard-operated slider. Dragging previews; releasing commits once. */
+/**
+ * A discrete, pointer- and keyboard-operated slider. Dragging previews; releasing commits once.
+ * The thumb follows the finger between the levels and settles on the nearest one when let go.
+ */
 export function EffortSlider({ levels, value, onChange, onPreview }: Props) {
   const options = [null, ...levels];
-  const [dragIndex, setDragIndex] = useState<number | null>(null);
-  const index = dragIndex ?? Math.max(0, options.indexOf(value));
+  // Where the finger is, in levels (fractional); null when not dragging.
+  const [dragAt, setDragAt] = useState<number | null>(null);
+  const index = dragAt === null ? Math.max(0, options.indexOf(value)) : Math.round(dragAt);
+  const at = dragAt ?? index;
   const label = (i: number) => options[i] === null ? '默认' : (EFFORT_LABELS[options[i]!] ?? options[i]!);
   const position = (i: number) => `${i / levels.length * 100}%`;
-  const indexAt = (event: PointerEvent<HTMLDivElement>) => {
+  const levelAt = (event: PointerEvent<HTMLDivElement>) => {
     const rail = event.currentTarget.querySelector('.effort-rail')!.getBoundingClientRect();
-    return Math.max(0, Math.min(levels.length, Math.round((event.clientX - rail.left) / rail.width * levels.length)));
+    return Math.max(0, Math.min(levels.length, (event.clientX - rail.left) / rail.width * levels.length));
   };
-  const preview = (i: number) => { setDragIndex(i); onPreview(options[i]); };
-  const clear = () => { setDragIndex(null); onPreview(undefined); };
+  const preview = (level: number) => { setDragAt(level); onPreview(options[Math.round(level)]); };
+  const clear = () => { setDragAt(null); onPreview(undefined); };
   return (
     <div
-      className={`effort-slider${index === 0 ? ' is-default' : ''}`}
+      className={`effort-slider${index === 0 ? ' is-default' : ''}${dragAt === null ? '' : ' dragging'}`}
       role="slider"
       tabIndex={0}
       aria-label="思考强度"
@@ -32,20 +37,20 @@ export function EffortSlider({ levels, value, onChange, onPreview }: Props) {
       aria-valuenow={index}
       aria-valuetext={label(index)}
       aria-orientation="horizontal"
-      style={{ '--effort-position': position(index), '--effort-fraction': index / levels.length } as CSSProperties}
+      style={{ '--effort-position': position(at), '--effort-fraction': at / levels.length } as CSSProperties}
       onPointerDown={(event) => {
         if (!event.isPrimary || event.button !== 0) return;
         event.preventDefault();
         event.currentTarget.focus();
         event.currentTarget.setPointerCapture(event.pointerId);
-        preview(indexAt(event));
+        preview(levelAt(event));
       }}
       onPointerMove={(event) => {
-        if (event.currentTarget.hasPointerCapture(event.pointerId)) preview(indexAt(event));
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) preview(levelAt(event));
       }}
       onPointerUp={(event) => {
         if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
-        onChange(options[indexAt(event)]);
+        onChange(options[Math.round(levelAt(event))]);
         clear();
         event.currentTarget.releasePointerCapture(event.pointerId);
       }}
@@ -65,7 +70,7 @@ export function EffortSlider({ levels, value, onChange, onPreview }: Props) {
       <div className="effort-fill" />
       <div className="effort-rail">
         {options.map((option, i) => (
-          <span key={option ?? 'default'} className={`effort-dot${i <= index ? ' filled' : ''}`} style={{ left: position(i) }} title={label(i)} />
+          <span key={option ?? 'default'} className={`effort-dot${i <= at ? ' filled' : ''}`} style={{ left: position(i) }} title={label(i)} />
         ))}
         <span className="effort-thumb" />
       </div>

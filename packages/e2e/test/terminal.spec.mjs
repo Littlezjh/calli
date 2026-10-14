@@ -52,12 +52,45 @@ test('the header button opens a terminal that runs commands and survives closing
     await page.keyboard.press('Enter');
     await termShows(page, 'e2e-ok');
 
+    // A program asks the terminal for its background colour and reads the answer.
+    const typed = [];
+    page.on('request', (r) => { if (r.method() === 'POST' && /\/terminals\/[^/]+\/input$/.test(r.url())) typed.push(JSON.parse(r.postData()).data); });
+    await page.keyboard.type(`stty raw -echo; printf '\\033]11;?\\033\\\\'; timeout 1 cat >/dev/null; stty sane; echo asked-$((1+1))`);
+    await page.keyboard.press('Enter');
+    await termShows(page, 'asked-2');
+    await page.waitForTimeout(300);
+    typed.length = 0; // the live answer above was asked for
+
     // Closing the panel hides the terminal; reopening reattaches and replays what already ran.
     await page.getByLabel('关闭').click();
     assert.equal(await page.locator('.term-panel').count(), 0);
     await page.getByLabel('打开终端').click();
     await page.locator('.term-panel').waitFor();
     await termShows(page, 'e2e-ok');
+    // The replay passes the old question through xterm again; its answer must not reach the shell.
+    await page.waitForTimeout(800);
+    assert.deepEqual(typed.filter((d) => d.includes('rgb:')), [], 'no answer to an old query was typed');
+
+    // Another page attached to the same terminal, not in use, sees the same question: only the
+    // page in use answers, or the second answer lands at the prompt as typing.
+    // A context of its own: two pages' long-lived streams in one would use up its connections.
+    const otherCtx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const other = await otherCtx.newPage();
+    const otherTyped = [];
+    other.on('request', (r) => { if (r.method() === 'POST' && /\/terminals\/[^/]+\/input$/.test(r.url())) otherTyped.push(JSON.parse(r.postData()).data); });
+    await openThreadWithTerminalButton(other, '终端旁观');
+    await other.getByLabel('打开终端').click();
+    await other.locator('.term-panel').waitFor();
+    await other.evaluate(() => { document.hasFocus = () => false; });
+    await page.bringToFront();
+    await page.locator('.term-body').click();
+    await page.keyboard.type(`stty raw -echo; printf '\\033]11;?\\033\\\\'; timeout 1 cat >/dev/null; stty sane; echo again-$((2+1))`);
+    await page.keyboard.press('Enter');
+    await termShows(page, 'again-3');
+    await page.waitForTimeout(300);
+    assert.equal(typed.filter((d) => d.includes('rgb:')).length, 1, 'the page in use answers');
+    assert.deepEqual(otherTyped.filter((d) => d.includes('rgb:')), [], 'the other page keeps quiet');
+    await otherCtx.close();
     assert.equal(await page.locator('.term-note').count(), 0, 'the reopened terminal is live, not ended');
 
     // Exiting the shell ends the panel's session and offers a fresh one.
@@ -77,7 +110,7 @@ test('the header button opens a terminal that runs commands and survives closing
 });
 
 test('on a phone the terminal opens from the thread menu', async () => {
-  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true });
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
   const page = await ctx.newPage();
   try {
     await openThreadWithTerminalButton(page, '终端手机');
@@ -85,10 +118,27 @@ test('on a phone the terminal opens from the thread menu', async () => {
     await page.getByRole('menuitem', { name: '打开终端' }).click();
     await page.locator('.term-panel').waitFor();
 
-    await page.locator('.term-body').click();
-    await page.keyboard.type('echo m-ok');
-    await page.keyboard.press('Enter');
+    // A phone types into a field of its own, a line at a time; the terminal's own field never
+    // brings up the keyboard (iOS keyboards lose track of it).
+    assert.equal(await page.locator('.term-body textarea').getAttribute('inputmode'), 'none');
+    const field = page.getByLabel('终端输入');
+    await field.fill('echo m-ok');
+    await field.press('Enter');
     await termShows(page, 'm-ok');
+    assert.equal(await field.inputValue(), '');
+    await field.fill('echo m-again');
+    await page.locator('.term-send').click();
+    await termShows(page, 'm-again');
+
+    // The keys a phone keyboard lacks go to the terminal as the bytes a keyboard would send.
+    const typed = [];
+    page.on('request', (r) => { if (r.method() === 'POST' && /\/terminals\/[^/]+\/input$/.test(r.url())) typed.push(JSON.parse(r.postData()).data); });
+    for (const key of ['Esc', 'Tab', 'Ctrl+C', '上', '左']) {
+      await page.getByRole('button', { name: key, exact: true }).click();
+      await page.waitForTimeout(60);
+    }
+    await page.waitForTimeout(200);
+    assert.deepEqual(typed, ['\x1b', '\t', '\x03', '\x1b[A', '\x1b[D']);
   } finally {
     await ctx.close();
   }

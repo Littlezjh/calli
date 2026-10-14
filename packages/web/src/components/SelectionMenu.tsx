@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type TouchEvent as ReactTouchEvent } from 'react';
 import { copyText } from '../clipboard';
+import { useIsTouch } from '../hooks';
 import { IconArrowUp, IconCopy, IconQuote, IconSideChat } from './icons';
 
 interface Props {
@@ -25,12 +26,25 @@ function selectable(node: Node | null): boolean {
   return !el.closest('textarea, input, [contenteditable="true"], .side-chat, .lightbox, .dialog-scrim');
 }
 
-/** Centred on the passage, above it when there is room, below it otherwise. */
-function placeNear(rect: DOMRect, width: number): { top: number; left: number } {
+/** Room left under the passage on a touch screen for the selection's end handle. */
+const HANDLE_GAP = 26;
+
+/**
+ * Centred on the passage, above it when there is room, below it otherwise. On a touch screen the
+ * other way round: the system's own menu (copy, look up, translate) takes the space above.
+ * The rect is on the screen; the menu is placed within the app's box, which a phone keyboard can
+ * have moved down the page.
+ */
+function placeNear(rect: DOMRect, width: number, below = false): { top: number; left: number } {
   const left = Math.min(Math.max(rect.left + rect.width / 2 - width / 2, MARGIN), window.innerWidth - width - MARGIN);
   const above = rect.top - MENU_HEIGHT - 12;
-  const top = above >= MARGIN ? above : Math.min(rect.bottom + 12, window.innerHeight - MENU_HEIGHT - MARGIN);
-  return { top, left };
+  const under = rect.bottom + (below ? HANDLE_GAP : 12);
+  const fitsUnder = under + MENU_HEIGHT + MARGIN <= window.innerHeight;
+  const top = below
+    ? fitsUnder || above < MARGIN ? Math.min(under, window.innerHeight - MENU_HEIGHT - MARGIN) : above
+    : above >= MARGIN ? above : Math.min(under, window.innerHeight - MENU_HEIGHT - MARGIN);
+  const box = document.querySelector('.app')?.getBoundingClientRect();
+  return { top: top - (box?.top ?? 0), left: left - (box?.left ?? 0) };
 }
 
 /**
@@ -50,10 +64,17 @@ export function SelectionMenu({ onNote, onSideAsk }: Props) {
   const textRef = useRef('');
   const rangeRef = useRef<Range | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  // On a touch screen the keyboard comes up over the lower half and the browser pans to the field,
+  // so a field beside the passage ends up under the keyboard or off the screen. There it sits at
+  // the bottom of the app instead, just above the keyboard, and shows the passage it is about.
+  const touch = useIsTouch();
+  const touchRef = useRef(touch);
+  touchRef.current = touch;
 
   useEffect(() => {
     const read = () => {
       if (commentingRef.current) {
+        if (touchRef.current) return;
         // The passage scrolls with the page; the field follows it.
         const range = rangeRef.current;
         if (range) setPos(placeNear(range.getBoundingClientRect(), COMMENT_WIDTH));
@@ -69,7 +90,7 @@ export function SelectionMenu({ onNote, onSideAsk }: Props) {
 
       textRef.current = text;
       rangeRef.current = range.cloneRange();
-      setPos(placeNear(rect, MENU_WIDTH));
+      setPos(placeNear(rect, MENU_WIDTH, touchRef.current));
     };
 
     document.addEventListener('selectionchange', read);
@@ -92,18 +113,17 @@ export function SelectionMenu({ onNote, onSideAsk }: Props) {
     return () => void registry.delete('rah-note-pending');
   }, [commenting]);
 
-  // A press anywhere else drops a comment being written.
+  // A press anywhere else drops a comment being written. Pointer events, not mouse ones: the tap
+  // that opened the field is followed by a compatibility mousedown where the finger was, which
+  // with the field docked away from there would close it at once. That tap's pointerdown is over
+  // before this listener exists.
   useEffect(() => {
     if (!commenting) return;
-    const onDown = (e: MouseEvent | TouchEvent) => {
+    const onDown = (e: PointerEvent) => {
       if (rootRef.current && !e.composedPath().includes(rootRef.current)) close();
     };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('touchstart', onDown);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('touchstart', onDown);
-    };
+    document.addEventListener('pointerdown', onDown);
+    return () => document.removeEventListener('pointerdown', onDown);
   }, [commenting]);
 
   const close = () => {
@@ -127,7 +147,7 @@ export function SelectionMenu({ onNote, onSideAsk }: Props) {
 
   const startComment = () => {
     const range = rangeRef.current;
-    if (range) setPos(placeNear(range.getBoundingClientRect(), COMMENT_WIDTH));
+    if (range && !touch) setPos(placeNear(range.getBoundingClientRect(), COMMENT_WIDTH));
     setCommenting(true);
   };
 
@@ -139,8 +159,8 @@ export function SelectionMenu({ onNote, onSideAsk }: Props) {
   };
 
   if (commenting) {
-    return (
-      <div ref={rootRef} className="selection-menu commenting" style={{ top: pos.top, left: pos.left, width: COMMENT_WIDTH }} role="dialog" aria-label="添加注释">
+    const field = (
+      <>
         <input
           autoFocus
           className="selection-comment"
@@ -161,6 +181,22 @@ export function SelectionMenu({ onNote, onSideAsk }: Props) {
         <button type="button" className="selection-add" aria-label="添加注释" title="添加注释（回车）" onClick={addNote}>
           <IconArrowUp size={15} />
         </button>
+      </>
+    );
+    if (touch) {
+      return (
+        <div ref={rootRef} className="selection-menu commenting docked" role="dialog" aria-label="添加注释">
+          <div className="selection-quote">
+            <IconQuote size={13} />
+            <span>{textRef.current}</span>
+          </div>
+          <div className="selection-field">{field}</div>
+        </div>
+      );
+    }
+    return (
+      <div ref={rootRef} className="selection-menu commenting" style={{ top: pos.top, left: pos.left, width: COMMENT_WIDTH }} role="dialog" aria-label="添加注释">
+        {field}
       </div>
     );
   }

@@ -4,7 +4,7 @@
 // reports, and the layout is checked against them.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildOnce, startDaemon, openUi, launchBrowser } from '../harness.mjs';
+import { buildOnce, startDaemon, openUi, launchBrowser, api } from '../harness.mjs';
 
 let daemon;
 let browser;
@@ -63,4 +63,86 @@ test('with the keyboard up, the app fills what is left of the screen, wherever t
   // Keyboard down again: back to the whole screen.
   await keyboard(844, 0);
   assert.deepEqual(await box('.app'), { top: 0, bottom: 844, height: 844 });
+});
+
+test('a comment on a passage is written just above the keyboard, with the passage shown', async () => {
+  await openUi(page, daemon);
+  await page.locator('.composer .context-btn').first().click();
+  await page.getByRole('menuitemradio', { name: /^pi/ }).click();
+  await page.locator('.composer textarea').fill('notekeyboard');
+  await page.locator('.composer .send-btn, .composer button[aria-label="发送"]').first().tap();
+  await page.getByText('hi there notekeyboard').waitFor({ timeout: 15_000 });
+  await page.locator('.composer textarea').blur();
+
+  await page.evaluate(() => {
+    const el = document.querySelector('.main .thread .markdown');
+    const node = document.createTreeWalker(el, NodeFilter.SHOW_TEXT).nextNode();
+    const range = document.createRange();
+    range.setStart(node, 0);
+    range.setEnd(node, 8);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  });
+  // The system's own menu (copy, look up) is above the passage; this one goes under it.
+  await page.locator('.selection-menu').waitFor({ timeout: 5_000 });
+  const passage = await page.evaluate(() => getSelection().getRangeAt(0).getBoundingClientRect().bottom);
+  assert.ok((await box('.selection-menu')).top >= passage + 20, 'the menu is under the passage, clear of its handle');
+  await page.locator('.selection-menu button', { hasText: '注释' }).tap();
+  await page.locator('.selection-comment').waitFor({ timeout: 5_000 });
+
+  // The field takes the focus, the keyboard comes up and Safari pans down the page.
+  await keyboard(500, 344);
+  const field = await box('.selection-menu.commenting');
+  assert.ok(field.top >= 344 && field.bottom <= 844 && field.bottom > 844 - 80, `the field sits just above the keyboard (${field.top}–${field.bottom})`);
+  assert.equal(await page.locator('.selection-quote').innerText(), 'hi there');
+
+  await page.locator('.selection-comment').fill('为什么');
+  await page.locator('.selection-add').tap();
+  await page.locator('.composer .note-strip, .composer .notes').first().waitFor({ timeout: 5_000 });
+  assert.equal(await page.locator('.selection-menu').count(), 0);
+  await keyboard(844, 0);
+});
+
+test('with the keyboard up, the terminal and its input line stay on the visible part', async () => {
+  await api(daemon, '/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: daemon.workdir, title: '键盘终端' }) });
+  await openUi(page, daemon);
+  await page.locator('.menu-btn').click();
+  await page.locator('.thread-item', { hasText: '键盘终端' }).click();
+  await page.getByLabel('这个线程的更多操作').click();
+  await page.getByRole('menuitem', { name: '打开终端' }).click();
+  await page.locator('.term-panel').waitFor();
+
+  // The field at the bottom takes the focus; Safari pans down to it.
+  await keyboard(500, 344);
+  assert.deepEqual(await box('.term-panel'), { top: 344, bottom: 844, height: 500 }, 'the terminal is the visible part, not pushed below it');
+  const line = await box('.term-line');
+  assert.ok(line.top >= 344 && line.bottom <= 844, `the input line is on screen (${line.top}–${line.bottom})`);
+  await keyboard(844, 0);
+  await page.getByLabel('关闭').click();
+});
+
+test('with the keyboard up, the side chat on a phone stays on the visible part', async () => {
+  await page.locator('.composer textarea').fill('sidekeyboard');
+  await page.locator('.composer .send-btn').first().tap();
+  await page.getByText('hi there sidekeyboard').waitFor({ timeout: 15_000 });
+  await page.locator('.composer textarea').blur();
+  await page.evaluate(() => {
+    const el = [...document.querySelectorAll('.main .thread .markdown')].pop();
+    const node = document.createTreeWalker(el, NodeFilter.SHOW_TEXT).nextNode();
+    const range = document.createRange();
+    range.setStart(node, 0);
+    range.setEnd(node, 8);
+    getSelection().removeAllRanges();
+    getSelection().addRange(range);
+  });
+  await page.locator('.selection-menu button', { hasText: '在侧边栏提问' }).tap();
+  await page.locator('.side-chat').waitFor();
+
+  await keyboard(500, 344);
+  const panel = await box('.side-chat');
+  assert.ok(panel.top >= 344 && panel.bottom <= 844, `the side chat is the visible part (${panel.top}–${panel.bottom})`);
+  const field = await box('.side-chat textarea');
+  assert.ok(field.top >= 344 && field.bottom <= 844, `its field is on screen (${field.top}–${field.bottom})`);
+  await keyboard(844, 0);
 });

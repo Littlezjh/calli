@@ -87,6 +87,9 @@ test('effort slider, model subview, reset and compression work in both themes an
       await waitFor(async () => (await read(thread)).effort === 'high');
       await slider.press('End');
       await waitFor(async () => (await read(thread)).effort === 'max');
+      // The button shows the level as a dial; its name says it in words. A phone shows the dial alone.
+      assert.equal(await page.locator('.model-control-trigger').getAttribute('aria-label'), '模型与思考强度：GPT Big · 最大');
+      assert.equal(await page.locator('.model-control-trigger .model-trigger-name').count(), mobile ? 0 : 1);
       await page.getByRole('button', { name: '恢复默认强度' }).click();
       await waitFor(async () => (await read(thread)).effort === null);
       await page.getByRole('button', { name: /切换模型/ }).click();
@@ -123,6 +126,58 @@ test('effort slider, model subview, reset and compression work in both themes an
       await shot(page, `quota-weekly-${tag}`);
     } finally { await context.close(); }
   }
+});
+
+test('the effort slider follows the finger and does not snap back while the change is saved', async () => {
+  const thread = await makeThread('强度滑块不跳');
+  const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  try {
+    const page = await context.newPage();
+    // The server answers slowly, then not at all: the slider must not wait for it either way.
+    let held = null;
+    let fail = false;
+    await page.route(`**/api/threads/${thread.id}`, async (route) => {
+      if (route.request().method() !== 'PATCH') return route.continue();
+      await new Promise((resolve) => { held = resolve; });
+      if (fail) await route.fulfill({ status: 500, json: { error: 'nope' } });
+      else await route.continue();
+    });
+    await select(page, thread);
+    await page.locator('.model-control-trigger').click();
+    const slider = page.getByRole('slider', { name: '思考强度' });
+    await slider.waitFor();
+    const rail = await slider.locator('.effort-rail').boundingBox();
+    const thumbX = async () => { const b = await slider.locator('.effort-thumb').boundingBox(); return b.x + b.width / 2; };
+    const y = rail.y + rail.height / 2;
+
+    // Between two levels the thumb is under the finger, not on a dot; the label is the nearest level.
+    await page.mouse.move(rail.x, y);
+    await page.mouse.down();
+    await page.mouse.move(rail.x + rail.width * 0.6, y, { steps: 6 });
+    assert.ok(Math.abs((await thumbX()) - (rail.x + rail.width * 0.6)) < 2, 'the thumb is under the finger');
+    assert.equal(await page.locator('.effort-value').innerText(), '高');
+    await page.mouse.move(rail.x + rail.width, y, { steps: 4 });
+    await page.mouse.up();
+
+    // Let go, the server has not answered yet: the slider stays where it was put.
+    await waitFor(async () => held !== null);
+    assert.equal(await slider.getAttribute('aria-valuetext'), '最大');
+    assert.equal(await page.locator('.effort-value').innerText(), '最大');
+    await page.waitForTimeout(300);
+    assert.ok(Math.abs((await thumbX()) - (rail.x + rail.width)) < 2, 'the thumb stays at the end');
+    held();
+    await waitFor(async () => (await read(thread)).effort === 'max');
+
+    // A change the server refuses goes back to what was there.
+    fail = true;
+    held = null;
+    await slider.press('ArrowLeft');
+    await waitFor(async () => held !== null);
+    assert.equal(await slider.getAttribute('aria-valuetext'), '高');
+    held();
+    await waitFor(async () => (await slider.getAttribute('aria-valuetext')) === '最大');
+    assert.equal((await read(thread)).effort, 'max');
+  } finally { await context.close(); }
 });
 
 test('compression queues once during a turn and preserves a draft; pi uses its own compact command', async () => {
