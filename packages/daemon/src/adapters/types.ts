@@ -219,7 +219,9 @@ export interface AgentAdapter {
   /** Whether the agent can be started on this host. */
   available(): Promise<boolean>;
   /** Models the user can pick from. May start a short-lived process to ask the agent. */
-  models(): Promise<ModelOption[]>;
+  models(refresh?: boolean): Promise<ModelOption[]>;
+  /** Read-only runtime identity; no prompt, login or config write. */
+  diagnose?(): Promise<import('./diagnostics.js').RuntimeDiagnostic>;
   /**
    * Slash commands the agent reports. Project-level commands depend on the directory, so pass the
    * thread's cwd when there is one. May be empty until the agent has announced them.

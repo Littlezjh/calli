@@ -1115,7 +1115,7 @@ test('CodexAppServerAdapter: prompt streams steps and text, then ends the turn',
   assert.deepEqual(result, { stopReason: 'end_turn' });
   assert.deepEqual(
     events.map((e) => e.type),
-    ['tool.start', 'tool.update', 'tool.update', 'tool.end', 'reasoning.delta', 'reasoning.delta', ...Array(7).fill('message.delta'), 'usage.updated'],
+    ['tool.start', 'tool.update', 'tool.update', 'tool.end', 'reasoning.delta', 'reasoning.delta', ...Array(7).fill('message.delta'), 'usage.sample', 'usage.updated'],
   );
   // Streamed command output accumulates, so an update carries the whole text so far.
   assert.deepEqual(events.find((e) => e.type === 'tool.update')?.data, { id: 'exec-1', status: 'in_progress', output: 'par' });
@@ -1144,7 +1144,7 @@ test('CodexAppServerAdapter: file changes stream their patch and carry diffs', a
   const { hooks, events } = collectingHooks();
   await session.prompt(turn('edit it'), hooks);
   const types = events.map((e) => e.type);
-  assert.deepEqual(types, ['tool.start', 'tool.update', 'tool.end', ...Array(3).fill('message.delta'), 'usage.updated']);
+  assert.deepEqual(types, ['tool.start', 'tool.update', 'tool.end', ...Array(3).fill('message.delta'), 'usage.sample', 'usage.updated']);
   // The patch grew while it ran: the update carries both files, the end keeps them.
   const update = events.find((e) => e.type === 'tool.update');
   assert.equal((update?.data.content as any[]).length, 2);

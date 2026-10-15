@@ -1,3 +1,5 @@
+import { CodexUsage } from './usage.js';
+import { cliDiagnostic } from './diagnostics.js';
 import { trackCompaction } from './compaction.js';
 import { goalSummary, parseGoalCommand, type GoalControl, type GoalCommand } from './native-goal.js';
 import { sessionEnvironment } from './types.js';
@@ -381,6 +383,7 @@ async function readSkills(peer: JsonRpcPeer, cwd: string): Promise<CodexSkill[]>
 
 /** A live Codex thread: one process, one thread id, any number of turns. */
 class CodexSession implements AgentSession {
+  private readonly accounting = new CodexUsage();
   private hooks: TurnHooks | null = null;
   private turn: { id: string; resolve(r: TurnResult): void; error?: string; compact?: boolean; goal?: boolean; goalTurns?: number; cancelRequested?: boolean } | null = null;
   private goal: any = null;
@@ -465,6 +468,8 @@ class CodexSession implements AgentSession {
       }
       case 'thread/tokenUsage/updated': {
         const usage = params?.tokenUsage;
+        const sample = this.accounting.sample(usage);
+        if (sample) this.emit({ type: 'usage.sample', data: { ...sample } });
         // `total` accumulates billed tokens across requests; `last` measures the active context.
         const used = usage?.last?.totalTokens;
         const size = usage?.modelContextWindow;
@@ -778,12 +783,15 @@ export class CodexAppServerAdapter implements AgentAdapter {
     private readonly env: Record<string, string> = {},
   ) {}
 
+  diagnose() { return cliDiagnostic(this.command, this.env, 'app-server'); }
+
   async available(): Promise<boolean> {
     return commandExists(this.command[0]);
   }
 
   /** The models this account offers, from one short-lived server that opens no thread. */
-  models(): Promise<ModelOption[]> {
+  models(refresh = false): Promise<ModelOption[]> {
+    if (refresh) this.modelProbe = null;
     this.modelProbe ??= this.readModels().catch((err) => {
       this.modelProbe = null;
       throw err;
@@ -802,7 +810,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
         if (!cursor) break;
       }
       return codexModelOptions(models);
-    });
+    }, tmpdir(), 30000);
   }
 
   async commands(cwd?: string): Promise<SlashCommand[]> {

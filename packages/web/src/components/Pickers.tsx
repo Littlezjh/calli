@@ -84,6 +84,7 @@ export function PermissionPicker({ modes, value, onChange, canAsk, openSignal, q
 }
 
 interface ModelProps {
+  onDiagnose?: () => void;
   models: ModelOption[];
   model: string | null;
   efforts: string[];
@@ -172,7 +173,7 @@ export function ModelPicker(props: ModelProps) {
         triggerTitle="暂无可选模型"
         trigger={<><span className="model-trigger-name">模型</span><IconChevron size={13} open /></>}
       >
-        {() => <><div className="pop-title">暂无可选模型</div><p className="member-model-empty">还没有从这个实例读到可选模型。请检查实例的模型配置与登录状态，配置完成后刷新页面。</p></>}
+        {close => <><div className="pop-title">暂无可选模型</div><p className="member-model-empty">还没有从这个实例读到可选模型。请检查实例的模型配置与登录状态，配置完成后刷新页面。</p>{props.onDiagnose && <button className="pop-row" onClick={() => { close(); props.onDiagnose?.(); }}>检查实例</button>}</>}
       </Popover>
     );
   }

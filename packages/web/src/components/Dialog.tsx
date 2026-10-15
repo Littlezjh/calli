@@ -1,3 +1,4 @@
+import { IconClose } from './icons';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 interface Props {
@@ -162,4 +163,25 @@ export function DialogSurface({ children, className = '', labelledBy, onClose, b
       </div>
     </div>
   );
+}
+
+/** Read-only information dialog, sharing the app's modal treatment without confirmation actions. */
+export function PanelDialog({ title, children, onClose, className = '' }: { title: string; children: ReactNode; onClose: () => void; className?: string }) {
+  const close = useRef<HTMLButtonElement>(null);
+  const closeAction = useRef(onClose);
+  closeAction.current = onClose;
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    close.current?.focus();
+    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') closeAction.current(); };
+    document.addEventListener('keydown', key);
+    return () => { document.removeEventListener('keydown', key); previous?.focus(); };
+  }, []);
+  return <div className="dialog-scrim" onClick={onClose}>
+    <section className={`panel ${className}`} role="dialog" aria-modal="true" aria-label={title} onClick={event => event.stopPropagation()}>
+      <header className="panel-head"><h2 className="panel-title">{title}</h2>
+        <button ref={close} className="icon-btn" aria-label="关闭" onClick={onClose}><IconClose size={18} /></button>
+      </header>{children}
+    </section>
+  </div>;
 }

@@ -15,6 +15,7 @@ export type EventType =
   | 'tool.end'
   | 'plan.updated'
   | 'usage.updated'
+  | 'usage.sample'
   | 'approval.request'
   | 'approval.resolved'
   /** Something on the plan page changed. Broadcast only, never stored in an event log. */

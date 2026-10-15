@@ -60,12 +60,15 @@ test('real zcode: memory stays disabled across create, resume, compact and nativ
     const models = await adapter.models();
     assert.equal(models.length, 1);
     const contextReadings: Array<{ used: number | null; size: number }> = [];
-    const hooks: TurnHooks = { emit: event => { if (event.type === 'usage.updated') contextReadings.push(event.data as { used: number | null; size: number }); }, requestApproval: async () => ({ cancelled: true }) };
+    const consumption: Array<Record<string, unknown>> = [];
+    const hooks: TurnHooks = { emit: event => { if (event.type === 'usage.sample') consumption.push(event.data); if (event.type === 'usage.updated') contextReadings.push(event.data as { used: number | null; size: number }); }, requestApproval: async () => ({ cancelled: true }) };
     session = await adapter.start({ cwd: dir, model: models[0].id });
     const first = await session.prompt({ text: 'Reply hello.', images: [] }, hooks);
     assert.equal(first.stopReason, 'end_turn', JSON.stringify(first));
     assert.ok((contextReadings.at(-1)?.size ?? 0) > 0, 'Use the native effective window rather than guessing from model configuration');
     assert.ok((contextReadings.at(-1)?.used ?? 0) > 0, 'The native runtime must report measured context usage');
+    assert.ok(consumption.length > 0, 'The native CLI reports cumulative consumption');
+    assert.equal(consumption.at(-1)?.total, 15, 'Only this request is counted, not the current context');
     const id = session.agentSessionId;
     await session.close();
     session = await adapter.start({ cwd: dir, resumeId: id });

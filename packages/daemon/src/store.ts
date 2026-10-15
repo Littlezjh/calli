@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { EventType, StoredEvent } from './events.js';
+import { Telemetry } from './telemetry.js';
 import { askedText } from './util.js';
 
 export interface ThreadRecord {
@@ -276,6 +277,7 @@ function snippetAround(text: string, terms: string[]): string {
 
 export class Store {
   private readonly db: DatabaseSync;
+  readonly telemetry: Telemetry;
 
   constructor(dataDir: string) {
     mkdirSync(dataDir, { recursive: true });
@@ -421,6 +423,7 @@ export class Store {
       );
     `);
     if (!indexed) this.indexText();
+    this.telemetry = new Telemetry(this.db);
   }
 
   /** Where each open turn began, so its answer is read from there and not from the thread's start. */
@@ -800,7 +803,9 @@ export class Store {
     if (type === 'turn.started' && typeof data.text === 'string' && data.text.trim() && !data.handover && !data.coordination) {
       this.db.prepare('UPDATE threads SET preview = ? WHERE id = ?').run(askedText(typeof data.displayText === 'string' ? data.displayText : data.text).slice(0, 80), threadId);
     }
-    return { threadId, seq, turnId, type, ts, data };
+    const event = { threadId, seq, turnId, type, ts, data };
+    this.telemetry.observe(event);
+    return event;
   }
 
   /** Events after a sequence number, oldest first. A negative limit means all of them. */

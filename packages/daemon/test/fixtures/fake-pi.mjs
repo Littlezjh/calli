@@ -1,4 +1,5 @@
 let pendingCompact = null;
+if (process.argv.includes('--version')) { process.stdout.write('fixture 1.2.3\n'); process.exit(0); }
 // Fake pi RPC process for tests. Speaks pi's JSONL RPC protocol on stdio.
 // Prompt text drives behaviour: "slow" waits until abort, "fail" ends with an error.
 import { coordinationFixture } from './coordination.mjs';
@@ -266,6 +267,7 @@ rl.on('line', (line) => {
       if (cmd.images?.length) {
         out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: `images:${cmd.images.length}:${cmd.images.map((i) => i.mimeType).join(',')};` } });
       }
+      if (process.env.FAKE_TELEMETRY) out({ type: 'message_start', message: { role: 'assistant', timestamp: Date.now() - 250 } });
       out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'hi ' } });
       const marker = process.env.FAKE_PI_LABEL ? `[${process.env.FAKE_PI_LABEL}] ` : '';
       out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: marker + 'there ' + cmd.message } });
@@ -274,6 +276,7 @@ rl.on('line', (line) => {
         running = false;
         return out({ type: 'agent_settled', aborted: false });
       }
+      if (process.env.FAKE_TELEMETRY) out({ type: 'message_end', message: { role: 'assistant', model: 'fixture-model', provider: 'fixture-provider', stopReason: 'stop', durationMs: 1250, usage: { input: 100, output: 20, cacheRead: 40, cacheWrite: 10, reasoning: 5, totalTokens: 170, cost: { total: 0.0123 } } } });
       if (cmd.message.includes('slow')) return;
       running = false;
       return out({ type: 'agent_settled', aborted: false });

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+if (process.argv.includes('--version')) { process.stdout.write('fixture 1.2.3\n'); process.exit(0); }
 // A stand-in for the Antigravity CLI in headless stream-json mode, for tests.
 // Prompt text drives behaviour: "tool" runs a command, "command" needs a permission that headless
 // mode cannot ask for, "slow" waits until interrupted, "crash" exits.

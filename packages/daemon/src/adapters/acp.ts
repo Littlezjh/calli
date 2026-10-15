@@ -1,3 +1,5 @@
+import { acpUsage } from './usage.js';
+import { cliDiagnostic, probeWithDeadline } from './diagnostics.js';
 import { isCompaction, trackCompaction } from './compaction.js';
 import { sessionEnvironment } from './types.js';
 import { spawn } from 'node:child_process';
@@ -155,6 +157,10 @@ export function modelsFromConfig(configOptions: ConfigOption[] | undefined): Mod
 
 /** A live ACP session bound to one thread. */
 export class AcpSession implements AgentSession {
+  private usageId = 0;
+  private costReading: { amount: number; currency: string } | null = null;
+  private costReported = false;
+  private costBefore: { amount: number; currency: string } | null = null;
   controlGoal?: AgentSession['controlGoal'];
   private hooks: TurnHooks | null = null;
 
@@ -172,6 +178,11 @@ export class AcpSession implements AgentSession {
   /** Called by the peer for every session/update notification. */
   onUpdate(update: unknown): void {
     if (!this.hooks) return; // replay during session/load, or stray updates
+    const value = update as any;
+    if (value?.sessionUpdate === 'usage_update' && typeof value.cost?.amount === 'number' && Number.isFinite(value.cost.amount) && value.cost.amount >= 0) {
+      this.costReported = true;
+      this.costReading = { amount: value.cost.amount, currency: String(value.cost.currency ?? 'USD') };
+    }
     const ev = mapAcpUpdate(update);
     if (ev) this.hooks.emit(ev);
   }
@@ -241,6 +252,8 @@ export class AcpSession implements AgentSession {
 
   private async promptInternal(input: TurnInput, hooks: TurnHooks): Promise<TurnResult> {
     this.hooks = hooks;
+    this.costBefore = this.costReading;
+    this.costReported = false;
     try {
       const res = await this.peer.request('session/prompt', {
         sessionId: this.agentSessionId,
@@ -249,6 +262,9 @@ export class AcpSession implements AgentSession {
           ...(input.text ? [{ type: 'text', text: input.text }] : []),
         ],
       });
+      const cost = this.costReported && this.costReading && this.costBefore && this.costReading.currency === this.costBefore.currency && this.costReading.amount >= this.costBefore.amount
+        ? { amount: this.costReading.amount - this.costBefore.amount, currency: this.costReading.currency, estimated: true } : undefined;
+      for (const sample of acpUsage(res, `prompt-${++this.usageId}`, cost)) hooks.emit({ type: 'usage.sample', data: { ...sample } });
       const stop = String(res?.stopReason ?? 'end_turn');
       return { stopReason: stop === 'cancelled' ? 'cancelled' : 'end_turn' };
     } catch (err) {
@@ -290,6 +306,8 @@ export abstract class AcpAdapter implements AgentAdapter {
     protected readonly env: Record<string, string> = {},
   ) {}
 
+  diagnose() { return cliDiagnostic(this.command, this.env, 'ACP 1'); }
+
   async available(): Promise<boolean> {
     return commandExists(this.command[0]);
   }
@@ -299,7 +317,8 @@ export abstract class AcpAdapter implements AgentAdapter {
    * short-lived session is opened, no prompt is sent; subclasses may probe the models further.
    * The result is cached; a failed probe is retried on the next call.
    */
-  models(): Promise<ModelOption[]> {
+  models(refresh = false): Promise<ModelOption[]> {
+    if (refresh) this.modelProbe = null;
     this.modelProbe ??= this.readModels().catch((err) => {
       this.modelProbe = null;
       throw err;
@@ -308,9 +327,9 @@ export abstract class AcpAdapter implements AgentAdapter {
   }
 
   private async readModels(): Promise<ModelOption[]> {
-    const { session, configOptions } = await this.open({ cwd: tmpdir() });
+    const { session, configOptions } = await this.open({ cwd: tmpdir() }, true);
     try {
-      return await this.refineModels(modelsFromConfig(configOptions), session);
+      return await probeWithDeadline(async () => this.refineModels(modelsFromConfig(configOptions), session), () => session.close());
     } finally {
       await session.close();
     }
@@ -421,7 +440,7 @@ export abstract class AcpAdapter implements AgentAdapter {
   }
 
   /** Starts a session and also returns the config options the agent reported for it. */
-  protected async open(opts: StartOptions): Promise<{ session: AcpSession; configOptions: ConfigOption[] }> {
+  protected async open(opts: StartOptions, probe = false): Promise<{ session: AcpSession; configOptions: ConfigOption[] }> {
     const [bin, ...args] = this.command;
     const child = spawn(bin, args, { cwd: opts.cwd, stdio: ['pipe', 'pipe', 'pipe'], env: sessionEnvironment(this.env, opts.coordinationEnv) });
 
@@ -454,6 +473,8 @@ export abstract class AcpAdapter implements AgentAdapter {
       `${this.id}-acp`,
     );
 
+    let timedOut = false;
+    const timer = probe ? setTimeout(() => { timedOut = true; peer.close(); }, 30000) : undefined;
     try {
       await peer.request('initialize', {
         protocolVersion: 1,
@@ -482,7 +503,7 @@ export abstract class AcpAdapter implements AgentAdapter {
       return { session, configOptions };
     } catch (err) {
       peer.close();
-      throw err;
-    }
+      throw timedOut ? new Error('模型读取超时') : err;
+    } finally { clearTimeout(timer); }
   }
 }

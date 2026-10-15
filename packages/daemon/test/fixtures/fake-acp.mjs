@@ -1,4 +1,5 @@
 // Fake ACP agent for tests. Speaks newline-delimited JSON-RPC on stdio.
+if (process.argv.includes('--version')) { process.stdout.write('fixture 1.2.3\n'); process.exit(0); }
 // Prompt text drives behaviour: "approve" asks permission, "slow" waits until cancelled.
 // FAKE_ACP_FLAVOR=traex shapes the answers the way TRAE CLI does: no modes in session/new,
 // the effort option is named reasoning_effort, and "delete" on the command line (its CLI,
@@ -293,7 +294,7 @@ rl.on('line', (line) => {
         pendingPrompt = { id: msg.id };
         return;
       }
-      return out({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });
+      return out({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn', ...(process.env.FAKE_TELEMETRY ? { usage: { inputTokens: 100, outputTokens: 20, cachedReadTokens: 40, cachedWriteTokens: 10, totalTokens: 170 } } : {}) } });
     }
     default:
       if (msg.id !== undefined) out({ jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: 'not found' } });

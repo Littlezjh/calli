@@ -40,6 +40,7 @@ import { FilesPanel, type FilesTarget } from './components/FilesPanel';
 import { PreviewPanel } from './components/PreviewPanel';
 import { fileRef } from './files';
 import { AddAgentDialog } from './components/AddAgentDialog';
+import { ObservabilityPanel } from './components/ObservabilityPanel';
 import { QuotaBoard } from './components/QuotaBoard';
 import { SelectionMenu } from './components/SelectionMenu';
 import { AgentPanel, TeamCard } from './components/AgentPanel';
@@ -262,6 +263,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
   /** The agent whose plan usage the quota panel shows. */
   /** The quota dashboard, over every agent that can report usage. */
   const [quotaOpen, setQuotaOpen] = useState(false);
+  const [observability, setObservability] = useState<'usage' | 'diagnostics' | null>(null);
   /** Other agent CLIs found on this host, added from the settings menu — not the picker. */
   const [addAgentOpen, setAddAgentOpen] = useState(false);
   // Counters that open the composer's pickers from elsewhere (the slash menu).
@@ -1333,6 +1335,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
       model={model}
       efforts={effortLevels}
       effort={effort}
+      onDiagnose={() => setObservability('diagnostics')}
       openSignal={modelSignal}
       onModel={(v) => {
         if (selected) return updateSelected({ model: v }); // the daemon drops an effort the new model lacks
@@ -1670,6 +1673,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           onClose={() => setStatusOpen(false)}
         />
       )}
+      {observability && api && <ObservabilityPanel key={hostId ?? 'local'} api={api} agents={agents} initial={observability} focusAgent={activeAgent} onResult={result => { if (result.state === 'ready' || result.state === 'empty') setModelsByAgent(previous => ({ ...previous, [result.agent]: result.models })); }} onClose={() => setObservability(null)} />}
       {quotaOpen && api && <QuotaBoard api={api} agents={agents} current={onTodos || onSkills ? undefined : activeAgent} onClose={() => setQuotaOpen(false)} onError={handleError} />}
       {addAgentOpen && (
         <AddAgentDialog
@@ -1762,6 +1766,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
                   },
                 ]
               : []),
+            { id: 'observability', label: '用量与诊断', icon: IconGauge, onSelect: () => { setObservability('usage'); setDrawer(false); } },
             { id: 'skills', label: '技能', icon: IconSparkle, onSelect: openSkills },
             {
               id: 'hosts',

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+if (process.argv.includes('--version')) { process.stdout.write('fixture 1.2.3\n'); process.exit(0); }
 // Fake Codex app-server for tests. Speaks newline-delimited JSON-RPC on stdio, the way
 // `codex app-server` does. Prompt text drives behaviour: "tool" runs a command, "edit" changes a
 // file, "approve" asks for a command approval, "deny" offers a plain decline, "slow" waits until
@@ -13,6 +14,7 @@ const out = (obj) => process.stdout.write(JSON.stringify(obj) + '\n');
 
 let threadId = process.env.FAKE_CODEX_THREAD ?? 'codex-thread-1';
 let nextTurnSeq = 1;
+let billedTokens = 900000;
 let nextServerRequestId = 1000;
 let activeTurn = null; // { id }
 // Settings as the adapter sets them: thread/start takes kebab-case sandbox, turn/start camelCase.
@@ -200,7 +202,8 @@ const runTurn = (text, turnId, done) => {
   if (text === 'delayed') { setTimeout(done, 5000); return; }
   if (text.includes('slow')) return; // only turn/interrupt ends this
   say(`echo:${text}`);
-  const tokenUsage = text.includes('usage')
+  if (process.env.FAKE_TELEMETRY) billedTokens += 150;
+  const tokenUsage = process.env.FAKE_TELEMETRY ? { total: { totalTokens: billedTokens, inputTokens: billedTokens * .8, outputTokens: billedTokens * .2, cachedInputTokens: billedTokens * .4 }, last: { totalTokens: 150, inputTokens: 120, outputTokens: 30, cachedInputTokens: 60, reasoningOutputTokens: 10 }, modelContextWindow: 100000 } : text.includes('usage')
     ? {
         total: { totalTokens: text.includes('compacted') ? 1900000 : 1798110 },
         ...(text.includes('missing') ? {} : { last: { totalTokens: text.includes('compacted') ? 12000 : 183510 } }),
@@ -275,6 +278,7 @@ rl.on('line', (line) => {
     case 'initialize':
       return out({ jsonrpc: '2.0', id: msg.id, result: { userAgent: 'fake-codex/0.160', codexHome: '/tmp/codex' } });
     case 'model/list':
+      if (process.env.FAKE_DIAGNOSTIC_ERROR) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: process.env.FAKE_DIAGNOSTIC_ERROR } });
       return out({ jsonrpc: '2.0', id: msg.id, result: { data: process.env.FAKE_CODEX_NO_EFFORT_MODEL
         ? [...MODELS, { id: 'gpt-basic', model: 'gpt-basic', displayName: 'GPT Basic', supportedReasoningEfforts: [] }] : MODELS, nextCursor: null } });
     case 'account/rateLimits/read': {

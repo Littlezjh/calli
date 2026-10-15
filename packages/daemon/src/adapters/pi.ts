@@ -1,3 +1,5 @@
+import { piUsage } from './usage.js';
+import { cliDiagnostic, probeWithDeadline } from './diagnostics.js';
 import { isCompaction, trackCompaction } from './compaction.js';
 import { sessionEnvironment } from './types.js';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
@@ -349,6 +351,9 @@ class PiSession implements AgentSession {
   /** Whether a model takes images natively; set by the adapter. */
   seesImages: (model: string | null) => Promise<boolean> = async () => true;
   private nextId = 1;
+  private usageId = 0;
+  private requestStarted: number | null = null;
+  private firstTokenMs: number | undefined;
   private readonly pending = new Map<string, { resolve(v: any): void; reject(e: Error): void }>();
   private hooks: TurnHooks | null = null;
   private turn: { resolve(r: TurnResult): void; error?: string } | null = null;
@@ -420,7 +425,7 @@ class PiSession implements AgentSession {
   ): Promise<T> {
     const session = PiSession.spawn(command, ['--no-session'], cwd, label, env);
     try {
-      return await ask(session);
+      return await probeWithDeadline(() => ask(session), () => session.close());
     } finally {
       await session.close();
     }
@@ -469,6 +474,21 @@ class PiSession implements AgentSession {
         this.finishTurn('end_turn');
       }
       return;
+    }
+
+    if (record.type === 'message_start' && record.message?.role === 'assistant') {
+      this.requestStarted = typeof record.message.timestamp === 'number' && record.message.timestamp > 0 && record.message.timestamp <= Date.now() ? record.message.timestamp : null;
+      this.firstTokenMs = undefined;
+    }
+    if (record.type === 'message_update' && this.requestStarted !== null && this.firstTokenMs === undefined
+      && ['text_delta', 'thinking_delta', 'toolcall_delta'].includes(record.assistantMessageEvent?.type)) {
+      this.firstTokenMs = Date.now() - this.requestStarted;
+    }
+    if (record.type === 'message_end' && this.hooks) {
+      const sample = piUsage(record.message, `message-${++this.usageId}`, this.firstTokenMs);
+      if (sample) this.hooks.emit({ type: 'usage.sample', data: { ...sample } });
+      this.requestStarted = null;
+      this.firstTokenMs = undefined;
     }
 
     if (record.type === 'message_end' && record.message?.role === 'assistant' && record.message?.stopReason === 'error') {
@@ -642,6 +662,8 @@ export class PiRpcAdapter implements AgentAdapter {
     private readonly env: Record<string, string> = {},
   ) {}
 
+  diagnose() { return cliDiagnostic(this.command, this.env, 'pi RPC'); }
+
   async available(): Promise<boolean> {
     return commandExists(this.command[0]);
   }
@@ -659,7 +681,8 @@ export class PiRpcAdapter implements AgentAdapter {
    * pi's configured models, with what each one supports. The model pi would use by default is
    * marked, so the UI can show what "default" means and which settings apply to it.
    */
-  models(): Promise<ModelOption[]> {
+  models(refresh = false): Promise<ModelOption[]> {
+    if (refresh) this.modelCache = null;
     return this.cached(
       this.modelCache,
       () =>

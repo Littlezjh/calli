@@ -1,3 +1,5 @@
+import { zcodeUsage } from './usage.js';
+import { cliDiagnostic } from './diagnostics.js';
 import { fetchZcodeQuota } from './zcode-quota.js';
 import { loadZcodeAccounts, type ZcodeAccounts } from './zcode-account.js';
 import { goalSummary, parseGoalCommand, type GoalControl } from './native-goal.js';
@@ -85,12 +87,15 @@ export class ZcodeAdapter implements AgentAdapter {
     const base = command.length ? command : ['zcode'];
     this.command = base.includes('app-server') || base.includes('agent-server') ? [...base] : [...base, 'app-server'];
   }
+  diagnose() { return cliDiagnostic(this.command, this.env, 'zcode NDJSON'); }
+
   async available(): Promise<boolean> { return commandExists(this.command[0]); }
   fetchQuota() { return fetchZcodeQuota(this.env); }
   commands() { return Promise.resolve(COMMANDS); }
   // Native terminal sessions do not inherit limi's runtime preferences.
   resumeCommand(id: string): string { return `zcode --resume ${quoteArg(id)}`; }
-  async models(): Promise<ModelOption[]> {
+  async models(refresh = false): Promise<ModelOption[]> {
+    if (refresh) this.cachedModels = null;
     if (this.cachedModels && Date.now() - this.modelsCheckedAt < 60_000) return this.cachedModels;
     if (this.probing) return this.probing;
     this.probing = (async () => {
@@ -126,6 +131,8 @@ class ZcodeSession implements AgentSession {
   private goalActive = false;
   private submission: Promise<void> | null = null;
   private usage: EmittedEvent | null = null;
+  private usageId = 0;
+  private accounting: any = null;
   constructor(private readonly wire: ZcodeWire, private readonly probe: boolean, private readonly accounts: ZcodeAccounts | null) {
     wire.onEvent = (method, params) => this.event(method, params);
     wire.onRequest = (method, params) => this.request(method, params);
@@ -153,7 +160,10 @@ class ZcodeSession implements AgentSession {
       if (opts.model) await this.setModel(opts.model);
     }
     if (opts.effort) await this.setEffort(opts.effort);
-    if (!this.probe) await this.wire.request('session/subscribe', { sessionId: this.agentSessionId, deliveryKind: DELIVERY, includeSnapshot: false });
+    if (!this.probe) {
+      this.accounting = await this.wire.request('session/usage', { sessionId: this.agentSessionId }, 3000, false).catch(() => null);
+      await this.wire.request('session/subscribe', { sessionId: this.agentSessionId, deliveryKind: DELIVERY, includeSnapshot: false });
+    }
     return snapshot;
   }
   async setModel(model: string): Promise<boolean> {
@@ -168,8 +178,18 @@ class ZcodeSession implements AgentSession {
     if (this.usage) hooks.emit(this.usage);
     const compact = isCompaction(input.text);
     const run = async () => {
+      const measure = !input.text.startsWith('/') || compact || /^\/goal\s+/.test(input.text);
+      const before = measure ? this.accounting : null;
       try { return await this.promptInternal(input, hooks); }
-      finally { await this.refreshUsage(hooks, compact); }
+      finally {
+        if (measure && !this.closed) {
+          const after = await this.wire.request('session/usage', { sessionId: this.agentSessionId }, 3000, false).catch(() => null);
+          this.accounting = after;
+          const sample = zcodeUsage(before, after);
+          if (sample.total !== undefined) hooks.emit({ type: 'usage.sample', data: { id: `turn-${++this.usageId}`, scope: 'turn', source: 'zcode.session/usage', ...sample } });
+        }
+        await this.refreshUsage(hooks, compact);
+      }
     };
     return compact ? trackCompaction(hooks, run) : run();
   }
@@ -178,7 +198,7 @@ class ZcodeSession implements AgentSession {
     if (this.closed) return;
     const previous = this.usage;
     try {
-      const snapshot = await this.wire.request('session/read', { sessionId: this.agentSessionId, messageLimit: 1 });
+      const snapshot = await this.wire.request('session/read', { sessionId: this.agentSessionId, messageLimit: 1 }, 3000, false);
       this.usage = zcodeContextUsage(snapshot);
     } catch {
       // Statistics are optional; a failed read must not turn a successful reply into a failed turn.
@@ -205,7 +225,7 @@ class ZcodeSession implements AgentSession {
       if (name === 'help') {
         response = COMMANDS.map((command) => `/${command.name}：${command.description}`).join('\n\n');
       } else if (name === 'session') {
-        const snapshot = await this.wire.request('session/read', { sessionId: this.agentSessionId, messageLimit: 1 });
+        const snapshot = await this.wire.request('session/read', { sessionId: this.agentSessionId, messageLimit: 1 }, 3000, false);
         const model = snapshot?.settings?.model?.current;
         response = [`会话：${this.agentSessionId}`, `模型：${model?.providerId ?? '未知'} / ${model?.modelId ?? '未知'}`, '自动记忆：关闭', '工具范围：基础编码工具', '套餐额度：请在左下角额度看板查看（默认账号）'].join('\n\n');
       } else {

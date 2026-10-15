@@ -1,3 +1,4 @@
+import type { UsageReport, AgentDiagnostic } from './observability';
 import type { StoredEvent } from './timeline';
 
 /** Where threads may work: the project roots, and whether one can start outside any project. */
@@ -835,6 +836,14 @@ export class Api {
   }
 
   /** Plan usage of an agent instance, read outside any session. `refresh` asks again now. */
+  usageReport(hours = 24, agent = ''): Promise<UsageReport> {
+    return this.request('GET', `/api/usage?hours=${hours}&agent=${encodeURIComponent(agent)}`);
+  }
+
+  agentDiagnostic(agent: string, refresh = false): Promise<AgentDiagnostic> {
+    return this.request('GET', `/api/agents/${encodeURIComponent(agent)}/diagnostics${refresh ? '?refresh=1' : ''}`);
+  }
+
   agentQuota(agent: string, refresh = false): Promise<PlanQuota> {
     return this.request('GET', `/api/agents/${agent}/quota${refresh ? '?refresh=1' : ''}`);
   }

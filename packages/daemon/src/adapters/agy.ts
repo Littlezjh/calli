@@ -1,3 +1,4 @@
+import { cliDiagnostic } from './diagnostics.js';
 import { sessionEnvironment } from './types.js';
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { homedir } from 'node:os';
@@ -444,6 +445,8 @@ export class AgyAdapter implements AgentAdapter {
     private readonly env: Record<string, string> = {},
   ) {}
 
+  diagnose() { return cliDiagnostic(this.command, this.env, 'stream-json'); }
+
   async available(): Promise<boolean> {
     return commandExists(this.command[0]);
   }
@@ -454,7 +457,8 @@ export class AgyAdapter implements AgentAdapter {
     return { windows: parseAgyUsage(stdout), checkedAt: new Date().toISOString() };
   }
 
-  async models(): Promise<ModelOption[]> {
+  async models(refresh = false): Promise<ModelOption[]> {
+    if (refresh) this.modelCache = null;
     if (this.modelCache && Date.now() - this.modelCache.at < MODELS_TTL_MS) return this.modelCache.models;
     const [bin, ...base] = this.command;
     const stdout = await new Promise<string>((resolve, reject) => {

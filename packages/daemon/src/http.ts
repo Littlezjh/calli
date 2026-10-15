@@ -222,6 +222,15 @@ export function createHttpServer(deps: HttpDeps): Server {
       }
     }
 
+    if (method === 'GET' && path === '/api/usage') {
+      const hours = Number(url.searchParams.get('hours') ?? 24);
+      if (![1, 24, 168].includes(hours)) throw new HttpError(400, '统计范围须为 1、24 或 168 小时');
+      return sendJson(res, 200, manager.usageReport(hours, url.searchParams.get('agent') ?? ''));
+    }
+    if (method === 'GET' && parts[0] === 'api' && parts[1] === 'agents' && parts[2] && parts[3] === 'diagnostics' && !parts[4]) {
+      return sendJson(res, 200, await manager.agentDiagnostic(parts[2], url.searchParams.get('refresh') === '1'));
+    }
+
     // GET /api/agents
     if (method === 'GET' && path === '/api/agents') return sendJson(res, 200, await manager.listAgents());
 

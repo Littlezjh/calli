@@ -1,3 +1,4 @@
+import { cliDiagnostic } from './diagnostics.js';
 import { execFile } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -113,6 +114,8 @@ export class TraexAcpAdapter extends AcpAdapter {
     this.execution = new CodexAppServerAdapter([...this.cli, 'app-server'], env);
   }
 
+  override diagnose() { return cliDiagnostic(this.cli, this.env, 'app-server / ACP 1'); }
+
   override start(opts: StartOptions): Promise<AgentSession> {
     return this.execution.start(opts);
   }
@@ -134,8 +137,8 @@ export class TraexAcpAdapter extends AcpAdapter {
     return read;
   }
 
-  override async models(): Promise<ModelOption[]> {
-    const [models, status] = await Promise.all([super.models(), this.readModelStatus().catch(() => [])]);
+  override async models(refresh = false): Promise<ModelOption[]> {
+    const [models, status] = await Promise.all([super.models(refresh), this.readModelStatus().catch(() => [])]);
     return models.map((model) => {
       // Keep ACP's model ids and defaults intact, even when CLI display names differ.
       if (model.id === 'default') return model;

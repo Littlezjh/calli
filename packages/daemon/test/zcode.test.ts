@@ -1,3 +1,4 @@
+import { ZcodeWire } from '../src/adapters/zcode-wire.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -153,7 +154,7 @@ test('zcode approvals use only offered responses and reject unknown option ids',
     for (const optionId of ['once', 'invented']) {
       const events: EmittedEvent[] = [];
       await s.prompt(input('approve'), { ...hooks(events), requestApproval: async (request) => { assert.equal(request.options[0].optionId, 'once'); return { optionId }; } });
-      assert.equal(events.at(-1)?.data.text, optionId === 'once' ? '已批准' : '已拒绝');
+      assert.equal(events.filter(e => e.type === 'message.delta').at(-1)?.data.text, optionId === 'once' ? '已批准' : '已拒绝');
     }
   } finally { await s.close(); f.clean(); }
 });
@@ -223,4 +224,15 @@ test('zcode exposes and handles local query commands without sending prompts', a
     assert.equal(f.log().find((r) => r.method === 'session/usage').params.sessionId, s.agentSessionId);
     assert.equal(f.adapter.capabilities.quota, true);
   } finally { await s.close(); f.clean(); }
+});
+
+
+test('an optional statistics timeout leaves the native connection usable', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rah-zcode-optional-'));
+  const wire = new ZcodeWire(command, dir, { ...process.env, FAKE_ZCODE_USAGE_HANG: '1' });
+  try {
+    await assert.rejects(wire.request('session/usage', {}, 30, false), /超时/);
+    const snapshot = await wire.request('session/read', { sessionId: 'sess-zcode-fixture' });
+    assert.equal(snapshot.session.sessionId, 'sess-zcode-fixture');
+  } finally { wire.close(); rmSync(dir, { recursive: true, force: true }); }
 });

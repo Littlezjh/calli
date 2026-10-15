@@ -1,3 +1,4 @@
+import { diagnosticFailure } from './adapters/diagnostics.js';
 import type { CoordinationManager } from './coordination.js';
 import { randomUUID } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, readSync, realpathSync, statSync } from 'node:fs';
@@ -176,6 +177,8 @@ export class ThreadManager {
   private readonly listeners = new Set<Listener>();
   /** Agent sessions being imported right now, so the same one is not imported twice in parallel. */
   private readonly importing = new Set<string>();
+  /** Read-only checks are cached per instance and share in-flight probes. */
+  private readonly diagnosticCache = new Map<string, { at: number; pending: boolean; value: Promise<unknown> }>();
   /** Plan-usage reads in flight or fresh, per agent: the probes spawn a CLI, so they are shared. */
   private readonly quotaCache = new Map<string, { at: number; value: Promise<PlanQuota> }>();
   /** Threads whose session is being synced right now, for the same reason. */
@@ -492,6 +495,30 @@ export class ThreadManager {
     const found = this.attachments.find(threadId, attachmentId);
     if (!found) throw new HttpError(404, 'attachment not found');
     return found;
+  }
+
+  usageReport(hours: number, agent: string) { return this.store.telemetry.read(hours, agent); }
+
+  agentDiagnostic(agent: string, refresh = false): Promise<unknown> {
+    const adapter = this.adapters.get(agent);
+    if (!adapter) throw new HttpError(404, '未知 agent 实例');
+    const hit = this.diagnosticCache.get(agent);
+    if (hit && (hit.pending || (!refresh && Date.now() - hit.at < 60000))) return hit.value;
+    const entry = { at: Date.now(), pending: true, value: Promise.resolve<unknown>(null) };
+    entry.value = (async () => {
+      const base = { agent, label: adapter.label, capabilities: adapter.capabilities };
+      try {
+        if (!await adapter.available()) return { ...base, checkedAt: new Date().toISOString(), state: 'missing', message: '没有找到 CLI，请检查该实例的命令和 PATH。', version: null, protocol: null, models: [] };
+        const runtime = await adapter.diagnose?.().catch(() => null);
+        try {
+          const models = await adapter.models(refresh);
+          return { ...base, ...runtime, checkedAt: new Date().toISOString(), state: models.length ? 'ready' : 'empty',
+            message: models.length ? '模型读取成功。登录有效性以实际请求结果为准。' : 'CLI 可启动，但未返回可选模型。请检查原生 CLI 的登录、模型配置和套餐。', models };
+        } catch (error) { return { ...base, ...runtime, checkedAt: new Date().toISOString(), ...diagnosticFailure(error), models: [] }; }
+      } catch (error) { return { ...base, checkedAt: new Date().toISOString(), ...diagnosticFailure(error), models: [] }; }
+    })().finally(() => { entry.pending = false; });
+    this.diagnosticCache.set(agent, entry);
+    return entry.value;
   }
 
   async listModels(agent: string): Promise<ModelOption[]> {
@@ -1575,6 +1602,11 @@ export class ThreadManager {
   }
 
   private emitThreadEvent(threadId: string, turnId: string | null, type: EventType, data: Record<string, unknown>): void {
+    if (type === 'turn.started') {
+      const agent = this.store.getThread(threadId)?.agent;
+      const account = this.agentMeta().find(m => m.id === agent)?.account;
+      if (account) data = { ...data, linkedAccount: account };
+    }
     const stored = this.store.appendEvent(threadId, turnId, type, data);
     for (const l of this.listeners) l(stored);
   }

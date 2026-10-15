@@ -25,11 +25,15 @@ export class ZcodeWire {
     this.child.on('exit', (code, signal) => this.close(new Error(`zcode 已退出（${signal ?? code}）`)));
   }
 
-  request(method: string, params: unknown, timeoutMs = REQUEST_TIMEOUT_MS): Promise<any> {
+  request(method: string, params: unknown, timeoutMs = REQUEST_TIMEOUT_MS, closeOnTimeout = true): Promise<any> {
     if (this.closed) return Promise.reject(new Error('zcode 连接已关闭'));
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => this.close(new Error(`zcode 请求超时：${method}`)), timeoutMs);
+      const timer = setTimeout(() => {
+        const error = new Error(`zcode 请求超时：${method}`);
+        if (closeOnTimeout) this.close(error);
+        else { this.pending.delete(id); reject(error); }
+      }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
       this.write({ id, method, params });
     });
