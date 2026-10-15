@@ -17,10 +17,11 @@ let seq = 0;
 let nextId = 10000;
 let goal = null;
 let goalRun = false;
+let contextUsed = process.env.FAKE_ZCODE_INITIAL_CONTEXT ? Number(process.env.FAKE_ZCODE_INITIAL_CONTEXT) : null;
 const pending = new Map();
 const request = (method, params) => new Promise((resolve) => { const id = nextId++; pending.set(id, resolve); output({ id, method, params }); });
 const emit = (type, payload, turnId = turn?.id) => output({ method: 'session/event', params: { sessionId, eventId: `ev-${++seq}`, seq, turnId, type, payload, deliveryKind: 'desktop-continuous' } });
-const snapshot = () => ({ session: { sessionId, target: process.env.FAKE_ZCODE_GOAL ? { status: 'active' } : goal }, settings: { mode: { current: mode }, model: { current: model, available: process.env.FAKE_ZCODE_NO_MODELS || !accountReady ? [] : [{ ref: { providerId, modelId: 'small' }, label: 'Small', reasoning: { defaultLevel: 'low', levels: [{ value: 'low' }, { value: 'high' }] } }, { ref: { providerId, modelId: 'large' }, label: 'Large' }] } } });
+const snapshot = () => ({ runtime: process.env.FAKE_ZCODE_CONTEXT && contextUsed !== null ? { contextUsage: { used: contextUsed, size: model.modelId === 'large' ? 256000 : 128000, cost: null } } : {}, projection: { totalTokenCount: 900000 }, session: { sessionId, target: process.env.FAKE_ZCODE_GOAL ? { status: 'active' } : goal }, settings: { mode: { current: mode }, model: { current: model, available: process.env.FAKE_ZCODE_NO_MODELS || !accountReady ? [] : [{ ref: { providerId, modelId: 'small' }, label: 'Small', reasoning: { defaultLevel: 'low', levels: [{ value: 'low' }, { value: 'high' }] } }, { ref: { providerId, modelId: 'large' }, label: 'Large' }] } } });
 const goalSettled = (failed = false) => { goalRun = false; output({ method: 'state.updated', params: { sessionId, reason: failed ? 'goal_continuation_failed' : 'goal_continuation_completed' } }); };
 const preferences = async () => {
   const result = await request('session/requestRuntimePreferences', { sessionId, scope: 'runtime-materialization' });
@@ -78,6 +79,7 @@ async function handle(message) {
     }
     case 'session/create': case 'session/resume': {
       sessionId = p.sessionId ?? sessionId;
+      if (method === 'session/resume' && process.env.FAKE_ZCODE_CONTEXT) contextUsed = 12000;
       if (!process.env.FAKE_ZCODE_NO_PREFERENCES) await preferences();
       mode = p.mode ?? mode; model = p.model ?? model;
       return reply(id, snapshot());
@@ -87,7 +89,7 @@ async function handle(message) {
     case 'session/setModel': model = p.model; return reply(id, snapshot());
     case 'session/setThoughtLevel': return reply(id, snapshot());
     case 'session/usage': return reply(id, { sessionId, totalTokens: 1500, inputTokens: 1200, outputTokens: 300, reasoningTokens: 100, cacheCreationTokens: 200, cacheReadTokens: 700, modelRequestCount: 2, modelErrorCount: 0, inputBaselineBySource: {} });
-    case 'session/read': return reply(id, snapshot());
+    case 'session/read': return process.env.FAKE_ZCODE_USAGE_READ_FAIL ? error(id, 'Statistics unavailable') : reply(id, snapshot());
     case 'session/close': reply(id, { closed: true }); return;
     case 'session/stop': reply(id, { stopped: true }); done('cancelled', ''); if (goalRun) { goal.status = 'paused'; goalSettled(); } return;
     case 'session/send': case 'session/compact': {
@@ -106,7 +108,7 @@ async function handle(message) {
       if (p.content === 'reject') return error(id, 'submission rejected');
       emit('turn.started', { inputId: p.inputId });
       // Completion may precede the response to send; the adapter must already be listening.
-      if (p.content === 'early') { done('success', '提前完成'); reply(id, { accepted: true }); return; }
+      if (p.content === 'early') { contextUsed = 48000; done('success', '提前完成'); reply(id, { accepted: true }); return; }
       reply(id, method === 'session/compact' ? { compact: { state: 'accepted', inputId: p.inputId } } : { accepted: true });
       if (method === 'session/compact') {
         await new Promise((resolve) => setTimeout(resolve, Number(process.env.FAKE_COMPACT_DELAY ?? 20)));
@@ -131,6 +133,7 @@ async function handle(message) {
       emit('model.streaming', { kind: 'text_delta', delta: method === 'session/compact' ? '已压缩' : '你好' });
       // part.delta is the other delivery surface and must not duplicate model.streaming.
       emit('part.delta', { field: 'text', delta: '你好', partId: 'part-1' });
+      contextUsed = method === 'session/compact' ? (process.env.FAKE_ZCODE_COMPACT_USAGE_UNKNOWN ? null : 8000) : 48000;
       done(); return;
     }
     default: error(id, `Unsupported method: ${method}`);

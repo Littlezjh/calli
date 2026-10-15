@@ -59,16 +59,23 @@ test('real zcode: memory stays disabled across create, resume, compact and nativ
     });
     const models = await adapter.models();
     assert.equal(models.length, 1);
-    const hooks: TurnHooks = { emit: () => {}, requestApproval: async () => ({ cancelled: true }) };
+    const contextReadings: Array<{ used: number | null; size: number }> = [];
+    const hooks: TurnHooks = { emit: event => { if (event.type === 'usage.updated') contextReadings.push(event.data as { used: number | null; size: number }); }, requestApproval: async () => ({ cancelled: true }) };
     session = await adapter.start({ cwd: dir, model: models[0].id });
     const first = await session.prompt({ text: 'Reply hello.', images: [] }, hooks);
     assert.equal(first.stopReason, 'end_turn', JSON.stringify(first));
+    assert.ok((contextReadings.at(-1)?.size ?? 0) > 0, 'Use the native effective window rather than guessing from model configuration');
+    assert.ok((contextReadings.at(-1)?.used ?? 0) > 0, 'The native runtime must report measured context usage');
     const id = session.agentSessionId;
     await session.close();
     session = await adapter.start({ cwd: dir, resumeId: id });
     assert.equal(session.agentSessionId, id);
     assert.equal((await session.prompt({ text: 'Reply hello again.', images: [] }, hooks)).stopReason, 'end_turn');
+    const readingsBeforeCompact = contextReadings.length;
     assert.equal((await session.prompt({ text: '/compact', images: [] }, hooks)).stopReason, 'end_turn');
+    assert.ok(contextReadings.length >= readingsBeforeCompact + 2);
+    assert.ok((contextReadings.at(-1)?.size ?? 0) > 0);
+    assert.ok((contextReadings.at(-1)?.used ?? 0) > 0, 'Compaction must publish the native post-compaction measurement');
     for (const text of ['/help', '/session', '/usage']) {
       let response = '';
       assert.equal((await session.prompt({ text, images: [] }, { ...hooks, emit: (event) => { if (event.type === 'message.delta') response += event.data.text; } })).stopReason, 'end_turn');

@@ -1321,7 +1321,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
 
   const right = (
     <>
-      {selected && timeline.usage && <UsageMeter
+      {selected && (timeline.usage || canCompact) && <UsageMeter
         usage={timeline.usage}
         onCompact={canCompact ? () => send('/compact', []) : undefined}
         running={running}

@@ -450,14 +450,15 @@ export function AgentPicker({ agents, value, onChange, accounts = [], onAddAccou
 
 /** How full the agent's context window is: a small ring that opens to the numbers. */
 export function UsageMeter({ usage, onCompact, running, compactDisabled, compactQueued }: {
-  usage: Usage;
+  usage: Usage | null;
   onCompact?: () => Promise<void>;
   running?: boolean;
   compactDisabled?: boolean;
   compactQueued?: boolean;
 }) {
   const [compacting, setCompacting] = useState(false);
-  const { percent, high, detail } = usageSummary(usage);
+  const { percent, high, detail } = usage ? usageSummary(usage)
+    : { percent: 0, high: false, detail: '暂未获取上下文用量，下一次响应后更新。' };
   // A ring of radius 6 has a circumference of about 37.7; the dash shows the used share of it.
   const circumference = 2 * Math.PI * 6;
   return (
@@ -481,7 +482,7 @@ export function UsageMeter({ usage, onCompact, running, compactDisabled, compact
               transform="rotate(-90 8 8)"
             />
           </svg>
-          <span>{percent}%</span>
+          <span>{usage ? `${percent}%` : '上下文'}</span>
         </>
       }
     >

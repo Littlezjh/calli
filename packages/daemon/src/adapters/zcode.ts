@@ -40,6 +40,17 @@ export function zcodeModels(snapshot: any): ModelOption[] {
   }));
 }
 
+/** Native current-context measurement, never the session's cumulative billed tokens. */
+export function zcodeContextUsage(snapshot: any): EmittedEvent | null {
+  const usage = snapshot?.runtime?.contextUsage;
+  if (typeof usage?.used !== 'number' || !Number.isFinite(usage.used) || usage.used < 0
+    || typeof usage.size !== 'number' || !Number.isFinite(usage.size) || usage.size <= 0) return null;
+  const cost = usage.cost;
+  const validCost = typeof cost?.amount === 'number' && Number.isFinite(cost.amount) && cost.amount >= 0
+    && typeof cost.currency === 'string' && cost.currency.trim();
+  return { type: 'usage.updated', data: { used: usage.used, size: usage.size, ...(validCost ? { cost: { amount: cost.amount, currency: cost.currency } } : {}) } };
+}
+
 export function mapZcodeEvent(event: any): EmittedEvent | null {
   const p = event.payload ?? {};
   if (event.type === 'model.streaming' && (p.kind === 'text_delta' || p.kind === 'reasoning_delta') && typeof p.delta === 'string') {
@@ -114,6 +125,7 @@ class ZcodeSession implements AgentSession {
   private closed = false;
   private goalActive = false;
   private submission: Promise<void> | null = null;
+  private usage: EmittedEvent | null = null;
   constructor(private readonly wire: ZcodeWire, private readonly probe: boolean, private readonly accounts: ZcodeAccounts | null) {
     wire.onEvent = (method, params) => this.event(method, params);
     wire.onRequest = (method, params) => this.request(method, params);
@@ -130,6 +142,7 @@ class ZcodeSession implements AgentSession {
     if (!this.preferenceRequests) throw new Error('此 zcode 未请求运行时偏好，无法保证关闭记忆，请升级 zcode');
     if (typeof snapshot?.session?.sessionId !== 'string') throw new Error('zcode 未返回会话 ID');
     this.agentSessionId = snapshot.session.sessionId;
+    this.usage = zcodeContextUsage(snapshot);
     if (!this.probe && zcodeModels(snapshot).length === 0) {
       await this.close();
       throw new Error('zcode 没有可用模型。请检查 API 模型配置，或在 zcode 中登录 BigModel / Z.ai 个人 Coding Plan 后刷新模型列表；其他账号套餐模型暂未支持。');
@@ -144,13 +157,36 @@ class ZcodeSession implements AgentSession {
     return snapshot;
   }
   async setModel(model: string): Promise<boolean> {
-    await this.wire.request('session/setModel', { sessionId: this.agentSessionId, model: selection(model), persistAsWorkspaceLastUsed: false }); return true;
+    const snapshot = await this.wire.request('session/setModel', { sessionId: this.agentSessionId, model: selection(model), persistAsWorkspaceLastUsed: false });
+    this.usage = zcodeContextUsage(snapshot);
+    return true;
   }
   async setEffort(effort: EffortLevel): Promise<boolean> {
     await this.wire.request('session/setThoughtLevel', { sessionId: this.agentSessionId, thoughtLevel: effort, persistAsWorkspaceLastUsed: false }); return true;
   }
   async prompt(input: TurnInput, hooks: TurnHooks): Promise<TurnResult> {
-    return isCompaction(input.text) ? trackCompaction(hooks, () => this.promptInternal(input, hooks)) : this.promptInternal(input, hooks);
+    if (this.usage) hooks.emit(this.usage);
+    const compact = isCompaction(input.text);
+    const run = async () => {
+      try { return await this.promptInternal(input, hooks); }
+      finally { await this.refreshUsage(hooks, compact); }
+    };
+    return compact ? trackCompaction(hooks, run) : run();
+  }
+
+  private async refreshUsage(hooks: TurnHooks, invalidateOnFailure: boolean): Promise<void> {
+    if (this.closed) return;
+    const previous = this.usage;
+    try {
+      const snapshot = await this.wire.request('session/read', { sessionId: this.agentSessionId, messageLimit: 1 });
+      this.usage = zcodeContextUsage(snapshot);
+    } catch {
+      // Statistics are optional; a failed read must not turn a successful reply into a failed turn.
+      if (!invalidateOnFailure) return;
+      this.usage = null;
+    }
+    if (this.usage) hooks.emit(this.usage);
+    else if (previous) hooks.emit({ type: 'usage.updated', data: { used: null, size: previous.data.size } });
   }
 
   private async promptInternal(input: TurnInput, hooks: TurnHooks): Promise<TurnResult> {

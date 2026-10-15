@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ZcodeAdapter, ZCODE_BASIC_TOOLS } from '../src/adapters/zcode.js';
+import { ZcodeAdapter, ZCODE_BASIC_TOOLS, zcodeContextUsage } from '../src/adapters/zcode.js';
 import type { EmittedEvent } from '../src/events.js';
 import type { TurnHooks } from '../src/adapters/types.js';
 const here = dirname(fileURLToPath(import.meta.url));
@@ -16,6 +16,54 @@ function setup(env: Record<string, string> = {}) {
 }
 const hooks = (events: EmittedEvent[]): TurnHooks => ({ emit: (event) => events.push(event), requestApproval: async () => ({ cancelled: true }) });
 const input = (text: string) => ({ text, images: [] });
+
+test('zcode context maps only native current usage and validates optional cost', () => {
+  const snapshot = (used: unknown, size: unknown, cost: unknown = null) => ({ runtime: { contextUsage: { used, size, cost } }, projection: { totalTokenCount: 900000 } });
+  assert.deepEqual(zcodeContextUsage(snapshot(12000, 128000)), { type: 'usage.updated', data: { used: 12000, size: 128000 } });
+  assert.equal(zcodeContextUsage({ totalTokens: 900000, projection: { totalTokenCount: 900000 } }), null);
+  for (const [used, size] of [[-1, 128000], [12, 0], [12, Infinity], [NaN, 128000], ['12', 128000], [null, 128000]]) assert.equal(zcodeContextUsage(snapshot(used, size)), null);
+  assert.equal(zcodeContextUsage(snapshot(0, 128000))?.data.used, 0);
+  assert.deepEqual(zcodeContextUsage(snapshot(12, 128000, { amount: 0.2, currency: 'USD' }))?.data.cost, { amount: 0.2, currency: 'USD' });
+  assert.equal(zcodeContextUsage(snapshot(12, 128000, { amount: NaN, currency: 'USD' }))?.data.cost, undefined);
+});
+
+test('zcode updates context after replies and compaction and restores usage on resume', async () => {
+  const f = setup({ FAKE_ZCODE_CONTEXT: '1' });
+  let s = await f.adapter.start({ cwd: f.dir });
+  try {
+    const events: EmittedEvent[] = [];
+    await s.prompt(input('hello'), hooks(events));
+    assert.deepEqual(events.at(-1), { type: 'usage.updated', data: { used: 48000, size: 128000 } });
+    await s.prompt(input('/compact'), hooks(events));
+    assert.deepEqual(events.filter(e => e.type === 'usage.updated').at(-1)?.data, { used: 8000, size: 128000 });
+    assert.equal(events.at(-1)?.type, 'tool.end');
+    assert.equal(events.at(-1)?.data.status, 'completed');
+    const id = s.agentSessionId;
+    await s.close();
+    s = await f.adapter.start({ cwd: f.dir, resumeId: id });
+    const resumed: EmittedEvent[] = [];
+    await s.prompt(input('/usage'), hooks(resumed));
+    assert.deepEqual(resumed[0]?.data, { used: 12000, size: 128000 });
+    await s.setModel!(JSON.stringify(['api', 'large']));
+    const changed: EmittedEvent[] = [];
+    await s.prompt(input('hello'), hooks(changed));
+    assert.equal(changed[0]?.data.size, 256000);
+    assert.equal(changed.at(-1)?.data.size, 256000);
+  } finally { await s.close(); f.clean(); }
+});
+
+test('zcode clears stale usage when compaction has no new measurement; optional statistics failure does not fail replies', async () => {
+  for (const env of [{ FAKE_ZCODE_COMPACT_USAGE_UNKNOWN: '1' }, { FAKE_ZCODE_USAGE_READ_FAIL: '1' }]) {
+    const f = setup({ FAKE_ZCODE_CONTEXT: '1', FAKE_ZCODE_INITIAL_CONTEXT: '48000', ...env });
+    const s = await f.adapter.start({ cwd: f.dir });
+    try {
+      const events: EmittedEvent[] = [];
+      assert.equal((await s.prompt(input('hello'), hooks(events))).stopReason, 'end_turn');
+      assert.equal((await s.prompt(input('/compact'), hooks(events))).stopReason, 'end_turn');
+      assert.deepEqual(events.filter(e => e.type === 'usage.updated').at(-1)?.data, { used: null, size: 128000 });
+    } finally { await s.close(); f.clean(); }
+  }
+});
 
 test('zcode without registered models hides fallback efforts and explains account support before setting effort', async () => {
   const f = setup({ FAKE_ZCODE_NO_MODELS: '1' });
