@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Api, type Thread } from '../api';
+import { Api, type AgentMention, type Thread } from '../api';
 import type { PreparedImage } from '../images';
+import { restoreVideos, type PreparedVideo } from '../videos';
 import { folderName } from '../paths';
 import { buildTimeline, splitNotes, withNotes, type StoredEvent } from '../timeline';
 import { Composer } from './Composer';
@@ -163,10 +164,10 @@ export function SideChat({
     if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
   };
 
-  const send = async (text: string, images: PreparedImage[]) => {
+  const send = async (text: string, images: PreparedImage[], _mentions?: AgentMention[], videos: PreparedVideo[] = []) => {
     const outgoing = images.map(({ data, mimeType }) => ({ data, mimeType }));
     if (threadId) {
-      await api.startTurn(threadId, text, outgoing, { queue: true });
+      await api.startTurn(threadId, text, outgoing, { queue: true, videos: await Promise.all(videos.map(async video => (await api.uploadVideo(threadId, video.file)).id)) });
       return;
     }
     const title = `追问：${quoteText.replace(/\s+/g, ' ').slice(0, 24)}`;
@@ -190,7 +191,7 @@ export function SideChat({
     }
     setThread(created);
     onThreadCreated(created);
-    await api.startTurn(created.id, firstText, outgoing, { queue: true });
+    await api.startTurn(created.id, firstText, outgoing, { queue: true, videos: await Promise.all(videos.map(async video => (await api.uploadVideo(created.id, video.file)).id)) });
   };
 
   const loadImage = (attachmentId: string) =>
@@ -253,7 +254,8 @@ export function SideChat({
           onRemoveQueued={(id) => threadId && api.removeQueued(threadId, id).catch(onError)}
           onEditQueued={async (id) => {
             if (!threadId) throw new Error('没有打开的线程');
-            return api.removeQueued(threadId, id);
+            const taken = await api.removeQueued(threadId, id);
+            return { ...taken, videos: await restoreVideos(api, threadId, taken.videos) };
           }}
           onSendQueuedNow={(id) => threadId && api.sendQueuedNow(threadId, id).catch(onError)}
           restore={null}

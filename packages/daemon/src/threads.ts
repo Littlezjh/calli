@@ -21,7 +21,7 @@ import {
 } from './adapters/types.js';
 import { findFiles, listDir, readText, type Listing, type TextFile } from './browse.js';
 import { temporaryFile } from './artifacts.js';
-import { MAX_IMAGES, sniffImageType, sniffSvg, type AttachmentStore, type StoredAttachment } from './attachments.js';
+import { MAX_IMAGES, sniffImageType, sniffSvg, type AttachmentStore, type StoredAttachment, type StoredVideo } from './attachments.js';
 import { HttpError } from './errors.js';
 import { handoverContext, handoverPrompt, synthesizeHandover, turnMessage } from './handover.js';
 import { SkillsManager } from './skills.js';
@@ -69,7 +69,7 @@ export type ThreadView = Omit<ThreadRecord, 'worktree'> & {
   /** The agent has stopped to ask for approval and is waiting for an answer. */
   waiting: boolean;
   /** Messages sent while a turn was running. They go out, in order, as turns finish. */
-  queued: Array<{ id: string; text: string; images: number }>;
+  queued: Array<{ id: string; text: string; images: number; videos: number }>;
   /** Turns the terminal added to this session since the hub last wrote to it. */
   terminalActivity: boolean;
 };
@@ -79,6 +79,7 @@ interface QueuedTurn {
   id: string;
   text: string;
   images: unknown[];
+  videos: string[];
 }
 
 /** How many messages may wait behind a running turn. */
@@ -498,6 +499,12 @@ export class ThreadManager {
     return found;
   }
 
+  async saveVideo(threadId: string, source: AsyncIterable<Uint8Array>, name: string): Promise<StoredVideo> {
+    const thread = this.getThread(threadId);
+    if (thread.archivedAt) throw new HttpError(409, 'this thread is archived');
+    return this.attachments.saveVideo(threadId, source, name);
+  }
+
   usageReport(hours: number, agent: string) { return this.store.telemetry.read(hours, agent); }
 
   agentDiagnostic(agent: string, refresh = false): Promise<unknown> {
@@ -555,7 +562,7 @@ export class ThreadManager {
     }
     let waiting = false;
     for (const p of this.approvals.values()) if (p.threadId === thread.id) waiting = true;
-    const queued = (this.queues.get(thread.id) ?? []).map((q) => ({ id: q.id, text: q.text, images: q.images.length }));
+    const queued = (this.queues.get(thread.id) ?? []).map((q) => ({ id: q.id, text: q.text, images: q.images.length, videos: q.videos.length }));
     // The terminal wrote to this session after the hub last did: the UI asks before sending more.
     const terminalActivity = thread.externalAt !== null && (thread.hubTurnAt === null || thread.externalAt > thread.hubTurnAt);
     let worktree: ThreadView['worktree'] = null;
@@ -1304,7 +1311,7 @@ export class ThreadManager {
    */
   async startTurn(
     threadId: string,
-    input: { text?: unknown; images?: unknown; queue?: unknown; mentions?: unknown; handover?: unknown; scheduled?: unknown },
+    input: { text?: unknown; images?: unknown; videos?: unknown; queue?: unknown; mentions?: unknown; handover?: unknown; scheduled?: unknown },
     delivery?: { turnId: string; source: Record<string, unknown>; displayText: string; claim: () => void },
   ): Promise<{ turnId: string } | { queued: true; id: string }> {
     const thread = this.getThread(threadId);
@@ -1314,7 +1321,10 @@ export class ThreadManager {
     const nativeGoal = this.adapters.get(thread.agent)?.capabilities.goal && /^\/goal(?:\s|$)/.test(rawText);
     const text = nativeGoal ? rawText : rawText ? (this.coordination?.instructions(threadId, rawText) ?? rawText) : '';
     const rawImages = Array.isArray(input.images) ? input.images : [];
-    if (!text && rawImages.length === 0) throw new HttpError(400, 'text is empty');
+    const storedVideos = this.attachments.videos(threadId, input.videos);
+    const videoIds = storedVideos.map(v => v.id);
+    if (storedVideos.length && /^\/\S+/.test(rawText)) throw new HttpError(400, '视频请随普通消息发送，不能附在斜杠命令后');
+    if (!text && rawImages.length === 0 && !storedVideos.length) throw new HttpError(400, 'text is empty');
     if (thread.archivedAt) throw new HttpError(409, 'this thread is archived; restore it first');
     if (this.running.has(threadId)) {
       const goalAction = originalText === '/goal' ? 'show' : originalText === '/goal pause' ? 'pause' : originalText === '/goal clear' ? 'clear' : null;
@@ -1344,7 +1354,7 @@ export class ThreadManager {
       const queue = this.queues.get(threadId) ?? [];
       if (queue.length >= MAX_QUEUED) throw new HttpError(409, `at most ${MAX_QUEUED} messages can wait in a thread`);
       this.attachments.check(rawImages); // a bad image is refused now, not when its turn comes
-      const queued: QueuedTurn = { id: randomUUID(), text: originalText, images: rawImages, ...(mentions ? { mentions } : {}) };
+      const queued: QueuedTurn = { id: randomUUID(), text: originalText, images: rawImages, videos: videoIds, ...(mentions ? { mentions } : {}) };
       this.queues.set(threadId, [...queue, queued]);
       this.emitThreadEvent(threadId, null, 'thread.updated', {});
       return { queued: true, id: queued.id };
@@ -1359,6 +1369,7 @@ export class ThreadManager {
       if (this.running.has(threadId)) throw new HttpError(409, 'a turn is already running in this thread');
     }
     const { stored, images } = this.attachments.save(threadId, rawImages);
+    const promptText = text + this.attachments.videoNote(threadId, storedVideos);
 
     const turnId = delivery?.turnId ?? randomUUID();
     try {
@@ -1367,20 +1378,21 @@ export class ThreadManager {
         this.running.set(threadId, { turnId, cancelRequested: false });
         this.store.updateThread(threadId, { status: 'running', hubTurnAt: new Date().toISOString() }, { touch: true });
         if (thread.title === 'New thread') {
-          const title = askedText(rawText).split('\n')[0].slice(0, 60) || '图片';
+          const title = askedText(rawText).split('\n')[0].slice(0, 60) || (storedVideos.length ? '视频' : '图片');
           this.store.updateThread(threadId, { title });
         }
         this.emitThreadEvent(threadId, turnId, 'turn.started', {
-          text,
+          text: promptText,
           ...(delivery ? { coordination: delivery.source } : {}),
-          ...(text !== rawText ? { displayText: delivery?.displayText ?? rawText.split('\n\n[指定协作对象]')[0] } : {}),
+          ...(promptText !== rawText ? { displayText: delivery?.displayText ?? rawText.split('\n\n[指定协作对象]')[0] } : {}),
           ...(stored.length ? { images: stored } : {}),
+          ...(storedVideos.length ? { videos: storedVideos } : {}),
           ...(typeof input.handover === 'string' && input.handover ? { handover: input.handover } : {}),
           ...(input.scheduled === true ? { scheduled: true } : {}),
         });
       });
     } catch (err) { this.running.delete(threadId); throw err; }
-    void this.runTurn(thread, turnId, { text, images });
+    void this.runTurn(thread, turnId, { text: promptText, images });
     return { turnId };
   }
 
@@ -1439,13 +1451,14 @@ export class ThreadManager {
   }
 
   /** Takes a waiting message out of the queue and hands it back, so the page can edit and resend it. */
-  removeQueued(threadId: string, queuedId: string): { text: string; images: unknown[]; mentions?: unknown[] } {
+  removeQueued(threadId: string, queuedId: string): { text: string; images: unknown[]; videos?: StoredVideo[]; mentions?: unknown[] } {
     this.getThread(threadId);
     const queue = this.queues.get(threadId) ?? [];
     const taken = queue.find((q) => q.id === queuedId);
     if (!taken) throw new HttpError(404, 'no such waiting message');
+    const videos = this.attachments.videos(threadId, taken.videos);
     this.setQueue(threadId, queue.filter((q) => q.id !== queuedId));
-    return { text: taken.text, images: taken.images, ...(taken.mentions ? { mentions: taken.mentions } : {}) };
+    return { text: taken.text, images: taken.images, ...(videos.length ? { videos } : {}), ...(taken.mentions ? { mentions: taken.mentions } : {}) };
   }
 
   /** Interrupts the running turn so that this waiting message goes out next, ahead of the others. */
@@ -1471,7 +1484,7 @@ export class ThreadManager {
     const [next, ...rest] = queue;
     if (rest.length) this.queues.set(threadId, rest);
     else this.queues.delete(threadId);
-    this.startTurn(threadId, { text: next.text, images: next.images, mentions: next.mentions }).catch((err) => {
+    this.startTurn(threadId, { text: next.text, images: next.images, videos: next.videos, mentions: next.mentions }).catch((err) => {
       // The thread was archived or deleted in the meantime, or the message is no longer acceptable.
       console.error(`could not send a queued message: ${err instanceof Error ? err.message : err}`);
       this.queues.delete(threadId);

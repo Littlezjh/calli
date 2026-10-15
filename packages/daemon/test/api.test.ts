@@ -1666,6 +1666,51 @@ test('usage and plan: what the agent reports reaches the event log', async () =>
   assert.ok(piLog.findIndex((e) => e.type === 'usage.updated') < piLog.findIndex((e) => e.type === 'turn.done'), 'usage arrives before the turn is reported done');
 });
 
+test('videos upload as original files, stay scoped to a thread, and survive queue editing and forks', async () => {
+  const thread = await newThread({ agent: 'pi', model: 'fake/plain' });
+  const other = await newThread({ agent: 'pi' });
+  const bytes = readFileSync(join(here, 'fixtures', 'sample-video.mp4'));
+  const upload = (id: string, body: Buffer = bytes, authenticated = true) => api(`/api/threads/${id}/videos`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent('手机录屏.mp4') }, body }, authenticated);
+  assert.equal((await upload(thread.id, bytes, false)).status, 401);
+  assert.equal((await upload('missing')).status, 404);
+  assert.equal((await upload(thread.id, Buffer.from('fake MP4'))).status, 400);
+  const uploaded = await upload(thread.id);
+  assert.equal(uploaded.status, 201);
+  const video = await uploaded.json();
+  assert.equal(video.mimeType, 'video/mp4');
+  assert.equal(video.name, '手机录屏.mp4');
+  const downloaded = await api(`/api/threads/${thread.id}/attachments/${video.id}`);
+  assert.equal(downloaded.headers.get('content-type'), 'video/mp4');
+  assert.deepEqual(Buffer.from(await downloaded.arrayBuffer()), bytes);
+  assert.equal((await api(`/api/threads/${other.id}/attachments/${video.id}`)).status, 404);
+  assert.equal((await post(`/api/threads/${other.id}/turns`, { videos: [video.id] })).status, 404);
+  assert.equal((await post(`/api/threads/${thread.id}/turns`, { videos: [video.id, video.id] })).status, 400);
+  assert.equal((await post(`/api/threads/${thread.id}/turns`, { text: '/compact', videos: [video.id] })).status, 400);
+  assert.equal((await post(`/api/threads/${thread.id}/turns`, { videos: ['/etc/passwd'] })).status, 400);
+  assert.equal((await post(`/api/threads/${thread.id}/turns`, { videos: [video.id] })).status, 202, 'video-only works even with a text model');
+  await untilIdle(thread.id);
+  const log = await events(thread.id);
+  const start = log.find(e => e.type === 'turn.started')!;
+  assert.equal(start.data.displayText, '');
+  assert.deepEqual(start.data.videos, [video]);
+  assert.match(start.data.text, /The user attached 1 video file/);
+  const answer = log.filter(e => e.type === 'message.delta').map(e => e.data.text).join('');
+  assert.ok(answer.includes(join(dataDir, 'attachments', thread.id, `${video.id}.mp4`)), 'the agent gets a readable original-file path');
+  await post(`/api/threads/${thread.id}/turns`, { text: 'slow' });
+  const queued = await (await post(`/api/threads/${thread.id}/turns`, { text: '分析视频', videos: [video.id], queue: true })).json();
+  assert.equal((await (await api(`/api/threads/${thread.id}`)).json()).queued[0].videos, 1);
+  const taken = await (await api(`/api/threads/${thread.id}/queue/${queued.id}`, { method: 'DELETE' })).json();
+  assert.deepEqual(taken.videos, [video]);
+  assert.equal((await post(`/api/threads/${thread.id}/turns`, { ...taken, queue: true })).status, 202);
+  await manager.cancelTurn(thread.id, { keepQueue: true });
+  await waitFor(async () => (await events(thread.id)).filter(e => e.type === 'turn.started').length === 3 ? true : null);
+  await untilIdle(thread.id);
+  const fork = await (await post(`/api/threads/${thread.id}/fork`, {})).json();
+  assert.equal((await api(`/api/threads/${fork.id}/attachments/${video.id}`)).status, 200);
+  await api(`/api/threads/${thread.id}`, { method: 'DELETE' });
+  assert.deepEqual(Buffer.from(await (await api(`/api/threads/${fork.id}/attachments/${video.id}`)).arrayBuffer()), bytes);
+});
+
 test('files: an image in the thread directory is served; anything else, or anywhere else, is not', async () => {
   const thread = await newThread({ agent: 'claude' });
   const png = Buffer.from(PNG, 'base64');

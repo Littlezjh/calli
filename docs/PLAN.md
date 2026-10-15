@@ -13,7 +13,7 @@ daemon（Node.js，跑在远程主机上）
    ├─ hosts.ts        机器登记、SSH 隧道、健康检查与流式代理
    ├─ threads.ts      线程生命周期、turn、审批、设置
    ├─ store.ts        SQLite：threads、events、sections
-   ├─ attachments.ts  图片落盘与校验
+   ├─ attachments.ts  图片与视频落盘、引用校验（videos.ts 流式保存视频）
    └─ adapters/       每个 agent 一个适配器，对上输出统一事件
 ```
 
@@ -37,7 +37,7 @@ daemon（Node.js，跑在远程主机上）
 | 事件 | 含义 |
 |---|---|
 | `thread.created` / `thread.updated` | 线程元数据变化 |
-| `turn.started` | 用户发出一轮。`text`，可带 `images: [{id, mimeType, size}]` |
+| `turn.started` | 用户发出一轮。`text`，可带 `images: [{id, mimeType, size}]`、`videos: [{id, name, mimeType, size}]`；`displayText` 保留用户原文 |
 | `turn.done` / `turn.error` | 一轮结束。`turn.error` 可带 `code`，界面据此给出说明 |
 | `message.delta` | 助手文本增量 |
 | `reasoning.delta` | 思考过程增量 |
@@ -64,6 +64,7 @@ daemon（Node.js，跑在远程主机上）
   - 模型列表、每个模型支持的强度、是否能读图片，都从 agent 读，不写死。Claude 要逐个模型探测（约 12 秒），所以 daemon 启动时就在后台做并缓存。
 - **审批：** 只接受 agent 给出的选项 ID，其他一律拒绝。取消 turn 时，未决的审批自动按取消处理。
 - **图片：** 类型按文件头判断，不信客户端声明；只收 PNG、JPEG、GIF、WebP；每条消息最多 6 张，每张 5 MB；文件存在数据目录，事件里只有引用。
+- **视频：** `POST /api/threads/:id/videos` 鉴权后接收二进制文件流，按文件头识别 MP4、MOV、WebM，每个最多 100 MB，每条消息最多 3 个。完整校验后才发布文件，断开或超限清理临时文件；发送消息只接受本线程的视频引用，不接受任意路径。视频原文件路径作为文字说明交给 agent，不冒充原生视觉输入。网页发送前可预览，历史视频点击后才通过鉴权接口加载成 blob 播放；编码不兼容时可下载原视频。排队撤回带回引用，重发复用已上传文件；分叉复制视频与元数据。
 - **斜杠命令按目录取**，因为项目级命令各不相同。
 - **原生目标：** `/goal` 复用 agent 自己的目标状态和续跑。Codex、TraeX 使用 `thread/goal/get|set|clear`，目标启动前通过 `thread/settings/update` 同步线程设置；Claude 使用 ACP 的 `/goal` 和 `_session/goal`；zcode 使用 `session/goal`，等待原生整个续跑结束再释放线程。多轮输出、审批、错误继续走统一事件，Hub 不另做续跑循环、不写 agent 的状态文件。
   - Codex、TraeX、zcode：`/goal 目标` 设置，`/goal` 查看，`/goal pause` 暂停，`/goal resume` 继续，`/goal clear` 清除。Claude 支持设置、查看、清除，停止用现有停止按钮。

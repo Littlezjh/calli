@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { HttpError } from './errors.js';
+import { MAX_VIDEOS, storeVideo, VIDEO_EXTENSIONS } from './videos.js';
 
 export const MAX_IMAGES = 6;
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -40,6 +41,8 @@ export interface StoredAttachment {
   size: number;
 }
 
+export interface StoredVideo extends StoredAttachment { name: string }
+
 /**
  * Finds the image type from the first bytes of the data. The type the client claims is ignored,
  * so nothing other than a real PNG, JPEG, GIF or WebP can be stored and served back as an image.
@@ -77,6 +80,35 @@ export class AttachmentStore {
 
   constructor(dataDir: string) {
     this.root = join(dataDir, 'attachments');
+  }
+
+  async saveVideo(threadId: string, source: AsyncIterable<Uint8Array>, name: string): Promise<StoredVideo> {
+    if (!UUID.test(threadId)) throw new HttpError(400, 'invalid thread id');
+    const dir = join(this.root, threadId);
+    mkdirSync(dir, { recursive: true });
+    const id = randomUUID();
+    return { id, ...await storeVideo(join(dir, id), source, name) };
+  }
+
+  /** Only ids uploaded to this thread can be sent, never a client-supplied local path. */
+  videos(threadId: string, raw: unknown): StoredVideo[] {
+    if (raw === undefined) return [];
+    if (!Array.isArray(raw) || raw.length > MAX_VIDEOS) throw new HttpError(400, `一条消息最多 ${MAX_VIDEOS} 个视频`);
+    const ids = raw.map(value => typeof value === 'string' ? value : value?.id);
+    if (new Set(ids).size !== ids.length) throw new HttpError(400, '视频不能重复');
+    return ids.map(id => {
+      if (typeof id !== 'string' || !UUID.test(id)) throw new HttpError(400, 'invalid video id');
+      const found = this.find(threadId, id);
+      if (!found || !VIDEO_EXTENSIONS[found.mimeType]) throw new HttpError(404, 'video not found in this thread');
+      let name = `视频.${VIDEO_EXTENSIONS[found.mimeType]}`;
+      try { name = JSON.parse(readFileSync(join(this.root, threadId, `${id}.json`), 'utf8')).name || name; } catch { /* Older metadata may be missing. */ }
+      return { id, name, mimeType: found.mimeType, size: found.size };
+    });
+  }
+
+  videoNote(threadId: string, videos: StoredVideo[]): string {
+    if (!videos.length) return '';
+    return `\n\nThe user attached ${videos.length} video file(s). Use your available tools to inspect the original files; if you cannot inspect them, say so rather than guessing their contents.\n${videos.map(v => `- ${JSON.stringify(v.name)}: ${this.find(threadId, v.id)!.path}`).join('\n')}`;
   }
 
   /**
@@ -120,10 +152,10 @@ export class AttachmentStore {
     });
   }
 
-  /** Path and type of a stored image, or null. Ids are checked so they cannot escape the directory. */
+  /** Path and type of a stored attachment, or null. Ids cannot escape the directory. */
   find(threadId: string, id: string): { path: string; mimeType: string; size: number } | null {
     if (!UUID.test(threadId) || !UUID.test(id)) return null;
-    for (const [mimeType, ext] of Object.entries(EXTENSIONS)) {
+    for (const [mimeType, ext] of Object.entries({ ...EXTENSIONS, ...VIDEO_EXTENSIONS })) {
       const path = join(this.root, threadId, `${id}.${ext}`);
       if (existsSync(path)) return { path, mimeType, size: statSync(path).size };
     }

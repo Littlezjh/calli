@@ -2,10 +2,13 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEv
 import { ApiError, MAX_QUEUED, type AgentMention, type OutgoingImage, type QueuedMessage, type SlashCommand } from '../api';
 import { buildMenu, type HubAction, type MenuRow } from '../commands';
 import { readDrafts, writeDraft, type Sending } from '../drafts';
+import { sizeLabel } from '../files';
 import { MAX_IMAGES, prepareImage, restoreImage, type PreparedImage } from '../images';
 import { withNotes, type Note } from '../timeline';
 import { Popover } from './Popover';
 import { Lightbox } from './Lightbox';
+import { VideoPreview } from './VideoPreview';
+import { isVideo, MAX_VIDEOS, prepareVideo, VIDEO_ACCEPT, type PreparedVideo } from '../videos';
 import {
   IconArchive,
   AgentMark,
@@ -18,6 +21,7 @@ import {
   IconImport,
   IconInfo,
   IconPaperclip,
+  IconPlay,
   IconPin,
   IconSend,
   IconShield,
@@ -37,6 +41,7 @@ interface Draft {
   text: string;
   notes: DraftNote[];
   images: PreparedImage[];
+  videos?: PreparedVideo[];
   /** The message is on its way out. See `StoredDraft.sending`. */
   sending?: Sending;
   /** A newly prepared handover should put the cursor in its input. */
@@ -76,7 +81,7 @@ function loadDraft(key: string): Draft | undefined {
 }
 
 function keepDraft(key: string, draft: Draft | null): void {
-  if (draft && (draft.text.trim() || draft.notes.length || draft.images.length || draft.mentions?.length)) drafts.set(key, draft);
+  if (draft && (draft.text.trim() || draft.notes.length || draft.images.length || draft.videos?.length || draft.mentions?.length)) drafts.set(key, draft);
   else drafts.delete(key);
   const store = storage();
   if (store) writeDraft(store, key, draft);
@@ -105,7 +110,7 @@ interface Props {
   mentionExtra?: (mention: AgentMention) => ReactNode;
   /** The mark of the agent behind a choice, for the @ list. */
   mentionIcon?: (mention: AgentMention) => string | undefined;
-  onSend: (text: string, images: PreparedImage[], mentions?: AgentMention[]) => Promise<void> | void;
+  onSend: (text: string, images: PreparedImage[], mentions?: AgentMention[], videos?: PreparedVideo[]) => Promise<void> | void;
   onStop: () => void;
   /** Strip above the text area: which agent and which directory. */
   header: ReactNode;
@@ -130,7 +135,7 @@ interface Props {
   queued: QueuedMessage[];
   onRemoveQueued: (id: string) => void;
   /** Takes a waiting message out of the queue and returns it, to be edited in the box. */
-  onEditQueued: (id: string) => Promise<{ text: string; images: OutgoingImage[]; mentions?: AgentMention[] }>;
+  onEditQueued: (id: string) => Promise<{ text: string; images: OutgoingImage[]; videos?: PreparedVideo[]; mentions?: AgentMention[] }>;
   /** Interrupt the running turn and send this waiting message next. */
   onSendQueuedNow: (id: string) => void;
   /** Text to put back in the box, such as messages that were waiting when the user pressed stop. */
@@ -199,6 +204,8 @@ export function Composer({
   /** The send has been going for a while: a picture uploading over a slow line, an agent waking up. */
   const [slow, setSlow] = useState(false);
   const [images, setImages] = useState<PreparedImage[]>([]);
+  const [videos, setVideos] = useState<PreparedVideo[]>([]);
+  const [videoPreview, setVideoPreview] = useState<PreparedVideo | null>(null);
   const [preparing, setPreparing] = useState(0);
   const [dragOver, setDragOver] = useState(false);
   const [active, setActive] = useState(0);
@@ -270,17 +277,25 @@ export function Composer({
   // the way back. The box stays marked for as long as it still holds exactly what was sent.
   const inFlight = useRef<Sending | null>(null);
   const unsettled = inFlight.current !== null && asMessage(text, notes) === inFlight.current.text;
-  const draftRef = useRef<Draft>({ text, notes, images });
-  draftRef.current = { text, notes, images, mentions, ...(unsettled ? { sending: inFlight.current! } : {}) };
+  const draftRef = useRef<Draft>({ text, notes, images, videos });
+  draftRef.current = { text, notes, images, videos, mentions, ...(unsettled ? { sending: inFlight.current! } : {}) };
   const sendingRef = useRef(false);
+  const previousDraftKey = useRef(draftKey);
   useLayoutEffect(() => {
     if (draftKey === undefined) return;
-    const saved = loadDraft(draftKey);
+    const previous = previousDraftKey.current;
+    previousDraftKey.current = draftKey;
+    // Creating a thread changes its draft key before uploads finish. Keep that first message
+    // in the new thread so an interrupted upload still has an editable, retryable draft.
+    const firstMessage = sendingRef.current && (previous === 'new' || previous?.endsWith(':new'));
+    const saved = loadDraft(draftKey) ?? (firstMessage ? draftRef.current : undefined);
     inFlight.current = saved?.sending ?? null;
     setText(saved?.text ?? '');
     setMentions(saved?.mentions ?? []);
     setNotes(saved?.notes ?? []);
     setImages(saved?.images ?? []);
+    setVideos(saved?.videos ?? []);
+    setVideoPreview(null);
     if (saved?.focus) {
       saved.focus = false;
       ref.current?.focus();
@@ -312,6 +327,8 @@ export function Composer({
     if (lastSent.turnId === mark.after || lastSent.text.trim() !== mark.text.trim()) return;
     inFlight.current = null;
     draftRef.current.images.forEach((img) => URL.revokeObjectURL(img.previewUrl));
+    draftRef.current.videos?.forEach(video => URL.revokeObjectURL(video.previewUrl));
+    setVideos([]);
     setImages([]);
     setText('');
     setNotes([]);
@@ -322,13 +339,26 @@ export function Composer({
   // Without a draft to keep them, thumbnails left in the box are released when it goes away.
   useEffect(
     () => () => {
-      if (draftKey === undefined) draftRef.current.images.forEach((img) => URL.revokeObjectURL(img.previewUrl));
+      if (draftKey === undefined) {
+        draftRef.current.images.forEach((img) => URL.revokeObjectURL(img.previewUrl));
+        draftRef.current.videos?.forEach(video => URL.revokeObjectURL(video.previewUrl));
+      }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
 
   const addFiles = async (files: File[]) => {
+    const pickedVideos = files.filter(isVideo);
+    if (pickedVideos.length) {
+      const room = MAX_VIDEOS - videos.length;
+      if (pickedVideos.length > room) onError(`一条消息最多 ${MAX_VIDEOS} 个视频`);
+      const ready: PreparedVideo[] = [];
+      for (const file of pickedVideos.slice(0, Math.max(0, room))) {
+        try { ready.push(prepareVideo(file)); } catch (error) { onError(error instanceof Error ? error.message : '视频无法添加'); }
+      }
+      setVideos(current => [...current, ...ready]);
+    }
     const pictures = files.filter((f) => f.type.startsWith('image/'));
     if (pictures.length === 0) return;
     if (attachBlocked) return onError(attachBlocked);
@@ -356,6 +386,11 @@ export function Composer({
       setText((current) => [taken.text, current].filter((s) => s.trim()).join('\n\n'));
       const room = MAX_IMAGES - images.length - preparing;
       if (taken.images.length > room) onError(`一条消息最多 ${MAX_IMAGES} 张图片，多出的没有放回`);
+      const videoRoom = Math.max(0, MAX_VIDEOS - videos.length);
+      const returnedVideos = taken.videos ?? [];
+      if (returnedVideos.length > videoRoom) onError(`一条消息最多 ${MAX_VIDEOS} 个视频`);
+      returnedVideos.slice(videoRoom).forEach(video => URL.revokeObjectURL(video.previewUrl));
+      setVideos(current => [...returnedVideos.slice(0, videoRoom), ...current]);
       const back = taken.images.slice(0, Math.max(0, room)).map(restoreImage);
       if (back.length) setImages((prev) => [...back, ...prev]);
       ref.current?.focus();
@@ -402,9 +437,9 @@ export function Composer({
     choose(row);
   };
 
-  const hasContent = text.trim() !== '' || images.length > 0 || notes.length > 0 || mentions.some((m) => m.task?.trim());
+  const hasContent = text.trim() !== '' || images.length > 0 || videos.length > 0 || notes.length > 0 || mentions.some((m) => m.task?.trim());
   const goalControl = text.trim() === '/goal' ? 'show' : text.trim() === '/goal pause' ? 'pause' : text.trim() === '/goal clear' ? 'clear' : null;
-  const immediate = !!goalControl && goalControls.includes(goalControl) && !images.length && !notes.length && !mentions.length;
+  const immediate = !!goalControl && goalControls.includes(goalControl) && !images.length && !videos.length && !notes.length && !mentions.length;
   const queueFull = running && !immediate && queued.length >= MAX_QUEUED;
   const canSend = hasContent && !busy && !disabled && preparing === 0 && !queueFull;
 
@@ -418,16 +453,18 @@ export function Composer({
     const sentFrom = draftKey;
     // On the device the draft now says it is on its way. Should the page be reloaded before the
     // send comes back, it is neither lost nor taken for something still to send.
-    if (sentFrom !== undefined) keepDraft(sentFrom, { text, notes, images, mentions, sending: mark });
+    if (sentFrom !== undefined) keepDraft(sentFrom, { text, notes, images, videos, mentions, sending: mark });
     const slowTimer = setTimeout(() => setSlow(true), SLOW_SEND_MS);
     try {
-      await onSend(message, images, mentions);
+      await onSend(message, images, mentions, videos);
       setMentions([]);
       // Forgotten at once, not when the box next saves itself: a reload right now must not bring it back.
       if (sentFrom !== undefined) keepDraft(sentFrom, null);
       inFlight.current = null;
       setNotes([]);
       images.forEach((img) => URL.revokeObjectURL(img.previewUrl));
+      videos.forEach(video => URL.revokeObjectURL(video.previewUrl));
+      setVideos([]);
       setImages([]);
       setText('');
     } catch {
@@ -483,7 +520,7 @@ export function Composer({
 
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
     const files = [...e.clipboardData.files];
-    if (files.some((f) => f.type.startsWith('image/'))) {
+    if (files.some((f) => f.type.startsWith('image/') || isVideo(f))) {
       e.preventDefault();
       void addFiles(files);
     }
@@ -574,8 +611,9 @@ export function Composer({
                 <div key={q.id} className="queue-item">
                   <span className="queue-badge">排队</span>
                   <span className="queue-text">
-                    {q.text || '图片'}
+                    {q.text || (q.videos ? '视频' : '图片')}
                     {q.images > 0 && q.text && <span className="muted"> · {q.images} 张图</span>}
+                    {!!q.videos && <span className="muted"> · {q.videos} 个视频</span>}
                   </span>
                   <button type="button" className="queue-now" title="打断当前这一轮，马上发送这条" onClick={() => onSendQueuedNow(q.id)}>
                     立即发送
@@ -591,8 +629,8 @@ export function Composer({
             </div>
           )}
 
-          {(images.length > 0 || preparing > 0) && (
-            <div className="attachments" aria-label="要发送的图片">
+          {(images.length > 0 || videos.length > 0 || preparing > 0) && (
+            <div className="attachments" aria-label="要发送的附件">
               {images.map((img) => (
                 <div key={img.id} className="attachment">
                   <button
@@ -609,6 +647,12 @@ export function Composer({
                   </button>
                 </div>
               ))}
+              {videos.map(video => <div key={video.id} className="attachment video-attachment">
+                <button type="button" className="video-card" aria-label={`预览视频：${video.name}`} onClick={() => setVideoPreview(video)}>
+                  <IconPlay size={20} /><span><span className="video-name">{video.name}</span><span className="video-size">视频 · {sizeLabel(video.file.size)}</span></span>
+                </button>
+                <button type="button" className="attachment-remove" aria-label={`移除 ${video.name}`} onClick={() => { URL.revokeObjectURL(video.previewUrl); setVideos(current => current.filter(v => v.id !== video.id)); }}><IconClose size={12} /></button>
+              </div>)}
               {Array.from({ length: preparing }, (_, i) => (
                 <div key={`p-${i}`} className="attachment pending" aria-label="正在处理图片" />
               ))}
@@ -704,7 +748,7 @@ export function Composer({
             <input
               ref={fileRef}
               type="file"
-              accept="image/*"
+              accept={`image/*,${VIDEO_ACCEPT}`}
               multiple
               hidden
               onChange={(e) => {
@@ -714,11 +758,11 @@ export function Composer({
             />
             <button
               type="button"
-              className={`tool-btn icon-only${attachBlocked ? ' blocked' : ''}`}
-              aria-label="添加图片"
-              title={attachBlocked ?? attachNote ?? '添加图片（也可以粘贴或拖进来）'}
+              className="tool-btn icon-only"
+              aria-label="添加图片或视频"
+              title={attachBlocked ? `${attachBlocked}；可以添加视频文件` : attachNote ?? '添加图片或视频（视频最大 100 MB）'}
               disabled={disabled}
-              onClick={() => (attachBlocked ? onError(attachBlocked) : fileRef.current?.click())}
+              onClick={() => fileRef.current?.click()}
             >
               <IconPaperclip size={17} />
             </button>
@@ -745,6 +789,7 @@ export function Composer({
           </div>
         </div>
       </div>
+      {videoPreview && <VideoPreview url={videoPreview.previewUrl} name={videoPreview.name} onClose={() => setVideoPreview(null)} />}
       {preview && <Lightbox url={preview.previewUrl} name={preview.name} onClose={() => setPreview(null)} />}
     </div>
   );

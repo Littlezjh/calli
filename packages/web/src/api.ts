@@ -173,7 +173,10 @@ export interface QueuedMessage {
   text: string;
   /** How many pictures go with it. */
   images: number;
+  videos?: number;
 }
+
+export interface VideoRef { id: string; name: string; mimeType: string; size: number }
 
 /** A user-made group in the sidebar. */
 export interface Section {
@@ -437,6 +440,7 @@ const STREAM_IDLE_MS = 40_000;
 const STREAM_WAKE_MS = 5_000;
 
 export class Api {
+  private readonly videoUploads = new WeakMap<File, Map<string, Promise<VideoRef>>>();
   private readonly quotas = new Map<string, PlanQuota>();
   private readonly quotaRequests = new Map<string, Promise<PlanQuota>>();
 
@@ -677,19 +681,44 @@ export class Api {
     threadId: string,
     text: string,
     images: OutgoingImage[] = [],
-    opts: { queue?: boolean; mentions?: AgentMention[] } = {},
+    opts: { queue?: boolean; mentions?: AgentMention[]; videos?: string[] } = {},
   ): Promise<{ turnId: string } | { queued: true; id: string }> {
     return this.request('POST', `/api/threads/${threadId}/turns`, {
       text,
       ...(images.length ? { images } : {}),
       ...(opts.queue ? { queue: true } : {}),
       ...(opts.mentions?.length ? { mentions: opts.mentions } : {}),
+      ...(opts.videos?.length ? { videos: opts.videos } : {}),
     });
   }
 
   /** Takes a waiting message out of the queue; it comes back whole, so it can be edited. */
-  removeQueued(threadId: string, queuedId: string): Promise<{ text: string; images: OutgoingImage[]; mentions?: AgentMention[] }> {
+  removeQueued(threadId: string, queuedId: string): Promise<{ text: string; images: OutgoingImage[]; videos?: VideoRef[]; mentions?: AgentMention[] }> {
     return this.request('DELETE', `/api/threads/${threadId}/queue/${queuedId}`);
+  }
+
+  /** Binary upload, shared across retries of the same file in the same thread. */
+  uploadVideo(threadId: string, file: File): Promise<VideoRef> {
+    const uploads = this.videoUploads.get(file) ?? new Map<string, Promise<VideoRef>>();
+    this.videoUploads.set(file, uploads);
+    const existing = uploads.get(threadId);
+    if (existing) return existing;
+    const pending = (async () => {
+      const res = await fetch(this.url(`/api/threads/${threadId}/videos`), { method: 'POST', headers: this.headers({ 'Content-Type': file.type || 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name) }), body: file });
+      if (res.status === 401) throw new AuthError('unauthorized');
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new ApiError(res.status === 404 ? '当前服务尚不支持视频，请更新服务后重试' : json.error ?? `HTTP ${res.status}`, json, res.status);
+      return json as VideoRef;
+    })();
+    uploads.set(threadId, pending);
+    pending.catch(() => uploads.delete(threadId));
+    return pending;
+  }
+
+  async videoFile(threadId: string, video: VideoRef): Promise<File> {
+    const file = new File([await this.attachment(threadId, video.id)], video.name, { type: video.mimeType });
+    this.videoUploads.set(file, new Map([[threadId, Promise.resolve(video)]]));
+    return file;
   }
 
   /** Interrupts the running turn and sends this waiting message next. */

@@ -5,6 +5,7 @@ import { renderMermaidDiagram } from '../mermaid';
 import { copyText } from '../clipboard';
 import { diffLines, numberLines } from '../diff';
 import { pictureUrl, svgPicture } from '../images';
+import { SentVideo } from './VideoPreview';
 import { IMAGE_FILE, linkTarget, nameAttachments, relativePath, shortenPaths } from '../paths';
 import {
   clockLabel,
@@ -180,6 +181,7 @@ export function ThreadView({ items, running, roots, loadImage, loadFile, onOpenF
                 </div>
               )}
               {noted.notes.length > 0 && <SentNotes notes={noted.notes} />}
+              {item.videos?.map(video => <SentVideo key={video.id} video={video} load={loadImage} />)}
               {quote !== null && (
                 <div className="bubble-quote" title={quote}>
                   {quote}

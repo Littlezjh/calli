@@ -21,6 +21,7 @@ import { buildProjectOptions } from './projects';
 import { useAppearance, useIsCompact, useListSwipe } from './hooks';
 import { useHosts } from './hosts';
 import type { PreparedImage } from './images';
+import { restoreVideos, type PreparedVideo } from './videos';
 import { attentionCount, pageTitle, threadNotices } from './notices';
 import { folderName } from './paths';
 import { PERMISSION_LABELS, PERMISSION_ORDER, permissionHint, startingPermission } from './permissions';
@@ -293,7 +294,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
   // The passage a side chat was opened for, if one is open.
   const [sideAsk, setSideAsk] = useState<{ text: string; nonce: number } | null>(null);
   // A message waiting for the user to confirm sending into a session the terminal also used.
-  const [pendingSend, setPendingSend] = useState<{ text: string; images: PreparedImage[]; mentions?: AgentMention[]; resolve: () => void; reject: (e: unknown) => void } | null>(null);
+  const [pendingSend, setPendingSend] = useState<{ text: string; images: PreparedImage[]; videos?: PreparedVideo[]; mentions?: AgentMention[]; resolve: () => void; reject: (e: unknown) => void } | null>(null);
   const [pageHidden, setPageHidden] = useState(() => document.hidden);
   const baseTitle = useRef(document.title);
   const seenThreads = useRef<Thread[] | null>(null);
@@ -944,7 +945,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
     );
   }
 
-  const performSend = async (text: string, images: PreparedImage[], isNewThread: boolean, mentions?: AgentMention[]) => {
+  const performSend = async (text: string, images: PreparedImage[], isNewThread: boolean, mentions?: AgentMention[], videos: PreparedVideo[] = []) => {
     setError(null);
     try {
       let id = selectedId;
@@ -972,7 +973,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
         id,
         text,
         images.map(({ data, mimeType }) => ({ data, mimeType })),
-        { queue: true, mentions },
+        { queue: true, mentions, videos: await Promise.all(videos.map(async video => (await api.uploadVideo(id!, video.file)).id)) },
       );
       void refreshThreads();
     } catch (e) {
@@ -981,14 +982,14 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
     }
   };
 
-  const send = async (text: string, images: PreparedImage[], mentions?: AgentMention[]) => {
+  const send = async (text: string, images: PreparedImage[], mentions?: AgentMention[], videos: PreparedVideo[] = []) => {
     // The terminal wrote to this session after the hub last did. Both sides writing the same session
     // interleaves turns, so ask before joining in again.
     // The composer keeps the draft and its pictures until this settles, so backing out loses nothing.
     if (selectedId && selected?.terminalActivity) {
-      return new Promise<void>((resolve, reject) => setPendingSend({ text, images, mentions, resolve, reject }));
+      return new Promise<void>((resolve, reject) => setPendingSend({ text, images, videos, mentions, resolve, reject }));
     }
-    await performSend(text, images, true, mentions);
+    await performSend(text, images, true, mentions, videos);
   };
 
   // Stopping means stopping: messages that were waiting are not sent. Their text goes back in the box.
@@ -1010,7 +1011,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
     if (!selectedId) throw new Error('没有打开的线程');
     const taken = await api.removeQueued(selectedId, queuedId);
     refreshThreads();
-    return taken;
+    return { ...taken, videos: await restoreVideos(api, selectedId, taken.videos) };
   };
 
   const sendQueuedNow = (queuedId: string) => {
@@ -1710,7 +1711,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           onConfirm={() => {
             const p = pendingSend;
             setPendingSend(null);
-            performSend(p.text, p.images, false, p.mentions).then(p.resolve, p.reject);
+            performSend(p.text, p.images, false, p.mentions, p.videos).then(p.resolve, p.reject);
           }}
         />
       )}

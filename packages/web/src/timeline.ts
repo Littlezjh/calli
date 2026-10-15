@@ -4,6 +4,7 @@
  */
 import { diffStats } from './diff';
 import { IMAGE_FILE } from './paths';
+import type { VideoRef } from './api';
 
 export interface StoredEvent {
   threadId: string;
@@ -117,7 +118,7 @@ export function deliveredPreview(text: string): string {
 }
 
 export type Item =
-  | { kind: 'user'; key: string; turnId: string; text: string; images: ImageRef[]; fromTerminal?: boolean; scheduled?: boolean; coordination?: CoordinationNote }
+  | { kind: 'user'; key: string; turnId: string; text: string; images: ImageRef[]; videos?: VideoRef[]; fromTerminal?: boolean; scheduled?: boolean; coordination?: CoordinationNote }
   /** The turn's answer: the text after everything the agent did. */
   | { kind: 'assistant'; key: string; turnId: string; text: string; done: boolean }
   /**
@@ -420,6 +421,7 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
           turnId: turn,
           text: delivered ? delivered.text : shown,
           images: Array.isArray(ev.data.images) ? ev.data.images : [],
+          ...(Array.isArray(ev.data.videos) && ev.data.videos.length ? { videos: ev.data.videos } : {}),
           ...(ev.data.fromTerminal ? { fromTerminal: true } : {}),
           ...(ev.data.scheduled ? { scheduled: true } : {}),
           ...(delivered ? { coordination: delivered.note } : {}),
