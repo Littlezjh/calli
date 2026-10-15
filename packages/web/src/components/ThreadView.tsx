@@ -38,7 +38,6 @@ import { IconAgents, IconCheck, IconChevron, IconClose, IconCopy, IconEdit, Icon
 
 interface Props {
   items: Item[];
-  running: boolean;
   /** Every spelling of the thread's directory (as stored, and resolved), so paths can be shown relative to it. */
   roots: string[];
   /** Fetches an attached image. Must keep the same identity while the thread stays the same. */
@@ -73,7 +72,7 @@ const RECENT_TURNS = 30;
 /** Scrolling up to within this distance of the top unfolds or fetches the earlier turns. */
 const NEAR_TOP_PX = 600;
 
-export function ThreadView({ items, running, roots, loadImage, loadFile, onOpenFile, onPreview, onDecide, hasOlder, loadingOlder, onLoadOlder, onFork, forkAnyTurn, takeover }: Props) {
+export function ThreadView({ items, roots, loadImage, loadFile, onOpenFile, onPreview, onDecide, hasOlder, loadingOlder, onLoadOlder, onFork, forkAnyTurn, takeover }: Props) {
   const [lightbox, setLightbox] = useState<{ url: string; name?: string } | null>(null);
   const show = useCallback((url: string, name?: string) => setLightbox({ url, name }), []);
   // A picture opened from a link in an answer is fetched for the occasion, and let go of when it is closed.
@@ -296,11 +295,6 @@ export function ThreadView({ items, running, roots, loadImage, loadFile, onOpenF
           </div>
         )}
         {shown.map((g) => renderItems(g.items))}
-        {running && (
-          <div className="row">
-            <div className="working">工作中…</div>
-          </div>
-        )}
       </Pictures.Provider>
       {lightbox && <Lightbox url={lightbox.url} name={lightbox.name} onClose={closeLightbox} />}
     </div>

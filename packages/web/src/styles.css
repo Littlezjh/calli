@@ -1552,12 +1552,6 @@ html.list-open body {
 .error-actions .ghost { border-color: color-mix(in srgb, var(--danger) 30%, transparent); color: var(--text); }
 .error-actions button:disabled { opacity: 0.6; }
 
-.working {
-  color: var(--muted);
-  font-size: 14px;
-  animation: pulse 1.6s ease-in-out infinite;
-}
-
 .empty {
   display: grid;
   place-items: center;

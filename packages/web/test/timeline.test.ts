@@ -127,9 +127,14 @@ test('lastSeq tracks the highest seq seen so the stream can resume', () => {
   assert.equal(buildTimeline([]).lastSeq, 0);
 });
 
-test('durationLabel formats seconds and minutes', () => {
+test('durationLabel formats seconds, minutes and hours, carrying rounded seconds across boundaries', () => {
   assert.equal(durationLabel('2026-10-10T00:00:00Z', '2026-10-10T00:00:25Z'), '25 秒');
   assert.equal(durationLabel('2026-10-10T00:00:00Z', '2026-10-10T00:05:25Z'), '5 分 25 秒');
+  assert.equal(durationLabel('2026-10-10T00:00:00Z', '2026-10-10T00:59:59Z'), '59 分 59 秒');
+  assert.equal(durationLabel('2026-10-10T00:00:00Z', '2026-10-10T00:59:59.600Z'), '1 小时 0 分 0 秒');
+  assert.equal(durationLabel('2026-10-10T00:00:00Z', '2026-10-10T01:05:30Z'), '1 小时 5 分 30 秒');
+  assert.equal(durationLabel('2026-10-10T23:00:00Z', '2026-10-12T00:02:03Z'), '25 小时 2 分 3 秒');
+  assert.equal(durationLabel('invalid', '2026-10-10T01:00:00Z'), '');
   assert.equal(durationLabel('2026-10-10T00:00:00Z', null), '');
 });
 
@@ -469,6 +474,9 @@ test('stepDurationLabel keeps one decimal for short calls', () => {
   assert.equal(stepDurationLabel('2026-10-10T00:00:00.000Z', '2026-10-10T00:00:00.400Z'), '0.4 秒');
   assert.equal(stepDurationLabel('2026-10-10T00:00:00.000Z', '2026-10-10T00:00:12.000Z'), '12 秒');
   assert.equal(stepDurationLabel('2026-10-10T00:00:00.000Z', '2026-10-10T00:01:15.000Z'), '1 分 15 秒');
+  assert.equal(stepDurationLabel('2026-10-10T00:00:00.000Z', '2026-10-10T00:00:59.600Z'), '1 分 0 秒');
+  assert.equal(stepDurationLabel('2026-10-10T00:00:00.000Z', '2026-10-10T00:59:59.600Z'), '1 小时 0 分 0 秒');
+  assert.equal(stepDurationLabel('2026-10-10T00:00:00.000Z', '2026-10-10T02:05:30.000Z'), '2 小时 5 分 30 秒');
   assert.equal(stepDurationLabel(undefined, '2026-10-10T00:00:00.000Z'), '');
 });
 

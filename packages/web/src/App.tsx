@@ -1540,8 +1540,6 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           {selected ? (
             <ThreadView
               items={timeline.items}
-              // While an approval is waiting, its card is the status; "working" would be wrong.
-              running={running && !timeline.awaitingApproval}
               roots={threadRoots}
               loadImage={loadImage}
               loadFile={loadFile}

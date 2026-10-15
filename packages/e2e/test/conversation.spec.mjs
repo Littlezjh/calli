@@ -67,7 +67,7 @@ test('a turn shows thinking, verb-first tool rows, and folds its work away when 
 });
 
 test('while a turn runs its steps stay the story: no changes card until it ends', async () => {
-  await page.locator('.new-thread').click();
+  await page.locator('.side-nav').getByRole('button', { name: '新线程', exact: true }).click();
   await page.locator('.composer .context-btn').first().click();
   await page.getByRole('menuitemradio', { name: /^pi/ }).click();
   await page.locator('.composer textarea').click();
@@ -79,7 +79,7 @@ test('while a turn runs its steps stay the story: no changes card until it ends'
   const longRun = page.locator('.step', { hasText: 'npm test' });
   await longRun.waitFor({ timeout: 10_000 });
   await page.waitForTimeout(300);
-  assert.equal(await page.locator('.working').count(), 1);
+  assert.equal(await page.getByText('工作中…', { exact: true }).count(), 0, 'no duplicate status above the composer');
   assert.equal(await page.locator('.changes').count(), 0, 'no changes card while the turn runs');
   assert.equal((await longRun.locator('.step-status').innerText()).trim(), '运行中');
 
@@ -93,7 +93,7 @@ test('while a turn runs its steps stay the story: no changes card until it ends'
 });
 
 test('a run of calls folds into one line that counts them, and opens to the calls', async () => {
-  await page.locator('.new-thread').click();
+  await page.locator('.side-nav').getByRole('button', { name: '新线程', exact: true }).click();
   await page.locator('.composer .context-btn').first().click();
   await page.getByRole('menuitemradio', { name: /^pi/ }).click();
   await page.locator('.composer textarea').click();

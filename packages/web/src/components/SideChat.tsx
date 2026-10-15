@@ -219,7 +219,6 @@ export function SideChat({
           {thread ? (
             <ThreadView
               items={timeline.items}
-              running={running && !timeline.awaitingApproval}
               roots={roots}
               loadImage={loadImage}
               loadFile={loadFile}

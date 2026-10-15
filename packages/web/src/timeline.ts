@@ -687,12 +687,19 @@ export function clockLabel(iso: string, now: Date = new Date()): string {
   return d.getFullYear() === now.getFullYear() ? `${date} ${time}` : `${d.getFullYear()}年${date} ${time}`;
 }
 
-/** Seconds between the first and last event of a work group, for the "用时 X" label. */
+/** Round before splitting units, so carries never leave a "60 秒" or "60 分" remainder. */
+function wholeDurationLabel(seconds: number): string {
+  if (!Number.isFinite(seconds)) return '';
+  const secs = Math.max(0, Math.round(seconds));
+  if (secs < 60) return `${secs} 秒`;
+  if (secs < 3600) return `${Math.floor(secs / 60)} 分 ${secs % 60} 秒`;
+  return `${Math.floor(secs / 3600)} 小时 ${Math.floor(secs % 3600 / 60)} 分 ${secs % 60} 秒`;
+}
+
+/** Time between the first and last event of a work group, for the "用时 X" label. */
 export function durationLabel(startedAt: string, endedAt: string | null): string {
   if (!endedAt) return '';
-  const secs = Math.max(0, Math.round((Date.parse(endedAt) - Date.parse(startedAt)) / 1000));
-  if (secs < 60) return `${secs} 秒`;
-  return `${Math.floor(secs / 60)} 分 ${secs % 60} 秒`;
+  return wholeDurationLabel((Date.parse(endedAt) - Date.parse(startedAt)) / 1000);
 }
 
 /** A tool call's own duration. Short calls keep one decimal, so instant calls do not all read "0 秒". */
@@ -700,8 +707,7 @@ export function stepDurationLabel(startedAt?: string, endedAt?: string): string 
   if (!startedAt || !endedAt) return '';
   const secs = Math.max(0, (Date.parse(endedAt) - Date.parse(startedAt)) / 1000);
   if (secs < 10) return `${secs.toFixed(1)} 秒`;
-  if (secs < 60) return `${Math.round(secs)} 秒`;
-  return `${Math.floor(secs / 60)} 分 ${Math.round(secs % 60)} 秒`;
+  return wholeDurationLabel(secs);
 }
 
 /** Verbs for the tool kinds the adapters report. `other` gets none: the title already speaks. */
