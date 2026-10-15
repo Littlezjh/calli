@@ -24,8 +24,12 @@ export function Dialog({ title, message, input, options = [], confirmLabel, dang
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    // Only select on opening; streaming updates can replace the callbacks while editing.
     inputRef.current?.focus();
     inputRef.current?.select();
+  }, []);
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onCancel();
     };
