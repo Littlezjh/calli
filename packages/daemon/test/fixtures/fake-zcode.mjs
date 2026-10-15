@@ -23,7 +23,7 @@ let contextUsed = process.env.FAKE_ZCODE_INITIAL_CONTEXT ? Number(process.env.FA
 const pending = new Map();
 const request = (method, params) => new Promise((resolve) => { const id = nextId++; pending.set(id, resolve); output({ id, method, params }); });
 const emit = (type, payload, turnId = turn?.id) => output({ method: 'session/event', params: { sessionId, eventId: `ev-${++seq}`, seq, turnId, type, payload, deliveryKind: 'desktop-continuous' } });
-const snapshot = () => ({ runtime: process.env.FAKE_ZCODE_CONTEXT && contextUsed !== null ? { contextUsage: { used: contextUsed, size: model.modelId === 'large' ? 256000 : 128000, cost: null } } : {}, projection: { totalTokenCount: 900000 }, session: { sessionId, target: process.env.FAKE_ZCODE_GOAL ? { status: 'active' } : goal }, settings: { mode: { current: mode }, model: { current: model, available: process.env.FAKE_ZCODE_NO_MODELS || !accountReady ? [] : [{ ref: { providerId, modelId: 'small' }, label: 'Small', reasoning: { defaultLevel: 'low', levels: [{ value: 'low' }, { value: 'high' }] } }, { ref: { providerId, modelId: 'large' }, label: 'Large' }] } } });
+const snapshot = () => ({ runtime: process.env.FAKE_ZCODE_CONTEXT && contextUsed !== null ? { contextUsage: { used: contextUsed, size: model.modelId === 'large' ? 256000 : 128000, cost: null } } : {}, projection: { totalTokenCount: 900000 }, session: { sessionId, target: process.env.FAKE_ZCODE_GOAL ? { status: 'active' } : goal }, settings: { mode: { current: mode }, model: { current: model, available: process.env.FAKE_ZCODE_NO_MODELS || !accountReady ? [] : [{ ref: { providerId, modelId: 'small' }, label: 'Small', properties: { inputFormat: { supportsImage: true } }, reasoning: { defaultLevel: 'low', levels: [{ value: 'low' }, { value: 'high' }] } }, { ref: { providerId, modelId: 'large' }, label: 'Large', properties: { inputFormat: { supportsImage: false } } }] } } });
 const goalSettled = (failed = false) => { goalRun = false; output({ method: 'state.updated', params: { sessionId, reason: failed ? 'goal_continuation_failed' : 'goal_continuation_completed' } }); };
 const preferences = async () => {
   const result = await request('session/requestRuntimePreferences', { sessionId, scope: 'runtime-materialization' });
@@ -96,6 +96,14 @@ async function handle(message) {
     case 'session/stop': reply(id, { stopped: true }); done('cancelled', ''); if (goalRun) { goal.status = 'paused'; goalSettled(); } return;
     case 'session/send': case 'session/compact': {
       if (method === 'session/compact' && p.instructions === 'already-running') return reply(id, { compact: { state: 'already_running' } });
+      if (p.attachments?.length) {
+        if (model.modelId === 'large') return error(id, 'Selected model cannot read images');
+        for (const image of p.attachments) {
+          if (image.kind !== 'image' || !image.filename || !image.mimeType?.startsWith('image/')) return error(id, 'Invalid image attachment');
+          const bytes = image.localPath ? readFileSync(image.localPath) : Buffer.from(image.dataBase64 ?? '', 'base64');
+          if (!bytes.length) return error(id, 'Empty image attachment');
+        }
+      }
       turn = { id: `turn-${++seq}`, inputId: p.inputId };
       const activeTurn = turn;
       await request('session/requestRuntimePreferences', { sessionId, scope: 'user-execution' });
@@ -132,7 +140,7 @@ async function handle(message) {
         emit('tool.updated', { kind: 'scheduled', toolCallId: 'tool-1', toolName: 'Read', input: { file_path: 'README.md' } });
         emit('tool.updated', { kind: 'result', toolCallId: 'tool-1', result: { success: true, output: 'hello' } });
       }
-      emit('model.streaming', { kind: 'text_delta', delta: method === 'session/compact' ? '已压缩' : '你好' });
+      emit('model.streaming', { kind: 'text_delta', delta: method === 'session/compact' ? '已压缩' : p.attachments?.length ? `已读取 ${p.attachments.length} 张图片` : '你好' });
       // part.delta is the other delivery surface and must not duplicate model.streaming.
       emit('part.delta', { field: 'text', delta: '你好', partId: 'part-1' });
       contextUsed = method === 'session/compact' ? (process.env.FAKE_ZCODE_COMPACT_USAGE_UNKNOWN ? null : 8000) : 48000;

@@ -6,6 +6,7 @@ import { goalSummary, parseGoalCommand, type GoalControl } from './native-goal.j
 import { isCompaction, trackCompaction } from './compaction.js';
 import { ZCODE_ICON } from './icons.js';
 import { randomUUID } from 'node:crypto';
+import { basename } from 'node:path';
 import { commandExists } from '../util.js';
 import type { EmittedEvent } from '../events.js';
 import { quoteArg } from './session-location.js';
@@ -37,7 +38,7 @@ export function zcodeModels(snapshot: any): ModelOption[] {
     id: JSON.stringify([m.ref.providerId, m.ref.modelId, m.reasoning?.defaultLevel ?? m.ref.options?.reasoningLevel ?? null]), label: m.label || m.ref.modelId,
     description: m.description,
     efforts: (m.reasoning?.levels ?? []).map((l: any) => l.value).filter((l: any) => EFFORT_LEVELS.includes(l)),
-    images: false,
+    ...(typeof m.properties?.inputFormat?.supportsImage === 'boolean' ? { images: m.properties.inputFormat.supportsImage } : {}),
     isDefault: current?.providerId === m.ref.providerId && current?.modelId === m.ref.modelId,
   }));
 }
@@ -76,7 +77,7 @@ export class ZcodeAdapter implements AgentAdapter {
     coordination: true, resume: true, approvals: true,
     // ZCode also treats toolAllowlist as approval exemptions, so permission tiers would mislead.
     permissionModes: [], effortLevels: [],
-    images: false, deleteSession: false, history: false, quota: true,
+    images: true, deleteSession: false, history: false, quota: true,
     compact: true, fork: false, forkAt: false, multiAccount: false, forkInto: false,
   };
   private cachedModels: ModelOption[] | null = null;
@@ -212,10 +213,10 @@ class ZcodeSession implements AgentSession {
   private async promptInternal(input: TurnInput, hooks: TurnHooks): Promise<TurnResult> {
     if (this.closed) throw new Error('zcode 连接已关闭');
     if (this.active) throw new Error('zcode 已有正在运行的轮次');
-    if (input.images.length) throw new Error('zcode 适配器暂不支持图片');
     const text = input.text.trim();
     const match = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(text);
     const name = match?.[1];
+    if (name && input.images.length) throw new Error(`/${name} 不接受图片，请将图片作为普通消息发送。`);
     const goal = parseGoalCommand(text);
     const compact = name === 'compact';
     if (text.startsWith('/') && !COMMANDS.some((command) => command.name === name)) throw new Error('精简接入不执行此命令，请用 /help 查看支持的命令');
@@ -242,7 +243,14 @@ class ZcodeSession implements AgentSession {
       this.active = active;
       this.submission = this.wire.request(goal ? 'session/goal' : compact ? 'session/compact' : 'session/send', {
         sessionId: this.agentSessionId, inputId,
-        ...(goal ? goal : compact ? { instructions: text.slice('/compact'.length).trim() } : { content: input.text }),
+        ...(goal ? goal : compact ? { instructions: text.slice('/compact'.length).trim() } : {
+          content: input.text,
+          ...(input.images.length ? { attachments: input.images.map((image, index) => ({
+            kind: 'image', mimeType: image.mimeType,
+            filename: image.path ? basename(image.path) : `image-${index + 1}.${image.mimeType.split('/')[1]}`,
+            ...(image.path ? { localPath: image.path } : { dataBase64: image.data }),
+          })) } : {}),
+        }),
       }).then((result) => {
         if (goal && this.active === active) {
           if (typeof result?.startedTurn !== 'boolean' || !result.snapshot) throw new Error('zcode 未返回可识别的目标状态');

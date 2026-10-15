@@ -1,11 +1,11 @@
 import { ZcodeWire } from '../src/adapters/zcode-wire.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ZcodeAdapter, ZCODE_BASIC_TOOLS, zcodeContextUsage } from '../src/adapters/zcode.js';
+import { ZcodeAdapter, ZCODE_BASIC_TOOLS, zcodeContextUsage, zcodeModels } from '../src/adapters/zcode.js';
 import type { EmittedEvent } from '../src/events.js';
 import type { TurnHooks } from '../src/adapters/types.js';
 const here = dirname(fileURLToPath(import.meta.url));
@@ -17,6 +17,40 @@ function setup(env: Record<string, string> = {}) {
 }
 const hooks = (events: EmittedEvent[]): TurnHooks => ({ emit: (event) => events.push(event), requestApproval: async () => ({ cancelled: true }) });
 const input = (text: string) => ({ text, images: [] });
+
+test('zcode reports native model image support without guessing missing capabilities', () => {
+  const available = [true, false, undefined].map((supportsImage, i) => ({ ref: { providerId: 'fixture', modelId: String(i) }, properties: { inputFormat: { supportsImage } } }));
+  assert.deepEqual(zcodeModels({ settings: { model: { available } } }).map(m => m.images), [true, false, undefined]);
+});
+
+test('zcode sends local and inline image attachments, including image-only turns; commands never discard images', async () => {
+  const f = setup();
+  const s = await f.adapter.start({ cwd: f.dir });
+  try {
+    assert.equal(f.adapter.capabilities.images, true);
+    const models = await f.adapter.models();
+    assert.deepEqual(models.map(m => m.images), [true, false]);
+    const data = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+    const path = join(f.dir, 'picture.png');
+    writeFileSync(path, Buffer.from(data, 'base64'));
+    const images = [{ data, mimeType: 'image/png', path }, { data, mimeType: 'image/png' }];
+    for (const text of ['Describe these images.', '']) {
+      const events: EmittedEvent[] = [];
+      assert.equal((await s.prompt({ text, images }, hooks(events))).stopReason, 'end_turn');
+      assert.ok(events.some(e => e.type === 'message.delta' && e.data.text === '已读取 2 张图片'));
+      const sent = f.log().filter(r => r.method === 'session/send').at(-1).params;
+      assert.equal(sent.content, text);
+      assert.deepEqual(sent.attachments, [
+        { kind: 'image', filename: 'picture.png', mimeType: 'image/png', localPath: path },
+        { kind: 'image', filename: 'image-2.png', mimeType: 'image/png', dataBase64: data },
+      ]);
+    }
+    for (const text of ['/compact', '/goal investigate', '/help', '/session', '/usage']) {
+      await assert.rejects(s.prompt({ text, images }, hooks([])), /不接受图片/);
+    }
+    assert.equal(f.log().filter(r => ['session/send', 'session/goal', 'session/compact'].includes(r.method)).length, 2);
+  } finally { await s.close(); f.clean(); }
+});
 
 test('zcode context maps only native current usage and validates optional cost', () => {
   const snapshot = (used: unknown, size: unknown, cost: unknown = null) => ({ runtime: { contextUsage: { used, size, cost } }, projection: { totalTokenCount: 900000 } });

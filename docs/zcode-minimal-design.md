@@ -62,9 +62,13 @@ Skills、插件、Hooks、MCP 自动加载与原生子代理模块并没有被�
 
 这个示例用于说明单个实例，实际文件应保留已有 agents。实例可通过 env 指定 zcode 已有的模型配置环境变量。模型列表通过 `persistence: "deferred"` 的临时会话读取并关闭；不提交 prompt，也不创建持久线程。
 
-支持 API 模型，以及原生 CLI 已登录的 BigModel / Z.ai 个人 Coding Plan。账号接入只读原生凭据：启动 app-server 前定位内置模型目录，通过 `provider/updateAccountConfig` 同步供应商可用状态；模型列表、默认模型与思考档位仍取自原生会话快照。每次 `interaction/requestProviderRuntimeHeaders` 回调重新读取当前账号的凭据，经会话和供应商匹配后回复本次请求的鉴权材料。凭据不进入模型列表、日志或 Hub 持久配置；退出登录或切换账号后，旧会话拒绝继续使用该身份。团队套餐、Start Plan 等其他账号模式暂不支持。图片、历史导入、fork、原生会话删除暂不开放，额度查询边界见下文。所有差异均由 capabilities 表达，前端不按 zcode 名称分支。
+支持 API 模型，以及原生 CLI 已登录的 BigModel / Z.ai 个人 Coding Plan。账号接入只读原生凭据：启动 app-server 前定位内置模型目录，通过 `provider/updateAccountConfig` 同步供应商可用状态；模型列表、默认模型与思考档位仍取自原生会话快照。每次 `interaction/requestProviderRuntimeHeaders` 回调重新读取当前账号的凭据，经会话和供应商匹配后回复本次请求的鉴权材料。凭据不进入模型列表、日志或 Hub 持久配置；退出登录或切换账号后，旧会话拒绝继续使用该身份。团队套餐、Start Plan 等其他账号模式暂不支持。历史导入、fork、原生会话删除暂不开放，额度查询边界见下文。所有差异均由 capabilities 表达，前端不按 zcode 名称分支。
 
 原生 CLI 的账号初始化与 app-server 的 Host 账号同步不同，仅传默认模型不能完成注册。账号同步必须绑定同一份内置目录的版本和路径；优先使用实例的 `ZCODE_BUILTIN_PROVIDER_CONFIG_FILE`，否则查找当前平台、控制面地址对应的唯一原生缓存。有多个版本时，使用 `ZCODE_APP_VERSION` 缩小范围或显式指定目录文件，不猜测应使用哪个版本。两个配置路径只传给本次子进程，不改用户文件。供应商同步回执只表示收到，最终是否可用仍以原生模型列表为准。没有可用模型时保留入口和说明，不补造模型或通用思考档位。
+
+## 图片输入
+
+通过 `session/send.attachments` 发送图片，支持图文、多图和纯图片消息。优先传 Hub 已保存的 `localPath`；没有文件路径时传 `dataBase64`，保留 `kind: image`、文件名和 MIME 类型。图片能力读取原生模型的 `properties.inputFormat.supportsImage`，明确不支持的模型提示换模型；未报告的能力保持未知。斜杠命令带图会明确报错，不静默丢弃附件。前端沿用统一的能力判断与上传入口。
 
 ## 协议与实现
 
@@ -85,6 +89,7 @@ zcode 帧不含标准 JSON-RPC 的 jsonrpc 字段，因此使用 `adapters/zcode
 - 假 agent：创建/恢复参数、记忆偏好、旧协议拒绝、活跃目标拒绝、模型探测、流式、工具、审批选项校验、取消、压缩、提交失败及崩溃。
 - 账号回归：BigModel / Z.ai 模型同步、选择、恢复、实际请求鉴权，凭据轮换、退出与切换账号，错误供应商/会话拒绝，配置不变、日志无凭据，以及缓存目录歧义。真实本机个人 Coding Plan 已返回 GLM-5.3、GLM-5.3-Flash，两个模型均在隔离测试会话完成实际回复，并验证恢复后切换模型及设置强度。真实账号的 Chromium 桌面/手机、亮色/深色已验证模型列表和选择；只读 UI 复验：`RAH_ZCODE_REAL_BIN=zcode node --test packages/e2e/test/zcode-account-real.spec.mjs`。
 - 未修改的真实 zcode 0.16.9 + 本地模拟 OpenAI API：模型发现、新建、恢复、流式回复、压缩和模型工具列表；在项目配置显式开启记忆、预置 MEMORY.md 标记时，请求中无该标记、文件不变且无额外记忆提取请求。复验命令：`RAH_ZCODE_REAL_BIN=zcode npx tsx --test packages/daemon/test/zcode-real.test.ts`。
+- 图片回归：假 agent 校验本地/内联附件与命令拒绝；真实 CLI + 本地模拟 API 验证图文、纯图和两种附件的图片字节到达上游；`zcode-images.spec.mjs` 验证浏览器上传与发送、纯图消息、文本模型拒绝，覆盖桌面/手机 × 亮/暗。
 - Chromium：桌面 1440×1000、手机 390×844，亮色与深色；四张截图实际查看。
 - `npm run typecheck && npm test && npm run build`。构建保留仓库已有的大 bundle 提示。
 

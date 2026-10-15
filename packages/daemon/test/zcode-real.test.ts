@@ -9,7 +9,7 @@ import { ZcodeAdapter, ZCODE_BASIC_TOOLS } from '../src/adapters/zcode.js';
 import type { AgentSession, TurnHooks } from '../src/adapters/types.js';
 
 // Opt-in: an unmodified installed CLI, isolated storage, and a local model endpoint. No real API keys.
-test('real zcode: memory stays disabled across create, resume, compact and native goals', { skip: !process.env.RAH_ZCODE_REAL_BIN, timeout: 60_000 }, async () => {
+test('real zcode: images reach the model and memory stays disabled across create, resume, compact and goals', { skip: !process.env.RAH_ZCODE_REAL_BIN, timeout: 60_000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'rah-zcode-real-'));
   const requests: any[] = [];
   let goalMode = false;
@@ -34,7 +34,7 @@ test('real zcode: memory stays disabled across create, resume, compact and nativ
     const port = (server.address() as { port: number }).port;
     const modelConfig = {
       enabled: true,
-      properties: { requiresMfjsToolSchema: false, contextWindow: 128000, inputFormat: { supportsText: true, supportsImage: false, supportsVideo: false, supportsAudio: false, supportsPdf: false }, outputFormat: { supportsText: true }, supportsToolCall: true, supportsJsonSchemaOutput: false, supportsNativeWebSearch: false, supportsMidConversationSystem: false },
+      properties: { requiresMfjsToolSchema: false, contextWindow: 128000, inputFormat: { supportsText: true, supportsImage: true, supportsVideo: false, supportsAudio: false, supportsPdf: false }, outputFormat: { supportsText: true }, supportsToolCall: true, supportsJsonSchemaOutput: false, supportsNativeWebSearch: false, supportsMidConversationSystem: false },
       optionSpecs: { reasoningLevel: { values: ['off'], map: '{}' }, maxOutputTokens: { max: 4096, map: '{}' } },
     };
     writeFileSync(join(dir, 'builtin.json'), JSON.stringify({ schemaVersion: 1, revision: 1, config: {
@@ -59,6 +59,7 @@ test('real zcode: memory stays disabled across create, resume, compact and nativ
     });
     const models = await adapter.models();
     assert.equal(models.length, 1);
+    assert.equal(models[0].images, true);
     const contextReadings: Array<{ used: number | null; size: number }> = [];
     const consumption: Array<Record<string, unknown>> = [];
     const hooks: TurnHooks = { emit: event => { if (event.type === 'usage.sample') consumption.push(event.data); if (event.type === 'usage.updated') contextReadings.push(event.data as { used: number | null; size: number }); }, requestApproval: async () => ({ cancelled: true }) };
@@ -86,6 +87,20 @@ test('real zcode: memory stays disabled across create, resume, compact and nativ
       if (text === '/usage') assert.match(response, /总计：[0-9,]+ tokens/);
     }
     assert.equal(requests.length, 3, 'No extra title or memory extraction calls');
+    const imageData = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+    const imagePath = join(dir, 'picture.png');
+    writeFileSync(imagePath, Buffer.from(imageData, 'base64'));
+    for (const text of ['Describe both images.', '']) {
+      assert.equal((await session.prompt({ text, images: [
+        { data: imageData, mimeType: 'image/png', path: imagePath },
+        { data: imageData, mimeType: 'image/png' },
+      ] }, hooks)).stopReason, 'end_turn');
+      const user = requests.at(-1).messages.filter((message: any) => message.role === 'user').at(-1);
+      const images = user.content.filter((block: any) => block.type === 'image_url');
+      assert.equal(images.length, 2, 'Both local-path and inline images reach the upstream model');
+      assert.ok(images.every((block: any) => block.image_url.url === `data:image/png;base64,${imageData}`));
+    }
+
     goalMode = true;
     let goalText = '';
     const goalHooks: TurnHooks = { ...hooks, emit: (event) => { if (event.type === 'message.delta') goalText += event.data.text; } };
