@@ -17,6 +17,19 @@ function setup(env: Record<string, string> = {}) {
 const hooks = (events: EmittedEvent[]): TurnHooks => ({ emit: (event) => events.push(event), requestApproval: async () => ({ cancelled: true }) });
 const input = (text: string) => ({ text, images: [] });
 
+test('zcode without registered models hides fallback efforts and explains account support before setting effort', async () => {
+  const f = setup({ FAKE_ZCODE_NO_MODELS: '1' });
+  try {
+    assert.deepEqual(await f.adapter.models(), []);
+    assert.deepEqual(f.adapter.capabilities.effortLevels, []);
+    for (const resumeId of [undefined, 'existing-account-session']) {
+      await assert.rejects(f.adapter.start({ cwd: f.dir, resumeId, effort: 'high' }), /没有可用模型.*账号套餐模型/);
+    }
+    assert.equal(f.log().some(r => r.method === 'session/setThoughtLevel' || r.method === 'session/send'), false);
+    assert.equal(f.log().filter(r => r.method === 'session/close').length, 3);
+  } finally { f.clean(); }
+});
+
 test('zcode creation and resume send restrictive protocol preferences without changing config', async () => {
   const f = setup();
   try {

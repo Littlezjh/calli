@@ -61,7 +61,7 @@ export class ZcodeAdapter implements AgentAdapter {
     goal: { controls: ['pause'] as const },
     coordination: true, resume: true, approvals: true,
     // ZCode also treats toolAllowlist as approval exemptions, so permission tiers would mislead.
-    permissionModes: [], effortLevels: EFFORT_LEVELS,
+    permissionModes: [], effortLevels: [],
     images: false, deleteSession: false, history: false, quota: true,
     compact: true, fork: false, forkAt: false, multiAccount: false, forkInto: false,
   };
@@ -123,6 +123,10 @@ class ZcodeSession implements AgentSession {
     if (!this.preferenceRequests) throw new Error('此 zcode 未请求运行时偏好，无法保证关闭记忆，请升级 zcode');
     if (typeof snapshot?.session?.sessionId !== 'string') throw new Error('zcode 未返回会话 ID');
     this.agentSessionId = snapshot.session.sessionId;
+    if (!this.probe && zcodeModels(snapshot).length === 0) {
+      await this.close();
+      throw new Error('zcode 没有可用模型。Hub 当前支持 API 模型，尚未接入账号套餐模型的注册与动态鉴权；请在 zcode 中配置 API 模型后刷新模型列表。');
+    }
     this.goalActive = (snapshot.session.target ?? snapshot.projection?.target)?.status === 'active';
     if (opts.resumeId) {
       await this.wire.request('session/setMode', { sessionId: this.agentSessionId, mode: 'build' });
