@@ -440,7 +440,7 @@ function MarkdownLink({ href, title, children }: { href?: string; title?: string
   const [note, setNote] = useState<string | null>(null);
   useEffect(() => {
     if (!note) return;
-    const timer = setTimeout(() => setNote(null), 1600);
+    const timer = setTimeout(() => setNote(null), 3200);
     return () => clearTimeout(timer);
   }, [note]);
 
@@ -458,10 +458,11 @@ function MarkdownLink({ href, title, children }: { href?: string; title?: string
   const { path } = target;
   const picture = pictures !== null && IMAGE_FILE.test(path);
   const copy = async () => setNote((await copyText(path)) ? '已复制路径' : '复制失败，请手动选中');
+  const failed = async () => setNote((await copyText(path)) ? '无法预览，已复制路径' : '无法预览，请检查文件是否还在');
   const act = () => {
     // The path is copied in the click itself where it can be: a browser may refuse once a fetch has come between.
-    if (picture) pictures.openFile(path).catch(copy);
-    else if (pictures?.openText) pictures.openText(path).catch(copy);
+    if (picture) pictures.openFile(path).catch(failed);
+    else if (pictures?.openText) pictures.openText(path).catch(failed);
     else void copy();
   };
   return (

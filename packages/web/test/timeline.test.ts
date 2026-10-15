@@ -391,6 +391,8 @@ test('imagePathsIn finds local image files in an answer and leaves web addresses
   assert.deepEqual(imagePathsIn('a.png a.png A.PNG'), ['a.png', 'A.PNG'], 'each file once');
   assert.equal(imagePathsIn(Array.from({ length: 20 }, (_, i) => `shot-${i}.png`).join(' ')).length, 6, 'no more than six');
   assert.deepEqual(imagePathsIn(''), []);
+  assert.deepEqual(imagePathsIn('[截图](</tmp/report/截图 (1).png>)'), ['/tmp/report/截图 (1).png']);
+  assert.deepEqual(imagePathsIn('[截图](/tmp/report/a%20b.png) [missing.png](https://example.com/a.png)'), ['/tmp/report/a b.png']);
 });
 
 test('fromTerminal marks a turn that arrived through sync, not from this page', () => {

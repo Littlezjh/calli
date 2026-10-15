@@ -585,9 +585,9 @@ const MAX_IMAGE_PATHS = 6;
  */
 export function imagePathsIn(text: string): string[] {
   const found: string[] = [];
-  const add = (raw: string) => {
+  const add = (raw: string, encoded = false) => {
     let path = raw.replace(/^file:\/\//, '');
-    if (path !== raw) {
+    if (encoded || path !== raw) {
       try {
         path = decodeURIComponent(path); // an address, so a space in the name was written as %20
       } catch {
@@ -598,9 +598,12 @@ export function imagePathsIn(text: string): string[] {
     if (!IMAGE_FILE.test(path) || found.includes(path) || found.length >= MAX_IMAGE_PATHS) return;
     found.push(path);
   };
-  for (const m of text.matchAll(/!\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/g)) add(m[1]);
+  const rest = text.replace(/!?\[[^\]\n]*\]\(\s*(?:<([^>\n]+)>|((?:\\.|[^\\\s()]|\([^()\s]*\))+))(?:\s+"[^"\n]*")?\s*\)/g, (_match, angle: string | undefined, plain: string) => {
+    add((angle ?? plain).replace(/\\([\\()[\]<> ])/g, '$1'), true);
+    return '';
+  });
   // A path stands on its own: after a space, a quote, a bracket or CJK punctuation, never mid-word or inside a URL.
-  for (const m of text.matchAll(/(?<=^|[\s`'"(（：，。])((?:file:\/\/)?[\p{L}\p{N}_@%+.~\-/]+\.(?:png|jpe?g|gif|webp|svg))(?=$|[\s`'")）：，。,;；!?]|[.:](?:\s|$))/gimu)) {
+  for (const m of rest.matchAll(/(?<=^|[\s`'"(（：，。])((?:file:\/\/)?[\p{L}\p{N}_@%+.~\-/]+\.(?:png|jpe?g|gif|webp|svg))(?=$|[\s`'")）：，。,;；!?]|[.:](?:\s|$))/gimu)) {
     add(m[1]);
   }
   return found;

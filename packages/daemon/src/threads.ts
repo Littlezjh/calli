@@ -20,6 +20,7 @@ import {
   type TurnInput,
 } from './adapters/types.js';
 import { findFiles, listDir, readText, type Listing, type TextFile } from './browse.js';
+import { temporaryFile } from './artifacts.js';
 import { MAX_IMAGES, sniffImageType, sniffSvg, type AttachmentStore, type StoredAttachment } from './attachments.js';
 import { HttpError } from './errors.js';
 import { handoverContext, handoverPrompt, synthesizeHandover, turnMessage } from './handover.js';
@@ -605,12 +606,12 @@ export class ThreadManager {
 
   /**
    * An image file the agent made or mentioned, for showing it in the thread. Only files the thread
-   * may show (see resolveInThread), and only real images: one of the four bitmap formats, or an SVG.
+   * may show (see resolveReadableFile), and only real images: one of the four bitmap formats, or an SVG.
    */
   getThreadImage(threadId: string, rawPath: unknown): { path: string; mimeType: string; size: number } {
     const notFound = new HttpError(404, 'no such image in this thread');
     if (typeof rawPath !== 'string' || !rawPath) throw new HttpError(400, 'path is required');
-    const { real } = this.resolveInThread(threadId, rawPath, notFound);
+    const { real } = this.resolveReadableFile(threadId, rawPath, notFound);
 
     const stat = statSync(real);
     if (!stat.isFile() || stat.size === 0 || stat.size > MAX_SERVED_IMAGE_BYTES) throw notFound;
@@ -652,9 +653,29 @@ export class ThreadManager {
   readThreadText(threadId: string, rawPath: unknown): { root: string; path: string } & TextFile {
     const notFound = new HttpError(404, 'no such file in this thread');
     if (typeof rawPath !== 'string' || !rawPath) throw new HttpError(400, 'path is required');
-    const { real, root } = this.resolveInThread(threadId, rawPath, notFound);
+    const { real, root } = this.resolveReadableFile(threadId, rawPath, notFound);
     if (!statSync(real).isFile()) throw notFound;
     return { root, path: real, ...readText(real) };
+  }
+
+  /** Temporary files explicitly referenced by this thread's answers are readable individually. */
+  private resolveReadableFile(threadId: string, rawPath: string, notFound: HttpError): { real: string; root: string } {
+    try {
+      return this.resolveInThread(threadId, rawPath, notFound);
+    } catch (error) {
+      if (error !== notFound) throw error;
+    }
+    let given = rawPath;
+    if (/^file:\/\//i.test(given)) {
+      given = given.slice(7);
+      try { given = decodeURIComponent(given); } catch { /* A literal percent sign. */ }
+    }
+    if (!isAbsolute(given)) throw notFound;
+    const path = resolve(given);
+    const real = temporaryFile(path);
+    if (!real || !this.store.referencesFile(threadId, path)) throw notFound;
+    // Keep the browser rooted in the project; the grant is only for this file, not its folder.
+    return { real, root: this.threadView(threadId).cwdReal };
   }
 
   listSections(): SectionRecord[] {

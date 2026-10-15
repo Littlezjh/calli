@@ -424,7 +424,7 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
           </div>
           {!inFolder && fileActions}
           {!inFolder && (
-            <button type="button" className="icon-btn" aria-label="浏览文件夹" title="浏览文件夹" onClick={() => showFolder(filePath ? parentDir(filePath) : (root ?? ''))}>
+            <button type="button" className="icon-btn" aria-label="浏览文件夹" title="浏览文件夹" onClick={() => showFolder(filePath && root && filePath.startsWith(`${root}/`) ? parentDir(filePath) : (root ?? ''))}>
               <IconFolder size={17} />
             </button>
           )}

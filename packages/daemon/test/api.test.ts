@@ -1715,6 +1715,63 @@ test('files: an image in the thread directory is served; anything else, or anywh
   assert.equal((await api('/api/threads/nope/files?path=out/chart.png')).status, 404);
 });
 
+test('files: only temporary files explicitly referenced in this thread’s completed answers can be read', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rah-artifacts-'));
+  const thread = await newThread({ agent: 'claude' });
+  const other = await newThread({ agent: 'pi' });
+  const path = join(dir, '截图 (1).png');
+  const notes = join(dir, 'report.md');
+  const get = (id: string, route: string, file: string) => api(`/api/threads/${id}/${route}?path=${encodeURIComponent(file)}`);
+  const answer = (id: string, turn: string, text: string) => {
+    store.appendEvent(id, turn, 'turn.started', { text: 'draw a chart' });
+    // A destination split across chunks must work once the answer is assembled.
+    const split = Math.floor(text.length / 2);
+    store.appendEvent(id, turn, 'message.delta', { text: text.slice(0, split) });
+    store.appendEvent(id, turn, 'message.delta', { text: text.slice(split) });
+    store.appendEvent(id, turn, 'turn.done', {});
+  };
+  try {
+    writeFileSync(path, Buffer.from(PNG, 'base64'));
+    writeFileSync(notes, '# Report\nTemporary artifact\n');
+    writeFileSync(join(dir, 'neighbour.png'), Buffer.from(PNG, 'base64'));
+    symlinkSync(path, join(dir, 'redirect.png'));
+    symlinkSync(dir, join(dir, 'redirect-dir'));
+    symlinkSync('/etc/passwd', join(dir, 'outside.txt'));
+    assert.equal((await get(thread.id, 'files', path)).status, 404);
+    store.appendEvent(thread.id, 'user-only', 'turn.started', { text: `[截图](<${path}>)` });
+    store.appendEvent(thread.id, 'user-only', 'turn.done', {});
+    assert.equal((await get(thread.id, 'files', path)).status, 404, 'a user prompt alone is not an artifact');
+    answer(other.id, 'other', `[截图](<${path}>)`);
+    assert.equal((await get(thread.id, 'files', path)).status, 404, 'another thread cannot grant access');
+    answer(thread.id, 'output', `[截图](<${path}>)\n[报告](file://${notes}#L2)\n目录：${dir}\n[重定向](${dir}/redirect.png)\n[目录链接](${dir}/redirect-dir/截图%20(1).png)\n[外部](${dir}/outside.txt)\n[外部](/etc/passwd)`);
+    for (const file of [path, `file://${encodeURI(path)}`]) {
+      const response = await get(thread.id, 'files', file);
+      assert.equal(response.status, 200, file);
+      assert.equal(response.headers.get('content-type'), 'image/png');
+      assert.deepEqual(Buffer.from(await response.arrayBuffer()), Buffer.from(PNG, 'base64'));
+    }
+    const text = await get(thread.id, 'text', notes);
+    assert.equal(text.status, 200);
+    assert.equal((await text.json()).text, '# Report\nTemporary artifact\n');
+    assert.equal((await get(thread.id, 'files', notes)).status, 404, 'image bytes are still checked');
+    for (const file of [join(dir, 'neighbour.png'), join(dir, 'redirect.png'), join(dir, 'redirect-dir', '截图 (1).png'), dir]) {
+      assert.equal((await get(thread.id, 'files', file)).status, 404, file);
+    }
+    for (const file of [join(dir, 'outside.txt'), '/etc/passwd', dir]) assert.equal((await get(thread.id, 'text', file)).status, 404);
+    assert.equal((await get(thread.id, 'tree', dir)).status, 404, 'a file grant never opens the folder');
+    assert.equal((await get(thread.id, 'preview-link', notes)).status, 404, 'no directory grant for HTML subresources');
+    assert.equal((await get(other.id, 'text', notes)).status, 404);
+    assert.equal((await api(`/api/threads/${thread.id}/files?path=${encodeURIComponent(path)}`, {}, false)).status, 401);
+    // Authorization survives reopening the database; existing answers need no migration or rewrite.
+    const reopened = new Store(dataDir);
+    try { assert.equal(reopened.referencesFile(thread.id, path), true); } finally { reopened.close(); }
+    rmSync(path);
+    assert.equal((await get(thread.id, 'files', path)).status, 404, 'a cleaned temporary file is gone');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("files: an agent's own folder for the session is served too, and only that session's", async () => {
   const brain = join(process.env.RAH_AGY_HOME!, 'brain');
   mkdirSync(join(brain, 'abcdef12-0001'), { recursive: true });

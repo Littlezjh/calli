@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import type { EventType, StoredEvent } from './events.js';
 import { Telemetry } from './telemetry.js';
 import { askedText } from './util.js';
+import { referencesFile } from './artifacts.js';
 
 export interface ThreadRecord {
   id: string;
@@ -434,6 +435,13 @@ export class Store {
     this.db
       .prepare('INSERT INTO turn_text (thread_id, turn_id, role, ts, text) VALUES (?, ?, ?, ?, ?) ON CONFLICT(thread_id, turn_id, role) DO UPDATE SET ts = excluded.ts, text = excluded.text')
       .run(threadId, turnId, role, ts, text);
+  }
+
+  /** Completed answers are already assembled for search, including imported and older turns. */
+  referencesFile(threadId: string, path: string): boolean {
+    const rows = this.db.prepare("SELECT text FROM turn_text WHERE thread_id = ? AND role = 'assistant'").iterate(threadId);
+    for (const row of rows) if (referencesFile(String(row.text), path)) return true;
+    return false;
   }
 
   /**
