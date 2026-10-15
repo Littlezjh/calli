@@ -12,6 +12,30 @@ before(async () => {
 });
 after(async () => { await browser?.close(); await daemon?.stop(); });
 
+test('empty model discovery keeps an explanatory picker visible without offering effort levels', async () => {
+  const emptyDaemon = await startDaemon({ RAH_AGENTS_JSON: JSON.stringify({ agents: [{ id: 'zcode', adapter: 'zcode', command: [process.execPath, join(repoRoot, 'daemon/test/fixtures/fake-zcode.mjs')], env: { FAKE_ZCODE_NO_MODELS: '1' } }] }) });
+  try {
+    assert.deepEqual(await (await api(emptyDaemon, '/api/agents/zcode/models')).json(), []);
+    for (const mobile of [false, true]) for (const colorScheme of ['light', 'dark']) {
+      const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 1000 }, isMobile: mobile, hasTouch: mobile, colorScheme });
+      try {
+        const page = await context.newPage();
+        await openUi(page, emptyDaemon);
+        await page.getByRole('button', { name: '模型：暂无可选模型', exact: true }).click();
+        await page.getByText('暂无可选模型', { exact: true }).waitFor();
+        await page.getByText('还没有从这个实例读到可选模型。', { exact: false }).waitFor();
+        assert.equal(await page.getByRole('slider').count(), 0);
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
+        if (process.env.RAH_E2E_SHOTS_DIR) {
+          mkdirSync(process.env.RAH_E2E_SHOTS_DIR, { recursive: true });
+          await page.waitForTimeout(300);
+          await page.screenshot({ path: join(process.env.RAH_E2E_SHOTS_DIR, `zcode-empty-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
+        }
+      } finally { await context.close(); }
+    }
+  } finally { await emptyDaemon.stop(); }
+});
+
 test('ZCode threads use the shared interface in desktop/phone and both themes', async () => {
   const agents = await (await api(daemon, '/api/agents')).json();
   const agent = agents.find((a) => a.id === 'zcode');

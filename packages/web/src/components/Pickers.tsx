@@ -161,7 +161,21 @@ export function modelRows(models: ModelOption[]): Array<{ value: string | null; 
 export function ModelPicker(props: ModelProps) {
   const { models, model, efforts, effort, openSignal, quietFor } = props;
   const narrow = useIsNarrow();
-  if (models.length === 0 && efforts.length === 0 && quietFor === undefined) return null;
+  if (models.length === 0 && efforts.length === 0 && quietFor === undefined) {
+    return (
+      <Popover
+        label="模型"
+        openSignal={openSignal}
+        align="end"
+        triggerClassName="tool-btn model-control-trigger"
+        triggerLabel="模型：暂无可选模型"
+        triggerTitle="暂无可选模型"
+        trigger={<><span className="model-trigger-name">模型</span><IconChevron size={13} open /></>}
+      >
+        {() => <><div className="pop-title">暂无可选模型</div><p className="member-model-empty">还没有从这个实例读到可选模型。请检查实例的模型配置与登录状态，配置完成后刷新页面。</p></>}
+      </Popover>
+    );
+  }
   const levels = effortsForModel(models, model, efforts);
   const shownEffort = effort && levels.includes(effort) ? effort : null;
   if (quietFor !== undefined) {
