@@ -1,5 +1,6 @@
 import type { UsageReport, AgentDiagnostic } from './observability';
 import type { StoredEvent } from './timeline';
+import { cachedQuota, clearQuotaCache, rememberQuota } from './quota-cache';
 
 /** Where threads may work: the project roots, and whether one can start outside any project. */
 export interface FolderEntry {
@@ -419,6 +420,7 @@ export function loadToken(): string {
 }
 
 export function saveToken(token: string): void {
+  if (!token || token !== loadToken()) clearQuotaCache();
   try {
     if (token) localStorage.setItem(TOKEN_KEY, token);
     else localStorage.removeItem(TOKEN_KEY);
@@ -435,6 +437,9 @@ const STREAM_IDLE_MS = 40_000;
 const STREAM_WAKE_MS = 5_000;
 
 export class Api {
+  private readonly quotas = new Map<string, PlanQuota>();
+  private readonly quotaRequests = new Map<string, Promise<PlanQuota>>();
+
   constructor(
     private readonly token: string,
     private readonly base = '',
@@ -844,8 +849,24 @@ export class Api {
     return this.request('GET', `/api/agents/${encodeURIComponent(agent)}/diagnostics${refresh ? '?refresh=1' : ''}`);
   }
 
+  /** A previous reading for immediate display, even after reopening the board or reloading the page. */
+  cachedAgentQuota(agent: string): PlanQuota | null {
+    return this.quotas.get(agent) ?? (loadToken() === this.token
+      ? cachedQuota(this.url(`/api/agents/${encodeURIComponent(agent)}/quota`)) : null);
+  }
+
   agentQuota(agent: string, refresh = false): Promise<PlanQuota> {
-    return this.request('GET', `/api/agents/${agent}/quota${refresh ? '?refresh=1' : ''}`);
+    const pending = this.quotaRequests.get(agent);
+    if (pending) return pending;
+    const path = `/api/agents/${encodeURIComponent(agent)}/quota`;
+    const request = this.request<PlanQuota>('GET', `${path}${refresh ? '?refresh=1' : ''}`).then(quota => {
+      this.quotas.set(agent, quota);
+      // A request that finishes after sign-out must not repopulate the next login's cache.
+      if (loadToken() === this.token) rememberQuota(this.url(path), quota);
+      return quota;
+    }).finally(() => this.quotaRequests.delete(agent));
+    this.quotaRequests.set(agent, request);
+    return request;
   }
 
   // Skills, in the folders the agents themselves read. Whichever machine this client is for

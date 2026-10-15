@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { AgentInfo, Api, PlanQuota } from '../api';
 import { formatReset, quotaHeadline, quotaLevel, quotaRows } from '../quota';
 import { AgentMark } from './icons';
@@ -23,44 +23,42 @@ interface Props {
 /** How often an open board re-reads. The daemon caches for a minute, so this stays cheap. */
 const REFRESH_MS = 60_000;
 
-const clock = (iso: string): string => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+const clock = (iso: string): string => {
+  const at = new Date(iso);
+  return at.toLocaleString('zh-CN', { ...(at.toDateString() !== new Date().toDateString() ? { month: 'numeric', day: 'numeric' } as const : {}), hour: '2-digit', minute: '2-digit' });
+};
 
-type Reading = { quota: PlanQuota } | { failedAt: string; quota: PlanQuota | null } | null;
+type Reading = { api: Api; agent: string; quota: PlanQuota | null; failedAt?: string };
 
 function QuotaRow({ api, agent, onError, refreshAll, askAll }: { api: Api; agent: AgentInfo; onError: (e: unknown) => void; refreshAll: number; askAll: number }) {
-  const [reading, setReading] = useState<Reading>(null);
+  const [reading, setReading] = useState<Reading>(() => ({ api, agent: agent.id, quota: api.cachedAgentQuota(agent.id) }));
   const [loading, setLoading] = useState(true);
-  const inFlight = useRef(false);
-
-  const read = useCallback(
-    async (refresh: boolean) => {
-      if (inFlight.current) return;
-      inFlight.current = true;
-      setLoading(true);
-      try {
-        setReading({ quota: await api.agentQuota(agent.id, refresh) });
-      } catch (e) {
-        onError(e);
-        setReading((prev) => ({ failedAt: new Date().toISOString(), quota: prev && 'quota' in prev ? prev.quota : null }));
-      } finally {
-        inFlight.current = false;
-        setLoading(false);
-      }
-    },
-    [api, agent.id, onError],
-  );
+  const [refreshRow, setRefreshRow] = useState(0);
+  const errorHandler = useRef(onError);
+  errorHandler.current = onError;
 
   // Read on mount and on the board's minute tick, where the daemon's cache rides along;
   // the board's refresh-all button asks every agent again, like a row's own button.
-  const asked = useRef(askAll);
+  const asked = useRef({ all: askAll, row: refreshRow });
   useEffect(() => {
-    const again = asked.current !== askAll;
-    asked.current = askAll;
-    void read(again);
-  }, [read, refreshAll, askAll]);
+    let alive = true;
+    const again = asked.current.all !== askAll || asked.current.row !== refreshRow;
+    asked.current = { all: askAll, row: refreshRow };
+    setReading({ api, agent: agent.id, quota: api.cachedAgentQuota(agent.id) });
+    setLoading(true);
+    void api.agentQuota(agent.id, again).then(quota => {
+      if (alive) setReading({ api, agent: agent.id, quota });
+    }).catch(e => {
+      if (!alive) return;
+      setReading({ api, agent: agent.id, quota: api.cachedAgentQuota(agent.id), failedAt: new Date().toISOString() });
+      errorHandler.current(e);
+    }).finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [api, agent.id, refreshAll, askAll, refreshRow]);
 
-  const quota = reading && 'quota' in reading ? reading.quota : null;
-  const failedAt = reading && 'failedAt' in reading ? reading.failedAt : null;
+  // Never show the previous machine's values while a different API client starts its request.
+  const current: Pick<Reading, 'quota' | 'failedAt'> = reading.api === api && reading.agent === agent.id ? reading : { quota: api.cachedAgentQuota(agent.id) };
+  const { quota, failedAt } = current;
 
   return (
     <div className="quota-board-row">
@@ -71,10 +69,11 @@ function QuotaRow({ api, agent, onError, refreshAll, askAll }: { api: Api; agent
           </span>
         ) : null}
         <span className="quota-board-name">{agent.label}</span>
-        <button type="button" className="icon-btn" aria-label={`刷新 ${agent.label} 的额度`} onClick={() => void read(true)} disabled={loading}>
-          {loading ? <IconInfo size={15} /> : <IconRefresh size={15} />}
+        <button type="button" className="icon-btn" aria-label={`刷新 ${agent.label} 的额度`} aria-busy={loading} onClick={() => setRefreshRow(n => n + 1)} disabled={loading}>
+          <IconRefresh size={15} />
         </button>
       </div>
+      {quota === null && loading && <p className="panel-empty">正在查询额度…</p>}
       {quota === null && !loading && <p className="panel-empty">没有读到额度信息{failedAt ? '，上一次也失败了' : ''}。</p>}
       {quota !== null && quota.windows.length === 0 && <p className="panel-empty">没有读到额度信息{failedAt ? '，上一次也失败了' : ''}。</p>}
       {quota !== null && quota.windows.length > 0 && (
@@ -96,12 +95,12 @@ function QuotaRow({ api, agent, onError, refreshAll, askAll }: { api: Api; agent
               </div>
             </div>
           ))}
-          <p className="quota-checked">
-            刷新于 {clock(quota.checkedAt)}
-            {failedAt ? ` · 上次刷新失败（${clock(failedAt)}）` : ''}
-          </p>
         </>
       )}
+      {quota && <p className="quota-checked" role="status">
+        更新于 {clock(quota.checkedAt)}
+        {loading ? ' · 更新中…' : failedAt ? ` · 上次刷新失败（${clock(failedAt)}），显示上次结果` : ''}
+      </p>}
       {quota?.note && <p className="quota-note">{quota.note}</p>}
     </div>
   );
