@@ -85,6 +85,7 @@ export async function startDaemon(env = {}) {
     RAH_AGY_BIN: 'fake-agy',
     PI_CODING_AGENT_DIR: join(dataDir, 'pi-agent'),
     RAH_AGY_HOME: join(dataDir, 'agy-home'),
+    ZCODE_DATA_BASE_DIR: dataDir,
     // Its own socket, never the one in the home directory that a real hub on this machine holds.
     RAH_SOCKET: join(dataDir, 'daemon.sock'),
     ...env,

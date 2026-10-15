@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import type { PlanQuota, QuotaWindow } from './types.js';
 
 // Read the standalone CLI's credential format without refreshing or modifying its store.
-function decrypt(value: unknown, env: NodeJS.ProcessEnv): string {
+export function decryptZcodeCredential(value: unknown, env: NodeJS.ProcessEnv): string {
   if (typeof value !== 'string') return '';
   if (!value.startsWith('enc:v1:')) return value.trim();
   let username = 'unknown';
@@ -46,8 +46,8 @@ export async function fetchZcodeQuota(extraEnv: Record<string, string> = {}): Pr
       if (provider !== 'account:bigmodel-individual-coding-plan' && provider !== 'account:zai-individual-coding-plan') return empty('当前 zcode 默认供应商未支持额度查询；目前支持 BigModel / Z.ai 个人 Coding Plan');
       family = provider.includes(':zai-') ? 'zai' : 'bigmodel';
       const credentials = JSON.parse(await readFile(join(directory, 'credentials.json'), 'utf8'));
-      const identity = decrypt(credentials[`account-provider:${provider}:identity`], env);
-      authorization = identity ? decrypt(credentials[`account-provider:coding-plan:${provider}:account:${encodeURIComponent(identity)}:api-key`], env) : '';
+      const identity = decryptZcodeCredential(credentials[`account-provider:${provider}:identity`], env);
+      authorization = identity ? decryptZcodeCredential(credentials[`account-provider:coding-plan:${provider}:account:${encodeURIComponent(identity)}:api-key`], env) : '';
       if (!authorization) return empty('没有找到当前 zcode 账号的套餐凭据，请先在 zcode 中登录');
     } catch {
       return empty('无法读取 zcode 套餐配置或凭据，请检查 zcode 登录及凭据加密配置');

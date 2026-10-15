@@ -1,4 +1,5 @@
 import { fetchZcodeQuota } from './zcode-quota.js';
+import { loadZcodeAccounts, type ZcodeAccounts } from './zcode-account.js';
 import { goalSummary, parseGoalCommand, type GoalControl } from './native-goal.js';
 import { isCompaction, trackCompaction } from './compaction.js';
 import { ZCODE_ICON } from './icons.js';
@@ -89,9 +90,15 @@ export class ZcodeAdapter implements AgentAdapter {
   }
   start(opts: StartOptions): Promise<AgentSession> { return this.open(opts, false); }
   private async open(opts: StartOptions, probe: boolean): Promise<ZcodeSession> {
-    const wire = new ZcodeWire(this.command, opts.cwd, sessionEnvironment(this.env, opts.coordinationEnv));
-    const session = new ZcodeSession(wire, probe);
+    const env = sessionEnvironment(this.env, opts.coordinationEnv);
+    const accounts = await loadZcodeAccounts(env, opts.cwd);
+    const wire = new ZcodeWire(this.command, opts.cwd, { ...env, ...accounts?.environment });
+    const session = new ZcodeSession(wire, probe, accounts);
     try {
+      if (accounts) {
+        const result = await wire.request('provider/updateAccountConfig', accounts.overlay);
+        if (result?.receivedRevision !== accounts.overlay.revision) throw new Error('zcode 未确认账号模型同步，请升级 zcode');
+      }
       const snapshot = await session.open(opts);
       this.cachedModels = zcodeModels(snapshot);
       this.modelsCheckedAt = Date.now();
@@ -107,7 +114,7 @@ class ZcodeSession implements AgentSession {
   private closed = false;
   private goalActive = false;
   private submission: Promise<void> | null = null;
-  constructor(private readonly wire: ZcodeWire, private readonly probe: boolean) {
+  constructor(private readonly wire: ZcodeWire, private readonly probe: boolean, private readonly accounts: ZcodeAccounts | null) {
     wire.onEvent = (method, params) => this.event(method, params);
     wire.onRequest = (method, params) => this.request(method, params);
     wire.onClosed = (error) => { this.closed = true; this.active?.reject(error); this.active = null; };
@@ -125,7 +132,7 @@ class ZcodeSession implements AgentSession {
     this.agentSessionId = snapshot.session.sessionId;
     if (!this.probe && zcodeModels(snapshot).length === 0) {
       await this.close();
-      throw new Error('zcode 没有可用模型。Hub 当前支持 API 模型，尚未接入账号套餐模型的注册与动态鉴权；请在 zcode 中配置 API 模型后刷新模型列表。');
+      throw new Error('zcode 没有可用模型。请检查 API 模型配置，或在 zcode 中登录 BigModel / Z.ai 个人 Coding Plan 后刷新模型列表；其他账号套餐模型暂未支持。');
     }
     this.goalActive = (snapshot.session.target ?? snapshot.projection?.target)?.status === 'active';
     if (opts.resumeId) {
@@ -269,7 +276,9 @@ class ZcodeSession implements AgentSession {
       this.preferenceRequests++;
       return { memoryEnabled: false, nativeSearchEnhancementsEnabled: false, askUserQuestionAutoResolutionEnabled: false };
     }
-    if (method === 'interaction/requestProviderRuntimeHeaders') return { headersApplied: false, errorMessage: 'limi 暂不支持 zcode 桌面账号的动态鉴权，请在 zcode 中配置 API 模型' };
+    if (method === 'interaction/requestProviderRuntimeHeaders') return this.accounts
+      ? this.accounts.authorize(params, this.agentSessionId)
+      : { headersApplied: false, errorMessage: '未找到 zcode 账号凭据；请在 zcode 中登录 BigModel / Z.ai 个人 Coding Plan，或配置 API 模型' };
     if (method !== 'interaction/requestPermission') return undefined;
     const active = this.active;
     if (!active || params?.sessionId !== this.agentSessionId) return { decision: 'deny' };

@@ -20,7 +20,7 @@ const hooks = (events: EmittedEvent[]): TurnHooks => ({ emit: (e) => events.push
 
 for (const [name, Adapter, fixture] of [['Codex', CodexAppServerAdapter, 'fake-codex.mjs'], ['TraeX', TraexAcpAdapter, 'fake-acp.mjs'], ['zcode', ZcodeAdapter, 'fake-zcode.mjs']] as const) {
   test(`${name} native goal owns multiple turns, approvals and terminal status`, { timeout: 5000 }, async () => {
-    const adapter = new Adapter([process.execPath, join(here, 'fixtures', fixture)]);
+    const adapter = new Adapter([process.execPath, join(here, 'fixtures', fixture)], { ZCODE_DATA_BASE_DIR: here });
     assert.ok((await adapter.commands(here)).some(c => c.name === 'goal'));
     const s = await adapter.start({ cwd: here });
     const events: EmittedEvent[] = [];
@@ -39,7 +39,7 @@ for (const [name, Adapter, fixture] of [['Codex', CodexAppServerAdapter, 'fake-c
 
   for (const control of ['stop', 'pause'] as const) {
     test(`${name} ${control} stops native continuation and allows subsequent prompts`, { timeout: 5000 }, async () => {
-      const s = await new Adapter([process.execPath, join(here, 'fixtures', fixture)]).start({ cwd: here });
+      const s = await new Adapter([process.execPath, join(here, 'fixtures', fixture)], { ZCODE_DATA_BASE_DIR: here }).start({ cwd: here });
       const events: EmittedEvent[] = [];
       try {
         const pending = s.prompt(input('/goal slow'), hooks(events));
@@ -54,7 +54,7 @@ for (const [name, Adapter, fixture] of [['Codex', CodexAppServerAdapter, 'fake-c
   }
 
   test(`${name} unsupported goal fails visibly and leaves session usable`, { timeout: 5000 }, async () => {
-    const s = await new Adapter([process.execPath, join(here, 'fixtures', fixture)], { FAKE_CODEX_NO_GOALS: '1', FAKE_ZCODE_NO_GOALS: '1' }).start({ cwd: here });
+    const s = await new Adapter([process.execPath, join(here, 'fixtures', fixture)], { ZCODE_DATA_BASE_DIR: here, FAKE_CODEX_NO_GOALS: '1', FAKE_ZCODE_NO_GOALS: '1' }).start({ cwd: here });
     try {
       const result = await s.prompt(input('/goal something'), hooks([])).catch(error => ({ stopReason: 'error', error: String(error) }));
       assert.equal(result.stopReason, 'error');
@@ -112,7 +112,7 @@ test('Codex can stop the current turn after clearing its goal', { timeout: 5000 
 });
 
 test('zcode waits for native failure cleanup before releasing the goal turn', { timeout: 5000 }, async () => {
-  const s = await new ZcodeAdapter([process.execPath, join(here, 'fixtures/fake-zcode.mjs')]).start({ cwd: here });
+  const s = await new ZcodeAdapter([process.execPath, join(here, 'fixtures/fake-zcode.mjs')], { ZCODE_DATA_BASE_DIR: here }).start({ cwd: here });
   const events: EmittedEvent[] = [];
   try {
     const result = await s.prompt(input('/goal turn-fail'), hooks(events));

@@ -1,12 +1,16 @@
 #!/usr/bin/env node
 // ZCode's strict NDJSON protocol: no jsonrpc field, reverse runtime preferences, native events.
 import { createInterface } from 'node:readline';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { resolve } from 'node:path';
 const output = (value) => process.stdout.write(JSON.stringify(value) + '\n');
 const reply = (id, result) => output({ id, result });
 const error = (id, message) => output({ id, error: { code: -32602, message } });
 let sessionId = 'sess-zcode-fixture';
-let model = { providerId: 'api', modelId: 'small' };
+const providerId = process.env.FAKE_ZCODE_ACCOUNT_PROVIDER || 'api';
+let accountReady = !process.env.FAKE_ZCODE_ACCOUNT_PROVIDER;
+let model = { providerId, modelId: 'small' };
 let mode = 'build';
 let turn = null;
 let seq = 0;
@@ -16,7 +20,7 @@ let goalRun = false;
 const pending = new Map();
 const request = (method, params) => new Promise((resolve) => { const id = nextId++; pending.set(id, resolve); output({ id, method, params }); });
 const emit = (type, payload, turnId = turn?.id) => output({ method: 'session/event', params: { sessionId, eventId: `ev-${++seq}`, seq, turnId, type, payload, deliveryKind: 'desktop-continuous' } });
-const snapshot = () => ({ session: { sessionId, target: process.env.FAKE_ZCODE_GOAL ? { status: 'active' } : goal }, settings: { mode: { current: mode }, model: { current: model, available: process.env.FAKE_ZCODE_NO_MODELS ? [] : [{ ref: { providerId: 'api', modelId: 'small' }, label: 'Small', reasoning: { defaultLevel: 'low', levels: [{ value: 'low' }, { value: 'high' }] } }, { ref: { providerId: 'api', modelId: 'large' }, label: 'Large' }] } } });
+const snapshot = () => ({ session: { sessionId, target: process.env.FAKE_ZCODE_GOAL ? { status: 'active' } : goal }, settings: { mode: { current: mode }, model: { current: model, available: process.env.FAKE_ZCODE_NO_MODELS || !accountReady ? [] : [{ ref: { providerId, modelId: 'small' }, label: 'Small', reasoning: { defaultLevel: 'low', levels: [{ value: 'low' }, { value: 'high' }] } }, { ref: { providerId, modelId: 'large' }, label: 'Large' }] } } });
 const goalSettled = (failed = false) => { goalRun = false; output({ method: 'state.updated', params: { sessionId, reason: failed ? 'goal_continuation_failed' : 'goal_continuation_completed' } }); };
 const preferences = async () => {
   const result = await request('session/requestRuntimePreferences', { sessionId, scope: 'runtime-materialization' });
@@ -30,6 +34,13 @@ async function handle(message) {
   const { id, method, params: p = {} } = message;
   if (process.env.FAKE_ZCODE_LOG) appendFileSync(process.env.FAKE_ZCODE_LOG, JSON.stringify({ method, params: p }) + '\n');
   switch (method) {
+    case 'provider/updateAccountConfig': {
+      const path = process.env.ZCODE_BUILTIN_PROVIDER_CONFIG_FILE;
+      const builtin = JSON.parse(readFileSync(path, 'utf8'));
+      const revision = `zcode-builtin:${builtin.revision}:${createHash('sha256').update(resolve(path)).digest('hex')}`;
+      accountReady = !process.env.FAKE_ZCODE_ACCOUNT_STALE && p.basedOnZCodeBuiltinRevision === revision && p.providers[providerId]?.access?.entitled === true && p.states[providerId]?.current === true;
+      return reply(id, { receivedRevision: p.revision, providerCount: Object.keys(p.providers).length, status: 'received' });
+    }
     case 'session/goal': {
       if (process.env.FAKE_ZCODE_NO_GOALS) return error(id, 'goal unsupported');
       if (p.action === 'pause') { if (goal) goal.status = 'paused'; done('cancelled', ''); if (goalRun) goalSettled(); }
@@ -84,6 +95,14 @@ async function handle(message) {
       turn = { id: `turn-${++seq}`, inputId: p.inputId };
       const activeTurn = turn;
       await request('session/requestRuntimePreferences', { sessionId, scope: 'user-execution' });
+      if (process.env.FAKE_ZCODE_ACCOUNT_PROVIDER) {
+        const auth = await request('interaction/requestProviderRuntimeHeaders', {
+          sessionId, providerId: model.providerId, modelSelection: model,
+          accountAccess: { mode: 'individual-coding-plan' }, reason: 'model-request',
+        });
+        if (!auth.headersApplied) return error(id, auth.errorMessage);
+        if (auth.requestAuth?.apiKey !== process.env.FAKE_ZCODE_API_KEY) return error(id, 'Invalid fixture credential');
+      }
       if (p.content === 'reject') return error(id, 'submission rejected');
       emit('turn.started', { inputId: p.inputId });
       // Completion may precede the response to send; the adapter must already be listening.

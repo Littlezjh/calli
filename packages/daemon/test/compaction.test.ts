@@ -10,7 +10,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 for (const [name, Adapter, fixture] of [['Claude', ClaudeAcpAdapter, 'fake-acp.mjs'], ['pi', PiRpcAdapter, 'fake-pi.mjs'], ['zcode', ZcodeAdapter, 'fake-zcode.mjs']] as const) {
   for (const outcome of ['success', 'failure', 'cancel']) {
     test(`${name} compaction stays pending and shares progress events: ${outcome}`, async () => {
-      const adapter = new Adapter([process.execPath, join(here, 'fixtures', fixture)], { FAKE_COMPACT_DELAY: '150', ...(outcome === 'failure' ? { FAKE_COMPACT_FAIL: '1' } : {}) });
+      const adapter = new Adapter([process.execPath, join(here, 'fixtures', fixture)], { ZCODE_DATA_BASE_DIR: here, FAKE_COMPACT_DELAY: '150', ...(outcome === 'failure' ? { FAKE_COMPACT_FAIL: '1' } : {}) });
       const session = await adapter.start({ cwd: here });
       const events: EmittedEvent[] = [];
       const hooks = { emit: (event: EmittedEvent) => events.push(event), requestApproval: async () => ({ cancelled: true as const }) };

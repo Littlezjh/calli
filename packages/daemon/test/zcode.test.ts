@@ -12,7 +12,7 @@ const command = [process.execPath, join(here, 'fixtures/fake-zcode.mjs')];
 function setup(env: Record<string, string> = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'rah-zcode-'));
   const log = join(dir, 'wire.jsonl');
-  return { dir, adapter: new ZcodeAdapter(command, { ...env, FAKE_ZCODE_LOG: log }), log: () => readFileSync(log, 'utf8').trim().split('\n').map((s) => JSON.parse(s)), clean: () => rmSync(dir, { recursive: true, force: true }) };
+  return { dir, adapter: new ZcodeAdapter(command, { ZCODE_DATA_BASE_DIR: dir, ...env, FAKE_ZCODE_LOG: log }), log: () => readFileSync(log, 'utf8').trim().split('\n').map((s) => JSON.parse(s)), clean: () => rmSync(dir, { recursive: true, force: true }) };
 }
 const hooks = (events: EmittedEvent[]): TurnHooks => ({ emit: (event) => events.push(event), requestApproval: async () => ({ cancelled: true }) });
 const input = (text: string) => ({ text, images: [] });
@@ -23,7 +23,7 @@ test('zcode without registered models hides fallback efforts and explains accoun
     assert.deepEqual(await f.adapter.models(), []);
     assert.deepEqual(f.adapter.capabilities.effortLevels, []);
     for (const resumeId of [undefined, 'existing-account-session']) {
-      await assert.rejects(f.adapter.start({ cwd: f.dir, resumeId, effort: 'high' }), /没有可用模型.*账号套餐模型/);
+      await assert.rejects(f.adapter.start({ cwd: f.dir, resumeId, effort: 'high' }), /没有可用模型.*Coding Plan/);
     }
     assert.equal(f.log().some(r => r.method === 'session/setThoughtLevel' || r.method === 'session/send'), false);
     assert.equal(f.log().filter(r => r.method === 'session/close').length, 3);

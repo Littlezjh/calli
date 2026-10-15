@@ -54,7 +54,7 @@ test('real zcode: memory stays disabled across create, resume, compact and nativ
     const sentinel = 'MEMORY_SENTINEL_MUST_NOT_BE_INJECTED';
     writeFileSync(join(memory, 'MEMORY.md'), sentinel);
     const adapter = new ZcodeAdapter([process.env.RAH_ZCODE_REAL_BIN!, 'app-server'], {
-      ZCODE_STORAGE_DIR: dir, ZCODE_SESSION_DB_PATH: join(dir, 'sessions.db'),
+      ZCODE_DATA_BASE_DIR: dir, ZCODE_STORAGE_DIR: dir, ZCODE_SESSION_DB_PATH: join(dir, 'sessions.db'),
       ZCODE_BUILTIN_PROVIDER_CONFIG_FILE: join(dir, 'builtin.json'), ZCODE_PERSONAL_PROVIDER_CONFIG_FILE: join(dir, 'personal.json'),
     });
     const models = await adapter.models();
