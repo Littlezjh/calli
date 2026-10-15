@@ -801,7 +801,6 @@ function StepRun({ run, live, roots }: { run: Extract<WorkSection, { kind: 'run'
         <button className="step-head run-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
           <Icon size={15} />
           <span className="run-title">{summary.text}</span>
-          {summary.failed > 0 && <span className="run-failed">{summary.failed} 次失败</span>}
           <IconChevron size={13} open={open} />
         </button>
         {open && <div className="run-body">{over.map(row)}</div>}
@@ -816,7 +815,8 @@ function StepRow({ step, roots }: { step: Step; roots: string[] }) {
   const Icon = STEP_ICONS[step.kind] ?? IconFile;
   // An edit is best shown as its diff; the raw arguments would repeat the same text as JSON.
   const showInput = step.input !== undefined && step.diffs.length === 0 && JSON.stringify(step.input) !== '{}';
-  const hasDetail = showInput || step.diffs.length > 0 || Boolean(step.output);
+  const failed = step.status === 'failed';
+  const hasDetail = failed || showInput || step.diffs.length > 0 || Boolean(step.output);
   return (
     <div className={`step ${step.status}`}>
       <button className="step-head" onClick={() => hasDetail && setOpen((v) => !v)} disabled={!hasDetail} aria-expanded={open}>
@@ -826,6 +826,7 @@ function StepRow({ step, roots }: { step: Step; roots: string[] }) {
       </button>
       {open && (
         <div className="step-detail">
+          {failed && <div className="step-result">执行失败{!showInput && !step.output && step.diffs.length === 0 ? '，工具未返回详细信息' : ''}</div>}
           {showInput && <pre>{JSON.stringify(step.input, null, 2)}</pre>}
           {step.diffs.length > 0 && <DiffView diffs={step.diffs} />}
           {step.output && <pre>{step.output}</pre>}

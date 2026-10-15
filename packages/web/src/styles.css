@@ -1466,12 +1466,6 @@ html.list-open body {
   font-size: 13.5px;
 }
 
-.run-failed {
-  flex-shrink: 0;
-  color: var(--danger);
-  font-size: 12px;
-}
-
 .run-body {
   display: flex;
   flex-direction: column;
@@ -1496,8 +1490,10 @@ html.list-open body {
   color: var(--faint);
 }
 
-.step.failed .step-status {
-  color: var(--danger);
+.step-result {
+  margin: 4px 0 8px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .step-detail pre {

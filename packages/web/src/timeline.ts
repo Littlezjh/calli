@@ -726,11 +726,10 @@ export function stepTitle(step: Step): string {
   return verb ? `${verb} ${title}` : title;
 }
 
-/** What the right side of a step row says: the duration when done, the state otherwise. */
+/** A row shows timing; failure belongs to the tool's expanded detail, not the conversation. */
 export function stepStatusLabel(step: Step): string {
-  if (step.status === 'failed') return '失败';
   if (stepActive(step)) return '运行中';
-  return stepDurationLabel(step.startedAt, step.endedAt) || '完成';
+  return stepDurationLabel(step.startedAt, step.endedAt) || (step.status === 'failed' ? '已结束' : '完成');
 }
 
 /** A call that has started and not come back yet. */
@@ -777,9 +776,9 @@ const RUN_GROUPS: Array<{ kinds: string[]; say: (n: number) => string }> = [
 
 /**
  * A stretch of tool calls in one line: "已浏览 2 个文件，搜索 1 次". Also which kind of call
- * there was most of (for the row's icon) and how many failed.
+ * there was most of (for the row's icon). Each call keeps its result in its own detail.
  */
-export function runSummary(steps: Step[]): { text: string; kind: string; failed: number } {
+export function runSummary(steps: Step[]): { text: string; kind: string } {
   const parts: string[] = [];
   let lead = { kind: 'other', count: 0 };
   const count = (kind: string, n: number, say: (n: number) => string) => {
@@ -795,7 +794,7 @@ export function runSummary(steps: Step[]): { text: string; kind: string; failed:
     count(group.kinds[0], group.kinds[0] === 'edit' ? files.size : calls.length, group.say);
   }
   count('other', steps.filter((s) => !known.has(s.kind)).length, (n) => `调用 ${n} 次工具`);
-  return { text: parts.length ? `已${parts.join('，')}` : '', kind: lead.kind, failed: steps.filter((s) => s.status === 'failed').length };
+  return { text: parts.length ? `已${parts.join('，')}` : '', kind: lead.kind };
 }
 
 /** Thinking text the model wrote as one stream is shown as short paragraphs. */

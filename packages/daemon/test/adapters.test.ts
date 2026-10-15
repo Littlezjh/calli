@@ -1014,6 +1014,9 @@ test('mapCodexItemStart/End map commands, file changes and the rest of the step 
   assert.equal(failed?.type, 'tool.end');
   assert.equal(failed?.data.status, 'failed');
   assert.equal(failed?.data.output, 'boom\n(exit 1)');
+  // Stdout can look normal before a later command fails; words in the output are not status.
+  assert.equal(mapCodexItemEnd({ type: 'commandExecution', id: 'e2', status: 'completed', exitCode: 2, aggregatedOutput: 'file contents\nmatched lines' })?.data.status, 'failed');
+  assert.equal(mapCodexItemEnd({ type: 'commandExecution', id: 'e3', status: 'completed', exitCode: 0, aggregatedOutput: '0 errors; no failed checks' })?.data.status, 'completed');
 
   const edit = mapCodexItemStart({ type: 'fileChange', id: 'f1', changes: [{ path: '/tmp/x/a.ts', diff: '-a\n+b\n', kind: { type: 'update' } }] });
   assert.equal(edit?.data.kind, 'edit');

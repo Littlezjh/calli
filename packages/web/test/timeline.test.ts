@@ -456,7 +456,8 @@ test('stepTitle puts a verb first and stepStatusLabel shows the state', () => {
   assert.equal(stepTitle({ ...base, kind: 'execute', status: 'completed', startedAt: '2026-10-10T00:00:00.000Z', endedAt: '2026-10-10T00:00:00.900Z' }), '运行了 npm test');
   assert.equal(stepStatusLabel({ ...base, kind: 'execute', status: 'completed', startedAt: '2026-10-10T00:00:00.000Z', endedAt: '2026-10-10T00:00:00.900Z' }), '0.9 秒');
   assert.equal(stepStatusLabel({ ...base, kind: 'read', status: 'in_progress' }), '运行中');
-  assert.equal(stepStatusLabel({ ...base, kind: 'other', status: 'failed' }), '失败');
+  assert.equal(stepStatusLabel({ ...base, kind: 'other', status: 'failed' }), '已结束');
+  assert.equal(stepStatusLabel({ ...base, kind: 'execute', status: 'failed', startedAt: '2026-10-10T00:00:00.000Z', endedAt: '2026-10-10T00:00:00.900Z' }), '0.9 秒');
   assert.equal(stepTitle({ ...base, kind: 'other', status: 'completed' }), 'npm test');
   // A command is named by what it runs; the directory it steps into first says nothing in one line.
   assert.equal(stepTitle({ ...base, kind: 'execute', status: 'completed', title: 'cd /srv/app && git status --short' }), '运行了 git status --short');
@@ -684,10 +685,9 @@ test('runSummary counts the calls by kind, in one line', () => {
   const summary = runSummary([step('1', 'read'), step('2', 'execute'), step('3', 'read'), step('4', 'search'), step('5', 'mcp-thing')]);
   assert.equal(summary.text, '已浏览 2 个文件，搜索 1 次，运行 1 条命令，调用 1 次工具');
   assert.equal(summary.kind, 'read', 'the kind there is most of');
-  assert.equal(summary.failed, 0);
 });
 
-test('runSummary counts edited files once each, and says how many calls failed', () => {
+test('runSummary counts edited files once each and includes calls regardless of their result', () => {
   const d = (path: string) => ({ path, oldText: '', newText: 'x', added: 1, removed: 0 });
   const summary = runSummary([
     step('1', 'edit', { diffs: [d('a.ts')] }),
@@ -698,7 +698,6 @@ test('runSummary counts edited files once each, and says how many calls failed',
   ]);
   assert.equal(summary.text, '已编辑 3 个文件，运行 1 条命令');
   assert.equal(summary.kind, 'edit');
-  assert.equal(summary.failed, 1);
   assert.equal(runSummary([]).text, '');
 });
 

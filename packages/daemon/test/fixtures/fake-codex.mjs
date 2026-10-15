@@ -150,6 +150,11 @@ const runTurn = (text, turnId, done) => {
     notify('item/started', { turnId, item: { type: 'commandExecution', id, command: 'false', cwd: '/tmp/one', status: 'inProgress' } });
     notify('item/completed', { turnId, item: { type: 'commandExecution', id, command: 'false', cwd: '/tmp/one', status: 'completed', exitCode: 1, aggregatedOutput: 'boom', durationMs: 3 } });
   }
+  if (text.includes('emptyfailure')) {
+    const item = { type: 'dynamicToolCall', id: 'empty-failure', namespace: 'fixture', tool: 'no-detail' };
+    notify('item/started', { turnId, item: { ...item, status: 'inProgress' } });
+    notify('item/completed', { turnId, item: { ...item, status: 'failed', success: false } });
+  }
   if (text.includes('edit')) {
     const id = 'fc-1';
     const changes = [{ path: '/tmp/one/src/app.ts', kind: { type: 'update' }, diff: '@@ -1,2 +1,2 @@\n const a = 1;\n-const b = 2;\n+const b = 3;\n' }];
