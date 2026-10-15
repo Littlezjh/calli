@@ -14,18 +14,26 @@ test('real zcode: images reach the model and memory stays disabled across create
   const requests: any[] = [];
   let goalMode = false;
   let goalReplies = 0;
+  let usageProbe = false;
   const server = createServer(async (req, res) => {
     let body = '';
     for await (const chunk of req) body += chunk;
     requests.push(JSON.parse(body));
+    if (usageProbe && goalMode && goalReplies === 1) await new Promise(r => setTimeout(r, 2600));
+    const streaming = JSON.parse(body).stream === true;
     const verification = goalMode && body.includes('Verify whether the active session goal is actually complete.');
     const content = verification ? JSON.stringify({ passed: goalReplies >= 2, reason: 'Local test verdict', nextAction: goalReplies >= 2 ? '' : 'Reply once more.' }) : '本地验证完成';
-    if (goalMode && !verification) goalReplies++;
+    if (goalMode && !verification && streaming) goalReplies++;
+    if (!streaming) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ id: `fixture-${requests.length}`, object: 'chat.completion', model: 'fixture', choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } }));
+      return;
+    }
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     for (const chunk of [
       { choices: [{ index: 0, delta: { role: 'assistant', content }, finish_reason: null }] },
       { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } },
-    ]) res.write(`data: ${JSON.stringify({ id: 'fixture', object: 'chat.completion.chunk', created: 1, model: 'fixture', ...chunk })}\n\n`);
+    ]) res.write(`data: ${JSON.stringify({ id: `fixture-${requests.length}`, object: 'chat.completion.chunk', created: 1, model: 'fixture', ...chunk })}\n\n`);
     res.end('data: [DONE]\n\n');
   });
   let session: AgentSession | undefined;
@@ -75,6 +83,7 @@ test('real zcode: images reach the model and memory stays disabled across create
     session = await adapter.start({ cwd: dir, resumeId: id });
     assert.equal(session.agentSessionId, id);
     assert.equal((await session.prompt({ text: 'Reply hello again.', images: [] }, hooks)).stopReason, 'end_turn');
+    assert.equal(consumption.at(-1)?.total, 15, 'Repeated input is still charged on the next request');
     const readingsBeforeCompact = contextReadings.length;
     assert.equal((await session.prompt({ text: '/compact', images: [] }, hooks)).stopReason, 'end_turn');
     assert.ok(contextReadings.length >= readingsBeforeCompact + 2);
@@ -101,10 +110,13 @@ test('real zcode: images reach the model and memory stays disabled across create
       assert.ok(images.every((block: any) => block.image_url.url === `data:image/png;base64,${imageData}`));
     }
 
-    goalMode = true;
+    goalMode = true; usageProbe = true;
+    const liveReadings: Array<{ at: number; total: number }> = [];
     let goalText = '';
-    const goalHooks: TurnHooks = { ...hooks, emit: (event) => { if (event.type === 'message.delta') goalText += event.data.text; } };
+    const goalHooks: TurnHooks = { ...hooks, emit: (event) => { if (event.type === 'message.delta') goalText += event.data.text; if (event.type === 'usage.sample' && Number(event.data.total) > 0) liveReadings.push({ at: Date.now(), total: Number(event.data.total) }); } };
     assert.equal((await session.prompt({ text: '/goal Reply twice for the local protocol test.', images: [] }, goalHooks)).stopReason, 'end_turn');
+    assert.ok(liveReadings.length >= 2, `Usage must arrive mid-goal: ${JSON.stringify({ liveReadings, goalReplies, requests: requests.length })}`);
+    assert.ok(Date.now() - liveReadings[0].at > 100, 'The first usage report arrives before the native goal finishes');
     assert.ok(goalReplies >= 2, 'The native runtime must continue through multiple turns');
     assert.match(goalText, /报告已完成/);
     assert.equal((await session.prompt({ text: '/goal clear', images: [] }, goalHooks)).stopReason, 'end_turn');

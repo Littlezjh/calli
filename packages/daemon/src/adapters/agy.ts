@@ -8,6 +8,7 @@ import { imagePathNote } from '../attachments.js';
 import { commandExists } from '../util.js';
 import { ANTIGRAVITY_ICON } from './icons.js';
 import { configDirectory, findSessionFile } from './session-location.js';
+import { agyLiveUsage } from './session-usage.js';
 import type {
   AgentAdapter,
   AgentSession,
@@ -256,6 +257,7 @@ interface Turn {
 }
 
 class AgySession implements AgentSession {
+  private preparing: Promise<void> = Promise.resolve();
   agentSessionId = '';
   private child: ChildProcessWithoutNullStreams | null = null;
   private buffer = '';
@@ -362,6 +364,13 @@ class AgySession implements AgentSession {
   }
 
   async prompt(input: TurnInput, hooks: TurnHooks): Promise<TurnResult> {
+    let prepared!: () => void;
+    this.preparing = new Promise(resolve => { prepared = resolve; });
+    try { return await this.promptInternal(input, hooks, prepared); }
+    finally { prepared(); }
+  }
+
+  private async promptInternal(input: TurnInput, hooks: TurnHooks, prepared: () => void): Promise<TurnResult> {
     if (this.turn) throw new Error('a turn is already running');
     // Commands agy answers itself never reach the model, and do not work in stream mode at all.
     if (input.text.startsWith('/') && input.images.length === 0) {
@@ -379,10 +388,14 @@ class AgySession implements AgentSession {
     if (this.child && this.stale) await this.close();
     if (!this.child) await this.launch();
     const child = this.child!;
-    return new Promise<TurnResult>((resolve) => {
+    const live = agyLiveUsage(this.agentSessionId, this.opts.cwd, this.env, sample => hooks.emit({ type: 'usage.sample', data: { ...sample } }));
+    await live.start();
+    if (this.child !== child) { await live.stop(); return { stopReason: 'error', error: 'agy 已退出' }; }
+    try { return await new Promise<TurnResult>((resolve) => {
       this.turn = { hooks, resolve, started: new Set(), cancelled: false };
       child.stdin.write(JSON.stringify({ event: 'user', message: { content: input.text + imagePathNote(input.images) } }) + '\n');
-    });
+      prepared();
+    }); } finally { await live.stop(); }
   }
 
   /** Takes effect on the next turn: the level is a flag of the process. */
@@ -394,6 +407,7 @@ class AgySession implements AgentSession {
 
   /** agy stops a turn on SIGINT, reports it as interrupted and exits; the conversation stays usable. */
   async cancel(): Promise<void> {
+    await this.preparing;
     const child = this.child;
     if (!this.turn || !child) return;
     this.turn.cancelled = true;

@@ -3,6 +3,7 @@ if (process.argv.includes('--version')) { process.stdout.write('fixture 1.2.3\n'
 // A stand-in for the Antigravity CLI in headless stream-json mode, for tests.
 // Prompt text drives behaviour: "tool" runs a command, "command" needs a permission that headless
 // mode cannot ask for, "slow" waits until interrupted, "crash" exits.
+import { agyUsage } from './live-usage.mjs';
 import { coordinationFixture } from './coordination.mjs';
 const args = process.argv.slice(2);
 
@@ -64,6 +65,12 @@ function runTurn(text) {
   if (coordinated !== null) {
     step({ step_index: stepIndex++, state: 'DONE', step_type: 'agent_response', text_delta: coordinated });
     result({ status: 'SUCCESS', response: coordinated, num_turns: 1 });
+    return;
+  }
+  if (process.env.FAKE_LIVE_USAGE && text.includes('live usage')) {
+    agyUsage(conversation, stepIndex++);
+    if (text.includes('slow')) { waiting = true; return; }
+    setTimeout(() => result({ status: 'SUCCESS', response: 'live usage', num_turns: 1 }), 2400);
     return;
   }
   if (text.includes('crash')) {

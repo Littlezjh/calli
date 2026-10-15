@@ -1,4 +1,6 @@
 import { zcodeUsage } from './usage.js';
+import { timedUsage } from './live-usage.js';
+import { ZcodeUsageFile } from './zcode-usage.js';
 import { cliDiagnostic } from './diagnostics.js';
 import { fetchZcodeQuota } from './zcode-quota.js';
 import { loadZcodeAccounts, type ZcodeAccounts } from './zcode-account.js';
@@ -9,6 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { basename } from 'node:path';
 import { commandExists } from '../util.js';
 import type { EmittedEvent } from '../events.js';
+import type { UsageSample } from '../telemetry.js';
 import { quoteArg } from './session-location.js';
 import { ZcodeWire } from './zcode-wire.js';
 import { EFFORT_LEVELS, sessionEnvironment, type AgentAdapter, type AgentSession, type EffortLevel, type ModelOption, type StartOptions, type TurnHooks, type TurnInput, type TurnResult } from './types.js';
@@ -110,7 +113,7 @@ export class ZcodeAdapter implements AgentAdapter {
     const env = sessionEnvironment(this.env, opts.coordinationEnv);
     const accounts = await loadZcodeAccounts(env, opts.cwd);
     const wire = new ZcodeWire(this.command, opts.cwd, { ...env, ...accounts?.environment });
-    const session = new ZcodeSession(wire, probe, accounts);
+    const session = new ZcodeSession(wire, probe, accounts, env, opts.cwd);
     try {
       if (accounts) {
         const result = await wire.request('provider/updateAccountConfig', accounts.overlay);
@@ -131,10 +134,11 @@ class ZcodeSession implements AgentSession {
   private closed = false;
   private goalActive = false;
   private submission: Promise<void> | null = null;
+  private preparing: Promise<void> | null = null;
   private usage: EmittedEvent | null = null;
   private usageId = 0;
   private accounting: any = null;
-  constructor(private readonly wire: ZcodeWire, private readonly probe: boolean, private readonly accounts: ZcodeAccounts | null) {
+  constructor(private readonly wire: ZcodeWire, private readonly probe: boolean, private readonly accounts: ZcodeAccounts | null, private readonly env: NodeJS.ProcessEnv, private readonly cwd: string) {
     wire.onEvent = (method, params) => this.event(method, params);
     wire.onRequest = (method, params) => this.request(method, params);
     wire.onClosed = (error) => { this.closed = true; this.active?.reject(error); this.active = null; };
@@ -176,19 +180,50 @@ class ZcodeSession implements AgentSession {
     await this.wire.request('session/setThoughtLevel', { sessionId: this.agentSessionId, thoughtLevel: effort, persistAsWorkspaceLastUsed: false }); return true;
   }
   async prompt(input: TurnInput, hooks: TurnHooks): Promise<TurnResult> {
+    let prepared!: () => void;
+    this.preparing = new Promise(resolve => { prepared = resolve; });
     if (this.usage) hooks.emit(this.usage);
     const compact = isCompaction(input.text);
     const run = async () => {
       const measure = !input.text.startsWith('/') || compact || /^\/goal\s+/.test(input.text);
-      const before = measure ? this.accounting : null;
-      try { return await this.promptInternal(input, hooks); }
-      finally {
-        if (measure && !this.closed) {
+      let since = Date.now(), reported = false;
+      let pending: Promise<void> | null = null;
+      // Establish this turn's baseline so terminal activity between hub turns is not charged here.
+      if (measure && !this.closed) this.accounting = await this.wire.request('session/usage', { sessionId: this.agentSessionId }, 3000, false).catch(() => null);
+      const file = new ZcodeUsageFile(this.env, this.cwd, this.agentSessionId);
+      const adjustedSummary = this.accounting && 'inputBaselineBySource' in this.accounting;
+      const useFile = measure && (adjustedSummary || !this.accounting) && file.start();
+      const emit = (sample: UsageSample) => hooks.emit({ type: 'usage.sample', data: { ...sample } });
+      const read = (final = false): Promise<void> => {
+        if (pending) return pending;
+        pending = (async () => {
+          if (useFile) { file.read(emit); return; }
+          if (adjustedSummary) return; // This protocol's input totals are not consumption; keep them unknown.
           const after = await this.wire.request('session/usage', { sessionId: this.agentSessionId }, 3000, false).catch(() => null);
+          if (!after) return; // Keep the last good baseline across transient failures within this turn.
+          const sample = zcodeUsage(this.accounting, after);
           this.accounting = after;
-          const sample = zcodeUsage(before, after);
-          if (sample.total !== undefined) hooks.emit({ type: 'usage.sample', data: { id: `turn-${++this.usageId}`, scope: 'turn', source: 'zcode.session/usage', ...sample } });
-        }
+          if (sample.total !== undefined && (sample.total > 0 || final && !reported)) {
+            const end = Date.now();
+            hooks.emit({ type: 'usage.sample', data: { ...timedUsage({ id: `usage-${++this.usageId}`, scope: 'update', source: 'zcode.session/usage', ...sample }, since, end) } });
+            since = end; reported = true;
+          }
+        })().finally(() => { pending = null; });
+        return pending;
+      };
+      const timer = measure ? setInterval(() => { if (!this.closed) void read(); }, 2000) : undefined;
+      timer?.unref();
+      try {
+        const turn = this.promptInternal(input, hooks);
+        prepared();
+        return await turn;
+      }
+      finally {
+        prepared();
+        clearInterval(timer);
+        await pending;
+        if (measure && (!this.closed || useFile)) await read(true);
+        file.close();
         await this.refreshUsage(hooks, compact);
       }
     };
@@ -279,6 +314,7 @@ class ZcodeSession implements AgentSession {
     });
   }
   async cancel(): Promise<void> {
+    await this.preparing;
     const active = this.active;
     if (!active) return;
     // Stop must follow admission; an earlier stop can miss a not-yet-started turn.
@@ -288,6 +324,7 @@ class ZcodeSession implements AgentSession {
   }
   async controlGoal(action: GoalControl): Promise<string> {
     if (action !== 'pause') throw new Error('请先停止当前执行，再查看或清除目标。');
+    await this.preparing;
     await this.submission;
     await this.wire.request('session/goal', { sessionId: this.agentSessionId, action: 'pause' });
     return '目标已暂停。';

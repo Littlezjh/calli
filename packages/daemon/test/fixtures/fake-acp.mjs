@@ -4,6 +4,7 @@ if (process.argv.includes('--version')) { process.stdout.write('fixture 1.2.3\n'
 // FAKE_ACP_FLAVOR=traex shapes the answers the way TRAE CLI does: no modes in session/new,
 // the effort option is named reasoning_effort, and "delete" on the command line (its CLI,
 // which the adapter runs for deletion) logs to FAKE_ACP_DELETE_LOG and exits.
+import { claudeUsage } from './live-usage.mjs';
 import { coordinationFixture } from './coordination.mjs';
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
@@ -208,6 +209,18 @@ rl.on('line', (line) => {
       recordSession(traex ? 'traex' : 'claude', msg.params.sessionId);
       const blocks = msg.params.prompt;
       const text = blocks.filter((p) => p.type === 'text').map((p) => p.text).join('');
+      if (process.env.FAKE_LIVE_USAGE && text.includes('live usage')) {
+        claudeUsage(sessionId, process.cwd(), msg.id);
+        pendingPrompt = msg;
+        if (!text.includes('slow')) setTimeout(() => {
+          if (pendingPrompt !== msg) return;
+          pendingPrompt = null;
+          out({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn', usage: {
+            inputTokens: 180, outputTokens: 50, cachedReadTokens: 60, cachedWriteTokens: 10, totalTokens: 300,
+          } } });
+        }, 2400);
+        return;
+      }
       if (!traex && /^\/goal(?:\s|$)/.test(text)) {
         if (text.includes('slow')) { pendingPrompt = msg; return; }
         update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: text === '/goal' ? '当前没有目标。' : text === '/goal clear' ? '目标已清除。' : '原生目标完成。' } });

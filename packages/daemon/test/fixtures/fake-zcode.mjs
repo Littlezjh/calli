@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 if (process.argv.includes('--version')) { process.stdout.write('fixture 1.2.3\n'); process.exit(0); }
 // ZCode's strict NDJSON protocol: no jsonrpc field, reverse runtime preferences, native events.
+import { DatabaseSync } from 'node:sqlite';
 import { createInterface } from 'node:readline';
 import { appendFileSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -19,6 +20,16 @@ let nextId = 10000;
 let goal = null;
 let goalRun = false;
 let accountedTurns = 0;
+const usageDb = process.env.FAKE_ZCODE_REQUEST_USAGE ? new DatabaseSync(process.env.ZCODE_SESSION_DB_PATH) : null;
+usageDb?.exec(`CREATE TABLE IF NOT EXISTS model_usage (
+  id TEXT PRIMARY KEY, session_id TEXT, started_at INTEGER, completed_at INTEGER, input_tokens INTEGER,
+  output_tokens INTEGER, reasoning_tokens INTEGER, cache_read_input_tokens INTEGER, cache_creation_input_tokens INTEGER,
+  computed_total_tokens INTEGER, provider_total_tokens INTEGER, model_id TEXT, provider_id TEXT, duration_ms INTEGER,
+  time_to_first_token_ms INTEGER, status TEXT)`);
+function recordNativeUsage() {
+  usageDb?.prepare('INSERT INTO model_usage VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(
+    `request-${accountedTurns}`, sessionId, Date.now(), Date.now(), 120, 30, 10, 60, 0, 150, 150, 'fixture-model', 'fixture-provider', 100, 50, 'completed');
+}
 let contextUsed = process.env.FAKE_ZCODE_INITIAL_CONTEXT ? Number(process.env.FAKE_ZCODE_INITIAL_CONTEXT) : null;
 const pending = new Map();
 const request = (method, params) => new Promise((resolve) => { const id = nextId++; pending.set(id, resolve); output({ id, method, params }); });
@@ -30,7 +41,7 @@ const preferences = async () => {
   if (process.env.FAKE_ZCODE_LOG) appendFileSync(process.env.FAKE_ZCODE_LOG, JSON.stringify({ preferences: result }) + '\n');
   return result;
 };
-function done(resultType = 'success', response = '完成') { if (!turn) return; accountedTurns++; emit('turn.completed', { resultType, response }); turn = null; }
+function done(resultType = 'success', response = '完成') { if (!turn) return; accountedTurns++; recordNativeUsage(); emit('turn.completed', { resultType, response }); turn = null; }
 async function handle(message) {
   if ('jsonrpc' in message) return error(message.id, 'Unexpected jsonrpc field');
   if (!message.method) { pending.get(message.id)?.(message.result); pending.delete(message.id); return; }
@@ -90,7 +101,7 @@ async function handle(message) {
     case 'session/setMode': mode = p.mode; return reply(id, snapshot());
     case 'session/setModel': model = p.model; return reply(id, snapshot());
     case 'session/setThoughtLevel': return reply(id, snapshot());
-    case 'session/usage': if (process.env.FAKE_ZCODE_USAGE_HANG) return; if (process.env.FAKE_TELEMETRY) return reply(id, { totalTokens: 900000 + accountedTurns * 150, inputTokens: 800000 + accountedTurns * 120, outputTokens: 100000 + accountedTurns * 30, cacheReadTokens: 500000 + accountedTurns * 60, cacheCreationTokens: 0, reasoningTokens: accountedTurns * 10 }); return reply(id, { sessionId, totalTokens: 1500, inputTokens: 1200, outputTokens: 300, reasoningTokens: 100, cacheCreationTokens: 200, cacheReadTokens: 700, modelRequestCount: 2, modelErrorCount: 0, inputBaselineBySource: {} });
+    case 'session/usage': if (process.env.FAKE_ZCODE_USAGE_HANG) return; if (process.env.FAKE_TELEMETRY) return reply(id, { ...(process.env.FAKE_ZCODE_REQUEST_USAGE ? { inputBaselineBySource: { main_turn: 120 } } : {}), totalTokens: 900000 + accountedTurns * 150, inputTokens: 800000 + accountedTurns * 120, outputTokens: 100000 + accountedTurns * 30, cacheReadTokens: 500000 + accountedTurns * 60, cacheCreationTokens: 0, reasoningTokens: accountedTurns * 10 }); return reply(id, { sessionId, totalTokens: 1500, inputTokens: 1200, outputTokens: 300, reasoningTokens: 100, cacheCreationTokens: 200, cacheReadTokens: 700, modelRequestCount: 2, modelErrorCount: 0, inputBaselineBySource: {} });
     case 'session/read': return process.env.FAKE_ZCODE_USAGE_READ_FAIL ? error(id, 'Statistics unavailable') : reply(id, snapshot());
     case 'session/close': reply(id, { closed: true }); return;
     case 'session/stop': reply(id, { stopped: true }); done('cancelled', ''); if (goalRun) { goal.status = 'paused'; goalSettled(); } return;
@@ -124,6 +135,12 @@ async function handle(message) {
         await new Promise((resolve) => setTimeout(resolve, Number(process.env.FAKE_COMPACT_DELAY ?? 20)));
         if (turn !== activeTurn) return;
         if (process.env.FAKE_COMPACT_FAIL) { emit('turn.failed', { error: { message: 'compaction failed' } }); turn = null; return; }
+      }
+      if (process.env.FAKE_LIVE_USAGE && p.content === 'live usage') {
+        accountedTurns++; recordNativeUsage();
+        await new Promise(r => setTimeout(r, 2400));
+        if (turn === activeTurn) done();
+        return;
       }
       if (p.content === 'crash') return process.exit(7);
       if (p.content === 'slow') return;

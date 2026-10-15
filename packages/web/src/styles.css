@@ -24,6 +24,12 @@
   --accent-soft: color-mix(in srgb, var(--accent) 66%, var(--bg));
   --on-color: #ffffff;
   --positive: #2f7d5b;
+  /* Chart lines: the total, then one hue per instance in this order (validated as a set, see observability-design.md). */
+  --chart-total: #25805a;
+  --chart-1: #2a78d6;
+  --chart-2: #eb6834;
+  --chart-3: #4a3aa7;
+  --chart-4: #e34948;
   --user-bg: #eceae4;
   --positive-bg: #e6f3eb;
   --lightbox: rgba(18, 17, 16, 0.9);
@@ -75,6 +81,11 @@
     --accent-fg: #1b1a18;
     --on-color: #ffffff;
     --positive: #3f9a72;
+    --chart-total: #3f9a72;
+    --chart-1: #3987e5;
+    --chart-2: #d95926;
+    --chart-3: #9085e9;
+    --chart-4: #e66767;
     --user-bg: #2f2d2a;
   --positive-bg: #1d3327;
   --lightbox: rgba(0, 0, 0, 0.92);
@@ -112,6 +123,11 @@
   --accent-fg: #1b1a18;
   --on-color: #ffffff;
   --positive: #3f9a72;
+  --chart-total: #3f9a72;
+  --chart-1: #3987e5;
+  --chart-2: #d95926;
+  --chart-3: #9085e9;
+  --chart-4: #e66767;
   --user-bg: #2f2d2a;
   --positive-bg: #1d3327;
   --lightbox: rgba(0, 0, 0, 0.92);
@@ -7908,13 +7924,33 @@ button.coord-row-name { cursor: pointer; }
 .obs-toolbar { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
 .obs-toolbar > .icon-btn { margin-left: auto; }
 .obs-select { display: flex; align-items: center; gap: 8px; }
+/* The toolbar sits at the top of a scrolling body: a menu opening upward would be cut off. */
+@media (min-width: 641px) {
+  .obs-toolbar .pop-panel { top: calc(100% + 8px); bottom: auto; }
+}
 .obs-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .obs-metric { padding: 18px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-lg); min-width: 0; display: flex; flex-direction: column; gap: 10px; }
 .obs-metric > span, .obs-metric small { color: var(--muted); font-size: 12px; }
 .obs-metric strong { font-size: 22px; font-weight: 550; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.obs-token-unit { display: inline-block; white-space: nowrap; }
 .obs-primary { background: var(--positive-bg); border-color: var(--positive-bg); }
 .obs-primary strong { color: var(--positive); }
 .obs-metric .obs-cost { font-size: 17px; }
+.obs-chart { margin-top: 12px; padding: 18px 18px 10px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-lg); }
+.obs-chart-head { display: flex; align-items: baseline; justify-content: space-between; gap: 6px 12px; flex-wrap: wrap; margin-bottom: 10px; color: var(--muted); font-size: 12px; }
+.obs-chart-head strong { color: var(--text); font-size: 13px; font-weight: 550; }
+.obs-chart-plot { position: relative; touch-action: pan-y; outline: none; border-radius: var(--radius-sm); }
+.obs-chart-plot:focus-visible { box-shadow: 0 0 0 2px var(--border-strong); }
+.obs-chart-plot svg { display: block; overflow: visible; }
+.obs-chart-grid { stroke: var(--border); stroke-width: 1; shape-rendering: crispEdges; }
+.obs-chart-axis { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.obs-chart-area { fill: var(--chart-total); fill-opacity: 0.1; }
+.obs-chart-line { fill: none; stroke: var(--positive); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.obs-chart-cross { stroke: var(--border-strong); stroke-width: 1; shape-rendering: crispEdges; }
+.obs-chart-dot { fill: var(--positive); stroke: var(--surface-2); stroke-width: 2; }
+.obs-chart-tip { position: absolute; top: 0; display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); box-shadow: var(--shadow-pop); color: var(--muted); font-size: 11px; white-space: nowrap; pointer-events: none; }
+.obs-chart-tip strong { color: var(--text); font-size: 14px; font-weight: 600; }
+.obs-chart-empty { display: grid; place-items: center; height: 150px; margin: 0; color: var(--muted); font-size: 13px; text-align: center; }
 .obs-note { color: var(--muted); font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; margin: 16px 0; }
 .obs-list-title { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-top: 28px; }
 .obs-list-title h3, .obs-diagnostic h3 { font-size: 15px; margin: 0; font-weight: 600; }
@@ -7950,7 +7986,24 @@ button.coord-row-name { cursor: pointer; }
   .obs-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .obs-metric { padding: 14px; }
   .obs-metric strong { font-size: 18px; }
+  .obs-chart { padding: 14px 12px 8px; }
   .obs-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .obs-list-title { align-items: start; flex-direction: column; gap: 6px; }
   .obs-diagnostic { padding: 16px; }
 }
+
+.obs-chart-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; }
+.obs-chart-legend button { display: inline-flex; align-items: center; gap: 6px; padding: 8px 0; border: 0; background: none; color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
+.obs-chart-legend button[aria-pressed="false"] { opacity: .45; text-decoration: line-through; }
+.obs-chart-legend button:disabled { cursor: default; }
+.obs-chart-legend i, .obs-chart-tip-row i { width: 16px; border-top-width: 2px; flex-shrink: 0; }
+.obs-chart-tip { width: 180px; max-width: calc(100% - 20px); }
+.obs-chart-tip-row { display: flex; align-items: center; gap: 6px; }
+.obs-chart-tip-row span { overflow: hidden; text-overflow: ellipsis; }
+.obs-chart-tip-row strong { margin-right: auto; }
+.obs-chart-table { color: var(--muted); font-size: 12px; margin: 8px 0; }
+.obs-chart-table summary { cursor: pointer; padding: 8px 0; }
+.obs-chart-table > div { overflow: auto; max-height: 240px; }
+.obs-chart-table table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.obs-chart-table th, .obs-chart-table td { padding: 8px; text-align: right; border-bottom: 1px solid var(--border); font-weight: normal; }
+.obs-chart-table th:first-child { text-align: left; }

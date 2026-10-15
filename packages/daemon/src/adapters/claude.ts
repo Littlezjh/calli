@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process';
+import { claudeLiveUsage } from './session-usage.js';
+import type { UsageSample } from '../telemetry.js';
 import { readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -91,6 +93,9 @@ export function parseClaudeUsage(text: string, now = new Date()): QuotaWindow[] 
 }
 
 export class ClaudeAcpAdapter extends AcpAdapter {
+  protected override liveUsage(id: string, cwd: string, emit: (sample: UsageSample) => void) {
+    return claudeLiveUsage(id, cwd, this.env, emit);
+  }
   readonly id = 'claude';
   readonly label = 'Claude Code';
   readonly icon = CLAUDE_ICON;
@@ -130,6 +135,7 @@ export class ClaudeAcpAdapter extends AcpAdapter {
     };
     session.controlGoal = async (action) => {
       if (action !== 'clear') throw new Error('此 agent 不支持运行中执行该目标操作');
+      await session.waitForSubmission();
       await peer.request('_session/goal', { sessionId: session.agentSessionId, action: 'clear' });
       return '已请求清除原生目标。';
     };

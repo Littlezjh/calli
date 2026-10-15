@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AgentInfo, Api } from '../api';
 import { copyText } from '../clipboard';
-import { durationLabel, numberLabel, type AgentDiagnostic, type UsageReport, type UsageSample } from '../observability';
+import { compactLabel, durationLabel, numberLabel, type AgentDiagnostic, type UsageReport, type UsageSample } from '../observability';
 import { PanelDialog } from './Dialog';
 import { Popover } from './Popover';
+import { TpmChart } from './TpmChart';
 import { IconCheck, IconCopy, IconRefresh, IconChevron } from './icons';
 
 const time = (s: string) => new Date(s).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -13,13 +14,21 @@ const status: Record<string, string> = { running: '运行中', done: '完成', e
 
 function Select({ label, value, options, onPick }: { label: string; value: string; options: Array<{ id: string; label: string }>; onPick: (id: string) => void }) {
   return <Popover label={label} triggerClassName="text-btn obs-select" triggerLabel={label} trigger={<>{options.find(o => o.id === value)?.label ?? label}<IconChevron size={12} open /></>}>
-    {close => <><div className="pop-title">{label}</div>{options.map(option => <button key={option.id} className="pop-row" onClick={() => { onPick(option.id); close(); }}>{option.label}{option.id === value && <IconCheck size={14} />}</button>)}</>}
+    {close => <><div className="pop-title">{label}</div>{options.map(option => <button key={option.id} type="button" role="menuitemradio" aria-checked={option.id === value} className="pop-item compact" onClick={() => { onPick(option.id); close(); }}>
+      <span className="pop-item-text"><span className="pop-item-label">{option.label}</span></span>
+      {option.id === value && <span className="pop-item-check"><IconCheck size={16} /></span>}
+    </button>)}</>}
   </Popover>;
+}
+
+/** Big counts read as 1.03M; hovering shows the exact digits. */
+function Count({ values }: { values: Array<number | null | undefined> }) {
+  return <strong title={values.map(numberLabel).join(' / ')}>{values.map(compactLabel).join(' / ')}</strong>;
 }
 
 function Sample({ sample }: { sample: UsageSample }) {
   return <div className="obs-sample">
-    <div className="obs-sample-head"><strong>{scope[sample.scope]}</strong><span>{sample.model ?? '实际模型未知'}{sample.provider ? ` · ${sample.provider}` : ''}</span></div>
+    <div className="obs-sample-head"><strong>{scope[sample.scope]}{sample.timing === 'estimated' ? ' · 时间估算' : ''}</strong><span>{sample.model ?? '实际模型未知'}{sample.provider ? ` · ${sample.provider}` : ''}</span></div>
     <dl className="obs-details">
       {[
         ['输入', numberLabel(sample.input)], ['输出', numberLabel(sample.output)], ['总 token', numberLabel(sample.total)],
@@ -35,6 +44,7 @@ function Sample({ sample }: { sample: UsageSample }) {
 function UsageView({ api, agents }: { api: Api; agents: AgentInfo[] }) {
   const [hours, setHours] = useState('24');
   const [agent, setAgent] = useState('');
+  const [metric, setMetric] = useState<'total' | 'output'>('total');
   const [report, setReport] = useState<UsageReport | null>(null);
   const [error, setError] = useState('');
   const [refresh, setRefresh] = useState(0);
@@ -56,20 +66,22 @@ function UsageView({ api, agents }: { api: Api; agents: AgentInfo[] }) {
     <div className="obs-toolbar">
       <Select label="统计范围" value={hours} options={[{ id: '1', label: '最近 1 小时' }, { id: '24', label: '最近 24 小时' }, { id: '168', label: '最近 7 天' }]} onPick={setHours} />
       <Select label="统计实例" value={agent} options={[{ id: '', label: '全部实例' }, ...agents.map(a => ({ id: a.id, label: a.label }))]} onPick={setAgent} />
+      <Select label="TPM 口径" value={metric} options={[{ id: 'total', label: '合计 token' }, { id: 'output', label: '仅输出 token' }]} onPick={id => setMetric(id as 'total' | 'output')} />
       <button className="icon-btn" aria-label="刷新统计" onClick={() => setRefresh(n => n + 1)}><IconRefresh size={16} /></button>
     </div>
     {error && <p role="alert" className="obs-error">{error}</p>}
     {!report && !error && <p className="panel-empty">正在读取用量…</p>}
     {report && <>
       <div className="obs-metrics">
-        <div className="obs-metric obs-primary"><span>TPM · 最近 60 秒</span><strong>{numberLabel(report.tpm)}</strong><small>Token / 分钟</small></div>
-        <div className="obs-metric"><span>总 token</span><strong>{numberLabel(report.totals.total)}</strong><small>{report.measuredSamples} 条已报告用量</small></div>
-        <div className="obs-metric"><span>输入 / 输出</span><strong>{numberLabel(report.totals.input)} / {numberLabel(report.totals.output)}</strong><small>输入包含缓存 token</small></div>
-        <div className="obs-metric"><span>缓存读取 / 写入</span><strong>{numberLabel(report.totals.cacheRead)} / {numberLabel(report.totals.cacheWrite)}</strong><small>未知字段不计入合计</small></div>
+        <div className="obs-metric obs-primary"><span>{metric === 'output' ? '输出 TPM' : 'TPM'} · 最近 60 秒</span><Count values={[metric === 'output' ? report.outputTpm : report.tpm]} /><small>Token / 分钟 · <span className="obs-token-unit">K 千 · M 百万</span></small></div>
+        <div className="obs-metric"><span>总 token</span><Count values={[report.totals.total]} /><small>{report.measuredSamples} 条已报告用量</small></div>
+        <div className="obs-metric"><span>输入 / 输出</span><Count values={[report.totals.input, report.totals.output]} /><small>输入包含缓存 token</small></div>
+        <div className="obs-metric"><span>缓存读取 / 写入</span><Count values={[report.totals.cacheRead, report.totals.cacheWrite]} /><small>未知字段不计入合计</small></div>
         <div className="obs-metric"><span>已报告费用</span><strong className="obs-cost">{Object.entries(report.costs).map(([currency, v]) => cost({ currency, ...v })).join(' · ') || '未知'}</strong><small>仅含报告费用的记录</small></div>
         <div className="obs-metric"><span>执行轮次 / 出错</span><strong>{report.turns} / {report.errors}</strong><small>一轮可能包含多次模型请求</small></div>
       </div>
-      <p className="obs-note">仅统计这台机器启用统计后在 Limi 中执行的用量，不回填历史或分叉副本。TPM 按原生用量到达时间滚动汇总输入与输出，不是模型限速额度；长请求结束时可能集中入账。未知不代表零。</p>
+      {report.series && <TpmChart series={report.series} agents={agents} metric={metric} empty={metric === 'output' ? !report.outputMeasuredSamples : !report.measuredSamples} />}
+      <p className="obs-note">仅统计这台机器启用统计后在 Limi 中执行的用量，不回填历史或分叉副本。TPM 为最近 60 秒的 token 用量；成批上报按两次报告之间的时间平摊，时间分布标为估算，总量来自原生记录。尚未完成的模型请求可能还没有用量，空闲时为 0；未知不代表零。</p>
       <div className="obs-list-title"><h3>最近执行</h3><span>更新于 {time(report.checkedAt)} · 最多 100 轮</span></div>
       {!report.rows.length && <p className="panel-empty">还没有执行记录。发送一条消息后，这里会开始记录。</p>}
       {report.rows.map(row => <details className="obs-turn" key={`${row.threadId}:${row.turnId}`}>

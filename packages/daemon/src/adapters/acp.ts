@@ -1,4 +1,6 @@
 import { acpUsage } from './usage.js';
+import { timedUsage, type LiveUsage } from './live-usage.js';
+import type { UsageSample } from '../telemetry.js';
 import { cliDiagnostic, probeWithDeadline } from './diagnostics.js';
 import { isCompaction, trackCompaction } from './compaction.js';
 import { sessionEnvironment } from './types.js';
@@ -157,6 +159,8 @@ export function modelsFromConfig(configOptions: ConfigOption[] | undefined): Mod
 
 /** A live ACP session bound to one thread. */
 export class AcpSession implements AgentSession {
+  private submission: Promise<void> = Promise.resolve();
+  waitForSubmission(): Promise<void> { return this.submission; }
   private usageId = 0;
   private costReading: { amount: number; currency: string } | null = null;
   private costReported = false;
@@ -173,6 +177,7 @@ export class AcpSession implements AgentSession {
     private readonly offeredModes: readonly string[],
     /** The config option this agent uses for effort ("effort", "reasoning_effort"). */
     private readonly effortConfigId: string = 'effort',
+    private readonly liveUsage?: (emit: (sample: UsageSample) => void) => LiveUsage | undefined,
   ) {}
 
   /** Called by the peer for every session/update notification. */
@@ -251,30 +256,46 @@ export class AcpSession implements AgentSession {
   }
 
   private async promptInternal(input: TurnInput, hooks: TurnHooks): Promise<TurnResult> {
+    const start = Date.now();
+    const emit = (sample: UsageSample) => hooks.emit({ type: 'usage.sample', data: { ...sample } });
+    const live = this.liveUsage?.(emit);
+    let submitted!: () => void;
+    this.submission = new Promise(resolve => { submitted = resolve; });
+    let samples: UsageSample[] = [];
     this.hooks = hooks;
     this.costBefore = this.costReading;
     this.costReported = false;
     try {
-      const res = await this.peer.request('session/prompt', {
+      await live?.start();
+      const response = this.peer.request('session/prompt', {
         sessionId: this.agentSessionId,
         prompt: [
           ...input.images.map((img) => ({ type: 'image', data: img.data, mimeType: img.mimeType })),
           ...(input.text ? [{ type: 'text', text: input.text }] : []),
         ],
       });
+      submitted();
+      const res = await response;
       const cost = this.costReported && this.costReading && this.costBefore && this.costReading.currency === this.costBefore.currency && this.costReading.amount >= this.costBefore.amount
         ? { amount: this.costReading.amount - this.costBefore.amount, currency: this.costReading.currency, estimated: true } : undefined;
-      for (const sample of acpUsage(res, `prompt-${++this.usageId}`, cost)) hooks.emit({ type: 'usage.sample', data: { ...sample } });
+      samples = acpUsage(res, `prompt-${++this.usageId}`, cost);
       const stop = String(res?.stopReason ?? 'end_turn');
       return { stopReason: stop === 'cancelled' ? 'cancelled' : 'end_turn' };
     } catch (err) {
       return { stopReason: 'error', error: err instanceof Error ? err.message : String(err) };
     } finally {
+      submitted();
+      await live?.stop();
+      for (const sample of samples) {
+        const remainder = live ? live.ledger.remainder(sample) : sample;
+        if (remainder) emit(timedUsage(remainder, start));
+      }
       this.hooks = null;
     }
   }
 
   async cancel(): Promise<void> {
+    await this.submission;
     this.peer.notify('session/cancel', { sessionId: this.agentSessionId });
   }
 
@@ -285,6 +306,7 @@ export class AcpSession implements AgentSession {
 
 /** Everything an ACP agent has in common. The agent-specific parts are the abstract members. */
 export abstract class AcpAdapter implements AgentAdapter {
+  protected liveUsage(_id: string, _cwd: string, _emit: (sample: UsageSample) => void): LiveUsage | undefined { return undefined; }
   /** Optional protocol extensions supplied by a concrete adapter. */
   protected configureSession(_session: AcpSession, _peer: JsonRpcPeer): void {}
   abstract readonly id: string;
@@ -494,7 +516,7 @@ export abstract class AcpAdapter implements AgentAdapter {
       const offeredModes: string[] = (info?.modes?.availableModes ?? []).map((m: any) => m.id);
       const configOptions: ConfigOption[] = info?.configOptions ?? [];
 
-      const session = new AcpSession(sessionId, peer, this.modeIds, offeredModes, effortConfigIdOf(configOptions));
+      const session = new AcpSession(sessionId, peer, this.modeIds, offeredModes, effortConfigIdOf(configOptions), emit => this.liveUsage(sessionId, opts.cwd, emit));
       this.configureSession(session, peer);
       holder.session = session;
       if (opts.permissionMode && opts.permissionMode !== 'ask') await session.setPermissionMode(opts.permissionMode);

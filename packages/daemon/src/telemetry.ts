@@ -19,6 +19,9 @@ export interface UsageSample {
   ttftMs?: number;
   cost?: { amount: number; currency: string; estimated: boolean };
   error?: string;
+  startedAt?: string;
+  endedAt?: string;
+  timing?: 'estimated';
 }
 
 export function cleanSample(data: Record<string, unknown>): UsageSample | null {
@@ -32,11 +35,20 @@ export function cleanSample(data: Record<string, unknown>): UsageSample | null {
     if (typeof data[key] === 'string') out[key] = data[key].slice(0, key === 'error' ? 500 : 200);
   }
   const cost = data.cost as UsageSample['cost'];
+  if (data.timing === 'estimated' && typeof data.startedAt === 'string' && typeof data.endedAt === 'string') {
+    const start = Date.parse(data.startedAt), end = Date.parse(data.endedAt);
+    if (Number.isFinite(start) && Number.isFinite(end) && start <= end) {
+      out.startedAt = new Date(start).toISOString(); out.endedAt = new Date(end).toISOString(); out.timing = 'estimated';
+    }
+  }
   if (cost && typeof cost.amount === 'number' && Number.isFinite(cost.amount) && cost.amount >= 0 && /^[A-Z]{3}$/.test(cost.currency)) {
     out.cost = { amount: cost.amount, currency: cost.currency, estimated: cost.estimated === true };
   }
   return out;
 }
+
+/** Chart buckets per range: about 60-170 points, so a day reads as a trend rather than per-minute spikes. */
+const STEP_MINUTES: Record<number, number> = { 1: 1, 24: 10, 168: 60 };
 
 export class Telemetry {
   constructor(private readonly db: DatabaseSync) {
@@ -84,7 +96,6 @@ export class Telemetry {
   read(hours = 24, agent = '', now = Date.now()) {
     const since = new Date(now - hours * 3600000).toISOString();
     const until = new Date(now).toISOString();
-    const minute = new Date(now - 60000).toISOString();
     const turns = this.db.prepare(`SELECT t.*,h.title FROM telemetry_turns t JOIN threads h ON h.id=t.thread_id
       WHERE t.started_at>=? AND t.started_at<=? AND (?='' OR t.agent=?) ORDER BY t.started_at DESC LIMIT 100`)
       .all(since, until, agent, agent) as any[];
@@ -93,14 +104,62 @@ export class Telemetry {
       .all(since, until, agent, agent) as any[];
     const totals: Record<string, number | null> = { input: null, output: null, total: null, cacheRead: null, cacheWrite: null, reasoning: null };
     const costs: Record<string, { amount: number; estimated: boolean }> = {};
-    let tpm = 0, measured = 0;
+    let tpm = 0, outputTpm = 0, measured = 0, outputMeasured = 0, estimated = false;
+    // Buckets sit on clock boundaries so points stay put between refreshes.
+    const step = (STEP_MINUTES[hours] ?? Math.max(1, Math.ceil(hours * 60 / 144))) * 60000;
+    const first = Math.floor((now - hours * 3600000) / step) * step;
+    const count = Math.max(1, Math.ceil((now - first) / step));
+    const buckets = new Array<number>(count).fill(0);
+    const outputBuckets = new Array<number>(count).fill(0);
+    const byAgent = new Map<string, { total: number[]; output: number[]; hasTotal: boolean; hasOutput: boolean }>();
+    const byTurn = new Map<string, Array<UsageSample & { observedAt: string }>>();
+    const turnKey = (thread: string, turn: string) => JSON.stringify([thread, turn]);
+    for (const row of turns) byTurn.set(turnKey(row.thread_id, row.turn_id), []);
+    // Allocate a measured amount across its estimated interval, clipped to the selected window.
+    const distribute = (value: number, start: number, end: number, target: number[]) => {
+      if (end <= start) {
+        const slot = Math.max(0, Math.min(count - 1, Math.floor((end - first) / step)));
+        target[slot] += value;
+        return;
+      }
+      const low = Math.max(0, Math.floor((start - first) / step));
+      const high = Math.min(count - 1, Math.floor((end - first) / step));
+      for (let i = low; i <= high; i++) {
+        const overlap = Math.max(0, Math.min(end, first + (i + 1) * step, now) - Math.max(start, first + i * step, now - hours * 3600000));
+        target[i] += value * overlap / (end - start);
+      }
+    };
     for (const row of samples) {
       const sample = JSON.parse(row.data) as UsageSample;
+      byTurn.get(turnKey(row.thread_id, row.turn_id))?.push({ ...sample, observedAt: row.ts });
       for (const key of Object.keys(totals)) {
         const value = sample[key as keyof UsageSample];
         if (typeof value === 'number') totals[key] = (totals[key] ?? 0) + value;
       }
-      if (sample.total !== undefined) { measured++; if (row.ts > minute) tpm += sample.total; }
+      const at = Date.parse(row.ts);
+      const end = sample.endedAt ? Math.min(at, Date.parse(sample.endedAt)) : at;
+      const start = sample.startedAt ? Math.min(end, Date.parse(sample.startedAt)) : end;
+      const fraction = end > start ? Math.max(0, Math.min(end, now) - Math.max(start, now - 60000)) / (end - start) : Number(end > now - 60000);
+      if (sample.total !== undefined || sample.output !== undefined) {
+        estimated ||= sample.timing === 'estimated' && end > start;
+        let instance = byAgent.get(row.agent);
+        if (!instance) {
+          instance = { total: new Array<number>(count).fill(0), output: new Array<number>(count).fill(0), hasTotal: false, hasOutput: false };
+          byAgent.set(row.agent, instance);
+        }
+        if (sample.total !== undefined) {
+          measured++; instance.hasTotal = true;
+          tpm += sample.total * fraction;
+          distribute(sample.total, start, end, buckets);
+          distribute(sample.total, start, end, instance.total);
+        }
+        if (sample.output !== undefined) {
+          outputMeasured++; instance.hasOutput = true;
+          outputTpm += sample.output * fraction;
+          distribute(sample.output, start, end, outputBuckets);
+          distribute(sample.output, start, end, instance.output);
+        }
+      }
       if (sample.cost) {
         const previous = costs[sample.cost.currency] ?? { amount: 0, estimated: false };
         costs[sample.cost.currency] = { amount: previous.amount + sample.cost.amount, estimated: previous.estimated || sample.cost.estimated };
@@ -113,9 +172,17 @@ export class Telemetry {
       configuredModel: row.configured_model as string | null, linkedAccount: row.linked_account as string | null,
       startedAt: row.started_at as string, finishedAt: row.finished_at as string | null,
       firstOutputMs: row.first_output_ms as number | null, status: row.status as string, error: row.error as string | null,
-      samples: samples.filter(s => s.thread_id === row.thread_id && s.turn_id === row.turn_id).map(s => ({ ...JSON.parse(s.data) as UsageSample, observedAt: s.ts as string })),
+      samples: byTurn.get(turnKey(row.thread_id, row.turn_id)) ?? [],
     }));
-    return { checkedAt: until, hours, totals, costs, tpm: measured ? tpm : null, measuredSamples: measured,
-      sampleCount: samples.length, turns: counts.turns, errors: counts.errors ?? 0, rows };
+    // Each point is the bucket's average TPM; the range edges cut the first and last bucket short, at least one minute.
+    const minutes = buckets.map((_, i) => {
+      const start = first + i * step;
+      return Math.max(1, (Math.min(start + step, now) - Math.max(start, now - hours * 3600000)) / 60000);
+    });
+    const points = buckets.map((tokens, i) => ({ at: new Date(first + i * step).toISOString(), tpm: Math.round(tokens / minutes[i]), outputTpm: outputMeasured ? Math.round(outputBuckets[i] / minutes[i]) : null }));
+    // The same buckets per instance, only for instances that reported usage in the range.
+    const agents = [...byAgent].map(([id, tokens]) => ({ agent: id, tpm: tokens.hasTotal ? tokens.total.map((t, i) => Math.round(t / minutes[i])) : null, outputTpm: tokens.hasOutput ? tokens.output.map((t, i) => Math.round(t / minutes[i])) : null }));
+    return { checkedAt: until, hours, totals, costs, tpm: measured ? Math.round(tpm) : null, outputTpm: outputMeasured ? Math.round(outputTpm) : null, measuredSamples: measured, outputMeasuredSamples: outputMeasured,
+      sampleCount: samples.length, turns: counts.turns, errors: counts.errors ?? 0, series: { stepMinutes: step / 60000, points, agents, estimated }, rows };
   }
 }

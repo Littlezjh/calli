@@ -152,7 +152,7 @@
 - [ ] **P0** 类型与能力：`PlanQuota { plan?, windows: [{ label, usedPercent, resetsAt? }], checkedAt }`、`capabilities.quota`、适配器方法 `fetchQuota?()`
 - [ ] **P0** daemon：`GET /api/agents/:id/quota`，60s TTL 缓存 + in-flight 去重（几个浏览器同时开只跑一次命令；Claude 要 3 秒，异步 + loading 态）
 - [ ] **P0** 界面：额度弹窗（现有 panel/Dialog 样式），每条窗口一行——标签胶囊（5H / 7D）+ 进度条 + 百分比 + 重置时间；颜色按 50% / 80% 分三档，只用 styles.css 变量；失败显示上次数据 +「检查于 xx:xx」（Stale）；入口：状态面板按钮（替换现在跳命令的那条）+ 斜杠面板 `/usage`
-- [ ] **P1** 全局 TPM：daemon 跨线程滚动窗口（60s / 5min）汇总每轮 token，pi 精确、其余估算（UI 标「估算」）；数据并入额度接口，面板顶部显示
+- [x] 全局 TPM：配置 → 用量与诊断，最近 60 秒速率和 1 小时／24 小时／7 天曲线；合计与各实例线可选，合计／输出口径可切换，数字用 K／M／B。优先原生会话接口；Claude、agy 和口径不适用的 zcode 只读本轮新增会话记录。批量上报只估算时间分布，不估算 token 数量。桌面／手机尺寸、亮／暗在 Chromium 中验证，真机待看。见 `observability-design.md`。
 - [ ] **P1** 单轮实时速度：纯前端，`message.delta` 字符数 ÷ 经过时间 ≈ tokens/s，输入框上方小字，运行中实时更新
 - [ ] **P0** 适配器测试 + `test/fixtures/` 假 agent 补对应实现
 
