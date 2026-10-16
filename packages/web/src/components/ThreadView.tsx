@@ -764,9 +764,6 @@ const WorkNote = memo(function WorkNote({ text }: { text: string }) {
   );
 });
 
-/** Once thinking is over and opened up: how many of its paragraphs show before the rest folds away. */
-const THINKING_VISIBLE = 4;
-
 /**
  * One stretch of the agent's thinking, kept small: while it is being thought, a line or two of
  * where it has got to; afterwards a single "思考 · X 秒" line. Either opens up to the whole text.
@@ -775,10 +772,8 @@ const THINKING_VISIBLE = 4;
 const ThinkingBlock = memo(function ThinkingBlock({ thought, live }: { thought: Thought; live: boolean }) {
   const paragraphs = useMemo(() => splitThinking(thought.text), [thought.text]);
   const [open, setOpen] = useState(false);
-  const [showAll, setShowAll] = useState(false);
   if (paragraphs.length === 0) return null;
 
-  const hidden = showAll ? 0 : Math.max(0, paragraphs.length - THINKING_VISIBLE);
   const secs = durationLabel(thought.startedAt, thought.endedAt);
 
   return (
@@ -789,12 +784,7 @@ const ThinkingBlock = memo(function ThinkingBlock({ thought, live }: { thought: 
       </button>
       {open ? (
         <div className="thinking-body">
-          {hidden > 0 && (
-            <button className="thinking-more" onClick={() => setShowAll(true)}>
-              更早的 {hidden} 段
-            </button>
-          )}
-          {paragraphs.slice(hidden).map((p, i) => (
+          {paragraphs.map((p, i) => (
             <p key={i} className="thinking-para">
               {p}
             </p>

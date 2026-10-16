@@ -1401,22 +1401,6 @@ html.list-open body {
   color: var(--muted);
 }
 
-.thinking-more {
-  align-self: flex-start;
-  min-height: 22px;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--faint);
-  font-size: 12.5px;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-
-.thinking-more:hover {
-  color: var(--muted);
-}
-
 /* The thought in progress: a glimpse of its latest lines, never the whole stream. */
 .thinking-live {
   display: -webkit-box;
