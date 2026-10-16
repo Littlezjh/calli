@@ -54,7 +54,7 @@ npm run build
 RAH_ENV_FILE=../../.env npm start -w @rah/daemon    # 默认监听 127.0.0.1:8787
 ```
 
-打开 `http://127.0.0.1:8787/`，输入 `RAH_TOKEN`。
+打开 `http://127.0.0.1:8787/`。没有连接时先显示一套示例数据，可以随便点开看；点「连接 hub」输入 `RAH_TOKEN` 后进入自己的数据。
 
 开发时可以分开启动：
 

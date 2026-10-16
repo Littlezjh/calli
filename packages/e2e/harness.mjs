@@ -157,15 +157,21 @@ export function launchBrowser() {
   })();
 }
 
-/** Opens the UI and signs in with the token, ready for test steps. Idempotent per page. */
+/** Opens the UI and connects with the token, ready for test steps. Idempotent per page. */
 export async function openUi(page, daemon) {
   await page.goto(daemon.base + '/');
-  const input = page.getByLabel('access token');
-  if (await input.count()) {
-    await input.fill(daemon.token);
-    await page.getByRole('button', { name: '进入' }).click();
-  }
   // On phones the sidebar is a drawer: it exists but is not visible until opened.
+  await page.locator('.sidebar-inner').waitFor({ state: 'attached', timeout: 15_000 });
+  // Without a saved token the page opens on the demo workspace; connecting is the way in from there.
+  if (await page.locator('.demo-bar').count()) await connect(page, daemon.token);
+}
+
+/** Connects the demo page to the hub through the connect dialog, and waits for the demo to go. */
+export async function connect(page, token) {
+  await page.locator('.demo-bar-btn:visible').first().click();
+  await page.getByLabel('访问 token').fill(token);
+  await page.getByRole('button', { name: '连接', exact: true }).click();
+  await page.locator('.demo-bar').first().waitFor({ state: 'detached', timeout: 15_000 });
   await page.locator('.sidebar-inner').waitFor({ state: 'attached', timeout: 15_000 });
 }
 

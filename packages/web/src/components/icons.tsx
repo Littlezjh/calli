@@ -329,6 +329,12 @@ export const IconSignOut = (p: { size?: number }) => (
     <path d="M10 4H6a2 2 0 00-2 2v12a2 2 0 002 2h4M15 8l4 4-4 4M19 12H9" />
   </Svg>
 );
+/** Going in: the arrow into the door, the mirror of signing out. */
+export const IconSignIn = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M14 4h4a2 2 0 012 2v12a2 2 0 01-2 2h-4M10 8l4 4-4 4M14 12H4" />
+  </Svg>
+);
 export const IconQuote = (p: { size?: number }) => (
   <svg width={p.size ?? 18} height={p.size ?? 18} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
     <path d="M10.6 6.2c-3.1 1.6-4.7 4.2-4.7 7.6 0 2.3 1.1 3.9 2.9 3.9 1.5 0 2.6-1.1 2.6-2.5 0-1.4-.9-2.4-2.2-2.4-.2 0-.4 0-.5.1.2-1.7 1.3-3 3-4zM19.6 6.2c-3.1 1.6-4.7 4.2-4.7 7.6 0 2.3 1.1 3.9 2.9 3.9 1.5 0 2.6-1.1 2.6-2.5 0-1.4-.9-2.4-2.2-2.4-.2 0-.4 0-.5.1.2-1.7 1.3-3 3-4z" />

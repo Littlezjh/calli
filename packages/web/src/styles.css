@@ -2672,8 +2672,7 @@ html.list-open body {
 
 .dialog-field input,
 .picker-search input,
-.picker-search,
-.gate-card input {
+.picker-search {
   width: 100%;
   height: 42px;
   padding: 0 13px;
@@ -2685,8 +2684,7 @@ html.list-open body {
 
 .dialog-field input:focus,
 .picker-search:focus,
-.picker-search input:focus,
-.gate-card input:focus {
+.picker-search input:focus {
   outline: 2px solid color-mix(in srgb, var(--text) 30%, transparent);
   outline-offset: 1px;
 }
@@ -2852,40 +2850,74 @@ input.picker-search {
   color: var(--danger);
 }
 
-/* ---------- Token gate ---------- */
+/* ---------- Demo workspace ---------- */
 
-.gate {
-  display: grid;
-  place-items: center;
-  min-height: 100%;
-  padding: 20px;
-}
-
-.gate-card {
+/* The line saying the data is made up. Quiet: a surface, not a warning. */
+.demo-bar {
   display: flex;
-  flex-direction: column;
-  gap: 14px;
-  width: min(380px, 100%);
-}
-
-.gate-card h1 {
-  margin: 0;
-  font-size: 26px;
-  font-weight: 650;
-  letter-spacing: -0.02em;
-}
-
-.gate-card p {
-  margin: 0;
-}
-
-.gate-card .primary {
-  min-height: 42px;
-}
-
-.error-text {
-  color: var(--danger);
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: min(var(--content-w), calc(100% - 32px));
+  margin: 4px auto 0;
+  padding: 6px 6px 6px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
   font-size: 14px;
+}
+
+.demo-bar-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.demo-bar-text strong {
+  font-weight: 600;
+}
+
+.demo-bar-more {
+  color: var(--muted);
+}
+
+.demo-bar .demo-bar-btn {
+  flex: none;
+  min-height: 30px;
+  padding: 0 14px;
+  font-size: 13.5px;
+}
+
+/* Over the phone's thread list, under the title row. */
+.sidebar-inner > .demo-bar {
+  width: auto;
+  margin: 0 16px 8px;
+}
+
+.connect-reason {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 550;
+}
+
+.connect-field {
+  margin-bottom: 8px;
+}
+
+.connect-dialog .field-hint {
+  margin-bottom: 18px;
+}
+
+.connect-spinner {
+  display: block;
+  width: 15px;
+  height: 15px;
+  border: 2px solid color-mix(in srgb, var(--accent-fg) 30%, transparent);
+  border-top-color: var(--accent-fg);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
 }
 
 /* ---------- Sidebar groups ---------- */

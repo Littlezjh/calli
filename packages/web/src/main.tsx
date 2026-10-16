@@ -1,20 +1,37 @@
 import { StrictMode, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App, type AppStart } from './App';
+import { loadToken, saveToken } from './api';
 import { loadHost, saveHost } from './hosts';
 import './styles.css';
 
-/** Which machine the page shows. Each machine is a hub of its own, so switching starts the app over on it. */
+/**
+ * Which machine the page shows, and whether it is connected at all. Each machine is a hub of its
+ * own, and the demo is a workspace of its own, so switching either starts the app over.
+ */
 function Root() {
   const [at, setAt] = useState<{ hostId: string | null; start?: AppStart }>(() => ({ hostId: loadHost() }));
+  const [token, setToken] = useState(loadToken);
+  // Set when the app starts over on the demo with the connect dialog open, and why.
+  const [connect, setConnect] = useState<{ reason?: string } | undefined>();
+  // Without a token there is only the demo, which is no machine.
+  const hostId = token ? at.hostId : null;
   return (
     <App
-      key={at.hostId ?? ''}
-      hostId={at.hostId}
+      key={`${token ? 'hub' : 'demo'}:${hostId ?? ''}`}
+      token={token}
+      hostId={hostId}
       start={at.start}
+      connect={connect}
       onHost={(hostId, start) => {
         saveHost(hostId);
         setAt({ hostId, start });
+      }}
+      onToken={(next, reason) => {
+        saveToken(next);
+        setToken(next);
+        setConnect(!next && reason ? { reason } : undefined);
+        if (next) setAt({ hostId: loadHost() });
       }}
     />
   );

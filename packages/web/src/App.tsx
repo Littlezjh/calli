@@ -6,8 +6,6 @@ import {
   ApiError,
   AuthError,
   MAX_QUEUED,
-  loadToken,
-  saveToken,
   type AgentInfo,
   type ModelOption,
   type Section,
@@ -61,8 +59,9 @@ import { TurnRuler } from './components/TurnRuler';
 import { NewProjectDialog, ProjectPicker, RootsDialog } from './components/Projects';
 import { NoteMarks, type NoteMark } from './components/NoteMarks';
 import { Toast, type ToastState } from './components/Toast';
-import { TokenGate } from './components/TokenGate';
-import { IconCheck, AgentMark, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconImport, IconList, IconMenu, IconMore, IconPalette, IconPlus, IconServer, IconSidebar, IconSignOut, IconSparkle, IconTerminal } from './components/icons';
+import { ConnectDialog, DemoBar } from './components/ConnectDialog';
+import { DemoApi, DemoError } from './demo/DemoApi';
+import { IconCheck, AgentMark, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconImport, IconList, IconMenu, IconMore, IconPalette, IconPlus, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal } from './components/icons';
 
 const sleep = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve) => {
@@ -131,6 +130,12 @@ function MemberModel({ agent, models, value, permission, onNeed, onChange, onPer
 }
 
 interface AppProps {
+  /** The hub's access token; empty shows the demo workspace, which talks to no daemon. */
+  token: string;
+  /** Connects (a token the hub accepted) or disconnects (empty, with why when it was not the user's doing). */
+  onToken: (token: string, reason?: string) => void;
+  /** Opens the connect dialog at once, saying why. */
+  connect?: { reason?: string };
   /** The machine on screen: one of the hub's other machines, or null for the hub's own. */
   hostId?: string | null;
   /** Switches machines. The app starts over on the new one, with what the switch was made from still open. */
@@ -141,9 +146,9 @@ interface AppProps {
 /** What is open when the app starts over on another machine: the phone's thread list, or the machines panel. */
 export type AppStart = 'list' | 'machines';
 
-export function App({ hostId = null, onHost, start }: AppProps = {}) {
-  const [token, setToken] = useState(loadToken);
-  const [authMessage, setAuthMessage] = useState<string | undefined>();
+export function App({ token, onToken, connect, hostId = null, onHost, start }: AppProps) {
+  // Asking for the token, and why: what was being done, or why the old one stopped working.
+  const [connectAsk, setConnectAsk] = useState<{ reason?: string } | null>(connect ?? null);
   // Looking at another machine, every call is answered by its daemon, through the hub.
   const { hosts, loaded: hostsLoaded, reload: reloadHosts } = useHosts(token);
   const host = hostId ? hosts.find((h) => h.id === hostId) : undefined;
@@ -151,7 +156,8 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
   const hostUp = !hostId || !hostsLoaded || host?.status === 'online';
   // A machine that comes back gets a new client, so everything is read from it again.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const api = useMemo(() => (token ? new Api(token, '', hostId) : null), [token, hostId, hostUp]);
+  const api = useMemo<Api>(() => (token ? new Api(token, '', hostId) : new DemoApi()), [token, hostId, hostUp]);
+  const demo = api.demo;
   const [hostsOpen, setHostsOpen] = useState(start === 'machines');
   // A machine that was removed (here or on another device) has nothing to show: back to the hub's own.
   useEffect(() => {
@@ -186,7 +192,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
       ? 'todos'
       : window.location.hash === SCHEDULES_HASH
         ? 'schedules'
-        : window.location.hash === SKILLS_HASH
+        : window.location.hash === SKILLS_HASH && token
           ? 'skills'
           : 'thread',
   );
@@ -252,7 +258,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
     return () => window.removeEventListener('keydown', onKey);
   }, [compact, toggleSidebar]);
   const listOpen = drawer && compact;
-  useListSwipe(compact && Boolean(token), listOpen, setDrawer);
+  useListSwipe(compact, listOpen, setDrawer);
   const [confirmSignOut, setConfirmSignOut] = useState(false);
   /** Where the settings menu opened from, while it is open. */
   const [settingsAt, setSettingsAt] = useState<{ x: number; y: number } | null>(null);
@@ -366,7 +372,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
         setView('schedules');
         setDrawer(false);
       }
-      if (window.location.hash === SKILLS_HASH) {
+      if (window.location.hash === SKILLS_HASH && token) {
         setSelectedId(null);
         setView('skills');
         setDrawer(false);
@@ -415,16 +421,16 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
   // Whether the user has a hand on the scroller, and when they last did.
   const gesture = useRef({ held: false, at: 0 });
 
-  const signOut = (msg?: string) => {
-    saveToken('');
-    setToken('');
-    setThreads([]);
-    setSelectedId(null);
-    setAuthMessage(msg);
-  };
+  const askToConnect = () => setConnectAsk((cur) => cur ?? {});
+
+  // The app starts over on the demo; a token that stopped working says so in the connect dialog.
+  const signOut = (msg?: string) => onToken('', msg);
 
   const handleError = (e: unknown) => {
-    if (e instanceof AuthError) signOut('token 无效或已过期，请重新输入');
+    // In the demo, doing something asks to connect; a part it has no data for just stays empty.
+    if (e instanceof DemoError) {
+      if (e.write) askToConnect();
+    } else if (e instanceof AuthError) signOut('token 无效或已过期，请重新输入');
     // A machine that dropped is explained in the main area; the hub is asked at once how it is.
     else if (e instanceof ApiError && e.details.code === 'host_offline') void reloadHosts();
     else setError(message(e));
@@ -923,7 +929,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
       api?.sections().then(setSections).catch(handleError);
       void refreshThreads();
     },
-    onOpenTerminal: () => setTermOpen(true),
+    onOpenTerminal: () => (demo ? askToConnect() : setTermOpen(true)),
     onError: handleError,
     toast: setToast,
     // The open thread is already in memory; copying it straight away keeps the browser's
@@ -936,19 +942,6 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
       return toMarkdown(thread.title, buildTimeline(await api.allEvents(thread.id)).items);
     },
   });
-
-  if (!api) {
-    return (
-      <TokenGate
-        message={authMessage}
-        onSubmit={(t) => {
-          saveToken(t);
-          setAuthMessage(undefined);
-          setToken(t);
-        }}
-      />
-    );
-  }
 
   const performSend = async (text: string, images: PreparedImage[], isNewThread: boolean, mentions?: AgentMention[], videos: PreparedVideo[] = []) => {
     setError(null);
@@ -984,7 +977,9 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
       );
       void refreshThreads();
     } catch (e) {
-      handleError(e);
+      // The composer keeps the draft; the dialog says it will still be there.
+      if (e instanceof DemoError) setConnectAsk({ reason: '连接后再发送，输入框里的内容会留着。' });
+      else handleError(e);
       throw e;
     }
   };
@@ -1203,6 +1198,8 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
   ];
 
   const runHubAction = (id: string) => {
+    // These are the hub's own machinery, which the demo has none of.
+    if (demo && (id === 'term' || id === 'usage' || id === 'skills' || id === 'import')) return askToConnect();
     if (id === 'new') return newThread();
     if (id === 'status') return setStatusOpen(true);
     if (id === 'term') return setTermOpen(true);
@@ -1443,6 +1440,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           todosActive={onTodos}
           onOpenSchedules={openSchedules}
           schedulesActive={onSchedules}
+          notice={demo && compact ? <DemoBar compact onConnect={askToConnect} /> : undefined}
         />
       </aside>
 
@@ -1498,7 +1496,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
                 <IconFiles />
               </button>
               {!compact && (
-                <button className="icon-btn topbar-term" aria-label="打开终端" title="终端" onClick={() => setTermOpen(true)}>
+                <button className="icon-btn topbar-term" aria-label="打开终端" title="终端" onClick={() => (demo ? askToConnect() : setTermOpen(true))}>
                   <IconTerminal />
                 </button>
               )}
@@ -1518,6 +1516,8 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
             </div>
           )}
         </header>
+
+        {demo && <DemoBar compact={compact} onConnect={askToConnect} />}
 
         {selected && !onTodos && !onSkills && !onSchedules && hostUp && <HandoverTrail thread={selected} threads={threads} agentLabel={agentLabel} onSelect={pick} />}
 
@@ -1632,7 +1632,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           draftKey={hostId ? `host:${hostId}:${selectedId ?? 'new'}` : selectedId ?? 'new'}
           running={running}
           disabled={modeBusy || (!selected && !draftCwd)}
-          placeholder={workMode === 'plan' && !running ? '先分析和讨论方案' : selected ? (running ? '追加一条，这一轮结束后发送' : '继续这个线程') : draftScratch ? '随便问点什么' : `在 ${folderName(draftCwd) || '工作目录'} 中开始`}
+          placeholder={demo ? '连接 hub 后就能发消息' : workMode === 'plan' && !running ? '先分析和讨论方案' : selected ? (running ? '追加一条，这一轮结束后发送' : '继续这个线程') : draftScratch ? '随便问点什么' : `在 ${folderName(draftCwd) || '工作目录'} 中开始`}
           onSend={send}
           mentionOptions={collaborationOptions}
           mentionIcon={collaborationIcon}
@@ -1757,6 +1757,21 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           corner="bottom-right"
           onClose={() => setSettingsAt(null)}
           items={[
+            // The demo's way in. The look works as it is; the hub's own machinery is left out.
+            ...(demo
+              ? [
+                  {
+                    id: 'connect',
+                    label: '连接 hub',
+                    icon: IconSignIn,
+                    onSelect: () => {
+                      setDrawer(false);
+                      askToConnect();
+                    },
+                  },
+                  'separator' as const,
+                ]
+              : []),
             {
               id: 'appearance',
               label: '外观',
@@ -1801,17 +1816,21 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
                   },
                 ]
               : []),
-            { id: 'observability', label: '用量与诊断', icon: IconGauge, onSelect: () => { setObservability('usage'); setDrawer(false); } },
-            { id: 'skills', label: '技能', icon: IconSparkle, onSelect: openSkills },
-            {
-              id: 'hosts',
-              label: '机器',
-              icon: IconServer,
-              onSelect: () => {
-                setHostsOpen(true);
-                setDrawer(false);
-              },
-            },
+            ...(demo
+              ? []
+              : [
+                  { id: 'observability', label: '用量与诊断', icon: IconGauge, onSelect: () => { setObservability('usage'); setDrawer(false); } },
+                  { id: 'skills', label: '技能', icon: IconSparkle, onSelect: openSkills },
+                  {
+                    id: 'hosts',
+                    label: '机器',
+                    icon: IconServer,
+                    onSelect: () => {
+                      setHostsOpen(true);
+                      setDrawer(false);
+                    },
+                  },
+                ]),
             ...(importAgents.length
               ? [
                   {
@@ -1825,9 +1844,8 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
                   },
                 ]
               : []),
-            'separator',
             // Signing out costs the saved token, so it asks first.
-            { id: 'sign-out', label: '退出', icon: IconSignOut, danger: true, onSelect: () => setConfirmSignOut(true) },
+            ...(demo ? [] : ['separator' as const, { id: 'sign-out', label: '退出', icon: IconSignOut, danger: true, onSelect: () => setConfirmSignOut(true) }]),
           ]}
         />
       )}
@@ -1835,10 +1853,11 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
       {appearanceOpen && (
         <AppearancePanel appearance={appearance} theme={theme} onChange={setAppearance} onClose={() => setAppearanceOpen(false)} />
       )}
+      {connectAsk && <ConnectDialog reason={connectAsk.reason} onCancel={() => setConnectAsk(null)} onConnected={(t) => onToken(t)} />}
       {confirmSignOut && (
         <Dialog
           title="退出登录？"
-          message="这台设备上保存的 token 会被清除，再进来要重新输入。"
+          message="这台设备上保存的 token 会被清除，回到示例数据。"
           confirmLabel="退出"
           onCancel={() => setConfirmSignOut(false)}
           onConfirm={() => {

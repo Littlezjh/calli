@@ -1,4 +1,4 @@
-import { useEffect, useState, type MouseEvent } from 'react';
+import { useEffect, useState, type MouseEvent, type ReactNode } from 'react';
 import type { AgentInfo, HostInfo, SearchHit, Section, Thread } from '../api';
 import { clockLabel } from '../timeline';
 import { useLongPress, useStoredFlag, useStoredSet } from '../hooks';
@@ -49,6 +49,8 @@ interface Props {
   onSearch?: (query: string) => Promise<SearchHit[]>;
   /** Opens the thread a found turn is in, at that turn. */
   onOpenHit?: (hit: SearchHit) => void;
+  /** A line over the list, such as the demo's way to connect. */
+  notice?: ReactNode;
 }
 
 /** Where a menu opened from a "more" button should appear: just under the button. */
@@ -90,6 +92,7 @@ export function Sidebar({
   schedulesActive = false,
   compact = false,
   onOpenSettings,
+  notice,
   onHide,
   hosts = [],
   hostId = null,
@@ -434,6 +437,7 @@ export function Sidebar({
         )}
       </div>
 
+      {notice}
       <div className="sidebar-scroll">
         {onHost && !search.trim() && <HostSwitcher hosts={hosts} current={hostId} onPick={onHost} />}
         {hostDown && <p className="group-empty top">这台机器现在连不上，它的线程要等连上才看得到。</p>}

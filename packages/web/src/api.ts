@@ -457,6 +457,9 @@ export class Api {
   private readonly quotas = new Map<string, PlanQuota>();
   private readonly quotaRequests = new Map<string, Promise<PlanQuota>>();
 
+  /** True for the made-up workspace shown before the page is connected: nothing reaches a daemon. */
+  readonly demo: boolean = false;
+
   constructor(
     private readonly token: string,
     private readonly base = '',
@@ -476,7 +479,7 @@ export class Api {
     return this.send(method, this.url(path), body);
   }
 
-  private async send<T>(method: string, url: string, body?: unknown): Promise<T> {
+  protected async send<T>(method: string, url: string, body?: unknown): Promise<T> {
     const res = await fetch(url, {
       method,
       headers: this.headers(body === undefined ? {} : { 'Content-Type': 'application/json' }),
