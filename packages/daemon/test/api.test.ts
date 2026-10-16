@@ -1471,7 +1471,7 @@ test('agy: stopping a turn leaves the thread idle and usable', async () => {
 });
 
 const patchRaw = (id: string, body: Record<string, unknown>) => api(`/api/threads/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
-type View = { id: string; status: string; unread: boolean; waiting: boolean; updatedAt: string; queued: Array<{ id: string; text: string; images: number }> };
+type View = { id: string; status: string; unread: boolean; waiting: boolean; waitingReason: 'approval' | 'question' | 'plan' | null; updatedAt: string; queued: Array<{ id: string; text: string; images: number }> };
 const viewOf = async (id: string) => (await (await api(`/api/threads/${id}`)).json()) as View;
 const post = (path: string, body?: unknown) => api(path, { method: 'POST', ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
 const untilIdle = (id: string) =>
@@ -1522,11 +1522,14 @@ test('waiting: a thread says when its agent is waiting for approval, in the list
   assert.equal((await viewOf(thread.id)).waiting, true);
   const list = (await (await api('/api/threads')).json()) as View[];
   assert.equal(list.find((t) => t.id === thread.id)?.waiting, true);
+  assert.equal(list.find((t) => t.id === thread.id)?.waitingReason, 'approval');
+  assert.equal((await viewOf(thread.id)).waitingReason, 'approval');
   assert.equal(list.filter((t) => t.waiting).length, 1);
 
   await post(`/api/approvals/${request.data.approvalId}`, { optionId: 'allow' });
   const after = await untilIdle(thread.id);
   assert.equal(after.waiting, false);
+  assert.equal(after.waitingReason, null);
 });
 
 test('the thread-list stream reports approvals, so a waiting thread shows up without polling', async () => {

@@ -96,6 +96,7 @@ Plan 交互参考了 [Cline 的 Plan / Act](https://docs.cline.bot/core-workflow
 - **图片按 agent 的能力走：** 能直接收图的发图片本身；agy 只收文字，发文件路径让它自己打开；pi 的纯文本模型在装了 `pi-aux-vision` 后发路径，由它的 `describe_image` 工具交给视觉模型，没装就拦下并提示换模型。
 - **排队：** 运行中发的消息排队（内存里，最多 5 条），每轮结束后发下一条；"立即发送"打断当前这轮；按停止则不发，文字退回输入框。
 - **未读存在服务器上，** 所以手机上看过，电脑上也算已读。
+- **等待状态：** 线程接口保留 `waiting`，并返回 `waitingReason`（`question` / `plan` / `approval`，无待处理请求时为 `null`）。从当前未解决的原生请求推导，回答、取消和到期后清除；多请求时权限审批优先，其次取最早未回答的提问或计划确认。前端统一映射文案，不按 agent 名称判断；旧 daemon 缺少类型时使用「等待处理」。
 - **终端（第 10 节）：** 真终端要 PTY，首选 `node-pty`（退路 `script -qfc`）；传输沿用 HTTP + SSE（输出 SSE + base64，输入 POST），不引 WebSocket；终端是临时会话，不写 SQLite，daemon 重启即消失，空闲 30 分钟回收，最多 3 个；起始目录限白名单，之后 cd 不管。
 - **agent 做不到的事不假装：** 没有审批的 agent 不显示"请求批准"；agy 因为不能询问而拒绝操作时，`turn.error` 带 `code: permission_refused`，界面提示切到"完全访问"。
 - **工作目录白名单：** 只能在 `RAH_WORKDIRS` 列出的目录里建线程。

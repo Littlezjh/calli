@@ -110,6 +110,7 @@ test('queued planning messages retain their mode after native approval starts ex
     const thread = await manager.createThread({ agent: 'zcode', cwd: dir, workMode: 'plan' });
     await manager.startTurn(thread.id, { text: 'plan-approval' });
     await waitFor(() => manager.threadView(thread.id).waiting);
+    assert.equal(manager.threadView(thread.id).waitingReason, 'plan');
     await manager.startTurn(thread.id, { text: 'plan-draft', queue: true });
     const request = store.listEvents(thread.id).find(e => e.type === 'input.request')!;
     const question = (request.data.questions as UserInputRequest['questions'])[0];
@@ -161,6 +162,9 @@ test('HTTP mode and input lifecycle: persistence, invalid modes, busy changes, r
     for (const cancel of [false, true]) {
       assert.equal((await call(`/api/threads/${th.id}/turns`, 'POST', { text: 'plan-question' })).status, 202);
       await waitFor(() => manager.threadView(th.id).waiting);
+      assert.equal((await (await call(`/api/threads/${th.id}`)).json() as any).waitingReason, 'question');
+      const list = await (await call('/api/threads')).json() as any[];
+      assert.equal(list.find(t => t.id === th.id).waitingReason, 'question');
       const events = await (await call(`/api/threads/${th.id}/events`)).json() as any[];
       const question = events.filter(e => e.type === 'input.request').at(-1);
       const route = `/api/inputs/${question.data.inputId}`;
@@ -171,8 +175,25 @@ test('HTTP mode and input lifecycle: persistence, invalid modes, busy changes, r
       await waitFor(() => manager.threadView(th.id).status !== 'running');
       assert.equal((await call(route, 'POST', { answers: { scope: ['桌面和手机'] } })).status, 404);
       assert.equal(manager.threadView(th.id).waiting, false);
+      assert.equal(manager.threadView(th.id).waitingReason, null);
     }
     assert.equal((await call(`/api/threads/${th.id}`, 'PATCH', { workMode: 'execute' })).status, 200);
     assert.equal(store.getThread(th.id)?.permissionMode, 'full_access');
   } finally { await manager.shutdown(); await new Promise<void>(r => server.close(() => r())); store.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('pending input reasons follow the oldest request and clear on cancellation', async () => {
+  const pending = new UserInputs(() => {});
+  const request: UserInputRequest = { title: 'Question', questions: [] };
+  const question = pending.request('thread', 'turn', { ...request, id: 'question' });
+  const plan = pending.request('thread', 'turn', { ...request, id: 'plan', kind: 'plan' });
+  assert.equal(pending.waitingReason('thread'), 'question');
+  assert.equal(pending.waitingReason('other'), null);
+  pending.cancel('thread', 'question');
+  await question;
+  assert.equal(pending.waitingReason('thread'), 'plan');
+  pending.cancel('thread');
+  await plan;
+  assert.equal(pending.waitingReason('thread'), null);
+  assert.equal(pending.waiting('thread'), false);
 });

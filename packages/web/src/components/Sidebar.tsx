@@ -2,7 +2,7 @@ import { useEffect, useState, type MouseEvent, type ReactNode } from 'react';
 import type { AgentInfo, HostInfo, SearchHit, Section, Thread } from '../api';
 import { clockLabel } from '../timeline';
 import { useLongPress, useStoredFlag, useStoredSet } from '../hooks';
-import { attentionCount, threadMark } from '../notices';
+import { attentionCount, threadMark, waitingLabel } from '../notices';
 import { folderName } from '../paths';
 import { buildActivity, buildSidebar, handoverGroups, markTerms, projectDir, SEARCH_MIN, taggedAgents } from '../sidebar';
 import { timeAgo } from '../sessions';
@@ -139,7 +139,7 @@ export function Sidebar({
   // While searching, everything is expanded so matches are never hidden inside a closed group.
   const isOpen = (key: string) => Boolean(search.trim()) || !collapsed.has(key);
 
-  const MARK_LABELS = { waiting: '等待批准', running: '运行中', error: '出错', unread: '有新结果' } as const;
+  const MARK_LABELS = { waiting: '等待处理', running: '运行中', error: '出错', unread: '有新结果' } as const;
   const agentById = new Map(agents.map((a) => [a.id, a]));
   const tagged = taggedAgents(agents);
 
@@ -150,7 +150,7 @@ export function Sidebar({
     // shows where it helps finding something, by activity and in a search. A thread that needs a
     // hand says so in every view.
     const detail = byActivity || query ? preview : null;
-    const note = mark === 'waiting' ? '等待批准' : mark === 'error' ? '出错了' : null;
+    const note = mark === 'waiting' ? waitingLabel(t) : mark === 'error' ? '出错了' : null;
     return (
     <div
       key={t.id}
@@ -198,7 +198,7 @@ export function Sidebar({
             // An agent without a mark, or one this hub no longer has: its name, as before.
             <span className="agent-tag">{t.agent}</span>
           )}
-          {mark && <span className={`dot ${mark}`} role="img" aria-label={MARK_LABELS[mark]} title={MARK_LABELS[mark]} />}
+          {mark && <span className={`dot ${mark}`} role="img" aria-label={mark === 'waiting' ? waitingLabel(t) : MARK_LABELS[mark]} title={mark === 'waiting' ? waitingLabel(t) : MARK_LABELS[mark]} />}
         </span>
       </button>
       <button className="row-more" aria-label={`“${t.title}” 的更多操作`} onClick={(e) => onThreadMenu(t, ...below(e))}>
@@ -228,7 +228,7 @@ export function Sidebar({
       {row(t)}
       <button className="handover-toggle" aria-label={`${open ? '收起' : '展开'}智能体：${t.title}`} aria-expanded={open} onClick={() => setTeamOpen((old) => new Map(old).set(t.id, !open))}>
         <span>{sorted.length} 个智能体</span>
-        {(waiting || working) > 0 && <span className="team-note">{waiting ? `${waiting} 待批准` : `${working} 运行中`}</span>}
+        {(waiting || working) > 0 && <span className="team-note">{waiting ? `${waiting} 待处理` : `${working} 运行中`}</span>}
         {!open && marks.length > 0 && <span className="handover-marks">{marks.map((mark) => <span key={mark} className={`dot ${mark}`} role="img" aria-label={MARK_LABELS[mark!]} title={MARK_LABELS[mark!]} />)}</span>}
         <IconChevron size={13} open={open} />
       </button>
@@ -244,7 +244,7 @@ export function Sidebar({
           onContextMenu={(e) => { e.preventDefault(); onThreadMenu(m, e.clientX, e.clientY); }}
           {...longPress(m)}
         >
-          <span className={`dot ${mark ?? 'idle'}`} role="img" aria-label={mark ? MARK_LABELS[mark] : '空闲'} />
+          <span className={`dot ${mark ?? 'idle'}`} role="img" aria-label={mark === 'waiting' ? waitingLabel(m) : mark ? MARK_LABELS[mark] : '空闲'} />
           {agent?.icon ? <span className="agent-mark" role="img" aria-label={agent.label}><AgentMark path={agent.icon} size={compact ? 14 : 13} /></span> : null}
           <span className="handover-member-name team-member-text">{deliveredPreview(m.coordination?.doing ?? '') || m.title}</span>
           <time className="handover-member-time" dateTime={m.updatedAt}>{timeAgo(m.updatedAt, now)}</time>
@@ -282,7 +282,7 @@ export function Sidebar({
           onContextMenu={(e) => { e.preventDefault(); onThreadMenu(t, e.clientX, e.clientY); }}
           {...longPress(t)}
         >
-          <span className={`dot ${mark ?? 'idle'}`} role="img" aria-label={mark ? MARK_LABELS[mark] : '空闲'} />
+          <span className={`dot ${mark ?? 'idle'}`} role="img" aria-label={mark === 'waiting' ? waitingLabel(t) : mark ? MARK_LABELS[mark] : '空闲'} />
           {agent?.icon ? <span className="agent-mark"><AgentMark path={agent.icon} size={compact ? 14 : 13} /></span> : null}
           <span className="handover-member-name">{agent?.label ?? t.agent}</span>
           <span className="handover-member-role">{t.handover ? '接手' : '原始'}</span>

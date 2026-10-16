@@ -1,3 +1,4 @@
+import { waitingLabel } from '../notices';
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import type { AgentInfo, Api, Coordination, Thread } from '../api';
 import { buildTalks } from '../coordination';
@@ -15,7 +16,7 @@ const clampWidth = (w: number) => Math.max(MIN_WIDTH, Math.min(w, window.innerWi
 const labels: Record<string, string> = { queued: '排队中', running: '运行中', returned: '已返回', failed: '失败', stopped: '已停止', interrupted: '中断' };
 export function memberStatus(m: Coordination['members'][number]): string {
   if (!m.thread) return '不可用';
-  if (m.thread.waiting) return '待批准';
+  if (m.thread.waiting) return waitingLabel(m.thread);
   if (m.thread.status === 'running') return '运行中';
   return labels[m.latest?.state ?? ''] ?? '尚未派发';
 }

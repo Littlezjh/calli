@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Thread } from '../src/api.js';
-import { attentionCount, pageTitle, threadMark, threadNotices } from '../src/notices.js';
+import { attentionCount, pageTitle, threadMark, threadNotices, waitingLabel } from '../src/notices.js';
 
 const thread = (id: string, over: Partial<Thread> = {}): Thread => ({
   id,
@@ -44,7 +44,7 @@ test('threadNotices keeps successful completion quiet and reports errors elsewhe
 
 test('threadNotices reports a thread that starts waiting for approval, once', () => {
   const idle = [thread('a', { status: 'running' })];
-  const waiting = [thread('a', { status: 'running', waiting: true })];
+  const waiting = [thread('a', { status: 'running', waiting: true, waitingReason: 'approval' })];
   assert.deepEqual(threadNotices(idle, waiting, null).map((n) => [n.kind, n.action]), [['waiting', '去批准']]);
   assert.deepEqual(threadNotices(waiting, waiting, null), [], 'no repeat while it keeps waiting');
 });
@@ -88,4 +88,26 @@ test('threadNotices does not repeat a thread that stays unread, nor one marked u
   assert.deepEqual(threadNotices(unread, unread, null), []);
   // Still running: the next turn of a queue has started, nothing to announce yet.
   assert.deepEqual(threadNotices([thread('a')], [thread('a', { status: 'running', unread: true })], null), []);
+});
+
+test('waiting labels and notices distinguish questions, plans, approvals and older daemons', () => {
+  const cases = [
+    ['approval', '等待批准', '去批准'],
+    ['question', '等待回答', '去回答'],
+    ['plan', '计划待确认', '查看计划'],
+    [undefined, '等待处理', '去查看'],
+  ] as const;
+  for (const [waitingReason, label, action] of cases) {
+    const pending = thread('a', { waiting: true, waitingReason });
+    assert.equal(waitingLabel(pending), label);
+    assert.equal(threadNotices([thread('a')], [pending], null)[0].action, action);
+    assert.deepEqual(threadNotices([pending], [pending], null), []);
+    assert.deepEqual(threadNotices([thread('a')], [pending], 'a'), []);
+    assert.equal(threadMark(pending, false), 'waiting');
+    assert.equal(attentionCount([pending], null), 1);
+  }
+  const question = thread('a', { waiting: true, waitingReason: 'question' });
+  const plan = thread('a', { waiting: true, waitingReason: 'plan' });
+  assert.equal(threadNotices([question], [plan], null)[0].action, '查看计划');
+  assert.deepEqual(threadNotices([plan], [thread('a')], null), []);
 });

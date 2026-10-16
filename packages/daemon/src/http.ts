@@ -46,7 +46,7 @@ export interface HttpDeps {
 const MAX_BODY = 1024 * 1024;
 /** Turns can carry images as base64, so they get a larger limit than other requests. */
 const MAX_TURN_BODY = 45 * 1024 * 1024;
-// Everything that changes what the thread list shows: a thread's state, and whether it is waiting for approval.
+// Everything that changes what the thread list shows: a thread's state and pending user requests.
 const GLOBAL_EVENT_TYPES = new Set([
   'thread.created',
   'thread.updated',

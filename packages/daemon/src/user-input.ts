@@ -8,7 +8,13 @@ export class UserInputs {
   private pending = new Map<string, { threadId: string; turnId: string; request: UserInputRequest; promise: Promise<UserInputAnswer>; resolve: (answer: UserInputAnswer) => void }>();
   constructor(private emit: (threadId: string, turnId: string, type: EventType, data: Record<string, unknown>) => void) {}
 
-  waiting(threadId: string): boolean { return [...this.pending.values()].some(p => p.threadId === threadId); }
+  waiting(threadId: string): boolean { return this.waitingReason(threadId) !== null; }
+
+  /** The oldest unanswered input determines the next action shown in the thread list. */
+  waitingReason(threadId: string): 'question' | 'plan' | null {
+    for (const p of this.pending.values()) if (p.threadId === threadId) return p.request.kind ?? 'question';
+    return null;
+  }
 
   request(threadId: string, turnId: string, request: UserInputRequest): Promise<UserInputAnswer> {
     if (request.id) {

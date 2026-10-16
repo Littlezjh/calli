@@ -128,8 +128,10 @@ export interface Thread {
   schedule?: { id: string; name: string } | null;
   /** The terminal wrote to this session since the hub last did. */
   terminalActivity: boolean;
-  /** The agent has stopped to ask for approval. */
+  /** The agent is waiting for the user to respond. */
   waiting: boolean;
+  /** Missing from older daemons, which do not distinguish questions from approvals. */
+  waitingReason?: 'approval' | 'question' | 'plan' | null;
   /** Messages sent while a turn was running; they go out as turns finish. */
   queued: QueuedMessage[];
   /** Shell command that continues this conversation in a terminal. Null before the first message. */

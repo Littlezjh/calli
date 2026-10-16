@@ -1,3 +1,4 @@
+import { waitingLabel } from '../notices';
 import type { Thread } from '../api';
 import { handoverGroups } from '../sidebar';
 import { Popover } from './Popover';
@@ -17,7 +18,7 @@ export function HandoverTrail({ thread, threads, agentLabel, onSelect }: {
         {members.map((t) => <button key={t.id} role="menuitem" className={`handover-entry${t.id === thread.id ? ' current' : ''}`} onClick={() => { close(); onSelect(t.id); }}>
           <span>{agentLabel(t.agent)} · {t.handover ? '接手会话' : '原始会话'}{t.id === thread.id ? ' · 当前' : ''}</span>
           <small>{t.title}</small>
-          <small>{new Date(t.createdAt).toLocaleString('zh-CN')} · {t.waiting ? '等待批准' : t.status === 'running' ? '运行中' : t.status === 'error' ? '出错' : '空闲'}</small>
+          <small>{new Date(t.createdAt).toLocaleString('zh-CN')} · {t.waiting ? waitingLabel(t) : t.status === 'running' ? '运行中' : t.status === 'error' ? '出错' : '空闲'}</small>
         </button>)}
         {thread.handover && !source && <div className="handover-missing">接手自 {agentLabel(thread.handover.agent)} · {thread.handover.title}<br />来源会话已归档、删除或暂不可用</div>}
       </>}

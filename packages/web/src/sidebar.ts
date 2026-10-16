@@ -110,7 +110,7 @@ function urgency(t: Thread, selectedId: string | null): number | null {
 
 /**
  * The list by what is going on, not by where a thread is filed. First the threads that want the
- * user or are at work: waiting for approval, then finished and not yet read, then running. After
+ * user or are at work: waiting for a response, then finished and not yet read, then running. After
  * them every other thread, newest first, under the day it last moved. Pins, sections and projects
  * play no part here.
  */

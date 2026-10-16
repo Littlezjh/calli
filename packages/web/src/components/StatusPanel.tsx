@@ -1,3 +1,4 @@
+import { waitingLabel } from '../notices';
 import { useEffect, useState, type ReactNode } from 'react';
 import type { Thread } from '../api';
 import { copyText } from '../clipboard';
@@ -59,7 +60,7 @@ export function StatusPanel({ thread, agentLabel, model, permission, directory, 
     ['目录', <code key="dir">{directory}</code>, directory],
   ];
   if (thread) {
-    rows.push(['状态', thread.waiting ? '等待批准' : (STATUS_LABELS[thread.status] ?? thread.status)]);
+    rows.push(['状态', thread.waiting ? waitingLabel(thread) : (STATUS_LABELS[thread.status] ?? thread.status)]);
     rows.push(
       thread.agentSessionId
         ? ['会话 ID', <code key="id">{thread.agentSessionId}</code>, thread.agentSessionId]

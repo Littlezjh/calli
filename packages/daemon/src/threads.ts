@@ -69,8 +69,9 @@ export type ThreadView = Omit<ThreadRecord, 'worktree'> & {
    * recognise which paths are inside the thread's directory.
    */
   cwdReal: string;
-  /** The agent has stopped to ask for approval and is waiting for an answer. */
+  /** The agent is waiting for the user to respond. */
   waiting: boolean;
+  waitingReason: 'approval' | 'question' | 'plan' | null;
   /** Messages sent while a turn was running. They go out, in order, as turns finish. */
   queued: Array<{ id: string; text: string; images: number; videos: number }>;
   /** Turns the terminal added to this session since the hub last wrote to it. */
@@ -591,9 +592,9 @@ export class ThreadManager {
     } catch {
       // The directory is gone; the stored spelling is the best there is.
     }
-    let waiting = false;
-    for (const p of this.approvals.values()) if (p.threadId === thread.id) waiting = true;
-    if (this.inputs.waiting(thread.id)) waiting = true;
+    let waitingReason: ThreadView['waitingReason'] = this.inputs.waitingReason(thread.id);
+    for (const p of this.approvals.values()) if (p.threadId === thread.id) { waitingReason = 'approval'; break; }
+    const waiting = waitingReason !== null;
     const queued = (this.queues.get(thread.id) ?? []).map((q) => ({ id: q.id, text: q.text, images: q.images.length, videos: q.videos.length }));
     // The terminal wrote to this session after the hub last did: the UI asks before sending more.
     const terminalActivity = thread.externalAt !== null && (thread.hubTurnAt === null || thread.externalAt > thread.hubTurnAt);
@@ -608,7 +609,7 @@ export class ThreadManager {
       worktree = { ...thread.worktree, ofReal };
     }
     const scratch = this.dirs.scratchRoot !== null && isWithinWorkdirs(thread.cwd, [this.dirs.scratchRoot]);
-    return { ...thread, worktree, resumeCommand, cwdReal, waiting, queued, terminalActivity, scratch, coordination: this.coordination?.metadata(thread.id) };
+    return { ...thread, worktree, resumeCommand, cwdReal, waiting, waitingReason, queued, terminalActivity, scratch, coordination: this.coordination?.metadata(thread.id) };
   }
 
   /**
