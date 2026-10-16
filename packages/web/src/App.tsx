@@ -684,9 +684,30 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
     apply();
     vv.addEventListener('resize', apply);
     vv.addEventListener('scroll', apply);
+    // The closing keyboard's last report can be lost: the pan-back can land without a final
+    // scroll event, and a keyboard closed while the page was hidden (app switch, lock, another
+    // tab) reports nothing at all. The app then stays drawn shrunk and panned, and the edge
+    // colour below fills most of the screen. Re-read the viewport when focus leaves a field
+    // and when the page comes back, and keep re-reading briefly, past the close animation.
+    const timers: number[] = [];
+    const settle = () => {
+      timers.forEach((t) => clearTimeout(t));
+      timers.length = 0;
+      for (const ms of [0, 250, 700]) timers.push(window.setTimeout(apply, ms));
+    };
+    const onVisible = () => { if (!document.hidden) settle(); };
+    document.addEventListener('focusout', settle);
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('pageshow', settle);
+    window.addEventListener('orientationchange', settle);
     return () => {
+      timers.forEach((t) => clearTimeout(t));
       vv.removeEventListener('resize', apply);
       vv.removeEventListener('scroll', apply);
+      document.removeEventListener('focusout', settle);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('pageshow', settle);
+      window.removeEventListener('orientationchange', settle);
     };
   }, []);
 
