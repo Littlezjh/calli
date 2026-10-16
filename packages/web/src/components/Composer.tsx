@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEv
 import { flushSync } from 'react-dom';
 import { ApiError, MAX_QUEUED, type AgentMention, type OutgoingImage, type QueuedMessage, type SlashCommand } from '../api';
 import { commandDraft, searchCommands, slashQuery, type HubAction, type MenuRow } from '../commands';
-import { useIsNarrow } from '../hooks';
+import { useIsNarrow, useIsTouch } from '../hooks';
 import { readDrafts, writeDraft, type Sending } from '../drafts';
 import { sizeLabel } from '../files';
 import { MAX_IMAGES, prepareImage, restoreImage, type PreparedImage } from '../images';
@@ -243,6 +243,7 @@ export function Composer({
   const paletteRef = useRef<HTMLDivElement>(null);
   const addRef = useRef<HTMLButtonElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const isTouch = useIsTouch();
 
   useEffect(() => { setGoalDialog(false); setGoalText(''); }, [draftKey]);
   useEffect(() => { setAddOpen(false); }, [draftKey, narrow]);
@@ -504,7 +505,7 @@ export function Composer({
     if (row.type === 'action' && row.action.disabled) return;
     if (row.type === 'action' && row.action.id === 'help') {
       // Everything there is to run is in this menu; show all of it.
-      if (addOpen) { setAddQuery(''); searchRef.current?.focus(); }
+      if (addOpen) { setAddQuery(''); if (!isTouch) searchRef.current?.focus(); }
       else { setText('/'); ref.current?.focus(); }
       return;
     }
@@ -524,9 +525,11 @@ export function Composer({
   };
 
   const browse = (section: 'actions' | 'skills') => {
-    // Mount and focus inside the tap gesture so iOS can bring up the search keyboard.
+    // Mount and focus inside the tap gesture so the browser allows focus at all. On a touch
+    // screen the focus would raise the keyboard over the menu, so there the search stays
+    // unfocused until the user taps it.
     flushSync(() => { setCatalog(section); setAddQuery(''); setAddOpen(true); setDismissed(true); });
-    searchRef.current?.focus();
+    if (!isTouch) searchRef.current?.focus();
   };
 
   /**
@@ -648,7 +651,7 @@ export function Composer({
       <div className="composer-anchor">
         {menuOpen && (
           <div className={`command-menu${addOpen && catalog !== 'all' ? ' catalog-menu' : ''}`} ref={paletteRef}>
-            {addOpen && <label className="pop-search command-search"><IconSearch size={16} /><input ref={searchRef} autoFocus aria-label={catalog === 'all' ? '搜索操作与技能' : catalog === 'skills' ? '搜索技能' : '搜索操作'} placeholder={catalog === 'all' ? '搜索操作、命令或技能' : catalog === 'skills' ? '搜索技能名称或描述' : '搜索操作或命令'} value={addQuery} onChange={e => setAddQuery(e.target.value)} onKeyDown={menuKeyDown} /></label>}
+            {addOpen && <label className="pop-search command-search"><IconSearch size={16} /><input ref={searchRef} autoFocus={!isTouch} aria-label={catalog === 'all' ? '搜索操作与技能' : catalog === 'skills' ? '搜索技能' : '搜索操作'} placeholder={catalog === 'all' ? '搜索操作、命令或技能' : catalog === 'skills' ? '搜索技能名称或描述' : '搜索操作或命令'} value={addQuery} onChange={e => setAddQuery(e.target.value)} onKeyDown={menuKeyDown} /></label>}
             <div className="command-menu-list" role="listbox" aria-label="命令" ref={listRef}>
             {rows.map((row) => {
               if (row.type === 'heading') {
