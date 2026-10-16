@@ -11,18 +11,19 @@
 | 功能 | 现有入口 | 行为与边界 |
 |---|---|---|
 | 自动记忆 | `session/requestRuntimePreferences` | 创建/恢复及执行前回复 `memoryEnabled: false`；旧服务不请求偏好则拒绝继续。主记忆读取和提取均受此总开关约束 |
-| 工具范围 | create/resume 的 `toolAllowlist` | 仅允许 Read、Write、Edit、Bash、Grep、Glob；以实际 CLI 注册工具为准，本机 0.16.9 的模型请求中实际是前四种 |
+| 工具范围 | create/resume 的 `toolAllowlist` | 允许 Read、Write、Edit、Bash、Grep、Glob，以及原生交互工具 AskUserQuestion、EnterPlanMode、ExitPlanMode；以实际 CLI 注册工具为准 |
 | 工作流/闲时任务 | create/resume 的 `dynamicWorkflowEnabled`、`offPeakToolEnabled` | 均为 false；不注册相应调用工具 |
 | 额外搜索增强 | 运行时偏好的 `nativeSearchEnhancementsEnabled` | false；基础 Shell 搜索仍可用 |
-| 自动回答提问 | `askUserQuestionAutoResolutionEnabled` | false；额外提问工具不在白名单内 |
+| 自动回答提问 | `askUserQuestionAutoResolutionEnabled` | false；通过 `interaction/requestUserInput` 把问题交给网页，不代替用户作答 |
+| 工作模式 | create 的 mode、`session/setMode` | plan/build；原生计划审批交给网页，批准后按原生 `session.updated` 的 `planEnabled` 同步模式，保留同一会话 |
 | 自动标题 | create 的 `titleGenerationEnabled` | 新会话为 false；resume 协议没有同等字段，不承诺所有历史会话完全无标题请求 |
 | 会话 MCP | create/resume 的 `mcpServers: []` | 空数组会被本机 CLI 当作未覆盖；用户配置和插件 MCP 仍可能初始化，只有模型调用面受工具白名单限制 |
 | 命令 | adapter 的命令入口 | `/compact`、`/help`、`/session`、`/usage`；查询命令本地处理，不提交模型；不展开自定义命令或工作流 |
-| 原生长期目标 | 恢复 snapshot 的 target | 活跃目标拒绝接入，请用户在 zcode 停止目标或另建线程；adapter 不改写目标状态 |
+| 原生长期目标 | `session/goal` 与 snapshot 的 target | 接入原生目标及续跑；活跃目标不可进入计划模式，需先暂停目标 |
 
 模型实际看到的工具范围受白名单限制，但 Shell 仍是通用执行能力，白名单不是操作系统沙箱。
 
-**权限差异：** 本机版本把 `toolAllowlist` 同时投影到 permission.allowedTools，基础工具会被免审批。adapter 不提供三档权限选择，使用 build 模式，继续处理 zcode 真正发出的审批请求（例如用户已有的更高优先级规则）。不能把这一接入显示为“每次操作请求批准”。
+**权限差异：** 本机版本把 `toolAllowlist` 同时投影到 permission.allowedTools，基础工具会被免审批。adapter 不提供三档权限选择，执行时使用 build 模式，计划时使用 plan 模式，继续处理 zcode 真正发出的审批请求（例如用户已有的更高优先级规则）。不能把这一接入显示为“每次操作请求批准”。真实 CLI + 本地模拟模型已验证：计划模式下 Write 仍被原生约束阻止，ExitPlanMode 仍需显式批准。
 
 ## 仍依赖 zcode 配置的功能
 
@@ -87,6 +88,7 @@ zcode 帧不含标准 JSON-RPC 的 jsonrpc 字段，因此使用 `adapters/zcode
 ## 验证
 
 - 假 agent：创建/恢复参数、记忆偏好、旧协议拒绝、活跃目标拒绝、模型探测、流式、工具、审批选项校验、取消、压缩、提交失败及崩溃。
+- Plan 回归：同会话切换 plan/build、提问答案回传、批准或反馈、原生模式事件同步、排队消息保留模式；真实 CLI + 本地模拟模型验证计划模式禁止写文件、AskUserQuestion 请求用户输入、ExitPlanMode 批准后切回执行。
 - 账号回归：BigModel / Z.ai 模型同步、选择、恢复、实际请求鉴权，凭据轮换、退出与切换账号，错误供应商/会话拒绝，配置不变、日志无凭据，以及缓存目录歧义。真实本机个人 Coding Plan 已返回 GLM-5.3、GLM-5.3-Flash，两个模型均在隔离测试会话完成实际回复，并验证恢复后切换模型及设置强度。真实账号的 Chromium 桌面/手机、亮色/深色已验证模型列表和选择；只读 UI 复验：`RAH_ZCODE_REAL_BIN=zcode node --test packages/e2e/test/zcode-account-real.spec.mjs`。
 - 未修改的真实 zcode 0.16.9 + 本地模拟 OpenAI API：模型发现、新建、恢复、流式回复、压缩和模型工具列表；在项目配置显式开启记忆、预置 MEMORY.md 标记时，请求中无该标记、文件不变且无额外记忆提取请求。复验命令：`RAH_ZCODE_REAL_BIN=zcode npx tsx --test packages/daemon/test/zcode-real.test.ts`。
 - 图片回归：假 agent 校验本地/内联附件与命令拒绝；真实 CLI + 本地模拟 API 验证图文、纯图和两种附件的图片字节到达上游；`zcode-images.spec.mjs` 验证浏览器上传与发送、纯图消息、文本模型拒绝，覆盖桌面/手机 × 亮/暗。

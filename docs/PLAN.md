@@ -32,6 +32,8 @@ daemon（Node.js，跑在远程主机上）
 
 注意：`@zed-industries/claude-agent-acp` 已停更（0.23.1，模型列表过时），不要用回去。
 
+Plan 交互参考了 [Cline 的 Plan / Act](https://docs.cline.bot/core-workflows/plan-and-act)：先讨论，切换后延续同一上下文；[OpenCode 的 Plan / Build](https://opencode.ai/v2/docs/agents) 将计划作为限制普通项目编辑的独立模式。[pi 官方说明](https://raw.githubusercontent.com/badlogic/pi-mono/main/packages/coding-agent/README.md) 明确不内置 Plan，交给扩展实现。Hub 据此统一入口和交互，执行策略仍接各 agent 的原生协议；协议依据包括 [Codex app-server](https://learn.chatgpt.com/docs/app-server) 与 [ACP Session Modes](https://agentclientprotocol.com/protocol/v1/session-modes)。
+
 ## 统一事件
 
 | 事件 | 含义 |
@@ -42,7 +44,10 @@ daemon（Node.js，跑在远程主机上）
 | `message.delta` | 助手文本增量 |
 | `reasoning.delta` | 思考过程增量 |
 | `tool.start` / `tool.update` / `tool.end` | 工具调用。`content` 里的 `{type:'diff', path, oldText, newText}` 是文件改动 |
+| `context.compaction` | 原生上下文压缩。`id` 标识同一轮内的操作，`status` 表示进行中、完成、失败、取消、跳过或中断；`automatic` 可选，未知触发方式时不标“自动” |
 | `approval.request` / `approval.resolved` | 审批。`toolCall.content` 里同样带 diff |
+| `input.request` / `input.resolved` | 原生提问与计划审批，包含问题、选项、自由输入能力及提交结果；由所属轮次管理生命周期 |
+| `plan.delta` / `plan.completed` | 提议的计划正文；完成事件以原生最终正文覆盖流式草稿 |
 | `plan.updated` | agent 的任务清单 |
 | `usage.updated` | 当前上下文占用：`used`、`size`，可带累计费用 `cost`。`used: null` 明确表示占用未知，清除旧读数 |
 
@@ -52,8 +57,10 @@ daemon（Node.js，跑在远程主机上）
 
 - **事件日志是唯一真相。** 每个事件有递增的 `seq`，SSE 断线后用 `after=<seq>` 续传。
 - **上下文占用和累计用量分开。** Codex 取 `tokenUsage.last.totalTokens`，不能取会话累计的 `total`；pi 取 `contextUsage`，压缩后返回 `tokens: null` 时隐藏旧占用，等下一次响应更新；Claude 和 TRAE 取 ACP 的 `usage_update.used / size`。agy 尚未提供占用数据。前端只消费统一事件，不按 agent 分支；80% 提示只是界面阈值，不表示 agent 已触发自动压缩。
-- **读回来按轮次分页。** 文字和思考是一个片段存一条，长轮次有上万条。打开线程只取最新几轮（`events?tail`），更早的从顶部一页页取（`events?before=<seq>`）；一页总是从某一轮的开头开始，单轮再长也整轮给。读回时把同一轮里连续的同类片段合并成首尾两条，存储不变。SSE 续传把游标之后的全部补完再接实时事件，不按页截断。
-- **一轮一个工作块。** 一轮里做的事（思考、工具调用、中途说的话）按发生顺序收在一个块里，运行中展开，结束后折成"用时 X · N 步"；块后面的文字才是回答。思考只露最新几行，想完是一行。
+- **压缩只认原生信号。** Codex / TRAE 的 `contextCompaction`、Claude ACP 的带标识工具事件或 `compaction_update`、Pi 新旧 compaction 事件、ZCode 保留在 `session.updated` 的原生压缩操作载荷，统一映射到 `context.compaction`。在工作记录中按发生顺序独立显示，不计入工具步数；重复通知只更新同一行，未收到成功通知不显示“已压缩”。手动 `/compact` 沿用现有操作行，不重复展示。刷新与翻页从事件日志回放；旧日志缺失的事件不倒推补造，agy 暂无可靠信号。
+- **读回来按轮次分页。** 文字和思考是一个片段存一条，长轮次有上万条。打开线程最多取最新 3 轮（`events?tail`），同时按 2,000 条事件预算确定边界；更早的从顶部一页页取（`events?before=<seq>`）。一页总是从某一轮的开头开始，单轮再长也整轮给。轮次起点有独立索引，避免扫描工具输出。数据库游标逐条读取并立即合并连续工具快照，避免把整页原始快照同时放进内存；随后把同一轮里连续的同类文字片段合并成首尾两条，原始存储不变。SSE 续传把游标之后的全部补完再接实时事件，不按页截断。
+- **一轮一个工作块。** 一轮里做的事（思考、工具调用、中途说的话）按发生顺序收在一个块里，运行中展开并显示“工作中 · 已用时长 · N 步”，计时按轮次开始时间每秒更新，不依赖新事件，刷新后继续；只刷新时间文字，不重绘 Markdown 和工具内容。停止或完成后计时固定，结束后折成"用时 X · N 步"；块后面的文字才是回答。思考只露最新几行，想完是一行。
+- **工作图标按操作统一。** 摘要和明细共用同一套图标：读取用展开的书页，编辑用铅笔，命令用带边框的终端，搜索用放大镜，网页用地球，其他工具用扳手。统一 18 px、圆头线条与文字间距，窄屏长命令不挤压图标；仍按统一事件里的操作类型呈现，不在前端按 agent 分支。
 - **页面自己发现断线和新版本。** 事件流 40 秒没有任何字节（daemon 每 15 秒发一次 ping）就当它死了重连，回到前台时静默超过 5 秒也立刻重连；线程列表流重连后重新拉一次列表。回到前台或重连时比对 `index.html` 里的入口脚本，不一样就提示"有新版本"。
 - **手机键盘。** 键盘不改变页面大小，只是盖住下半部分，浏览器再把剩下的可视区平移到输入框那里。所以 app 整个画在可视区所在的位置：高度取 `visualViewport.height`，位置取 `visualViewport.pageTop`；弹层都在 app 这个盒子里定位，跟着一起到可视区。只跟高度不跟位置，输入框会被顶到屏幕顶部、下面空一片。不要再加 `interactive-widget=resizes-content`。
 - **daemon 重启时收尾。** 启动时把还标着"运行中"的线程里没结束的那一轮记为 `turn.error`（`code: interrupted`）。
@@ -62,13 +69,24 @@ daemon（Node.js，跑在远程主机上）
 - **设置按线程保存：** 权限、模型、思考强度。运行中修改会直接作用到会话上，做不到时重启会话并恢复。
   - 权限三档：请求批准 → `default`；帮我批准 → `auto`（没有就退到 `acceptEdits`）；完全访问 → `bypassPermissions`。pi 没有权限模式。
   - 模型列表、每个模型支持的强度、是否能读图片，都从 agent 读，不写死。Claude 要逐个模型探测（约 12 秒），所以 daemon 启动时就在后台做并缓存。
+  - 速度同样按模型发现：`capabilities.speed` 表示适配器能设置速度，`ModelOption.speeds` 提供实际档位，适配器用 `isFast` 标记加速档，避免把经济或未知档位当作加速。Codex 读取 `model/list.serviceTiers`，旧协议的 `additionalSpeedTiers.fast` 映射为 `priority`；Claude 在现有逐模型探测中读取 ACP `fast` 的 on/off 选项，不增加模型请求。TraeX 仅合并执行协议中匹配模型的速度能力。
+  - 模型弹层左上角的闪电直接切换加速：开启为绿色实心，关闭为灰色轮廓；不再单独占一块速度选项。关闭显式恢复标准速度，模型不支持时隐藏；模型列表标注「可加速」。尚未选择时保留原生设置，按钮提示说明继承状态及加速可能增加用量。前端先于 Hub 更新、旧响应尚无 `isFast` 时，兼容已返回的快速档位 ID；明确的 `isFast: false` 优先，经济与未知档位不猜测为加速。
+  - 线程 `speed` 未设置时不覆盖原生速度；选择后通过原生会话接口应用并保存。标准档为 `default`，切换到不支持原档位的模型也显式保存标准档，避免恢复时继承旧加速设置。Codex 通过 `thread/settings/update` 和 `turn/start.serviceTier` 应用，Claude 通过 `session/set_config_option` 应用并从 `config_option_update` 同步原生降速。切换速度不改变思考强度、权限、工作模式或会话。界面提示加速可能增加用量，不把固定价格或账户资格写死；参见 [官方 Speed 说明](https://learn.chatgpt.com/docs/agent-configuration/speed)。
 - **审批：** 只接受 agent 给出的选项 ID，其他一律拒绝。取消 turn 时，未决的审批自动按取消处理。
+- **工作模式与权限分开。** `workMode: execute | plan` 按线程保存，前端只看 `capabilities.workModes`。运行中禁止切换，原生计划审批导致的模式变化由适配器回报；排队消息保留入队时的模式。进入计划不会改写用户的执行权限，回到执行继续使用原模型、强度、会话和权限。计划模式不能启动或恢复长期目标。
+  - 输入框「＋」菜单合并附件与「计划模式」开关，开启时菜单打勾、输入框提示先讨论方案，关闭即回到执行。底栏不常驻工作模式按钮；手机模型仪表按钮及其容器保持固定正圆，停止和发送同时出现时也不压缩。
+  - Codex / TraeX 通过 `collaborationMode/list` 探测，再随 `turn/start` 传原生 `collaborationMode`；模型和强度取当前会话，不套用另一套默认值。旧版本不支持时明确报错。
+  - Claude 使用 ACP `session/set_mode`，`current_mode_update` 同步界面；原生 ExitPlanMode 审批按用户已选权限批准，不清空上下文。zcode 使用 `session/setMode` 的 plan/build，并读取原生模式事件。agy 通过 `--mode plan`，切换后恢复同一 conversation。pi 使用适配器内的简短提示词接入同一开关：计划时先讨论方案，切回执行或恢复执行会话时明确解除旧的讨论限制，不重启会话、不安装扩展、不改配置。此模式仅为对话约定，不提供工具只读拦截；斜杠命令保持原样交给 pi。
+  - Codex / TraeX 的 `requestUserInput`、Claude 的 form elicitation、zcode 的 `requestUserInput` 统一为问题卡。`POST /api/inputs/:id` 校验字段与选项、单选/多选和自由输入；停止、原生问题过期、轮次结束后释放等待，重复答复返回 404。浏览器重连从事件日志恢复；daemon 重启时原轮次标记中断，问题失效。
+  - 原生计划审批直接回复当前请求，后续由 agent 继续；已结束的计划讨论点击「开始执行」时切回执行并发送一轮。除 pi 的轻量提示词模式外，Hub 不额外编写规划提示词；不另建 agent 或计划文件。原生接入的只读约束由各 agent 的 Plan 行为负责，pi 不提供这一保证。
 - **图片：** 类型按文件头判断，不信客户端声明；只收 PNG、JPEG、GIF、WebP；每条消息最多 6 张，每张 5 MB；文件存在数据目录，事件里只有引用。
 - **视频：** `POST /api/threads/:id/videos` 鉴权后接收二进制文件流，按文件头识别 MP4、MOV、WebM，每个最多 100 MB，每条消息最多 3 个。完整校验后才发布文件，断开或超限清理临时文件；发送消息只接受本线程的视频引用，不接受任意路径。视频原文件路径作为文字说明交给 agent，不冒充原生视觉输入。网页发送前可预览，历史视频点击后才通过鉴权接口加载成 blob 播放；编码不兼容时可下载原视频。排队撤回带回引用，重发复用已上传文件；分叉复制视频与元数据。
 - **斜杠命令按目录取**，因为项目级命令各不相同。
+  - 桌面端「＋」与「/」共用命令面板和条目顺序，在输入框上方按同等宽度展开，附件、计划、目标、操作、原生命令与技能直接分组列出。「＋」有独立搜索框，不改草稿；「/」继续从输入文字过滤。支持方向键、Enter/Tab、Esc 和点击外部关闭。手机「＋」保留紧凑首页，点「操作」「技能」后关闭小菜单，复用输入框上方的等宽命令面板并过滤对应条目，名称与描述分行显示；搜索框在点击手势内挂载并获得焦点，面板按键盘上方可视高度限高，不遮暗对话。面板自身承接纵向触摸和滚轮滚动，搜索框与技能管理入口固定在上下边缘；列表手势不触发侧栏导航，只有方向键选择会自动滚动到当前项，避免触摸滑动被悬停选中打断。技能和命令选择后填入输入框，保留原有文字；已有命令前缀仅在可识别时替换。Hub 操作直接打开对应面板，不清空草稿；未区分类型的原生条目不强行归类。
 - **原生目标：** `/goal` 复用 agent 自己的目标状态和续跑。Codex、TraeX 使用 `thread/goal/get|set|clear`，目标启动前通过 `thread/settings/update` 同步线程设置；Claude 使用 ACP 的 `/goal` 和 `_session/goal`；zcode 使用 `session/goal`，等待原生整个续跑结束再释放线程。多轮输出、审批、错误继续走统一事件，Hub 不另做续跑循环、不写 agent 的状态文件。
   - Codex、TraeX、zcode：`/goal 目标` 设置，`/goal` 查看，`/goal pause` 暂停，`/goal resume` 继续，`/goal clear` 清除。Claude 支持设置、查看、清除，停止用现有停止按钮。
   - `capabilities.goal.controls` 声明运行中可立即执行的操作：Codex/TraeX 查看/暂停/清除、Claude 清除、zcode 暂停。这些操作复用发送接口，单独记录结果，不排到目标后面，也不抢占原轮次的输出或审批。会话尚未启动时返回可重试的错误，避免操作排队后无法执行；其他消息沿用原有排队规则。
+  - `capabilities.goal.actions` 声明空闲时支持的目标操作；前端据此生成桌面命令面板中的目标条目、手机「＋ → 目标模式」菜单，设置目标打开中文表单，其余按钮发送对应原生命令。运行中只开放 `controls` 中的操作，计划模式下禁用设置与继续；这些按钮独立于当前草稿，不发送或清除草稿里的文字、图片、视频与协作对象。
   - 目标完成只表示原生 agent 的判断，Codex/TraeX/zcode 的状态摘要写「原生 agent 报告已完成」，Claude 保留原生回复。不支持原生目标的 agent 不补造能力；旧版本 RPC 不支持时显示错误。
 - **Codex 命令走正式协议：** 额度通过 `account/rateLimits/read` 接入统一面板，优先读取多额度池，兼容旧版单池；`/review` 调用 `review/start`，`/mcp` 分页读取服务状态，`/skills` 和技能菜单按当前目录调用 `skills/list`。选择技能后发送结构化 `skill` 输入；查询命令不触发模型推理。终端专用操作仍由 hub 的模型、权限、状态等入口承接，不把未知斜杠命令当普通提示词发送。
 - **归档不删东西：** 归档只是从侧边栏隐藏并停掉 agent 进程，随时能恢复。永久删除默认只删 hub 的记录，可以勾选同时删 agent 自己的会话（agent 支持时）。
