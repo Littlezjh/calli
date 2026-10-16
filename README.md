@@ -26,6 +26,10 @@ Limi 不动 agent 本身的目录、配置和会话，装好即用。名字来�
 |---|---|
 | ![手机亮色](docs/screenshots/phone-light.png) | ![手机深色](docs/screenshots/phone-dark.png) |
 
+用量与诊断：多 agent 的 token 用量、TPM 走势和费用估算。
+
+![用量与诊断](docs/screenshots/usage-light.png)
+
 > 状态：可用，正在迭代。要做的事见 [docs/TODO.md](docs/TODO.md)，架构见 [docs/PLAN.md](docs/PLAN.md)。
 
 ## 已支持
