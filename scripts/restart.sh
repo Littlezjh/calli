@@ -53,10 +53,20 @@ running_threads() {
   local active archived
   active="$(curl -sf -m 5 -H "Authorization: Bearer $TOKEN" "$BASE/api/threads")" || return 1
   archived="$(curl -sf -m 5 -H "Authorization: Bearer $TOKEN" "$BASE/api/threads?archived=1")" || return 1
-  node -e '
-    for (const list of process.argv.slice(1).map((s) => JSON.parse(s)))
-      for (const t of list) if (t.status === "running") console.log(`${t.title || t.id} (${t.agent})`);
-  ' "$active" "$archived"
+  # The thread list outgrew the kernel's per-argument limit (~128K), which used to fail exec
+  # ("Argument list too long") and read as "no threads running", restarting under active turns.
+  # So the lists reach node through stdin, NUL-separated, never through argv.
+  printf '%s\0%s\0' "$active" "$archived" | node -e '
+    let buf = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (chunk) => (buf += chunk));
+    process.stdin.on("end", () => {
+      for (const doc of buf.split("\0")) {
+        if (!doc.trim()) continue;
+        for (const t of JSON.parse(doc)) if (t.status === "running") console.log(`${t.title || t.id} (${t.agent})`);
+      }
+    });
+  '
 }
 
 wait_until_idle() {

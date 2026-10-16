@@ -16,6 +16,8 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
+    // Keep the published UI available if a build fails or is interrupted.
+    emptyOutDir: false,
     sourcemap: false,
   },
 });
