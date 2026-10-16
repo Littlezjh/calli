@@ -2,7 +2,7 @@
 // it took; older turns come a page at a time from the top, without moving what is on screen.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildOnce, startDaemon, openUi, launchBrowser, repoRoot } from '../harness.mjs';
@@ -12,6 +12,7 @@ let browser;
 let page;
 let dataDir;
 let workdir;
+const shots = process.env.RAH_E2E_SHOTS_DIR;
 
 /** More events than one page of history reaches back, so each turn below is a page of its own. */
 const LONG_TURN = 21_000;
@@ -35,10 +36,23 @@ before(async () => {
       add('turn.done', { stopReason: 'end_turn' });
     }
   });
+  store.createThread({ id: 'snapshots', agent: 'pi', cwd: workdir, title: '按需加载对话', permissionMode: 'auto_edit', model: null, effort: null });
+  store.transaction(() => {
+    for (let i = 1; i <= 8; i++) {
+      const add = (type, data) => store.appendEvent('snapshots', `turn-${i}`, type, data);
+      add('turn.started', { text: `第 ${i} 轮问题` });
+      add('tool.start', { id: `check-${i}`, kind: 'execute', title: '检查结果', status: 'in_progress' });
+      for (let n = 0; n < 30; n++) add('tool.update', { id: `check-${i}`, output: `snapshot ${n}\n${'output\n'.repeat(1000)}` });
+      add('tool.end', { id: `check-${i}`, status: 'completed' });
+      add('message.delta', { text: `${'已检查加载流程，历史记录完整保留。\n\n'.repeat(8)}第 ${i} 轮回答结束` });
+      add('turn.done', { stopReason: 'end_turn' });
+    }
+  });
   store.close();
 
   daemon = await startDaemon({ RAH_DATA_DIR: dataDir, RAH_WORKDIRS: workdir });
   browser = await launchBrowser();
+  if (shots) mkdirSync(shots, { recursive: true });
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, permissions: ['clipboard-read', 'clipboard-write'] });
   page = await ctx.newPage();
 });
@@ -122,5 +136,35 @@ test('copying the conversation takes all of it, not only the turns on screen', a
   const copied = await page.evaluate(() => navigator.clipboard.readText());
   for (const name of ['first', 'second', 'latest']) {
     assert.ok(copied.includes(`${name} question`) && copied.includes(`${name} answer line 39`), `the ${name} turn is in the copy`);
+  }
+});
+
+test('opening a snapshot-heavy conversation loads only recent turns in desktop and phone themes', { timeout: 60000 }, async () => {
+  for (const mobile of [false, true]) for (const colorScheme of ['light', 'dark']) {
+    const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1400, height: 900 }, isMobile: mobile, hasTouch: mobile, colorScheme });
+    try {
+      const page = await context.newPage();
+      await openUi(page, daemon);
+      if (mobile) await page.locator('.menu-btn').click();
+      const response = page.waitForResponse(r => r.url().endsWith('/api/threads/snapshots/events?tail=1'));
+      await page.locator('.thread-title', { hasText: '按需加载对话' }).first().click();
+      const data = await (await response).json();
+      assert.equal(data.filter(e => e.type === 'turn.started').length, 3);
+      assert.ok(JSON.stringify(data).length < 40_000, 'the first response excludes old turns and superseded tool snapshots');
+      await page.getByText('第 8 轮回答结束', { exact: true }).waitFor();
+      assert.deepEqual(await page.locator('.thread .bubble').allTextContents(), ['第 6 轮问题', '第 7 轮问题', '第 8 轮问题']);
+      await page.waitForFunction(() => { const el = document.querySelector('.scroller'); return el.scrollHeight - el.scrollTop - el.clientHeight < 2; });
+      if (shots) await page.screenshot({ path: join(shots, `history-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`), animations: 'disabled' });
+      for (let n = 0; n < 2; n++) {
+        const count = await page.locator('.thread .bubble').count();
+        const response = page.waitForResponse(r => r.url().includes('/api/threads/snapshots/events?before='));
+        await page.mouse.move(page.viewportSize().width / 2, 200);
+        await page.mouse.wheel(0, -100_000);
+        await response;
+        await page.waitForFunction(count => document.querySelectorAll('.thread .bubble').length > count, count);
+      }
+      assert.deepEqual(await page.locator('.thread .bubble').allTextContents(), Array.from({ length: 8 }, (_, i) => `第 ${i + 1} 轮问题`));
+      assert.equal(await page.getByRole('button', { name: '加载更早的消息' }).count(), 0);
+    } finally { await context.close(); }
   }
 });
