@@ -811,8 +811,9 @@ function StepRow({ step, roots }: { step: Step; roots: string[] }) {
   const Icon = STEP_ICONS[step.kind] ?? IconFile;
   // An edit is best shown as its diff; the raw arguments would repeat the same text as JSON.
   const showInput = step.input !== undefined && step.diffs.length === 0 && JSON.stringify(step.input) !== '{}';
-  const failed = step.status === 'failed';
-  const hasDetail = failed || showInput || step.diffs.length > 0 || Boolean(step.output);
+  const result = step.status === 'completed' ? '成功' : step.status === 'failed' ? '失败' : null;
+  const hasContent = showInput || step.diffs.length > 0 || Boolean(step.output);
+  const hasDetail = hasContent || result !== null;
   return (
     <div className={`step ${step.status}`}>
       <button className="step-head" onClick={() => hasDetail && setOpen((v) => !v)} disabled={!hasDetail} aria-expanded={open}>
@@ -822,10 +823,13 @@ function StepRow({ step, roots }: { step: Step; roots: string[] }) {
       </button>
       {open && (
         <div className="step-detail">
-          {failed && <div className="step-result">执行失败{!showInput && !step.output && step.diffs.length === 0 ? '，工具未返回详细信息' : ''}</div>}
-          {showInput && <pre>{JSON.stringify(step.input, null, 2)}</pre>}
-          {step.diffs.length > 0 && <DiffView diffs={step.diffs} />}
-          {step.output && <pre>{step.output}</pre>}
+          <div className="step-detail-content">
+            {showInput && <pre>{JSON.stringify(step.input, null, 2)}</pre>}
+            {step.diffs.length > 0 && <DiffView diffs={step.diffs} />}
+            {step.output && <pre>{step.output}</pre>}
+            {!hasContent && <div className="step-detail-empty">工具未返回详细信息</div>}
+          </div>
+          {result && <div className="step-result">{result}</div>}
         </div>
       )}
     </div>

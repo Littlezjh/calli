@@ -140,10 +140,11 @@ const runTurn = (text, turnId, done) => {
   }
   if (text.includes('tool')) {
     const id = 'exec-1';
+    const output = text.includes('longoutput') ? Array.from({ length: 120 }, (_, i) => `Output line ${i + 1}: partial out`).join('\n') : 'partial out';
     notify('item/started', { turnId, item: { type: 'commandExecution', id, command: 'npm test', cwd: '/tmp/one', status: 'inProgress' } });
     notify('item/commandExecution/outputDelta', { turnId, itemId: id, delta: 'par' });
     notify('item/commandExecution/outputDelta', { turnId, itemId: id, delta: 'tial' });
-    notify('item/completed', { turnId, item: { type: 'commandExecution', id, command: 'npm test', cwd: '/tmp/one', status: 'completed', exitCode: 0, aggregatedOutput: 'partial out', durationMs: 12 } });
+    notify('item/completed', { turnId, item: { type: 'commandExecution', id, command: 'npm test', cwd: '/tmp/one', status: 'completed', exitCode: 0, aggregatedOutput: output, durationMs: 12 } });
   }
   if (text.includes('fail')) {
     const id = 'exec-9';
@@ -154,6 +155,15 @@ const runTurn = (text, turnId, done) => {
     const item = { type: 'dynamicToolCall', id: 'empty-failure', namespace: 'fixture', tool: 'no-detail' };
     notify('item/started', { turnId, item: { ...item, status: 'inProgress' } });
     notify('item/completed', { turnId, item: { ...item, status: 'failed', success: false } });
+  }
+  if (text.includes('emptysuccess')) {
+    const item = { type: 'dynamicToolCall', id: 'empty-success', namespace: 'fixture', tool: 'no-output' };
+    notify('item/started', { turnId, item: { ...item, status: 'inProgress' } });
+    notify('item/completed', { turnId, item: { ...item, status: 'completed', success: true } });
+  }
+  if (text.includes('livecommand')) {
+    notify('item/started', { turnId, item: { type: 'commandExecution', id: 'live-command', command: 'npm run build', status: 'inProgress' } });
+    notify('item/commandExecution/outputDelta', { turnId, itemId: 'live-command', delta: 'Compiling…' });
   }
   if (text.includes('edit')) {
     const id = 'fc-1';

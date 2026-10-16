@@ -1490,19 +1490,33 @@ html.list-open body {
   color: var(--faint);
 }
 
+.step-detail {
+  margin: 2px 0 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--code-bg);
+}
+
+.step-detail-content {
+  max-height: min(360px, 50dvh);
+  overflow: auto;
+}
+
+.step-detail-content > * + * { border-top: 1px solid var(--border); }
+
 .step-result {
-  margin: 4px 0 8px;
+  padding: 8px 12px 12px;
+  text-align: right;
   color: var(--muted);
   font-size: 12px;
 }
 
+.step-detail-empty { padding: 12px; color: var(--muted); font-size: 12px; }
+
 .step-detail pre {
-  margin: 2px 0 8px;
+  margin: 0;
   padding: 10px 12px;
-  max-height: 260px;
-  overflow: auto;
-  border-radius: var(--radius-sm);
-  background: var(--code-bg);
   font-family: var(--mono);
   font-size: 12.5px;
   line-height: 1.5;
@@ -5288,9 +5302,9 @@ input.picker-search {
 }
 
 .step-detail .diff {
-  margin: 2px 0 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  margin: 0;
+  border: 0;
+  background: transparent;
 }
 
 .approval.pending {
