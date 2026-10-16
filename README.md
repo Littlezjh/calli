@@ -49,12 +49,12 @@ pi 和 agy 要先在主机上装好并登录。没装的 agent 在界面里显�
 
 ```bash
 npm install
-cp .env.example .env          # 在项目根目录，编辑 RAH_TOKEN（至少 16 位）和 RAH_WORKDIRS
+npm run setup               # 生成 .env 和随机 RAH_TOKEN，并打印出来
 npm run build
 RAH_ENV_FILE=../../.env npm start -w @rah/daemon    # 默认监听 127.0.0.1:8787
 ```
 
-打开 `http://127.0.0.1:8787/`。没有连接时先显示一套示例数据，可以随便点开看；点「连接 hub」输入 `RAH_TOKEN` 后进入自己的数据。
+打开 `http://127.0.0.1:8787/`。没有连接时先显示一套示例数据，可以随便点开看；点「连接 hub」粘贴 `npm run setup` 打印的 token 即可。要让 agent 在哪些目录工作，编辑 `.env` 里的 `RAH_WORKDIRS`。
 
 开发时可以分开启动：
 
