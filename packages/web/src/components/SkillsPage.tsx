@@ -5,7 +5,7 @@ import { copyText } from '../clipboard';
 import { useIsNarrow } from '../hooks';
 import { Dialog, DialogSurface } from './Dialog';
 import { Menu, type MenuEntry } from './Menu';
-import { AgentMark, IconCheck, IconClose, IconCopy, IconInfo, IconMore, IconRefresh, IconRestore, IconSearch, IconTrash } from './icons';
+import { AgentMark, IconCheck, IconClose, IconCopy, IconInfo, IconMore, IconPlus, IconRefresh, IconRestore, IconSearch, IconTrash } from './icons';
 
 /**
  * The skills of every agent on every machine, in one view: a row per skill, a column per machine,
@@ -61,7 +61,7 @@ function when(iso: string, now = new Date()): string {
 }
 
 /** The mark of an agent, with its name for hover and screen readers. */
-function Mark({ agent, size = 15 }: { agent: AgentInfo; size?: number }) {
+function Mark({ agent, size = 16 }: { agent: AgentInfo; size?: number }) {
   return (
     <span className="skill-mark" title={agent.label} aria-label={agent.label}>
       {agent.icon ? <AgentMark path={agent.icon} size={size} /> : <span className="skill-mark-name">{agent.label}</span>}
@@ -263,7 +263,7 @@ export function SkillsPage({ api, token, hostId, hosts, agents, onError }: Props
                       <span className="skill-marks" title={`装在 ${column.label}`}>{marksFor(column, place.entry.agents)}</span>
                     ) : (
                       <button type="button" className="skill-add" disabled={!column.listing} title={`同步到 ${column.label}`} onClick={() => setSync({ row })}>
-                        同步
+                        <IconPlus size={11} /> 同步
                       </button>
                     )}
                   </div>
@@ -279,7 +279,7 @@ export function SkillsPage({ api, token, hostId, hosts, agents, onError }: Props
                   return (
                     <span key={column.id ?? 'local'} className={`skills-mobile-machine${place ? '' : ' empty'}`}>
                       <span className="skills-mobile-label">{column.label}</span>
-                      {place ? marksFor(column, place.entry.agents) : <button type="button" className="skill-add" disabled={!column.listing} onClick={() => setSync({ row })}>同步</button>}
+                      {place ? marksFor(column, place.entry.agents) : <button type="button" className="skill-add" disabled={!column.listing} onClick={() => setSync({ row })}><IconPlus size={11} /> 同步</button>}
                     </span>
                   );
                 })}

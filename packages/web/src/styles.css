@@ -7182,12 +7182,13 @@ input.picker-search {
   font-size: 11.5px;
 }
 
-/* The marks: one per agent that sees the skill there. */
+/* The marks: one per agent that sees the skill there. Plain marks, like the thread list's — a
+   grid of bordered boxes reads as a form, which this is not. */
 .skill-marks {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 5px;
   flex-wrap: wrap;
 }
 
@@ -7195,27 +7196,23 @@ input.picker-search {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 22px;
-  height: 22px;
-  padding: 0 3px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--text);
+  color: var(--muted);
 }
 
 .skill-mark-name {
-  padding: 0 4px;
-  font-size: 10.5px;
+  font-size: 11px;
   white-space: nowrap;
 }
 
-/* An empty cell offers the one thing that makes sense there: bring the skill over. */
+/* An empty cell offers the one thing that makes sense there: bring the skill over. Quiet text,
+   so a page of empty cells does not read as a page of input fields. */
 .skill-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   height: 24px;
-  padding: 0 10px;
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius-pill);
+  padding: 0 4px;
+  border: 0;
   background: none;
   color: var(--muted);
   font: inherit;
@@ -7234,8 +7231,6 @@ input.picker-search {
 }
 
 .skill-add:hover {
-  border-style: solid;
-  border-color: var(--border-strong);
   color: var(--text);
 }
 
@@ -7505,8 +7500,6 @@ input.picker-search {
 
 .skills-mobile-machine .skill-add {
   opacity: 1;
-  height: 22px;
-  padding: 0 9px;
   font-size: 11.5px;
 }
 
@@ -7534,7 +7527,7 @@ input.picker-search {
   .skills-row > .skills-cell-machine { display: none; }
   .skills-search input { font-size: 16px; }
   .skill-dialog { width: 100%; max-height: 88dvh; }
-  .skill-target { min-height: 36px; }
+  .skill-target { min-height: 32px; }
 }
 
 /* Compact model card: choose a supported effort directly, or open the model list. */

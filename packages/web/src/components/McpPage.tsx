@@ -72,7 +72,7 @@ function splitArgs(text: string): string[] {
 }
 
 /** The mark of an agent, with its name for hover and screen readers. */
-function Mark({ agent, size = 15 }: { agent: AgentInfo; size?: number }) {
+function Mark({ agent, size = 16 }: { agent: AgentInfo; size?: number }) {
   return (
     <span className="skill-mark" title={agent.label} aria-label={agent.label}>
       {agent.icon ? <AgentMark path={agent.icon} size={size} /> : <span className="skill-mark-name">{agent.label}</span>}
@@ -384,7 +384,7 @@ export function McpPage({ api, token, hostId, hosts, agents, onError }: Props) {
                           <span className="skill-marks" title={`装在 ${column.label}`}>{marksFor(column, here.map((p) => p.agentId))}</span>
                         ) : (
                           <button type="button" className="skill-add" disabled={!column.listing || row.config === null} title={`安装到 ${column.label}`} onClick={() => setInstall({ row })}>
-                            安装
+                            <IconPlus size={11} /> 安装
                           </button>
                         )}
                       </div>
@@ -402,7 +402,7 @@ export function McpPage({ api, token, hostId, hosts, agents, onError }: Props) {
                           <span className="skills-mobile-label">{column.label}</span>
                           {here.length ? marksFor(column, here.map((p) => p.agentId)) : (
                             <button type="button" className="skill-add" disabled={!column.listing || row.config === null} onClick={() => setInstall({ row })}>
-                              安装
+                              <IconPlus size={11} /> 安装
                             </button>
                           )}
                         </span>
