@@ -155,3 +155,13 @@ Plan 交互参考了 [Cline 的 Plan / Act](https://docs.cline.bot/core-workflow
 ## 用量统计与诊断
 
 已接入原生消耗采集、滚动 TPM、用量账本和实例诊断。统计粒度、未知字段、缓存与费用口径，以及接口和验证见 [用量统计与诊断](observability-design.md)。
+## MCP 管理
+
+「配置 → MCP」按业务线管理各机器各 agent 的 MCP 服务。哪个文件存 MCP 是适配器自己的知识（`mcpServers()`/`mcpInstall()`/`mcpRemove()`）：Claude 的 `~/.claude.json` 用户级（设 `CLAUDE_CONFIG_DIR` 时先看配置目录内）、Codex 的 `config.toml` `[mcp_servers.*]` 表、pi 的 `~/.pi/agent/mcp.json`。未实现的 agent 不出现在页面上；前端按接口返回的 `writable` 判断能否安装/移除，不按 agent 名字分支。
+
+- 页面沿用技能页矩阵：行是服务、列是机器、格子是装了它的实例标志。hub 自己的 `mcp_entries` 表（SQLite，name 主键）按名字挂业务线与用途说明；带整份配置的条目就是手动登记的服务，装到任何机器前以「已登记」徽标显示。
+- 配置原样旅行：安装携带配置对象本身，pi 的 `exposure` 等各 agent 私有字段随之保留。相同配置视为已装（`same`），不同配置默认拒绝（`exists`），显式确认才覆盖。
+- 写入是外科手术式：JSON 只动 `mcpServers` 下那一个名字，TOML 只替换该服务的表块（含子表），文件其余字节不动；临时文件 + rename 原子落盘，保留原文件权限。服务名限 `[A-Za-z0-9][A-Za-z0-9_-]{0,63}`，不含点，避免 TOML 子表歧义。
+- 环境变量只在详情弹窗里展示。这不是安全边界（hub token 本就能开终端），只是不让列表被密钥刷屏。
+- 第一期只读用户级配置：Claude 项目级 `.mcp.json` 和 `.claude.json` 里 projects 下的本地 scope 不扫。
+

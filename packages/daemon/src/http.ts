@@ -305,6 +305,33 @@ export function createHttpServer(deps: HttpDeps): Server {
       return sendJson(res, 200, await manager.skills.install(await readJson(req, 24 * 1024 * 1024)));
     }
 
+    // MCP: what each agent instance's own config says, plus the one-entry writes the page asks
+    // for. Cross-machine installs are driven by the page, machine by machine, like skill sync.
+    // GET /api/mcp: this machine's scan
+    if (method === 'GET' && parts[1] === 'mcp' && !parts[2]) return sendJson(res, 200, manager.mcp.listing());
+    // DELETE /api/mcp?agent=&name=: take one server out of one instance's config
+    if (method === 'DELETE' && parts[1] === 'mcp' && !parts[2]) {
+      await manager.mcp.remove(url.searchParams.get('agent') ?? '', url.searchParams.get('name') ?? '');
+      res.writeHead(204).end();
+      return;
+    }
+    // POST /api/mcp/install { targets: [agent], name, config, overwrite? }
+    if (method === 'POST' && parts[1] === 'mcp' && parts[2] === 'install' && !parts[3]) {
+      return sendJson(res, 200, await manager.mcp.install(await readJson(req, 128 * 1024)));
+    }
+    // Registry entries: the business line and purpose in words, plus manually registered servers.
+    // They belong to the hub the page talks to; the scan above stays per machine.
+    if (parts[1] === 'mcp' && parts[2] === 'entries' && !parts[3]) {
+      if (method === 'GET') return sendJson(res, 200, manager.mcp.entries.list());
+      if (method === 'PUT') return sendJson(res, 200, manager.mcp.entries.save(await readJson(req, 128 * 1024)));
+    }
+    // DELETE /api/mcp/entries/:name
+    if (method === 'DELETE' && parts[1] === 'mcp' && parts[2] === 'entries' && parts[3] && !parts[4]) {
+      if (!manager.mcp.entries.remove(parts[3])) throw new HttpError(404, `没有名为 ${parts[3]} 的登记条目`);
+      res.writeHead(204).end();
+      return;
+    }
+
     // GET /api/config: the project roots, and whether threads can work outside a project
     if (method === 'GET' && path === '/api/config') return sendJson(res, 200, manager.workdirsConfig());
 

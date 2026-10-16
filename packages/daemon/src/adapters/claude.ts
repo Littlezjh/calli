@@ -1,14 +1,15 @@
 import { execFile } from 'node:child_process';
 import { claudeLiveUsage } from './session-usage.js';
 import type { UsageSample } from '../telemetry.js';
-import { readdirSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { AcpAdapter, AcpSession, airForkPoint } from './acp.js';
 import { CLAUDE_ICON } from './icons.js';
 import type { JsonRpcPeer } from './jsonrpc.js';
+import { installJsonMcpServer, jsonMcpServers, removeJsonMcpServer } from '../mcp-format.js';
 import { configDirectory, findSessionFile, quoteArg } from './session-location.js';
-import type { DiscoveredAccount, ModelOption, PermissionMode, PlanQuota, QuotaWindow, SkillDir, SlashCommand } from './types.js';
+import type { DiscoveredAccount, McpServerInfo, ModelOption, PermissionMode, PlanQuota, QuotaWindow, SkillDir, SlashCommand } from './types.js';
 
 /**
  * Claude Code, through the ACP bridge this repo ships with (`@agentclientprotocol/claude-agent-acp`).
@@ -189,6 +190,31 @@ export class ClaudeAcpAdapter extends AcpAdapter {
   skillDirs(): SkillDir[] {
     // Claude keeps skills in its config dir, `~/.claude/skills` unless CLAUDE_CONFIG_DIR moves it.
     return [{ path: join(configDirectory(this.env, 'CLAUDE_CONFIG_DIR', ['.claude'], process.cwd()), 'skills'), scope: 'personal' }];
+  }
+
+  /**
+   * User-scope MCP servers, which Claude Code keeps in `.claude.json`: in the config directory
+   * once CLAUDE_CONFIG_DIR is set, in the home directory otherwise. The file also holds most of
+   * Claude's own state, so writes touch only the one name inside `mcpServers`.
+   */
+  private mcpJsonPath(): string {
+    const configDir = configDirectory(this.env, 'CLAUDE_CONFIG_DIR', ['.claude'], process.cwd());
+    const home = this.env.HOME ?? process.env.HOME ?? homedir();
+    const explicit = this.env.CLAUDE_CONFIG_DIR ?? process.env.CLAUDE_CONFIG_DIR;
+    const candidates = explicit ? [join(configDir, '.claude.json'), join(home, '.claude.json')] : [join(home, '.claude.json')];
+    return candidates.find((path) => existsSync(path)) ?? candidates[0];
+  }
+
+  mcpServers(): McpServerInfo[] {
+    return jsonMcpServers(this.mcpJsonPath());
+  }
+
+  mcpInstall(name: string, config: Record<string, unknown>): void {
+    installJsonMcpServer(this.mcpJsonPath(), name, config);
+  }
+
+  mcpRemove(name: string): void {
+    if (!removeJsonMcpServer(this.mcpJsonPath(), name)) throw new Error(`claude 没有名为 ${name} 的 MCP 服务`);
   }
 
   /** One `claude -p "/usage"` run. A local command, so no session is written and no turn spent. */

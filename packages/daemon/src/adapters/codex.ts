@@ -12,6 +12,7 @@ import type { EmittedEvent } from '../events.js';
 import { commandExists } from '../util.js';
 import { CODEX_ICON } from './icons.js';
 import { configDirectory, findSessionFile, quoteArg } from './session-location.js';
+import { installTomlMcpServer, removeTomlMcpServer, tomlMcpServers } from '../mcp-format.js';
 import { JsonRpcPeer, RpcError } from './jsonrpc.js';
 import type {
   AgentAdapter,
@@ -21,6 +22,7 @@ import type {
   ApprovalRequest,
   EffortLevel,
   HistoryTurn,
+  McpServerInfo,
   ModelOption,
   PermissionMode,
   PermissionOption,
@@ -920,6 +922,27 @@ export class CodexAppServerAdapter implements AgentAdapter {
       { path: join(configDirectory(this.env, 'CODEX_HOME', ['.codex'], process.cwd()), 'skills'), scope: 'personal' },
       { path: join(this.env.HOME ?? process.env.HOME ?? homedir(), '.agents', 'skills'), scope: 'shared' },
     ];
+  }
+
+  /**
+   * MCP servers live as `[mcp_servers.<name>]` tables in config.toml. Writes replace exactly one
+   * server's tables and leave every other line of the file — profiles, providers, comments — as
+   * it stood.
+   */
+  private configTomlPath(): string {
+    return join(configDirectory(this.env, 'CODEX_HOME', ['.codex'], process.cwd()), 'config.toml');
+  }
+
+  mcpServers(): McpServerInfo[] {
+    return tomlMcpServers(this.configTomlPath());
+  }
+
+  mcpInstall(name: string, config: Record<string, unknown>): void {
+    installTomlMcpServer(this.configTomlPath(), name, config);
+  }
+
+  mcpRemove(name: string): void {
+    if (!removeTomlMcpServer(this.configTomlPath(), name)) throw new Error(`${this.name} 没有名为 ${name} 的 MCP 服务`);
   }
 
   async deleteSession(agentSessionId: string): Promise<void> {

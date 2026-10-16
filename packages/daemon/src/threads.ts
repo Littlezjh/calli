@@ -26,6 +26,7 @@ import { temporaryFile } from './artifacts.js';
 import { MAX_IMAGES, sniffImageType, sniffSvg, type AttachmentStore, type StoredAttachment, type StoredVideo } from './attachments.js';
 import { HttpError } from './errors.js';
 import { handoverContext, handoverPrompt, synthesizeHandover, turnMessage } from './handover.js';
+import { McpManager } from './mcp.js';
 import { SkillsManager } from './skills.js';
 import { isWithinWorkdirs, Workdirs } from './workdirs.js';
 import { coalesceToolEvents, compactDeltas, type EmittedEvent, type EventType, type StoredEvent } from './events.js';
@@ -206,10 +207,14 @@ export class ThreadManager {
   ) {
     this.dirs = Array.isArray(workdirs) ? new Workdirs(workdirs) : workdirs;
     this.skills = new SkillsManager(this.adapters);
+    this.mcp = new McpManager(this.adapters, store.mcpEntries);
   }
 
   /** The skills every agent instance on this machine can reach. Read-mostly, by the skills page. */
   readonly skills: SkillsManager;
+
+  /** The MCP servers of every agent instance on this machine, and the one-entry writes the page asks for. */
+  readonly mcp: McpManager;
 
   /** Every directory a thread may work in right now, the scratch area included. */
   private get workdirs(): string[] {

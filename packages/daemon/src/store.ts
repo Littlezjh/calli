@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { EventType, StoredEvent } from './events.js';
+import { McpRegistry } from './mcp.js';
 import { Telemetry } from './telemetry.js';
 import { askedText } from './util.js';
 import { referencesFile } from './artifacts.js';
@@ -434,7 +435,11 @@ export class Store {
     `);
     if (!indexed) this.indexText();
     this.telemetry = new Telemetry(this.db);
+    this.mcpEntries = new McpRegistry(this.db);
   }
+
+  /** The MCP registry: business line and purpose notes, plus manually registered servers. */
+  readonly mcpEntries: McpRegistry;
 
   /** Where each open turn began, so its answer is read from there and not from the thread's start. */
   private readonly turnStarts = new Map<string, number>();

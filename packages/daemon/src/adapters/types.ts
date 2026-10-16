@@ -103,6 +103,18 @@ export interface SkillDir {
   scope: 'personal' | 'shared';
 }
 
+/**
+ * An MCP server as the agent's own config states it. `config` is the server object exactly as it
+ * stands there, so it can be shown, copied and reinstalled without the hub understanding every
+ * field a given agent adds around `command`/`args`/`env` or `url`.
+ */
+export interface McpServerInfo {
+  name: string;
+  config: Record<string, unknown>;
+  /** The config file the entry was read from, shown on the page. */
+  sourcePath: string;
+}
+
 /** A slash command the agent understands, shown when the user types "/" in the composer. */
 export interface SlashCommand {
   /** Without the leading slash. */
@@ -293,6 +305,16 @@ export interface AgentAdapter {
    * skill locations are not known leave this out; the page then shows no badge for them.
    */
   skillDirs?(): SkillDir[];
+
+  /**
+   * The MCP servers this instance is configured with, read from the agent's own config without
+   * starting anything. Agents whose MCP config is not known leave this out and simply do not
+   * appear on the MCP page. `mcpInstall`/`mcpRemove` are present only where the config can also
+   * be written back safely, one entry at a time.
+   */
+  mcpServers?(): McpServerInfo[];
+  mcpInstall?(name: string, config: Record<string, unknown>): void;
+  mcpRemove?(name: string): void;
 
   /** Plan usage, read outside any session. With capabilities.quota. Cached one layer up. */
   fetchQuota?(): Promise<PlanQuota>;

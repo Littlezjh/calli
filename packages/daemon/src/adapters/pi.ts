@@ -11,12 +11,14 @@ import { imagePathNote } from '../attachments.js';
 import { commandExists, textOf } from '../util.js';
 import { PI_ICON } from './icons.js';
 import { configDirectory, findSessionFile, quoteArg } from './session-location.js';
+import { installJsonMcpServer, jsonMcpServers, removeJsonMcpServer } from '../mcp-format.js';
 import type {
   AgentAdapter,
   AgentSession,
   AgentSessionSummary,
   EffortLevel,
   HistoryTurn,
+  McpServerInfo,
   ModelOption,
   SkillDir,
   SlashCommand,
@@ -821,6 +823,24 @@ export class PiRpcAdapter implements AgentAdapter {
       { path: join(configDirectory(this.env, 'PI_CODING_AGENT_DIR', ['.pi', 'agent'], process.cwd()), 'skills'), scope: 'personal' },
       { path: join(this.env.HOME ?? process.env.HOME ?? homedir(), '.agents', 'skills'), scope: 'shared' },
     ];
+  }
+
+  /** pi's MCP servers: `mcp.json` in its agent dir, the same `{"mcpServers": {…}}` shape Claude
+   * uses. Writes touch only the one name, so pi's own fields such as `exposure` survive. */
+  private mcpJsonPath(): string {
+    return join(configDirectory(this.env, 'PI_CODING_AGENT_DIR', ['.pi', 'agent'], process.cwd()), 'mcp.json');
+  }
+
+  mcpServers(): McpServerInfo[] {
+    return jsonMcpServers(this.mcpJsonPath());
+  }
+
+  mcpInstall(name: string, config: Record<string, unknown>): void {
+    installJsonMcpServer(this.mcpJsonPath(), name, config);
+  }
+
+  mcpRemove(name: string): void {
+    if (!removeJsonMcpServer(this.mcpJsonPath(), name)) throw new Error(`pi 没有名为 ${name} 的 MCP 服务`);
   }
 
   /**

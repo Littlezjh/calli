@@ -284,3 +284,14 @@
 - [x] 错过可选补跑：任务可勾「停机错过后，启动时补跑一次」，恢复阶段除记 `missed` 外补跑一次；默认关（daemon + 测试 + 表单选项）
 - [x] e2e 修复：phone.spec 在本机挂 4 项的根因是 Drawer 打开时 `.main` 为 `visibility: hidden`，`innerText()` 按规范返回空串，且测试 3 报错后菜单未关引发级联失败；断言改 `textContent()`，sidebar.spec 坐标判断加 1px 亚像素容差。phone.spec 连续两次 6/6，smoke/sidebar/schedules 回归全过
 - [ ] 之后：对话内让 agent 自己建任务（MCP/工具调 `POST /api/schedules`，参考 nyx-builds/agent-scheduler；需先决定给 agent 什么入口）
+## 17. MCP 管理
+
+「配置 → MCP」一页：各业务线的 MCP 有哪些、是干什么的，一眼看全；详见 `PLAN.md` 的「MCP 管理」一节。第一版已实现。
+
+- [x] 扫描：配置位置的知识只在适配器（`mcpServers()`）——Claude 的 `~/.claude.json` 用户级（设 `CLAUDE_CONFIG_DIR` 时先看配置目录内）、Codex 的 `config.toml` `[mcp_servers.*]`、pi 的 `~/.pi/agent/mcp.json`；未实现（agy、zcode、traex）的 agent 不出现，前端按接口返回的 `writable` 分支，不认 agent 名字
+- [x] 页面：沿用技能页矩阵——行是服务、列是机器、格子是装了它的实例标志；按业务线分组（未分组最后）+ 业务线筛选 chips + 搜索；详情弹窗显示说明、配置明细（命令/参数/环境变量或地址）和每台机器的安装位置；环境变量只在详情里展示
+- [x] 标注与登记：hub 自己的 `mcp_entries` 表按名字挂业务线和用途说明（纯标注，或整份登记配置）；「登记 MCP」可手动录入本地命令或 HTTP 地址，未装到任何机器的以「已登记」徽标显示
+- [x] 安装/移除：来源可选登记的配置或某台机器上的副本（原样旅行，各 agent 私有字段随之保留），目标选多台机器上的实例；相同配置视为已装（`same`）、不同配置默认拒绝并显式确认覆盖，结果逐个回报；移除按机器 × agent 确认后执行，跨机器经现有主机代理
+- [x] 写入安全：外科手术式——JSON 只改 `mcpServers` 里那一个名字（Claude 的其余状态原样保留），TOML 只替换该服务的表块（文件其他字节不动），临时文件 + rename 原子落盘并保留原权限；服务名统一 `[A-Za-z0-9][A-Za-z0-9_-]{0,63}`（无点，避免 TOML 子表歧义）
+- [x] 验证：daemon 8 项测试（三种格式读写往返、无关字段与字节保留、冲突与覆盖、entries CRUD、TOML 边界）；e2e 6 项浏览器回归（跨机器扫描、标注与分组筛选、经代理安装写入真实文件、移除、手动登记安装、四组合视口适配）
+- [ ] Claude 项目级 `.mcp.json` 与本地 scope 的扫描；zcode、traex 的配置位置

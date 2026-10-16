@@ -48,6 +48,7 @@ import { AgentPanel, TeamCard } from './components/AgentPanel';
 import type { AgentMention, Coordination, MemberDefault, SearchHit } from './api';
 import { Popover as CoordinationPopover } from './components/Popover';
 import { SideChat } from './components/SideChat';
+import { McpPage } from './components/McpPage';
 import { SkillsPage } from './components/SkillsPage';
 import { SchedulesPage } from './components/SchedulesPage';
 import { TodosPage } from './components/TodosPage';
@@ -61,7 +62,7 @@ import { NoteMarks, type NoteMark } from './components/NoteMarks';
 import { Toast, type ToastState } from './components/Toast';
 import { ConnectDialog, DemoBar } from './components/ConnectDialog';
 import { DemoApi, DemoError } from './demo/DemoApi';
-import { IconCheck, AgentMark, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconImport, IconList, IconMenu, IconMore, IconPalette, IconPlus, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal } from './components/icons';
+import { IconCheck, AgentMark, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconMore, IconPalette, IconPlus, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal } from './components/icons';
 
 const sleep = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve) => {
@@ -90,6 +91,7 @@ const isNearBottom = (el: HTMLElement) => el.scrollHeight - el.scrollTop - el.cl
 /** The plan page's address. Threads have none: the main area showing a thread is the plain URL. */
 const TODOS_HASH = '#/todos';
 const SKILLS_HASH = '#/skills';
+const MCP_HASH = '#/mcp';
 const SCHEDULES_HASH = '#/schedules';
 
 /** Whether the thread list is put away on a wide screen. */
@@ -187,14 +189,16 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   /** What the main area shows: a thread (or the blank one a new thread starts from), the plan page, the scheduled-task page, or the skills page. */
   // Those pages have addresses of their own, so a reload or a bookmark lands back on them.
-  const [view, setView] = useState<'thread' | 'todos' | 'schedules' | 'skills'>(() =>
+  const [view, setView] = useState<'thread' | 'todos' | 'schedules' | 'skills' | 'mcp'>(() =>
     window.location.hash === TODOS_HASH
       ? 'todos'
       : window.location.hash === SCHEDULES_HASH
         ? 'schedules'
         : window.location.hash === SKILLS_HASH && token
           ? 'skills'
-          : 'thread',
+          : window.location.hash === MCP_HASH && token
+            ? 'mcp'
+            : 'thread',
   );
   /** Bumped by daemon broadcasts, so the open plan page reloads. */
   const [todosKey, setTodosKey] = useState(0);
@@ -331,15 +335,16 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
   const onTodos = view === 'todos' && !selectedId;
   const onSchedules = view === 'schedules' && !selectedId;
   const onSkills = view === 'skills' && !selectedId;
+  const onMcp = view === 'mcp' && !selectedId;
 
   // The address follows what the main area shows. Replaced, not pushed: going between the pages and
   // threads is not a trail for the back button to walk.
   useEffect(() => {
-    const want = onTodos ? TODOS_HASH : onSchedules ? SCHEDULES_HASH : onSkills ? SKILLS_HASH : '';
+    const want = onTodos ? TODOS_HASH : onSchedules ? SCHEDULES_HASH : onSkills ? SKILLS_HASH : onMcp ? MCP_HASH : '';
     if (window.location.hash !== want) {
       window.history.replaceState(window.history.state, '', want || window.location.pathname + window.location.search);
     }
-  }, [onTodos, onSkills, onSchedules]);
+  }, [onTodos, onSkills, onSchedules, onMcp]);
 
   // Whether the directory a new thread would start in is a git repository. Asked once per directory picked.
   useEffect(() => {
@@ -1069,6 +1074,12 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
     setDrawer(false);
   };
 
+  const openMcp = () => {
+    setSelectedId(null);
+    setView('mcp');
+    setDrawer(false);
+  };
+
   const newThread = (opts: { cwd?: string; sectionId?: string | null; scratch?: boolean } = {}) => {
     setSelectedId(null);
     setView('thread');
@@ -1196,6 +1207,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
       ? [{ id: 'usage', label: '额度', hint: '所有 agent 的用量、重置时间和刷新', keywords: ['usage', 'quota', '额度', 'cost'] }]
       : []),
     { id: 'skills', label: '技能', hint: '各机器各 agent 的技能，互相同步', keywords: ['skills', 'skill', '技能'] },
+    { id: 'mcp', label: 'MCP', hint: '各机器各 agent 的 MCP 服务，按业务线管理', keywords: ['mcp', 'server', '业务线'] },
     ...(models.length || effortLevels.length
       ? [{ id: 'model', label: '模型与思考强度', hint: modelName(models, model), keywords: ['model', 'effort', 'thinking'] }]
       : []),
@@ -1220,12 +1232,13 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
 
   const runHubAction = (id: string) => {
     // These are the hub's own machinery, which the demo has none of.
-    if (demo && (id === 'term' || id === 'usage' || id === 'skills' || id === 'import')) return askToConnect();
+    if (demo && (id === 'term' || id === 'usage' || id === 'skills' || id === 'mcp' || id === 'import')) return askToConnect();
     if (id === 'new') return newThread();
     if (id === 'status') return setStatusOpen(true);
     if (id === 'term') return setTermOpen(true);
     if (id === 'usage') return setQuotaOpen(true);
     if (id === 'skills') return openSkills();
+    if (id === 'mcp') return openMcp();
     if (id === 'export' && selected) return threadActions.copyConversation(selected);
     if (id === 'model') return setModelSignal((n) => n + 1);
     if (id === 'permission') return setPermissionSignal((n) => n + 1);
@@ -1561,6 +1574,11 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
           <div key="skills" className="scroller">
             <SkillsPage api={api} token={token} hostId={hostId} hosts={hosts} agents={agents} onError={handleError} />
           </div>
+        ) : onMcp ? (
+          // The same: one view across every machine, with a scroller of its own.
+          <div key="mcp" className="scroller">
+            <McpPage api={api} token={token} hostId={hostId} hosts={hosts} agents={agents} onError={handleError} />
+          </div>
         ) : onSchedules ? (
           // The same: a document-style page with a scroller of its own.
           <div key="schedules" className="scroller">
@@ -1842,6 +1860,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
               : [
                   { id: 'observability', label: '用量与诊断', icon: IconGauge, onSelect: () => { setObservability('usage'); setDrawer(false); } },
                   { id: 'skills', label: '技能', icon: IconSparkle, onSelect: openSkills },
+                  { id: 'mcp', label: 'MCP', icon: IconGlobe, onSelect: openMcp },
                   {
                     id: 'hosts',
                     label: '机器',

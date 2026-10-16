@@ -406,6 +406,45 @@ export interface SkillInstallOutcome {
   error?: string;
 }
 
+/** One MCP server as one agent instance's own config states it. `config` is the server object
+ * verbatim, so it can be shown, copied and reinstalled without knowing every agent's extras. */
+export interface McpServer {
+  name: string;
+  config: Record<string, unknown>;
+  sourcePath: string;
+}
+
+/** One agent instance's MCP servers, as the machine this client is for reads them. */
+export interface McpAgentListing {
+  agent: string;
+  writable: boolean;
+  servers: McpServer[];
+  error?: string;
+}
+
+export interface McpListing {
+  agents: McpAgentListing[];
+}
+
+export type McpInstallStatus = 'installed' | 'exists' | 'same' | 'error';
+
+export interface McpInstallOutcome {
+  agent: string;
+  status: McpInstallStatus;
+  error?: string;
+}
+
+/** The hub's own note about one server name: the business line and the purpose in words, plus the
+ * config for servers registered on the page rather than found in any config file. */
+export interface McpEntry {
+  name: string;
+  businessLine: string;
+  description: string;
+  server: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** Another machine this hub shows: the same daemon over there, reached over SSH. */
 export interface HostInfo {
   id: string;
@@ -954,6 +993,37 @@ export class Api {
   /** Takes a skill out of one folder on this machine. */
   skillRemove(name: string, path: string): Promise<void> {
     return this.request('DELETE', `/api/skills?name=${encodeURIComponent(name)}&path=${encodeURIComponent(path)}`);
+  }
+
+  // MCP, in each agent's own config. Whichever machine this client is for scans its own agents;
+  // entries (the notes and manual servers) live on the hub the page talks to.
+
+  /** This machine's scan: every agent instance whose MCP config the daemon can read. */
+  mcp(): Promise<McpListing> {
+    return this.request('GET', '/api/mcp');
+  }
+
+  /** Writes one server into each listed instance's config on this machine. */
+  mcpInstall(body: { targets: string[]; name: string; config: Record<string, unknown>; overwrite?: boolean }): Promise<McpInstallOutcome[]> {
+    return this.request('POST', '/api/mcp/install', body);
+  }
+
+  /** Takes one server out of one instance's config on this machine. */
+  mcpRemove(agent: string, name: string): Promise<void> {
+    return this.request('DELETE', `/api/mcp?agent=${encodeURIComponent(agent)}&name=${encodeURIComponent(name)}`);
+  }
+
+  /** The registry of notes and manually registered servers, on this daemon. */
+  mcpEntries(): Promise<McpEntry[]> {
+    return this.request('GET', '/api/mcp/entries');
+  }
+
+  mcpSaveEntry(body: { name: string; businessLine?: string; description?: string; server?: Record<string, unknown> | null }): Promise<McpEntry> {
+    return this.request('PUT', '/api/mcp/entries', body);
+  }
+
+  mcpDeleteEntry(name: string): Promise<void> {
+    return this.request('DELETE', `/api/mcp/entries/${encodeURIComponent(name)}`);
   }
 
   /** Live web terminals on this daemon. */
