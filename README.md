@@ -2,13 +2,29 @@
   <img src="packages/web/public/limi-icon.png" alt="Limi：薄荷绿背景上的奶油白小海蛞蝓，带橙色触角和微笑" width="160" />
 </p>
 
-# Limi
+<h1 align="center">Limi</h1>
 
-Limi（全名 Limacia，昵称「粒米」）是一个在浏览器里使用远程 coding agent 的工作台。
+<p align="center">a simple way to manage agents</p>
 
-让 coding agent 在远程主机上工作，你用手机或电脑浏览器查看进展、补充要求、处理审批和检查结果。Limi 保持界面简单，也保留各个 agent 原有的目录、配置和会话。
+Limi 是一个 agent 管理工作台。把远程主机上的 Claude Code、Codex、pi、Antigravity 等 coding agent 集中到浏览器里，统一查看和管理。
 
-名字来自 Limacia 海蛞蝓。图标是一只带橙色短触角、奶油白身体的小伙伴，配上浅薄荷绿背景，希望工作台也能轻松、亲切一些。
+打开网页就能：
+
+- 看每个 agent 在做什么——进展、审批、用量
+- 随时发消息、补充要求、处理审批
+- 一处管理多个 agent 和多台机器
+
+Limi 不动 agent 本身的目录、配置和会话，装好即用。名字来自 Limacia 海蛞蝓，图标是一只带橙色短触角、奶油白身体的小伙伴，配上浅薄荷绿背景，希望工作台也能轻松、亲切一些。
+
+## 界面预览
+
+| 桌面 · 亮色 | 桌面 · 深色 |
+|---|---|
+| ![桌面亮色](docs/screenshots/desktop-light.png) | ![桌面深色](docs/screenshots/desktop-dark.png) |
+
+| 手机 · 亮色 | 手机 · 深色 |
+|---|---|
+| ![手机亮色](docs/screenshots/phone-light.png) | ![手机深色](docs/screenshots/phone-dark.png) |
 
 > 状态：可用，正在迭代。要做的事见 [docs/TODO.md](docs/TODO.md)，架构见 [docs/PLAN.md](docs/PLAN.md)。
 
