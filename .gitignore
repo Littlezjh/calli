@@ -35,3 +35,6 @@ packages/e2e/shots/
 
 # playwright MCP artifacts when e2e testing from the repo root
 .playwright-mcp/
+
+# zcode CLI runtime state when testing from the repo root
+.zcode/
