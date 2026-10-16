@@ -8,7 +8,7 @@ import { buildActivity, buildSidebar, handoverGroups, markTerms, projectDir, SEA
 import { timeAgo } from '../sessions';
 import { deliveredPreview } from '../timeline';
 import { HostSwitcher } from './Hosts';
-import { AgentMark, IconBell, IconChevron, IconClock, IconClose, IconEdit, IconFolder, IconFork, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconWorktree, IconSidebar } from './icons';
+import { AgentMark, IconBell, IconChevron, IconClock, IconClose, IconEdit, IconFolder, IconFork, IconGauge, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconWorktree, IconSidebar } from './icons';
 
 export { folderName } from '../paths';
 
@@ -35,6 +35,9 @@ interface Props {
   onOpenSchedules: () => void;
   /** The scheduled-task page is what the main area shows. */
   schedulesActive?: boolean;
+  onOpenActivity: () => void;
+  /** The overview page is what the main area shows. */
+  activityActive?: boolean;
   /** The phone layout: the list is a page of its own under the conversation, laid out for thumbs. */
   compact?: boolean;
   /** Opens the settings menu, where the look, the archive, importing and signing out are. It grows up and to the left from the point given. */
@@ -90,6 +93,8 @@ export function Sidebar({
   todosActive = false,
   onOpenSchedules,
   schedulesActive = false,
+  onOpenActivity,
+  activityActive = false,
   compact = false,
   onOpenSettings,
   notice,
@@ -454,6 +459,9 @@ export function Sidebar({
             </button>
             <button className={`side-link${schedulesActive ? ' active' : ''}`} aria-current={schedulesActive ? 'page' : undefined} onClick={onOpenSchedules}>
               <IconClock size={compact ? 21 : 17} /> 定时任务
+            </button>
+            <button className={`side-link${activityActive ? ' active' : ''}`} aria-current={activityActive ? 'page' : undefined} onClick={onOpenActivity}>
+              <IconGauge size={compact ? 21 : 17} /> 概览
             </button>
           </div>
         )}

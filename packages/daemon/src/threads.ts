@@ -1,5 +1,5 @@
 import { UserInputs } from './user-input.js';
-import type { WorkMode } from './adapters/types.js';
+import type { SystemPrompt, WorkMode } from './adapters/types.js';
 import { diagnosticFailure } from './adapters/diagnostics.js';
 import type { CoordinationManager } from './coordination.js';
 import { randomUUID } from 'node:crypto';
@@ -518,6 +518,25 @@ export class ThreadManager {
   }
 
   usageReport(hours: number, agent: string) { return this.store.telemetry.read(hours, agent); }
+
+  activityReport(days: number, agent: string) { return this.store.activity.read(days, agent); }
+
+  /**
+   * The whole prompt a thread's conversation runs with, from the agent's own session file. Reading
+   * it starts nothing and writes nothing; an agent that does not persist its prompt says so.
+   */
+  async threadSystemPrompt(threadId: string): Promise<SystemPrompt> {
+    const thread = this.getThread(threadId);
+    if (!thread) throw new HttpError(404, 'no such thread');
+    const adapter = this.adapters.get(thread.agent);
+    if (!adapter?.capabilities.systemPrompt || !adapter.readSystemPrompt) {
+      throw new HttpError(400, `${thread.agent} 的会话文件不保存系统提示词`);
+    }
+    if (!thread.agentSessionId) throw new HttpError(400, '这个线程还没有会话');
+    const prompt = await adapter.readSystemPrompt(thread.agentSessionId, thread.cwd);
+    if (!prompt) throw new HttpError(404, '会话文件里没有系统提示词');
+    return prompt;
+  }
 
   agentDiagnostic(agent: string, refresh = false): Promise<unknown> {
     const adapter = this.adapters.get(agent);

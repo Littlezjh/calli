@@ -52,6 +52,7 @@ import { McpPage } from './components/McpPage';
 import { SkillsPage } from './components/SkillsPage';
 import { SchedulesPage } from './components/SchedulesPage';
 import { TodosPage } from './components/TodosPage';
+import { ActivityPage } from './components/ActivityPage';
 import { AgentPicker, type DiscoveredAccount, type DiscoveredAgent, effortsForModel, imagesBlocked, imagesNote, modelName, speedsForModel, ModelPicker, PermissionPicker, UsageMeter, WorkspacePicker } from './components/Pickers';
 import { Sidebar, SIDEBAR_SHORTCUT } from './components/Sidebar';
 import { forkBlocked, useThreadActions } from './components/ThreadActions';
@@ -93,6 +94,7 @@ const TODOS_HASH = '#/todos';
 const SKILLS_HASH = '#/skills';
 const MCP_HASH = '#/mcp';
 const SCHEDULES_HASH = '#/schedules';
+const ACTIVITY_HASH = '#/activity';
 
 /** Whether the thread list is put away on a wide screen. */
 const SIDEBAR_HIDDEN_KEY = 'rah.sidebar.hidden';
@@ -187,18 +189,20 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
   const [sections, setSections] = useState<Section[]>([]);
   const [todos, setTodos] = useState<Todo[]>([]);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
-  /** What the main area shows: a thread (or the blank one a new thread starts from), the plan page, the scheduled-task page, or the skills page. */
+  /** What the main area shows: a thread (or the blank one a new thread starts from), the plan page, the scheduled-task page, the overview page, or the skills page. */
   // Those pages have addresses of their own, so a reload or a bookmark lands back on them.
-  const [view, setView] = useState<'thread' | 'todos' | 'schedules' | 'skills' | 'mcp'>(() =>
+  const [view, setView] = useState<'thread' | 'todos' | 'schedules' | 'activity' | 'skills' | 'mcp'>(() =>
     window.location.hash === TODOS_HASH
       ? 'todos'
       : window.location.hash === SCHEDULES_HASH
         ? 'schedules'
-        : window.location.hash === SKILLS_HASH && token
-          ? 'skills'
-          : window.location.hash === MCP_HASH && token
-            ? 'mcp'
-            : 'thread',
+        : window.location.hash === ACTIVITY_HASH
+          ? 'activity'
+          : window.location.hash === SKILLS_HASH && token
+            ? 'skills'
+            : window.location.hash === MCP_HASH && token
+              ? 'mcp'
+              : 'thread',
   );
   /** Bumped by daemon broadcasts, so the open plan page reloads. */
   const [todosKey, setTodosKey] = useState(0);
@@ -334,17 +338,18 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
   useEffect(() => { setAgentsOpen(false); setDraftCollaboration(false); setCollaborationDirectories([]); }, [selectedId, hostId]);
   const onTodos = view === 'todos' && !selectedId;
   const onSchedules = view === 'schedules' && !selectedId;
+  const onActivity = view === 'activity' && !selectedId;
   const onSkills = view === 'skills' && !selectedId;
   const onMcp = view === 'mcp' && !selectedId;
 
   // The address follows what the main area shows. Replaced, not pushed: going between the pages and
   // threads is not a trail for the back button to walk.
   useEffect(() => {
-    const want = onTodos ? TODOS_HASH : onSchedules ? SCHEDULES_HASH : onSkills ? SKILLS_HASH : onMcp ? MCP_HASH : '';
+    const want = onTodos ? TODOS_HASH : onSchedules ? SCHEDULES_HASH : onActivity ? ACTIVITY_HASH : onSkills ? SKILLS_HASH : onMcp ? MCP_HASH : '';
     if (window.location.hash !== want) {
       window.history.replaceState(window.history.state, '', want || window.location.pathname + window.location.search);
     }
-  }, [onTodos, onSkills, onSchedules, onMcp]);
+  }, [onTodos, onActivity, onSkills, onSchedules, onMcp]);
 
   // Whether the directory a new thread would start in is a git repository. Asked once per directory picked.
   useEffect(() => {
@@ -375,6 +380,11 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
       if (window.location.hash === SCHEDULES_HASH) {
         setSelectedId(null);
         setView('schedules');
+        setDrawer(false);
+      }
+      if (window.location.hash === ACTIVITY_HASH) {
+        setSelectedId(null);
+        setView('activity');
         setDrawer(false);
       }
       if (window.location.hash === SKILLS_HASH && token) {
@@ -1068,6 +1078,12 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
     setDrawer(false);
   };
 
+  const openActivity = () => {
+    setSelectedId(null);
+    setView('activity');
+    setDrawer(false);
+  };
+
   const openSkills = () => {
     setSelectedId(null);
     setView('skills');
@@ -1379,7 +1395,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
 
   const teamWaiting = Boolean(coordination?.members.some((m) => m.thread?.waiting));
   const teamRunning = coordination?.members.filter((m) => m.thread?.status === 'running').length ?? 0;
-  const teamShown = Boolean(selected?.coordination && (selected.coordination.rootId !== selected.id || selected.coordination.children > 0) && !onTodos && !onSkills && hostUp);
+  const teamShown = Boolean(selected?.coordination && (selected.coordination.rootId !== selected.id || selected.coordination.children > 0) && !onTodos && !onActivity && !onSkills && hostUp);
   const teamNote = teamWaiting ? '待批准' : teamRunning ? `${teamRunning} 运行中` : selected?.coordination?.paused ? '已暂停' : '';
 
   // Older daemons advertise /compact before they expose the dedicated capability.
@@ -1474,6 +1490,8 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
           todosActive={onTodos}
           onOpenSchedules={openSchedules}
           schedulesActive={onSchedules}
+          onOpenActivity={openActivity}
+          activityActive={onActivity}
           notice={demo && compact ? <DemoBar compact onConnect={askToConnect} /> : undefined}
         />
       </aside>
@@ -1497,7 +1515,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
           <div className="topbar-heading">
             {/* The plan page carries its own heading. */}
             <div className="topbar-title">{host && !hostUp ? host.label : onTodos || onSkills || onSchedules ? '' : selected ? selected.title : '新线程'}</div>
-            {!selected && !onTodos && !onSkills && !onSchedules && host && hostUp && <div className="topbar-sub">{host.label}</div>}
+            {!selected && !onTodos && !onActivity && !onSkills && !onSchedules && host && hostUp && <div className="topbar-sub">{host.label}</div>}
             {selected && (
               <div className="topbar-sub" title={selected.cwd}>
                 {agentLabel(selected.agent)} ·{' '}
@@ -1553,7 +1571,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
 
         {demo && <DemoBar compact={compact} onConnect={askToConnect} />}
 
-        {selected && !onTodos && !onSkills && !onSchedules && hostUp && <HandoverTrail thread={selected} threads={threads} agentLabel={agentLabel} onSelect={pick} />}
+        {selected && !onTodos && !onActivity && !onSkills && !onSchedules && hostUp && <HandoverTrail thread={selected} threads={threads} agentLabel={agentLabel} onSelect={pick} />}
 
         {error && (
           <div className="banner" role="alert">
@@ -1606,6 +1624,11 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
               onOpenThread={pick}
               onError={handleError}
             />
+          </div>
+        ) : onActivity ? (
+          // The same document shape: days from the top, each conversation's asks under its name.
+          <div key="activity" className="scroller">
+            <ActivityPage api={api} agents={agents} onOpenThread={pick} onError={handleError} />
           </div>
         ) : (
         <div key="thread" className="scroller" ref={scrollerRef} onScroll={onScroll} {...gestureProps}>
@@ -1666,7 +1689,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
           <TeamCard team={coordination} agents={agents} onOpen={(member) => { setAgentsStart(member ?? null); setAgentsOpen(true); setFiles(null); }} />
         )}
 
-        {!onTodos && !onSkills && !(host && !hostUp) && (
+        {!onTodos && !onActivity && !onSkills && !(host && !hostUp) && (
         <Composer
           draftKey={hostId ? `host:${hostId}:${selectedId ?? 'new'}` : selectedId ?? 'new'}
           running={running}

@@ -182,6 +182,13 @@ export interface AgentSessionSummary {
   updatedAt: string | null;
 }
 
+/** The whole prompt a conversation runs with, as the agent itself persisted it. */
+export interface SystemPrompt {
+  text: string;
+  /** What was read, for a caption: the agent names its own shape ("Claude Code 会话文件"). */
+  source: string;
+}
+
 /** One past exchange, in the shape a live turn would have produced. */
 export interface HistoryTurn {
   text: string;
@@ -259,6 +266,8 @@ export interface AgentAdapter {
     multiAccount: boolean;
     /** Whether that copy can go on in another directory, a new worktree of the same repository. Needs fork. */
     forkInto: boolean;
+    /** Whether the whole prompt the model runs with can be read from the agent's session file. */
+    systemPrompt?: boolean;
   };
   /** Whether the agent can be started on this host. */
   available(): Promise<boolean>;
@@ -287,6 +296,12 @@ export interface AgentAdapter {
   }>;
   /** Removes the agent's own record of a session. Present only when capabilities.deleteSession is true. */
   deleteSession?(agentSessionId: string, cwd: string): Promise<void>;
+  /**
+   * The whole system prompt of one conversation, read from the agent's own session file without
+   * starting anything. With capabilities.systemPrompt. Null when there is no session yet or the
+   * file holds no prompt; never throws for a missing file.
+   */
+  readSystemPrompt?(agentSessionId: string, cwd: string): Promise<SystemPrompt | null>;
   /** Every conversation the agent has on record, in any directory. With capabilities.history. */
   listSessions?(): Promise<AgentSessionSummary[]>;
   /** Read one session's metadata without listing every session or loading its turns. */

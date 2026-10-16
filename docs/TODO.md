@@ -284,6 +284,17 @@
 - [x] 错过可选补跑：任务可勾「停机错过后，启动时补跑一次」，恢复阶段除记 `missed` 外补跑一次；默认关（daemon + 测试 + 表单选项）
 - [x] e2e 修复：phone.spec 在本机挂 4 项的根因是 Drawer 打开时 `.main` 为 `visibility: hidden`，`innerText()` 按规范返回空串，且测试 3 报错后菜单未关引发级联失败；断言改 `textContent()`，sidebar.spec 坐标判断加 1px 亚像素容差。phone.spec 连续两次 6/6，smoke/sidebar/schedules 回归全过
 - [ ] 之后：对话内让 agent 自己建任务（MCP/工具调 `POST /api/schedules`，参考 nyx-builds/agent-scheduler；需先决定给 agent 什么入口）
+
+## 16. 概览（每日执行分析）
+
+侧边栏「概览」一页：每天问了什么、调了哪些工具和 MCP，以及每个会话的完整系统提示词。方案与开源调研见 [activity-design.md](activity-design.md)。第一版已实现。
+
+- [x] 事件里补存原始工具名：`tool.start` 新增 `tool`（模型看到的名字，如 `mcp__github__create_issue`）和 `server`（Codex 的 MCP 服务名）；ACP、pi、Codex、agy、zcode 适配器都带上了；旧记录不回填，按当时记录的 kind 归类统计
+- [x] `GET /api/activity?days=`（1..90）：按 daemon 本地日聚合，每天的用户提问（`turn_text`，含导入与终端同步的轮次；每至多 50 条，多的计数）、工具调用排行（原始名或旧记录的类别）、MCP 按服务汇总；归档线程计入；`events` 增加 `tool.start` 的部分索引
+- [x] `GET /api/threads/:id/system-prompt`：从 agent 自己的会话文件只读整段系统提示词——Claude 的 `prompt_snapshot`（取最新快照）、Codex rollout 的 `base_instructions`、pi 会话的 `system` 消息（sections 按写入顺序拼接）；能力 `capabilities.systemPrompt`，agy/zcode 暂无；流式扫描限 8 MiB，缺文件即无提示词，不算错误
+- [x] 界面：文档式一页（同计划页），范围 7/14/30 天（记在本机）；每天一节——「今天 · N 轮 · M 个会话」、工具 chips（MCP 带标记和服务名）、会话分组下按时间列提问原文，点提问回会话；有能力的会话一行「系统提示词」按钮，Dialog 展示全文（来源说明、复制、限高滚动）
+- [x] 验证：daemon 新增 activity、system-prompt 两组测试（本地日边界、洪峰截断、新旧工具行、MCP 两种拼法、适配器真实读文件、接口鉴权与错误）；e2e 新增 overview 回归 2 项（真实 daemon 跑一轮后当天可见、无会话文件的 agent 不显示按钮）；demo 模式带两天示例与两段示例提示词；无头 Chromium 桌面/手机 × 亮/暗用 DOM 度量检查（无横向溢出、弹窗限高、导航往返），截图留在 `packages/e2e/shots/overview-*`；像素级未逐张目检，真机未测
+
 ## 17. MCP 管理
 
 「配置 → MCP」一页：各业务线的 MCP 有哪些、是干什么的，一眼看全；详见 `PLAN.md` 的「MCP 管理」一节。第一版已实现。

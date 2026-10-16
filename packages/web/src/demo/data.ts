@@ -6,7 +6,7 @@
  * Nothing here is anyone's real project, path or machine.
  */
 import { CLAUDE_ICON, CODEX_ICON, PI_ICON } from '../../../daemon/src/adapters/icons';
-import type { AgentInfo, FolderListing, ModelOption, Schedule, Section, TextFile, Thread, Todo, WorkdirsConfig } from '../api';
+import type { ActivityDay, AgentInfo, FolderListing, ModelOption, Schedule, Section, SystemPrompt, TextFile, Thread, Todo, WorkdirsConfig } from '../api';
 import type { StoredEvent } from '../timeline';
 
 export interface DemoData {
@@ -21,6 +21,10 @@ export interface DemoData {
   /** Folder listings by thread directory and path inside it ('' for the top). */
   folders: Record<string, FolderListing['entries']>;
   files: Record<string, string>;
+  /** The daily digest, as the activity endpoint would answer it. */
+  activity: ActivityDay[];
+  /** The whole prompt of a conversation, by thread, for the demo's system-prompt dialog. */
+  systemPrompts: Record<string, SystemPrompt>;
 }
 
 const STOREFRONT = '~/projects/storefront';
@@ -46,7 +50,7 @@ const AGENTS: AgentInfo[] = [
     icon: CODEX_ICON,
     adapter: 'codex',
     available: true,
-    capabilities: caps({ workModes: ['execute', 'plan'], speed: true, effortLevels: ['low', 'medium', 'high', 'xhigh'], compact: true, forkAt: true }),
+    capabilities: caps({ workModes: ['execute', 'plan'], speed: true, effortLevels: ['low', 'medium', 'high', 'xhigh'], compact: true, forkAt: true, systemPrompt: true }),
   },
   {
     id: 'claude',
@@ -54,7 +58,7 @@ const AGENTS: AgentInfo[] = [
     icon: CLAUDE_ICON,
     adapter: 'claude',
     available: true,
-    capabilities: caps({ workModes: ['execute', 'plan'], effortLevels: ['low', 'medium', 'high'], compact: true }),
+    capabilities: caps({ workModes: ['execute', 'plan'], effortLevels: ['low', 'medium', 'high'], compact: true, systemPrompt: true }),
   },
   {
     id: 'pi',
@@ -401,6 +405,64 @@ export function demoData(now = Date.now()): DemoData {
     [`${NOTES_API}:README.md`]: '# notes-api\n\n示例项目：笔记服务的接口。\n',
   };
 
+  const dayKey = (minutesAgo: number) => {
+    const offset = new Date(now).getTimezoneOffset() * 60_000;
+    return new Date(now - minutesAgo * 60_000 - offset).toISOString().slice(0, 10);
+  };
+  const today = dayKey(30);
+  const yesterday = dayKey(60 * 26);
+  const activity: DemoData['activity'] = [
+    {
+      date: yesterday,
+      turns: 2,
+      threads: 2,
+      morePrompts: 0,
+      prompts: [
+        { threadId: 'demo-weekly', turnId: 'turn-weekly-1', ts: at(60 * 26), text: '整理上周的提交记录，写成周报发到讨论区。', title: '上周周报', agent: 'pi', cwd: NOTES_API, archived: false },
+        { threadId: 'demo-routes', turnId: 'turn-routes-1', ts: at(127), text: '想把接口迁到新的路由写法，先帮我看看现在哪些地方用了旧的。', title: '迁移到新的路由写法', agent: 'codex', cwd: NOTES_API, archived: false },
+      ],
+      tools: [
+        { name: 'shell', count: 6, mcp: false },
+        { name: 'apply_patch', count: 4, mcp: false },
+        { name: 'read_file', count: 3, mcp: false },
+        { name: 'github · search_issues', count: 2, mcp: true, server: 'github' },
+      ],
+      mcp: [{ server: 'github', count: 2 }],
+    },
+    {
+      date: today,
+      turns: 3,
+      threads: 3,
+      morePrompts: 0,
+      prompts: [
+        { threadId: 'demo-scroll-fix', turnId: 'turn-scroll-1', ts: at(8), text: '商品列表往下滚的时候会跳一下，帮忙看看是哪里的问题。', title: '修复商品列表滚动跳动', agent: 'claude', cwd: STOREFRONT, archived: false },
+        { threadId: 'demo-tests', turnId: 'turn-tests-1', ts: at(19), text: '给 /users 接口补上缺的测试。', title: '补齐 /users 接口测试', agent: 'codex', cwd: NOTES_API, archived: false },
+        { threadId: 'demo-dark-mode', turnId: 'turn-dark-1', ts: at(41), text: '设置页加一个深色模式开关，默认跟随系统。', title: '设置页加深色模式', agent: 'codex', cwd: STOREFRONT, archived: false },
+      ],
+      tools: [
+        { name: 'mcp__figma__get_frame', count: 3, mcp: true, server: 'figma' },
+        { name: 'Bash', count: 3, mcp: false },
+        { name: 'Edit', count: 3, mcp: false },
+        { name: 'Read', count: 2, mcp: false },
+      ],
+      mcp: [{ server: 'figma', count: 3 }],
+    },
+  ];
+  const systemPrompts: DemoData['systemPrompts'] = {
+    'demo-routes': {
+      text: 'You are Codex, an agent working in the user\'s workspace.\n\n# 计划模式\n这是示例的节选。真实的系统提示词有几万字符，包含身份、工具说明、沙箱规则和挂载的 MCP 说明；hub 只把它原样读出来，不改动。\n\n# Tools\n- shell, apply_patch, read_file, web_search',
+      source: 'Codex 会话文件',
+    },
+    'demo-dark-mode': {
+      text: 'You are Codex, an agent working in the user\'s workspace.\n\n# 急救\n这是一个示例提示词。真实的系统提示词由 agent 自己写进会话文件，hub 只读出来给你看：它包含身份、工具说明和这个会话挂载的 MCP 说明，通常有几千字。\n\n# Tools\n- shell: run commands\n- apply_patch: edit files',
+      source: 'Codex 会话文件',
+    },
+    'demo-scroll-fix': {
+      text: 'You are Claude Code, Anthropic\'s official CLI for Claude.\n\n# 示例\n同样是节选：真实提示词里还有环境信息、git 状态和 MCP 工具的完整说明。\n\n# Tools\n- Read, Edit, Bash, Grep…',
+      source: 'Claude Code 会话文件',
+    },
+  };
+
   return {
     agents: AGENTS,
     config: {
@@ -425,5 +487,7 @@ export function demoData(now = Date.now()): DemoData {
     },
     folders,
     files,
+    activity,
+    systemPrompts,
   };
 }

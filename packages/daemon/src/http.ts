@@ -230,6 +230,12 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (![1, 24, 168].includes(hours)) throw new HttpError(400, '统计范围须为 1、24 或 168 小时');
       return sendJson(res, 200, manager.usageReport(hours, url.searchParams.get('agent') ?? ''));
     }
+    // The daily digest of what was asked and what was called. `days` clamps to 1..90.
+    if (method === 'GET' && path === '/api/activity') {
+      const days = Number(url.searchParams.get('days') ?? 14);
+      if (!Number.isFinite(days)) throw new HttpError(400, '天数须为数字');
+      return sendJson(res, 200, { days: manager.activityReport(days, url.searchParams.get('agent') ?? '') });
+    }
     if (method === 'GET' && parts[0] === 'api' && parts[1] === 'agents' && parts[2] && parts[3] === 'diagnostics' && !parts[4]) {
       return sendJson(res, 200, await manager.agentDiagnostic(parts[2], url.searchParams.get('refresh') === '1'));
     }
@@ -588,6 +594,10 @@ export function createHttpServer(deps: HttpDeps): Server {
         if (before > 0) return sendJson(res, 200, manager.listEventsPage(threadId, before));
         const after = Number(url.searchParams.get('after') ?? 0) || 0;
         return sendJson(res, 200, manager.listEvents(threadId, after));
+      }
+
+      if (method === 'GET' && sub === 'system-prompt') {
+        return sendJson(res, 200, await manager.threadSystemPrompt(threadId));
       }
 
       if (method === 'GET' && sub === 'stream') {

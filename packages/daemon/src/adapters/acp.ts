@@ -73,6 +73,9 @@ export function mapAcpUpdate(update: any): EmittedEvent | null {
           title: update.title ?? '',
           kind: update.kind ?? 'other',
           status: update.status ?? 'in_progress',
+          // The raw tool name (Claude's bridge sends it, e.g. `mcp__server__tool`), kept for the
+          // activity page. ACP itself does not define it, so older bridges simply leave it out.
+          ...(typeof update.name === 'string' && update.name ? { tool: update.name } : {}),
           input: update.rawInput,
           content: update.content ?? [],
         },

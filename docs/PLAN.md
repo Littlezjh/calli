@@ -43,7 +43,7 @@ Plan 交互参考了 [Cline 的 Plan / Act](https://docs.cline.bot/core-workflow
 | `turn.done` / `turn.error` | 一轮结束。`turn.error` 可带 `code`，界面据此给出说明 |
 | `message.delta` | 助手文本增量 |
 | `reasoning.delta` | 思考过程增量 |
-| `tool.start` / `tool.update` / `tool.end` | 工具调用。`content` 里的 `{type:'diff', path, oldText, newText}` 是文件改动 |
+| `tool.start` / `tool.update` / `tool.end` | 工具调用。`content` 里的 `{type:'diff', path, oldText, newText}` 是文件改动。`tool.start` 可带 `tool`（模型看到的原始工具名，如 `mcp__服务__工具`）和 `server`（Codex 的 MCP 服务名），供概览统计；旧事件没有 |
 | `context.compaction` | 原生上下文压缩。`id` 标识同一轮内的操作，`status` 表示进行中、完成、失败、取消、跳过或中断；`automatic` 可选，未知触发方式时不标“自动” |
 | `approval.request` / `approval.resolved` | 审批。`toolCall.content` 里同样带 diff |
 | `input.request` / `input.resolved` | 原生提问与计划审批，包含问题、选项、自由输入能力及提交结果；由所属轮次管理生命周期 |
@@ -108,6 +108,8 @@ Plan 交互参考了 [Cline 的 Plan / Act](https://docs.cline.bot/core-workflow
 - **交接关系：** 独立保存 `handover`（来源线程 ID、标题与 agent 快照），与原生 fork 分开。同一机器、同一侧边栏分组内的交接链合为一个可展开入口，点击标题打开最新接手会话，整组按最近活跃时间排序；展开可切换每段会话，折叠时保留其他成员的运行、未读、错误或待批准标记。置顶和手动分区不被自动迁移，活动视图保持逐条显示。会话顶部的「交接记录」支持双向跳转；来源已不在当前列表时保留快照说明。升级只根据首轮中明确的本机交接信息、线程 ID、相同 cwd 和先后创建时间补全旧关系，不按同名标题猜测，也不跨机器猜关联。
 - **定时任务（见 `scheduled-tasks-design.md`）：** 任务 = agent 实例 + 白名单内目录 + 提示词 + 5 字段 cron（预设生成）+ 执行模式（每次新线程 / 固定线程继续）+ IANA 时区（空 = daemon 本地）+ 错过可选补跑。调度器在每台 daemon 内（线程在哪台、任务在哪台），30 秒 tick；上一轮未结束跳过记 `skipped`，停机错过的记 `missed`（勾了补跑的再补一次），重启时收尾遗留的 running。线程带任务徽标，`turn.started` 带 `scheduled` 标记；权限档位建任务时显式选，默认「请求批准」。自写 cron 解析（含时区，`Intl` 取分量），不加依赖。已实现。
 
+- **概览（见 `activity-design.md`）：** 每天的提问与工具调用从 hub 自己的日志出（`turn_text` 与 `events` 的 `tool.start`，事件里补存原始工具名，旧记录不回填）；整段系统提示词只读 agent 落盘的会话文件（Claude 的 `prompt_snapshot`、Codex 的 `base_instructions`、pi 的 system 消息），能力 `capabilities.systemPrompt` 控制，agy/zcode 未开。接口 `GET /api/activity` 与 `GET /api/threads/:id/system-prompt`；页面 `#/activity`。已实现。
+
 ## 网络与安全
 
 - TCP HTTP API 验证 token（健康检查除外）；私有 Unix socket 免 token，目录与 socket 权限均为 `0700`。默认位于 `~/.local/state/remote-agent-hub/daemon.sock`，`RAH_SOCKET=off` 可关闭。
@@ -152,9 +154,6 @@ Plan 交互参考了 [Cline 的 Plan / Act](https://docs.cline.bot/core-workflow
 
 同步限制为 400 个文件、单文件 4 MB、合计 16 MB。校验目录穿越、文件与目录冲突、缺少 `SKILL.md` 及非法编码。技能列表短暂缓存 3 秒，写入后失效。不改 agent 配置或会话；新增技能是否立即可用仍取决于各 agent 的重新加载机制。
 
-## 用量统计与诊断
-
-已接入原生消耗采集、滚动 TPM、用量账本和实例诊断。统计粒度、未知字段、缓存与费用口径，以及接口和验证见 [用量统计与诊断](observability-design.md)。
 ## MCP 管理
 
 「配置 → MCP」按业务线管理各机器各 agent 的 MCP 服务。哪个文件存 MCP 是适配器自己的知识（`mcpServers()`/`mcpInstall()`/`mcpRemove()`）：Claude 的 `~/.claude.json` 用户级（设 `CLAUDE_CONFIG_DIR` 时先看配置目录内）、Codex 的 `config.toml` `[mcp_servers.*]` 表、pi 的 `~/.pi/agent/mcp.json`。未实现的 agent 不出现在页面上；前端按接口返回的 `writable` 判断能否安装/移除，不按 agent 名字分支。
@@ -165,3 +164,6 @@ Plan 交互参考了 [Cline 的 Plan / Act](https://docs.cline.bot/core-workflow
 - 环境变量只在详情弹窗里展示。这不是安全边界（hub token 本就能开终端），只是不让列表被密钥刷屏。
 - 第一期只读用户级配置：Claude 项目级 `.mcp.json` 和 `.claude.json` 里 projects 下的本地 scope 不扫。
 
+## 用量统计与诊断
+
+已接入原生消耗采集、滚动 TPM、用量账本和实例诊断。统计粒度、未知字段、缓存与费用口径，以及接口和验证见 [用量统计与诊断](observability-design.md)。

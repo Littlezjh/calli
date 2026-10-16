@@ -76,7 +76,7 @@ export function mapZcodeEvent(event: any): EmittedEvent | null {
   if (event.type !== 'tool.updated' || !p.toolCallId) return null;
   const name = String(p.toolName ?? '');
   const kind = ({ Read: 'read', Write: 'edit', Edit: 'edit', Bash: 'execute', Grep: 'search', Glob: 'search' } as Record<string, string>)[name] ?? 'other';
-  if (p.kind === 'scheduled') return { type: 'tool.start', data: { id: p.toolCallId, title: p.input?.file_path ?? p.input?.path ?? p.input?.command ?? name, kind, input: p.input, status: 'in_progress' } };
+  if (p.kind === 'scheduled') return { type: 'tool.start', data: { id: p.toolCallId, title: p.input?.file_path ?? p.input?.path ?? p.input?.command ?? name, kind, input: p.input, status: 'in_progress', ...(name ? { tool: name } : {}) } };
   if (p.kind === 'progress') return { type: 'tool.update', data: { id: p.toolCallId, status: 'in_progress', output: [p.stdoutTail, p.stderrTail].filter(Boolean).join('\n') } };
   if (p.kind === 'result' || p.kind === 'error') return { type: 'tool.end', data: { id: p.toolCallId, status: p.kind === 'error' || p.result?.success === false ? 'failed' : 'completed', output: p.error?.message ?? (typeof p.result?.output === 'string' ? p.result.output : JSON.stringify(p.result?.output ?? p.result ?? '')) } };
   return null;

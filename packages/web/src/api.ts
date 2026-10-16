@@ -54,6 +54,28 @@ export interface SearchHit {
   archived: boolean;
 }
 
+/** The whole prompt a conversation runs with, as the agent itself persisted it. */
+export interface SystemPrompt {
+  text: string;
+  source: string;
+}
+
+/** One day of the digest: what the user asked and what the models called. */
+export interface ActivityDay {
+  /** Local calendar day, `YYYY-MM-DD`. */
+  date: string;
+  turns: number;
+  threads: number;
+  prompts: Array<{ threadId: string; turnId: string; ts: string; text: string; title: string; agent: string; cwd: string; archived: boolean }>;
+  morePrompts: number;
+  tools: Array<{ name: string; count: number; mcp: boolean; server?: string }>;
+  mcp: Array<{ server: string; count: number }>;
+}
+
+export interface ActivityReport {
+  days: ActivityDay[];
+}
+
 /** The model and thinking effort members of one instance start with; null leaves the agent's own. */
 export interface MemberDefault { model: string | null; effort: string | null; /** Set where this instance's members differ from the team's level. */ permission?: string }
 export interface Coordination {
@@ -300,6 +322,8 @@ export interface AgentInfo {
     forkAt?: boolean;
     /** A fork can run in a git worktree of its own. Missing from daemons that predate it. */
     forkInto?: boolean;
+    /** The whole prompt of a conversation can be read from the agent's session file. Missing from daemons that predate it. */
+    systemPrompt?: boolean;
   };
 }
 
@@ -727,6 +751,16 @@ export class Api {
   /** Turns of any thread on this machine, archived ones too, in which the words were said. */
   search(query: string): Promise<SearchHit[]> {
     return this.request('GET', `/api/search?q=${encodeURIComponent(query)}`);
+  }
+
+  /** The daily digest of what was asked and what was called, newest day last. */
+  activity(days = 14): Promise<ActivityReport> {
+    return this.request('GET', `/api/activity?days=${days}`);
+  }
+
+  /** The whole prompt a thread's conversation runs with, as the agent itself persisted it. */
+  systemPrompt(threadId: string): Promise<SystemPrompt> {
+    return this.request('GET', `/api/threads/${threadId}/system-prompt`);
   }
 
   configureCoordination(id: string, body: { action?: string; directories?: string[]; defaults?: Record<string, MemberDefault>; permission?: string }): Promise<Coordination> {

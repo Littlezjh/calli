@@ -12,6 +12,7 @@ import type { EmittedEvent } from '../events.js';
 import { commandExists } from '../util.js';
 import { CODEX_ICON } from './icons.js';
 import { configDirectory, findSessionFile, quoteArg } from './session-location.js';
+import { codexSystemPromptMeta, scanJsonl } from './system-prompt.js';
 import { installTomlMcpServer, removeTomlMcpServer, tomlMcpServers } from '../mcp-format.js';
 import { JsonRpcPeer, RpcError } from './jsonrpc.js';
 import type {
@@ -30,6 +31,7 @@ import type {
   SkillDir,
   SlashCommand,
   StartOptions,
+  SystemPrompt,
   TurnHooks,
   TurnInput,
   TurnResult,
@@ -164,14 +166,33 @@ export function mapCodexItemStart(item: any): EmittedEvent | null {
     case 'mcpToolCall':
       return {
         type: 'tool.start',
-        data: { id: item.id, title: `${item.server ?? 'mcp'} · ${item.tool ?? ''}`, kind: 'other', status: 'in_progress', input: item.arguments },
+        data: {
+          id: item.id,
+          title: `${item.server ?? 'mcp'} · ${item.tool ?? ''}`,
+          kind: 'other',
+          status: 'in_progress',
+          input: item.arguments,
+          // Kept apart for the activity page: the MCP server and the tool the model called.
+          ...(item.tool ? { tool: String(item.tool) } : {}),
+          ...(item.server ? { server: String(item.server) } : {}),
+        },
       };
     case 'webSearch':
       return { type: 'tool.start', data: { id: item.id, title: String(item.query ?? ''), kind: 'search', status: 'in_progress' } };
     case 'imageGeneration':
       return { type: 'tool.start', data: { id: item.id, title: '图片', kind: 'create', status: 'in_progress', input: { revisedPrompt: item.revisedPrompt } } };
     case 'dynamicToolCall':
-      return { type: 'tool.start', data: { id: item.id, title: `${item.namespace ?? ''} · ${item.tool ?? ''}`, kind: 'other', status: 'in_progress', input: item.arguments } };
+      return {
+        type: 'tool.start',
+        data: {
+          id: item.id,
+          title: `${item.namespace ?? ''} · ${item.tool ?? ''}`,
+          kind: 'other',
+          status: 'in_progress',
+          input: item.arguments,
+          ...(item.tool ? { tool: [item.namespace, item.tool].filter(Boolean).map(String).join('·') } : {}),
+        },
+      };
     default:
       return null;
   }
@@ -841,6 +862,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
     forkInto: true,
     quota: true,
     compact: true,
+    systemPrompt: true,
   };
 
   private modelProbe: Promise<ModelOption[]> | null = null;
@@ -914,6 +936,18 @@ export class CodexAppServerAdapter implements AgentAdapter {
     const sessionPath = await findSessionFile(join(configDir, 'sessions'), agentSessionId, 3, matches)
       ?? await findSessionFile(join(configDir, 'archived_sessions'), agentSessionId, 3, matches);
     return { configDir, sessionPath, ...(agentSessionId ? { resumeCommand: `env CODEX_HOME=${quoteArg(configDir)} codex resume ${quoteArg(agentSessionId)}` } : {}) };
+  }
+
+  /** The base instructions the conversation was started with, from the rollout's first record. */
+  async readSystemPrompt(agentSessionId: string, cwd: string): Promise<SystemPrompt | null> {
+    const { sessionPath } = await this.sessionLocation(agentSessionId, cwd);
+    if (!sessionPath) return null;
+    let text: string | null = null;
+    await scanJsonl(sessionPath, (line) => {
+      const found = codexSystemPromptMeta(line);
+      if (found !== null) text = found;
+    });
+    return text ? { text, source: 'Codex 会话文件' } : null;
   }
 
   skillDirs(): SkillDir[] {

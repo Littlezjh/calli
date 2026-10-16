@@ -38,6 +38,16 @@ test('mapAcpUpdate maps message, thought, tool and plan updates', () => {
   });
   assert.equal(mapAcpUpdate({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'x' } })?.type, 'reasoning.delta');
   assert.equal(mapAcpUpdate({ sessionUpdate: 'tool_call', toolCallId: 'a', title: 'ls', status: 'pending' })?.type, 'tool.start');
+  // The raw tool name rides along when the bridge sends it, so the activity page can tell MCP calls.
+  assert.equal(mapAcpUpdate({ sessionUpdate: 'tool_call', toolCallId: 'a', title: 'ls', status: 'pending', name: 'mcp__github__create_issue' })?.data.tool, 'mcp__github__create_issue');
+  assert.equal(mapAcpUpdate({ sessionUpdate: 'tool_call', toolCallId: 'a', title: 'ls', status: 'pending', name: 'Read' })?.data.tool, 'Read');
+  assert.equal('tool' in (mapAcpUpdate({ sessionUpdate: 'tool_call', toolCallId: 'a', title: 'ls', status: 'pending' })?.data ?? {}), false, 'no name, no guess');
+  // Codex says the server and the tool apart, which is what an MCP count is made of.
+  const mcp = mapCodexItemStart({ type: 'mcpToolCall', id: 'm1', server: 'github', tool: 'create_issue', arguments: {} });
+  assert.equal(mcp?.data.tool, 'create_issue');
+  assert.equal(mcp?.data.server, 'github');
+  const shell = mapCodexItemStart({ type: 'commandExecution', id: 'c1', command: 'ls', cwd: '/tmp' });
+  assert.equal('tool' in (shell?.data ?? {}), false);
   assert.equal(mapAcpUpdate({ sessionUpdate: 'tool_call_update', toolCallId: 'a', status: 'in_progress' })?.type, 'tool.update');
   assert.equal(mapAcpUpdate({ sessionUpdate: 'tool_call_update', toolCallId: 'a', status: 'failed' })?.type, 'tool.end');
   assert.equal(mapAcpUpdate({ sessionUpdate: 'plan', entries: [] })?.type, 'plan.updated');
@@ -49,6 +59,8 @@ test('mapPiEvent maps text, thinking and tool execution records', () => {
   assert.equal(mapPiEvent({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'a' } })?.type, 'message.delta');
   assert.equal(mapPiEvent({ type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', delta: 'b' } })?.type, 'reasoning.delta');
   assert.equal(mapPiEvent({ type: 'message_update', assistantMessageEvent: { type: 'toolcall_delta' } }), null);
+  const start = mapPiEvent({ type: 'tool_execution_start', toolCallId: 'b', toolName: 'mcp__botmux__run', args: {} });
+  assert.equal(start?.data.tool, 'mcp__botmux__run');
   const end = mapPiEvent({ type: 'tool_execution_end', toolCallId: 'c', result: { content: [{ type: 'text', text: 'out' }] }, isError: true });
   assert.deepEqual(end, { type: 'tool.end', data: { id: 'c', status: 'failed', output: 'out' } });
   assert.equal(mapPiEvent({ type: 'queue_update' }), null);
@@ -545,7 +557,7 @@ test('mapAgyStep maps reply text and tool steps, and ignores bookkeeping steps',
 
   const info = { name: 'run_command', parameters: { CommandLine: 'npm test\necho done' } };
   assert.deepEqual(mapAgyStep({ step_index: 2, state: 'ACTIVE', step_type: 'tool', tool_name: 'run_command', tool_info: info }, started), [
-    { type: 'tool.start', data: { id: 'agy-step-2', title: 'npm test', kind: 'execute', status: 'in_progress', input: info.parameters } },
+    { type: 'tool.start', data: { id: 'agy-step-2', title: 'npm test', kind: 'execute', status: 'in_progress', tool: 'run_command', input: info.parameters } },
   ]);
   assert.deepEqual(
     mapAgyStep({ step_index: 2, state: 'DONE', step_type: 'tool', tool_name: 'run_command', tool_info: { ...info, output: '12 passed' } }, started),

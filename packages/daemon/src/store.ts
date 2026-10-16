@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import type { EventType, StoredEvent } from './events.js';
 import { McpRegistry } from './mcp.js';
 import { Telemetry } from './telemetry.js';
+import { Activity } from './activity.js';
 import { askedText } from './util.js';
 import { referencesFile } from './artifacts.js';
 
@@ -286,6 +287,7 @@ function snippetAround(text: string, terms: string[]): string {
 export class Store {
   private readonly db: DatabaseSync;
   readonly telemetry: Telemetry;
+  readonly activity: Activity;
 
   constructor(dataDir: string) {
     mkdirSync(dataDir, { recursive: true });
@@ -315,6 +317,7 @@ export class Store {
         PRIMARY KEY (thread_id, seq)
       );
       CREATE INDEX IF NOT EXISTS idx_events_turn_starts ON events(thread_id, seq) WHERE type = 'turn.started';
+      CREATE INDEX IF NOT EXISTS idx_events_tool_starts ON events(ts) WHERE type = 'tool.start';
     `);
     // Migration: add pinned column if it doesn't exist
     try {
@@ -435,6 +438,7 @@ export class Store {
     `);
     if (!indexed) this.indexText();
     this.telemetry = new Telemetry(this.db);
+    this.activity = new Activity(this.db);
     this.mcpEntries = new McpRegistry(this.db);
   }
 

@@ -9,7 +9,8 @@ import { CLAUDE_ICON } from './icons.js';
 import type { JsonRpcPeer } from './jsonrpc.js';
 import { installJsonMcpServer, jsonMcpServers, removeJsonMcpServer } from '../mcp-format.js';
 import { configDirectory, findSessionFile, quoteArg } from './session-location.js';
-import type { DiscoveredAccount, McpServerInfo, ModelOption, PermissionMode, PlanQuota, QuotaWindow, SkillDir, SlashCommand } from './types.js';
+import { claudeSystemPromptLine, scanJsonl } from './system-prompt.js';
+import type { DiscoveredAccount, McpServerInfo, ModelOption, PermissionMode, PlanQuota, QuotaWindow, SkillDir, SlashCommand, SystemPrompt } from './types.js';
 
 /**
  * Claude Code, through the ACP bridge this repo ships with (`@agentclientprotocol/claude-agent-acp`).
@@ -119,6 +120,7 @@ export class ClaudeAcpAdapter extends AcpAdapter {
     multiAccount: true,
     // Claude Code finds a conversation from any worktree of its repository, so the copy loads there.
     forkInto: true,
+    systemPrompt: true,
   };
 
   protected forkPointMeta(forkRef: string): Record<string, unknown> {
@@ -185,6 +187,19 @@ export class ClaudeAcpAdapter extends AcpAdapter {
       sessionPath,
       ...(agentSessionId ? { resumeCommand: `env CLAUDE_CONFIG_DIR=${quoteArg(configDir)} ${quoteArg(this.env.RAH_CLAUDE_BIN || claudeCli())} --resume ${quoteArg(agentSessionId)}` } : {}),
     };
+  }
+
+  /** The system prompt the conversation runs with, from the transcript's own snapshot of it. */
+  async readSystemPrompt(agentSessionId: string, cwd: string): Promise<SystemPrompt | null> {
+    const { sessionPath } = await this.sessionLocation(agentSessionId, cwd);
+    if (!sessionPath) return null;
+    let text: string | null = null;
+    await scanJsonl(sessionPath, (line) => {
+      // The newest snapshot wins: a mid-session change of skills or MCP servers is reflected in it.
+      const found = claudeSystemPromptLine(line);
+      if (found !== null) text = found;
+    });
+    return text ? { text, source: 'Claude Code 会话文件' } : null;
   }
 
   skillDirs(): SkillDir[] {

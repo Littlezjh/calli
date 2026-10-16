@@ -11,6 +11,7 @@ import { imagePathNote } from '../attachments.js';
 import { commandExists, textOf } from '../util.js';
 import { PI_ICON } from './icons.js';
 import { configDirectory, findSessionFile, quoteArg } from './session-location.js';
+import { piSystemPromptLine, scanJsonl } from './system-prompt.js';
 import { installJsonMcpServer, jsonMcpServers, removeJsonMcpServer } from '../mcp-format.js';
 import type {
   AgentAdapter,
@@ -23,6 +24,7 @@ import type {
   SkillDir,
   SlashCommand,
   StartOptions,
+  SystemPrompt,
   TurnHooks,
   TurnInput,
   TurnResult,
@@ -217,6 +219,8 @@ export function mapPiEvent(record: any): EmittedEvent | null {
           title: piToolTitle(name, record.args),
           kind: PI_TOOL_KIND[name] ?? 'other',
           status: 'in_progress',
+          // The name the model called, kept for the activity page (`mcp__server__tool` for MCP).
+          ...(name ? { tool: name } : {}),
           input: record.args,
           ...(diffs.length ? { content: diffs } : {}),
         },
@@ -692,6 +696,7 @@ export class PiRpcAdapter implements AgentAdapter {
     // pi has no plan of its own to read: it runs on whatever model account it was given.
     quota: false,
     compact: true,
+    systemPrompt: true,
   };
 
   private modelCache: Cached<ModelOption[]> | null = null;
@@ -829,6 +834,19 @@ export class PiRpcAdapter implements AgentAdapter {
    * uses. Writes touch only the one name, so pi's own fields such as `exposure` survive. */
   private mcpJsonPath(): string {
     return join(configDirectory(this.env, 'PI_CODING_AGENT_DIR', ['.pi', 'agent'], process.cwd()), 'mcp.json');
+  }
+
+  /** The prompt pi assembled for this conversation: the system message in its session file. */
+  async readSystemPrompt(agentSessionId: string, _cwd: string): Promise<SystemPrompt | null> {
+    const root = join(this.env.PI_CODING_AGENT_DIR || process.env.PI_CODING_AGENT_DIR || join(homedir(), '.pi', 'agent'), 'sessions');
+    const path = await findSessionFile(root, agentSessionId, 1, (name, id) => name.endsWith(`_${id}.jsonl`));
+    if (!path) return null;
+    let text: string | null = null;
+    await scanJsonl(path, (line) => {
+      const found = piSystemPromptLine(line);
+      if (found !== null) text = found;
+    });
+    return text ? { text, source: 'pi 会话文件' } : null;
   }
 
   mcpServers(): McpServerInfo[] {

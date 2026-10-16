@@ -189,6 +189,8 @@ export function mapAgyStep(step: any, started: Set<number>): EmittedEvent[] {
         title: sub ? `${sub.role ?? sub.type_name ?? 'Subagent'}: ${String(sub.initial_prompt ?? '').split('\n')[0]}` : agyToolTitle(name, step.tool_info?.parameters),
         kind: AGY_TOOL_KIND[name] ?? 'other',
         status: 'in_progress',
+        // The name the model called, kept for the activity page.
+        ...(name ? { tool: name } : {}),
         input: sub ? { prompt: sub.initial_prompt } : step.tool_info?.parameters,
       },
     });

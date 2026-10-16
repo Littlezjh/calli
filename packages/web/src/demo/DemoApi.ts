@@ -99,6 +99,8 @@ export function route(data: DemoData, method: string, url: string, body?: unknow
       return { available: false };
     case 'search':
       return search(data, q.get('q') ?? '');
+    case 'activity':
+      return { days: data.activity };
   }
 
   if (parts[0] === 'agents' && parts.length === 3) {
@@ -116,6 +118,8 @@ export function route(data: DemoData, method: string, url: string, body?: unknow
     switch (parts[2]) {
       case undefined:
         return t;
+      case 'system-prompt':
+        return data.systemPrompts[t.id] ?? undefined;
       case 'events': {
         const after = Number(q.get('after') ?? 0);
         const before = Number(q.get('before') ?? Infinity);
