@@ -2,7 +2,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 
 export interface RpcHandlers {
   onNotification(method: string, params: unknown): void;
-  onRequest(method: string, params: unknown): Promise<unknown> | unknown;
+  onRequest(method: string, params: unknown, id?: string | number): Promise<unknown> | unknown;
   /** Called once after the process is gone and pending requests have failed. */
   onClosed?(): void;
 }
@@ -124,7 +124,7 @@ export class JsonRpcPeer {
 
   private async handleIncomingRequest(id: number | string, method: string, params: unknown): Promise<void> {
     try {
-      const result = await this.handlers.onRequest(method, params);
+      const result = await this.handlers.onRequest(method, params, id);
       if (result === undefined) {
         this.write({ jsonrpc: '2.0', id, error: { code: -32601, message: `Method not supported: ${method}` } });
       } else {

@@ -31,6 +31,20 @@ export const IconPlus = (p: { size?: number }) => (
   </Svg>
 );
 
+export const IconCompact = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m8 0h3a2 2 0 0 0 2-2v-3M8 9h8M8 15h5" />
+  </Svg>
+);
+
+export const IconTarget = (p: { size?: number }) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="8" />
+    <circle cx="12" cy="12" r="4" />
+    <circle cx="12" cy="12" r="1" />
+  </Svg>
+);
+
 /** A clock face with hands, for scheduled tasks. */
 export const IconClock = (p: { size?: number }) => (
   <Svg {...p}>
@@ -73,6 +87,23 @@ export const IconTerminal = (p: { size?: number }) => (
 export const IconFile = (p: { size?: number }) => (
   <Svg {...p}>
     <path d="M7 3h7l5 5v13H7zM14 3v5h5" />
+  </Svg>
+);
+export const IconRead = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M12 6.5C9.5 4.6 6.5 4 3.5 4.5v14c3-.5 6 .1 8.5 2 2.5-1.9 5.5-2.5 8.5-2v-14c-3-.5-6 .1-8.5 2ZM12 6.5v14M7 4.5v11" />
+  </Svg>
+);
+/** A command window; the plain terminal prompt remains available for navigation. */
+export const IconCommand = (p: { size?: number }) => (
+  <Svg {...p}>
+    <rect x="3.5" y="3.5" width="17" height="17" rx="3" />
+    <path d="m7.5 8 3 3-3 3M13.5 15.5h3" />
+  </Svg>
+);
+export const IconTool = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M14 4a5 5 0 0 0-6 6l-4 4a3 3 0 0 0 6 6l4-4a5 5 0 0 0 6-6l-4 3-3-3 3-4a5 5 0 0 0-2-2Z" />
   </Svg>
 );
 export const IconSearch = (p: { size?: number }) => (
@@ -351,6 +382,25 @@ export const IconFiles = (p: { size?: number }) => (
 export const IconAgents = (p: { size?: number }) => (
   <Svg {...p}><circle cx="9" cy="7" r="3" /><path d="M3 20v-2a6 6 0 0 1 12 0v2M16 4a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 4v2" /></Svg>
 );
+
+/** The same operation has the same icon in a work summary and its expanded rows. */
+export function ActivityIcon({ kind, size = 18 }: { kind: string; size?: number }) {
+  const Icon = ACTIVITY_ICONS[kind] ?? IconTool;
+  return <Icon size={size} />;
+}
+
+const ACTIVITY_ICONS: Record<string, (p: { size?: number }) => ReactNode> = {
+  read: IconRead,
+  edit: IconEdit,
+  write: IconEdit,
+  execute: IconCommand,
+  search: IconSearch,
+  fetch: IconGlobe,
+  create: IconFile,
+  delete: IconTrash,
+  move: IconArrowRight,
+  think: IconSparkle,
+};
 
 /**
  * A dial for thinking effort: the arc fills and the needle turns as `level` goes from 0 to 1.

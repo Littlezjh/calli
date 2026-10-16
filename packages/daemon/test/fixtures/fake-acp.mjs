@@ -41,9 +41,11 @@ const out = (obj) => process.stdout.write(JSON.stringify(obj) + '\n');
 const sessionId = process.env.FAKE_ACP_SESSION ?? 'acp-session-1';
 let pendingPrompt = null; // { id, cancelled }
 let nextAgentRequestId = 1000;
+const awaitingInput = new Map();
 let currentMode = 'default';
 let currentModel = 'default';
 let currentEffort = 'default';
+let currentSpeed = 'off';
 // No "auto" mode on purpose: the adapter must fall back to acceptEdits for auto_edit.
 const knownModes = traex
   // The modes TRAE CLI answers to, without the agent announcing them in session/new.
@@ -53,6 +55,7 @@ const sessionInfo = () => ({
   // TRAE CLI does not report its modes; the adapter must still set one it accepts.
   ...(traex ? {} : { modes: { currentModeId: currentMode, availableModes: knownModes.map((id) => ({ id, name: id })) } }),
   configOptions: [
+    ...(process.env.FAKE_ACP_SPEED && currentModel !== 'small' ? [{ id: 'fast', category: 'model_config', type: 'select', currentValue: currentSpeed, options: [{ value: 'on', name: 'On' }, { value: 'off', name: 'Off' }] }] : []),
     {
       id: 'model',
       category: 'model',
@@ -92,6 +95,18 @@ rl.on('line', (line) => {
 
   // Responses to our permission request.
   if (msg.id !== undefined && msg.method === undefined) {
+    const input = awaitingInput.get(msg.id);
+    if (input) {
+      awaitingInput.delete(msg.id);
+      if (input.kind === 'plan' && msg.result?.outcome?.outcome === 'selected') {
+        const modes = { 'exit-plan-default': 'default', 'exit-plan-auto': 'auto', 'exit-plan-accept-edits': 'acceptEdits', 'exit-plan-bypass': 'bypassPermissions' };
+        currentMode = modes[msg.result.outcome.optionId];
+        update({ sessionUpdate: 'current_mode_update', currentModeId: currentMode });
+      }
+      update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `answer:${JSON.stringify(msg.result)};mode:${currentMode}` } });
+      out({ jsonrpc: '2.0', id: input.prompt, result: { stopReason: 'end_turn' } });
+      pendingPrompt = null; return;
+    }
     const promptId = awaitingPermission.get(msg.id);
     if (promptId === undefined) return;
     awaitingPermission.delete(msg.id);
@@ -172,6 +187,7 @@ rl.on('line', (line) => {
         return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: 'Internal error' } });
       }
       if (msg.params.configId === 'model') currentModel = msg.params.value;
+      else if (msg.params.configId === 'fast' && process.env.FAKE_ACP_SPEED && currentModel !== 'small') currentSpeed = msg.params.value;
       else if (msg.params.configId === (traex ? 'reasoning_effort' : 'effort')) currentEffort = msg.params.value;
       else return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: 'unknown config option' } });
       return out({ jsonrpc: '2.0', id: msg.id, result: { configOptions: sessionInfo().configOptions } });
@@ -187,6 +203,7 @@ rl.on('line', (line) => {
         return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: 'unknown mode' } });
       }
       currentMode = msg.params.modeId;
+      update({ sessionUpdate: 'current_mode_update', currentModeId: currentMode });
       return out({ jsonrpc: '2.0', id: msg.id, result: {} });
     case 'session/set_model':
       currentModel = msg.params.modelId;
@@ -209,6 +226,22 @@ rl.on('line', (line) => {
       recordSession(traex ? 'traex' : 'claude', msg.params.sessionId);
       const blocks = msg.params.prompt;
       const text = blocks.filter((p) => p.type === 'text').map((p) => p.text).join('');
+      if (text === 'speed?') {
+        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `speed:${currentSpeed}` } });
+        if (process.env.FAKE_ACP_SPEED_REVOKED) { currentSpeed = 'off'; update({ sessionUpdate: 'config_option_update', configOptions: sessionInfo().configOptions }); }
+        out({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } }); return;
+      }
+      if (text === 'plan-draft') { update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `mode:${currentMode};model:${currentModel};effort:${currentEffort}` } }); out({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } }); return; }
+      if (text === 'plan-question' || text === 'plan-approval') {
+        pendingPrompt = msg;
+        const id = nextAgentRequestId++;
+        awaitingInput.set(id, { prompt: msg.id, kind: text === 'plan-approval' ? 'plan' : 'question' });
+        if (text === 'plan-approval') {
+          const options = ['exit-plan-default', 'exit-plan-accept-edits', 'exit-plan-bypass'].map(optionId => ({ optionId, name: optionId, kind: 'allow_once' }));
+          out({ jsonrpc: '2.0', id, method: 'session/request_permission', params: { sessionId, options, toolCall: { toolCallId: 'plan', title: 'ExitPlanMode', rawInput: { plan: '## 实施计划\n\n1. 阅读代码\n2. 完成验证' } } } });
+        } else out({ jsonrpc: '2.0', id, method: 'elicitation/create', params: { sessionId, mode: 'form', toolCallId: 'ask', message: '优先支持哪一端？', requestedSchema: { type: 'object', properties: { question_0: { type: 'string', oneOf: [{ const: '桌面和手机', title: '桌面和手机' }, { const: '先做桌面', title: '先做桌面' }] }, question_0_custom: { type: 'string', title: '补充回答' } } } } });
+        return;
+      }
       if (process.env.FAKE_LIVE_USAGE && text.includes('live usage')) {
         claudeUsage(sessionId, process.cwd(), msg.id);
         pendingPrompt = msg;
@@ -227,15 +260,27 @@ rl.on('line', (line) => {
         out({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } }); return;
       }
       if (/^\/compact(?:\s|$)/.test(text)) {
+        update({ sessionUpdate: 'tool_call', toolCallId: 'manual-native', title: 'Compact conversation', status: 'in_progress', _meta: { claudeCode: { toolName: 'compact' } } });
         pendingPrompt = msg;
         setTimeout(() => {
           if (pendingPrompt !== msg) return;
           pendingPrompt = null;
           if (process.env.FAKE_COMPACT_FAIL) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: 'compaction failed' } });
+          update({ sessionUpdate: 'tool_call_update', toolCallId: 'manual-native', status: 'completed', _meta: { claudeCode: { toolName: 'compact' } } });
           update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '上下文压缩完成。' } });
           out({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });
         }, Number(process.env.FAKE_COMPACT_DELAY ?? 20));
         return;
+      }
+      if (text.startsWith('auto-compact')) {
+        const native = text.includes('native');
+        const status = text.includes('fail') ? 'failed' : text.includes('cancel') ? 'cancelled' : 'completed';
+        const compact = (status, first) => update(native
+          ? { sessionUpdate: 'compaction_update', compactionId: 'auto-1', status }
+          : { sessionUpdate: first ? 'tool_call' : 'tool_call_update', toolCallId: 'auto-1', title: 'Compact conversation', status, _meta: { claudeCode: { toolName: 'compact' } }, rawOutput: { trigger: 'automatic' } });
+        compact('in_progress', true); compact(status, false);
+        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '继续处理。' } });
+        out({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } }); return;
       }
       const collaboration = coordinationFixture(text);
       if (collaboration !== null) {

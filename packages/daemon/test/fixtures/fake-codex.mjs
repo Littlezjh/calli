@@ -18,8 +18,15 @@ let billedTokens = 900000;
 let nextServerRequestId = 1000;
 let activeTurn = null; // { id }
 // Settings as the adapter sets them: thread/start takes kebab-case sandbox, turn/start camelCase.
+let currentWorkMode = 'default';
+const awaitingInput = new Map();
+const planResult = (turnId) => {
+  notify('item/plan/delta', { turnId, itemId: 'proposal', delta: '## 实施计划\n\n正在整理…' });
+  notify('item/completed', { turnId, item: { type: 'plan', id: 'proposal', text: '## 实施计划\n\n1. 阅读现有实现\n2. 完成改动并验证\n\n保留当前会话和权限设置。' } });
+};
 let currentModel = 'gpt-big';
 let currentEffort = 'high';
+let currentSpeed = null;
 let currentSandbox = 'read-only';
 let currentApproval = 'on-request';
 let goal = process.env.FAKE_CODEX_ACTIVE_GOAL ? { objective: 'Saved target', status: 'active' } : null;
@@ -66,6 +73,7 @@ const MODELS = [
     displayName: 'GPT Big',
     description: 'For hard work',
     isDefault: true,
+    ...(process.env.FAKE_CODEX_SPEED ? { serviceTiers: [{ id: 'priority', name: 'Fast', description: '2x speed, increased usage' }, { id: 'ultrafast', name: 'Ultrafast', description: 'More speed' }] } : {}),
     inputModalities: ['text', 'image'],
     supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'high' }, { reasoningEffort: 'max' }, { reasoningEffort: 'ultra' }],
   },
@@ -112,6 +120,7 @@ const historyTurns = () => [
 ];
 
 const applyTurnOverrides = (p) => {
+  if ('serviceTier' in p) currentSpeed = p.serviceTier;
   if (typeof p.model === 'string') currentModel = p.model;
   if (typeof p.effort === 'string') currentEffort = p.effort;
   if (typeof p.approvalPolicy === 'string') currentApproval = p.approvalPolicy;
@@ -131,6 +140,39 @@ const runTurn = (text, turnId, done) => {
   notify('item/started', { item: userItem, turnId });
   notify('item/completed', { item: userItem, turnId });
 
+  if (text.startsWith('auto-compact')) {
+    const tool = (id) => {
+      const item = { type: 'commandExecution', id, command: 'pwd', status: 'completed', exitCode: 0 };
+      notify('item/started', { turnId, item }); notify('item/completed', { turnId, item });
+    };
+    tool('before-compact');
+    tool('before-compact-2');
+    const item = { type: 'contextCompaction', id: 'auto-compact-1' };
+    notify('item/started', { turnId: 'unrelated-turn', item: { ...item, id: 'wrong-turn' } });
+    notify('item/completed', { turnId, threadId: 'unrelated-thread', item: { ...item, id: 'wrong-thread' } });
+    notify('item/started', { turnId, item });
+    if (text.includes('pending')) return;
+    setTimeout(() => {
+      notify('item/completed', { turnId, item });
+      notify('item/completed', { turnId, item }); // Duplicate delivery must not add a second row.
+      notify('thread/compacted', { turnId }); // Deprecated alias of the same completion.
+      tool('after-compact');
+      tool('after-compact-2');
+      say('压缩后继续处理。');
+      done();
+    }, Number(process.env.FAKE_AUTO_COMPACT_DELAY ?? 20));
+    return;
+  }
+
+  if (text.startsWith('plan-question')) {
+    const id = nextServerRequestId++;
+    awaitingInput.set(id, { turnId, done });
+    out({ jsonrpc: '2.0', id, method: 'item/tool/requestUserInput', params: { threadId, turnId, itemId: 'question', questions: [{ id: 'scope', header: '范围', question: '优先支持哪一端？', options: [{ label: '桌面和手机', description: '同时覆盖两种屏幕' }, { label: '先做桌面', description: '先完成桌面流程' }], isOther: true }] } });
+    if (text.endsWith('expired')) setTimeout(() => { awaitingInput.delete(id); notify('serverRequest/resolved', { requestId: id }); done(); }, 120);
+    return;
+  }
+  if (text === 'speed?') { say(`model:${currentModel};effort:${currentEffort};speed:${currentSpeed};mode:${currentWorkMode};approval:${currentApproval}`); done(); return; }
+  if (text === 'plan-draft') { say(`mode:${currentWorkMode};model:${currentModel};effort:${currentEffort};approval:${currentApproval}`); planResult(turnId); done(); return; }
   const collaboration = coordinationFixture(text);
   if (collaboration !== null) { say(collaboration); done(); return; }
 
@@ -240,6 +282,14 @@ rl.on('line', (line) => {
 
   // A decision for an approval we asked about.
   if (msg.id !== undefined && msg.method === undefined) {
+    const input = awaitingInput.get(msg.id);
+    if (input) {
+      awaitingInput.delete(msg.id);
+      if (activeTurn !== input.turnId) return;
+      say(`answer:${JSON.stringify(msg.result?.answers ?? {})}`);
+      notify('serverRequest/resolved', { requestId: msg.id });
+      planResult(input.turnId); input.done(); return;
+    }
     const pending = awaitingApproval.get(msg.id);
     if (!pending) return;
     awaitingApproval.delete(msg.id);
@@ -292,6 +342,8 @@ rl.on('line', (line) => {
     }
     case 'initialize':
       return out({ jsonrpc: '2.0', id: msg.id, result: { userAgent: 'fake-codex/0.160', codexHome: '/tmp/codex' } });
+    case 'collaborationMode/list':
+      return out({ jsonrpc: '2.0', id: msg.id, ...(process.env.FAKE_CODEX_NO_PLAN ? { error: { code: -32601, message: 'not supported' } } : { result: { data: [{ mode: 'plan', name: 'Plan', model: null, reasoning_effort: null }, { mode: 'default', name: 'Default', model: null, reasoning_effort: null }] } } ) });
     case 'model/list':
       if (process.env.FAKE_DIAGNOSTIC_ERROR) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: process.env.FAKE_DIAGNOSTIC_ERROR } });
       return out({ jsonrpc: '2.0', id: msg.id, result: { data: process.env.FAKE_CODEX_NO_EFFORT_MODEL
@@ -343,6 +395,13 @@ rl.on('line', (line) => {
     case 'turn/start': {
       if (activeTurn) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: 'ActiveTurnNotSteerable' } });
       applyTurnOverrides(msg.params ?? {});
+      if (msg.params?.collaborationMode) {
+        currentWorkMode = msg.params.collaborationMode.mode;
+        const settings = msg.params.collaborationMode.settings;
+        if (!settings?.model || settings.developer_instructions !== null) throw new Error('Invalid native collaboration settings');
+        currentModel = settings.model;
+        if (settings.reasoning_effort) currentEffort = settings.reasoning_effort;
+      }
       const turnId = `turn-${nextTurnSeq++}`;
       const text = (msg.params?.input ?? []).filter((i) => i.type === 'text').map((i) => i.text).join('');
       const images = (msg.params?.input ?? []).filter((i) => i.type === 'localImage');
@@ -355,7 +414,7 @@ rl.on('line', (line) => {
       setTimeout(() => runTurn(text, turnId, () => {
         activeTurn = null; finishTurn(turnId, 'completed');
         if (goal?.status === 'active') setTimeout(() => runGoal(goalGeneration), 15);
-      }), 15);
+      }), Number(process.env.FAKE_CODEX_TURN_DELAY ?? 15));
       return;
     }
     case 'turn/interrupt':

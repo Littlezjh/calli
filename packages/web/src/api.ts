@@ -1,3 +1,6 @@
+export type WorkMode = 'execute' | 'plan';
+export interface UserQuestion { id: string; question: string; header?: string; options: Array<{ value: string; label: string; description?: string }>; multiple?: boolean; freeText?: boolean; required?: boolean }
+export type UserInputAnswer = { answers: Record<string, string[]> } | { cancelled: true };
 import type { UsageReport, AgentDiagnostic } from './observability';
 import type { StoredEvent } from './timeline';
 import { cachedQuota, clearQuotaCache, rememberQuota } from './quota-cache';
@@ -77,6 +80,8 @@ export interface Thread {
   agentSessionId: string | null;
   status: 'idle' | 'running' | 'error';
   pinned: boolean;
+  workMode?: WorkMode;
+  speed?: string | null;
   permissionMode: string;
   model: string | null;
   effort: string | null;
@@ -248,12 +253,18 @@ export interface ModelOption {
   description?: string;
   /** Effort levels this model accepts. Empty: none. Missing: use the agent-wide list. */
   efforts?: string[];
+  speeds?: Array<{ id: string; label: string; description?: string; isFast?: boolean }>;
   /** False when the model cannot read images. */
   images?: boolean;
   /** How images reach a model that cannot read them, such as a tool that hands them to a vision model. */
   imagesVia?: string;
   /** The model the agent uses when the thread does not pick one. */
   isDefault?: boolean;
+}
+
+/** Older Hub responses lack isFast. Only recognize their advertised public fast-tier IDs. */
+export function isFastSpeed(speed: NonNullable<ModelOption['speeds']>[number]): boolean {
+  return speed.isFast ?? ['priority', 'fast', 'ultrafast'].includes(speed.id);
 }
 
 export interface AgentInfo {
@@ -267,6 +278,8 @@ export interface AgentInfo {
   account?: string | null;
   available: boolean;
   capabilities: {
+    workModes?: WorkMode[];
+    speed?: boolean;
     coordination?: boolean;
     resume: boolean;
     approvals: boolean;
@@ -281,7 +294,7 @@ export interface AgentInfo {
     /** Can read plan usage outside a session, for the quota panel. */
     quota: boolean;
     compact?: boolean;
-    goal?: { controls: Array<'show' | 'pause' | 'clear'> };
+    goal?: { controls: Array<'show' | 'pause' | 'clear'>; actions?: Array<'set' | 'show' | 'pause' | 'resume' | 'clear'> };
     fork: boolean;
     /** A fork can end at an earlier turn instead of taking the whole thread. Missing from daemons that predate it. */
     forkAt?: boolean;
@@ -646,6 +659,8 @@ export class Api {
   }
 
   createThread(input: {
+    workMode?: WorkMode;
+    speed?: string | null;
     agent: string;
     cwd: string;
     title?: string;
@@ -766,9 +781,15 @@ export class Api {
     return this.request('POST', `/api/approvals/${approvalId}`, decision);
   }
 
+  answerInput(id: string, answer: UserInputAnswer): Promise<void> {
+    return this.request('POST', `/api/inputs/${id}`, answer);
+  }
+
   updateThread(
     threadId: string,
     updates: {
+      workMode?: WorkMode;
+      speed?: string | null;
       title?: string;
       pinned?: boolean;
       permissionMode?: string;

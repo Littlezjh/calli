@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildMenu, slashQuery, type HubAction, type MenuRow } from '../src/commands.js';
+import { buildMenu, commandDraft, searchCommands, slashQuery, type HubAction, type MenuRow } from '../src/commands.js';
 
 const actions: HubAction[] = [
   { id: 'model', label: '模型与思考强度', hint: '', keywords: ['model', 'effort'] },
@@ -56,4 +56,17 @@ test('actions are found by their Chinese label or an English keyword', () => {
 test('when the agent says what each entry is, they are grouped by kind', () => {
   assert.deepEqual(show(buildMenu('/', [], pi)), ['# 命令', '/deploy', '# 模板', '/fix-tests', '# 技能', '/skill:pdf']);
   assert.deepEqual(show(buildMenu('/pdf', [], pi)), ['# 技能', '/skill:pdf']);
+});
+
+test('the add menu searches descriptions with spaces and respects hidden commands', () => {
+  assert.deepEqual(show(searchCommands('pull request', [], claude)), ['# 命令和技能', '/review']);
+  assert.deepEqual(show(searchCommands(' /MODEL ', actions, claude, ['model'])), ['# 操作', '@model']);
+});
+
+test('choosing a command preserves the draft and replaces only a recognized prefix', () => {
+  assert.equal(commandDraft('review', '检查错误处理\n保留第二行', claude), '/review 检查错误处理\n保留第二行');
+  assert.equal(commandDraft('/review', '/compact 检查错误处理', claude), '/review 检查错误处理');
+  assert.equal(commandDraft('review', '/tmp/project 是目录', claude), '/review /tmp/project 是目录');
+  assert.equal(commandDraft('skill:pdf', '/', pi), '/skill:pdf ');
+  assert.equal(commandDraft('skill:pdf', '/skill:pdf 整理文件', pi), '/skill:pdf 整理文件');
 });

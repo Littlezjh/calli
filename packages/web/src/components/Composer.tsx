@@ -1,11 +1,15 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { flushSync } from 'react-dom';
 import { ApiError, MAX_QUEUED, type AgentMention, type OutgoingImage, type QueuedMessage, type SlashCommand } from '../api';
-import { buildMenu, type HubAction, type MenuRow } from '../commands';
+import { commandDraft, searchCommands, slashQuery, type HubAction, type MenuRow } from '../commands';
+import { useIsNarrow } from '../hooks';
 import { readDrafts, writeDraft, type Sending } from '../drafts';
 import { sizeLabel } from '../files';
 import { MAX_IMAGES, prepareImage, restoreImage, type PreparedImage } from '../images';
 import { withNotes, type Note } from '../timeline';
 import { Popover } from './Popover';
+import { ComposerMenu, GOAL_LABELS, type GoalAction, type GoalCapability } from './ComposerMenu';
+import { Dialog } from './Dialog';
 import { Lightbox } from './Lightbox';
 import { VideoPreview } from './VideoPreview';
 import { isVideo, MAX_VIDEOS, prepareVideo, VIDEO_ACCEPT, type PreparedVideo } from '../videos';
@@ -13,6 +17,8 @@ import {
   IconArchive,
   AgentMark,
   IconClose,
+  IconCheck,
+  IconChevron,
   IconCopy,
   IconCube,
   IconEdit,
@@ -20,14 +26,18 @@ import {
   IconHelp,
   IconImport,
   IconInfo,
+  IconList,
   IconPaperclip,
   IconPlay,
   IconPin,
+  IconPlus,
   IconSend,
+  IconSearch,
   IconShield,
   IconSlash,
   IconSparkle,
   IconStop,
+  IconTarget,
 } from './icons';
 
 /** A passage noted for the next message. The id ties it to its highlight in the conversation. */
@@ -105,6 +115,7 @@ interface Props {
   disabled?: boolean;
   placeholder: string;
   mentionOptions?: AgentMention[];
+  collaboration?: (select: (mention: AgentMention) => void, selected: AgentMention[]) => ReactNode;
   mentionDirectories?: string[];
   /** A control of the app's own on an agent's line, such as the model its member starts with. */
   mentionExtra?: (mention: AgentMention) => ReactNode;
@@ -114,13 +125,16 @@ interface Props {
   onStop: () => void;
   /** Strip above the text area: which agent and which directory. */
   header: ReactNode;
-  /** Controls at the left of the bottom bar, after the attach button. */
+  planAction?: ReactNode;
+  /** Native planning is offered in the add menu only when the agent supports it. */
+  planMode?: { active: boolean; disabled: boolean; onChange: (active: boolean) => void };
+  /** Controls at the left of the bottom bar, after the add menu. */
   left: ReactNode;
   /** Controls at the right of the bottom bar, before the send button. */
   right: ReactNode;
   /** The agent's own slash commands. */
   commands: SlashCommand[];
-  goalControls?: Array<'show' | 'pause' | 'clear'>;
+  goal?: GoalCapability;
   /** Things the hub does itself, offered in the same menu. */
   actions: HubAction[];
   /** Agent commands left out because a hub action replaces them. */
@@ -172,10 +186,12 @@ export function Composer({
   onSend,
   onStop,
   header,
+  planAction,
+  planMode,
   left,
   right,
   commands,
-  goalControls = [],
+  goal,
   actions,
   hiddenCommands,
   onAction,
@@ -191,16 +207,21 @@ export function Composer({
   onNotesChange,
   lastSent = null,
   mentionOptions = [],
+  collaboration,
   mentionDirectories = [],
   mentionIcon,
   mentionExtra,
 }: Props) {
+  const narrow = useIsNarrow();
   const [text, setText] = useState('');
   const [mentions, setMentions] = useState<AgentMention[]>([]);
   const [mentionActive, setMentionActive] = useState(0);
   const [mentionDismissed, setMentionDismissed] = useState(false);
   const [notes, setNotes] = useState<DraftNote[]>([]);
   const [busy, setBusy] = useState(false);
+  const [menuBusy, setMenuBusy] = useState(false);
+  const [goalDialog, setGoalDialog] = useState(false);
+  const [goalText, setGoalText] = useState('');
   /** The send has been going for a while: a picture uploading over a slow line, an agent waking up. */
   const [slow, setSlow] = useState(false);
   const [images, setImages] = useState<PreparedImage[]>([]);
@@ -210,32 +231,98 @@ export function Composer({
   const [dragOver, setDragOver] = useState(false);
   const [active, setActive] = useState(0);
   const [dismissed, setDismissed] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [addQuery, setAddQuery] = useState('');
+  const [catalog, setCatalog] = useState<'all' | 'actions' | 'skills'>('all');
   /** A picture being looked at full size before it goes out. */
   const [preview, setPreview] = useState<PreparedImage | null>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const revealSelection = useRef(false);
+  const paletteRef = useRef<HTMLDivElement>(null);
+  const addRef = useRef<HTMLButtonElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
-  const rows = useMemo(() => buildMenu(text, actions, commands, hiddenCommands), [text, actions, commands, hiddenCommands]);
-  const selectable = useMemo(() => rows.filter((r): r is Selectable => r.type !== 'heading'), [rows]);
-  const menuOpen = selectable.length > 0 && !dismissed;
+  useEffect(() => { setGoalDialog(false); setGoalText(''); }, [draftKey]);
+  useEffect(() => { setAddOpen(false); }, [draftKey, narrow]);
+  useEffect(() => {
+    if (!addOpen) return;
+    const outside = (event: PointerEvent) => {
+      if (!paletteRef.current?.contains(event.target as Node) && !addRef.current?.contains(event.target as Node)) {
+        setAddOpen(false);
+        setDismissed(true);
+      }
+    };
+    const escape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setAddOpen(false);
+      setDismissed(true);
+      (addRef.current ?? ref.current)?.focus();
+    };
+    document.addEventListener('pointerdown', outside);
+    document.addEventListener('keydown', escape);
+    return () => {
+      document.removeEventListener('pointerdown', outside);
+      document.removeEventListener('keydown', escape);
+    };
+  }, [addOpen]);
+
+  const runMenuCommand = async (command: string) => {
+    setMenuBusy(true);
+    try {
+      // Menu controls are independent of the unsent draft and its attachments.
+      await onSend(command, []);
+      setGoalDialog(false);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : String(error));
+    } finally { setMenuBusy(false); }
+  };
+  const chooseGoal = (action: GoalAction) => {
+    if (action === 'set') { setGoalText(''); setGoalDialog(true); }
+    else void runMenuCommand(action === 'show' ? '/goal' : `/goal ${action}`);
+  };
+
+  const rows = useMemo(() => {
+    const query = addOpen ? addQuery : slashQuery(text);
+    if (query === null) return [];
+    if (addOpen && catalog !== 'all') {
+      const entries = commands.filter(c => catalog === 'skills' ? c.kind !== 'command' : c.kind !== 'skill' && c.kind !== 'prompt');
+      return searchCommands(query, catalog === 'actions' ? actions.filter(a => !['help', 'skills'].includes(a.id)) : [], entries, [...hiddenCommands, ...(goal ? ['goal'] : [])]);
+    }
+    const additions: HubAction[] = [{ id: 'composer:attach', label: '添加图片或视频', hint: '', keywords: ['attach', 'image', 'video', '附件'] }];
+    if (planMode) additions.push({ id: 'composer:plan', label: '计划模式', hint: planMode.disabled ? '当前轮结束后可切换' : planMode.active ? '已开启，点击关闭' : '先分析和讨论方案', keywords: ['plan', '计划'], disabled: planMode.disabled });
+    const goals: HubAction[] = (goal?.actions ?? (goal ? ['set' as const, ...goal.controls] : [])).map(action => {
+      const blocked = running ? !goal?.controls.some(c => c === action) : (action === 'set' || action === 'resume') && planMode?.active;
+      return { id: `composer:goal:${action}`, label: GOAL_LABELS[action], hint: blocked ? running ? '当前轮结束后可操作' : '先关闭计划模式' : action === 'set' ? '设置要持续完成的目标' : '', keywords: ['目标', 'target'], disabled: !!blocked };
+    });
+    const group = (label: string, entries: HubAction[]): MenuRow[] => searchCommands(query, entries, []).map(row => row.type === 'heading' ? { ...row, label } : row);
+    // Both desktop entry points share one catalog, ordering and filtering behavior.
+    return [
+      ...(!narrow ? group('添加', [...additions, ...goals.filter(a => a.id.endsWith(':set'))]) : []),
+      ...searchCommands(query, actions, commands, hiddenCommands),
+      ...(!narrow ? group('目标', goals.filter(a => !a.id.endsWith(':set'))) : []),
+    ];
+  }, [addOpen, addQuery, catalog, text, narrow, actions, commands, hiddenCommands, planMode, goal, running]);
+  const selectable = useMemo(() => rows.filter((r): r is Selectable => r.type !== 'heading' && !(r.type === 'action' && r.action.disabled)), [rows]);
+  const menuOpen = addOpen || (rows.length > 0 && !dismissed);
 
   const mentionMatch = /(?:^|\s)@([^\s@]*)$/.exec(text);
   const mentionRows = mentionOptions.filter(m => !mentions.some(v => v.id === m.id && v.kind === m.kind) && (!mentionMatch?.[1] || `${m.label} ${m.id}`.toLowerCase().includes(mentionMatch[1].toLowerCase())));
-  const mentionOpen = Boolean(mentionMatch && mentionRows.length && !mentionDismissed);
+  const mentionOpen = Boolean(mentionMatch && mentionRows.length && !mentionDismissed && !addOpen);
   const taskRefs = useRef<Array<HTMLTextAreaElement | null>>([]);
-  const focusTask = useRef(false);
-  const chooseMention = (mention: AgentMention) => {
-    setMentions(prev => [...prev, mention]);
-    setText(prev => prev.replace(/@[^\s@]*$/, ''));
-    focusTask.current = true;
+  const chooseMention = (mention: AgentMention, replaceQuery = true) => {
+    const existing = mentions.findIndex(m => m.id === mention.id && m.kind === mention.kind);
+    const target = existing < 0 ? mentions.length : existing;
+    // Mount and focus inside the tap gesture so mobile browsers can open the keyboard.
+    flushSync(() => {
+      if (existing < 0) setMentions(prev => [...prev, mention]);
+      if (replaceQuery) setText(prev => prev.replace(/@[^\s@]*$/, ''));
+      setMentionDismissed(true);
+    });
+    taskRefs.current[target]?.focus();
   };
-  // The agent just brought in gets its own line; the caret goes there, ready for its task.
-  useEffect(() => {
-    if (!focusTask.current) return;
-    focusTask.current = false;
-    taskRefs.current[mentions.length - 1]?.focus();
-  }, [mentions.length]);
   // Turned away once, the list stays away for that @: the word after it is the user's own. A new @ asks again.
   const mentioning = mentionMatch !== null;
   useEffect(() => { setMentionActive(0); }, [text]);
@@ -246,6 +333,7 @@ export function Composer({
     setActive(0);
     setDismissed(false);
   }, [text]);
+  useEffect(() => { setActive(0); }, [addQuery, addOpen]);
 
   // A passage noted out of a message joins the others. Keyed on the nonce: the same passage can be noted twice.
   useEffect(() => {
@@ -258,8 +346,11 @@ export function Composer({
   useEffect(() => onNotesChange?.(notes), [notes, onNotesChange]);
 
   useEffect(() => {
+    if (!revealSelection.current) return;
+    revealSelection.current = false;
     listRef.current?.querySelector('[data-active="true"]')?.scrollIntoView({ block: 'nearest' });
-  }, [active, menuOpen]);
+  }, [active]);
+  useEffect(() => { if (menuOpen) paletteRef.current?.scrollTo({ top: 0 }); }, [addQuery, text, menuOpen]);
 
   // Text handed back goes in front of whatever is being typed, so nothing is lost either way.
   useEffect(() => {
@@ -410,19 +501,32 @@ export function Composer({
   };
 
   const choose = (row: Selectable) => {
+    if (row.type === 'action' && row.action.disabled) return;
     if (row.type === 'action' && row.action.id === 'help') {
       // Everything there is to run is in this menu; show all of it.
-      setText('/');
-      ref.current?.focus();
+      if (addOpen) { setAddQuery(''); searchRef.current?.focus(); }
+      else { setText('/'); ref.current?.focus(); }
       return;
     }
-    if (row.type === 'action') {
-      setText('');
-      onAction(row.action.id);
-    } else {
-      setText(`/${row.command.name} `);
-    }
+    setAddOpen(false);
+    setDismissed(true);
     ref.current?.focus();
+    if (row.type === 'action') {
+      if (!addOpen) setText('');
+      const id = row.action.id;
+      if (id === 'composer:attach') fileRef.current?.click();
+      else if (id === 'composer:plan') planMode?.onChange(!planMode.active);
+      else if (id.startsWith('composer:goal:')) chooseGoal(id.slice('composer:goal:'.length) as GoalAction);
+      else onAction(id);
+    } else {
+      setText(current => addOpen ? commandDraft(row.command.name, current, commands) : `/${row.command.name} `);
+    }
+  };
+
+  const browse = (section: 'actions' | 'skills') => {
+    // Mount and focus inside the tap gesture so iOS can bring up the search keyboard.
+    flushSync(() => { setCatalog(section); setAddQuery(''); setAddOpen(true); setDismissed(true); });
+    searchRef.current?.focus();
   };
 
   /**
@@ -430,7 +534,7 @@ export function Composer({
    * as in a terminal; otherwise the highlighted entry is filled in for the user to finish.
    */
   const enter = (row: Selectable) => {
-    if (row.type === 'command' && !row.command.hint && text.trim() === `/${row.command.name}`) {
+    if (!addOpen && row.type === 'command' && !row.command.hint && text.trim() === `/${row.command.name}`) {
       void submit();
       return;
     }
@@ -439,9 +543,9 @@ export function Composer({
 
   const hasContent = text.trim() !== '' || images.length > 0 || videos.length > 0 || notes.length > 0 || mentions.some((m) => m.task?.trim());
   const goalControl = text.trim() === '/goal' ? 'show' : text.trim() === '/goal pause' ? 'pause' : text.trim() === '/goal clear' ? 'clear' : null;
-  const immediate = !!goalControl && goalControls.includes(goalControl) && !images.length && !videos.length && !notes.length && !mentions.length;
+  const immediate = !!goalControl && !!goal?.controls.includes(goalControl) && !images.length && !videos.length && !notes.length && !mentions.length;
   const queueFull = running && !immediate && queued.length >= MAX_QUEUED;
-  const canSend = hasContent && !busy && !disabled && preparing === 0 && !queueFull;
+  const canSend = hasContent && !busy && !menuBusy && !disabled && preparing === 0 && !queueFull;
 
   const submit = async () => {
     if (!canSend) return;
@@ -481,35 +585,40 @@ export function Composer({
     }
   };
 
+  const menuKeyDown = (e: KeyboardEvent<HTMLTextAreaElement | HTMLInputElement>): boolean => {
+    if (menuOpen && !e.nativeEvent.isComposing) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const step = e.key === 'ArrowDown' ? 1 : -1;
+        revealSelection.current = true;
+        if (selectable.length) setActive((i) => (i + step + selectable.length) % selectable.length);
+        return true;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        const row = selectable[active] ?? selectable[0];
+        if (row) { if (e.key === 'Enter') enter(row); else choose(row); }
+        return true;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        setAddOpen(false);
+        setDismissed(true);
+        ref.current?.focus();
+        return true;
+      }
+    }
+    return false;
+  };
+
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (mentionOpen && !e.nativeEvent.isComposing) {
       if (e.key === 'Escape') { e.preventDefault(); setMentionDismissed(true); return; }
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); setMentionActive(i => (i + (e.key === 'ArrowDown' ? 1 : -1) + mentionRows.length) % mentionRows.length); return; }
       if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); chooseMention(mentionRows[mentionActive] ?? mentionRows[0]); return; }
     }
-    if (menuOpen && !e.nativeEvent.isComposing) {
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-        e.preventDefault();
-        const step = e.key === 'ArrowDown' ? 1 : -1;
-        setActive((i) => (i + step + selectable.length) % selectable.length);
-        return;
-      }
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        enter(selectable[active]);
-        return;
-      }
-      if (e.key === 'Tab') {
-        e.preventDefault();
-        choose(selectable[active]);
-        return;
-      }
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        setDismissed(true);
-        return;
-      }
-    }
+    if (menuKeyDown(e)) return;
     // Desktop: Enter sends, Shift+Enter inserts a newline. Touch keyboards get the send button instead.
     const fine = typeof window !== 'undefined' && window.matchMedia?.('(pointer: fine)').matches;
     if (fine && e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -534,13 +643,13 @@ export function Composer({
     void addFiles([...e.dataTransfer.files]);
   };
 
-  let selectableIndex = -1;
-
   return (
     <div className="composer">
       <div className="composer-anchor">
         {menuOpen && (
-          <div className="command-menu" role="listbox" aria-label="命令" ref={listRef}>
+          <div className={`command-menu${addOpen && catalog !== 'all' ? ' catalog-menu' : ''}`} ref={paletteRef}>
+            {addOpen && <label className="pop-search command-search"><IconSearch size={16} /><input ref={searchRef} autoFocus aria-label={catalog === 'all' ? '搜索操作与技能' : catalog === 'skills' ? '搜索技能' : '搜索操作'} placeholder={catalog === 'all' ? '搜索操作、命令或技能' : catalog === 'skills' ? '搜索技能名称或描述' : '搜索操作或命令'} value={addQuery} onChange={e => setAddQuery(e.target.value)} onKeyDown={menuKeyDown} /></label>}
+            <div className="command-menu-list" role="listbox" aria-label="命令" ref={listRef}>
             {rows.map((row) => {
               if (row.type === 'heading') {
                 return (
@@ -549,29 +658,30 @@ export function Composer({
                   </div>
                 );
               }
-              selectableIndex += 1;
-              const index = selectableIndex;
+              const index = selectable.indexOf(row);
+              const selected = index >= 0 && row === (selectable[active] ?? selectable[0]);
               const isAction = row.type === 'action';
-              const Icon = isAction ? (ACTION_ICONS[row.action.id] ?? IconSlash) : row.command.kind === 'skill' ? IconSparkle : IconSlash;
+              const plan = isAction && row.action.id === 'composer:plan';
+              const Icon = isAction ? row.action.id === 'composer:attach' ? IconPaperclip : plan ? IconList : row.action.id.startsWith('composer:goal:') ? IconTarget : (ACTION_ICONS[row.action.id] ?? IconSlash) : row.command.kind === 'skill' ? IconSparkle : IconSlash;
               return (
                 <button
                   key={isAction ? `a-${row.action.id}` : `c-${row.command.name}`}
                   type="button"
                   role="option"
-                  aria-selected={index === active}
-                  data-active={index === active}
-                  className={`command-item${index === active ? ' active' : ''}`}
-                  onMouseEnter={() => setActive(index)}
-                  // mousedown, not click: keeps focus in the textarea so the keyboard stays open on phones.
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    choose(row);
-                  }}
+                  aria-selected={selected}
+                  aria-checked={plan ? planMode?.active : undefined}
+                  disabled={isAction && row.action.disabled}
+                  data-active={selected}
+                  className={`command-item${selected ? ' active' : ''}`}
+                  onPointerMove={e => { if (e.pointerType === 'mouse' && index >= 0) { revealSelection.current = false; setActive(index); } }}
+                  // Keep focus in the input so the keyboard stays open on phones.
+                  onMouseDown={e => e.preventDefault()}
+                  onClick={() => choose(row)}
                 >
                   <span className="command-icon">
                     <Icon size={16} />
                   </span>
-                  {isAction ? (
+                  <span className="command-content">{isAction ? (
                     <>
                       <span className="command-label">{row.action.label}</span>
                       <span className="command-desc">{row.action.hint}</span>
@@ -584,10 +694,14 @@ export function Composer({
                       </span>
                       <span className="command-desc">{row.command.description}</span>
                     </>
-                  )}
+                  )}</span>
+                  {plan && planMode?.active && <span className="command-check"><IconCheck size={16} /></span>}
                 </button>
               );
             })}
+            {!rows.length && <p className="pop-note">没有匹配的结果</p>}
+            </div>
+            {addOpen && catalog === 'skills' && actions.some(a => a.id === 'skills') && <button type="button" className="composer-menu-footer" onClick={() => { setAddOpen(false); setDismissed(true); onAction('skills'); }}>管理技能<IconChevron size={14} /></button>}
           </div>
         )}
 
@@ -604,6 +718,7 @@ export function Composer({
           onDrop={onDrop}
         >
           {header && <div className="composer-context">{header}</div>}
+          {planAction && <div className="composer-plan-action">{planAction}</div>}
 
           {queued.length > 0 && (
             <div className="queue" aria-label="排队中的消息">
@@ -756,16 +871,22 @@ export function Composer({
                 e.target.value = ''; // so picking the same file again fires a change
               }}
             />
-            <button
-              type="button"
-              className="tool-btn icon-only"
-              aria-label="添加图片或视频"
-              title={attachBlocked ? `${attachBlocked}；可以添加视频文件` : attachNote ?? '添加图片或视频（视频最大 100 MB）'}
-              disabled={disabled}
-              onClick={() => fileRef.current?.click()}
+            {narrow ? <Popover
+              label="添加与模式"
+              triggerClassName={`tool-btn icon-only composer-add${planMode?.active ? ' plan-active' : ''}`}
+              triggerLabel="添加与模式"
+              triggerTitle={planMode?.active ? '添加附件 · 计划模式已开启' : '添加附件与选择模式'}
+              panelClassName="composer-add-menu"
+              trigger={<IconPlus size={20} />}
+              disabled={disabled || menuBusy || busy}
             >
-              <IconPaperclip size={17} />
-            </button>
+              {close => <ComposerMenu close={close} commands={commands} planMode={planMode} goal={goal} running={running}
+                attachTitle={attachBlocked ? `${attachBlocked}；可以添加视频文件` : attachNote ?? '添加图片或视频（视频最大 100 MB）'}
+                onAttach={() => fileRef.current?.click()} onGoal={chooseGoal} onBrowse={browse} />}
+            </Popover> : <button ref={addRef} type="button" className={`tool-btn icon-only composer-add${planMode?.active ? ' plan-active' : ''}`}
+              aria-label="添加与模式" aria-haspopup="listbox" aria-expanded={addOpen} title={planMode?.active ? '添加与命令 · 计划模式已开启' : '添加附件、操作或技能'} disabled={disabled || menuBusy || busy}
+              onClick={() => { setCatalog('all'); setAddQuery(''); setAddOpen(!addOpen); setDismissed(true); }}><IconPlus size={20} /></button>}
+            {collaboration?.(mention => chooseMention(mention, false), mentions)}
             {left}
             <div className="spacer" />
             {right}
@@ -789,6 +910,11 @@ export function Composer({
           </div>
         </div>
       </div>
+      {goalDialog && <Dialog title="设置目标" message="描述要完成的结果，智能体会持续执行。" confirmLabel={menuBusy ? '正在启动…' : '开始执行'}
+        confirmDisabled={menuBusy || busy || disabled || running || planMode?.active || !goalText.trim() || /^(pause|resume|clear)$/.test(goalText.trim())}
+        onCancel={() => { if (!menuBusy) setGoalDialog(false); }} onConfirm={() => void runMenuCommand(`/goal ${goalText.trim()}`)}>
+        <label className="dialog-field"><span>目标</span><textarea autoFocus className="goal-objective" aria-label="目标" placeholder="例如：修复登录问题，补齐回归测试并验证通过" rows={4} value={goalText} disabled={menuBusy} onChange={e => setGoalText(e.target.value)} /></label>
+      </Dialog>}
       {videoPreview && <VideoPreview url={videoPreview.previewUrl} name={videoPreview.name} onClose={() => setVideoPreview(null)} />}
       {preview && <Lightbox url={preview.previewUrl} name={preview.name} onClose={() => setPreview(null)} />}
     </div>

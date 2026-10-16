@@ -1,3 +1,4 @@
+import type { WorkMode } from './api';
 import { HandoverTrail } from './components/HandoverTrail';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -30,6 +31,7 @@ import { newerBuildAvailable } from './version';
 import { AppearancePanel } from './components/AppearancePanel';
 import { ArchivePanel } from './components/ArchivePanel';
 import { Composer, prefillComposerDraft, type DraftNote } from './components/Composer';
+import { CollaborationMenu } from './components/CollaborationMenu';
 import { DirectoryPicker } from './components/DirectoryPicker';
 import { Dialog } from './components/Dialog';
 import { HostDown, HostsPanel, MachinePicker } from './components/Hosts';
@@ -51,7 +53,7 @@ import { SideChat } from './components/SideChat';
 import { SkillsPage } from './components/SkillsPage';
 import { SchedulesPage } from './components/SchedulesPage';
 import { TodosPage } from './components/TodosPage';
-import { AgentPicker, type DiscoveredAccount, type DiscoveredAgent, effortsForModel, imagesBlocked, imagesNote, modelName, ModelPicker, PermissionPicker, UsageMeter, WorkspacePicker } from './components/Pickers';
+import { AgentPicker, type DiscoveredAccount, type DiscoveredAgent, effortsForModel, imagesBlocked, imagesNote, modelName, speedsForModel, ModelPicker, PermissionPicker, UsageMeter, WorkspacePicker } from './components/Pickers';
 import { Sidebar, SIDEBAR_SHORTCUT } from './components/Sidebar';
 import { forkBlocked, useThreadActions } from './components/ThreadActions';
 import { ThreadView } from './components/ThreadView';
@@ -208,9 +210,12 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
   const [draftWorktree, setDraftWorktree] = useState(false);
   const [worktreeOffer, setWorktreeOffer] = useState<{ cwd: string; branch: string | null; changes: number } | null>(null);
   const [draftSectionId, setDraftSectionId] = useState<string | null>(null);
+  const [draftWorkMode, setDraftWorkMode] = useState<WorkMode>('execute');
+  const [modeBusy, setModeBusy] = useState(false);
   const [draftPermission, setDraftPermission] = useState('auto_edit');
   const [draftModel, setDraftModel] = useState<string | null>(null);
   const [draftEffort, setDraftEffort] = useState<string | null>(null);
+  const [draftSpeed, setDraftSpeed] = useState<string | null>(null);
   const [modelsByAgent, setModelsByAgent] = useState<Record<string, ModelOption[]>>({});
   const [commandsByKey, setCommandsByKey] = useState<Record<string, SlashCommand[]>>({});
   const [drawer, setDrawer] = useState(start === 'list');
@@ -954,8 +959,10 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           agent: draftAgent,
           cwd: draftCwd,
           permissionMode: draftPermission,
+          workMode: draftWorkMode,
           model: draftModel,
           effort: draftEffort,
+          speed: draftSpeed,
           ...(draftSectionId && isNewThread ? { sectionId: draftSectionId } : {}),
           ...(draftScratch ? { scratch: true } : draftWorktree && offer ? { worktree: true } : {}),
         });
@@ -1101,15 +1108,29 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
   const effortLevels = activeCaps?.effortLevels ?? [];
 
   // Settings shown in the composer: the thread's own, or the draft's until the first message is sent.
+  const workMode = selected?.workMode ?? (selected ? 'execute' : draftWorkMode);
+  const changeWorkMode = async (mode: WorkMode, execute = false) => {
+    if (!selected) { setDraftWorkMode(mode); return; }
+    const id = selected.id;
+    setModeBusy(true);
+    try {
+      const updated = await api.updateThread(id, { workMode: mode });
+      setThreads(prev => prev.map(t => t.id === id ? updated : t));
+      if (execute) await api.startTurn(id, '按我们讨论的计划开始执行。');
+    } catch (error) { handleError(error); }
+    finally { setModeBusy(false); }
+  };
+
   const permission = selected ? selected.permissionMode : draftPermission;
   const model = selected ? selected.model : draftModel;
   const effort = selected ? selected.effort : draftEffort;
+  const speed = selected ? selected.speed ?? null : draftSpeed;
 
-  const updateSelected = (patch: { permissionMode?: string; model?: string | null; effort?: string | null }) => {
+  const updateSelected = (patch: { speed?: string | null; permissionMode?: string; model?: string | null; effort?: string | null }) => {
     if (!selected) return;
     // Shown at once: a control that waits for the round trip snaps back to the old value first.
     const id = selected.id;
-    const before = { permissionMode: selected.permissionMode, model: selected.model, effort: selected.effort };
+    const before = { permissionMode: selected.permissionMode, model: selected.model, effort: selected.effort, speed: selected.speed };
     setThreads((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
     api
       .updateThread(id, patch)
@@ -1122,6 +1143,8 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
 
   const pickAgent = (id: string) => {
     setDraftAgent(id);
+    setDraftWorkMode('execute');
+    setDraftSpeed(null);
     setDraftModel(null);
     setDraftEffort(null);
     // Each agent starts at its own level: one that cannot ask starts where it can work.
@@ -1270,11 +1293,18 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
     );
   };
 
-  const left = (<>
-    {(activeCaps?.coordination || selected?.coordination) && <CoordinationPopover label="协作设置" triggerClassName={`tool-btn coord-tool${selected?.coordination || draftCollaboration ? ' on' : ''}`} triggerLabel="协作" triggerTitle={selected?.coordination || draftCollaboration ? '协作已启用' : '协作'} trigger={<><IconAgents size={16} /><span>协作</span></>}>
-      {close => <div className="coord-setup">
-        <strong>{selected?.coordination ? '当前协作' : '让多个智能体一起工作'}</strong>
-        <p>在输入框输入 @ 选择助手就会开始协作，由当前智能体安排分工。默认在当前目录工作。</p>
+  const collaborationOptions: AgentMention[] = (selected?.coordination ? selected.coordination.rootId === selected.id : activeCaps?.coordination && !(selected && running)) ? [
+            ...(coordination?.members.map(m => ({ id: m.id, label: m.name, kind: 'member' as const })) ?? []),
+            ...agents.filter(a => a.available && a.capabilities.coordination && (!coordination || coordination.agents.includes(a.id))).map(a => ({ id: a.id, label: a.label, kind: 'agent' as const })),
+          ] : [];
+  const collaborationIcon = (m: AgentMention) => agents.find((a) => a.id === (m.kind === 'agent' ? m.id : coordination?.members.find((v) => v.id === m.id)?.thread?.agent))?.icon;
+
+  const collaborationControl = (select: (mention: AgentMention) => void, chosen: AgentMention[]) => ((activeCaps?.coordination || selected?.coordination) && <CoordinationPopover label="协作" panelClassName="coord-picker-panel" triggerClassName={`tool-btn coord-tool${selected?.coordination || draftCollaboration ? ' on' : ''}`} triggerLabel="协作" triggerTitle={selected?.coordination || draftCollaboration ? '协作已启用' : '协作'} trigger={<><IconAgents size={16} /><span>协作</span></>}>
+      {close => <CollaborationMenu options={collaborationOptions} selected={chosen} icon={collaborationIcon}
+        onSelect={mention => { close(); select(mention); }}
+        unavailable={selected?.coordination && !leading ? '请回到主线程选择协作成员' : running ? '当前轮结束后可添加助手' : '暂无可用的协作智能体'}
+        settings={<div className="coord-setup">
+        <p>设置成员的目录、权限和默认模型。选择助手并发送任务后会自动启用协作。</p>
         {!selected?.coordination && <>
           <div className="coord-caption">允许使用的目录</div>
           {[...new Set([activeCwd, ...workdirs].filter(Boolean))].map(dir => <button className="pop-item compact" role="menuitemcheckbox" aria-checked={(collaborationDirectories.length ? collaborationDirectories : [activeCwd]).includes(dir)} key={dir} onClick={() => setCollaborationDirectories(prev => { const current = prev.length ? prev : [activeCwd]; return current.includes(dir) ? current.filter(v => v !== dir) : [...current, dir]; })}>{(collaborationDirectories.length ? collaborationDirectories : [activeCwd]).includes(dir) ? '已选 · ' : ''}{dir}</button>)}
@@ -1297,8 +1327,10 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
           </div>)}
         </>}
         {selected?.coordination && <button className="pop-item compact" onClick={() => { setAgentsOpen(true); setFiles(null); close(); }}>查看智能体</button>}
-      </div>}
-    </CoordinationPopover>}
+      </div>} />}
+    </CoordinationPopover>);
+
+  const left = (<>
     <PermissionPicker
       modes={permissionModes}
       value={permission}
@@ -1336,11 +1368,14 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
       model={model}
       efforts={effortLevels}
       effort={effort}
+      speed={speed}
+      onSpeed={activeCaps?.speed ? v => selected ? updateSelected({ speed: v }) : setDraftSpeed(v) : undefined}
       onDiagnose={() => setObservability('diagnostics')}
       openSignal={modelSignal}
       onModel={(v) => {
         if (selected) return updateSelected({ model: v }); // the daemon drops an effort the new model lacks
         setDraftModel(v);
+        if (draftSpeed && !speedsForModel(models, v).some(s => s.id === draftSpeed)) setDraftSpeed(null);
         if (draftEffort && !effortsForModel(models, v, effortLevels).includes(draftEffort)) setDraftEffort(null);
       }}
       onEffort={(v) => (selected ? updateSelected({ effort: v }) : setDraftEffort(v))}
@@ -1546,6 +1581,7 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
               onOpenFile={openFileLink}
               onPreview={selected ? (path) => setPreview({ threadId: selected.id, path }) : undefined}
               onDecide={decide}
+              onAnswer={(id, answer) => api.answerInput(id, answer)}
               hasOlder={hasOlder}
               loadingOlder={loadingOlder}
               onLoadOlder={loadOlder}
@@ -1595,22 +1631,22 @@ export function App({ hostId = null, onHost, start }: AppProps = {}) {
         <Composer
           draftKey={hostId ? `host:${hostId}:${selectedId ?? 'new'}` : selectedId ?? 'new'}
           running={running}
-          disabled={!selected && !draftCwd}
-          placeholder={selected ? (running ? '追加一条，这一轮结束后发送' : '继续这个线程') : draftScratch ? '随便问点什么' : `在 ${folderName(draftCwd) || '工作目录'} 中开始`}
+          disabled={modeBusy || (!selected && !draftCwd)}
+          placeholder={workMode === 'plan' && !running ? '先分析和讨论方案' : selected ? (running ? '追加一条，这一轮结束后发送' : '继续这个线程') : draftScratch ? '随便问点什么' : `在 ${folderName(draftCwd) || '工作目录'} 中开始`}
           onSend={send}
-          mentionOptions={(selected?.coordination ? selected.coordination.rootId === selected.id : activeCaps?.coordination && !(selected && running)) ? [
-            ...(coordination?.members.map(m => ({ id: m.id, label: m.name, kind: 'member' as const })) ?? []),
-            ...agents.filter(a => a.available && a.capabilities.coordination && (!coordination || coordination.agents.includes(a.id))).map(a => ({ id: a.id, label: a.label, kind: 'agent' as const })),
-          ] : []}
-          mentionIcon={(m) => agents.find((a) => a.id === (m.kind === 'agent' ? m.id : coordination?.members.find((v) => v.id === m.id)?.thread?.agent))?.icon}
+          mentionOptions={collaborationOptions}
+          mentionIcon={collaborationIcon}
+          collaboration={collaborationControl}
           mentionExtra={(m) => { const a = agents.find((v) => v.id === m.id); return a ? memberModel(a) : null; }}
           mentionDirectories={coordination?.directories ?? (collaborationDirectories.length ? collaborationDirectories : [activeCwd])}
           onStop={stop}
+          planAction={selected && workMode === 'plan' && !running && timeline.items.some(it => it.kind === 'assistant' || it.kind === 'proposal') ? <><span>可以继续讨论，也可以开始执行</span><button className="primary" disabled={modeBusy} onClick={() => void changeWorkMode('execute', true)}>开始执行</button></> : null}
           header={header}
+          planMode={activeCaps?.workModes?.includes('plan') ? { active: workMode === 'plan', disabled: running || modeBusy, onChange: active => void changeWorkMode(active ? 'plan' : 'execute') } : undefined}
           left={left}
           right={right}
           commands={commandsByKey[commandsKey] ?? []}
-          goalControls={activeCaps?.goal?.controls}
+          goal={activeCaps?.goal}
           actions={hubActions}
           hiddenCommands={hiddenCommands}
           onAction={runHubAction}

@@ -8,6 +8,26 @@ export interface TurnInput {
   images: ImageInput[];
 }
 
+export type WorkMode = 'execute' | 'plan';
+export interface UserQuestion {
+  id: string;
+  question: string;
+  header?: string;
+  options: Array<{ value: string; label: string; description?: string }>;
+  multiple?: boolean;
+  freeText?: boolean;
+  required?: boolean;
+}
+export interface UserInputRequest {
+  /** Native request identity, used to coalesce reannouncements and cancellations. */
+  id?: string;
+  title: string;
+  kind?: 'question' | 'plan';
+  plan?: string;
+  questions: UserQuestion[];
+}
+export type UserInputAnswer = { answers: Record<string, string[]> } | { cancelled: true };
+
 export interface PermissionOption {
   optionId: string;
   name: string;
@@ -28,6 +48,8 @@ export type ApprovalDecision = { optionId: string } | { cancelled: true };
 export interface TurnHooks {
   emit(event: EmittedEvent): void;
   requestApproval(req: ApprovalRequest): Promise<ApprovalDecision>;
+  requestInput?(req: UserInputRequest): Promise<UserInputAnswer>;
+  cancelInput?(nativeId: string): void;
 }
 
 export interface TurnResult {
@@ -47,6 +69,8 @@ export interface AgentSession {
   readonly agentSessionId: string;
   /** Changes the permission level of a live session. Only called when the adapter lists modes. */
   setPermissionMode?(mode: PermissionMode): Promise<void>;
+  setWorkMode?(mode: WorkMode): Promise<void>;
+  setSpeed?(speed: string | null): Promise<boolean>;
   /** Returns true if the change applied to the live session; false means the session must restart. */
   setModel?(model: string): Promise<boolean>;
   /** Returns true if the change applied to the live session; false means the session must restart. */
@@ -124,6 +148,8 @@ export interface ModelOption {
    * Left out when the agent does not say, in which case the agent-wide list applies.
    */
   efforts?: EffortLevel[];
+  /** Native speed tiers for this model. Missing or empty means no speed control. */
+  speeds?: Array<{ id: string; label: string; description?: string; isFast?: boolean }>;
   /** False when the model cannot read images. Left out when the agent does not say. */
   images?: boolean;
   /**
@@ -168,6 +194,9 @@ export interface DiscoveredAccount {
 }
 
 export interface StartOptions {
+  workMode?: WorkMode;
+  onWorkMode?: (mode: WorkMode) => void;
+  onSpeed?: (speed: string) => void;
   /** Ephemeral limi connection context. Never persisted in agent configuration. */
   coordinationEnv?: Record<string, string>;
   cwd: string;
@@ -177,6 +206,7 @@ export interface StartOptions {
   permissionMode?: PermissionMode;
   model?: string;
   effort?: EffortLevel;
+  speed?: string | null;
 }
 
 export interface AgentAdapter {
@@ -185,6 +215,8 @@ export interface AgentAdapter {
   /** The agent's mark: the path of a 24×24 drawing, filled with the even-odd rule. See icons.ts. */
   readonly icon?: string;
   readonly capabilities: {
+    workModes?: readonly WorkMode[];
+    speed?: boolean;
     /** Accepts runtime-only limi CLI connection context. */
     coordination?: boolean;
     resume: boolean;
@@ -206,7 +238,7 @@ export interface AgentAdapter {
     /** Whether /compact can compress the current context. */
     compact?: boolean;
     /** Native goal controls supported while a turn is running. */
-    goal?: { controls: readonly GoalControl[] };
+    goal?: { controls: readonly GoalControl[]; actions?: readonly ('set' | 'show' | 'pause' | 'resume' | 'clear')[] };
     /** Whether a conversation can be copied into a new, independent one. */
     fork: boolean;
     /** Whether that copy can stop at an earlier turn instead of taking everything. Needs fork and history. */

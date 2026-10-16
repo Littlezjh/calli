@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildTimeline,
+  compactionLabel,
   coordinationNote,
   deliveredPreview,
   clockLabel,
@@ -29,6 +30,56 @@ function ev(type: string, data: Record<string, any> = {}, turnId: string | null 
   seq += 1;
   return { threadId: 'th', seq, turnId, type, ts, data };
 }
+
+test('compaction is a chronological separator, deduplicated without adding tool steps', () => {
+  const events = [ev('turn.started', { text: 'work' }),
+    ev('tool.start', { id: 'before', kind: 'read' }), ev('tool.end', { id: 'before', status: 'completed' }),
+    ev('context.compaction', { id: 'c1', status: 'in_progress', automatic: true }),
+    ev('context.compaction', { id: 'c1', status: 'completed', automatic: true }),
+    ev('tool.start', { id: 'after', kind: 'execute' }), ev('tool.end', { id: 'after', status: 'completed' }),
+    ev('message.delta', { text: 'answer' }),
+    ev('context.compaction', { id: 'c1', status: 'completed' }),
+    ev('context.compaction', { id: 'c1', status: 'in_progress' }), ev('turn.done')];
+  const work = buildTimeline(events).items.find(i => i.kind === 'work');
+  assert.ok(work?.kind === 'work');
+  assert.equal(work.steps.length, 2);
+  const sections = workSections(work.entries);
+  assert.deepEqual(sections.map(s => s.kind), ['run', 'compaction', 'run']);
+  const compact = sections[1];
+  assert.ok(compact.kind === 'compaction');
+  assert.equal(compactionLabel(compact), '上下文已自动压缩');
+  assert.ok(buildTimeline(events).items.some(i => i.kind === 'assistant' && i.text === 'answer'));
+});
+
+test('compaction distinguishes running, completed, failed, cancelled, skipped and interrupted', () => {
+  for (const [status, label] of [['in_progress', '正在压缩上下文…'], ['completed', '上下文已自动压缩'],
+    ['failed', '上下文压缩失败'], ['cancelled', '上下文压缩已停止'], ['skipped', '已跳过上下文压缩']]) {
+    const work = buildTimeline([ev('turn.started'), ev('context.compaction', { id: 'c', status, automatic: true })]).items.find(i => i.kind === 'work');
+    assert.ok(work?.kind === 'work');
+    const entry = work.entries[0];
+    assert.ok(entry.kind === 'compaction');
+    assert.equal(compactionLabel(entry), label);
+  }
+  for (const end of [ev('turn.done', { stopReason: 'cancelled' }), ev('turn.error', { message: 'crash' }), ev('turn.started', {}, 't2')]) {
+    const work = buildTimeline([ev('turn.started'), ev('context.compaction', { id: 'c', status: 'in_progress' }), end]).items.find(i => i.kind === 'work');
+    assert.ok(work?.kind === 'work');
+    const entry = work.entries[0];
+    assert.ok(entry.kind === 'compaction');
+    assert.equal(compactionLabel(entry), '上下文压缩未完成');
+  }
+});
+
+test('terminal-only and repeated compactions survive replay with turn-scoped identities', () => {
+  const events = [ev('turn.started'), ev('context.compaction', { id: 'c', status: 'completed' }),
+    ev('context.compaction', { id: 'c2', status: 'completed', automatic: true }), ev('turn.done'),
+    ev('turn.started', {}, 't2'), ev('context.compaction', { id: 'c', status: 'completed' }, 't2'), ev('turn.done', {}, 't2')];
+  const work = buildTimeline(events).items.filter(i => i.kind === 'work');
+  assert.deepEqual(work.map(w => w.entries.length), [2, 1]);
+  assert.deepEqual(buildTimeline(JSON.parse(JSON.stringify(events))), buildTimeline(events));
+  const entry = work[0].entries[0];
+  assert.ok(entry.kind === 'compaction');
+  assert.equal(compactionLabel(entry), '上下文已压缩');
+});
 
 test('collaboration turns expose their source and hide runtime instructions', () => {
   const tl = buildTimeline([ev('turn.started', { text: 'internal instructions', displayText: '来自 审查成员 的结果\n\n状态：本轮已返回，仍需验收\n完成', coordination: { from: 'reviewer' } })]);
@@ -534,7 +585,7 @@ test('a turn is one work block in the order things happened, and the answer is w
   if (work.kind !== 'work') return assert.fail('expected work');
   // Thinking after a tool call comes after it, and what was said on the way sits where it was said.
   assert.deepEqual(
-    work.entries.map((e) => (e.kind === 'thought' ? `thought:${e.thought.text}` : e.kind === 'step' ? `step:${e.step.title}` : `note:${e.text}`)),
+    work.entries.map((e) => (e.kind === 'thought' ? `thought:${e.thought.text}` : e.kind === 'step' ? `step:${e.step.title}` : e.kind === 'note' ? `note:${e.text}` : e.kind)),
     ['thought:plan', 'note:先看文件，', 'step:ls', 'thought:next', 'note:再跑测试，', 'step:npm test'],
   );
   assert.deepEqual(work.steps.map((s) => s.title), ['ls', 'npm test']);
@@ -784,4 +835,35 @@ test('a stopped turn says so, keeps what was said, and offers nothing to copy or
   assert.equal(work.kind === 'work' && work.stopped, true);
   assert.equal(tl.items[4].kind === 'assistant' && tl.items[4].text, '半句');
   assert.equal(tl.items.filter((i) => i.kind === 'actions').length, 1);
+});
+
+test('native proposed plans replace draft deltas, remain separate from progress and export their final text', () => {
+  const tl = buildTimeline([
+    ev('turn.started', { text: '分析一下', workMode: 'plan' }),
+    ev('plan.updated', { entries: [{ content: '读取', status: 'in_progress' }] }),
+    ev('plan.delta', { id: 'proposal', text: '草稿内容' }),
+    ev('plan.completed', { id: 'proposal', text: '# 实施计划\n\n最终方案' }),
+    ev('turn.done'),
+  ]);
+  const proposal = tl.items.find(it => it.kind === 'proposal');
+  assert.ok(proposal && proposal.kind === 'proposal');
+  assert.equal(proposal.text, '# 实施计划\n\n最终方案');
+  assert.equal(tl.items.filter(it => it.kind === 'plan').length, 1);
+  assert.match(toMarkdown('会话', tl.items), /最终方案/);
+  assert.doesNotMatch(toMarkdown('会话', tl.items), /草稿内容/);
+});
+
+test('native questions replay answers and cease waiting after cancellation or daemon restart', () => {
+  const asked = [ev('turn.started', { text: '计划' }), ev('input.request', { inputId: 'q1', title: '选择范围', questions: [{ id: 'scope', question: '范围', options: [] }] })];
+  assert.equal(buildTimeline(asked).awaitingApproval, true);
+  const answered = buildTimeline([...asked, ev('input.resolved', { inputId: 'q1', answer: { answers: { scope: ['手机'] } } })]);
+  assert.equal(answered.awaitingApproval, false);
+  const item = answered.items.find(it => it.kind === 'input');
+  assert.ok(item && item.kind === 'input' && item.answer && 'answers' in item.answer);
+  assert.deepEqual(item.answer.answers, { scope: ['手机'] });
+  const interrupted = buildTimeline([...asked, ev('turn.error', { code: 'interrupted' })]);
+  const old = interrupted.items.find(it => it.kind === 'input');
+  assert.ok(old && old.kind === 'input');
+  assert.deepEqual(old.answer, { cancelled: true });
+  assert.equal(interrupted.awaitingApproval, false);
 });

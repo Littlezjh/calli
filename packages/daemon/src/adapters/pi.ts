@@ -24,6 +24,7 @@ import type {
   TurnHooks,
   TurnInput,
   TurnResult,
+  WorkMode,
 } from './types.js';
 
 const PI_EFFORTS: EffortLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
@@ -346,6 +347,8 @@ function mcpToolNames(command: string[], env: Record<string, string>): Promise<s
 
 class PiSession implements AgentSession {
   agentSessionId = '';
+  private workMode: WorkMode = 'execute';
+  private clearPlanInstruction = false;
   /** The session's model as `provider/id`, so a message knows whether the model can see its pictures. */
   model: string | null = null;
   /** Whether a model takes images natively; set by the adapter. */
@@ -359,6 +362,8 @@ class PiSession implements AgentSession {
   private turn: { resolve(r: TurnResult): void; error?: string } | null = null;
   private buffer = '';
   private exited = false;
+  private compactionSequence = 0;
+  private activeCompaction: string | null = null;
 
   constructor(
     private readonly child: ChildProcessWithoutNullStreams,
@@ -405,6 +410,9 @@ class PiSession implements AgentSession {
       const sessionId = String(state?.sessionId ?? '');
       if (!sessionId) throw new Error('pi did not report a session id');
       session.agentSessionId = sessionId;
+      session.workMode = opts.workMode ?? 'execute';
+      // A resumed conversation may still contain a previous planning instruction.
+      session.clearPlanInstruction = !!opts.resumeId && session.workMode === 'execute';
       session.model = state?.model ? `${state.model.provider}/${state.model.id}` : null;
       if (opts.model) await session.setModel(opts.model);
       if (opts.effort) await session.setEffort(opts.effort);
@@ -502,6 +510,18 @@ class PiSession implements AgentSession {
       return;
     }
 
+    // Current Pi also reports manual compaction; older versions use the auto_ prefix.
+    if (['compaction_start', 'compaction_end', 'auto_compaction_start', 'auto_compaction_end'].includes(record.type)) {
+      if (this.compacting || !this.hooks) return;
+      const starting = record.type.endsWith('_start');
+      const id = this.activeCompaction ?? `pi-compaction-${++this.compactionSequence}`;
+      this.hooks.emit({ type: 'context.compaction', data: {
+        id, automatic: record.reason !== 'manual',
+        status: starting ? 'in_progress' : record.aborted ? 'cancelled' : record.result ? 'completed' : record.errorMessage ? 'failed' : 'skipped',
+      } });
+      this.activeCompaction = starting ? id : null;
+      return;
+    }
     const ev = mapPiEvent(record);
     if (ev && this.hooks) this.hooks.emit(ev);
   }
@@ -520,6 +540,7 @@ class PiSession implements AgentSession {
     const turn = this.turn;
     if (!turn) return;
     this.turn = null;
+    this.activeCompaction = null;
     this.hooks = null;
     turn.resolve({ stopReason, error: turn.error });
   }
@@ -567,8 +588,9 @@ class PiSession implements AgentSession {
         try { return await trackCompaction(hooks, async () => (await this.local(input.text, hooks))!); }
         finally { this.compacting = false; this.compactCancelRequested = false; }
       }
-      const answered = await this.local(input.text, hooks);
-      if (answered) return answered;
+      // Ordinary prompts must register their turn before yielding, so an immediate
+      // stop cannot fall between mode application and the prompt being sent.
+      if (/^\/session(?:\s|$)/.test(input.text.trim())) return (await this.local(input.text, hooks))!;
     }
     this.hooks = hooks;
     let resolveTurn!: (r: TurnResult) => void;
@@ -580,12 +602,23 @@ class PiSession implements AgentSession {
       // A model that cannot see would have the pictures dropped. It gets their paths instead, for its
       // describe_image tool; the hub only lets such a message through when that tool is installed.
       const native = input.images.length === 0 || (await this.seesImages(this.model));
+      let message = native ? input.text : input.text + imagePathNote(input.images);
+      // Keep extension commands and prompt templates at the start of the message.
+      // This is a conversational instruction, not a tool permission boundary.
+      if (!input.text.trimStart().startsWith('/')) {
+        if (this.workMode === 'plan') {
+          message = '[Hub work mode: plan]\n先分析需求并给出简短的设计方案和执行步骤。这一轮只讨论方案，不修改文件、不执行实施操作；等用户要求开始执行后再做。\n\n' + message;
+        } else if (this.clearPlanInstruction) {
+          message = '[Hub work mode: execute]\n已结束计划模式，按用户当前要求执行；此前只讨论、不实施的限制已解除。\n\n' + message;
+        }
+      }
       await this.request('prompt', {
-        message: native ? input.text : input.text + imagePathNote(input.images),
+        message,
         ...(native && input.images.length
           ? { images: input.images.map((img) => ({ type: 'image', data: img.data, mimeType: img.mimeType })) }
           : {}),
       });
+      if (!input.text.trimStart().startsWith('/')) this.clearPlanInstruction = false;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (this.turn) this.turn.error = msg;
@@ -606,6 +639,12 @@ class PiSession implements AgentSession {
   async setEffort(effort: EffortLevel): Promise<boolean> {
     await this.request('set_thinking_level', { level: effort });
     return true;
+  }
+
+  async setWorkMode(mode: WorkMode): Promise<void> {
+    if (this.turn || this.compacting) throw new Error('a turn is already running');
+    if (this.workMode === 'plan' && mode === 'execute') this.clearPlanInstruction = true;
+    this.workMode = mode;
   }
 
   async cancel(): Promise<void> {
@@ -632,6 +671,7 @@ export class PiRpcAdapter implements AgentAdapter {
   readonly icon = PI_ICON;
   // pi has no approval flow, so there is nothing to choose.
   readonly capabilities = {
+    workModes: ['execute', 'plan'] as const,
     coordination: true,
     resume: true,
     approvals: false,

@@ -1028,7 +1028,7 @@ test('mapCodexItemStart/End map commands, file changes and the rest of the step 
   assert.equal(mapCodexItemStart({ type: 'userMessage', id: 'u' }), null);
   assert.equal(mapCodexItemStart({ type: 'agentMessage', id: 'm' }), null);
   assert.equal(mapCodexItemEnd({ type: 'agentMessage', id: 'm' }), null);
-  assert.equal(mapCodexItemStart({ type: 'contextCompaction', id: 'c' }), null);
+  assert.deepEqual(mapCodexItemStart({ type: 'contextCompaction', id: 'c' }), { type: 'context.compaction', data: { id: 'c', status: 'in_progress' } });
   assert.deepEqual(mapCodexItemStart({ type: 'webSearch', id: 'w1', query: 'rust async' })?.data, {
     id: 'w1',
     title: 'rust async',
@@ -1101,10 +1101,7 @@ test('turnsFromCodexHistory reads a conversation back as turns', () => {
   ]);
   assert.deepEqual(turns.map((t) => t.text), ['first question', 'second']);
   assert.deepEqual(turns[0].events.map((e) => e.type), ['reasoning.delta', 'tool.start', 'tool.end', 'message.delta']);
-  assert.deepEqual(turns[1].events.find((e) => e.type === 'plan.updated')?.data.entries, [
-    { content: 'Read', status: 'completed' },
-    { content: 'Write', status: 'pending' },
-  ]);
+  assert.equal(turns[1].events.find((e) => e.type === 'plan.completed')?.data.text, '- [x] Read\n- [ ] Write\n');
 });
 
 test('CodexAppServerAdapter: prompt streams steps and text, then ends the turn', async () => {
@@ -1125,6 +1122,17 @@ test('CodexAppServerAdapter: prompt streams steps and text, then ends the turn',
   assert.equal(textFrom(events), 'echo:tool and reason please');
   assert.deepEqual(events.at(-1)?.data, { used: 500, size: 100000 });
   await session.close();
+});
+
+test('CodexAppServerAdapter: a turn cut off by the server dying reports whose server it was', async () => {
+  // TRAE CLI runs the same protocol through this adapter; its threads must not blame codex.
+  const adapter = new CodexAppServerAdapter([process.execPath, fakeCodex], { FAKE_CODEX_TURN_DELAY: '500' }, 'TRAE CLI');
+  const session = await adapter.start({ cwd: here });
+  const { hooks } = collectingHooks();
+  const result = session.prompt(turn('slow please'), hooks);
+  await new Promise((r) => setTimeout(r, 50)); // the turn is in flight before the server dies
+  await session.close();
+  assert.deepEqual(await result, { stopReason: 'error', error: 'TRAE CLI app-server exited' });
 });
 
 test('CodexAppServerAdapter: context uses the latest request and shrinks after compaction', async (t) => {

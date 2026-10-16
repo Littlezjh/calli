@@ -82,6 +82,7 @@ export interface Thought {
 export type WorkEntry =
   | { kind: 'thought'; thought: Thought }
   | { kind: 'step'; step: Step }
+  | { kind: 'compaction'; key: string; id: string; status: string; automatic?: boolean }
   /** Something the agent said on the way, before going on to do more. */
   | { kind: 'note'; key: string; text: string };
 
@@ -118,7 +119,9 @@ export function deliveredPreview(text: string): string {
 }
 
 export type Item =
-  | { kind: 'user'; key: string; turnId: string; text: string; images: ImageRef[]; videos?: VideoRef[]; fromTerminal?: boolean; scheduled?: boolean; coordination?: CoordinationNote }
+  | { kind: 'proposal'; key: string; turnId: string; id: string; text: string; done: boolean }
+  | { kind: 'input'; key: string; turnId: string; inputId: string; title: string; inputKind?: string; plan?: string; questions: import('./api').UserQuestion[]; answer: import('./api').UserInputAnswer | null }
+  | { kind: 'user'; workMode?: string; key: string; turnId: string; text: string; images: ImageRef[]; videos?: VideoRef[]; fromTerminal?: boolean; scheduled?: boolean; coordination?: CoordinationNote }
   /** The turn's answer: the text after everything the agent did. */
   | { kind: 'assistant'; key: string; turnId: string; text: string; done: boolean }
   /**
@@ -383,6 +386,9 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
     const { work, answer, plan } = open;
     if (work) {
       work.done = true;
+      for (const entry of work.entries) {
+        if (entry.kind === 'compaction' && entry.status === 'in_progress') entry.status = 'interrupted';
+      }
       if (endedAt) work.endedAt = endedAt;
       // A turn whose last act was a tool call still said something: its last remark is the answer.
       const last = answer ? -1 : work.entries.map((e) => e.kind).lastIndexOf('note');
@@ -390,6 +396,10 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
         const [note] = work.entries.splice(last, 1);
         if (note.kind === 'note') items.splice(items.indexOf(work) + 1, 0, { kind: 'assistant', key: note.key, turnId: work.turnId, text: note.text, done: true });
       }
+    }
+    for (const item of items) if (item.turnId === open.turn) {
+      if (item.kind === 'proposal') item.done = true;
+      if (item.kind === 'input' && !item.answer) item.answer = { cancelled: true };
     }
     if (answer) answer.done = true;
     if (plan) plan.done = true;
@@ -417,6 +427,7 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
         const delivered = ev.data.coordination ? coordinationNote(shown) : null;
         items.push({
           kind: 'user',
+          workMode: ev.data.workMode,
           key,
           turnId: turn,
           text: delivered ? delivered.text : shown,
@@ -474,6 +485,22 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
         break;
       }
 
+      case 'context.compaction': {
+        if (typeof ev.data.id !== 'string' || !ev.data.id) break;
+        const existing = open.work?.turnId === turn
+          ? open.work.entries.find((entry) => entry.kind === 'compaction' && entry.id === ev.data.id) : undefined;
+        if (existing?.kind === 'compaction') {
+          // Replayed or enriched terminal updates keep their original place; a late start
+          // must not turn a completed operation back into a spinner.
+          if (ev.data.status && (existing.status === 'in_progress' || ev.data.status !== 'in_progress')) existing.status = ev.data.status;
+          if (typeof ev.data.automatic === 'boolean') existing.automatic = ev.data.automatic;
+        } else if (ev.data.status) {
+          workBlock(key, ev.ts).entries.push({ kind: 'compaction', key, id: ev.data.id, status: ev.data.status,
+            ...(typeof ev.data.automatic === 'boolean' ? { automatic: ev.data.automatic } : {}) });
+        }
+        break;
+      }
+
       case 'tool.start': {
         const block = workBlock(key, ev.ts);
         const step: Step = {
@@ -503,6 +530,22 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
         work.endedAt = ev.ts;
         break;
       }
+
+      case 'plan.delta':
+      case 'plan.completed': {
+        const id = String(ev.data.id ?? 'plan');
+        let proposal = items.find((it): it is Extract<Item, { kind: 'proposal' }> => it.kind === 'proposal' && it.turnId === turn && it.id === id);
+        if (!proposal) { proposal = { kind: 'proposal', key, turnId: turn, id, text: '', done: false }; items.push(proposal); }
+        if (ev.type === 'plan.completed') { proposal.text = String(ev.data.text ?? ''); proposal.done = true; }
+        else proposal.text += String(ev.data.text ?? '');
+        break;
+      }
+      case 'input.request':
+        items.push({ kind: 'input', key, turnId: turn, inputId: String(ev.data.inputId), title: ev.data.title, inputKind: ev.data.kind, plan: ev.data.plan, questions: ev.data.questions ?? [], answer: null });
+        break;
+      case 'input.resolved':
+        for (const it of items) if (it.kind === 'input' && it.inputId === ev.data.inputId) it.answer = ev.data.answer;
+        break;
 
       case 'approval.request': {
         const toolCall = (ev.data.toolCall ?? {}) as { content?: unknown; rawInput?: { command?: unknown } };
@@ -566,7 +609,7 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
   }
 
   const withSummaries = addTurnSummaries(items, finished, stopped);
-  const awaitingApproval = running && items.some((it) => it.kind === 'approval' && it.decision === null);
+  const awaitingApproval = running && items.some((it) => (it.kind === 'approval' && it.decision === null) || (it.kind === 'input' && it.answer === null));
   return { items: withSummaries, lastSeq, running, awaitingApproval, usage };
 }
 
@@ -655,7 +698,7 @@ function addTurnSummaries(items: Item[], finished: Map<string, string | undefine
     }
 
     if (finished.has(turnId) && !stopped.has(turnId)) {
-      const answers = turnItems.filter((it): it is Extract<Item, { kind: 'assistant' }> => it.kind === 'assistant' && it.text.trim() !== '');
+      const answers = turnItems.filter((it): it is Extract<Item, { kind: 'assistant' | 'proposal' }> => (it.kind === 'assistant' || it.kind === 'proposal') && it.text.trim() !== '');
       const last = answers[answers.length - 1];
       const at = finished.get(turnId);
       if (last) out.push({ kind: 'actions', key: `actions-${turnId}`, turnId, text: last.text, ...(at ? { at } : {}) });
@@ -750,12 +793,24 @@ export const stepActive = (step: Step) => step.status === 'in_progress' || step.
  */
 export type WorkSection =
   | { kind: 'note'; key: string; text: string }
-  | { kind: 'run'; key: string; entries: Exclude<WorkEntry, { kind: 'note' }>[]; steps: Step[] };
+  | Extract<WorkEntry, { kind: 'compaction' }>
+  | { kind: 'run'; key: string; entries: Extract<WorkEntry, { kind: 'thought' | 'step' }>[]; steps: Step[] };
+
+export function compactionLabel(entry: Extract<WorkEntry, { kind: 'compaction' }>): string {
+  switch (entry.status) {
+    case 'in_progress': return '正在压缩上下文…';
+    case 'completed': return entry.automatic ? '上下文已自动压缩' : '上下文已压缩';
+    case 'failed': return '上下文压缩失败';
+    case 'cancelled': return '上下文压缩已停止';
+    case 'skipped': return '已跳过上下文压缩';
+    default: return '上下文压缩未完成';
+  }
+}
 
 export function workSections(entries: WorkEntry[]): WorkSection[] {
   const out: WorkSection[] = [];
   for (const entry of entries) {
-    if (entry.kind === 'note') {
+    if (entry.kind === 'note' || entry.kind === 'compaction') {
       out.push(entry);
       continue;
     }
@@ -904,6 +959,7 @@ export function toMarkdown(title: string, items: Item[]): string {
         parts.push(`## 你\n\n${it.text}${images}`.trimEnd());
         break;
       }
+      case 'proposal':
       case 'assistant':
         if (it.text.trim()) parts.push(it.text.trim());
         break;

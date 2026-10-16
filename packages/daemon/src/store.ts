@@ -14,6 +14,8 @@ export interface ThreadRecord {
   agentSessionId: string | null;
   status: 'idle' | 'running' | 'error';
   pinned: boolean;
+  speed?: string | null;
+  workMode?: 'execute' | 'plan';
   permissionMode: string;
   model: string | null;
   effort: string | null;
@@ -185,6 +187,8 @@ const toTodo = (r: TodoRow): TodoRecord => ({
 });
 
 interface ThreadRow {
+  work_mode: string;
+  speed: string | null;
   id: string;
   agent: string;
   cwd: string;
@@ -219,6 +223,8 @@ interface EventRow {
 }
 
 const toThread = (r: ThreadRow): ThreadRecord => ({
+  speed: r.speed,
+  workMode: r.work_mode === 'plan' ? 'plan' : 'execute',
   id: r.id,
   agent: r.agent,
   cwd: r.cwd,
@@ -307,6 +313,7 @@ export class Store {
         data TEXT NOT NULL,
         PRIMARY KEY (thread_id, seq)
       );
+      CREATE INDEX IF NOT EXISTS idx_events_turn_starts ON events(thread_id, seq) WHERE type = 'turn.started';
     `);
     // Migration: add pinned column if it doesn't exist
     try {
@@ -337,6 +344,8 @@ export class Store {
     if (!cols.some((c) => c.name === 'worktree')) this.db.exec('ALTER TABLE threads ADD COLUMN worktree TEXT');
     // Migration: unread marker.
     if (!cols.some((c) => c.name === 'unread')) this.db.exec('ALTER TABLE threads ADD COLUMN unread INTEGER NOT NULL DEFAULT 0');
+    if (!cols.some(c => c.name === 'work_mode')) this.db.exec("ALTER TABLE threads ADD COLUMN work_mode TEXT NOT NULL DEFAULT 'execute'");
+    if (!cols.some(c => c.name === 'speed')) this.db.exec('ALTER TABLE threads ADD COLUMN speed TEXT');
     // Migration: the schedule a thread was started by, if any, as JSON { id, name }.
     if (!cols.some((c) => c.name === 'schedule')) this.db.exec('ALTER TABLE threads ADD COLUMN schedule TEXT');
     this.db.exec(`
@@ -559,7 +568,7 @@ export class Store {
     const now = new Date().toISOString();
     this.db
       .prepare(
-        'INSERT INTO threads (id, agent, cwd, title, status, pinned, permission_mode, model, effort, forked_from, worktree, section_id, created_at, updated_at, handover, schedule) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        'INSERT INTO threads (id, agent, cwd, title, status, pinned, permission_mode, model, effort, forked_from, worktree, section_id, created_at, updated_at, handover, schedule, work_mode, speed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       )
       .run(
         t.id,
@@ -578,6 +587,8 @@ export class Store {
         now,
         t.handover ? JSON.stringify(t.handover) : null,
         t.schedule ? JSON.stringify(t.schedule) : null,
+        t.workMode ?? 'execute',
+        t.speed ?? null,
       );
     return this.getThread(t.id)!;
   }
@@ -640,6 +651,8 @@ export class Store {
         | 'status'
         | 'agentSessionId'
         | 'pinned'
+        | 'workMode'
+        | 'speed'
         | 'permissionMode'
         | 'model'
         | 'effort'
@@ -662,7 +675,7 @@ export class Store {
     const next = { ...current, ...patch, updatedAt: opts.touch ? new Date().toISOString() : current.updatedAt };
     this.db
       .prepare(
-        'UPDATE threads SET title = ?, status = ?, agent_session_id = ?, pinned = ?, permission_mode = ?, model = ?, effort = ?, archived_at = ?, section_id = ?, unread = ?, preview = ?, hub_turn_at = ?, external_at = ?, updated_at = ? WHERE id = ?',
+        'UPDATE threads SET title = ?, status = ?, agent_session_id = ?, pinned = ?, permission_mode = ?, model = ?, effort = ?, archived_at = ?, section_id = ?, unread = ?, preview = ?, hub_turn_at = ?, external_at = ?, updated_at = ?, work_mode = ?, speed = ? WHERE id = ?',
       )
       .run(
         next.title,
@@ -679,6 +692,8 @@ export class Store {
         next.hubTurnAt,
         next.externalAt,
         next.updatedAt,
+        next.workMode ?? 'execute',
+        next.speed ?? null,
         id,
       );
   }
@@ -818,10 +833,15 @@ export class Store {
 
   /** Events after a sequence number, oldest first. A negative limit means all of them. */
   listEvents(threadId: string, afterSeq = 0, limit = 5000): StoredEvent[] {
+    return [...this.iterateEvents(threadId, afterSeq, limit)];
+  }
+
+  /** Read one row at a time so replay can discard superseded tool snapshots immediately. */
+  *iterateEvents(threadId: string, afterSeq = 0, limit = -1): IterableIterator<StoredEvent> {
     const rows = this.db
       .prepare('SELECT * FROM events WHERE thread_id = ? AND seq > ? ORDER BY seq ASC LIMIT ?')
-      .all(threadId, afterSeq, limit) as unknown as EventRow[];
-    return rows.map(toEvent);
+      .iterate(threadId, afterSeq, limit);
+    for (const row of rows) yield toEvent(row as unknown as EventRow);
   }
 
   /** Every event of one type in a thread, oldest first. There are few of the types this is asked for. */
@@ -837,9 +857,14 @@ export class Store {
    * when that is left out. A page begins where a turn begins, so the reader never gets an answer
    * without its question or a tool result without its call. It reaches back to the earliest turn
    * that starts within `budget` events of the page's end; a single turn longer than that still
-   * comes whole. Whatever precedes the first turn rides along with it.
+   * comes whole. At most three turns are included, even when their event counts are small.
+   * Whatever precedes the first turn rides along with it.
    */
   listEventsPage(threadId: string, budget: number, beforeSeq?: number): StoredEvent[] {
+    return [...this.iterateEventsPage(threadId, budget, beforeSeq)];
+  }
+
+  *iterateEventsPage(threadId: string, budget: number, beforeSeq?: number): IterableIterator<StoredEvent> {
     const end =
       beforeSeq ??
       (this.db.prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM events WHERE thread_id = ?').get(threadId) as { next: number }).next;
@@ -850,11 +875,14 @@ export class Store {
           .get(threadId, ...args) as { seq: number } | undefined
       )?.seq;
     let start = turnStart('seq < ? AND seq >= ?', 'ASC', end, end - budget) ?? turnStart('seq < ?', 'DESC', end) ?? 1;
+    const third = this.db.prepare("SELECT seq FROM events WHERE thread_id = ? AND type = 'turn.started' AND seq < ? ORDER BY seq DESC LIMIT 1 OFFSET 2")
+      .get(threadId, end) as { seq: number } | undefined;
+    if (third) start = Math.max(start, third.seq);
     if (turnStart('seq < ?', 'DESC', start) === undefined) start = 1;
     const rows = this.db
       .prepare('SELECT * FROM events WHERE thread_id = ? AND seq >= ? AND seq < ? ORDER BY seq ASC')
-      .all(threadId, start, end) as unknown as EventRow[];
-    return rows.map(toEvent);
+      .iterate(threadId, start, end);
+    for (const row of rows) yield toEvent(row as unknown as EventRow);
   }
 
   /**

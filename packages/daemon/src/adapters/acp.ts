@@ -1,3 +1,5 @@
+import { formQuestions } from './questions.js';
+import type { WorkMode } from './types.js';
 import { acpUsage } from './usage.js';
 import { timedUsage, type LiveUsage } from './live-usage.js';
 import type { UsageSample } from '../telemetry.js';
@@ -46,6 +48,18 @@ interface ConfigOption {
  * Returns null for updates the UI does not need (commands, user echoes).
  */
 export function mapAcpUpdate(update: any): EmittedEvent | null {
+  // Claude's bridge uses an explicit compaction entity or a tagged synthetic tool call.
+  const compactMeta = update?._meta?.jetbrains?.air?.contextCompaction;
+  if (update?.sessionUpdate === 'compaction_update'
+    || ['tool_call', 'tool_call_update'].includes(update?.sessionUpdate)
+      && (update?._meta?.claudeCode?.toolName === 'compact' || compactMeta)) {
+    const trigger = compactMeta?.trigger ?? update.rawOutput?.trigger;
+    return { type: 'context.compaction', data: {
+      id: update.compactionId ?? update.toolCallId,
+      ...(update.status ? { status: update.status } : {}),
+      ...(['automatic', 'manual'].includes(trigger) ? { automatic: trigger === 'automatic' } : {}),
+    } };
+  }
   switch (update?.sessionUpdate) {
     case 'agent_message_chunk':
       return { type: 'message.delta', data: { text: textOf(update.content) } };
@@ -91,6 +105,13 @@ export function mapAcpUpdate(update: any): EmittedEvent | null {
 export function effortsFromConfig(configOptions: ConfigOption[] | undefined): EffortLevel[] {
   const option = (configOptions ?? []).find((o) => o.id === 'effort' || o.category === 'thought_level');
   return (option?.options ?? []).map((o) => o.value).filter((v) => v !== 'default') as EffortLevel[];
+}
+
+/** The fast select is exposed only for models that support it. */
+export function speedsFromConfig(options: ConfigOption[] | undefined): ModelOption['speeds'] {
+  const option = options?.find(o => o.id === 'fast');
+  if (!option?.options?.some(o => o.value === 'on') || !option.options.some(o => o.value === 'off')) return undefined;
+  return [{ id: 'default', label: '标准' }, { id: 'fast', label: '快速', description: '速度更快，用量可能增加', isFast: true }];
 }
 
 /** The id of the effort config option, which agents name differently ("effort", "reasoning_effort"). */
@@ -159,6 +180,7 @@ export function modelsFromConfig(configOptions: ConfigOption[] | undefined): Mod
 
 /** A live ACP session bound to one thread. */
 export class AcpSession implements AgentSession {
+  private manualCompaction = false;
   private submission: Promise<void> = Promise.resolve();
   waitForSubmission(): Promise<void> { return this.submission; }
   private usageId = 0;
@@ -167,6 +189,12 @@ export class AcpSession implements AgentSession {
   private costBefore: { amount: number; currency: string } | null = null;
   controlGoal?: AgentSession['controlGoal'];
   private hooks: TurnHooks | null = null;
+  private workMode: WorkMode = 'execute';
+  private permissionMode: PermissionMode = 'ask';
+  onWorkMode?: (mode: WorkMode) => void;
+  onSpeed?: (speed: string) => void;
+  private speedOverride: string | undefined;
+  private configRequests = 0;
 
   constructor(
     readonly agentSessionId: string,
@@ -178,10 +206,24 @@ export class AcpSession implements AgentSession {
     /** The config option this agent uses for effort ("effort", "reasoning_effort"). */
     private readonly effortConfigId: string = 'effort',
     private readonly liveUsage?: (emit: (sample: UsageSample) => void) => LiveUsage | undefined,
+    private configOptions: ConfigOption[] = [],
   ) {}
 
   /** Called by the peer for every session/update notification. */
   onUpdate(update: unknown): void {
+    const modeUpdate = update as any;
+    if (modeUpdate?.sessionUpdate === 'config_option_update') {
+      this.configOptions = modeUpdate.configOptions ?? [];
+      const fast = this.configOptions.find(o => o.id === 'fast');
+      if (!this.configRequests && (fast?.currentValue === 'on' || fast?.currentValue === 'off')) {
+        this.speedOverride = fast.currentValue === 'on' ? 'fast' : 'default';
+        this.onSpeed?.(this.speedOverride);
+      }
+    }
+    if (modeUpdate?.sessionUpdate === 'current_mode_update') {
+      this.workMode = modeUpdate.currentModeId === 'plan' ? 'plan' : 'execute';
+      this.onWorkMode?.(this.workMode);
+    }
     if (!this.hooks) return; // replay during session/load, or stray updates
     const value = update as any;
     if (value?.sessionUpdate === 'usage_update' && typeof value.cost?.amount === 'number' && Number.isFinite(value.cost.amount) && value.cost.amount >= 0) {
@@ -189,12 +231,25 @@ export class AcpSession implements AgentSession {
       this.costReading = { amount: value.cost.amount, currency: String(value.cost.currency ?? 'USD') };
     }
     const ev = mapAcpUpdate(update);
+    if (ev?.type === 'context.compaction') {
+      if (this.manualCompaction) return;
+      ev.data.automatic ??= true;
+    }
     if (ev) this.hooks.emit(ev);
   }
 
   /** Called by the peer for session/request_permission. */
   async onPermission(params: any): Promise<unknown> {
     if (!this.hooks) return { outcome: { outcome: 'cancelled' } };
+    const plan = params?.toolCall?.rawInput?.plan;
+    if (typeof plan === 'string' && this.workMode === 'plan' && this.hooks.requestInput) {
+      const preferred = this.permissionMode === 'ask' ? ['exit-plan-default'] : this.permissionMode === 'full_access' ? ['exit-plan-bypass'] : ['exit-plan-auto', 'exit-plan-accept-edits'];
+      const option = preferred.map(id => params.options?.find((o: any) => o.optionId === id)).find(Boolean);
+      if (option) {
+        const answer = await this.hooks.requestInput({ id: params.toolCall.toolCallId, title: '计划已准备好', kind: 'plan', plan, questions: [{ id: 'approval', question: '是否按此计划开始执行？', options: [{ value: option.optionId, label: '开始执行' }] }] });
+        return 'answers' in answer ? { outcome: { outcome: 'selected', optionId: answer.answers.approval[0] } } : { outcome: { outcome: 'cancelled' } };
+      }
+    }
     const decision: ApprovalDecision = await this.hooks.requestApproval({
       title: params?.toolCall?.title ?? 'Permission requested',
       options: (params?.options ?? []).map((o: any) => ({
@@ -208,7 +263,37 @@ export class AcpSession implements AgentSession {
     return { outcome: { outcome: 'selected', optionId: decision.optionId } };
   }
 
+  async onElicitation(params: any): Promise<unknown> {
+    const questions = params.mode === 'form' ? formQuestions(params.requestedSchema, params.message) : null;
+    if (!questions?.length || !this.hooks?.requestInput) return { action: 'cancel' };
+    const answer = await this.hooks.requestInput({ id: params.toolCallId, title: params.message || '需要你的意见', questions });
+    if ('cancelled' in answer) return { action: 'cancel' };
+    const content = Object.fromEntries(questions.filter(q => answer.answers[q.id]?.length).map(q => {
+      const a = answer.answers[q.id];
+      const type = params.requestedSchema.properties[q.id].type;
+      return [q.id, type === 'array' ? a : type === 'boolean' ? a[0] === 'true' : a[0]];
+    }));
+    return { action: 'accept', content };
+  }
+
+  async setWorkMode(mode: WorkMode): Promise<void> {
+    if (mode === this.workMode) return;
+    if (mode === 'plan') {
+      if (this.offeredModes.length && !this.offeredModes.includes('plan')) throw new Error('此版本不支持计划模式');
+      await this.peer.request('session/set_mode', { sessionId: this.agentSessionId, modeId: 'plan' });
+      this.workMode = 'plan';
+    } else {
+      await this.applyPermissionMode(this.permissionMode);
+      this.workMode = 'execute';
+    }
+  }
+
   async setPermissionMode(mode: PermissionMode): Promise<void> {
+    if (this.workMode !== 'plan') await this.applyPermissionMode(mode);
+    this.permissionMode = mode;
+  }
+
+  private async applyPermissionMode(mode: PermissionMode): Promise<void> {
     const wanted = this.modeIds[mode];
     // Prefer a mode the session lists; if the list is unknown, try them in order.
     const candidates = this.offeredModes.length ? wanted.filter((id) => this.offeredModes.includes(id)) : wanted;
@@ -225,17 +310,23 @@ export class AcpSession implements AgentSession {
   }
 
   protected async setConfig(configId: string, value: string): Promise<any> {
-    return this.peer.request('session/set_config_option', { sessionId: this.agentSessionId, configId, value });
+    this.configRequests++;
+    try {
+      const result = await this.peer.request('session/set_config_option', { sessionId: this.agentSessionId, configId, value });
+      this.configOptions = result?.configOptions ?? this.configOptions;
+      return result;
+    } finally { this.configRequests--; }
   }
 
   /**
    * Selects a model and reports which effort levels it then offers.
    * Returns null when the agent refuses the model, which means this account cannot use it.
    */
-  async probeModel(model: string): Promise<EffortLevel[] | null> {
+  async probeModel(model: string): Promise<Pick<ModelOption, 'efforts' | 'speeds'> | null> {
     try {
       const res = await this.setConfig('model', model);
-      return effortsFromConfig(res?.configOptions);
+      const speeds = speedsFromConfig(res?.configOptions);
+      return { efforts: effortsFromConfig(res?.configOptions), ...(speeds ? { speeds } : {}) };
     } catch {
       return null;
     }
@@ -243,6 +334,16 @@ export class AcpSession implements AgentSession {
 
   async setModel(model: string): Promise<boolean> {
     await this.setConfig('model', model);
+    if (this.speedOverride !== undefined && speedsFromConfig(this.configOptions)) await this.setSpeed(this.speedOverride);
+    return true;
+  }
+
+  async setSpeed(speed: string | null): Promise<boolean> {
+    if (speed !== null && speed !== 'default' && speed !== 'fast') throw new Error('当前模型不支持此速度');
+    if (speedsFromConfig(this.configOptions)) await this.setConfig('fast', speed === 'fast' ? 'on' : 'off');
+    else if (speed === 'fast') throw new Error('当前模型不支持快速模式');
+    // A hidden fast option cannot be changed; apply the cleared preference when it reappears.
+    this.speedOverride = speed ?? 'default';
     return true;
   }
 
@@ -252,7 +353,10 @@ export class AcpSession implements AgentSession {
   }
 
   async prompt(input: TurnInput, hooks: TurnHooks): Promise<TurnResult> {
-    return isCompaction(input.text) ? trackCompaction(hooks, () => this.promptInternal(input, hooks)) : this.promptInternal(input, hooks);
+    this.manualCompaction = isCompaction(input.text);
+    try {
+      return await (this.manualCompaction ? trackCompaction(hooks, () => this.promptInternal(input, hooks)) : this.promptInternal(input, hooks));
+    } finally { this.manualCompaction = false; }
   }
 
   private async promptInternal(input: TurnInput, hooks: TurnHooks): Promise<TurnResult> {
@@ -489,6 +593,7 @@ export abstract class AcpAdapter implements AgentAdapter {
         },
         onRequest: async (method, params) => {
           if (method === 'session/request_permission') return holder.session?.onPermission(params);
+          if (method === 'elicitation/create') return holder.session?.onElicitation(params);
           return undefined; // fs/* and terminal/* are not advertised, so the agent should not call them
         },
       },
@@ -500,7 +605,7 @@ export abstract class AcpAdapter implements AgentAdapter {
     try {
       await peer.request('initialize', {
         protocolVersion: 1,
-        clientCapabilities: {},
+        clientCapabilities: { elicitation: { form: {} } },
       });
 
       let sessionId: string;
@@ -516,12 +621,16 @@ export abstract class AcpAdapter implements AgentAdapter {
       const offeredModes: string[] = (info?.modes?.availableModes ?? []).map((m: any) => m.id);
       const configOptions: ConfigOption[] = info?.configOptions ?? [];
 
-      const session = new AcpSession(sessionId, peer, this.modeIds, offeredModes, effortConfigIdOf(configOptions), emit => this.liveUsage(sessionId, opts.cwd, emit));
+      const session = new AcpSession(sessionId, peer, this.modeIds, offeredModes, effortConfigIdOf(configOptions), emit => this.liveUsage(sessionId, opts.cwd, emit), configOptions);
       this.configureSession(session, peer);
       holder.session = session;
-      if (opts.permissionMode && opts.permissionMode !== 'ask') await session.setPermissionMode(opts.permissionMode);
+      if (opts.permissionMode) await session.setPermissionMode(opts.permissionMode);
+      if (opts.workMode === 'plan') await session.setWorkMode('plan');
+      session.onWorkMode = opts.onWorkMode;
       if (opts.model) await session.setModel(opts.model);
       if (opts.effort) await session.setEffort(opts.effort);
+      if (opts.speed != null) await session.setSpeed(opts.speed);
+      session.onSpeed = opts.onSpeed;
       return { session, configOptions };
     } catch (err) {
       peer.close();

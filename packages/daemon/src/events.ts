@@ -13,7 +13,12 @@ export type EventType =
   | 'tool.start'
   | 'tool.update'
   | 'tool.end'
+  | 'context.compaction'
   | 'plan.updated'
+  | 'plan.delta'
+  | 'plan.completed'
+  | 'input.request'
+  | 'input.resolved'
   | 'usage.updated'
   | 'usage.sample'
   | 'approval.request'
@@ -127,23 +132,19 @@ function mergedToolEvent(run: StoredEvent[]): StoredEvent {
  * it, and the call's last seq, time and type, so durations and "still running" read the same. The
  * store keeps every intermediate; this is only how pages are served.
  */
-export function coalesceToolEvents(events: StoredEvent[]): StoredEvent[] {
+export function coalesceToolEvents(events: Iterable<StoredEvent>): StoredEvent[] {
   const out: StoredEvent[] = [];
-  let run: StoredEvent[] = [];
+  // Only the current snapshot is retained, even when the source is a database cursor.
+  let pending: StoredEvent | undefined;
   const flush = () => {
-    if (run.length === 1) out.push(run[0]);
-    else if (run.length > 1) out.push(mergedToolEvent(run));
-    run = [];
+    if (pending) out.push(pending);
+    pending = undefined;
   };
   for (const ev of events) {
     const isTool = ev.type === 'tool.update' || ev.type === 'tool.end';
-    const continues = isTool && run.length > 0 && run[run.length - 1].turnId === ev.turnId && run[run.length - 1].data.id === ev.data.id;
-    if (isTool && (continues || run.length === 0)) run.push(ev);
-    else {
-      flush();
-      if (isTool) run.push(ev);
-      else out.push(ev);
-    }
+    const continues = isTool && pending && pending.turnId === ev.turnId && pending.data.id === ev.data.id;
+    if (continues) pending = mergedToolEvent([pending!, ev]);
+    else { flush(); if (isTool) pending = ev; else out.push(ev); }
   }
   flush();
   return out;

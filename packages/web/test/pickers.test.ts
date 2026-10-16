@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { effortsForModel, imagesBlocked, modelName, modelRows } from '../src/components/Pickers.js';
+import { isFastSpeed } from '../src/api.js';
 
 const claude = [
   { id: 'default', label: 'Default (recommended)', description: 'Opus 5.5' },
@@ -102,4 +103,26 @@ test('a model that cannot see is still offered pictures when the agent can show 
   assert.match(imagesNote(models, 'p/blind') ?? '', /Blind 不能直接看图，会用 describe_image/);
   assert.equal(imagesNote(models, 'p/eyes'), null);
   assert.equal(imagesNote(models, 'p/plain'), null);
+});
+
+test('speed options follow the selected model and advertise adjustable models', async () => {
+  const { speedsForModel } = await import('../src/components/Pickers.js');
+  const speeds = [{ id: 'default', label: '标准' }, { id: 'priority', label: '快速', isFast: true }];
+  const models = [{ id: 'fast-capable', label: 'Main', isDefault: true, speeds }, { id: 'plain', label: 'Plain' }, { id: 'economy', label: 'Economy', speeds: [{ id: 'flex', label: '经济', isFast: false }] }];
+  assert.deepEqual(speedsForModel(models, null), speeds);
+  assert.deepEqual(speedsForModel(models, 'plain'), []);
+  assert.deepEqual(speedsForModel(models, 'unknown'), []);
+  assert.match(modelRows(models).find(row => row.value === 'fast-capable')?.hint ?? '', /可加速/);
+  assert.equal(modelRows(models).find(row => row.value === 'economy')?.hint, undefined);
+});
+
+test('fast controls accept older Hub catalogs without treating economy or unknown tiers as acceleration', () => {
+  for (const id of ['priority', 'fast', 'ultrafast']) {
+    const speed = { id, label: id };
+    assert.equal(isFastSpeed(speed), true);
+    assert.match(modelRows([{ id: 'model', label: 'Model', speeds: [speed] }])[1].hint ?? '', /可加速/);
+    assert.equal(isFastSpeed({ ...speed, isFast: false }), false, 'an explicit capability takes precedence');
+  }
+  for (const id of ['default', 'flex', 'custom-tier']) assert.equal(isFastSpeed({ id, label: id }), false);
+  assert.equal(isFastSpeed({ id: 'custom-tier', label: 'Custom', isFast: true }), true);
 });

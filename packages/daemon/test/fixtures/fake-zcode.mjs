@@ -131,6 +131,11 @@ async function handle(message) {
       // Completion may precede the response to send; the adapter must already be listening.
       if (p.content === 'early') { contextUsed = 48000; done('success', '提前完成'); reply(id, { accepted: true }); return; }
       reply(id, method === 'session/compact' ? { compact: { state: 'accepted', inputId: p.inputId } } : { accepted: true });
+      if (p.content?.startsWith('auto-compact') || method === 'session/compact') {
+        const payload = { operationId: 'compact-1', messageId: 'compact-marker', display: 'separator', trigger: method === 'session/compact' ? 'manual' : 'auto' };
+        emit('session.updated', { ...payload, status: 'started' });
+        emit('session.updated', { ...payload, status: p.content?.includes('fail') ? 'failed' : p.content?.includes('skip') ? 'skipped' : 'completed' });
+      }
       if (method === 'session/compact') {
         await new Promise((resolve) => setTimeout(resolve, Number(process.env.FAKE_COMPACT_DELAY ?? 20)));
         if (turn !== activeTurn) return;
@@ -142,6 +147,15 @@ async function handle(message) {
         if (turn === activeTurn) done();
         return;
       }
+      if (p.content === 'plan-question' || p.content === 'plan-approval') {
+        const plan = p.content === 'plan-approval';
+        const question = plan ? 'Review this implementation plan.' : '优先支持哪一端？';
+        const answer = await request('interaction/requestUserInput', { sessionId, requestId: 'question-1', prompt: question, questions: [{ question, options: plan ? [{ value: 'approve', label: 'Approve' }] : [{ value: '桌面和手机', label: '桌面和手机' }, { value: '先做桌面', label: '先做桌面' }] }], schema: plan ? { interaction: 'plan_approval' } : {}, input: plan ? { plan: '## 实施计划\n\n1. 阅读代码\n2. 完成验证' } : {} });
+        if (turn !== activeTurn) return;
+        if (plan && answer.content?.answers?.[question] === 'approve') { mode = 'build'; emit('session.updated', { mode: 'build', planEnabled: false }); }
+        done('success', `answer:${JSON.stringify(answer)};mode:${mode}`); return;
+      }
+      if (p.content === 'plan-draft') { done('success', `mode:${mode}`); return; }
       if (p.content === 'crash') return process.exit(7);
       if (p.content === 'slow') return;
       if (p.content === 'fail') { emit('turn.failed', { error: { message: '模型请求失败' } }); turn = null; return; }

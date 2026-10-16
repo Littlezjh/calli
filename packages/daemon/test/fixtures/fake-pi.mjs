@@ -146,8 +146,13 @@ rl.on('line', (line) => {
     }
     case 'compact':
       if (cmd.customInstructions === 'explode') return reply(null, false, 'nothing to compact');
+      out({ type: 'compaction_start', reason: 'manual' });
       contextUnknown = true;
-      const complete = () => reply({ summary: `summary ${cmd.customInstructions ?? ''}`.trim(), tokensBefore: 150000, estimatedTokensAfter: 32000 });
+      const complete = () => {
+        const result = { summary: `summary ${cmd.customInstructions ?? ''}`.trim(), tokensBefore: 150000, estimatedTokensAfter: 32000 };
+        out({ type: 'compaction_end', reason: 'manual', result, aborted: false });
+        reply(result);
+      };
       const cancelCompact = () => reply(null, false, 'compaction aborted');
       pendingCompact = cancelCompact;
       setTimeout(() => {
@@ -175,6 +180,18 @@ rl.on('line', (line) => {
       return reply({ sessionId, isStreaming: running, model: MODELS[0] });
     case 'prompt': {
       if (running) return reply(null, false, 'already streaming');
+      if (cmd.message.startsWith('auto-compact')) {
+        reply({ disposition: 'started' });
+        const prefix = cmd.message.includes('legacy') ? 'auto_' : '';
+        for (let i = 0; i < (cmd.message.includes('twice') ? 2 : 1); i++) {
+          out({ type: `${prefix}compaction_start`, reason: 'threshold' });
+          out({ type: `${prefix}compaction_end`, reason: 'threshold', aborted: cmd.message.includes('cancel'),
+            ...(cmd.message.includes('fail') ? { errorMessage: 'summary failed' } : cmd.message.includes('cancel') || cmd.message.includes('skip') ? {} : { result: { summary: 'summary', tokensBefore: 150000 } }) });
+        }
+        out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: '继续处理。' } });
+        out({ type: 'agent_settled', aborted: false });
+        return;
+      }
       const collaboration = coordinationFixture(cmd.message);
       if (collaboration !== null) {
         reply({ disposition: 'started' });
@@ -188,6 +205,16 @@ rl.on('line', (line) => {
       running = true;
       reply({ disposition: 'started' });
       out({ type: 'agent_start' });
+      if (cmd.message.includes('inspect-work-mode')) {
+        out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: JSON.stringify({ message: cmd.message, images: cmd.images ?? [] }) } });
+        running = false;
+        return out({ type: 'agent_settled', aborted: false });
+      }
+      if (cmd.message.startsWith('[Hub work mode: plan]')) {
+        out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: '设计方案：\n\n1. 阅读相关代码，确认改动范围。\n2. 实现修改并运行测试。\n\n等你要求开始执行。' } });
+        running = false;
+        return out({ type: 'agent_settled', aborted: false });
+      }
       out({ type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', contentIndex: 0, delta: 'hmm' } });
       // "slowthink" spaces the turn out, so a UI test can watch it run. It interleaves tool calls
       // with text on purpose: a group, then text, then another group — the order the view must

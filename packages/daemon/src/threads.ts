@@ -1,3 +1,5 @@
+import { UserInputs } from './user-input.js';
+import type { WorkMode } from './adapters/types.js';
 import { diagnosticFailure } from './adapters/diagnostics.js';
 import type { CoordinationManager } from './coordination.js';
 import { randomUUID } from 'node:crypto';
@@ -75,6 +77,7 @@ export type ThreadView = Omit<ThreadRecord, 'worktree'> & {
 };
 
 interface QueuedTurn {
+  workMode?: WorkMode;
   mentions?: unknown[];
   id: string;
   text: string;
@@ -175,6 +178,8 @@ export class ThreadManager {
   private readonly sessions = new Map<string, AgentSession>();
   /** Turns in flight. `cancelRequested` covers cancels that arrive before the agent session exists. */
   private readonly running = new Map<string, { turnId: string; cancelRequested: boolean }>();
+  readonly inputs = new UserInputs((thread, turn, type, data) => this.emitThreadEvent(thread, turn, type, data));
+  private readonly changingModes = new Set<string>();
   private readonly approvals = new Map<string, PendingApproval>();
   private readonly listeners = new Set<Listener>();
   /** Agent sessions being imported right now, so the same one is not imported twice in parallel. */
@@ -423,6 +428,8 @@ export class ThreadManager {
           cwd,
           title: `${thread.title}（分叉）`,
           permissionMode: thread.permissionMode,
+          workMode: thread.workMode,
+          speed: thread.speed,
           model: thread.model,
           effort: thread.effort,
           forkedFrom: thread.id,
@@ -562,6 +569,7 @@ export class ThreadManager {
     }
     let waiting = false;
     for (const p of this.approvals.values()) if (p.threadId === thread.id) waiting = true;
+    if (this.inputs.waiting(thread.id)) waiting = true;
     const queued = (this.queues.get(thread.id) ?? []).map((q) => ({ id: q.id, text: q.text, images: q.images.length, videos: q.videos.length }));
     // The terminal wrote to this session after the hub last did: the UI asks before sending more.
     const terminalActivity = thread.externalAt !== null && (thread.hubTurnAt === null || thread.externalAt > thread.hubTurnAt);
@@ -825,6 +833,8 @@ export class ThreadManager {
     updates: {
       title?: string;
       pinned?: boolean;
+      workMode?: WorkMode;
+      speed?: string | null;
       permissionMode?: string;
       model?: string | null;
       effort?: string | null;
@@ -835,6 +845,13 @@ export class ThreadManager {
   ): Promise<ThreadView> {
     const thread = this.getThread(id);
     const patch: Record<string, unknown> = {};
+    if (updates.speed !== undefined) {
+      patch.speed = updates.speed === null ? (thread.speed ? 'default' : null) : await this.validateSpeed(thread.agent, updates.model === undefined ? thread.model : updates.model, updates.speed);
+    } else if (updates.model !== undefined && thread.speed) {
+      const adapter = this.adapters.get(thread.agent)!;
+      const option = await this.modelOption(adapter, updates.model);
+      if (!option?.speeds?.some(s => s.id === thread.speed)) patch.speed = 'default';
+    }
     if (updates.title !== undefined) patch.title = String(updates.title).trim() || thread.title;
     if (updates.pinned !== undefined) patch.pinned = Boolean(updates.pinned);
     if (updates.sectionId !== undefined) {
@@ -854,6 +871,19 @@ export class ThreadManager {
     if (updates.unread !== undefined) {
       if (typeof updates.unread !== 'boolean') throw new HttpError(400, 'unread must be true or false');
       patch.unread = updates.unread;
+    }
+    if (updates.workMode !== undefined) {
+      const mode = this.validateWorkMode(thread.agent, updates.workMode);
+      if (this.running.has(id) || this.changingModes.has(id)) throw new HttpError(409, '请等待当前轮结束后切换模式');
+      if (updates.permissionMode !== undefined || updates.model !== undefined || updates.effort !== undefined || updates.speed !== undefined) throw new HttpError(400, '请单独修改工作模式');
+      this.changingModes.add(id);
+      try {
+        const session = this.sessions.get(id);
+        if (session?.setWorkMode) await session.setWorkMode(mode);
+        else if (session) await this.dropSession(id);
+        this.store.updateThread(id, { workMode: mode });
+      } finally { this.changingModes.delete(id); }
+      patch.workMode = mode;
     }
     if (updates.permissionMode !== undefined) {
       const mode = this.validatePermissionMode(thread.agent, updates.permissionMode);
@@ -892,6 +922,9 @@ export class ThreadManager {
         await this.restartForChange(thread, 'effort');
       }
     }
+    if (patch.speed !== undefined) {
+      await this.applyLive(thread, 'speed', s => s.setSpeed?.(patch.speed as string | null) ?? Promise.resolve(false));
+    }
     this.store.updateThread(id, patch as any);
     this.emitThreadEvent(id, null, 'thread.updated', {});
     return this.threadView(id);
@@ -903,7 +936,7 @@ export class ThreadManager {
    */
   private async applyLive(
     thread: ThreadRecord,
-    what: 'model' | 'effort',
+    what: 'model' | 'effort' | 'speed',
     apply: (s: AgentSession) => Promise<boolean>,
   ): Promise<void> {
     const session = this.sessions.get(thread.id);
@@ -1009,6 +1042,14 @@ export class ThreadManager {
     return options.find((o) => o.id === 'default') ?? options.find((o) => o.isDefault);
   }
 
+  private async validateSpeed(agent: string, model: string | null, speed: unknown): Promise<string> {
+    const adapter = this.adapters.get(agent);
+    const option = adapter?.capabilities.speed ? await this.modelOption(adapter, model) : undefined;
+    if (adapter?.capabilities.speed && speed === 'default') return speed;
+    if (typeof speed !== 'string' || !option?.speeds?.some(s => s.id === speed)) throw new HttpError(400, '当前模型不支持此速度');
+    return speed;
+  }
+
   private async validateEffort(agent: string, model: string | null, effort: string): Promise<EffortLevel> {
     const supported = await this.effortsFor(agent, model);
     if (supported.length === 0) {
@@ -1043,11 +1084,11 @@ export class ThreadManager {
    */
   listEventsSince(threadId: string, afterSeq: number): StoredEvent[] {
     this.getThread(threadId);
-    return coalesceToolEvents(compactDeltas(this.store.listEvents(threadId, afterSeq, -1)));
+    return compactDeltas(coalesceToolEvents(this.store.iterateEvents(threadId, afterSeq)));
   }
 
   /** How far back, in stored events, one page of history reaches before stopping at a turn's start. */
-  private static readonly PAGE_BUDGET = 20_000;
+  private static readonly PAGE_BUDGET = 2_000;
 
   /**
    * One page of a thread's history for the view: the newest turns, or the ones just before
@@ -1055,7 +1096,7 @@ export class ThreadManager {
    */
   listEventsPage(threadId: string, beforeSeq?: number): StoredEvent[] {
     this.getThread(threadId);
-    return coalesceToolEvents(compactDeltas(this.store.listEventsPage(threadId, ThreadManager.PAGE_BUDGET, beforeSeq)));
+    return compactDeltas(coalesceToolEvents(this.store.iterateEventsPage(threadId, ThreadManager.PAGE_BUDGET, beforeSeq)));
   }
 
   /**
@@ -1153,7 +1194,15 @@ export class ThreadManager {
     return { added: fresh.length, terminalActivity: true };
   }
 
+  private validateWorkMode(agent: string, value: unknown): WorkMode {
+    if (value !== 'execute' && value !== 'plan') throw new HttpError(400, '工作模式无效');
+    if (value === 'plan' && !this.adapters.get(agent)?.capabilities.workModes?.includes('plan')) throw new HttpError(400, '此智能体不支持计划模式');
+    return value;
+  }
+
   async createThread(input: {
+    workMode?: WorkMode;
+    speed?: string | null;
     agent: string;
     cwd: string;
     title?: string;
@@ -1190,8 +1239,10 @@ export class ThreadManager {
       adapter.capabilities.permissionModes.length === 0
         ? 'auto_edit'
         : this.validatePermissionMode(input.agent, input.permissionMode ?? adapter.capabilities.defaultPermissionMode ?? 'auto_edit');
+    const workMode = this.validateWorkMode(input.agent, input.workMode ?? 'execute');
     const model = input.model ? await this.validateModel(input.agent, input.model) : null;
     const effort = input.effort ? await this.validateEffort(input.agent, model, input.effort) : null;
+    const speed = input.speed == null ? null : await this.validateSpeed(input.agent, model, input.speed);
     const title = (input.title ?? '').trim() || 'New thread';
     // A new thread has no conversation to move, so any agent can start in a worktree.
     let added: { main: string; tree: Worktree; cwd: string } | null = null;
@@ -1216,6 +1267,8 @@ export class ThreadManager {
         cwd: added?.cwd ?? cwd,
         title,
         permissionMode,
+        workMode,
+        speed,
         model,
         effort,
         handover,
@@ -1311,15 +1364,19 @@ export class ThreadManager {
    */
   async startTurn(
     threadId: string,
-    input: { text?: unknown; images?: unknown; videos?: unknown; queue?: unknown; mentions?: unknown; handover?: unknown; scheduled?: unknown },
+    input: { workMode?: unknown; text?: unknown; images?: unknown; videos?: unknown; queue?: unknown; mentions?: unknown; handover?: unknown; scheduled?: unknown },
     delivery?: { turnId: string; source: Record<string, unknown>; displayText: string; claim: () => void },
   ): Promise<{ turnId: string } | { queued: true; id: string }> {
     const thread = this.getThread(threadId);
+    if (this.changingModes.has(threadId)) throw new HttpError(409, '模式正在切换，请稍后发送');
+    if (input.workMode !== undefined) thread.workMode = this.validateWorkMode(thread.agent, input.workMode);
     const originalText = typeof input.text === 'string' ? input.text.trim() : '';
+    if (thread.workMode === 'plan' && /^\/goal(?:\s|$)/.test(originalText) && !['/goal', '/goal pause', '/goal clear'].includes(originalText)) throw new HttpError(409, '请切到执行模式后启动目标');
     const mentions = Array.isArray(input.mentions) && input.mentions.length ? input.mentions : undefined;
     const rawText = this.coordination?.mentionText(threadId, originalText, mentions) ?? originalText;
-    const nativeGoal = this.adapters.get(thread.agent)?.capabilities.goal && /^\/goal(?:\s|$)/.test(rawText);
-    const text = nativeGoal ? rawText : rawText ? (this.coordination?.instructions(threadId, rawText) ?? rawText) : '';
+    // Slash commands have their own argument grammar; hidden instructions become unwanted arguments.
+    const slashCommand = /^\/\S+/.test(rawText);
+    const text = slashCommand ? rawText : rawText ? (this.coordination?.instructions(threadId, rawText) ?? rawText) : '';
     const rawImages = Array.isArray(input.images) ? input.images : [];
     const storedVideos = this.attachments.videos(threadId, input.videos);
     const videoIds = storedVideos.map(v => v.id);
@@ -1354,7 +1411,7 @@ export class ThreadManager {
       const queue = this.queues.get(threadId) ?? [];
       if (queue.length >= MAX_QUEUED) throw new HttpError(409, `at most ${MAX_QUEUED} messages can wait in a thread`);
       this.attachments.check(rawImages); // a bad image is refused now, not when its turn comes
-      const queued: QueuedTurn = { id: randomUUID(), text: originalText, images: rawImages, videos: videoIds, ...(mentions ? { mentions } : {}) };
+      const queued: QueuedTurn = { workMode: thread.workMode ?? 'execute', id: randomUUID(), text: originalText, images: rawImages, videos: videoIds, ...(mentions ? { mentions } : {}) };
       this.queues.set(threadId, [...queue, queued]);
       this.emitThreadEvent(threadId, null, 'thread.updated', {});
       return { queued: true, id: queued.id };
@@ -1367,6 +1424,7 @@ export class ThreadManager {
       if (option?.images === false && !option.imagesVia) throw new HttpError(400, `${option.label} cannot read images; pick another model`);
       // The model lookup above can take a moment, so check again before claiming the thread.
       if (this.running.has(threadId)) throw new HttpError(409, 'a turn is already running in this thread');
+      if (this.changingModes.has(threadId) || input.workMode === undefined && this.getThread(threadId).workMode !== thread.workMode) throw new HttpError(409, '工作模式已变化，请重新发送');
     }
     const { stored, images } = this.attachments.save(threadId, rawImages);
     const promptText = text + this.attachments.videoNote(threadId, storedVideos);
@@ -1376,13 +1434,15 @@ export class ThreadManager {
       this.store.transaction(() => {
         delivery?.claim();
         this.running.set(threadId, { turnId, cancelRequested: false });
-        this.store.updateThread(threadId, { status: 'running', hubTurnAt: new Date().toISOString() }, { touch: true });
+        this.store.updateThread(threadId, { status: 'running', workMode: thread.workMode ?? 'execute', hubTurnAt: new Date().toISOString() }, { touch: true });
         if (thread.title === 'New thread') {
           const title = askedText(rawText).split('\n')[0].slice(0, 60) || (storedVideos.length ? '视频' : '图片');
           this.store.updateThread(threadId, { title });
         }
         this.emitThreadEvent(threadId, turnId, 'turn.started', {
           text: promptText,
+          speed: thread.speed,
+          workMode: thread.workMode ?? 'execute',
           ...(delivery ? { coordination: delivery.source } : {}),
           ...(promptText !== rawText ? { displayText: delivery?.displayText ?? rawText.split('\n\n[指定协作对象]')[0] } : {}),
           ...(stored.length ? { images: stored } : {}),
@@ -1484,7 +1544,7 @@ export class ThreadManager {
     const [next, ...rest] = queue;
     if (rest.length) this.queues.set(threadId, rest);
     else this.queues.delete(threadId);
-    this.startTurn(threadId, { text: next.text, images: next.images, videos: next.videos, mentions: next.mentions }).catch((err) => {
+    this.startTurn(threadId, { workMode: next.workMode, text: next.text, images: next.images, videos: next.videos, mentions: next.mentions }).catch((err) => {
       // The thread was archived or deleted in the meantime, or the message is no longer acceptable.
       console.error(`could not send a queued message: ${err instanceof Error ? err.message : err}`);
       this.queues.delete(threadId);
@@ -1509,6 +1569,7 @@ export class ThreadManager {
   private async stopTurn(threadId: string): Promise<void> {
     const run = this.running.get(threadId);
     if (run) run.cancelRequested = true;
+    this.inputs.cancel(threadId);
     for (const [approvalId, p] of this.approvals) {
       if (p.threadId === threadId) this.resolveApproval(approvalId, { cancelled: true });
     }
@@ -1574,6 +1635,7 @@ export class ThreadManager {
       this.emitThreadEvent(thread.id, turnId, 'turn.error', { message, ...(exhausted ? { code: 'plan_exhausted' } : {}) });
       await this.dropSession(thread.id);
     } finally {
+      this.inputs.cancel(thread.id);
       this.running.delete(thread.id);
       // The thread may have been deleted while its last turn was winding down.
       if (this.store.getThread(thread.id)) {
@@ -1586,7 +1648,10 @@ export class ThreadManager {
 
   private async ensureSession(thread: ThreadRecord): Promise<AgentSession> {
     const existing = this.sessions.get(thread.id);
-    if (existing) return existing;
+    if (existing) {
+      if (existing.setWorkMode) await existing.setWorkMode(thread.workMode ?? 'execute');
+      return existing;
+    }
     const adapter = this.adapters.get(thread.agent);
     if (!adapter) throw new Error(`unknown agent: ${thread.agent}`);
     const session = await adapter.start({
@@ -1594,6 +1659,18 @@ export class ThreadManager {
       cwd: thread.cwd,
       resumeId: thread.agentSessionId ?? undefined,
       permissionMode: thread.permissionMode as PermissionMode,
+      speed: thread.speed,
+      workMode: thread.workMode ?? 'execute',
+      onSpeed: (speed) => {
+        if (!this.store.getThread(thread.id)) return;
+        this.store.updateThread(thread.id, { speed });
+        this.emitThreadEvent(thread.id, null, 'thread.updated', {});
+      },
+      onWorkMode: (workMode) => {
+        if (!this.store.getThread(thread.id)) return;
+        this.store.updateThread(thread.id, { workMode });
+        this.emitThreadEvent(thread.id, null, 'thread.updated', {});
+      },
       model: thread.model ?? undefined,
       effort: (thread.effort ?? undefined) as EffortLevel | undefined,
     });
@@ -1613,6 +1690,9 @@ export class ThreadManager {
   private hooksFor(threadId: string, turnId: string): TurnHooks {
     return {
       emit: (ev: EmittedEvent) => this.emitThreadEvent(threadId, turnId, ev.type, ev.data),
+      requestInput: req => this.running.get(threadId)?.cancelRequested
+        ? Promise.resolve({ cancelled: true }) : this.inputs.request(threadId, turnId, req),
+      cancelInput: id => this.inputs.cancel(threadId, id),
       requestApproval: (req: ApprovalRequest) => {
         const approvalId = randomUUID();
         this.emitThreadEvent(threadId, turnId, 'approval.request', {

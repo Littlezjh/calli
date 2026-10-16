@@ -1,3 +1,4 @@
+import type { WorkMode } from './types.js';
 import { cliDiagnostic } from './diagnostics.js';
 import { sessionEnvironment } from './types.js';
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
@@ -236,13 +237,13 @@ export function parseAgyModels(stdout: string): ModelOption[] {
 }
 
 /** Flags for one process. Exported so the mapping from the hub's settings is tested directly. */
-export function agyArgs(opts: { conversationId?: string; permissionMode?: PermissionMode; model?: string }): string[] {
+export function agyArgs(opts: { conversationId?: string; permissionMode?: PermissionMode; model?: string; workMode?: WorkMode }): string[] {
   return [
     '--input-format',
     'stream-json',
     '--output-format',
     'stream-json',
-    ...(opts.permissionMode === 'full_access' ? ['--dangerously-skip-permissions'] : ['--mode', 'accept-edits']),
+    ...(opts.workMode === 'plan' ? ['--mode', 'plan'] : opts.permissionMode === 'full_access' ? ['--dangerously-skip-permissions'] : ['--mode', 'accept-edits']),
     ...(opts.model ? ['--model', opts.model] : []),
     ...(opts.conversationId ? ['--conversation', opts.conversationId] : []),
     '-p=', // print mode with no prompt of its own: prompts arrive on stdin
@@ -283,7 +284,7 @@ class AgySession implements AgentSession {
   /** Starts a process on this session's conversation and waits until it has announced itself. */
   async launch(): Promise<void> {
     const [bin, ...base] = this.command;
-    const args = agyArgs({ conversationId: this.agentSessionId || undefined, permissionMode: this.permissionMode, model: this.opts.model });
+    const args = agyArgs({ conversationId: this.agentSessionId || undefined, permissionMode: this.permissionMode, model: this.opts.model, workMode: this.opts.workMode });
     const child = spawn(bin, [...base, ...args], { cwd: this.opts.cwd, stdio: ['pipe', 'pipe', 'pipe'], env: sessionEnvironment(this.env, this.opts.coordinationEnv) });
     this.child = child;
     this.buffer = '';
@@ -399,6 +400,12 @@ class AgySession implements AgentSession {
   }
 
   /** Takes effect on the next turn: the level is a flag of the process. */
+  async setWorkMode(mode: WorkMode): Promise<void> {
+    if ((this.opts.workMode ?? 'execute') === mode) return;
+    this.opts.workMode = mode;
+    this.stale = true;
+  }
+
   async setPermissionMode(mode: PermissionMode): Promise<void> {
     if (mode === this.permissionMode) return;
     this.permissionMode = mode;
@@ -433,6 +440,7 @@ export class AgyAdapter implements AgentAdapter {
   readonly label = 'Antigravity';
   readonly icon = ANTIGRAVITY_ICON;
   readonly capabilities = {
+    workModes: ['execute', 'plan'] as const,
     coordination: true,
     resume: true,
     approvals: false,

@@ -2250,6 +2250,37 @@ test('events endpoint: a page begins where a turn begins, and streamed fragments
   assert.equal((await api('/api/threads/nope/events?tail=1')).status, 404);
 });
 
+test('history pages limit short turns too, and paging back preserves every event needed for replay', async () => {
+  const thread = await newThread({ agent: 'pi', cwd: workdir });
+  for (let i = 0; i < 8; i++) {
+    writeLog(thread.id, `turn-${i}`, [
+      ['turn.started', { text: `question ${i}` }],
+      ['tool.start', { id: `tool-${i}`, kind: 'execute', title: 'check', status: 'in_progress' }],
+      ...Array.from({ length: 30 }, (_, n): ['tool.update', Record<string, unknown>] => ['tool.update', { id: `tool-${i}`, output: `snapshot ${n}\n${'output\n'.repeat(1000)}` }]),
+      ['tool.end', { id: `tool-${i}`, status: 'completed' }],
+      ['message.delta', { text: `answer ${i}` }],
+      ['turn.done', { stopReason: 'end_turn' }],
+    ]);
+  }
+  const page = async (query: string) => (await (await api(`/api/threads/${thread.id}/events?${query}`)).json()) as Logged[];
+  let current = await page('tail=1');
+  assert.deepEqual(current.filter(e => e.type === 'turn.started').map(e => e.data.text), ['question 5', 'question 6', 'question 7']);
+  let complete = current;
+  while (current[0].seq > 1) {
+    const older = await page(`before=${current[0].seq}`);
+    assert.ok(older.length > 0);
+    assert.ok(older.filter(e => e.type === 'turn.started').length <= 3);
+    assert.equal(older.at(-1)!.seq + 1, current[0].seq, 'page boundaries have no gaps');
+    complete = [...older, ...complete];
+    current = older;
+  }
+  assert.deepEqual(complete, await page('all=1'), 'paging reconstructs the same complete replay');
+  const tools = complete.filter(e => e.type === 'tool.end');
+  assert.equal(tools.length, 8);
+  assert.ok(tools.every(e => e.data.output.startsWith('snapshot 29\n') && e.data.status === 'completed'));
+  assert.equal(store.listEventsOfType(thread.id, 'tool.update').length, 240, 'stored history is unchanged');
+});
+
 test('SSE stream replays everything after the cursor, however long, before going live', async () => {
   const thread = await newThread({ agent: 'pi', cwd: workdir });
   // More than one page of the stored log, none of it mergeable.

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { coalesceToolEvents, type StoredEvent } from '../src/events.js';
+import { coalesceToolEvents, compactDeltas, type StoredEvent } from '../src/events.js';
 
 let seq = 0;
 function ev(type: string, data: Record<string, unknown>, turnId = 't1'): StoredEvent {
@@ -89,4 +89,29 @@ test('interleaved calls and other events stay apart; each run merges on its own'
   const bEnd = out.find((e) => e.type === 'tool.end' && e.data.id === 'b');
   assert.equal(bEnd.data.status, 'completed');
   assert.equal(bEnd.data.output, undefined);
+});
+
+test('cursor replay merges tool snapshots before buffering text, preserving diff, output and turn boundaries', () => {
+  const diff = [{ type: 'diff', path: 'a.ts', oldText: 'old', newText: 'new' }];
+  const events = [
+    ev('turn.started', { text: 'go' }),
+    ev('reasoning.delta', { text: 'think' }),
+    ev('reasoning.delta', { text: 'ing' }),
+    ev('tool.start', { id: 'a', kind: 'edit' }),
+    ev('tool.update', { id: 'a', title: 'Edit a.ts', content: diff }),
+    ...Array.from({ length: 1000 }, (_, i) => ev('tool.update', { id: 'a', output: `progress ${i}` })),
+    ev('tool.end', { id: 'a', status: 'completed' }),
+    ev('message.delta', { text: 'all ' }),
+    ev('message.delta', { text: 'done' }),
+    ev('turn.done', {}),
+    ev('turn.started', { text: 'next' }, 't2'),
+    ev('tool.update', { id: 'a', output: 'new turn' }, 't2'),
+  ];
+  function* cursor() { yield* events; }
+  const result = compactDeltas(coalesceToolEvents(cursor()));
+  assert.deepEqual(result, coalesceToolEvents(compactDeltas(events)), 'changing the compaction order does not change replay');
+  const end = result.find(e => e.type === 'tool.end')!;
+  assert.deepEqual(end.data, { id: 'a', title: 'Edit a.ts', content: diff, output: 'progress 999', status: 'completed' });
+  assert.deepEqual(result.at(-1), events.at(-1), 'another turn is never merged into the previous one');
+  assert.equal(events.filter(e => e.type === 'tool.update').length, 1002, 'compaction does not mutate the input');
 });

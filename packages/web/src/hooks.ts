@@ -47,7 +47,7 @@ export function useListSwipe(enabled: boolean, open: boolean, setOpen: (open: bo
       start = null;
       const t = e.touches[0];
       const el = e.target instanceof Element ? e.target : null;
-      if (e.touches.length !== 1 || !el?.closest('.main, .sidebar') || el.closest('.pop-panel, .pop-scrim, .lightbox')) return;
+      if (e.touches.length !== 1 || !el?.closest('.main, .sidebar') || el.closest('.pop-panel, .pop-scrim, .command-menu, .lightbox')) return;
       if (open || t.clientX <= EDGE_PX) start = { x: t.clientX, y: t.clientY };
     };
     const onMove = (e: globalThis.TouchEvent) => {

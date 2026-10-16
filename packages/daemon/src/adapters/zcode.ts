@@ -1,3 +1,5 @@
+import { nativeQuestions } from './questions.js';
+import type { WorkMode } from './types.js';
 import { zcodeUsage } from './usage.js';
 import { timedUsage } from './live-usage.js';
 import { ZcodeUsageFile } from './zcode-usage.js';
@@ -16,7 +18,7 @@ import { quoteArg } from './session-location.js';
 import { ZcodeWire } from './zcode-wire.js';
 import { EFFORT_LEVELS, sessionEnvironment, type AgentAdapter, type AgentSession, type EffortLevel, type ModelOption, type StartOptions, type TurnHooks, type TurnInput, type TurnResult } from './types.js';
 
-export const ZCODE_BASIC_TOOLS = ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob'];
+export const ZCODE_BASIC_TOOLS = ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'AskUserQuestion', 'EnterPlanMode', 'ExitPlanMode'];
 const DELIVERY = 'desktop-continuous';
 const COMMANDS = [
   { name: 'goal', description: '设置原生目标并持续执行；可查看、暂停、继续或清除', hint: '[目标 | pause | resume | clear]' },
@@ -59,6 +61,15 @@ export function zcodeContextUsage(snapshot: any): EmittedEvent | null {
 
 export function mapZcodeEvent(event: any): EmittedEvent | null {
   const p = event.payload ?? {};
+  // The legacy protocol preserves the native compaction payload under session.updated.
+  if (event.type === 'session.updated' && typeof p.operationId === 'string' && p.display === 'separator'
+    && ['manual', 'auto', 'partial', 'reactive', 'session_memory'].includes(p.trigger)
+    && ['started', 'retrying', 'completed', 'failed', 'interrupted', 'skipped'].includes(p.status)) {
+    return { type: 'context.compaction', data: { id: p.operationId,
+      status: ['started', 'retrying'].includes(p.status) ? 'in_progress' : p.status,
+      automatic: ['auto', 'reactive', 'session_memory'].includes(p.trigger),
+    } };
+  }
   if (event.type === 'model.streaming' && (p.kind === 'text_delta' || p.kind === 'reasoning_delta') && typeof p.delta === 'string') {
     return { type: p.kind === 'text_delta' ? 'message.delta' : 'reasoning.delta', data: { text: p.delta } };
   }
@@ -76,7 +87,8 @@ export class ZcodeAdapter implements AgentAdapter {
   readonly label = 'ZCode';
   readonly icon = ZCODE_ICON;
   readonly capabilities = {
-    goal: { controls: ['pause'] as const },
+    workModes: ['execute', 'plan'] as const,
+    goal: { controls: ['pause'] as const, actions: ['set', 'show', 'pause', 'resume', 'clear'] as const },
     coordination: true, resume: true, approvals: true,
     // ZCode also treats toolAllowlist as approval exemptions, so permission tiers would mislead.
     permissionModes: [], effortLevels: [],
@@ -128,9 +140,11 @@ export class ZcodeAdapter implements AgentAdapter {
 }
 
 class ZcodeSession implements AgentSession {
+  private workMode: WorkMode = 'execute';
+  private onWorkMode?: (mode: WorkMode) => void;
   agentSessionId = '';
   private preferenceRequests = 0;
-  private active: { inputId: string; turnId?: string; goal?: boolean; error?: string; hooks: TurnHooks; resolve(result: TurnResult): void; reject(error: Error): void; text: string; seen: Set<string> } | null = null;
+  private active: { inputId: string; turnId?: string; goal?: boolean; compact?: boolean; error?: string; hooks: TurnHooks; resolve(result: TurnResult): void; reject(error: Error): void; text: string; seen: Set<string> } | null = null;
   private closed = false;
   private goalActive = false;
   private submission: Promise<void> | null = null;
@@ -144,13 +158,15 @@ class ZcodeSession implements AgentSession {
     wire.onClosed = (error) => { this.closed = true; this.active?.reject(error); this.active = null; };
   }
   async open(opts: StartOptions): Promise<any> {
+    this.onWorkMode = opts.onWorkMode;
+    this.workMode = opts.workMode ?? 'execute';
     const workspace = { workspacePath: opts.cwd, workspaceKey: opts.cwd };
     const model = opts.model ? selection(opts.model, opts.effort) : undefined;
     const thoughtLevel = opts.effort ?? model?.options?.reasoningLevel;
     const restrictions = { workspace, mcpServers: [], toolAllowlist: ZCODE_BASIC_TOOLS, dynamicWorkflowEnabled: false, offPeakToolEnabled: false };
     const snapshot = await this.wire.request(opts.resumeId ? 'session/resume' : 'session/create', opts.resumeId
       ? { ...restrictions, sessionId: opts.resumeId }
-      : { ...restrictions, mode: 'build', persistence: this.probe ? 'deferred' : 'immediate', titleGenerationEnabled: false, ...(model ? { model } : {}), ...(thoughtLevel ? { thoughtLevel } : {}) });
+      : { ...restrictions, mode: this.workMode === 'plan' ? 'plan' : 'build', persistence: this.probe ? 'deferred' : 'immediate', titleGenerationEnabled: false, ...(model ? { model } : {}), ...(thoughtLevel ? { thoughtLevel } : {}) });
     if (!this.preferenceRequests) throw new Error('此 zcode 未请求运行时偏好，无法保证关闭记忆，请升级 zcode');
     if (typeof snapshot?.session?.sessionId !== 'string') throw new Error('zcode 未返回会话 ID');
     this.agentSessionId = snapshot.session.sessionId;
@@ -160,8 +176,9 @@ class ZcodeSession implements AgentSession {
       throw new Error('zcode 没有可用模型。请检查 API 模型配置，或在 zcode 中登录 BigModel / Z.ai 个人 Coding Plan 后刷新模型列表；其他账号套餐模型暂未支持。');
     }
     this.goalActive = (snapshot.session.target ?? snapshot.projection?.target)?.status === 'active';
+    if (this.workMode === 'plan' && this.goalActive) throw new Error('请先暂停当前目标，再进入计划模式');
     if (opts.resumeId) {
-      await this.wire.request('session/setMode', { sessionId: this.agentSessionId, mode: 'build' });
+      await this.wire.request('session/setMode', { sessionId: this.agentSessionId, mode: this.workMode === 'plan' ? 'plan' : 'build' });
       if (opts.model) await this.setModel(opts.model);
     }
     if (opts.effort) await this.setEffort(opts.effort);
@@ -171,6 +188,13 @@ class ZcodeSession implements AgentSession {
     }
     return snapshot;
   }
+  async setWorkMode(mode: WorkMode): Promise<void> {
+    if (mode === this.workMode) return;
+    if (mode === 'plan' && this.goalActive) throw new Error('请先暂停当前目标，再进入计划模式');
+    await this.wire.request('session/setMode', { sessionId: this.agentSessionId, mode: mode === 'plan' ? 'plan' : 'build' });
+    this.workMode = mode;
+  }
+
   async setModel(model: string): Promise<boolean> {
     const snapshot = await this.wire.request('session/setModel', { sessionId: this.agentSessionId, model: selection(model), persistAsWorkspaceLastUsed: false });
     this.usage = zcodeContextUsage(snapshot);
@@ -274,7 +298,7 @@ class ZcodeSession implements AgentSession {
     }
     const inputId = randomUUID();
     return new Promise<TurnResult>((resolve, reject) => {
-      const active = { inputId, hooks, resolve, reject, goal: !!goal || (!compact && this.goalActive), text: '', seen: new Set<string>() };
+      const active = { inputId, hooks, resolve, reject, compact, goal: !!goal || (!compact && this.goalActive), text: '', seen: new Set<string>() };
       this.active = active;
       this.submission = this.wire.request(goal ? 'session/goal' : compact ? 'session/compact' : 'session/send', {
         sessionId: this.agentSessionId, inputId,
@@ -336,6 +360,12 @@ class ZcodeSession implements AgentSession {
   private finish(result: TurnResult): void { const active = this.active; this.active = null; active?.resolve(result); }
   private event(method: string, event: any): void {
     const active = this.active;
+    // The legacy protocol maps native SessionModeChanged to session.updated.
+    if (method === 'session/event' && event?.sessionId === this.agentSessionId
+      && (event.type === 'session_mode_changed' || event.type === 'session.updated' && typeof event.payload?.planEnabled === 'boolean')) {
+      const mode = (event.payload?.planEnabled ?? event.payload?.mode === 'plan') ? 'plan' : 'execute';
+      if (mode !== this.workMode) { this.workMode = mode; this.onWorkMode?.(mode); }
+    }
     if (method === 'state.updated' && active?.goal && event?.sessionId === this.agentSessionId
       && ['goal_continuation_completed', 'goal_continuation_failed', 'prompt_completed', 'prompt_failed'].includes(event.reason)) {
       // Native continuation owns all its turns, including verification between turns.
@@ -361,6 +391,7 @@ class ZcodeSession implements AgentSession {
     const terminal = event.type === 'turn.completed' || event.type === 'turn.failed';
     if ((!active.turnId || event.turnId !== active.turnId) && !(terminal && p.inputId === active.inputId)) return;
     const mapped = mapZcodeEvent(event);
+    if (mapped?.type === 'context.compaction' && active.compact) return;
     if (mapped) { active.hooks.emit(mapped); if (mapped.type === 'message.delta') active.text += mapped.data.text; }
     if (event.type === 'turn.completed') {
       if (!active.text && p.response) active.hooks.emit({ type: 'message.delta', data: { text: p.response } });
@@ -380,6 +411,17 @@ class ZcodeSession implements AgentSession {
     if (method === 'interaction/requestProviderRuntimeHeaders') return this.accounts
       ? this.accounts.authorize(params, this.agentSessionId)
       : { headersApplied: false, errorMessage: '未找到 zcode 账号凭据；请在 zcode 中登录 BigModel / Z.ai 个人 Coding Plan，或配置 API 模型' };
+    if (method === 'interaction/requestUserInput') {
+      const active = this.active;
+      if (!active?.hooks.requestInput || params?.sessionId !== this.agentSessionId) return { action: 'cancel' };
+      const questions = nativeQuestions(params.questions);
+      if (!questions.length) return { action: 'cancel' };
+      const plan = params.schema?.interaction === 'plan_approval';
+      if (plan) for (const q of questions) for (const option of q.options) if (option.value === 'approve') option.label = '开始执行';
+      const answer = await active.hooks.requestInput({ id: params.requestId, title: plan ? '计划已准备好' : params.prompt || '需要你的意见', kind: plan ? 'plan' : 'question', plan: plan ? params.input?.plan : undefined, questions });
+      if (active !== this.active || 'cancelled' in answer) return { action: 'cancel' };
+      return { action: 'accept', content: { answers: Object.fromEntries(questions.map(q => [q.question, answer.answers[q.id].join(', ')])) } };
+    }
     if (method !== 'interaction/requestPermission') return undefined;
     const active = this.active;
     if (!active || params?.sessionId !== this.agentSessionId) return { decision: 'deny' };

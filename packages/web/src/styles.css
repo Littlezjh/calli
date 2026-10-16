@@ -1342,6 +1342,8 @@ html.list-open body {
   color: var(--text);
 }
 
+.work-label { font-variant-numeric: tabular-nums; }
+
 .work-body {
   display: flex;
   flex-direction: column;
@@ -1368,6 +1370,18 @@ html.list-open body {
 .work-note {
   margin: 6px 0;
 }
+
+.context-compaction {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 32px;
+  padding: 5px 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.context-compaction svg { flex-shrink: 0; }
 
 .thinking-toggle {
   display: inline-flex;
@@ -1441,6 +1455,11 @@ html.list-open body {
   opacity: 1;
 }
 
+/* Operation marks keep their shape beside long commands on narrow screens. */
+.step-head > svg {
+  flex-shrink: 0;
+}
+
 /* A stretch of calls said in one line. The chevron follows the words; the line opens to the
    calls themselves, set in from a hairline so they read as belonging to it. */
 .step-run {
@@ -1452,10 +1471,6 @@ html.list-open body {
   align-self: flex-start;
   width: auto;
   max-width: 100%;
-}
-
-.run-head > svg {
-  flex-shrink: 0;
 }
 
 .run-title {
@@ -1470,7 +1485,7 @@ html.list-open body {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  margin: 0 0 6px 7px;
+  margin: 0 0 6px 8px;
   padding-left: 16px;
   border-left: 1px solid var(--border);
 }
@@ -2304,7 +2319,7 @@ html.list-open body {
   font-weight: 600;
 }
 
-/* ---------- Slash command menu ---------- */
+/* ---------- Shared add and slash command palette ---------- */
 
 .command-menu {
   position: absolute;
@@ -2312,20 +2327,41 @@ html.list-open body {
   right: 0;
   bottom: calc(100% + 8px);
   z-index: 30;
-  max-height: min(320px, 45vh);
+  max-height: min(320px, calc(var(--vvh, 100dvh) * 0.45));
   overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
   padding: 6px;
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   background: var(--surface);
   box-shadow: var(--shadow-pop);
   animation: pop-in 0.14s cubic-bezier(0.2, 0.8, 0.2, 1);
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-strong) transparent;
+}
+
+/* The height limit and overflow belong to one element, including on iOS Safari. */
+.command-search { position: sticky; top: -6px; z-index: 1; background: var(--surface); }
+.command-menu > .composer-menu-footer { position: sticky; bottom: -6px; z-index: 1; width: 100%; background: var(--surface); }
+.command-content { display: contents; }
+.command-check { display: flex; margin-left: auto; color: var(--text); }
+.command-item:disabled { opacity: 0.5; }
+.catalog-menu .command-item { align-items: flex-start; gap: 10px; min-height: 54px; padding: 9px 10px; }
+.catalog-menu .command-icon { align-self: flex-start; padding-top: 3px; }
+.catalog-menu .command-content { display: flex; flex-direction: column; flex: 1; min-width: 0; gap: 3px; }
+.catalog-menu .command-name { max-width: 100%; font-family: inherit; font-size: 14px; }
+.catalog-menu .command-desc { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; white-space: normal; overflow-wrap: anywhere; }
+
+@media (min-width: 641px) {
+  .command-menu { max-height: min(480px, 60dvh); }
+  .command-menu .command-item { min-height: 40px; align-items: center; }
 }
 
 .command-item {
+  scroll-margin-block: 44px;
   display: flex;
   align-items: baseline;
   gap: 14px;
@@ -2333,7 +2369,7 @@ html.list-open body {
   min-height: 34px;
   padding: 6px 10px;
   border: 0;
-  border-radius: 9px;
+  border-radius: var(--radius-sm);
   background: transparent;
   text-align: left;
 }
@@ -4783,6 +4819,57 @@ input.picker-search {
 .tool-btn.blocked {
   opacity: 0.4;
 }
+
+.pop:has(> .composer-add) {
+  position: relative;
+  flex: none;
+}
+
+.tool-btn.composer-add {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-pill);
+}
+
+.composer-add.plan-active {
+  background: var(--active);
+  color: var(--text);
+}
+
+.pop > .pop-panel.composer-add-menu {
+  display: flex;
+  flex-direction: column;
+  position: absolute;
+  inset: auto auto calc(100% + 8px) 0;
+  width: 280px;
+  min-width: 0;
+  max-width: calc(100vw - 56px);
+  max-height: 60dvh;
+  overflow: hidden;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  animation: pop-in 0.14s ease-out;
+}
+
+.composer-add-menu .pop-item {
+  align-items: center;
+  min-height: 46px;
+  border-radius: var(--radius-sm);
+}
+
+.composer-add-menu .pop-item-icon { margin-top: 0; }
+.composer-add-menu .pop-item:disabled { opacity: 0.5; }
+.composer-add-menu .pop-item-hint { overflow-wrap: anywhere; }
+.composer-add-menu .pop-item-label { overflow-wrap: anywhere; }
+.composer-add-menu .pop-search { flex: none; }
+.composer-menu-list { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.composer-menu-heading { display: flex; align-items: center; flex: none; gap: 8px; min-height: 38px; color: var(--text); font-size: 14px; }
+.composer-menu-footer { display: flex; align-items: center; justify-content: space-between; flex: none; min-height: 42px; padding: 8px 12px; border: 0; border-top: 1px solid var(--border); background: transparent; color: var(--muted); text-align: left; font: inherit; font-size: 13px; }
+.composer-menu-footer:hover { background: var(--hover); color: var(--text); }
+.goal-objective { display: block; width: 100%; min-height: 100px; resize: vertical; margin-top: 8px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text); font: inherit; font-size: 16px; line-height: 1.6; }
+.goal-objective:focus { outline: none; border-color: var(--text); }
 
 .command-heading {
   padding: 8px 10px 3px;
@@ -7445,13 +7532,20 @@ input.picker-search {
 
 .gauge-fill { stroke: var(--positive); }
 
-/* The dial alone: a circle, not a pill. As tall as the phone's other tool buttons (40px), and as wide. */
+/* Keep both the popover wrapper and its dial square when stop and send share a narrow bar. */
+.pop:has(> .model-control-trigger.dial-only) {
+  flex: none;
+}
+
 .model-control-trigger.dial-only {
   justify-content: center;
+  flex: none;
   width: 40px;
   height: 40px;
-  min-height: 0;
+  min-width: 40px;
+  min-height: 40px;
   padding: 0;
+  border-radius: var(--radius-pill);
 }
 
 .model-control-panel {
@@ -7471,11 +7565,35 @@ input.picker-search {
   margin-bottom: 22px;
 }
 
-.effort-symbol {
+.model-speed-toggle {
   display: grid;
   place-items: center;
+  width: 30px;
   height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--muted);
+  cursor: pointer;
+}
+
+.model-speed-toggle:hover {
+  background: var(--hover);
+}
+
+.model-speed-toggle[aria-pressed='true'] {
+  color: var(--positive);
+  background: var(--positive-bg);
+}
+
+.model-speed-toggle[aria-pressed='true'] svg {
+  fill: currentColor;
+}
+
+.model-speed-toggle:focus-visible {
+  outline: 2px solid var(--positive);
+  outline-offset: 2px;
 }
 
 .effort-card-heading {
@@ -7600,11 +7718,17 @@ input.picker-search {
 
 @media (max-width: 640px) {
   .composer-bar { gap: 2px; }
+  .composer-bar .send-btn { margin-left: 0; }
+  .composer-bar .tool-btn.keep { padding-inline: 6px; }
+  .composer-bar .coord-tool { justify-content: center; width: 32px; padding: 0; }
+  .composer-bar > .pop:has(> .coord-tool),
+  .composer-bar > .pop:has(> .usage) { flex: none; }
   .composer-bar .usage { padding-inline: 4px; }
   .model-control-trigger { gap: 4px; padding-inline: 6px; }
   .model-control-panel { width: auto; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
   .effort-card { padding: 10px 12px 12px; }
-  .effort-card-head { margin-bottom: 24px; }
+  .effort-card-head { grid-template-columns: 40px minmax(0, 1fr) 40px; margin-bottom: 24px; }
+  .model-speed-toggle, .effort-reset { width: 40px; height: 40px; }
   .effort-slider { height: 38px; }
   .effort-thumb { width: 30px; height: 30px; }
   .effort-rail { inset-inline: 19px; }
@@ -7853,6 +7977,20 @@ button.coord-row-name { cursor: pointer; }
 .coord-setup { padding: 10px; min-width: 260px; }
 .coord-setup p { font-size: 12px; color: var(--muted); line-height: 1.6; }
 .coord-setup .pop-item { overflow-wrap: anywhere; white-space: normal; }
+.coord-picker-panel { width: 340px; max-width: calc(100vw - 32px); }
+.coord-picker { min-width: 0; }
+.coord-picker-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px; }
+.coord-picker-head strong { flex: 1; font-size: 14px; }
+.coord-picker-head .tool-btn { gap: 6px; font-size: 12px; }
+.coord-picker-hint { margin: 4px 10px 12px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.coord-picker-list { max-height: 45dvh; overflow-y: auto; overscroll-behavior: contain; }
+.coord-pick .pop-item-icon { align-self: center; margin-top: 0; }
+.coord-pick.chosen { background: var(--active); }
+.coord-row:focus-within { background: var(--active); box-shadow: 0 0 0 1px var(--border-strong); }
+@media (max-width: 640px) {
+  .coord-picker-panel { width: auto; max-width: none; }
+  .composer-box .coord-row textarea { font-size: 16px; }
+}
 @media (max-width: 900px) {
   .agent-panel, .agent-panel.detail { position: absolute; inset: 0; width: 100%; z-index: 45; border-left: 0; }
   .agent-panel-resize { display: none; }
@@ -8036,3 +8174,24 @@ button.coord-row-name { cursor: pointer; }
 .obs-chart-table table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .obs-chart-table th, .obs-chart-table td { padding: 8px; text-align: right; border-bottom: 1px solid var(--border); font-weight: normal; }
 .obs-chart-table th:first-child { text-align: left; }
+
+/* Native planning and questions stay in the conversation on every screen size. */
+.proposal, .input-card { width: 100%; min-width: 0; padding: 20px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
+.proposal-heading { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.input-card.pending { border-color: var(--border-strong); }
+.input-question { border: 0; padding: 0; margin: 20px 0; min-width: 0; }
+.input-question legend { padding: 0; margin-bottom: 10px; font-size: 14px; font-weight: 500; line-height: 1.6; }
+.input-options { display: grid; gap: 8px; }
+.input-option { display: flex; align-items: center; justify-content: space-between; gap: 12px; text-align: left; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); color: var(--text); }
+.input-option:hover { background: var(--hover); }
+.input-option.selected { border-color: var(--accent); background: var(--active); }
+.input-option strong { font-size: 14px; font-weight: 500; }
+.input-option small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.input-check { display: inline-flex; width: 16px; flex-shrink: 0; }
+.input-card textarea { display: block; width: 100%; box-sizing: border-box; min-height: 72px; margin-top: 10px; padding: 12px; resize: vertical; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--text); font: inherit; font-size: 14px; }
+.input-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.input-result { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.input-error { color: var(--danger); font-size: 13px; margin-top: 10px; }
+.composer-plan-action { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+.composer-plan-action button { flex-shrink: 0; }
+@media (max-width: 600px) { .proposal, .input-card { padding: 16px; } }

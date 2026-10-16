@@ -1,3 +1,5 @@
+import { nativeQuestions } from './questions.js';
+import type { WorkMode } from './types.js';
 import { CodexUsage } from './usage.js';
 import { cliDiagnostic } from './diagnostics.js';
 import { trackCompaction } from './compaction.js';
@@ -130,6 +132,8 @@ function fileChangeTitle(item: any): string {
  */
 export function mapCodexItemStart(item: any): EmittedEvent | null {
   switch (item?.type) {
+    case 'contextCompaction':
+      return { type: 'context.compaction', data: { id: item.id, status: 'in_progress' } };
     case 'commandExecution':
       return {
         type: 'tool.start',
@@ -171,10 +175,12 @@ export function mapCodexItemStart(item: any): EmittedEvent | null {
   }
 }
 
-/** One `item/completed`, as a tool.end. The same items as above, plus the plan. */
+/** One `item/completed`, including native compaction boundaries. */
 export function mapCodexItemEnd(item: any): EmittedEvent | null {
   const base = { id: item?.id };
   switch (item?.type) {
+    case 'contextCompaction':
+      return { type: 'context.compaction', data: { ...base, status: 'completed' } };
     case 'commandExecution': {
       const failed = item.status !== 'completed' || (typeof item.exitCode === 'number' && item.exitCode !== 0);
       const output = [item.aggregatedOutput, failed && typeof item.exitCode === 'number' ? `(exit ${item.exitCode})` : null]
@@ -217,6 +223,19 @@ export function planEntries(steps: any): Array<{ content: string; status: string
     }));
 }
 
+/** Only advertise catalog tiers; legacy fast is the API's priority service tier. */
+export function codexSpeedOptions(model: any): NonNullable<ModelOption['speeds']> {
+  const raw = Array.isArray(model.serviceTiers) ? model.serviceTiers
+    : (Array.isArray(model.additionalSpeedTiers) ? model.additionalSpeedTiers : []).map((id: string) => ({ id: id === 'fast' ? 'priority' : id, name: id }));
+  const names: Record<string, string> = { default: '标准', priority: '快速', fast: '快速', ultrafast: '超快', flex: '经济' };
+  const tiers = raw.filter((t: any) => typeof t?.id === 'string' && t.id && t.id !== 'default');
+  if (!tiers.length) return [];
+  return [{ id: 'default', label: '标准' }, ...tiers.map((t: any) => ({ id: t.id, label: names[t.id] ?? t.name ?? t.id,
+    isFast: ['priority', 'fast', 'ultrafast'].includes(t.id),
+    description: ['priority', 'fast', 'ultrafast'].includes(t.id) ? '速度更快，用量可能增加' : t.description || undefined,
+  }))].filter((t, i, all) => all.findIndex(v => v.id === t.id) === i);
+}
+
 /** The model list as `model/list` reports it, in the hub's shape. */
 export function codexModelOptions(models: any[]): ModelOption[] {
   return (models ?? [])
@@ -232,6 +251,7 @@ export function codexModelOptions(models: any[]): ModelOption[] {
         ...(Array.isArray(m.supportedReasoningEfforts) ? { efforts } : {}),
         ...(Array.isArray(m.inputModalities) ? { images: m.inputModalities.includes('image') } : {}),
         ...(m.isDefault ? { isDefault: true } : {}),
+        ...(codexSpeedOptions(m).length ? { speeds: codexSpeedOptions(m) } : {}),
       };
     });
 }
@@ -296,17 +316,7 @@ export function turnsFromCodexHistory(turns: any[]): HistoryTurn[] {
         continue;
       }
       if (item?.type === 'plan') {
-        const entries = planEntries(
-          String(item.text ?? '')
-            .split('\n')
-            .map((line: string) => {
-              const checked = /^[-*]\s*\[x\]\s*/i.test(line);
-              const step = line.replace(/^[-*]\s*(\[[ xX]\])?\s*/, '').trim();
-              return { step, status: checked ? 'completed' : 'pending' };
-            })
-            .filter((e: any) => e.step),
-        );
-        if (entries.length) current.events.push({ type: 'plan.updated', data: { entries } });
+        current.events.push({ type: 'plan.completed', data: { id: item.id, text: item.text ?? '' } });
         continue;
       }
       const start = mapCodexItemStart(item);
@@ -393,19 +403,34 @@ class CodexSession implements AgentSession {
   /** File changes by item id, for approval cards that need to show the patch. */
   private readonly fileChanges = new Map<string, any[]>();
   /** Settings sent with turn/start, or persisted before runtime-owned goal turns. */
-  private overrides: { model?: string; effort?: EffortLevel; approvalPolicy?: string; sandboxPolicy?: { type: string } } = {};
+  private workMode: WorkMode = 'execute';
+  private collaboration: any = undefined;
+  private defaultModel = '';
+  private defaultEffort: string | null = null;
+  private overrides: { serviceTier?: string | null; model?: string; effort?: EffortLevel; approvalPolicy?: string; sandboxPolicy?: { type: string } } = {};
 
   constructor(
     readonly agentSessionId: string,
     private readonly peer: JsonRpcPeer,
     private readonly cwd: string,
-  ) {}
+    initialModel?: string,
+    initialEffort?: string | null,
+    /** Whose app-server this is; TRAE CLI runs the same protocol under its own name. */
+    private readonly name = 'codex',
+  ) { this.defaultModel = initialModel ?? ''; this.defaultEffort = initialEffort ?? null; }
 
   /** Called by the peer for every notification. Ignores anything about another thread. */
   onNotification(method: string, params: any): void {
     if (params?.threadId !== undefined && params.threadId !== this.agentSessionId) return;
     if (this.turn?.compact && this.turn.id && params?.turnId && params.turnId !== this.turn.id) return;
+    if (params?.item?.type === 'contextCompaction' && this.turn?.id && params.turnId && params.turnId !== this.turn.id) return;
     switch (method) {
+      case 'serverRequest/resolved':
+        this.hooks?.cancelInput?.(String(params.requestId));
+        break;
+      case 'item/plan/delta':
+        this.emit({ type: 'plan.delta', data: { id: params.itemId, text: params.delta } });
+        break;
       case 'turn/started':
         if ((this.turn?.compact || this.turn?.goal) && !this.turn.id && params?.turn?.id) {
           if (this.turn.goal && (this.turn.goalTurns ?? 0) > 0) this.emit({ type: 'message.delta', data: { text: '\n\n' } });
@@ -426,12 +451,16 @@ class CodexSession implements AgentSession {
       case 'item/started': {
         if (this.turn?.compact && params?.item?.type === 'contextCompaction') break;
         if (params?.item?.type === 'fileChange') this.fileChanges.set(params.item.id, params.item.changes ?? []);
-        if (params?.item?.type === 'plan') break; // the structured turn/plan/updated is used instead
+        if (params?.item?.type === 'plan') break; // Proposed plan text arrives separately from progress steps.
         const ev = mapCodexItemStart(params?.item);
         if (ev) this.emit(ev);
         break;
       }
       case 'item/completed': {
+        if (params?.item?.type === 'plan') {
+          this.emit({ type: 'plan.completed', data: { id: params.item.id, text: params.item.text ?? '' } });
+          break;
+        }
         if (this.turn?.compact && params?.item?.type === 'contextCompaction') break;
         if (params?.item?.type === 'exitedReviewMode' && params.item.review) {
           this.emit({ type: 'message.delta', data: { text: String(params.item.review) } });
@@ -503,7 +532,13 @@ class CodexSession implements AgentSession {
   }
 
   /** Called by the peer when Codex asks something. Approvals go to the user; the rest is refused. */
-  async onRequest(method: string, params: any): Promise<unknown> {
+  async onRequest(method: string, params: any, requestId?: string | number): Promise<unknown> {
+    if (method === 'item/tool/requestUserInput') {
+      const questions = nativeQuestions(params?.questions);
+      const answer = questions.length && this.hooks?.requestInput
+        ? await this.hooks.requestInput({ id: String(requestId), title: '需要你的意见', questions }) : { cancelled: true } as const;
+      return { answers: 'answers' in answer ? Object.fromEntries(Object.entries(answer.answers).map(([id, answers]) => [id, { answers }])) : {} };
+    }
     if (method !== 'item/commandExecution/requestApproval' && method !== 'item/fileChange/requestApproval') {
       return undefined; // answered with "method not supported", which Codex treats as declined
     }
@@ -521,6 +556,8 @@ class CodexSession implements AgentSession {
   }
 
   private emit(ev: EmittedEvent): void {
+    // Manual /compact has its own tracked operation. Items during ordinary turns are automatic.
+    if (ev.type === 'context.compaction') ev = { ...ev, data: { ...ev.data, automatic: true } };
     if (this.hooks) this.hooks.emit(ev);
   }
 
@@ -540,10 +577,30 @@ class CodexSession implements AgentSession {
   private turnOverrides(): Record<string, unknown> {
     const out: Record<string, unknown> = {};
     if (this.overrides.model) out.model = this.overrides.model;
+    if (this.overrides.serviceTier !== undefined) out.serviceTier = this.overrides.serviceTier;
     if (this.overrides.effort) out.effort = this.overrides.effort;
     if (this.overrides.approvalPolicy) out.approvalPolicy = this.overrides.approvalPolicy;
     if (this.overrides.sandboxPolicy) out.sandboxPolicy = this.overrides.sandboxPolicy;
+    if (this.collaboration) out.collaborationMode = { mode: this.workMode === 'plan' ? 'plan' : 'default', settings: {
+      model: this.overrides.model ?? this.defaultModel, reasoning_effort: this.overrides.effort ?? this.defaultEffort, developer_instructions: null,
+    } };
     return out;
+  }
+
+  async setWorkMode(mode: WorkMode): Promise<void> {
+    if (this.collaboration !== undefined && this.workMode === mode) return;
+    const modes = await this.peer.request('collaborationMode/list', {}).catch(() => ({ data: [] }));
+    const preset = (modes.data ?? []).find((m: any) => m.mode === (mode === 'plan' ? 'plan' : 'default'));
+    if (!preset && mode === 'plan') throw new Error('此版本不支持原生计划模式，请升级智能体');
+    if (preset && !this.defaultModel) {
+      const result = await this.peer.request('model/list', {});
+      const model = result.data?.find((m: any) => m.isDefault) ?? result.data?.find((m: any) => !m.hidden);
+      this.defaultModel = preset.model ?? model?.model ?? model?.id;
+      if (!this.defaultModel) throw new Error('无法读取计划模式使用的模型');
+    }
+    if (mode === 'plan' && this.goal?.status === 'active') throw new Error('请先暂停当前目标，再进入计划模式');
+    this.workMode = mode;
+    this.collaboration = preset ?? null;
   }
 
   async prompt(input: TurnInput, hooks: TurnHooks): Promise<TurnResult> {
@@ -649,6 +706,13 @@ class CodexSession implements AgentSession {
     return true;
   }
 
+  async setSpeed(speed: string | null): Promise<boolean> {
+    await this.peer.request('thread/settings/update', { threadId: this.agentSessionId,
+      ...(this.overrides.model ? { model: this.overrides.model } : {}), serviceTier: speed });
+    this.overrides.serviceTier = speed;
+    return true;
+  }
+
   async setEffort(effort: EffortLevel): Promise<boolean> {
     this.overrides.effort = effort;
     if (this.turn?.goal) await this.peer.request('thread/settings/update', { threadId: this.agentSessionId, effort });
@@ -744,7 +808,7 @@ class CodexSession implements AgentSession {
   /** The peer is gone: a running turn can only end as an error now. */
   onClosed(): void {
     if (this.turn) {
-      this.turn.error ??= 'codex app-server exited';
+      this.turn.error ??= `${this.name} app-server exited`;
       this.finishTurn('error');
     }
   }
@@ -756,7 +820,9 @@ export class CodexAppServerAdapter implements AgentAdapter {
   readonly label = 'Codex';
   readonly icon = CODEX_ICON;
   readonly capabilities = {
-    goal: { controls: ['show', 'pause', 'clear'] as const },
+    workModes: ['execute', 'plan'] as const,
+    speed: true,
+    goal: { controls: ['show', 'pause', 'clear'] as const, actions: ['set', 'show', 'pause', 'resume', 'clear'] as const },
     coordination: true,
     resume: true,
     approvals: true,
@@ -781,6 +847,8 @@ export class CodexAppServerAdapter implements AgentAdapter {
     private readonly command: string[],
     /** Extra environment for this agent instance. */
     private readonly env: Record<string, string> = {},
+    /** Name in errors; TRAE CLI reuses this adapter with its own binary. */
+    private readonly name = 'codex',
   ) {}
 
   diagnose() { return cliDiagnostic(this.command, this.env, 'app-server'); }
@@ -948,10 +1016,10 @@ export class CodexAppServerAdapter implements AgentAdapter {
       child,
       {
         onNotification: (method, params) => holder.session?.onNotification(method, params),
-        onRequest: async (method, params) => holder.session?.onRequest(method, params),
+        onRequest: async (method, params, id) => holder.session?.onRequest(method, params, id),
         onClosed: () => holder.session?.onClosed(),
       },
-      'codex',
+      this.name,
     );
 
     try {
@@ -960,6 +1028,8 @@ export class CodexAppServerAdapter implements AgentAdapter {
 
       const mode = opts.permissionMode ? CODEX_MODES[opts.permissionMode] : null;
       let threadId: string;
+      let nativeModel: string | undefined;
+      let nativeEffort: string | null | undefined;
       if (opts.resumeId) {
         const res = await peer.request('thread/resume', {
           threadId: opts.resumeId,
@@ -967,6 +1037,8 @@ export class CodexAppServerAdapter implements AgentAdapter {
           excludeTurns: true,
           ...(mode ? { sandbox: mode.sandbox, approvalPolicy: mode.approvalPolicy } : {}),
         });
+        nativeModel = res?.model;
+        nativeEffort = res?.reasoningEffort;
         threadId = String(res?.thread?.id ?? opts.resumeId);
       } else {
         const res = await peer.request('thread/start', {
@@ -974,11 +1046,13 @@ export class CodexAppServerAdapter implements AgentAdapter {
           ...(mode ? { sandbox: mode.sandbox, approvalPolicy: mode.approvalPolicy } : {}),
           ...(opts.model ? { model: opts.model } : {}),
         });
+        nativeModel = res?.model;
+        nativeEffort = res?.reasoningEffort;
         threadId = String(res?.thread?.id ?? '');
         if (!threadId) throw new Error('Codex did not return a thread id');
       }
 
-      const session = new CodexSession(threadId, peer, opts.cwd);
+      const session = new CodexSession(threadId, peer, opts.cwd, nativeModel, nativeEffort, this.name);
       holder.session = session;
       // An ordinary prompt can also continue a persisted native goal. Older servers omit it.
       if (opts.resumeId) await session.controlGoal('show').catch(() => undefined);
@@ -987,6 +1061,8 @@ export class CodexAppServerAdapter implements AgentAdapter {
       if (opts.model) await session.setModel(opts.model);
       if (opts.effort) await session.setEffort(opts.effort);
       if (opts.permissionMode) await session.setPermissionMode(opts.permissionMode);
+      if (opts.workMode) await session.setWorkMode(opts.workMode);
+      if (opts.speed != null) await session.setSpeed(opts.speed);
       return session;
     } catch (err) {
       peer.close();
@@ -1002,7 +1078,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
   private async withServer<T>(job: (peer: JsonRpcPeer) => Promise<T>, cwd = tmpdir(), timeoutMs?: number): Promise<T> {
     const [bin, ...args] = this.command;
     const child = spawn(bin, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ...this.env } });
-    const peer = new JsonRpcPeer(child, { onNotification: () => undefined, onRequest: async () => undefined }, 'codex');
+    const peer = new JsonRpcPeer(child, { onNotification: () => undefined, onRequest: async () => undefined }, this.name);
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const run = async () => {

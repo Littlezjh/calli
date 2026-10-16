@@ -100,7 +100,9 @@ export class ClaudeAcpAdapter extends AcpAdapter {
   readonly label = 'Claude Code';
   readonly icon = CLAUDE_ICON;
   readonly capabilities = {
-    goal: { controls: ['clear'] as const },
+    workModes: ['execute', 'plan'] as const,
+    speed: true,
+    goal: { controls: ['clear'] as const, actions: ['set', 'show', 'clear'] as const },
     coordination: true,
     resume: true,
     approvals: true,
@@ -149,12 +151,12 @@ export class ClaudeAcpAdapter extends AcpAdapter {
     return (async () => {
       const usable: ModelOption[] = [];
       for (const model of models) {
-        const efforts = await session.probeModel(model.id);
-        if (efforts === null) {
+        const settings = await session.probeModel(model.id);
+        if (settings === null) {
           console.error(`[claude-acp] model ${model.id} cannot be selected on this account; hiding it`);
           continue;
         }
-        usable.push({ ...model, efforts });
+        usable.push({ ...model, ...settings });
       }
       return usable;
     })();

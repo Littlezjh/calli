@@ -75,7 +75,9 @@ export class TraexAcpAdapter extends AcpAdapter {
   readonly label = 'TRAE CLI';
   readonly icon = TRAE_ICON;
   readonly capabilities = {
-    goal: { controls: ['show', 'pause', 'clear'] as const },
+    workModes: ['execute', 'plan'] as const,
+    speed: true,
+    goal: { controls: ['show', 'pause', 'clear'] as const, actions: ['set', 'show', 'pause', 'resume', 'clear'] as const },
     compact: true,
     coordination: true,
     resume: true,
@@ -111,7 +113,7 @@ export class TraexAcpAdapter extends AcpAdapter {
     super(command, env);
     const endsWithServe = command.length > 2 && command.at(-2) === 'acp' && command.at(-1) === 'serve';
     this.cli = cli ?? (endsWithServe ? command.slice(0, -2) : command);
-    this.execution = new CodexAppServerAdapter([...this.cli, 'app-server'], env);
+    this.execution = new CodexAppServerAdapter([...this.cli, 'app-server'], env, 'TRAE CLI');
   }
 
   override diagnose() { return cliDiagnostic(this.cli, this.env, 'app-server / ACP 1'); }
@@ -138,8 +140,10 @@ export class TraexAcpAdapter extends AcpAdapter {
   }
 
   override async models(refresh = false): Promise<ModelOption[]> {
-    const [models, status] = await Promise.all([super.models(refresh), this.readModelStatus().catch(() => [])]);
+    const [models, status, executionModels] = await Promise.all([super.models(refresh), this.readModelStatus().catch(() => []), this.execution.models(refresh).catch(() => [])]);
     return models.map((model) => {
+      const execution = model.id === 'default' ? executionModels.find(m => m.isDefault) : executionModels.find(m => m.id === model.id);
+      if (execution?.speeds?.length) model = { ...model, speeds: execution.speeds };
       // Keep ACP's model ids and defaults intact, even when CLI display names differ.
       if (model.id === 'default') return model;
       const live = status.find((s) => s.configName === model.id || s.name === model.id || s.name === model.label);

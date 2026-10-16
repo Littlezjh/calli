@@ -9,6 +9,7 @@ export interface HubAction {
   id: string;
   label: string;
   hint: string;
+  disabled?: boolean;
   /** Extra words that find this action, e.g. the English name. Lower case. */
   keywords: string[];
 }
@@ -45,6 +46,12 @@ function rankCommand(cmd: SlashCommand, query: string): number {
 export function buildMenu(text: string, actions: HubAction[], commands: SlashCommand[], hidden: string[] = []): MenuRow[] {
   const query = slashQuery(text);
   if (query === null) return [];
+  return searchCommands(query, actions, commands, hidden);
+}
+
+/** The same catalog can be searched without typing a slash. */
+export function searchCommands(query: string, actions: HubAction[], commands: SlashCommand[], hidden: string[] = []): MenuRow[] {
+  query = query.trim().replace(/^\//, '').toLowerCase();
 
   const rows: MenuRow[] = [];
   const matchedActions = actions.filter(
@@ -76,4 +83,12 @@ export function buildMenu(text: string, actions: HubAction[], commands: SlashCom
     for (const r of group) rows.push({ type: 'command', command: r.command });
   }
   return rows;
+}
+
+/** Add a command to the existing words, replacing only a known command prefix. */
+export function commandDraft(name: string, text: string, commands: SlashCommand[]): string {
+  const prefix = /^\/(\S*)(?:\s+|$)/.exec(text);
+  const body = prefix && (!prefix[1] || commands.some(c => c.name.replace(/^\//, '') === prefix[1]))
+    ? text.slice(prefix[0].length) : text;
+  return `/${name.replace(/^\//, '')} ${body}`;
 }

@@ -2,19 +2,21 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, existsSync, readFileSync, writeFileSync, rmSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { ZcodeAdapter, ZCODE_BASIC_TOOLS } from '../src/adapters/zcode.js';
 import type { AgentSession, TurnHooks } from '../src/adapters/types.js';
 
 // Opt-in: an unmodified installed CLI, isolated storage, and a local model endpoint. No real API keys.
-test('real zcode: images reach the model and memory stays disabled across create, resume, compact and goals', { skip: !process.env.RAH_ZCODE_REAL_BIN, timeout: 60_000 }, async () => {
+test('real zcode: images, memory isolation, goals and native plan approval', { skip: !process.env.RAH_ZCODE_REAL_BIN, timeout: 60_000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'rah-zcode-real-'));
   const requests: any[] = [];
   let goalMode = false;
   let goalReplies = 0;
   let usageProbe = false;
+  const toolCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const nativeModes: string[] = [];
   const server = createServer(async (req, res) => {
     let body = '';
     for await (const chunk of req) body += chunk;
@@ -30,6 +32,14 @@ test('real zcode: images reach the model and memory stays disabled across create
       return;
     }
     res.writeHead(200, { 'content-type': 'text/event-stream' });
+    const tool = toolCalls.shift();
+    if (tool) {
+      for (const chunk of [
+        { choices: [{ index: 0, delta: { role: 'assistant', tool_calls: [{ index: 0, id: `call-${requests.length}`, type: 'function', function: { name: tool.name, arguments: JSON.stringify(tool.args) } }] }, finish_reason: null }] },
+        { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } },
+      ]) res.write(`data: ${JSON.stringify({ id: `fixture-${requests.length}`, object: 'chat.completion.chunk', created: 1, model: 'fixture', ...chunk })}\n\n`);
+      res.end('data: [DONE]\n\n'); return;
+    }
     for (const chunk of [
       { choices: [{ index: 0, delta: { role: 'assistant', content }, finish_reason: null }] },
       { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } },
@@ -80,7 +90,7 @@ test('real zcode: images reach the model and memory stays disabled across create
     assert.equal(consumption.at(-1)?.total, 15, 'Only this request is counted, not the current context');
     const id = session.agentSessionId;
     await session.close();
-    session = await adapter.start({ cwd: dir, resumeId: id });
+    session = await adapter.start({ cwd: dir, resumeId: id, onWorkMode: mode => nativeModes.push(mode) });
     assert.equal(session.agentSessionId, id);
     assert.equal((await session.prompt({ text: 'Reply hello again.', images: [] }, hooks)).stopReason, 'end_turn');
     assert.equal(consumption.at(-1)?.total, 15, 'Repeated input is still charged on the next request');
@@ -120,6 +130,25 @@ test('real zcode: images reach the model and memory stays disabled across create
     assert.ok(goalReplies >= 2, 'The native runtime must continue through multiple turns');
     assert.match(goalText, /报告已完成/);
     assert.equal((await session.prompt({ text: '/goal clear', images: [] }, goalHooks)).stopReason, 'end_turn');
+    goalMode = false;
+    await session.setWorkMode!('plan');
+    const changedFile = join(dir, 'must-not-write.txt');
+    toolCalls.push({ name: 'Write', args: { file_path: changedFile, content: 'unexpected mutation' } });
+    assert.equal((await session.prompt({ text: 'Check native plan restrictions.', images: [] }, hooks)).stopReason, 'end_turn');
+    assert.equal(existsSync(changedFile), false, 'Native Plan must prevent writes even with the tool allowlist');
+    let questionsAsked = 0;
+    toolCalls.push({ name: 'AskUserQuestion', args: { questions: [{ header: '范围', question: '先做哪一端？', options: [{ label: '手机', description: '先适配手机' }, { label: '桌面', description: '先适配桌面' }], multiSelect: false }] } });
+    const planHooks: TurnHooks = { ...hooks, requestInput: async request => {
+      questionsAsked++;
+      return { answers: Object.fromEntries(request.questions.map(q => [q.id, [q.options[0].value]])) };
+    } };
+    assert.equal((await session.prompt({ text: 'Ask for a planning preference.', images: [] }, planHooks)).stopReason, 'end_turn');
+    assert.equal(questionsAsked, 1, 'The real runtime must route AskUserQuestion to the client');
+    toolCalls.push({ name: 'ExitPlanMode', args: { plan: '# 实施计划\n\n完成本地协议验证。' } });
+    assert.equal((await session.prompt({ text: 'Present the plan for approval.', images: [] }, planHooks)).stopReason, 'end_turn');
+    assert.equal(questionsAsked, 2, 'Plan approval must require an explicit client answer');
+    assert.ok(nativeModes.includes('execute'), 'Native plan approval must publish the new mode');
+    assert.equal(session.agentSessionId, id);
     await session.close(); session = undefined;
     assert.equal(JSON.stringify(requests).includes(sentinel), false);
     assert.equal(readFileSync(join(memory, 'MEMORY.md'), 'utf8'), sentinel);

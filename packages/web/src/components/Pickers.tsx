@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import type { AgentInfo, ModelOption } from '../api';
+import { isFastSpeed, type AgentInfo, type ModelOption } from '../api';
 import { usageSummary, type Usage } from '../timeline';
 import { EFFORT_LABELS, PERMISSION_LABELS, PERMISSION_ORDER, permissionHint } from '../permissions';
 import { AgentMark, IconBolt, IconEffortGauge, IconCompress, IconRefresh, IconCheck, IconChevron, IconFolder, IconHand, IconPlus, IconShield, IconShieldAlert, IconSparkle, IconWorktree } from './icons';
@@ -89,6 +89,8 @@ interface ModelProps {
   model: string | null;
   efforts: string[];
   effort: string | null;
+  speed?: string | null;
+  onSpeed?: (speed: string | null) => void;
   onModel: (model: string | null) => void;
   onEffort: (effort: string | null) => void;
   /** Opens the panel when this number changes. */
@@ -150,12 +152,16 @@ export function effortsForModel(models: ModelOption[], model: string | null, fal
  * (stored as null), so there is never a second, duplicate default row.
  */
 export function modelRows(models: ModelOption[]): Array<{ value: string | null; label: string; hint?: string }> {
-  const rest = models.filter((m) => m.id !== AGENT_DEFAULT).map((m) => ({ value: m.id, label: m.label, hint: m.description }));
+  const rest = models.filter((m) => m.id !== AGENT_DEFAULT).map((m) => ({ value: m.id, label: m.label, hint: [m.description, m.speeds?.some(isFastSpeed) ? '可加速' : ''].filter(Boolean).join(' · ') || undefined }));
   const target = defaultTarget(models);
   const first = target
     ? { value: null, label: '默认', hint: `当前是 ${target}` }
     : { value: null, label: '默认模型', hint: '使用 agent 自己配置的模型' };
   return [first, ...rest];
+}
+
+export function speedsForModel(models: ModelOption[], model: string | null): NonNullable<ModelOption['speeds']> {
+  return resolveModel(models, model)?.speeds ?? [];
 }
 
 /** Model and thinking effort in a compact card; the model list is a second view. */
@@ -216,16 +222,21 @@ export function ModelPicker(props: ModelProps) {
   );
 }
 
-function ModelControl({ models, model, efforts, effort, onModel, onEffort }: ModelProps) {
+function ModelControl({ models, model, efforts, effort, onModel, onEffort, speed, onSpeed }: ModelProps) {
   const levels = effortsForModel(models, model, efforts);
-  const [showModels, setShowModels] = useState(levels.length === 0);
+  const speeds = onSpeed ? speedsForModel(models, model) : [];
+  const fastSpeed = speeds.find(isFastSpeed);
+  const standardSpeed = speeds.find(s => s.id === 'default');
+  const canAccelerate = Boolean(fastSpeed && standardSpeed);
+  const accelerated = speeds.some(s => s.id === speed && isFastSpeed(s));
+  const [showModels, setShowModels] = useState(levels.length === 0 && !canAccelerate);
   const [preview, setPreview] = useState<string | null | undefined>(undefined);
   const selected = effort && levels.includes(effort) ? effort : null;
   const shown = preview === undefined ? selected : preview;
   return showModels ? (
     <>
       <div className="model-list-head">
-        {levels.length > 0 && <button type="button" className="icon-btn model-back" aria-label="返回思考强度" onClick={() => setShowModels(false)}><IconChevron size={16} /></button>}
+        {(levels.length > 0 || canAccelerate) && <button type="button" className="icon-btn model-back" aria-label="返回思考强度" onClick={() => setShowModels(false)}><IconChevron size={16} /></button>}
         <span>选择模型</span>
       </div>
       <div className="pop-scroll">
@@ -241,7 +252,14 @@ function ModelControl({ models, model, efforts, effort, onModel, onEffort }: Mod
   ) : (
     <div className="effort-card">
       <div className="effort-card-head">
-        <span className="effort-symbol"><IconBolt size={19} /></span>
+        {fastSpeed && standardSpeed ? <button
+          type="button"
+          className="model-speed-toggle"
+          aria-label={accelerated ? '关闭加速' : '开启加速'}
+          aria-pressed={accelerated}
+          title={accelerated ? '关闭加速，恢复标准速度' : `${speed == null ? '当前沿用智能体设置；' : ''}开启加速，速度更快，用量可能增加`}
+          onClick={() => onSpeed?.(accelerated ? standardSpeed.id : fastSpeed.id)}
+        ><IconBolt size={19} /></button> : <span aria-hidden="true" />}
         <div className="effort-card-heading">
           <div className="effort-value" aria-live="polite">{levels.length ? (shown ? (EFFORT_LABELS[shown] ?? shown) : '默认') : '无需设置强度'}</div>
           <button type="button" className="effort-model" disabled={models.length === 0} onClick={() => setShowModels(true)} aria-label={`切换模型，当前 ${modelName(models, model)}`}>

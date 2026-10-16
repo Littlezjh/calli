@@ -55,6 +55,8 @@ const GLOBAL_EVENT_TYPES = new Set([
   'turn.error',
   'approval.request',
   'approval.resolved',
+  'input.request',
+  'input.resolved',
   'todo.updated',
 ]);
 
@@ -358,9 +360,11 @@ export function createHttpServer(deps: HttpDeps): Server {
             agent: body.agent,
             cwd: body.cwd,
             title: body.title,
+            workMode: body.workMode,
             permissionMode: body.permissionMode,
             model: body.model,
             effort: body.effort,
+            speed: body.speed,
             sectionId: body.sectionId,
             worktree: body.worktree === true,
             scratch: body.scratch === true,
@@ -534,9 +538,11 @@ export function createHttpServer(deps: HttpDeps): Server {
           await manager.updateThread(threadId, {
             title: body.title,
             pinned: body.pinned,
+            workMode: body.workMode,
             permissionMode: body.permissionMode,
             model: body.model,
             effort: body.effort,
+            speed: body.speed,
             archived: body.archived,
             sectionId: body.sectionId,
             unread: body.unread,
@@ -728,6 +734,12 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (method === 'POST' && sub === 'cancel') {
         return sendJson(res, 200, await manager.cancelTurn(threadId));
       }
+    }
+
+    if (method === 'POST' && parts[1] === 'inputs' && parts[2] && parts.length === 3) {
+      if (!manager.inputs.answer(parts[2], await readJson(req))) throw new HttpError(404, '问题已结束或已经回答');
+      res.writeHead(204).end();
+      return;
     }
 
     // POST /api/approvals/:id

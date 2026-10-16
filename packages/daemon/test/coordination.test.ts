@@ -47,6 +47,37 @@ async function setup() {
 }
 const spawn = (name: string, agent = 'pi', text = 'hello', extra = {}) => ({ op: 'spawn', name, agent, text, requestId: name, ...extra });
 
+test('coordination preserves slash commands and their arguments while enriching ordinary messages', async () => {
+  const h = await setup();
+  try {
+    for (const agent of ['codex', 'pi']) {
+      const thread = await h.manager.createThread({ agent, cwd: h.cwd });
+      await h.team.enable(thread.id);
+      const commands = agent === 'codex'
+        ? ['/compact', '/mcp', '/skills', '/review', '/review 检查错误处理', '/inspect 检查测试']
+        : ['/compact', '/compact keep the API notes', '/session'];
+      for (const text of commands) {
+        const response = await h.api(`/api/threads/${thread.id}/turns`, { text: `  ${text}\n` });
+        assert.equal(response.status, 202);
+        const { turnId } = await response.json() as { turnId: string };
+        await wait(() => h.manager.threadView(thread.id).status !== 'running');
+        const events = h.store.listEvents(thread.id, 0, -1).filter(e => e.turnId === turnId);
+        assert.equal(events.find(e => e.type === 'turn.started')?.data.text, text);
+        assert.equal(events.some(e => e.type === 'turn.error'), false, `${agent}: ${text}`);
+        assert.ok(events.some(e => e.type === 'turn.done'));
+        if (agent === 'codex' && text === '/compact') {
+          assert.ok(events.some(e => e.type === 'message.delta' && e.data.text === '上下文压缩完成。'));
+        }
+      }
+      await h.manager.startTurn(thread.id, { text: 'hello' });
+      await wait(() => h.manager.threadView(thread.id).status !== 'running');
+      const started = h.store.listEvents(thread.id, 0, -1).filter(e => e.type === 'turn.started').at(-1)!;
+      assert.match(String(started.data.text), /<limi-coordination>/);
+      assert.equal(started.data.displayText, 'hello');
+    }
+  } finally { await h.close(); }
+});
+
 test('each advertised adapter passes the runtime environment to its fixture', async () => {
   const h = await setup();
   try {

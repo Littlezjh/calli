@@ -1,3 +1,4 @@
+import type { UserInputAnswer } from '../api';
 import { Children, createContext, isValidElement, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -9,6 +10,7 @@ import { SentVideo } from './VideoPreview';
 import { IMAGE_FILE, linkTarget, nameAttachments, relativePath, shortenPaths } from '../paths';
 import {
   clockLabel,
+  compactionLabel,
   deliveredPreview,
   durationLabel,
   groupByTurn,
@@ -34,7 +36,7 @@ import {
   type WorkSection,
 } from '../timeline';
 import { Lightbox } from './Lightbox';
-import { IconAgents, IconCheck, IconChevron, IconClose, IconCopy, IconEdit, IconFile, IconFork, IconGlobe, IconHand, IconQuote, IconSearch, IconTerminal, IconWorktree } from './icons';
+import { ActivityIcon, IconAgents, IconCheck, IconChevron, IconClose, IconCompact, IconCopy, IconFile, IconFork, IconHand, IconQuote, IconWorktree } from './icons';
 
 interface Props {
   items: Item[];
@@ -48,6 +50,7 @@ interface Props {
   onOpenFile?: (path: string) => Promise<void>;
   /** Renders a page the agent wrote, from the thread's directory. HTML and SVG files. */
   onPreview?: (path: string) => void;
+  onAnswer?: (id: string, answer: UserInputAnswer) => Promise<void>;
   onDecide: (approvalId: string, optionId: string | null) => void;
   /** The thread's log continues below what is in memory: one more history page can be fetched. */
   hasOlder?: boolean;
@@ -72,7 +75,7 @@ const RECENT_TURNS = 30;
 /** Scrolling up to within this distance of the top unfolds or fetches the earlier turns. */
 const NEAR_TOP_PX = 600;
 
-export function ThreadView({ items, roots, loadImage, loadFile, onOpenFile, onPreview, onDecide, hasOlder, loadingOlder, onLoadOlder, onFork, forkAnyTurn, takeover }: Props) {
+export function ThreadView({ items, roots, loadImage, loadFile, onOpenFile, onPreview, onDecide, onAnswer, hasOlder, loadingOlder, onLoadOlder, onFork, forkAnyTurn, takeover }: Props) {
   const [lightbox, setLightbox] = useState<{ url: string; name?: string } | null>(null);
   const show = useCallback((url: string, name?: string) => setLightbox({ url, name }), []);
   // A picture opened from a link in an answer is fetched for the occasion, and let go of when it is closed.
@@ -190,6 +193,7 @@ export function ThreadView({ items, roots, loadImage, loadFile, onOpenFile, onPr
                 <div className="bubble">
                   {item.fromTerminal && <span className="term-chip" title="这轮是在终端里发的">终端</span>}
                   {item.scheduled && <span className="term-chip" title="这轮是定时任务发的">定时</span>}
+                  {item.workMode === 'plan' && <span className="term-chip">计划</span>}
                   {body}
                 </div>
               )}
@@ -202,6 +206,10 @@ export function ThreadView({ items, roots, loadImage, loadFile, onOpenFile, onPr
             </div>
           );
         }
+        case 'input':
+          return <InputCard key={item.key} item={item} onAnswer={onAnswer} />;
+        case 'proposal':
+          return <div className="row" key={item.key}><section className="proposal"><div className="proposal-heading">{item.done ? '方案' : '正在整理计划'}</div><Prose text={item.text} /></section></div>;
         case 'assistant':
           if (!item.text) return null;
           return <AssistantMessage key={item.key} text={item.text} done={item.done} roots={roots} loadFile={loadFile} onOpen={show} />;
@@ -593,6 +601,44 @@ function FileImage({ path, roots, load, onOpen }: { path: string; roots: string[
   );
 }
 
+function InputCard({ item, onAnswer }: { item: Extract<Item, { kind: 'input' }>; onAnswer?: (id: string, answer: UserInputAnswer) => Promise<void> }) {
+  const [answers, setAnswers] = useState<Record<string, string[]>>({});
+  const [custom, setCustom] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const pending = !item.answer;
+  const values = Object.fromEntries(item.questions.map(q => [q.id, custom[q.id]?.trim() ? q.multiple ? [...(answers[q.id] ?? []), custom[q.id].trim()] : [custom[q.id].trim()] : answers[q.id] ?? []]));
+  const ready = item.questions.every(q => q.required === false || values[q.id].length);
+  const submit = async (answer: UserInputAnswer) => {
+    if (!onAnswer || busy) return;
+    setBusy(true); setError('');
+    try { await onAnswer(item.inputId, answer); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
+  };
+  const singleApproval = item.inputKind === 'plan' && item.questions.length === 1 && item.questions[0].options.length === 1;
+  return <div className="row"><section className={`input-card${pending ? ' pending' : ''}`} aria-label={item.inputKind === 'plan' ? '计划审批' : '智能体提问'}>
+    <div className="proposal-heading"><IconHand size={17} />{item.title}</div>
+    {item.plan && <Prose text={item.plan} />}
+    {pending ? <>
+      {!singleApproval && item.questions.map(q => <fieldset key={q.id} disabled={busy} className="input-question"><legend>{q.question}</legend>
+        <div className="input-options" role={q.multiple ? 'group' : 'radiogroup'} aria-label={q.question}>{q.options.map(o => {
+          const checked = (answers[q.id] ?? []).includes(o.value) && (q.multiple || !custom[q.id]?.trim());
+          return <button type="button" key={o.value} role={q.multiple ? 'checkbox' : 'radio'} aria-checked={checked} className={`input-option${checked ? ' selected' : ''}`} onClick={() => {
+            setAnswers(prev => ({ ...prev, [q.id]: q.multiple ? checked ? (prev[q.id] ?? []).filter(v => v !== o.value) : [...(prev[q.id] ?? []), o.value] : [o.value] }));
+            if (!q.multiple) setCustom(prev => ({ ...prev, [q.id]: '' }));
+          }}><span><strong>{o.label}</strong>{o.description && <small>{o.description}</small>}</span><span className="input-check">{checked && <IconCheck size={15} />}</span></button>;
+        })}</div>
+        {q.freeText && <textarea aria-label={`${q.question}：补充回答`} placeholder={q.options.length ? '或输入你的想法' : '输入回答'} value={custom[q.id] ?? ''} maxLength={8000} onChange={e => setCustom(prev => ({ ...prev, [q.id]: e.target.value }))} rows={2} />}
+      </fieldset>)}
+      {singleApproval && item.questions[0].freeText && <textarea aria-label="计划修改意见" placeholder="也可以写下修改意见" rows={2} maxLength={8000} value={custom[item.questions[0].id] ?? ''} onChange={e => setCustom({ [item.questions[0].id]: e.target.value })} />}
+      <div className="input-actions"><button className="primary" disabled={busy || !onAnswer || (!singleApproval && !ready)} onClick={() => void submit({ answers: singleApproval && !custom[item.questions[0].id]?.trim() ? { [item.questions[0].id]: [item.questions[0].options[0].value] } : values })}>{busy ? '正在提交…' : singleApproval ? custom[item.questions[0].id]?.trim() ? '提交修改意见' : '开始执行' : '提交回答'}</button>
+        <button className="ghost" disabled={busy || !onAnswer} onClick={() => void submit({ cancelled: true })}>{item.inputKind === 'plan' ? '继续讨论' : '跳过'}</button></div>
+      {error && <div className="input-error" role="alert">{error}</div>}
+    </> : <div className="input-result">{'cancelled' in item.answer! ? '本次询问已结束' : item.inputKind === 'plan' ? '已提交计划意见' : Object.values(item.answer!.answers).flat().join(' · ') || '已跳过'}</div>}
+  </section></div>;
+}
+
 /** The agent's own task list for the turn: what is done, what it is on, what is left. */
 function PlanCard({ item }: { item: Extract<Item, { kind: 'plan' }> }) {
   const completed = item.entries.filter((e) => e.status === 'completed').length;
@@ -654,6 +700,22 @@ function SentImage({ image, load, onOpen }: { image: ImageRef; load: (id: string
   );
 }
 
+/** Only this small label ticks; the Markdown and tool output do not rerender every second. */
+function WorkLabel({ item }: { item: Extract<Item, { kind: 'work' }> }) {
+  const [now, setNow] = useState(() => new Date().toISOString());
+  useEffect(() => {
+    if (item.done || !item.timed) return;
+    const tick = () => setNow(new Date().toISOString());
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    document.addEventListener('visibilitychange', tick);
+    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', tick); };
+  }, [item.done, item.timed, item.startedAt]);
+  const time = item.timed ? durationLabel(item.startedAt, item.done ? item.endedAt : now) : '';
+  const label = !item.done ? time ? `工作中 · ${time}` : '工作中' : item.stopped ? stoppedLabel(time) : time ? `用时 ${time}` : '已处理';
+  return <span className="work-label">{label}</span>;
+}
+
 function WorkGroup({ item, roots }: { item: Extract<Item, { kind: 'work' }>; roots: string[] }) {
   // Open while the turn runs so progress is visible; collapsed once it finishes.
   const [open, setOpen] = useState(!item.done);
@@ -661,14 +723,12 @@ function WorkGroup({ item, roots }: { item: Extract<Item, { kind: 'work' }>; roo
   useEffect(() => {
     if (item.done) setOpen(false);
   }, [item.done]);
-  const time = item.done && item.timed ? durationLabel(item.startedAt, item.endedAt) : '';
-  const label = !item.done ? '工作中' : item.stopped ? stoppedLabel(time) : time ? `用时 ${time}` : '已处理';
   const count = item.steps.length;
   const sections = workSections(item.entries);
   return (
     <div className="row work">
       <button className="work-toggle" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-        <span>{label}</span>
+        <WorkLabel item={item} />
         {count > 0 && <span className="muted">· {count} 步</span>}
         <IconChevron size={14} open={open} />
       </button>
@@ -677,6 +737,11 @@ function WorkGroup({ item, roots }: { item: Extract<Item, { kind: 'work' }>; roo
           {sections.map((section, i) =>
             section.kind === 'note' ? (
               <WorkNote key={section.key} text={section.text} />
+            ) : section.kind === 'compaction' ? (
+              <div className="context-compaction" key={section.key} role="status">
+                <IconCompact size={18} />
+                <span>{compactionLabel(section)}</span>
+              </div>
             ) : (
               // Only the stretch at the end of a running turn is still going on.
               <StepRun key={section.key} run={section} live={!item.done && i === sections.length - 1} roots={roots} />
@@ -746,20 +811,6 @@ const ThinkingBlock = memo(function ThinkingBlock({ thought, live }: { thought: 
   );
 });
 
-const STEP_ICONS: Record<string, (p: { size?: number }) => JSX.Element> = {
-  execute: IconTerminal,
-  search: IconSearch,
-};
-
-/** The icon of a folded run: what there was most of in it. Looking around, by file or by search, is one thing. */
-const RUN_ICONS: Record<string, (p: { size?: number }) => JSX.Element> = {
-  execute: IconTerminal,
-  search: IconSearch,
-  read: IconSearch,
-  fetch: IconGlobe,
-  edit: IconEdit,
-};
-
 /** From this many finished calls on, a run is one line that counts them. Fewer are shown as they are. */
 const RUN_FOLD_MIN = 2;
 
@@ -790,12 +841,11 @@ function StepRun({ run, live, roots }: { run: Extract<WorkSection, { kind: 'run'
   if (overSteps.length < RUN_FOLD_MIN) return <>{indexes.map(row)}</>;
 
   const summary = runSummary(overSteps);
-  const Icon = RUN_ICONS[summary.kind] ?? IconFile;
   return (
     <>
       <div className="step-run">
         <button className="step-head run-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-          <Icon size={15} />
+          <ActivityIcon kind={summary.kind} />
           <span className="run-title">{summary.text}</span>
           <IconChevron size={13} open={open} />
         </button>
@@ -808,7 +858,6 @@ function StepRun({ run, live, roots }: { run: Extract<WorkSection, { kind: 'run'
 
 function StepRow({ step, roots }: { step: Step; roots: string[] }) {
   const [open, setOpen] = useState(false);
-  const Icon = STEP_ICONS[step.kind] ?? IconFile;
   // An edit is best shown as its diff; the raw arguments would repeat the same text as JSON.
   const showInput = step.input !== undefined && step.diffs.length === 0 && JSON.stringify(step.input) !== '{}';
   const result = step.status === 'completed' ? '成功' : step.status === 'failed' ? '失败' : null;
@@ -817,7 +866,7 @@ function StepRow({ step, roots }: { step: Step; roots: string[] }) {
   return (
     <div className={`step ${step.status}`}>
       <button className="step-head" onClick={() => hasDetail && setOpen((v) => !v)} disabled={!hasDetail} aria-expanded={open}>
-        <Icon size={15} />
+        <ActivityIcon kind={step.kind} />
         <span className="step-title">{nameAttachments(shortenPaths(stepTitle(step), roots)) || step.kind}</span>
         <span className="step-status">{stepStatusLabel(step)}</span>
       </button>

@@ -21,6 +21,7 @@ const hooks = (events: EmittedEvent[]): TurnHooks => ({ emit: (e) => events.push
 for (const [name, Adapter, fixture] of [['Codex', CodexAppServerAdapter, 'fake-codex.mjs'], ['TraeX', TraexAcpAdapter, 'fake-acp.mjs'], ['zcode', ZcodeAdapter, 'fake-zcode.mjs']] as const) {
   test(`${name} native goal owns multiple turns, approvals and terminal status`, { timeout: 5000 }, async () => {
     const adapter = new Adapter([process.execPath, join(here, 'fixtures', fixture)], { ZCODE_DATA_BASE_DIR: here });
+    assert.deepEqual(adapter.capabilities.goal.actions, ['set', 'show', 'pause', 'resume', 'clear']);
     assert.ok((await adapter.commands(here)).some(c => c.name === 'goal'));
     const s = await adapter.start({ cwd: here });
     const events: EmittedEvent[] = [];
@@ -74,6 +75,7 @@ for (const env of [{ FAKE_CODEX_GOAL_EARLY: '1' }, { FAKE_CODEX_GOAL_LATE: '1' }
 
 test('Claude exposes native goal, forwards the session command and clears during execution', { timeout: 5000 }, async () => {
   const a = new ClaudeAcpAdapter([process.execPath, join(here, 'fixtures/fake-acp.mjs')]);
+  assert.deepEqual(a.capabilities.goal.actions, ['set', 'show', 'clear']);
   const s = await a.start({ cwd: here });
   try {
     assert.ok((await a.commands(here)).some(c => c.name === 'goal'));
