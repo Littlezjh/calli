@@ -101,6 +101,26 @@ function messagesOf(id) {
   return String(id).startsWith('hist') ? HIST_MESSAGES : [];
 }
 
+/** Where scriptedTurn left off reading each session's script, so live turns walk it in order. */
+const scriptCursor = new Map();
+/**
+ * The scripted answer to a live turn: the messages the script holds after the matching user
+ * message, up to the next one. Lets FAKE_PI_MESSAGES_FILE drive not just /sync but the live
+ * reply too, so a scripted conversation plays out turn for turn. Falls back to the canned
+ * answer when the script has no such user message (or no script at all).
+ */
+function scriptedTurn(id, message) {
+  const list = messagesOf(id);
+  if (!Array.isArray(list) || list.length === 0) return null;
+  let i = scriptCursor.get(id) ?? 0;
+  while (i < list.length && !(list[i].role === 'user' && userText(list[i]) === message)) i++;
+  if (i >= list.length) return null;
+  const blocks = [];
+  for (i++; i < list.length && list[i].role !== 'user'; i++) blocks.push(list[i]);
+  scriptCursor.set(id, i);
+  return blocks;
+}
+
 /** The user messages of a session, numbered from one: e1, e2, … */
 const forkPoints = (id) =>
   messagesOf(id)
@@ -287,6 +307,21 @@ rl.on('line', (line) => {
           out({ type: 'agent_settled', aborted: false });
         }, 6000);
         return;
+      }
+      // A scripted turn plays out its blocks in order: thinking, tool calls with results, text.
+      const script = scriptedTurn(sessionId, cmd.message);
+      if (script) {
+        for (const m of script) {
+          const content = Array.isArray(m.content) ? m.content : [];
+          for (const block of content) {
+            if (block.type === 'thinking') out({ type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', contentIndex: 0, delta: block.thinking } });
+            else if (block.type === 'toolCall') out({ type: 'tool_execution_start', toolCallId: block.id, toolName: block.name, args: block.arguments });
+            else if (block.type === 'text') out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: block.text } });
+          }
+          if (m.role === 'toolResult') out({ type: 'tool_execution_end', toolCallId: m.toolCallId, toolName: m.toolName, result: { content: m.content }, isError: m.isError === true });
+        }
+        running = false;
+        return out({ type: 'agent_settled', aborted: false });
       }
       out({ type: 'tool_execution_start', toolCallId: 'c1', toolName: 'bash', args: { command: 'ls' } });
       out({ type: 'tool_execution_update', toolCallId: 'c1', toolName: 'bash', partialResult: { content: [{ type: 'text', text: 'partial' }] } });

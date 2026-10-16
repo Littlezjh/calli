@@ -55,9 +55,11 @@ function shim(dir, name, script) {
  * One daemon with its own data dir, workdir and fake agents. Returns the base URL plus handles.
  * `env` is merged into the daemon's environment (extra RAH_* switches, fake-agent switches).
  */
-export async function startDaemon(env = {}) {
+export async function startDaemon(env = {}, opts = {}) {
   const dataDir = mkdtempSync(join(tmpdir(), 'rah-e2e-data-'));
-  const workdir = mkdtempSync(join(tmpdir(), 'rah-e2e-work-'));
+  // A fixed name reads better in screenshots than the random suffix mkdtemp adds.
+  const workdir = opts.workdir ?? mkdtempSync(join(tmpdir(), 'limi-demo-'));
+  if (opts.workdir) mkdirSync(opts.workdir, { recursive: true });
   const binDir = join(dataDir, 'bin');
   mkdirSync(binDir);
   shim(binDir, 'fake-pi', 'fake-pi.mjs');
