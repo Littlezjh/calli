@@ -486,6 +486,15 @@ button:disabled {
     background: var(--below);
   }
 
+  /* Opened from the home screen there is no browser bar below the app, and iOS paints the body's
+     colour behind the status bar instead: --below there is a grey band above every page but the
+     list. The page colour, so the top of the screen is one colour up to the edge. */
+  @media (display-mode: standalone) {
+    body {
+      background: var(--bg);
+    }
+  }
+
   .sidebar {
     position: absolute;
     inset: 0;
