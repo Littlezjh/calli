@@ -596,6 +596,11 @@ export function createHttpServer(deps: HttpDeps): Server {
         return sendJson(res, 200, manager.listEvents(threadId, after));
       }
 
+      if (method === 'GET' && sub === 'trace') {
+        // ?turn=ID: that turn; without it, the thread's last one.
+        return sendJson(res, 200, manager.turnTrace(threadId, url.searchParams.get('turn') || undefined));
+      }
+
       if (method === 'GET' && sub === 'system-prompt') {
         return sendJson(res, 200, await manager.threadSystemPrompt(threadId));
       }

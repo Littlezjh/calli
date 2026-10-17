@@ -294,6 +294,36 @@ test('claude thread: send a turn, get streamed events, title set from first mess
   assert.equal(after.agentSessionId, 'acp-session-1');
 });
 
+test('a turn reads back as a trace: the last one by default, any one by id', async () => {
+  const created = await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: workdir }) });
+  const thread = (await created.json()) as { id: string };
+  type Trace = { turnId: string; status: string; agent: string; steps: Array<{ kind: string; text?: string; tool?: string; output?: string }>; totals: { tools: number }; turns: Array<{ turnId: string }> };
+  for (const text of ['first ask', 'second ask']) {
+    await api(`/api/threads/${thread.id}/turns`, { method: 'POST', body: JSON.stringify({ text }) });
+    await waitFor(async () => {
+      const t = (await (await api(`/api/threads/${thread.id}`)).json()) as { status: string };
+      return t.status === 'idle' ? t : null;
+    });
+  }
+  const last = (await (await api(`/api/threads/${thread.id}/trace`)).json()) as Trace;
+  assert.equal(last.turns.length, 2);
+  assert.equal(last.turnId, last.turns[1].turnId);
+  assert.equal(last.status, 'done');
+  assert.equal(last.agent, 'pi');
+  assert.equal(last.steps[0].kind, 'user');
+  assert.equal(last.steps[0].text, 'second ask');
+  const tool = last.steps.find((s) => s.kind === 'tool');
+  assert.equal(tool?.output, 'a.txt');
+  assert.equal(last.totals.tools, 1);
+  assert.ok(last.steps.some((s) => s.kind === 'thinking'));
+  assert.match(last.steps.at(-1)?.text ?? '', /there second ask/);
+
+  const first = (await (await api(`/api/threads/${thread.id}/trace?turn=${last.turns[0].turnId}`)).json()) as Trace;
+  assert.equal(first.steps[0].text, 'first ask');
+  assert.equal((await api(`/api/threads/${thread.id}/trace?turn=nope`)).status, 404);
+  assert.equal((await api('/api/threads/does-not-exist/trace')).status, 404);
+});
+
 test('a second turn while one is running is refused with 409', async () => {
   const created = await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: workdir }) });
   const thread = (await created.json()) as { id: string };

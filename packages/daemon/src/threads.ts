@@ -31,6 +31,7 @@ import { SkillsManager } from './skills.js';
 import { isWithinWorkdirs, Workdirs } from './workdirs.js';
 import { coalesceToolEvents, compactDeltas, type EmittedEvent, type EventType, type StoredEvent } from './events.js';
 import type { SearchHit, SectionRecord, Store, ThreadRecord, ThreadWorktree, TodoRecord } from './store.js';
+import { buildTrace, type TurnTrace } from './trace.js';
 import { askedText } from './util.js';
 import { addWorktree, countChanges, findCheckout, initRepository, removeWorktree, samePath, worktreeLeftovers, type Checkout, type Worktree } from './worktrees.js';
 
@@ -521,6 +522,30 @@ export class ThreadManager {
   usageReport(hours: number, agent: string) { return this.store.telemetry.read(hours, agent); }
 
   activityReport(days: number, agent: string) { return this.store.activity.read(days, agent); }
+
+  /** One turn of a thread as a trace, the last turn when none is named. */
+  turnTrace(threadId: string, turnId?: string): TurnTrace {
+    const thread = this.getThread(threadId);
+    const turns = this.store.listTurns(threadId);
+    const turn = turnId ? turns.find((t) => t.turnId === turnId) : turns[turns.length - 1];
+    if (!turn) throw new HttpError(404, '这个线程没有这一轮');
+    const trace = buildTrace(this.store.turnEvents(threadId, turn.turnId));
+    return {
+      threadId,
+      turnId: turn.turnId,
+      title: thread.title,
+      agent: thread.agent,
+      cwd: thread.cwd,
+      models: trace.models.length ? trace.models : thread.model ? [thread.model] : [],
+      // A turn that never ended and is not the one running now was cut off.
+      status: trace.status === 'running' && (thread.status !== 'running' || turn !== turns[turns.length - 1]) ? 'cancelled' : trace.status,
+      startedAt: turn.ts,
+      endedAt: trace.endedAt,
+      steps: trace.steps,
+      totals: trace.totals,
+      turns: turns.map((t) => ({ turnId: t.turnId, ts: t.ts })),
+    };
+  }
 
   /**
    * The whole prompt a thread's conversation runs with, from the agent's own session file. Reading

@@ -31,6 +31,16 @@ try {
     await page.waitForTimeout(200);
     await page.screenshot({ path: join(outDir, `overview-${name}-dialog.png`) });
     await page.keyboard.press('Escape');
+    // One turn as a trace: the ask open, then a tool opened to its input and output.
+    await page.locator('.activity-ask', { hasText: '商品列表' }).click();
+    await page.locator('.trace-step.user .trace-text').waitFor({ timeout: 10_000 });
+    await page.locator('.trace-step.tool', { hasText: 'npm test' }).locator('.trace-step-head').click();
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), theme);
+      await page.waitForTimeout(300);
+      await page.screenshot({ path: join(outDir, `overview-${name}-trace-${theme}.png`) });
+    }
+    await page.keyboard.press('Escape');
     await page.close();
   }
 } finally {

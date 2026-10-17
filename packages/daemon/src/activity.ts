@@ -17,6 +17,8 @@ export interface ActivityPrompt {
   agent: string;
   cwd: string;
   archived: boolean;
+  /** Tool calls the turn made, so the page shows which asks did work and which only talked. */
+  tools: number;
 }
 
 export interface ActivityTool {
@@ -110,7 +112,7 @@ export class Activity {
         entry.prompts.push({
           threadId: row.thread_id, turnId: row.turn_id, ts: row.ts,
           text: row.text.length > PROMPT_CHARS ? `${row.text.slice(0, PROMPT_CHARS)}…` : row.text,
-          title: row.title, agent: row.agent, cwd: row.cwd, archived: row.archived_at !== null,
+          title: row.title, agent: row.agent, cwd: row.cwd, archived: row.archived_at !== null, tools: 0,
         });
       } else {
         entry.morePrompts += 1;
@@ -121,8 +123,9 @@ export class Activity {
     // are not re-guessed from their titles; their count simply shows under the kind it logged.
     const toolCounts = new Map<string, Map<string, { count: number; mcp: boolean; mcpServer?: string }>>();
     const serverCounts = new Map<string, Map<string, number>>();
-    const toolRows = this.db.prepare(`SELECT thread_id, ts, data FROM events WHERE type = 'tool.start' AND ts >= ?
-      ${agent ? 'AND thread_id IN (SELECT id FROM threads WHERE agent = ?)' : ''}`) as unknown as { iterate: (...args: string[]) => Iterable<{ thread_id: string; ts: string; data: string }> };
+    const perTurn = new Map<string, number>();
+    const toolRows = this.db.prepare(`SELECT thread_id, turn_id, ts, data FROM events WHERE type = 'tool.start' AND ts >= ?
+      ${agent ? 'AND thread_id IN (SELECT id FROM threads WHERE agent = ?)' : ''}`) as unknown as { iterate: (...args: string[]) => Iterable<{ thread_id: string; turn_id: string | null; ts: string; data: string }> };
     for (const row of toolRows.iterate(...(agent ? [since, agent] : [since]))) {
       let data: Record<string, unknown>;
       try {
@@ -132,6 +135,7 @@ export class Activity {
       }
       const key = localDay(row.ts);
       day(row.ts);
+      if (row.turn_id) perTurn.set(`${row.thread_id}:${row.turn_id}`, (perTurn.get(`${row.thread_id}:${row.turn_id}`) ?? 0) + 1);
       sawThread(row.ts, row.thread_id);
       const mcp = mcpCallOf(data);
       const name = typeof data.tool === 'string' && data.tool ? data.tool : KIND_LABELS[String(data.kind)] ?? KIND_LABELS.other;
@@ -147,6 +151,9 @@ export class Activity {
       }
     }
 
+    for (const entry of byDay.values()) {
+      for (const p of entry.prompts) p.tools = perTurn.get(`${p.threadId}:${p.turnId}`) ?? 0;
+    }
     for (const [key, threads] of threadsPerDay) {
       const entry = byDay.get(key);
       if (entry) entry.threads = threads.size;

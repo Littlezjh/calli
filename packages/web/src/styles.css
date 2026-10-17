@@ -8482,6 +8482,254 @@ button.coord-row-name { cursor: pointer; }
   .activity-ask { gap: 10px; }
 }
 
+.activity-ask-tools {
+  flex: none;
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Trace: one turn, step by step ---------- */
+
+.trace-panel { width: min(880px, calc(100vw - 40px)); max-height: calc(100dvh - 60px); }
+.trace-panel .panel-head { flex-shrink: 0; }
+.trace-empty { margin: 0; padding: 28px 22px; color: var(--muted); font-size: 13.5px; list-style: none; }
+
+.trace-body { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.trace-head { padding: 10px 22px 0; }
+.trace-title-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.trace-thread {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.trace-thread span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.trace-thread svg { flex: none; color: var(--faint); }
+.trace-thread:hover svg { color: var(--text); }
+.trace-status {
+  flex: none;
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
+  background: var(--hover);
+  color: var(--muted);
+  font-size: 12px;
+}
+.trace-status.done { background: var(--positive-bg); color: var(--positive); }
+.trace-status.error { background: var(--danger-bg); color: var(--danger); }
+.trace-status.running { background: var(--active); color: var(--text); }
+.trace-nav { display: flex; align-items: center; gap: 2px; margin-left: auto; flex: none; }
+.trace-nav .icon-btn { width: 30px; height: 30px; }
+.trace-nav .icon-btn:disabled { opacity: 0.35; cursor: default; }
+.trace-nav-pos { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.trace-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px 18px;
+  margin: 14px 0 0;
+}
+.trace-meta div { min-width: 0; }
+.trace-meta .wide { grid-column: 1 / -1; }
+.trace-meta dt { color: var(--faint); font-size: 11.5px; }
+.trace-meta dd {
+  margin: 2px 0 0;
+  color: var(--text);
+  font-size: 13px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.trace-meta .wide dd { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+
+.trace-tools {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 22px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.trace-filters { display: flex; gap: 6px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.trace-filters::-webkit-scrollbar { display: none; }
+.trace-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.trace-filter:hover { color: var(--text); background: var(--hover); }
+.trace-filter.active { border-color: var(--accent); background: var(--accent); color: var(--accent-fg); }
+.trace-filter-count { color: var(--faint); font-variant-numeric: tabular-nums; }
+.trace-filter.active .trace-filter-count { color: inherit; opacity: 0.7; }
+.trace-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 200px;
+  min-width: 120px;
+  height: 30px;
+  margin-left: auto;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--faint);
+}
+.trace-search:focus-within { border-color: var(--border-strong); }
+.trace-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; color: var(--text); font: inherit; font-size: 13px; }
+.trace-search input::-webkit-search-cancel-button { display: none; }
+
+/* The kinds, one hue each, the same in the chips and the rail. */
+.trace-dot { flex: none; width: 7px; height: 7px; border-radius: var(--radius-pill); background: var(--faint); }
+.trace-dot.system { background: var(--muted); }
+.trace-dot.user { background: var(--chart-1); }
+.trace-dot.thinking { background: var(--chart-3); }
+.trace-dot.assistant { background: var(--chart-total); }
+.trace-dot.tool { background: var(--chart-2); }
+.trace-dot.request { background: var(--faint); }
+.trace-dot.context { background: var(--faint); }
+.trace-dot.error { background: var(--danger); }
+
+.trace-steps { margin: 0; padding: 8px 12px 18px; list-style: none; }
+.trace-step { position: relative; border-radius: var(--radius-sm); }
+.trace-step + .trace-step::before {
+  content: '';
+  position: absolute;
+  top: -6px;
+  left: 17px;
+  height: 12px;
+  border-left: 1px solid var(--border);
+}
+.trace-step-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  padding: 6px 10px 6px 14px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+div.trace-step-head { cursor: default; }
+button.trace-step-head:hover { background: var(--hover); }
+.trace-kind { flex: none; width: 42px; color: var(--muted); font-size: 12px; }
+.trace-tool {
+  flex: none;
+  max-width: 40%;
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: var(--code-bg);
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.trace-tool.mcp { box-shadow: inset 0 0 0 1px var(--border-strong); }
+.trace-summary {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 13px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.trace-step.user .trace-summary,
+.trace-step.assistant .trace-summary { color: var(--text); }
+.trace-step.request .trace-summary { font-size: 12px; }
+/* Opened, a text step says it in full below; a tool's title may wrap, it is not said again. */
+.trace-step.open:not(.tool) .trace-summary { visibility: hidden; }
+.trace-step.open.tool .trace-summary { white-space: normal; word-break: break-all; }
+.trace-step.failed .trace-tool,
+.trace-step.error .trace-summary { color: var(--danger); }
+.trace-time { flex: none; color: var(--faint); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.trace-time em { margin-left: 6px; font-style: normal; color: var(--muted); }
+
+.trace-step-body { padding: 2px 10px 12px 66px; }
+.trace-label { margin: 8px 0 4px; color: var(--faint); font-size: 11.5px; }
+.trace-label:first-child { margin-top: 2px; }
+.trace-text {
+  margin: 0;
+  max-height: 420px;
+  overflow: auto;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.trace-text.code { font-family: var(--mono); font-size: 12px; line-height: 1.55; background: var(--code-bg); border-color: transparent; }
+.trace-step.thinking .trace-text { color: var(--muted); }
+.trace-note { margin: 6px 0 0; color: var(--muted); font-size: 12.5px; }
+.trace-note.error { color: var(--danger); }
+.trace-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0 0 8px;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.trace-copy:hover { color: var(--text); background: var(--hover); }
+
+@media (max-width: 640px) {
+  .trace-panel { width: 100%; max-height: min(92dvh, 100%); }
+  .trace-head { padding: 8px 16px 0; }
+  .trace-tools { padding: 12px 16px 10px; }
+  .trace-title-row { flex-wrap: wrap; row-gap: 4px; }
+  .trace-thread { flex: 1 1 100%; order: -1; }
+  .trace-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; margin-top: 10px; }
+  .trace-tools { flex-direction: column; align-items: stretch; gap: 10px; }
+  .trace-search { flex: none; margin-left: 0; height: 34px; }
+  .trace-steps { padding: 6px 4px calc(16px + var(--safe-bottom)); }
+  .trace-filters { margin: 0 -16px; padding: 0 16px; }
+  .trace-step-head { gap: 8px; padding-left: 12px; }
+  .trace-kind { width: 30px; }
+  .trace-tool { max-width: 45%; }
+  .trace-step-body { padding: 2px 8px 12px 12px; }
+  .trace-step + .trace-step::before { left: 15px; }
+}
+
 /* The MCP page shares the skills skeleton; what is its own: business line chips and groups, the
    config listing in the detail dialog, and the note dialog's fields. */
 .mcp-page .skills-tools .primary { gap: 6px; flex-shrink: 0; white-space: nowrap; }

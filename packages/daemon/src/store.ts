@@ -894,6 +894,26 @@ export class Store {
     for (const row of rows) yield toEvent(row as unknown as EventRow);
   }
 
+  /** A thread's turns, oldest first, by where each began in the log. */
+  listTurns(threadId: string): Array<{ turnId: string; ts: string; seq: number }> {
+    const rows = this.db
+      .prepare("SELECT seq, turn_id, ts FROM events WHERE thread_id = ? AND type = 'turn.started' AND turn_id IS NOT NULL ORDER BY seq ASC")
+      .all(threadId) as Array<{ seq: number; turn_id: string; ts: string }>;
+    return rows.map((row) => ({ turnId: row.turn_id, ts: row.ts, seq: row.seq }));
+  }
+
+  /** One turn's events, oldest first: from where it began up to where the next one did. */
+  turnEvents(threadId: string, turnId: string): StoredEvent[] {
+    const turns = this.listTurns(threadId);
+    const at = turns.findIndex((t) => t.turnId === turnId);
+    if (at < 0) return [];
+    const end = turns[at + 1]?.seq ?? Number.MAX_SAFE_INTEGER;
+    const rows = this.db
+      .prepare('SELECT * FROM events WHERE thread_id = ? AND seq >= ? AND seq < ? AND turn_id = ? ORDER BY seq ASC')
+      .all(threadId, turns[at].seq, end, turnId) as unknown as EventRow[];
+    return rows.map(toEvent);
+  }
+
   /**
    * The id of the thread's last turn when it never ended (no turn.done or turn.error), else null.
    */

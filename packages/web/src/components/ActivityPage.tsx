@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { ActivityDay, ActivityReport, AgentInfo, Api, SystemPrompt } from '../api';
 import { Dialog } from './Dialog';
 import { AgentMark } from './icons';
+import { TracePanel } from './TracePanel';
 
 interface Props {
   api: Api;
@@ -71,6 +72,7 @@ export function ActivityPage({ api, agents, onOpenThread, onError }: Props) {
   const [report, setReport] = useState<ActivityReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<PromptView | null>(null);
+  const [trace, setTrace] = useState<{ threadId: string; turnId: string } | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -126,7 +128,7 @@ export function ActivityPage({ api, agents, onOpenThread, onError }: Props) {
             </button>
           ))}
         </div>
-        <p className="activity-hint">每天问了什么、调了哪些工具和 MCP；点提问回到那个会话。</p>
+        <p className="activity-hint">每天问了什么、调了哪些工具和 MCP；点提问看那一轮的执行轨迹。</p>
       </header>
 
       {loading && !report && <div className="activity-empty">读取中…</div>}
@@ -185,9 +187,10 @@ export function ActivityPage({ api, agents, onOpenThread, onError }: Props) {
                   <ul className="activity-asks">
                     {asks.map((p) => (
                       <li key={p.turnId}>
-                        <button type="button" className="activity-ask" onClick={() => onOpenThread(threadId)} title={p.text}>
+                        <button type="button" className="activity-ask" onClick={() => setTrace({ threadId, turnId: p.turnId })} title={p.text}>
                           <span className="activity-ask-time">{timeOf(p.ts)}</span>
                           <span className="activity-ask-text">{p.text}</span>
+                          {p.tools ? <span className="activity-ask-tools">{p.tools} 个工具</span> : null}
                         </button>
                       </li>
                     ))}
@@ -206,6 +209,19 @@ export function ActivityPage({ api, agents, onOpenThread, onError }: Props) {
       })}
 
       {view && <SystemPromptDialog view={view} onClose={() => setView(null)} />}
+      {trace && (
+        <TracePanel
+          api={api}
+          agents={agents}
+          threadId={trace.threadId}
+          turnId={trace.turnId}
+          onOpenThread={(id) => {
+            setTrace(null);
+            onOpenThread(id);
+          }}
+          onClose={() => setTrace(null)}
+        />
+      )}
     </div>
   );
 }

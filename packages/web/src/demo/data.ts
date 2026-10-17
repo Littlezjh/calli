@@ -6,7 +6,7 @@
  * Nothing here is anyone's real project, path or machine.
  */
 import { CLAUDE_ICON, CODEX_ICON, PI_ICON } from '../../../daemon/src/adapters/icons';
-import type { ActivityDay, AgentInfo, FolderListing, ModelOption, Schedule, Section, SystemPrompt, TextFile, Thread, Todo, WorkdirsConfig } from '../api';
+import type { ActivityDay, AgentInfo, FolderListing, ModelOption, Schedule, Section, SystemPrompt, TextFile, Thread, Todo, TurnTrace, WorkdirsConfig } from '../api';
 import type { StoredEvent } from '../timeline';
 
 export interface DemoData {
@@ -25,6 +25,8 @@ export interface DemoData {
   activity: ActivityDay[];
   /** The whole prompt of a conversation, by thread, for the demo's system-prompt dialog. */
   systemPrompts: Record<string, SystemPrompt>;
+  /** Turn traces by thread, as the trace endpoint would answer for its last turn. */
+  traces: Record<string, TurnTrace>;
 }
 
 const STOREFRONT = '~/projects/storefront';
@@ -418,8 +420,8 @@ export function demoData(now = Date.now()): DemoData {
       threads: 2,
       morePrompts: 0,
       prompts: [
-        { threadId: 'demo-weekly', turnId: 'turn-weekly-1', ts: at(60 * 26), text: '整理上周的提交记录，写成周报发到讨论区。', title: '上周周报', agent: 'pi', cwd: NOTES_API, archived: false },
-        { threadId: 'demo-routes', turnId: 'turn-routes-1', ts: at(127), text: '想把接口迁到新的路由写法，先帮我看看现在哪些地方用了旧的。', title: '迁移到新的路由写法', agent: 'codex', cwd: NOTES_API, archived: false },
+        { threadId: 'demo-weekly', turnId: 'turn-weekly-1', ts: at(60 * 26), text: '整理上周的提交记录，写成周报发到讨论区。', title: '上周周报', agent: 'pi', cwd: NOTES_API, archived: false, tools: 5 },
+        { threadId: 'demo-routes', turnId: 'turn-routes-1', ts: at(127), text: '想把接口迁到新的路由写法，先帮我看看现在哪些地方用了旧的。', title: '迁移到新的路由写法', agent: 'codex', cwd: NOTES_API, archived: false, tools: 9 },
       ],
       tools: [
         { name: 'shell', count: 6, mcp: false },
@@ -435,9 +437,9 @@ export function demoData(now = Date.now()): DemoData {
       threads: 3,
       morePrompts: 0,
       prompts: [
-        { threadId: 'demo-scroll-fix', turnId: 'turn-scroll-1', ts: at(8), text: '商品列表往下滚的时候会跳一下，帮忙看看是哪里的问题。', title: '修复商品列表滚动跳动', agent: 'claude', cwd: STOREFRONT, archived: false },
-        { threadId: 'demo-tests', turnId: 'turn-tests-1', ts: at(19), text: '给 /users 接口补上缺的测试。', title: '补齐 /users 接口测试', agent: 'codex', cwd: NOTES_API, archived: false },
-        { threadId: 'demo-dark-mode', turnId: 'turn-dark-1', ts: at(41), text: '设置页加一个深色模式开关，默认跟随系统。', title: '设置页加深色模式', agent: 'codex', cwd: STOREFRONT, archived: false },
+        { threadId: 'demo-scroll-fix', turnId: 'turn-scroll-1', ts: at(8), text: '商品列表往下滚的时候会跳一下，帮忙看看是哪里的问题。', title: '修复商品列表滚动跳动', agent: 'claude', cwd: STOREFRONT, archived: false, tools: 6 },
+        { threadId: 'demo-tests', turnId: 'turn-tests-1', ts: at(19), text: '给 /users 接口补上缺的测试。', title: '补齐 /users 接口测试', agent: 'codex', cwd: NOTES_API, archived: false, tools: 4 },
+        { threadId: 'demo-dark-mode', turnId: 'turn-dark-1', ts: at(41), text: '设置页加一个深色模式开关，默认跟随系统。', title: '设置页加深色模式', agent: 'codex', cwd: STOREFRONT, archived: false, tools: 3 },
       ],
       tools: [
         { name: 'mcp__figma__get_frame', count: 3, mcp: true, server: 'figma' },
@@ -460,6 +462,37 @@ export function demoData(now = Date.now()): DemoData {
     'demo-scroll-fix': {
       text: 'You are Claude Code, Anthropic\'s official CLI for Claude.\n\n# 示例\n同样是节选：真实提示词里还有环境信息、git 状态和 MCP 工具的完整说明。\n\n# Tools\n- Read, Edit, Bash, Grep…',
       source: 'Claude Code 会话文件',
+    },
+  };
+
+  const sec = (minutesAgo: number, seconds: number) => new Date(now - minutesAgo * 60_000 + seconds * 1000).toISOString();
+  const traces: DemoData['traces'] = {
+    'demo-scroll-fix': {
+      threadId: 'demo-scroll-fix',
+      turnId: 'turn-scroll-1',
+      title: '修复商品列表滚动跳动',
+      agent: 'claude',
+      cwd: STOREFRONT,
+      models: ['claude-sonnet-5-5'],
+      status: 'done',
+      startedAt: sec(8, 0),
+      endedAt: sec(8, 74),
+      totals: { tools: 6, mcp: 1, requests: 4, input: 61_240, output: 2_310 },
+      turns: [{ turnId: 'turn-scroll-1', ts: sec(8, 0) }],
+      steps: [
+        { kind: 'user', ts: sec(8, 0), text: '商品列表往下滚的时候会跳一下，帮忙看看是哪里的问题。' },
+        { kind: 'request', ts: sec(8, 1), endTs: sec(8, 4), model: 'claude-sonnet-5-5', tokens: { input: 14_820, output: 310, cacheRead: 12_400 } },
+        { kind: 'thinking', ts: sec(8, 2), endTs: sec(8, 4), text: '滚动跳动多半是图片加载后撑开了高度，或者列表在滚动时重新测量了行高。先看列表组件和图片有没有固定尺寸。' },
+        { kind: 'tool', ts: sec(8, 4), endTs: sec(8, 5), tool: 'Grep', title: 'ProductList', status: 'completed', input: '{\n  "pattern": "ProductList",\n  "path": "src"\n}', output: 'src/components/ProductList.tsx\nsrc/pages/Home.tsx' },
+        { kind: 'tool', ts: sec(8, 5), endTs: sec(8, 6), tool: 'Read', title: 'src/components/ProductList.tsx', status: 'completed', output: 'export function ProductList({ items }) {\n  return items.map((item) => (\n    <article className="card">\n      <img src={item.image} />\n      …' },
+        { kind: 'tool', ts: sec(8, 7), endTs: sec(8, 11), tool: 'mcp__figma__get_frame', server: 'figma', title: '商品卡片 / 列表', status: 'completed', output: '{ "width": 343, "height": 412, "image": { "aspectRatio": "4 / 5" } }' },
+        { kind: 'request', ts: sec(8, 12), endTs: sec(8, 19), model: 'claude-sonnet-5-5', tokens: { input: 16_930, output: 820, cacheRead: 14_800 } },
+        { kind: 'assistant', ts: sec(8, 19), endTs: sec(8, 20), text: '图片没有固定宽高比，加载完成后卡片变高，把下面的内容往下推。按设计稿给图片加上 4:5 的宽高比。' },
+        { kind: 'tool', ts: sec(8, 20), endTs: sec(8, 22), tool: 'Edit', title: 'src/components/ProductList.tsx', status: 'completed', output: '已修改 1 处' },
+        { kind: 'tool', ts: sec(8, 23), endTs: sec(8, 61), tool: 'Bash', title: 'npm test -- ProductList', status: 'completed', input: '{\n  "command": "npm test -- ProductList"\n}', output: ' PASS  src/components/ProductList.test.tsx\n  ✓ keeps its height while images load (38 ms)\n\nTests: 4 passed, 4 total' },
+        { kind: 'request', ts: sec(8, 62), endTs: sec(8, 74), model: 'claude-sonnet-5-5', tokens: { input: 29_490, output: 1_180, cacheRead: 27_100 } },
+        { kind: 'assistant', ts: sec(8, 70), endTs: sec(8, 74), text: '已修复：给商品图加了 `aspect-ratio: 4 / 5`，图片加载前就占好位置，滚动不再跳。测试 4 个全部通过。' },
+      ],
     },
   };
 
@@ -489,5 +522,6 @@ export function demoData(now = Date.now()): DemoData {
     files,
     activity,
     systemPrompts,
+    traces,
   };
 }

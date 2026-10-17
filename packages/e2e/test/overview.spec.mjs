@@ -51,8 +51,28 @@ test('the sidebar opens the overview, a turn shows up the day it was asked, tool
     const toolNames = await day.locator('.activity-chip').allTextContents();
     assert.ok(toolNames.length > 0, `tools counted: ${toolNames.join(', ')}`);
 
-    // The ask leads back into its conversation.
+    // The ask opens its turn as a trace: the ask itself, then the tool the fake pi ran, with output.
+    assert.match(await day.locator('.activity-ask-tools').first().textContent(), /1 个工具/);
     await day.locator('.activity-ask').first().click();
+    const trace = page.locator('.trace-panel');
+    await trace.waitFor({ timeout: 10_000 });
+    await trace.locator('.trace-step.user .trace-text').waitFor({ timeout: 10_000 });
+    assert.match(await trace.locator('.trace-step.user .trace-text').textContent(), /安装检查/, 'the ask is open from the start');
+    assert.match(await trace.locator('.trace-status').textContent(), /完成/);
+    const tool = trace.locator('.trace-step.tool').first();
+    assert.match(await tool.locator('.trace-tool').textContent(), /bash/);
+    await tool.locator('.trace-step-head').click();
+    assert.match(await tool.locator('.trace-text.code').last().textContent(), /a\.txt/);
+    // Filtered by kind, then searched.
+    await trace.locator('.trace-filter', { hasText: '工具' }).click();
+    assert.equal(await trace.locator('.trace-step.user').count(), 0);
+    await trace.locator('.trace-filter', { hasText: '全部' }).click();
+    await trace.locator('.trace-search input').fill('没有这个词');
+    await trace.locator('.trace-empty', { hasText: '没有匹配' }).waitFor({ timeout: 5_000 });
+    await trace.locator('.trace-search input').fill('');
+
+    // From the trace, into its conversation.
+    await trace.locator('.trace-thread').click();
     await page.locator('.composer').waitFor({ timeout: 10_000 });
     assert.equal(await page.evaluate(() => window.location.hash), '');
     await page.locator('.side-link', { hasText: '概览' }).click();

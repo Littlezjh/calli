@@ -66,7 +66,7 @@ export interface ActivityDay {
   date: string;
   turns: number;
   threads: number;
-  prompts: Array<{ threadId: string; turnId: string; ts: string; text: string; title: string; agent: string; cwd: string; archived: boolean }>;
+  prompts: Array<{ threadId: string; turnId: string; ts: string; text: string; title: string; agent: string; cwd: string; archived: boolean; /** Tool calls the turn made; absent from older daemons. */ tools?: number }>;
   morePrompts: number;
   tools: Array<{ name: string; count: number; mcp: boolean; server?: string }>;
   mcp: Array<{ server: string; count: number }>;
@@ -74,6 +74,42 @@ export interface ActivityDay {
 
 export interface ActivityReport {
   days: ActivityDay[];
+}
+
+export type TraceStepKind = 'user' | 'thinking' | 'assistant' | 'tool' | 'request' | 'context' | 'error';
+
+/** One thing that happened in a turn, as the daemon's trace reads it out of the event log. */
+export interface TraceStep {
+  kind: TraceStepKind;
+  ts: string;
+  endTs?: string;
+  text?: string;
+  tool?: string;
+  title?: string;
+  server?: string;
+  status?: string;
+  input?: string;
+  output?: string;
+  model?: string;
+  tokens?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
+  /** A text above was cut; the thread holds all of it. */
+  cut?: boolean;
+}
+
+/** One turn read back step by step: the ask, the thinking, each tool and model request, the answer. */
+export interface TurnTrace {
+  threadId: string;
+  turnId: string;
+  title: string;
+  agent: string;
+  cwd: string;
+  models: string[];
+  status: 'running' | 'done' | 'cancelled' | 'error';
+  startedAt: string;
+  endedAt: string | null;
+  steps: TraceStep[];
+  totals: { tools: number; mcp: number; requests: number; input: number; output: number };
+  turns: Array<{ turnId: string; ts: string }>;
 }
 
 /** The model and thinking effort members of one instance start with; null leaves the agent's own. */
@@ -758,6 +794,11 @@ export class Api {
   /** The daily digest of what was asked and what was called, newest day last. */
   activity(days = 14): Promise<ActivityReport> {
     return this.request('GET', `/api/activity?days=${days}`);
+  }
+
+  /** One turn of a thread as a trace; the last turn when none is named. */
+  trace(threadId: string, turnId?: string): Promise<TurnTrace> {
+    return this.request('GET', `/api/threads/${threadId}/trace${turnId ? `?turn=${encodeURIComponent(turnId)}` : ''}`);
   }
 
   /** The whole prompt a thread's conversation runs with, as the agent itself persisted it. */
