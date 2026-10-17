@@ -63,7 +63,7 @@ import { NoteMarks, type NoteMark } from './components/NoteMarks';
 import { Toast, type ToastState } from './components/Toast';
 import { ConnectDialog, DemoBar } from './components/ConnectDialog';
 import { DemoApi, DemoError } from './demo/DemoApi';
-import { IconCheck, AgentMark, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconMore, IconPalette, IconPlus, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal } from './components/icons';
+import { IconCheck, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconMore, IconPalette, IconPlus, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal } from './components/icons';
 
 const sleep = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve) => {
@@ -1229,6 +1229,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
     ...(agents.some((a) => a.capabilities.quota)
       ? [{ id: 'usage', label: '额度', hint: '所有 agent 的用量、重置时间和刷新', keywords: ['usage', 'quota', '额度', 'cost'] }]
       : []),
+    { id: 'activity', label: '概览', hint: '每天的提问、工具与 MCP，每一轮的执行轨迹', keywords: ['activity', 'overview', 'trace', '概览', '轨迹'] },
     { id: 'skills', label: '技能', hint: '各机器各 agent 的技能，互相同步', keywords: ['skills', 'skill', '技能'] },
     { id: 'mcp', label: 'MCP', hint: '各机器各 agent 的 MCP 服务，按业务线管理', keywords: ['mcp', 'server', '业务线'] },
     ...(models.length || effortLevels.length
@@ -1260,6 +1261,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
     if (id === 'status') return setStatusOpen(true);
     if (id === 'term') return setTermOpen(true);
     if (id === 'usage') return setQuotaOpen(true);
+    if (id === 'activity') return openActivity();
     if (id === 'skills') return openSkills();
     if (id === 'mcp') return openMcp();
     if (id === 'export' && selected) return threadActions.copyConversation(selected);
@@ -1497,8 +1499,6 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
           todosActive={onTodos}
           onOpenSchedules={openSchedules}
           schedulesActive={onSchedules}
-          onOpenActivity={openActivity}
-          activityActive={onActivity}
           notice={demo && compact ? <DemoBar compact onConnect={askToConnect} /> : undefined}
         />
       </aside>
@@ -1885,6 +1885,8 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
                   },
                 ]
               : []),
+            // The overview reads only this hub's own log, so the demo has one to show too.
+            { id: 'activity', label: '概览', icon: IconActivity, onSelect: openActivity },
             ...(demo
               ? []
               : [

@@ -287,7 +287,7 @@
 
 ## 16. 概览（每日执行分析）
 
-侧边栏「概览」一页：每天问了什么、调了哪些工具和 MCP，以及每个会话的完整系统提示词。方案与开源调研见 [activity-design.md](activity-design.md)。第一版已实现。
+设置菜单里的「概览」一页：每天问了什么、调了哪些工具和 MCP，以及每个会话的完整系统提示词。方案与开源调研见 [activity-design.md](activity-design.md)。第一版已实现。
 
 - [x] 事件里补存原始工具名：`tool.start` 新增 `tool`（模型看到的名字，如 `mcp__github__create_issue`）和 `server`（Codex 的 MCP 服务名）；ACP、pi、Codex、agy、zcode 适配器都带上了；旧记录不回填，按当时记录的 kind 归类统计
 - [x] `GET /api/activity?days=`（1..90）：按 daemon 本地日聚合，每天的用户提问（`turn_text`，含导入与终端同步的轮次；每至多 50 条，多的计数）、工具调用排行（原始名或旧记录的类别）、MCP 按服务汇总；归档线程计入；`events` 增加 `tool.start` 的部分索引

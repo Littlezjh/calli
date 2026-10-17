@@ -174,6 +174,12 @@ export const IconGauge = (p: { size?: number }) => (
     <path d="M4 14a8 8 0 1 1 16 0M12 14l4-4" />
   </Svg>
 );
+/** A pulse line: what the agents have been doing, the overview page. */
+export const IconActivity = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M3 12h4l3-7 4 14 3-7h4" />
+  </Svg>
+);
 export const IconArchive = (p: { size?: number }) => (
   <Svg {...p}>
     <path d="M4 5h16v4H4zM6 9v10h12V9M10 13h4" />

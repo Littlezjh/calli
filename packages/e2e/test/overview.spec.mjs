@@ -18,7 +18,7 @@ after(async () => {
   await daemon?.stop();
 });
 
-test('the sidebar opens the overview, a turn shows up the day it was asked, tools and MCP counted', async () => {
+test('the settings menu opens the overview, a turn shows up the day it was asked, tools and MCP counted', async () => {
   const page = await (await browser.newContext({ viewport: { width: 1400, height: 900 } })).newPage();
   try {
     const made = await (await fetch(`${daemon.base}/api/threads`, {
@@ -38,7 +38,10 @@ test('the sidebar opens the overview, a turn shows up the day it was asked, tool
     }
 
     await openUi(page, daemon);
-    await page.locator('.side-link', { hasText: '概览' }).click();
+    // Not a row of the list: it lives in the settings menu, with the skills and MCP pages.
+    assert.equal(await page.locator('.side-link', { hasText: '概览' }).count(), 0);
+    await page.getByRole('button', { name: '配置', exact: true }).click();
+    await page.getByRole('menuitem', { name: '概览', exact: true }).click();
     await page.locator('.activity-page').waitFor({ timeout: 10_000 });
     assert.match(await page.evaluate(() => window.location.hash), /#\/activity$/);
     assert.equal((await page.locator('.topbar-title').innerText()).trim(), '概览', 'the top bar names the page, not 新线程');
@@ -75,7 +78,8 @@ test('the sidebar opens the overview, a turn shows up the day it was asked, tool
     await trace.locator('.trace-thread').click();
     await page.locator('.composer').waitFor({ timeout: 10_000 });
     assert.equal(await page.evaluate(() => window.location.hash), '');
-    await page.locator('.side-link', { hasText: '概览' }).click();
+    await page.getByRole('button', { name: '配置', exact: true }).click();
+    await page.getByRole('menuitem', { name: '概览', exact: true }).click();
     await page.locator('.activity-page').waitFor({ timeout: 10_000 });
   } finally { await page.close(); }
 });
