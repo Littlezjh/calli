@@ -33,6 +33,7 @@ test('plans and sub-items are added, each on its own line, and ticked off', asyn
   assert.equal(await newPlan().getAttribute('placeholder'), '写下第一条计划，回车添加');
   assert.equal(await page.locator('.composer').count(), 0, 'the page has no composer');
   assert.equal(await page.locator('.side-link[aria-current="page"]', { hasText: '计划' }).count(), 1);
+  assert.equal((await page.locator('.topbar-title').innerText()).trim(), '计划', 'the top bar names the page');
 
   await newPlan().fill('发布 0.2');
   // Enter while an input method is still composing belongs to it: nothing is added yet.

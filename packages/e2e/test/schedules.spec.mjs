@@ -1,6 +1,7 @@
 // The scheduled-task page: create a task from the form, run it by hand, and see the run land as
 // a thread that says a schedule started it.
 import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
 import { buildOnce, startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
 
 let daemon;
@@ -24,6 +25,8 @@ test('schedules: the page creates a task, runs it now, and the run shows up as a
   await openUi(page, daemon);
   await page.getByRole('button', { name: '定时任务', exact: true }).click();
   await page.locator('.sched-page').waitFor();
+  assert.equal((await page.locator('.topbar-title').innerText()).trim(), '定时任务', 'the top bar names the page');
+  assert.equal(await page.locator('.composer').count(), 0, 'the page has no composer under it');
   // Nothing yet: the page says so and offers the way in.
   await page.locator('.sched-empty').waitFor();
 

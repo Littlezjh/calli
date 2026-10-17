@@ -148,6 +148,10 @@ test('desktop and phone, light and dark fit the viewport with readable dialogs',
     await p.waitForTimeout(300);
     assert.equal(await p.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     assert.ok((await p.locator('.skills-cell-name').last().boundingBox()).width > (phone ? 150 : 200));
+    assert.equal(await p.locator('.composer').count(), 0, 'a config page has no composer under it');
+    assert.equal((await p.locator('.topbar-title').innerText()).trim(), 'MCP', 'the top bar names the page');
+    // On a phone the machines go on one short line under each row, not a stretched empty block.
+    assert.ok((await p.locator('.skills-row').first().boundingBox()).height < 160);
     if (shots) await p.screenshot({ path: join(shots, `${phone ? 'phone' : 'desktop'}-${theme}.png`) });
     await p.getByRole('button', { name: 'playwright 的操作' }).click();
     await p.getByRole('menuitem', { name: '安装到…' }).click();

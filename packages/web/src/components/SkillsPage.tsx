@@ -277,7 +277,7 @@ export function SkillsPage({ api, token, hostId, hosts, agents, onError }: Props
                 {columns.map((column) => {
                   const place = row.places.find((p) => p.machine === column);
                   return (
-                    <span key={column.id ?? 'local'} className={`skills-mobile-machine${place ? '' : ' empty'}`}>
+                    <span key={column.id ?? 'local'} className="skills-mobile-machine">
                       <span className="skills-mobile-label">{column.label}</span>
                       {place ? marksFor(column, place.entry.agents) : <button type="button" className="skill-add" disabled={!column.listing} onClick={() => setSync({ row })}><IconPlus size={11} /> 同步</button>}
                     </span>

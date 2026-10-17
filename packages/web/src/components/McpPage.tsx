@@ -398,7 +398,7 @@ export function McpPage({ api, token, hostId, hosts, agents, onError }: Props) {
                     {columns.map((column) => {
                       const here = row.places.filter((p) => p.machine === column);
                       return (
-                        <span key={column.id ?? 'local'} className={`skills-mobile-machine${here.length ? '' : ' empty'}`}>
+                        <span key={column.id ?? 'local'} className="skills-mobile-machine">
                           <span className="skills-mobile-label">{column.label}</span>
                           {here.length ? marksFor(column, here.map((p) => p.agentId)) : (
                             <button type="button" className="skill-add" disabled={!column.listing || row.config === null} onClick={() => setInstall({ row })}>

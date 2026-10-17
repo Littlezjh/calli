@@ -41,6 +41,7 @@ test('the sidebar opens the overview, a turn shows up the day it was asked, tool
     await page.locator('.side-link', { hasText: '概览' }).click();
     await page.locator('.activity-page').waitFor({ timeout: 10_000 });
     assert.match(await page.evaluate(() => window.location.hash), /#\/activity$/);
+    assert.equal((await page.locator('.topbar-title').innerText()).trim(), '概览', 'the top bar names the page, not 新线程');
 
     // Today's section: the ask, the conversation under its name, and the tools the fake pi called.
     const day = page.locator('.activity-day', { has: page.locator('.activity-day-head h2', { hasText: '今天' }) });

@@ -341,6 +341,9 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
   const onActivity = view === 'activity' && !selectedId;
   const onSkills = view === 'skills' && !selectedId;
   const onMcp = view === 'mcp' && !selectedId;
+  /** The name of the page the main area shows instead of a thread, for the top bar; null on a thread. */
+  const viewTitle = onTodos ? '计划' : onSchedules ? '定时任务' : onActivity ? '概览' : onSkills ? '技能' : onMcp ? 'MCP' : null;
+  const onPage = viewTitle !== null;
 
   // The address follows what the main area shows. Replaced, not pushed: going between the pages and
   // threads is not a trail for the back button to walk.
@@ -695,6 +698,10 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
       const root = document.documentElement.style;
       root.setProperty('--vvh', `${vv.height}px`);
       root.setProperty('--vvt', `${vv.pageTop}px`);
+      // With the keyboard up the home indicator is under it, so the bottom inset is no space to
+      // keep clear: kept, it shows as a band between the composer and the keyboard.
+      if (document.documentElement.clientHeight - vv.height > 120) root.setProperty('--safe-bottom', '0px');
+      else root.removeProperty('--safe-bottom');
     };
     apply();
     vv.addEventListener('resize', apply);
@@ -1395,7 +1402,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
 
   const teamWaiting = Boolean(coordination?.members.some((m) => m.thread?.waiting));
   const teamRunning = coordination?.members.filter((m) => m.thread?.status === 'running').length ?? 0;
-  const teamShown = Boolean(selected?.coordination && (selected.coordination.rootId !== selected.id || selected.coordination.children > 0) && !onTodos && !onActivity && !onSkills && hostUp);
+  const teamShown = Boolean(selected?.coordination && (selected.coordination.rootId !== selected.id || selected.coordination.children > 0) && !onPage && hostUp);
   const teamNote = teamWaiting ? '待批准' : teamRunning ? `${teamRunning} 运行中` : selected?.coordination?.paused ? '已暂停' : '';
 
   // Older daemons advertise /compact before they expose the dedicated capability.
@@ -1513,9 +1520,9 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
             </div>
           )}
           <div className="topbar-heading">
-            {/* The plan page carries its own heading. */}
-            <div className="topbar-title">{host && !hostUp ? host.label : onTodos || onSkills || onSchedules ? '' : selected ? selected.title : '新线程'}</div>
-            {!selected && !onTodos && !onActivity && !onSkills && !onSchedules && host && hostUp && <div className="topbar-sub">{host.label}</div>}
+            {/* Every page names itself here, the way a thread does: the bar is never left blank. */}
+            <div className="topbar-title">{host && !hostUp ? host.label : viewTitle ?? (selected ? selected.title : '新线程')}</div>
+            {!selected && host && hostUp && <div className="topbar-sub">{host.label}</div>}
             {selected && (
               <div className="topbar-sub" title={selected.cwd}>
                 {agentLabel(selected.agent)} ·{' '}
@@ -1571,7 +1578,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
 
         {demo && <DemoBar compact={compact} onConnect={askToConnect} />}
 
-        {selected && !onTodos && !onActivity && !onSkills && !onSchedules && hostUp && <HandoverTrail thread={selected} threads={threads} agentLabel={agentLabel} onSelect={pick} />}
+        {selected && !onPage && hostUp && <HandoverTrail thread={selected} threads={threads} agentLabel={agentLabel} onSelect={pick} />}
 
         {error && (
           <div className="banner" role="alert">
@@ -1689,7 +1696,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
           <TeamCard team={coordination} agents={agents} onOpen={(member) => { setAgentsStart(member ?? null); setAgentsOpen(true); setFiles(null); }} />
         )}
 
-        {!onTodos && !onActivity && !onSkills && !(host && !hostUp) && (
+        {!onPage && !(host && !hostUp) && (
         <Composer
           draftKey={hostId ? `host:${hostId}:${selectedId ?? 'new'}` : selectedId ?? 'new'}
           running={running}
@@ -1771,7 +1778,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
         />
       )}
       {observability && api && <ObservabilityPanel key={hostId ?? 'local'} api={api} agents={agents} initial={observability} focusAgent={activeAgent} onResult={result => { if (result.state === 'ready' || result.state === 'empty') setModelsByAgent(previous => ({ ...previous, [result.agent]: result.models })); }} onClose={() => setObservability(null)} />}
-      {quotaOpen && api && <QuotaBoard api={api} agents={agents} current={onTodos || onSkills ? undefined : activeAgent} onClose={() => setQuotaOpen(false)} onError={handleError} />}
+      {quotaOpen && api && <QuotaBoard api={api} agents={agents} current={onPage ? undefined : activeAgent} onClose={() => setQuotaOpen(false)} onError={handleError} />}
       {addAgentOpen && (
         <AddAgentDialog
           found={discovered}

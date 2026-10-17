@@ -52,6 +52,8 @@ test('with the keyboard up, the app fills what is left of the screen, wherever t
   const composer = await box('.composer-box');
   assert.ok(composer.bottom <= 844 && composer.bottom > 844 - 60, `the composer sits just above the keyboard (${composer.bottom})`);
   assert.ok((await box('.topbar')).top === 344, 'the top bar is at the top of what is visible');
+  const safeBottom = () => page.evaluate(() => document.documentElement.style.getPropertyValue('--safe-bottom'));
+  assert.equal(await safeBottom(), '0px', 'the home-indicator inset is under the keyboard, so no band is kept for it');
 
   // The plan page lives in the same visible part, and its line for a new plan can be typed on.
   await page.locator('.menu-btn').click();
@@ -63,6 +65,7 @@ test('with the keyboard up, the app fills what is left of the screen, wherever t
   // Keyboard down again: back to the whole screen.
   await keyboard(844, 0);
   assert.deepEqual(await box('.app'), { top: 0, bottom: 844, height: 844 });
+  assert.equal(await safeBottom(), '', 'with the keyboard down the inset is kept clear again');
 });
 
 test('a comment on a passage is written just above the keyboard, with the passage shown', async () => {
