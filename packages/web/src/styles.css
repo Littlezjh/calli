@@ -69,6 +69,18 @@
   color-scheme: light;
 }
 
+/* English set in a CJK face gets its full-width quotes and punctuation: Latin faces come first, CJK only for what they lack. */
+:root:lang(en) {
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', 'Helvetica Neue', Roboto, 'Noto Sans', Arial,
+    'Liberation Sans', 'PingFang SC', 'Noto Sans CJK SC', 'Microsoft YaHei', sans-serif;
+}
+
+/* Japanese text set in a Chinese face gets the Chinese forms of shared characters: the Japanese faces come first. */
+:root:lang(ja) {
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Helvetica Neue',
+    'Noto Sans CJK JP', 'Yu Gothic UI', Meiryo, sans-serif;
+}
+
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
     --bg: #1b1a18;

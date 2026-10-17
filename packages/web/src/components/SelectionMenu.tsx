@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type T
 import { copyText } from '../clipboard';
 import { useIsTouch } from '../hooks';
 import { IconArrowUp, IconCopy, IconQuote, IconSideChat } from './icons';
+import { t } from '../i18n';
 
 interface Props {
   /** A passage noted for the next message, with what the user says about it (may be empty). */
@@ -165,8 +166,8 @@ export function SelectionMenu({ onNote, onSideAsk }: Props) {
           autoFocus
           className="selection-comment"
           value={comment}
-          placeholder="添加可选评论…"
-          aria-label="对这段的评论，可以不写"
+          placeholder={t('selection.commentPlaceholder')}
+          aria-label={t('selection.commentLabel')}
           onChange={(e) => setComment(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
@@ -178,14 +179,14 @@ export function SelectionMenu({ onNote, onSideAsk }: Props) {
             }
           }}
         />
-        <button type="button" className="selection-add" aria-label="添加注释" title="添加注释（回车）" onClick={addNote}>
+        <button type="button" className="selection-add" aria-label={t('selection.addNote')} title={t('selection.addNoteEnter')} onClick={addNote}>
           <IconArrowUp size={15} />
         </button>
       </>
     );
     if (touch) {
       return (
-        <div ref={rootRef} className="selection-menu commenting docked" role="dialog" aria-label="添加注释">
+        <div ref={rootRef} className="selection-menu commenting docked" role="dialog" aria-label={t('selection.addNote')}>
           <div className="selection-quote">
             <IconQuote size={13} />
             <span>{textRef.current}</span>
@@ -195,17 +196,17 @@ export function SelectionMenu({ onNote, onSideAsk }: Props) {
       );
     }
     return (
-      <div ref={rootRef} className="selection-menu commenting" style={{ top: pos.top, left: pos.left, width: COMMENT_WIDTH }} role="dialog" aria-label="添加注释">
+      <div ref={rootRef} className="selection-menu commenting" style={{ top: pos.top, left: pos.left, width: COMMENT_WIDTH }} role="dialog" aria-label={t('selection.addNote')}>
         {field}
       </div>
     );
   }
 
   return (
-    <div ref={rootRef} className="selection-menu" style={{ top: pos.top, left: pos.left }} role="toolbar" aria-label="对选中文字的操作">
+    <div ref={rootRef} className="selection-menu" style={{ top: pos.top, left: pos.left }} role="toolbar" aria-label={t('selection.toolbar')}>
       <button type="button" {...act(startComment)}>
         <IconQuote size={14} />
-        注释
+        {t('selection.note')}
       </button>
       <button
         type="button"
@@ -215,7 +216,7 @@ export function SelectionMenu({ onNote, onSideAsk }: Props) {
         })}
       >
         <IconCopy size={14} />
-        拷贝
+        {t('selection.copy')}
       </button>
       <button
         type="button"
@@ -226,7 +227,7 @@ export function SelectionMenu({ onNote, onSideAsk }: Props) {
         })}
       >
         <IconSideChat size={14} />
-        在侧边栏提问
+        {t('selection.ask')}
       </button>
     </div>
   );

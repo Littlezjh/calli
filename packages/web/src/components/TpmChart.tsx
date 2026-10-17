@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import type { AgentInfo } from '../api';
 import { bucketLabel, chartLines, clockLabel, compactLabel, dayLabel, niceTicks, numberLabel, stepLabel, timeTicks, type UsageSeries } from '../observability';
+import { formatList, t } from '../i18n';
 
 const PAD = { top: 10, right: 12, bottom: 26, left: 48 };
 
@@ -58,14 +59,14 @@ export function TpmChart({ series, agents, empty: noMeasurements, metric = 'tota
   });
   const dot = (tpm: number[], i: number, color: string, key: string) => <circle key={key} className="obs-chart-dot" style={{ fill: color }} cx={x(i)} cy={y(tpm[i])} r={4} />;
 
-  return <section className="obs-chart" aria-label="TPM 走势">
+  return <section className="obs-chart" aria-label={t('chart.label')}>
     <header className="obs-chart-head">
-      <span>{metric === 'output' ? '输出 TPM' : 'TPM'} 走势 · {stepLabel(stepMinutes)}{series.estimated ? ' · 时间估算' : ''}</span>
-      {!empty && <span>合计峰值 <strong>{compactLabel(total.tpm[peak])}</strong> · {dayLabel(peakAt)} {clockLabel(peakAt)}</span>}
+      <span>{t('chart.trend', metric === 'output' ? t('chart.outputTpm') : 'TPM')} · {stepLabel(stepMinutes)}{series.estimated ? ` · ${t('chart.estimated')}` : ''}</span>
+      {!empty && <span>{t('chart.peak')} <strong>{compactLabel(total.tpm[peak])}</strong> · {dayLabel(peakAt)} {clockLabel(peakAt)}</span>}
     </header>
-    {empty ? <p className="obs-chart-empty">还没有已报告的用量，发送消息后这里会出现走势。</p> : <>
+    {empty ? <p className="obs-chart-empty">{t('chart.empty')}</p> : <>
       <div ref={box} className="obs-chart-plot" style={{ height }} tabIndex={0} role="group"
-        aria-label={`TPM 走势：${visible.map(l => l.label).join('、')}。合计峰值 ${compactLabel(total.tpm[peak])}，在 ${dayLabel(peakAt)} ${clockLabel(peakAt)}。左右方向键逐段查看。`}
+        aria-label={t('chart.aria', formatList(visible.map(l => l.label)), compactLabel(total.tpm[peak]), `${dayLabel(peakAt)} ${clockLabel(peakAt)}`)}
         onPointerDown={(e: PointerEvent) => pick(e.clientX)} onPointerMove={(e: PointerEvent) => pick(e.clientX)}
         onPointerLeave={(e: PointerEvent) => { if (e.pointerType === 'mouse') setActive(null); }}
         onKeyDown={onKey} onBlur={() => setActive(null)}>
@@ -95,16 +96,16 @@ export function TpmChart({ series, agents, empty: noMeasurements, metric = 'tota
           </div>)}
         </div>}
       </div>
-      {lines.length > 1 && <div className="obs-chart-legend" aria-label="显示的线条">
+      {lines.length > 1 && <div className="obs-chart-legend" aria-label={t('chart.lines')}>
         {lines.map(l => {
           const on = visible.includes(l);
-          return <button key={l.id} type="button" aria-pressed={on} disabled={on && visible.length === 1} title={on ? `隐藏${l.label}` : `显示${l.label}`} onClick={() => toggle(l.id)}>
+          return <button key={l.id} type="button" aria-pressed={on} disabled={on && visible.length === 1} title={on ? t('chart.hide', l.label) : t('chart.show', l.label)} onClick={() => toggle(l.id)}>
             <i style={{ borderColor: l.color, borderTopStyle: l.dash ? 'dashed' : 'solid' }} />{l.label}
           </button>;
         })}
       </div>}
-      <details className="obs-chart-table"><summary>查看数值表</summary><div>
-        <table><thead><tr><th>时段</th>{visible.map(l => <th key={l.id}>{l.label}</th>)}</tr></thead>
+      <details className="obs-chart-table"><summary>{t('chart.table')}</summary><div>
+        <table><thead><tr><th>{t('chart.period')}</th>{visible.map(l => <th key={l.id}>{l.label}</th>)}</tr></thead>
           <tbody>{points.map((p, i) => <tr key={p.at}><th>{bucketLabel(p.at, stepMinutes)}</th>{visible.map(l => <td key={l.id}>{numberLabel(l.tpm[i])}</td>)}</tr>)}</tbody></table>
       </div></details>
     </>}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Api, type HostFailure, type HostInfo } from './api';
+import { t } from './i18n';
 
 const HOST_KEY = 'rah.host';
 
@@ -21,7 +22,7 @@ export function saveHost(id: string | null): void {
   }
 }
 
-export const HOST_STATUS: Record<HostInfo['status'], string> = { online: '在线', connecting: '连接中', offline: '离线' };
+export const hostStatus = (status: HostInfo['status']): string => t(`hosts.status.${status}`);
 
 /**
  * Why a machine cannot be reached, said so that it is clear what to do about it. The hub signs in
@@ -30,19 +31,19 @@ export const HOST_STATUS: Record<HostInfo['status'], string> = { online: '在线
 export function hostProblem(code: HostFailure | undefined, target: string): string {
   switch (code) {
     case 'no_ssh':
-      return 'hub 所在的机器上没有装 ssh。';
+      return t('hosts.error.noSsh');
     case 'host_key':
-      return `hub 还不认识这台机器的主机密钥。在 hub 所在的机器上运行一次 ssh ${target}，确认指纹后再试。`;
+      return t('hosts.error.hostKey', target);
     case 'auth':
-      return `hub 登录不上这台机器。它要不输密码就能登录：先在 hub 所在的机器上确认 ssh ${target} 能直接进去。`;
+      return t('hosts.error.auth', target);
     case 'unreachable':
-      return '连不到这台机器：名字解析不了、网络不通，或者超时了。';
+      return t('hosts.error.unreachable');
     case 'daemon_missing':
-      return '登录上了，但那台机器上的 Limi 没有应答。在那台机器上装好并启动它；已经在运行的话，检查它的 sshd 是否允许转发。';
+      return t('hosts.error.noHub');
     case 'forward_denied':
-      return '那台机器的 sshd 不允许转发连接。';
+      return t('hosts.error.noForwarding');
     default:
-      return 'ssh 没连上。';
+      return t('hosts.error.other');
   }
 }
 

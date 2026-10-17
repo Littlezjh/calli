@@ -5,6 +5,7 @@
 import { diffStats } from './diff';
 import { IMAGE_FILE } from './paths';
 import type { VideoRef } from './api';
+import { formatDate, formatList, t } from './i18n';
 
 export interface StoredEvent {
   threadId: string;
@@ -141,7 +142,7 @@ export type Item =
       done: boolean;
       /** False for turns imported from the agent's history: their events were all written at once. */
       timed: boolean;
-      /** The user stopped the turn: it reads "你在 N 秒后停止了", like Codex. */
+      /** The user stopped the turn: it reads "You stopped after Ns", like Codex. */
       stopped?: boolean;
     }
   /** A turn the user stopped before it did anything worth a work block. */
@@ -175,11 +176,10 @@ export type Item =
  * way out; anything else is shown as the agent reported it.
  */
 export function errorText(data: Record<string, any>): string {
-  if (data.code === 'interrupted') return 'hub 重启时这一轮还在运行，被中断了。再发一条消息可以接着做。';
-  if (data.code === 'plan_exhausted') return `这个账号的额度用完了（${String(data.message ?? '').replace(/^Internal error:\s*/, '')}）。可以交给另一个智能体接着做。`;
+  if (data.code === 'interrupted') return t('timeline.error.interrupted');
+  if (data.code === 'plan_exhausted') return t('timeline.error.planExhausted', String(data.message ?? '').replace(/^Internal error:\s*/, ''));
   if (data.code === 'permission_refused') {
-    const what = Array.isArray(data.refused) && data.refused.length ? `（${data.refused.join('、')}）` : '';
-    return `这一步需要批准${what}，但这个 agent 在后台运行时没法询问，所以拒绝后停下了。把输入框下方的权限切到"完全访问"，再发一次。`;
+    return t('timeline.error.permissionRefused', Array.isArray(data.refused) && data.refused.length ? formatList(data.refused.map(String)) : '');
   }
   return String(data.message ?? 'error');
 }
@@ -619,7 +619,7 @@ const compactTokens = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixe
 export function usageSummary(usage: Usage): { percent: number; high: boolean; detail: string } {
   const percent = Math.min(100, Math.max(0, Math.round((usage.used / usage.size) * 100)));
   const cost = usage.cost && usage.cost.amount > 0 ? ` · ${usage.cost.currency === 'USD' ? '$' : `${usage.cost.currency} `}${usage.cost.amount.toFixed(2)}` : '';
-  return { percent, high: percent >= 80, detail: `上下文已用 ${compactTokens(usage.used)} / ${compactTokens(usage.size)}${cost}` };
+  return { percent, high: percent >= 80, detail: t('timeline.contextUsed', compactTokens(usage.used), compactTokens(usage.size)) + cost };
 }
 
 const MAX_IMAGE_PATHS = 6;
@@ -726,61 +726,50 @@ export function clockLabel(iso: string, now: Date = new Date()): string {
   const time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
   if (sameDay) return time;
-  const date = `${d.getMonth() + 1}月${d.getDate()}日`;
-  return d.getFullYear() === now.getFullYear() ? `${date} ${time}` : `${d.getFullYear()}年${date} ${time}`;
+  const thisYear = d.getFullYear() === now.getFullYear();
+  return `${formatDate(d, { ...(thisYear ? {} : { year: 'numeric' }), month: 'short', day: 'numeric' })} ${time}`;
 }
 
-/** Round before splitting units, so carries never leave a "60 秒" or "60 分" remainder. */
+/** Round before splitting units, so carries never leave a "60s" or "60m" remainder. */
 function wholeDurationLabel(seconds: number): string {
   if (!Number.isFinite(seconds)) return '';
   const secs = Math.max(0, Math.round(seconds));
-  if (secs < 60) return `${secs} 秒`;
-  if (secs < 3600) return `${Math.floor(secs / 60)} 分 ${secs % 60} 秒`;
-  return `${Math.floor(secs / 3600)} 小时 ${Math.floor(secs % 3600 / 60)} 分 ${secs % 60} 秒`;
+  if (secs < 60) return t('duration.seconds', secs);
+  if (secs < 3600) return t('duration.minutes', Math.floor(secs / 60), secs % 60);
+  return t('duration.hours', Math.floor(secs / 3600), Math.floor(secs % 3600 / 60), secs % 60);
 }
 
-/** Time between the first and last event of a work group, for the "用时 X" label. */
+/** Time between the first and last event of a work group, for the "worked for X" label. */
 export function durationLabel(startedAt: string, endedAt: string | null): string {
   if (!endedAt) return '';
   return wholeDurationLabel((Date.parse(endedAt) - Date.parse(startedAt)) / 1000);
 }
 
-/** A tool call's own duration. Short calls keep one decimal, so instant calls do not all read "0 秒". */
+/** A tool call's own duration. Short calls keep one decimal, so instant calls do not all read "0s". */
 export function stepDurationLabel(startedAt?: string, endedAt?: string): string {
   if (!startedAt || !endedAt) return '';
   const secs = Math.max(0, (Date.parse(endedAt) - Date.parse(startedAt)) / 1000);
-  if (secs < 10) return `${secs.toFixed(1)} 秒`;
+  if (secs < 10) return t('duration.seconds', secs.toFixed(1));
   return wholeDurationLabel(secs);
 }
 
-/** Verbs for the tool kinds the adapters report. `other` gets none: the title already speaks. */
-const STEP_VERBS: Record<string, string> = {
-  execute: '运行了',
-  read: '读取了',
-  edit: '编辑了',
-  write: '写入了',
-  create: '创建了',
-  delete: '删除了',
-  fetch: '抓取了',
-  search: '搜索了',
-  move: '移动了',
-  switch: '切换了',
-};
+/** The tool kinds the adapters report that have a verb. `other` gets none: the title already speaks. */
+const STEP_VERBS = ['execute', 'read', 'edit', 'write', 'create', 'delete', 'fetch', 'search', 'move', 'switch'] as const;
+const hasVerb = (kind: string): kind is (typeof STEP_VERBS)[number] => (STEP_VERBS as readonly string[]).includes(kind);
 
 /** `cd <dir> && …` at the start of a command: where it ran, which the row's detail still shows. */
 const LEADING_CD = /^cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*(?:&&|;)\s*(?=\S)/;
 
-/** The step's one line, verb first: "运行了 npm test". A command is named by what it runs, not by the directory it first steps into. */
+/** The step's one line, verb first: "Ran npm test". A command is named by what it runs, not by the directory it first steps into. */
 export function stepTitle(step: Step): string {
-  const verb = STEP_VERBS[step.kind] ?? '';
   const title = step.kind === 'execute' ? step.title.replace(LEADING_CD, '') : step.title;
-  return verb ? `${verb} ${title}` : title;
+  return hasVerb(step.kind) ? t(`step.${step.kind}`, title) : title;
 }
 
 /** A row shows timing; failure belongs to the tool's expanded detail, not the conversation. */
 export function stepStatusLabel(step: Step): string {
-  if (stepActive(step)) return '运行中';
-  return stepDurationLabel(step.startedAt, step.endedAt) || (step.status === 'failed' ? '已结束' : '完成');
+  if (stepActive(step)) return t('step.running');
+  return stepDurationLabel(step.startedAt, step.endedAt) || (step.status === 'failed' ? t('step.ended') : t('step.done'));
 }
 
 /** A call that has started and not come back yet. */
@@ -798,12 +787,12 @@ export type WorkSection =
 
 export function compactionLabel(entry: Extract<WorkEntry, { kind: 'compaction' }>): string {
   switch (entry.status) {
-    case 'in_progress': return '正在压缩上下文…';
-    case 'completed': return entry.automatic ? '上下文已自动压缩' : '上下文已压缩';
-    case 'failed': return '上下文压缩失败';
-    case 'cancelled': return '上下文压缩已停止';
-    case 'skipped': return '已跳过上下文压缩';
-    default: return '上下文压缩未完成';
+    case 'in_progress': return t('compaction.in_progress');
+    case 'completed': return entry.automatic ? t('compaction.automatic') : t('compaction.completed');
+    case 'failed': return t('compaction.failed');
+    case 'cancelled': return t('compaction.cancelled');
+    case 'skipped': return t('compaction.skipped');
+    default: return t('compaction.unfinished');
   }
 }
 
@@ -827,18 +816,18 @@ export function workSections(entries: WorkEntry[]): WorkSection[] {
 
 /** The kinds of call a summary counts apart, in the order it names them. Anything else is "a tool". */
 const RUN_GROUPS: Array<{ kinds: string[]; say: (n: number) => string }> = [
-  { kinds: ['read'], say: (n) => `浏览 ${n} 个文件` },
-  { kinds: ['search'], say: (n) => `搜索 ${n} 次` },
-  { kinds: ['fetch'], say: (n) => `抓取 ${n} 个网页` },
-  { kinds: ['edit', 'write'], say: (n) => `编辑 ${n} 个文件` },
-  { kinds: ['create'], say: (n) => `创建 ${n} 个文件` },
-  { kinds: ['delete'], say: (n) => `删除 ${n} 个文件` },
-  { kinds: ['move'], say: (n) => `移动 ${n} 个文件` },
-  { kinds: ['execute'], say: (n) => `运行 ${n} 条命令` },
+  { kinds: ['read'], say: (n) => t('run.read', n) },
+  { kinds: ['search'], say: (n) => t('run.search', n) },
+  { kinds: ['fetch'], say: (n) => t('run.fetch', n) },
+  { kinds: ['edit', 'write'], say: (n) => t('run.edit', n) },
+  { kinds: ['create'], say: (n) => t('run.create', n) },
+  { kinds: ['delete'], say: (n) => t('run.delete', n) },
+  { kinds: ['move'], say: (n) => t('run.move', n) },
+  { kinds: ['execute'], say: (n) => t('run.execute', n) },
 ];
 
 /**
- * A stretch of tool calls in one line: "已浏览 2 个文件，搜索 1 次". Also which kind of call
+ * A stretch of tool calls in one line: "Explored 2 files, searched 1 time". Also which kind of call
  * there was most of (for the row's icon). Each call keeps its result in its own detail.
  */
 export function runSummary(steps: Step[]): { text: string; kind: string } {
@@ -856,8 +845,8 @@ export function runSummary(steps: Step[]): { text: string; kind: string } {
     const files = new Set(calls.flatMap((s) => (s.diffs.length ? s.diffs.map((d) => d.path) : [`call:${s.id}`])));
     count(group.kinds[0], group.kinds[0] === 'edit' ? files.size : calls.length, group.say);
   }
-  count('other', steps.filter((s) => !known.has(s.kind)).length, (n) => `调用 ${n} 次工具`);
-  return { text: parts.length ? `已${parts.join('，')}` : '', kind: lead.kind };
+  count('other', steps.filter((s) => !known.has(s.kind)).length, (n) => t('run.other', n));
+  return { text: parts.length ? t('run.summary', parts) : '', kind: lead.kind };
 }
 
 /** Thinking text the model wrote as one stream is shown as short paragraphs. */
@@ -893,7 +882,7 @@ export function splitThinking(text: string): string[] {
   return out;
 }
 
-/** How much of the thinking in progress is shown under "思考中". */
+/** How much of the thinking in progress is shown under "Thinking". */
 const THINKING_PREVIEW_CHARS = 140;
 
 /**
@@ -955,8 +944,8 @@ export function toMarkdown(title: string, items: Item[]): string {
   for (const it of items) {
     switch (it.kind) {
       case 'user': {
-        const images = it.images.length ? `\n\n（附 ${it.images.length} 张图片）` : '';
-        parts.push(`## 你\n\n${it.text}${images}`.trimEnd());
+        const images = it.images.length ? `\n\n${t('markdown.images', it.images.length)}` : '';
+        parts.push(`## ${t('markdown.you')}\n\n${it.text}${images}`.trimEnd());
         break;
       }
       case 'proposal':
@@ -965,11 +954,11 @@ export function toMarkdown(title: string, items: Item[]): string {
         break;
       case 'changes':
         parts.push(
-          [`**已更改 ${it.files.length} 个文件** (+${it.added} −${it.removed})`, ...it.files.map((f) => `- \`${f.path}\` +${f.added} −${f.removed}`)].join('\n'),
+          [`**${t('markdown.changed', it.files.length)}** (+${it.added} −${it.removed})`, ...it.files.map((f) => `- \`${f.path}\` +${f.added} −${f.removed}`)].join('\n'),
         );
         break;
       case 'error':
-        parts.push(`> 出错：${it.message}`);
+        parts.push(`> ${t('markdown.error', it.message)}`);
         break;
       default:
         break;

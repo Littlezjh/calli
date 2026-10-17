@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type MouseEvent, type PointerEvent } from 
 import { savePicture, savePictureAsPng } from '../images';
 import { MAX_ZOOM, REST, fitted, panBy, zoomAt, type View } from '../zoom';
 import { IconClose, IconDownload, IconMinus, IconPlus } from './icons';
+import { t } from '../i18n';
 
 interface Props {
   url: string;
@@ -144,7 +145,7 @@ export function Lightbox({ url, name, onClose }: Props) {
   };
 
   const save = (how: (url: string, name?: string) => Promise<void>) => () => {
-    how(url, name).catch(() => setNote('没能保存这张图片'));
+    how(url, name).catch(() => setNote(t('lightbox.saveFailed')));
   };
 
   const zoomed = view.scale > 1;
@@ -154,7 +155,7 @@ export function Lightbox({ url, name, onClose }: Props) {
       className={`lightbox${zoomed ? ' zoomed' : ''}`}
       role="dialog"
       aria-modal="true"
-      aria-label="图片"
+      aria-label={t('lightbox.image')}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerEnd}
@@ -165,7 +166,7 @@ export function Lightbox({ url, name, onClose }: Props) {
         <img
           ref={imgRef}
           src={url}
-          alt="放大的图片"
+          alt={t('lightbox.alt')}
           draggable={false}
           onLoad={fit}
           style={{
@@ -174,38 +175,38 @@ export function Lightbox({ url, name, onClose }: Props) {
           }}
         />
       </div>
-      <div className="lightbox-bar" role="toolbar" aria-label="图片操作">
+      <div className="lightbox-bar" role="toolbar" aria-label={t('lightbox.toolbar')}>
         {note && (
           <span className="lightbox-note" role="status">
             {note}
           </span>
         )}
-        <button type="button" aria-label="缩小" title="缩小（-）" disabled={!zoomed} onClick={() => zoom(1 / STEP)}>
+        <button type="button" aria-label={t('lightbox.zoomOut')} title={t('lightbox.zoomOutKey')} disabled={!zoomed} onClick={() => zoom(1 / STEP)}>
           <IconMinus size={17} />
         </button>
-        <button type="button" className="lightbox-scale" aria-label="恢复原大小" title="恢复原大小（0）" disabled={!zoomed} onClick={() => setView(REST)}>
+        <button type="button" className="lightbox-scale" aria-label={t('lightbox.reset')} title={t('lightbox.resetKey')} disabled={!zoomed} onClick={() => setView(REST)}>
           {Math.round(view.scale * 100)}%
         </button>
-        <button type="button" aria-label="放大" title="放大（+）" disabled={view.scale >= MAX_ZOOM} onClick={() => zoom(STEP)}>
+        <button type="button" aria-label={t('lightbox.zoomIn')} title={t('lightbox.zoomInKey')} disabled={view.scale >= MAX_ZOOM} onClick={() => zoom(STEP)}>
           <IconPlus size={17} />
         </button>
         <span className="lightbox-sep" aria-hidden="true" />
         {isSvg ? (
           <>
-            <button type="button" className="lightbox-save" aria-label="下载 SVG" title="下载 SVG" onClick={save(savePicture)}>
+            <button type="button" className="lightbox-save" aria-label={t('lightbox.svg')} title={t('lightbox.svg')} onClick={save(savePicture)}>
               <IconDownload size={16} /> SVG
             </button>
-            <button type="button" className="lightbox-save" aria-label="下载 PNG" title="下载 PNG" onClick={save(savePictureAsPng)}>
+            <button type="button" className="lightbox-save" aria-label={t('lightbox.png')} title={t('lightbox.png')} onClick={save(savePictureAsPng)}>
               <IconDownload size={16} /> PNG
             </button>
           </>
         ) : (
-          <button type="button" aria-label="下载" title="下载" onClick={save(savePicture)}>
+          <button type="button" aria-label={t('common.download')} title={t('common.download')} onClick={save(savePicture)}>
             <IconDownload size={17} />
           </button>
         )}
       </div>
-      <button type="button" className="lightbox-close" aria-label="关闭" onClick={onClose}>
+      <button type="button" className="lightbox-close" aria-label={t('common.close')} onClick={onClose}>
         <IconClose size={18} />
       </button>
     </div>

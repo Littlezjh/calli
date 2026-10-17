@@ -3,6 +3,7 @@
  * The menu mixes two things: actions the hub performs itself, and commands sent to the agent.
  */
 import type { SlashCommand } from './api';
+import { t } from './i18n';
 
 /** Something the hub does itself when picked, such as opening the model picker. */
 export interface HubAction {
@@ -19,11 +20,7 @@ export type MenuRow =
   | { type: 'action'; action: HubAction }
   | { type: 'command'; command: SlashCommand };
 
-const KIND_HEADINGS: Array<[NonNullable<SlashCommand['kind']>, string]> = [
-  ['command', '命令'],
-  ['prompt', '模板'],
-  ['skill', '技能'],
-];
+const KINDS: Array<NonNullable<SlashCommand['kind']>> = ['command', 'prompt', 'skill'];
 
 /** The text after the slash, lower-cased, or null when the menu should be closed. */
 export function slashQuery(text: string): string | null {
@@ -58,7 +55,7 @@ export function searchCommands(query: string, actions: HubAction[], commands: Sl
     (a) => query === '' || a.label.toLowerCase().includes(query) || a.keywords.some((k) => k.startsWith(query)),
   );
   if (matchedActions.length) {
-    rows.push({ type: 'heading', label: '操作' });
+    rows.push({ type: 'heading', label: t('commands.actions') });
     for (const action of matchedActions) rows.push({ type: 'action', action });
   }
 
@@ -72,14 +69,14 @@ export function searchCommands(query: string, actions: HubAction[], commands: Sl
   const known = ranked.some((r) => r.command.kind);
   if (!known) {
     // The agent does not say which entries are skills, so they are not split into made-up groups.
-    if (ranked.length) rows.push({ type: 'heading', label: '命令和技能' });
+    if (ranked.length) rows.push({ type: 'heading', label: t('commands.commandsAndSkills') });
     for (const r of ranked) rows.push({ type: 'command', command: r.command });
     return rows;
   }
-  for (const [kind, label] of KIND_HEADINGS) {
+  for (const kind of KINDS) {
     const group = ranked.filter((r) => (r.command.kind ?? 'command') === kind);
     if (group.length === 0) continue;
-    rows.push({ type: 'heading', label });
+    rows.push({ type: 'heading', label: t(`commands.kind.${kind}`) });
     for (const r of group) rows.push({ type: 'command', command: r.command });
   }
   return rows;

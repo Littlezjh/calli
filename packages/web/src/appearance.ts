@@ -1,4 +1,5 @@
 /** How the hub looks on this device: light or dark, and which palette. Pure, so it can be tested directly. */
+import { t } from './i18n';
 
 export type Mode = 'system' | 'light' | 'dark';
 export type Theme = 'light' | 'dark';
@@ -11,8 +12,8 @@ export interface Appearance {
 
 /** The palettes to choose from. Their colours live at the top of styles.css, keyed by these ids. */
 export const PALETTES: ReadonlyArray<{ id: string; name: string }> = [
-  { id: 'paper', name: '纸' },
-  { id: 'graphite', name: '石墨' },
+  { id: 'paper', name: t('appearance.palette.paper') },
+  { id: 'graphite', name: t('appearance.palette.graphite') },
   { id: 'catppuccin', name: 'Catppuccin' },
   { id: 'everforest', name: 'Everforest' },
   { id: 'gruvbox', name: 'Gruvbox' },
@@ -22,9 +23,9 @@ export const PALETTES: ReadonlyArray<{ id: string; name: string }> = [
 ];
 
 export const MODES: ReadonlyArray<{ id: Mode; name: string }> = [
-  { id: 'system', name: '跟随系统' },
-  { id: 'light', name: '浅色' },
-  { id: 'dark', name: '深色' },
+  { id: 'system', name: t('appearance.mode.system') },
+  { id: 'light', name: t('appearance.mode.light') },
+  { id: 'dark', name: t('appearance.mode.dark') },
 ];
 
 export const DEFAULT_APPEARANCE: Appearance = { mode: 'system', palette: 'paper' };

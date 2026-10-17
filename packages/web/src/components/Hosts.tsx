@@ -1,16 +1,17 @@
 import { useEffect, useState } from 'react';
 import { ApiError, AuthError, type Api, type HostFailure, type HostInfo } from '../api';
-import { HOST_STATUS, hostProblem } from '../hosts';
+import { hostProblem, hostStatus } from '../hosts';
 import { Dialog } from './Dialog';
 import { IconCheck, IconChevron, IconClose, IconComputer, IconGlobe, IconPlus, IconServer, IconSettings } from './icons';
 import { Popover } from './Popover';
+import { t } from '../i18n';
 
 /** ssh's own words, for whoever has to fix it. When no daemon answered there is nothing of ssh's to quote. */
 const SshSaid = ({ host }: { host: Pick<HostInfo, 'code' | 'error'> }) =>
   host.error && host.code !== 'daemon_missing' ? <code className="host-error">{host.error}</code> : null;
 
 const StatusDot = ({ status }: { status: HostInfo['status'] }) => (
-  <span className={`host-dot ${status}`} role="img" aria-label={HOST_STATUS[status]} title={HOST_STATUS[status]} />
+  <span className={`host-dot ${status}`} role="img" aria-label={hostStatus(status)} title={hostStatus(status)} />
 );
 
 interface SwitcherProps {
@@ -23,9 +24,9 @@ interface SwitcherProps {
 /** Chooses where a new conversation runs, next to its project rather than only in the sidebar. */
 export function MachinePicker({ hosts, current, onPick, onManage }: SwitcherProps & { onManage: () => void }) {
   const selected = hosts.find((host) => host.id === current);
-  const label = current ? `远程 · ${selected?.label ?? '连接中'}` : '本机';
+  const label = current ? t('hosts.remote', selected?.label ?? t('hosts.status.connecting')) : t('hosts.local');
   return (
-    <Popover label="工作位置" triggerLabel="选择机器" triggerClassName="context-btn machine-trigger" triggerTitle={label}
+    <Popover label={t('hosts.where')} triggerLabel={t('hosts.pick')} triggerClassName="context-btn machine-trigger" triggerTitle={label}
       trigger={<>
         {current ? <IconGlobe size={15} /> : <IconComputer size={15} />}
         <span>{label}</span>
@@ -34,23 +35,23 @@ export function MachinePicker({ hosts, current, onPick, onManage }: SwitcherProp
       </>}
     >
       {(close) => <>
-        <div className="pop-title">工作位置</div>
+        <div className="pop-title">{t('hosts.where')}</div>
         <button type="button" role="menuitemradio" aria-checked={current === null} className="pop-item compact" onClick={() => { close(); onPick(null); }}>
           <span className="pop-item-icon"><IconComputer size={17} /></span>
-          <span className="pop-item-text"><span className="pop-item-label">本机</span><span className="pop-item-hint">Hub 所在机器</span></span>
+          <span className="pop-item-text"><span className="pop-item-label">{t('hosts.local')}</span><span className="pop-item-hint">{t('hosts.localHint')}</span></span>
           {current === null && <span className="pop-item-check"><IconCheck size={16} /></span>}
         </button>
-        {hosts.length > 0 && <div className="pop-sep">远程机器</div>}
+        {hosts.length > 0 && <div className="pop-sep">{t('hosts.remoteMachines')}</div>}
         {hosts.map((host) => <button key={host.id} type="button" role="menuitemradio" aria-checked={current === host.id} className="pop-item compact" title={host.target}
           onClick={() => { close(); onPick(host.id); }}>
           <span className="pop-item-icon"><IconGlobe size={17} /></span>
-          <span className="pop-item-text"><span className="pop-item-label">{host.label}</span><span className="pop-item-hint machine-status"><StatusDot status={host.status} />{HOST_STATUS[host.status]}</span></span>
+          <span className="pop-item-text"><span className="pop-item-label">{host.label}</span><span className="pop-item-hint machine-status"><StatusDot status={host.status} />{hostStatus(host.status)}</span></span>
           {current === host.id && <span className="pop-item-check"><IconCheck size={16} /></span>}
         </button>)}
         <div className="pop-divider" role="separator" />
         <button type="button" role="menuitem" className="pop-item compact" onClick={() => { close(); onManage(); }}>
           <span className="pop-item-icon"><IconSettings size={17} /></span>
-          <span className="pop-item-label">管理机器…</span>
+          <span className="pop-item-label">{t('hosts.manage')}</span>
         </button>
       </>}
     </Popover>
@@ -61,10 +62,10 @@ export function MachinePicker({ hosts, current, onPick, onManage }: SwitcherProp
 export function HostSwitcher({ hosts, current, onPick }: SwitcherProps) {
   if (hosts.length === 0) return null;
   return (
-    <div className="host-switch" role="tablist" aria-label="机器">
+    <div className="host-switch" role="tablist" aria-label={t('hosts.machines')}>
       <button type="button" role="tab" aria-selected={current === null} className={`host-chip${current === null ? ' active' : ''}`} onClick={() => onPick(null)}>
         <StatusDot status="online" />
-        <span className="host-chip-name">本机</span>
+        <span className="host-chip-name">{t('hosts.local')}</span>
       </button>
       {hosts.map((h) => (
         <button
@@ -91,7 +92,7 @@ export function HostDown({ host, onRetry }: { host: HostInfo; onRetry: () => Pro
   return (
     <div className="empty host-down">
       <div className="host-down-body">
-        <h2>{connecting ? `正在连接 ${host.label}…` : `连不上 ${host.label}`}</h2>
+        <h2>{connecting ? t('hosts.connectingTo', host.label) : t('hosts.cannotReach', host.label)}</h2>
         {!connecting && <p>{hostProblem(host.code, host.target)}</p>}
         {!connecting && <SshSaid host={host} />}
         <button
@@ -102,7 +103,7 @@ export function HostDown({ host, onRetry }: { host: HostInfo; onRetry: () => Pro
             void onRetry().finally(() => setTrying(false));
           }}
         >
-          重试
+          {t('common.retry')}
         </button>
       </div>
     </div>
@@ -199,13 +200,13 @@ export function HostsPanel({ api, hosts, onChanged, onClose, onError }: PanelPro
       <div className="panel" role="dialog" aria-modal="true" aria-labelledby="hosts-title" onClick={(e) => e.stopPropagation()}>
         <header className="panel-head">
           <h2 id="hosts-title" className="panel-title">
-            <IconServer size={20} /> 机器
+            <IconServer size={20} /> {t('hosts.machines')}
           </h2>
-          <button className="icon-btn" aria-label="关闭" onClick={onClose}>
+          <button className="icon-btn" aria-label={t('common.close')} onClick={onClose}>
             <IconClose size={18} />
           </button>
         </header>
-        <p className="panel-hint">把别的机器上的 Limi 接到这里，一个页面管多台。hub 用 SSH 连过去，那台机器不用开端口，也不用再输 token。</p>
+        <p className="panel-hint">{t('hosts.hint')}</p>
 
         <div className="panel-list">
           {hosts.map((h) => (
@@ -216,8 +217,8 @@ export function HostsPanel({ api, hosts, onChanged, onClose, onError }: PanelPro
                 </div>
                 <div className="panel-row-meta">
                   <span className="host-target">{h.target}</span>
-                  <span>{HOST_STATUS[busy === h.id ? 'connecting' : h.status]}</span>
-                  {h.version && <span>版本 {h.version}</span>}
+                  <span>{hostStatus(busy === h.id ? 'connecting' : h.status)}</span>
+                  {h.version && <span>{t('hosts.version', h.version)}</span>}
                 </div>
                 {h.status === 'offline' && busy !== h.id && (
                   <p className="host-problem">
@@ -228,16 +229,16 @@ export function HostsPanel({ api, hosts, onChanged, onClose, onError }: PanelPro
               </div>
               {h.status !== 'online' && (
                 <button className="text-btn" disabled={busy !== null} onClick={() => void retry(h)}>
-                  重试
+                  {t('common.retry')}
                 </button>
               )}
               <button className="text-btn danger" disabled={busy !== null} onClick={() => setRemoving(h)}>
-                移除
+                {t('hosts.remove')}
               </button>
             </div>
           ))}
 
-          <div className="group-label host-add-label">添加机器</div>
+          <div className="group-label host-add-label">{t('hosts.add')}</div>
           <form
             className="host-add"
             onSubmit={(e) => {
@@ -250,8 +251,8 @@ export function HostsPanel({ api, hosts, onChanged, onClose, onError }: PanelPro
               <input
                 value={target}
                 onChange={(e) => setTarget(e.target.value)}
-                placeholder="ssh 别名，或 user@host"
-                aria-label="ssh 别名，或 user@host"
+                placeholder={t('hosts.target')}
+                aria-label={t('hosts.target')}
                 autoCapitalize="none"
                 autoCorrect="off"
                 spellCheck={false}
@@ -259,37 +260,37 @@ export function HostsPanel({ api, hosts, onChanged, onClose, onError }: PanelPro
               />
             </label>
             <button type="submit" className="primary" disabled={!target.trim() || adding !== null}>
-              {adding !== null && adding === target.trim() ? '连接中…' : '添加'}
+              {adding !== null && adding === target.trim() ? t('hosts.connecting') : t('hosts.addButton')}
             </button>
           </form>
           {failure && (
             <p className="panel-error host-failure" role="alert">
-              没能添加 {failure.target}：{hostProblem(failure.code, failure.target)}
+              {t('hosts.addFailed', failure.target, hostProblem(failure.code, failure.target))}
               <SshSaid host={failure} />
             </p>
           )}
 
-          {candidates.length > 0 && <p className="host-candidates-hint">hub 的 ~/.ssh/config 里有这些，点一下就加：</p>}
+          {candidates.length > 0 && <p className="host-candidates-hint">{t('hosts.candidates')}</p>}
           {candidates.length > 0 && (
             <div className="host-candidates">
               {candidates.map((alias) => (
-                <button key={alias} type="button" className="host-candidate" aria-label={`添加 ${alias}`} disabled={adding !== null} onClick={() => void add(alias)}>
+                <button key={alias} type="button" className="host-candidate" aria-label={t('hosts.addAlias', alias)} disabled={adding !== null} onClick={() => void add(alias)}>
                   <IconPlus size={13} />
                   <span className="host-target">{alias}</span>
-                  {adding === alias && <span className="host-candidate-note">连接中…</span>}
+                  {adding === alias && <span className="host-candidate-note">{t('hosts.connecting')}</span>}
                 </button>
               ))}
             </div>
           )}
-          <p className="host-foot">那台机器上要先装好并启动 Limi（scripts/install-service.sh），hub 所在的机器要能不输密码 ssh 过去。</p>
+          <p className="host-foot">{t('hosts.foot')}</p>
         </div>
       </div>
     </div>
     {removing && (
       <Dialog
-        title={`移除 ${removing.label}？`}
-        message="只是不再从这里连它。那台机器上的线程和数据都不会动，以后可以再加回来。"
-        confirmLabel="移除"
+        title={t('hosts.removeTitle', removing.label)}
+        message={t('hosts.removeMessage')}
+        confirmLabel={t('hosts.remove')}
         danger
         onCancel={() => setRemoving(null)}
         onConfirm={() => void remove(removing)}

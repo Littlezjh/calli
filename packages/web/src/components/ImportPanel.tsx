@@ -3,6 +3,7 @@ import { AuthError, type AgentInfo, type AgentSession, type Api, type Thread } f
 import { folderName } from '../paths';
 import { filterSessions, SESSION_LIMIT, sessionTitle, timeAgo } from '../sessions';
 import { IconClose, IconFolder, IconImport, IconSearch } from './icons';
+import { t } from '../i18n';
 
 interface Props {
   api: Api;
@@ -80,13 +81,13 @@ export function ImportPanel({ api, agents, onImported, onOpen, onClose, onError 
       <div className="panel" role="dialog" aria-modal="true" aria-labelledby="import-title" onClick={(e) => e.stopPropagation()}>
         <header className="panel-head">
           <h2 id="import-title" className="panel-title">
-            <IconImport size={20} /> 导入历史
+            <IconImport size={20} /> {t('import.title')}
           </h2>
-          <button className="icon-btn" aria-label="关闭" onClick={onClose}>
+          <button className="icon-btn" aria-label={t('common.close')} onClick={onClose}>
             <IconClose size={18} />
           </button>
         </header>
-        <p className="panel-hint">把在终端里聊过的会话接到这里。导入后两边是同一个会话，可以接着聊。</p>
+        <p className="panel-hint">{t('import.hint')}</p>
 
         {agents.length > 1 && (
           <div className="segmented panel-tabs" role="tablist" aria-label="Agent">
@@ -111,28 +112,28 @@ export function ImportPanel({ api, agents, onImported, onOpen, onClose, onError 
 
         <label className="panel-search">
           <IconSearch size={16} />
-          <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索标题或目录" aria-label="搜索会话" />
+          <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('import.searchPlaceholder')} aria-label={t('import.search')} />
         </label>
 
         {failure && (
           <p className="panel-error" role="alert">
-            导入失败：{failure}
+            {t('import.failed', failure)}
           </p>
         )}
 
         <div className="panel-list">
-          {agents.length === 0 && <p className="panel-empty">现在没有可以导入历史的 agent。</p>}
-          {current?.state === 'loading' && <p className="panel-empty">正在读取 {label} 的会话…</p>}
+          {agents.length === 0 && <p className="panel-empty">{t('import.noAgents')}</p>}
+          {current?.state === 'loading' && <p className="panel-empty">{t('import.loading', label)}</p>}
           {current?.state === 'failed' && (
             <div className="panel-empty">
-              <p>读取 {label} 的会话失败：{current.message}</p>
+              <p>{t('import.loadFailed', label, current.message)}</p>
               <button className="text-btn" onClick={() => load(agent)}>
-                重试
+                {t('common.retry')}
               </button>
             </div>
           )}
           {current?.state === 'ready' && shown.length === 0 && (
-            <p className="panel-empty">{all.length === 0 ? `允许的工作目录里还没有 ${label} 的会话。` : '没有匹配的会话。'}</p>
+            <p className="panel-empty">{all.length === 0 ? t('import.none', label) : t('import.noMatch')}</p>
           )}
           {shown.map((s) => (
             <div key={s.id} className="panel-row single">
@@ -144,22 +145,22 @@ export function ImportPanel({ api, agents, onImported, onOpen, onClose, onError 
                     {folderName(s.cwd)}
                   </span>
                   {timeAgo(s.updatedAt, now) && <span>{timeAgo(s.updatedAt, now)}</span>}
-                  {s.threadId && <span className="tag">已导入</span>}
+                  {s.threadId && <span className="tag">{t('import.imported')}</span>}
                 </div>
               </div>
               {s.threadId ? (
                 <button className="text-btn" disabled={importing !== null} onClick={() => onOpen(s.threadId!)}>
-                  打开
+                  {t('notices.open')}
                 </button>
               ) : (
                 <button className="text-btn strong" disabled={importing !== null} onClick={() => void importOne(s)}>
-                  {importing === s.id ? '导入中…' : '导入'}
+                  {importing === s.id ? t('import.importing') : t('import.import')}
                 </button>
               )}
             </div>
           ))}
           {matching.length > shown.length && (
-            <p className="panel-more">还有 {matching.length - shown.length} 个没有列出，用搜索缩小范围。</p>
+            <p className="panel-more">{t('import.more', matching.length - shown.length)}</p>
           )}
         </div>
       </div>

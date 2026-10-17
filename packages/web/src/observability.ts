@@ -1,4 +1,5 @@
 import type { AgentInfo, ModelOption } from './api';
+import { formatNumber, t } from './i18n';
 export interface UsageSample {
   id: string; scope: 'request' | 'turn' | 'update'; source: string; observedAt: string;
   input?: number; output?: number; total?: number; cacheRead?: number; cacheWrite?: number; reasoning?: number;
@@ -22,7 +23,7 @@ export interface ChartLine { id: string; label: string; color: string; dash?: st
 
 /** Stable colours and dash patterns keep every instance selectable, even beyond four instances. */
 export function chartLines(series: UsageSeries, agents: Array<Pick<AgentInfo, 'id' | 'label'>>, metric: 'total' | 'output' = 'total'): ChartLine[] {
-  const lines: ChartLine[] = [{ id: 'total', label: '合计', color: 'var(--chart-total)', tpm: series.points.map(p => (metric === 'output' ? p.outputTpm : p.tpm) ?? 0) }];
+  const lines: ChartLine[] = [{ id: 'total', label: t('obs.total'), color: 'var(--chart-total)', tpm: series.points.map(p => (metric === 'output' ? p.outputTpm : p.tpm) ?? 0) }];
   const instances = series.agents ?? [];
   const ordered = [...agents.map(a => a.id), ...instances.map(a => a.agent).filter(id => !agents.some(a => a.id === id)).sort()];
   for (const row of instances) {
@@ -38,11 +39,11 @@ export interface AgentDiagnostic {
   agent: string; label: string; state: string; message: string; checkedAt: string;
   version?: string | null; protocol?: string | null; models: ModelOption[]; capabilities: AgentInfo['capabilities'];
 }
-export const numberLabel = (n: number | null | undefined): string => n == null ? '未知' : n.toLocaleString('zh-CN', { maximumFractionDigits: 0 });
+export const numberLabel = (n: number | null | undefined): string => n == null ? t('common.unknown') : formatNumber(n, { maximumFractionDigits: 0 });
 const compact = new Intl.NumberFormat('en', { notation: 'compact', maximumSignificantDigits: 3 });
 /** Token counts the way rate limits are quoted (906K, 1.03M): exact digits stay in numberLabel. */
-export const compactLabel = (n: number | null | undefined): string => n == null ? '未知' : compact.format(n);
-export const durationLabel = (n: number | null | undefined): string => n == null ? '未知' : `${(n / 1000).toFixed(2)} 秒`;
+export const compactLabel = (n: number | null | undefined): string => n == null ? t('common.unknown') : compact.format(n);
+export const durationLabel = (n: number | null | undefined): string => n == null ? t('common.unknown') : t('obs.seconds', (n / 1000).toFixed(2));
 
 const pad = (n: number) => String(n).padStart(2, '0');
 export const clockLabel = (d: Date): string => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -54,7 +55,7 @@ export function bucketLabel(at: string, stepMinutes: number): string {
   return stepMinutes > 1 ? `${head}–${clockLabel(new Date(start.getTime() + stepMinutes * 60000))}` : head;
 }
 export const stepLabel = (minutes: number): string =>
-  minutes === 1 ? '每分钟' : minutes === 60 ? '每小时平均' : minutes % 60 ? `每 ${minutes} 分钟平均` : `每 ${minutes / 60} 小时平均`;
+  minutes === 1 ? t('obs.step.minute') : minutes === 60 ? t('obs.step.hour') : minutes % 60 ? t('obs.step.minutes', minutes) : t('obs.step.hours', minutes / 60);
 
 /** Y-axis ticks from zero that end on a round number: steps of 1, 2, 2.5 or 5 times a power of ten. */
 export function niceTicks(peak: number, count = 3): number[] {

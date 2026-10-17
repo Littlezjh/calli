@@ -4,6 +4,7 @@ import { folderName } from '../paths';
 import { projectPath, type ProjectOption } from '../projects';
 import { IconCheck, IconComputer, IconGlobe, IconChevron, IconClose, IconFolder, IconPlus, IconSearch, IconSettings } from './icons';
 import { Popover } from './Popover';
+import { t } from '../i18n';
 
 interface PickerProps {
   /** Most recently used first; the roots that have no threads yet come after. */
@@ -40,13 +41,13 @@ export function ProjectPicker({ projects, machineLabel, remote, cwd, scratch, sc
 
   return (
     <Popover
-      label="在哪个项目里工作"
+      label={t('projects.where')}
       triggerClassName="context-btn"
-      triggerTitle={scratch ? '不在项目中' : cwd}
+      triggerTitle={scratch ? t('projects.none') : cwd}
       trigger={
         <>
           <IconFolder size={14} />
-          <span>{scratch ? '不在项目中' : folderName(cwd) || '选择项目'}</span>
+          <span>{scratch ? t('projects.none') : folderName(cwd) || t('projects.pick')}</span>
           <IconChevron size={12} open />
         </>
       }
@@ -61,7 +62,7 @@ export function ProjectPicker({ projects, machineLabel, remote, cwd, scratch, sc
           <>
             <label className="pop-search">
               <IconSearch size={15} />
-              <input autoFocus={canFocus} value={query} placeholder="搜索项目" aria-label="搜索项目" onChange={(e) => setQuery(e.target.value)} />
+              <input autoFocus={canFocus} value={query} placeholder={t('projects.search')} aria-label={t('projects.search')} onChange={(e) => setQuery(e.target.value)} />
             </label>
             <div className="pop-scroll">
               {shown.map((p) => {
@@ -74,7 +75,7 @@ export function ProjectPicker({ projects, machineLabel, remote, cwd, scratch, sc
                     <span className="pop-item-text">
                       <span className="pop-item-label project-label-line">
                         <span className="project-name-text">{p.name}</span>
-                        <span className={`project-machine${remote ? ' remote' : ''}`} title={remote ? `远程 · ${machineLabel}` : '本机 · Hub 所在机器'}>
+                        <span className={`project-machine${remote ? ' remote' : ''}`} title={remote ? t('hosts.remote', machineLabel) : `${t('hosts.local')} · ${t('hosts.localHint')}`}>
                           {remote ? <IconGlobe size={13} /> : <IconComputer size={13} />}
                           <span>{machineLabel}</span>
                         </span>
@@ -89,27 +90,27 @@ export function ProjectPicker({ projects, machineLabel, remote, cwd, scratch, sc
                   </button>
                 );
               })}
-              {shown.length === 0 && <div className="pop-note">没有叫这个名字的项目。</div>}
+              {shown.length === 0 && <div className="pop-note">{t('projects.noMatch')}</div>}
             </div>
             <div className="pop-divider" role="separator" />
             <button type="button" role="menuitem" className="pop-item compact" onClick={act(onBrowse)}>
               <span className="pop-item-icon">
                 <IconFolder size={16} />
               </span>
-              <span className="pop-item-label">打开其他目录…</span>
+              <span className="pop-item-label">{t('projects.browse')}</span>
             </button>
             <button type="button" role="menuitem" className="pop-item compact" onClick={act(onNewProject)}>
               <span className="pop-item-icon">
                 <IconPlus size={16} />
               </span>
-              <span className="pop-item-label">新建项目</span>
+              <span className="pop-item-label">{t('projects.new')}</span>
             </button>
             {scratchAvailable && (
               <button type="button" role="menuitemradio" aria-checked={scratch} className="pop-item compact" onClick={act(onScratch)}>
                 <span className="pop-item-icon">
                   <IconClose size={16} />
                 </span>
-                <span className="pop-item-label">不在项目中工作</span>
+                <span className="pop-item-label">{t('projects.scratch')}</span>
                 {scratch && (
                   <span className="pop-item-check">
                     <IconCheck size={16} />
@@ -121,7 +122,7 @@ export function ProjectPicker({ projects, machineLabel, remote, cwd, scratch, sc
               <span className="pop-item-icon">
                 <IconSettings size={16} />
               </span>
-              <span className="pop-item-label">可用目录…</span>
+              <span className="pop-item-label">{t('projects.roots')}</span>
             </button>
           </>
         );
@@ -133,13 +134,13 @@ export function ProjectPicker({ projects, machineLabel, remote, cwd, scratch, sc
 /** The daemon's refusals, said the way the page says things. */
 function explain(e: unknown): string {
   const message = e instanceof Error ? e.message : String(e);
-  if (e instanceof ApiError && e.status === 409) return '这里已经有同名的文件或文件夹';
-  if (/plain folder name/.test(message)) return '名称里不能有斜杠，也不能以点开头';
-  if (/no such directory/.test(message)) return '找不到这个目录';
-  if (/absolute path/.test(message)) return '请填写以 / 开头的完整路径';
-  if (/too wide/.test(message)) return '范围太大：不能添加根目录或家目录本身，请选具体的项目文件夹';
-  if (/already allowed/.test(message)) return '它已经在可用目录里了';
-  if (/cannot be removed here/.test(message)) return '这个目录来自 hub 的启动设置，不能在这里移除';
+  if (e instanceof ApiError && e.status === 409) return t('projects.error.exists');
+  if (/plain folder name/.test(message)) return t('projects.error.badName');
+  if (/no such directory/.test(message)) return t('projects.error.notFound');
+  if (/absolute path/.test(message)) return t('projects.error.absolute');
+  if (/too wide/.test(message)) return t('projects.error.tooWide');
+  if (/already allowed/.test(message)) return t('projects.error.already');
+  if (/cannot be removed here/.test(message)) return t('projects.error.fixed');
   return message;
 }
 
@@ -157,7 +158,7 @@ function Frame({ title, onCancel, children }: { title: string; onCancel: () => v
       <div className="dialog project-dialog" role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
         <div className="project-dialog-head">
           <h2 className="dialog-title">{title}</h2>
-          <button type="button" className="icon-btn" aria-label="关闭" onClick={onCancel}>
+          <button type="button" className="icon-btn" aria-label={t('common.close')} onClick={onCancel}>
             <IconClose size={16} />
           </button>
         </div>
@@ -199,14 +200,14 @@ export function NewProjectDialog({ api, roots, onCreated, onCancel }: NewProject
   };
 
   return (
-    <Frame title="新建项目" onCancel={onCancel}>
+    <Frame title={t('projects.new')} onCancel={onCancel}>
       <label className="project-name">
         <IconFolder size={16} />
         <input
           ref={inputRef}
           value={name}
-          placeholder="项目名称"
-          aria-label="项目名称"
+          placeholder={t('projects.name')}
+          aria-label={t('projects.name')}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
@@ -218,8 +219,8 @@ export function NewProjectDialog({ api, roots, onCreated, onCancel }: NewProject
       </label>
       {roots.length > 1 && (
         <>
-          <div className="project-label">放在</div>
-          <div className="project-roots" role="radiogroup" aria-label="放在哪个目录">
+          <div className="project-label">{t('projects.parent')}</div>
+          <div className="project-roots" role="radiogroup" aria-label={t('projects.parentLabel')}>
             {roots.map((root) => (
               <button key={root} type="button" role="radio" aria-checked={root === parent} className="pop-item compact" onClick={() => setParent(root)}>
                 <span className="pop-item-icon">
@@ -242,18 +243,18 @@ export function NewProjectDialog({ api, roots, onCreated, onCancel }: NewProject
       <label className="dialog-option">
         <input type="checkbox" checked={git} onChange={(e) => setGit(e.target.checked)} />
         <span className="dialog-option-text">
-          <span>初始化为 git 仓库</span>
-          <span className="dialog-option-hint">带一个空的首次提交，新线程可以直接开在工作树里</span>
+          <span>{t('projects.git')}</span>
+          <span className="dialog-option-hint">{t('projects.gitHint')}</span>
         </span>
       </label>
-      <p className="project-path">{name.trim() ? `会建在 ${parent.replace(/\/$/, '')}/${name.trim()}` : `会建在 ${parent}`}</p>
+      <p className="project-path">{t('projects.willCreate', name.trim() ? `${parent.replace(/\/$/, '')}/${name.trim()}` : parent)}</p>
       {error && <p className="project-error">{error}</p>}
       <div className="dialog-actions">
         <button className="ghost" onClick={onCancel}>
-          取消
+          {t('common.cancel')}
         </button>
         <button className="primary" onClick={() => void submit()} disabled={!name.trim() || busy}>
-          创建项目
+          {t('projects.create')}
         </button>
       </div>
     </Frame>
@@ -292,8 +293,8 @@ export function RootsDialog({ api, roots, onChange, onCancel }: RootsProps) {
   };
 
   return (
-    <Frame title="可用目录" onCancel={onCancel}>
-      <p className="dialog-message">新线程只能在这些目录和它们的子目录里开始。添加后，agent 可以读写这个目录下的所有内容。</p>
+    <Frame title={t('dir.available')} onCancel={onCancel}>
+      <p className="dialog-message">{t('projects.rootsHint')}</p>
       <div className="roots-list">
         {roots.map((root) => (
           <div key={root.path} className="roots-row">
@@ -303,10 +304,10 @@ export function RootsDialog({ api, roots, onChange, onCancel }: RootsProps) {
             </span>
             {root.removable ? (
               <button type="button" className="roots-remove" disabled={busy} onClick={() => void run(() => api.removeWorkdir(root.path))}>
-                移除
+                {t('hosts.remove')}
               </button>
             ) : (
-              <span className="roots-fixed" title="来自 hub 的启动设置（RAH_WORKDIRS）">启动设置</span>
+              <span className="roots-fixed" title={t('projects.fixedHint')}>{t('projects.fixed')}</span>
             )}
           </div>
         ))}
@@ -314,8 +315,8 @@ export function RootsDialog({ api, roots, onChange, onCancel }: RootsProps) {
       <div className="roots-add">
         <input
           value={path}
-          placeholder="/完整/路径"
-          aria-label="要添加的目录"
+          placeholder={t('projects.pathPlaceholder')}
+          aria-label={t('projects.addPath')}
           spellCheck={false}
           autoCapitalize="off"
           onChange={(e) => setPath(e.target.value)}
@@ -327,7 +328,7 @@ export function RootsDialog({ api, roots, onChange, onCancel }: RootsProps) {
           }}
         />
         <button type="button" className="btn-primary" disabled={!path.trim() || busy} onClick={() => void add()}>
-          添加
+          {t('hosts.addButton')}
         </button>
       </div>
       {error && <p className="project-error">{error}</p>}

@@ -2,7 +2,7 @@ import { useEffect, useState, type RefObject } from 'react';
 
 export interface NoteMark {
   id: string;
-  /** The note's number in the box, as the message will call it ("注释 2"). */
+  /** The note's number in the box, as the message will call it ("[注释 2]", which the daemon reads). */
   n: number;
   range: Range;
 }

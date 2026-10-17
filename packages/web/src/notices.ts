@@ -1,5 +1,6 @@
 /** What deserves the user's attention in threads they are not looking at. Pure, so it can be tested directly. */
 import type { Thread } from './api';
+import { t } from './i18n';
 
 export interface Notice {
   threadId: string;
@@ -11,15 +12,8 @@ export interface Notice {
 
 const short = (title: string) => (title.length > 24 ? `${title.slice(0, 23)}…` : title);
 
-const WAITING = {
-  approval: { label: '等待批准', message: '在等你批准', action: '去批准' },
-  question: { label: '等待回答', message: '有问题等你回答', action: '去回答' },
-  plan: { label: '计划待确认', message: '的计划等你确认', action: '查看计划' },
-  unknown: { label: '等待处理', message: '需要你处理', action: '去查看' },
-} as const;
-
-const waitingDetails = (thread: Thread) => WAITING[thread.waitingReason ?? 'unknown'];
-export const waitingLabel = (thread: Thread): string => waitingDetails(thread).label;
+const waitingReason = (thread: Thread) => thread.waitingReason ?? 'unknown';
+export const waitingLabel = (thread: Thread): string => t(`notices.${waitingReason(thread)}.label`);
 
 /**
  * Compares two snapshots of the thread list and says what just happened elsewhere: a thread started
@@ -32,14 +26,14 @@ export const waitingLabel = (thread: Thread): string => waitingDetails(thread).l
 export function threadNotices(before: Thread[], after: Thread[], viewingId: string | null): Notice[] {
   const previous = new Map(before.map((t) => [t.id, t]));
   const out: Notice[] = [];
-  for (const t of after) {
-    const was = previous.get(t.id);
-    if (!was || t.id === viewingId) continue;
-    if (t.waiting && (!was.waiting || t.waitingReason !== was.waitingReason)) {
-      const detail = waitingDetails(t);
-      out.push({ threadId: t.id, kind: 'waiting', message: `“${short(t.title)}” ${detail.message}`, action: detail.action });
-    } else if (t.unread && !was.unread && t.status === 'error') {
-      out.push({ threadId: t.id, kind: 'error', message: `“${short(t.title)}” 出错了`, action: '打开' });
+  for (const thread of after) {
+    const was = previous.get(thread.id);
+    if (!was || thread.id === viewingId) continue;
+    if (thread.waiting && (!was.waiting || thread.waitingReason !== was.waitingReason)) {
+      const reason = waitingReason(thread);
+      out.push({ threadId: thread.id, kind: 'waiting', message: t(`notices.${reason}.message`, short(thread.title)), action: t(`notices.${reason}.action`) });
+    } else if (thread.unread && !was.unread && thread.status === 'error') {
+      out.push({ threadId: thread.id, kind: 'error', message: t('notices.error', short(thread.title)), action: t('notices.open') });
     }
   }
   return out;

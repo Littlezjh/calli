@@ -3,14 +3,15 @@ import type { VideoRef } from '../api';
 import { sizeLabel } from '../files';
 import { PanelDialog } from './Dialog';
 import { IconDownload, IconPlay } from './icons';
+import { t } from '../i18n';
 
 export function VideoPreview({ url, name, onClose }: { url: string; name: string; onClose: () => void }) {
   const [failed, setFailed] = useState(false);
   return <PanelDialog title={name} onClose={onClose} className="video-preview">
     <video src={url} controls playsInline preload="metadata" onError={() => setFailed(true)} />
     <div className="video-preview-footer">
-      <span>{failed ? '浏览器无法播放这个编码，可以下载原视频' : '原视频'}</span>
-      <a href={url} download={name}><IconDownload size={15} />下载视频</a>
+      <span>{failed ? t('video.cannotPlay') : t('video.original')}</span>
+      <a href={url} download={name}><IconDownload size={15} />{t('video.download')}</a>
     </div>
   </PanelDialog>;
 }
@@ -33,8 +34,8 @@ export function SentVideo({ video, load }: { video: VideoRef; load: (id: string)
     finally { if (alive.current) setLoading(false); }
   };
   return <>
-    <button type="button" className="video-card" disabled={loading} onClick={() => void open()} aria-label={`播放视频：${video.name}`}>
-      <IconPlay size={20} /><span><span className="video-name">{video.name}</span><span className="video-size">{loading ? '加载视频…' : error ? '加载失败，点击重试' : sizeLabel(video.size)}</span></span>
+    <button type="button" className="video-card" disabled={loading} onClick={() => void open()} aria-label={t('video.play', video.name)}>
+      <IconPlay size={20} /><span><span className="video-name">{video.name}</span><span className="video-size">{loading ? t('video.loading') : error ? t('video.loadFailed') : sizeLabel(video.size)}</span></span>
     </button>
     {url && <VideoPreview url={url} name={video.name} onClose={() => setUrl(null)} />}
   </>;

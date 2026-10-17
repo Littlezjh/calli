@@ -1,4 +1,5 @@
 /** Preparing pictures for sending: checks, downscaling, base64. */
+import { t } from './i18n';
 
 export const MAX_IMAGES = 6;
 /** Longest edge after downscaling. Larger pictures gain nothing for a model and cost upload time. */
@@ -31,7 +32,7 @@ function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error('无法读取这张图片'));
+    img.onerror = () => reject(new Error(t('images.unreadable')));
     img.src = url;
   });
 }
@@ -43,14 +44,14 @@ function toBase64(blob: Blob): Promise<string> {
       const url = String(reader.result);
       resolve(url.slice(url.indexOf(',') + 1));
     };
-    reader.onerror = () => reject(new Error('无法读取这张图片'));
+    reader.onerror = () => reject(new Error(t('images.unreadable')));
     reader.readAsDataURL(blob);
   });
 }
 
 function canvasToJpeg(canvas: HTMLCanvasElement, quality: number): Promise<Blob> {
   return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('无法压缩这张图片'))), 'image/jpeg', quality);
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error(t('images.uncompressible')))), 'image/jpeg', quality);
   });
 }
 
@@ -59,9 +60,9 @@ function canvasToJpeg(canvas: HTMLCanvasElement, quality: number): Promise<Blob>
  * is often 3-8 MB) are scaled down and re-encoded as JPEG so they upload quickly over a VPN.
  */
 export async function prepareImage(file: File): Promise<PreparedImage> {
-  if (!file.type.startsWith('image/')) throw new Error(`${file.name || '这个文件'} 不是图片`);
+  if (!file.type.startsWith('image/')) throw new Error(t('images.notImage', file.name || t('images.thisFile')));
   const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const name = file.name || '图片';
+  const name = file.name || t('images.image');
   const originalUrl = URL.createObjectURL(file);
 
   let img: HTMLImageElement;
@@ -84,7 +85,7 @@ export async function prepareImage(file: File): Promise<PreparedImage> {
   const ctx = canvas.getContext('2d');
   if (!ctx) {
     URL.revokeObjectURL(originalUrl);
-    throw new Error('无法压缩这张图片');
+    throw new Error(t('images.uncompressible'));
   }
   // JPEG has no transparency; without a fill, transparent areas of a screenshot would turn black.
   ctx.fillStyle = '#ffffff';
@@ -98,7 +99,7 @@ export async function prepareImage(file: File): Promise<PreparedImage> {
       return { id, name, data: await toBase64(blob), mimeType: 'image/jpeg', previewUrl: URL.createObjectURL(blob) };
     }
   }
-  throw new Error(`${name} 压缩后仍然太大`);
+  throw new Error(t('images.tooLarge', name));
 }
 
 /** A picture that was already sent (a queued message taken back to edit), back in the box. */
@@ -107,7 +108,7 @@ export function restoreImage(img: { data: string; mimeType: string }, index: num
   const blob = new Blob([bytes], { type: img.mimeType });
   return {
     id: `${Date.now()}-${index}-${Math.random().toString(36).slice(2)}`,
-    name: '图片',
+    name: t('images.image'),
     data: img.data,
     mimeType: img.mimeType,
     previewUrl: URL.createObjectURL(blob),
@@ -204,10 +205,10 @@ export async function savePictureAsPng(url: string, name?: string): Promise<void
   canvas.width = Math.round(natural.width * k);
   canvas.height = Math.round(natural.height * k);
   const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('无法导出这张图片');
+  if (!ctx) throw new Error(t('images.unexportable'));
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
   const blob = await new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob((made) => (made ? resolve(made) : reject(new Error('无法导出这张图片'))), 'image/png');
+    canvas.toBlob((made) => (made ? resolve(made) : reject(new Error(t('images.unexportable')))), 'image/png');
   });
   const href = URL.createObjectURL(blob);
   saveAs(href, pngFileName(pictureFileName(name, 'image/svg+xml')));

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import type { TurnPreview } from '../timeline';
+import { t } from '../i18n';
 
 interface Props {
   /** The scroll container holding the thread. A ref, because it mounts with the app. */
@@ -29,7 +30,7 @@ interface Tick {
 /**
  * The ruler along the thread's left edge: one tick per turn, the current turn longer. Hovering
  * enlarges the neighbours and shows what that turn was about; clicking jumps there. The ticks read
- * the rendered rows, so turns folded away by the "上 N 条消息" collapse have no tick until expanded.
+ * the rendered rows, so turns folded away by the "N earlier messages" collapse have no tick until expanded.
  * Desktop only; CSS hides it on narrow screens.
  */
 export function TurnRuler({ scrollerRef, previews }: Props) {
@@ -130,14 +131,14 @@ export function TurnRuler({ scrollerRef, previews }: Props) {
           key={tick.turnId || i}
           className={`tick${i === activeIdx ? ' active' : ''}${i === hoverIdx ? ' hover' : ''}`}
           style={{ top: centerOf(i) - pitch / 2, height: pitch, ['--w' as string]: `${widthOf(i)}px` }}
-          aria-label={`跳到第 ${i + 1} 轮`}
+          aria-label={t('ruler.jump', i + 1)}
           onClick={() => jump(tick)}
           onMouseEnter={() => setHoverIdx(i)}
         />
       ))}
       {hoverIdx >= 0 && previewOf(hoverIdx) && (
         <div className="ruler-pop" style={{ top: centerOf(hoverIdx) }}>
-          <div className="ruler-pop-q">{previewOf(hoverIdx)!.question.slice(0, 90) || '（图片）'}</div>
+          <div className="ruler-pop-q">{previewOf(hoverIdx)!.question.slice(0, 90) || t('ruler.image')}</div>
           {previewOf(hoverIdx)!.answer && <div className="ruler-pop-a">{previewOf(hoverIdx)!.answer.slice(0, 110)}</div>}
         </div>
       )}

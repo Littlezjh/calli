@@ -4,6 +4,7 @@ export type UserInputAnswer = { answers: Record<string, string[]> } | { cancelle
 import type { UsageReport, AgentDiagnostic } from './observability';
 import type { StoredEvent } from './timeline';
 import { cachedQuota, clearQuotaCache, rememberQuota } from './quota-cache';
+import { localeTag, t } from './i18n';
 
 /** Where threads may work: the project roots, and whether one can start outside any project. */
 export interface FolderEntry {
@@ -569,7 +570,8 @@ export class Api {
   ) {}
 
   private headers(extra: Record<string, string> = {}): Record<string, string> {
-    return { Authorization: `Bearer ${this.token}`, ...extra };
+    // The language picked in the hub, not the browser's: what the daemon writes for people can follow it.
+    return { Authorization: `Bearer ${this.token}`, 'Accept-Language': localeTag(), ...extra };
   }
 
   private url(path: string): string {
@@ -841,7 +843,7 @@ export class Api {
       const res = await fetch(this.url(`/api/threads/${threadId}/videos`), { method: 'POST', headers: this.headers({ 'Content-Type': file.type || 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name) }), body: file });
       if (res.status === 401) throw new AuthError('unauthorized');
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new ApiError(res.status === 404 ? '当前服务尚不支持视频，请更新服务后重试' : json.error ?? `HTTP ${res.status}`, json, res.status);
+      if (!res.ok) throw new ApiError(res.status === 404 ? t('api.noVideos') : json.error ?? `HTTP ${res.status}`, json, res.status);
       return json as VideoRef;
     })();
     uploads.set(threadId, pending);

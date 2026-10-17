@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { AgentInfo, Api, SystemPrompt, TraceStep, TraceStepKind, TurnTrace } from '../api';
 import { PanelDialog } from './Dialog';
 import { IconArrowLeft, IconArrowRight, IconCheck, IconCopy, IconExternal, IconSearch } from './icons';
+import { formatDateTime, formatList, formatNumber, t } from '../i18n';
 
 interface Props {
   api: Api;
@@ -15,20 +16,20 @@ interface Props {
 type Filter = 'all' | 'system' | TraceStepKind;
 
 const KIND_LABELS: Record<TraceStepKind | 'system', string> = {
-  system: '系统',
-  user: '用户',
-  thinking: '思考',
-  assistant: '回答',
-  tool: '工具',
-  request: '请求',
-  context: '上下文',
-  error: '出错',
+  system: t('trace.kind.system'),
+  user: t('trace.kind.user'),
+  thinking: t('trace.kind.thinking'),
+  assistant: t('trace.kind.assistant'),
+  tool: t('trace.kind.tool'),
+  request: t('trace.kind.request'),
+  context: t('trace.kind.context'),
+  error: t('trace.kind.error'),
 };
 
-/** The chips, in the order a turn happens. Context and errors show under 全部 only: they are rare. */
+/** The chips, in the order a turn happens. Context and errors show under "all" only: they are rare. */
 const FILTERS: Filter[] = ['all', 'system', 'user', 'thinking', 'assistant', 'tool', 'request'];
 
-const STATUS_LABELS: Record<TurnTrace['status'], string> = { running: '运行中', done: '完成', cancelled: '已停止', error: '出错' };
+const STATUS_LABELS: Record<TurnTrace['status'], string> = { running: t('status.running'), done: t('step.done'), cancelled: t('team.stopped'), error: t('status.error') };
 
 const ms = (a: string, b: string): number => new Date(b).getTime() - new Date(a).getTime();
 
@@ -52,19 +53,18 @@ function tokens(value: number): string {
 const clock = (ts: string): string => {
   const date = new Date(ts);
   if (Number.isNaN(date.getTime())) return '';
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${date.getMonth() + 1} 月 ${date.getDate()} 日 ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  return formatDateTime(date, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
 };
 
 /** What a step's folded line says: a tool's title, a request's model, a text's first words. */
 function summaryOf(step: TraceStep): string {
   if (step.kind === 'tool') return step.title && step.title !== step.tool ? step.title : step.input?.replace(/\s+/g, ' ') ?? '';
   if (step.kind === 'request') {
-    const t = step.tokens ?? {};
-    const parts = [step.model ?? '模型请求'];
-    if (t.input !== undefined) parts.push(`输入 ${tokens(t.input)}`);
-    if (t.output !== undefined) parts.push(`输出 ${tokens(t.output)}`);
-    if (t.cacheRead) parts.push(`缓存 ${tokens(t.cacheRead)}`);
+    const used = step.tokens ?? {};
+    const parts = [step.model ?? t('obs.scope.request')];
+    if (used.input !== undefined) parts.push(t('trace.input', tokens(used.input)));
+    if (used.output !== undefined) parts.push(t('trace.output', tokens(used.output)));
+    if (used.cacheRead) parts.push(t('trace.cache', tokens(used.cacheRead)));
     return parts.join(' · ');
   }
   return (step.text ?? '').replace(/\s+/g, ' ').trim();
@@ -72,7 +72,7 @@ function summaryOf(step: TraceStep): string {
 
 /** A tool's name as people say it: `mcp__github__create_issue` is github's create_issue. */
 function toolName(step: TraceStep): string {
-  const name = step.tool ?? '工具';
+  const name = step.tool ?? t('trace.kind.tool');
   if (step.server && name.startsWith('mcp__')) return `${step.server} · ${name.split('__').slice(2).join('__')}`;
   if (step.server) return `${step.server} · ${name}`;
   return name;
@@ -177,26 +177,26 @@ export function TracePanel({ api, agents, threadId, turnId: initialTurn, onOpenT
   const duration = trace ? ms(trace.startedAt, trace.endedAt ?? new Date().toISOString()) : 0;
 
   return (
-    <PanelDialog title="执行轨迹" className="trace-panel" onClose={onClose}>
+    <PanelDialog title={t('trace.title')} className="trace-panel" onClose={onClose}>
       {error && !trace && <p className="trace-empty" role="alert">{error}</p>}
-      {!error && !trace && <p className="trace-empty">读取中…</p>}
+      {!error && !trace && <p className="trace-empty">{t('activity.reading')}</p>}
       {trace && (
         <div className="trace-body">
           <div className="trace-head">
             <div className="trace-title-row">
-              <button type="button" className="trace-thread" onClick={() => onOpenThread(trace.threadId)} title="打开会话">
+              <button type="button" className="trace-thread" onClick={() => onOpenThread(trace.threadId)} title={t('trace.openThread')}>
                 <span>{trace.title}</span>
                 <IconExternal size={13} />
               </button>
               <span className={`trace-status ${trace.status}`}>{STATUS_LABELS[trace.status]}</span>
-              <div className="trace-nav" role="group" aria-label="切换轮次">
-                <button type="button" className="icon-btn" aria-label="上一轮" disabled={at <= 0} onClick={() => go(-1)}>
+              <div className="trace-nav" role="group" aria-label={t('trace.switchTurn')}>
+                <button type="button" className="icon-btn" aria-label={t('trace.prev')} disabled={at <= 0} onClick={() => go(-1)}>
                   <IconArrowLeft size={15} />
                 </button>
                 <span className="trace-nav-pos">
-                  第 {at + 1} / {trace.turns.length} 轮
+                  {t('trace.position', at + 1, trace.turns.length)}
                 </span>
-                <button type="button" className="icon-btn" aria-label="下一轮" disabled={at < 0 || at >= trace.turns.length - 1} onClick={() => go(1)}>
+                <button type="button" className="icon-btn" aria-label={t('trace.next')} disabled={at < 0 || at >= trace.turns.length - 1} onClick={() => go(1)}>
                   <IconArrowRight size={15} />
                 </button>
               </div>
@@ -207,49 +207,49 @@ export function TracePanel({ api, agents, threadId, turnId: initialTurn, onOpenT
                 <dd>{agent?.label ?? trace.agent}</dd>
               </div>
               <div>
-                <dt>模型</dt>
-                <dd>{trace.models.join('、') || '原生默认'}</dd>
+                <dt>{t('statusPanel.model')}</dt>
+                <dd>{formatList(trace.models) || t('obs.nativeDefault')}</dd>
               </div>
               <div>
-                <dt>开始</dt>
+                <dt>{t('trace.started')}</dt>
                 <dd>{clock(trace.startedAt)}</dd>
               </div>
               <div>
-                <dt>用时</dt>
-                <dd>{durationLabel(duration)}{running ? ' · 进行中' : ''}</dd>
+                <dt>{t('trace.duration')}</dt>
+                <dd>{durationLabel(duration)}{running ? ` · ${t('trace.inProgress')}` : ''}</dd>
               </div>
               <div>
-                <dt>工具</dt>
+                <dt>{t('trace.kind.tool')}</dt>
                 <dd>
-                  {trace.totals.tools} 次{trace.totals.mcp ? ` · MCP ${trace.totals.mcp}` : ''}
+                  {t('trace.times', trace.totals.tools)}{trace.totals.mcp ? ` · MCP ${trace.totals.mcp}` : ''}
                 </dd>
               </div>
               <div>
-                <dt>模型请求</dt>
+                <dt>{t('obs.scope.request')}</dt>
                 <dd>
-                  {trace.totals.requests ? `${trace.totals.requests} 次 · 输入 ${tokens(trace.totals.input)} · 输出 ${tokens(trace.totals.output)}` : '未报告'}
+                  {trace.totals.requests ? `${t('trace.times', trace.totals.requests)} · ${t('trace.input', tokens(trace.totals.input))} · ${t('trace.output', tokens(trace.totals.output))}` : t('obs.notReported')}
                 </dd>
               </div>
               <div className="wide">
-                <dt>目录</dt>
+                <dt>{t('statusPanel.directory')}</dt>
                 <dd title={trace.cwd}>{trace.cwd}</dd>
               </div>
             </dl>
           </div>
           {/* Pinned while the steps scroll under it, so the filters are always at hand. */}
           <div className="trace-tools">
-              <div className="trace-filters" role="group" aria-label="按类型筛选">
+              <div className="trace-filters" role="group" aria-label={t('trace.filter')}>
                 {FILTERS.filter((f) => f === 'all' || counts[f]).map((f) => (
                   <button key={f} type="button" className={`trace-filter${filter === f ? ' active' : ''}`} aria-pressed={filter === f} onClick={() => setFilter(f)}>
                     {f !== 'all' && <span className={`trace-dot ${f}`} />}
-                    {f === 'all' ? '全部' : KIND_LABELS[f]}
+                    {f === 'all' ? t('trace.all') : KIND_LABELS[f]}
                     <span className="trace-filter-count">{counts[f] ?? 0}</span>
                   </button>
                 ))}
               </div>
               <label className="trace-search">
                 <IconSearch size={14} />
-                <input type="search" value={query} placeholder="搜索这一轮" aria-label="搜索这一轮" onChange={(e) => setQuery(e.target.value)} />
+                <input type="search" value={query} placeholder={t('trace.search')} aria-label={t('trace.search')} onChange={(e) => setQuery(e.target.value)} />
               </label>
           </div>
 
@@ -258,20 +258,20 @@ export function TracePanel({ api, agents, threadId, turnId: initialTurn, onOpenT
               <li className={`trace-step system${open.has('system') ? ' open' : ''}`}>
                 <button type="button" className="trace-step-head" aria-expanded={open.has('system')} onClick={() => toggle('system')}>
                   <span className="trace-dot system" />
-                  <span className="trace-kind">系统</span>
-                  <span className="trace-summary">{system?.prompt ? `${system.prompt.text.length.toLocaleString()} 字符 · 来自${system.prompt.source}` : '会话的系统提示词，点开读取'}</span>
+                  <span className="trace-kind">{t('trace.kind.system')}</span>
+                  <span className="trace-summary">{system?.prompt ? t('trace.systemSummary', formatNumber(system.prompt.text.length), system.prompt.source) : t('trace.systemHint')}</span>
                 </button>
                 {open.has('system') && (
                   <div className="trace-step-body">
                     {system?.error ? (
                       <p className="trace-note error">{system.error}</p>
                     ) : !system?.prompt ? (
-                      <p className="trace-note">读取中…</p>
+                      <p className="trace-note">{t('activity.reading')}</p>
                     ) : (
                       <>
                         <button type="button" className="trace-copy" onClick={copySystem}>
                           {copied ? <IconCheck size={13} /> : <IconCopy size={13} />}
-                          {copied ? '已复制' : '复制全文'}
+                          {copied ? t('common.copied') : t('activity.copyAll')}
                         </button>
                         <pre className="trace-text">{system.prompt.text}</pre>
                       </>
@@ -313,25 +313,25 @@ export function TracePanel({ api, agents, threadId, turnId: initialTurn, onOpenT
                         <>
                           {step.input && (
                             <>
-                              <p className="trace-label">输入</p>
+                              <p className="trace-label">{t('obs.input')}</p>
                               <pre className="trace-text code">{step.input}</pre>
                             </>
                           )}
                           <p className="trace-label">
-                            输出{step.status ? ` · ${step.status === 'completed' ? '完成' : failed ? '失败' : step.status}` : ''}
+                            {t('obs.output')}{step.status ? ` · ${step.status === 'completed' ? t('step.done') : failed ? t('team.failed') : step.status}` : ''}
                           </p>
-                          {step.output ? <pre className="trace-text code">{step.output}</pre> : <p className="trace-note">{step.endTs ? '没有输出' : '还在运行'}</p>}
+                          {step.output ? <pre className="trace-text code">{step.output}</pre> : <p className="trace-note">{step.endTs ? t('trace.noOutput') : t('trace.stillRunning')}</p>}
                         </>
                       ) : (
                         <pre className="trace-text">{step.text}</pre>
                       )}
-                      {step.cut && <p className="trace-note">内容太长，这里只显示前一部分；完整内容在会话里。</p>}
+                      {step.cut && <p className="trace-note">{t('trace.cut')}</p>}
                     </div>
                   )}
                 </li>
               );
             })}
-            {steps.length === 0 && !showSystem && <li className="trace-empty">{q ? '没有匹配的步骤。' : '这一轮没有记录到步骤。'}</li>}
+            {steps.length === 0 && !showSystem && <li className="trace-empty">{q ? t('trace.noMatch') : t('trace.noSteps')}</li>}
           </ol>
         </div>
       )}

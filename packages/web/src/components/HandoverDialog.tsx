@@ -3,6 +3,7 @@ import { copyText } from '../clipboard';
 import type { AgentInfo, Api, Thread } from '../api';
 import { AgentPicker } from './Pickers';
 import { IconCheck, IconCopy, IconEdit } from './icons';
+import { t } from '../i18n';
 
 interface Props {
   api: Api;
@@ -14,8 +15,8 @@ interface Props {
 
 /** The handover as it is sent: which machine it came from, then what the hub assembled. */
 export function handoverMessage(api: Api, summary: string): string {
-  const machine = api.host ? `远端机器（ID：${api.host}）` : '本机（当前 hub）';
-  return `来源机器：${machine}\n\n${summary}`;
+  const machine = api.host ? t('handover.remote', api.host) : t('handover.local');
+  return `${t('handover.source', machine)}\n\n${summary}`;
 }
 
 /** Assemble the source session and progress as soon as the dialog opens; no agent turn is needed. */
@@ -38,7 +39,7 @@ export function HandoverDialog({ api, thread, agents, onOpen, onClose }: Props) 
       if (!active) return;
       if ('summary' in result) {
         setSummary(handoverMessage(api, result.summary));
-      } else setError('交接信息尚未就绪，请重试。');
+      } else setError(t('handover.notReady'));
     }).catch((e: unknown) => {
       if (active) setError(e instanceof Error ? e.message : String(e));
     });
@@ -60,7 +61,7 @@ export function HandoverDialog({ api, thread, agents, onOpen, onClose }: Props) 
       setCopied(true);
       window.clearTimeout(timer.current);
       timer.current = window.setTimeout(() => setCopied(false), 1500);
-    } else setError('复制失败，请选择下方内容手动复制。');
+    } else setError(t('handover.copyFailed'));
   };
 
   const create = async () => {
@@ -83,25 +84,25 @@ export function HandoverDialog({ api, thread, agents, onOpen, onClose }: Props) 
   return (
     <div className="dialog-scrim" onClick={() => { if (!creatingRef.current) onClose(); }}>
       <div className="dialog handover" role="dialog" aria-modal="true" aria-labelledby="handover-title" onClick={(e) => e.stopPropagation()}>
-        <h2 id="handover-title" className="dialog-title">交接</h2>
-        <p className="dialog-message">在原目录和 worktree 中新建对话，交接内容会放进输入框，编辑后再发送。也可以直接复制。</p>
+        <h2 id="handover-title" className="dialog-title">{t('handover.title')}</h2>
+        <p className="dialog-message">{t('handover.message')}</p>
         <div className="handover-successor">
-          <span>接手 agent</span>
+          <span>{t('handover.successor')}</span>
           <fieldset disabled={creating}>
             <AgentPicker agents={agents} value={target} onChange={setTarget} />
           </fieldset>
         </div>
         <p className="handover-cwd" title={thread.cwd}>{thread.cwd}</p>
-        {summary ? <pre className="handover-summary" tabIndex={0}>{summary}</pre> : !error && <p className="handover-note" role="status">正在整理交接信息…</p>}
+        {summary ? <pre className="handover-summary" tabIndex={0}>{summary}</pre> : !error && <p className="handover-note" role="status">{t('handover.preparing')}</p>}
         {error && <p className="panel-error" role="alert">{error}</p>}
         <div className="dialog-actions">
-          {error && !summary && <button className="ghost" onClick={() => setRevision((v) => v + 1)}>重试</button>}
-          <button className="ghost" onClick={onClose} disabled={creating}>关闭</button>
+          {error && !summary && <button className="ghost" onClick={() => setRevision((v) => v + 1)}>{t('common.retry')}</button>}
+          <button className="ghost" onClick={onClose} disabled={creating}>{t('common.close')}</button>
           <button className="ghost" onClick={() => void copy()} disabled={!summary}>
-            {copied ? <IconCheck size={15} /> : <IconCopy size={15} />} {copied ? '已复制' : '复制交接信息'}
+            {copied ? <IconCheck size={15} /> : <IconCopy size={15} />} {copied ? t('common.copied') : t('handover.copy')}
           </button>
           <button className="primary" onClick={() => void create()} disabled={!summary || !agents.some((a) => a.id === target && a.available) || creating}>
-            <IconEdit size={15} /> {creating ? '正在创建…' : '新建接手对话'}
+            <IconEdit size={15} /> {creating ? t('handover.creating') : t('handover.create')}
           </button>
         </div>
       </div>

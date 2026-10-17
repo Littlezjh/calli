@@ -1,5 +1,6 @@
 import { Api, type FolderListing, type SearchHit, type TextFile, type Thread, type VideoRef } from '../api';
 import type { DemoData } from './data';
+import { t } from '../i18n';
 
 /**
  * What the demo cannot do. `write` is set for anything that would change something: the page
@@ -7,7 +8,7 @@ import type { DemoData } from './data';
  */
 export class DemoError extends Error {
   constructor(readonly write: boolean) {
-    super(write ? '连接 hub 后才能这样做' : '示例里没有这部分');
+    super(write ? t('demo.needsHub') : t('demo.notInDemo'));
   }
 }
 

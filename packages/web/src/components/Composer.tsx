@@ -39,6 +39,7 @@ import {
   IconStop,
   IconTarget,
 } from './icons';
+import { t } from '../i18n';
 
 /** A passage noted for the next message. The id ties it to its highlight in the conversation. */
 export interface DraftNote extends Note {
@@ -292,18 +293,18 @@ export function Composer({
       const entries = commands.filter(c => catalog === 'skills' ? c.kind !== 'command' : c.kind !== 'skill' && c.kind !== 'prompt');
       return searchCommands(query, catalog === 'actions' ? actions.filter(a => !['help', 'skills'].includes(a.id)) : [], entries, [...hiddenCommands, ...(goal ? ['goal'] : [])]);
     }
-    const additions: HubAction[] = [{ id: 'composer:attach', label: '添加图片或视频', hint: '', keywords: ['attach', 'image', 'video', '附件'] }];
-    if (planMode) additions.push({ id: 'composer:plan', label: '计划模式', hint: planMode.disabled ? '当前轮结束后可切换' : planMode.active ? '已开启，点击关闭' : '先分析和讨论方案', keywords: ['plan', '计划'], disabled: planMode.disabled });
+    const additions: HubAction[] = [{ id: 'composer:attach', label: t('composerMenu.attach'), hint: '', keywords: ['attach', 'image', 'video', '附件'] }];
+    if (planMode) additions.push({ id: 'composer:plan', label: t('composerMenu.planMode'), hint: planMode.disabled ? t('composer.planAfterTurn') : planMode.active ? t('composer.planActive') : t('composerMenu.planOn'), keywords: ['plan', '计划'], disabled: planMode.disabled });
     const goals: HubAction[] = (goal?.actions ?? (goal ? ['set' as const, ...goal.controls] : [])).map(action => {
       const blocked = running ? !goal?.controls.some(c => c === action) : (action === 'set' || action === 'resume') && planMode?.active;
-      return { id: `composer:goal:${action}`, label: GOAL_LABELS[action], hint: blocked ? running ? '当前轮结束后可操作' : '先关闭计划模式' : action === 'set' ? '设置要持续完成的目标' : '', keywords: ['目标', 'target'], disabled: !!blocked };
+      return { id: `composer:goal:${action}`, label: GOAL_LABELS[action], hint: blocked ? running ? t('composerMenu.afterTurn') : t('composerMenu.planFirst') : action === 'set' ? t('composer.goalSetHint') : '', keywords: ['目标', 'target'], disabled: !!blocked };
     });
     const group = (label: string, entries: HubAction[]): MenuRow[] => searchCommands(query, entries, []).map(row => row.type === 'heading' ? { ...row, label } : row);
     // Both desktop entry points share one catalog, ordering and filtering behavior.
     return [
-      ...(!narrow ? group('添加', [...additions, ...goals.filter(a => a.id.endsWith(':set'))]) : []),
+      ...(!narrow ? group(t('composer.add'), [...additions, ...goals.filter(a => a.id.endsWith(':set'))]) : []),
       ...searchCommands(query, actions, commands, hiddenCommands),
-      ...(!narrow ? group('目标', goals.filter(a => !a.id.endsWith(':set'))) : []),
+      ...(!narrow ? group(t('composer.goal'), goals.filter(a => !a.id.endsWith(':set'))) : []),
     ];
   }, [addOpen, addQuery, catalog, text, narrow, actions, commands, hiddenCommands, planMode, goal, running]);
   const selectable = useMemo(() => rows.filter((r): r is Selectable => r.type !== 'heading' && !(r.type === 'action' && r.action.disabled)), [rows]);
@@ -444,10 +445,10 @@ export function Composer({
     const pickedVideos = files.filter(isVideo);
     if (pickedVideos.length) {
       const room = MAX_VIDEOS - videos.length;
-      if (pickedVideos.length > room) onError(`一条消息最多 ${MAX_VIDEOS} 个视频`);
+      if (pickedVideos.length > room) onError(t('composer.maxVideos', MAX_VIDEOS));
       const ready: PreparedVideo[] = [];
       for (const file of pickedVideos.slice(0, Math.max(0, room))) {
-        try { ready.push(prepareVideo(file)); } catch (error) { onError(error instanceof Error ? error.message : '视频无法添加'); }
+        try { ready.push(prepareVideo(file)); } catch (error) { onError(error instanceof Error ? error.message : t('composer.videoFailed')); }
       }
       setVideos(current => [...current, ...ready]);
     }
@@ -455,8 +456,8 @@ export function Composer({
     if (pictures.length === 0) return;
     if (attachBlocked) return onError(attachBlocked);
     const room = MAX_IMAGES - images.length - preparing;
-    if (room <= 0) return onError(`一条消息最多 ${MAX_IMAGES} 张图片`);
-    if (pictures.length > room) onError(`一条消息最多 ${MAX_IMAGES} 张图片，多出的没有添加`);
+    if (room <= 0) return onError(t('composer.maxImages', MAX_IMAGES));
+    if (pictures.length > room) onError(t('composer.maxImagesDropped', MAX_IMAGES));
     const picked = pictures.slice(0, room);
 
     setPreparing((n) => n + picked.length);
@@ -465,7 +466,7 @@ export function Composer({
 
     const ready = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
     const failed = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
-    if (failed) onError(failed.reason instanceof Error ? failed.reason.message : '有图片无法添加');
+    if (failed) onError(failed.reason instanceof Error ? failed.reason.message : t('composer.imageFailed'));
     if (ready.length) setImages((prev) => [...prev, ...ready]);
     ref.current?.focus();
   };
@@ -477,10 +478,10 @@ export function Composer({
       if (taken.mentions?.length) setMentions(current => [...taken.mentions!, ...current]);
       setText((current) => [taken.text, current].filter((s) => s.trim()).join('\n\n'));
       const room = MAX_IMAGES - images.length - preparing;
-      if (taken.images.length > room) onError(`一条消息最多 ${MAX_IMAGES} 张图片，多出的没有放回`);
+      if (taken.images.length > room) onError(t('composer.maxImagesNotRestored', MAX_IMAGES));
       const videoRoom = Math.max(0, MAX_VIDEOS - videos.length);
       const returnedVideos = taken.videos ?? [];
-      if (returnedVideos.length > videoRoom) onError(`一条消息最多 ${MAX_VIDEOS} 个视频`);
+      if (returnedVideos.length > videoRoom) onError(t('composer.maxVideos', MAX_VIDEOS));
       returnedVideos.slice(videoRoom).forEach(video => URL.revokeObjectURL(video.previewUrl));
       setVideos(current => [...returnedVideos.slice(0, videoRoom), ...current]);
       const back = taken.images.slice(0, Math.max(0, room)).map(restoreImage);
@@ -488,8 +489,8 @@ export function Composer({
       ref.current?.focus();
     } catch (e) {
       // The turn ahead of it may have ended in the meantime, taking the message out with it.
-      if (e instanceof ApiError && e.status === 404) onError('这条消息已经发出去了，不能再编辑');
-      else onError(e instanceof Error ? e.message : '没能取回这条消息');
+      if (e instanceof ApiError && e.status === 404) onError(t('composer.alreadySent'));
+      else onError(e instanceof Error ? e.message : t('composer.takeBackFailed'));
     }
   };
 
@@ -651,8 +652,8 @@ export function Composer({
       <div className="composer-anchor">
         {menuOpen && (
           <div className={`command-menu${addOpen && catalog !== 'all' ? ' catalog-menu' : ''}`} ref={paletteRef}>
-            {addOpen && <label className="pop-search command-search"><IconSearch size={16} /><input ref={searchRef} autoFocus={!isTouch} aria-label={catalog === 'all' ? '搜索操作与技能' : catalog === 'skills' ? '搜索技能' : '搜索操作'} placeholder={catalog === 'all' ? '搜索操作、命令或技能' : catalog === 'skills' ? '搜索技能名称或描述' : '搜索操作或命令'} value={addQuery} onChange={e => setAddQuery(e.target.value)} onKeyDown={menuKeyDown} /></label>}
-            <div className="command-menu-list" role="listbox" aria-label="命令" ref={listRef}>
+            {addOpen && <label className="pop-search command-search"><IconSearch size={16} /><input ref={searchRef} autoFocus={!isTouch} aria-label={catalog === 'all' ? t('composer.searchAll') : catalog === 'skills' ? t('skills.search') : t('composer.searchActions')} placeholder={catalog === 'all' ? t('composer.searchAllPlaceholder') : catalog === 'skills' ? t('composer.searchSkillsPlaceholder') : t('composer.searchActionsPlaceholder')} value={addQuery} onChange={e => setAddQuery(e.target.value)} onKeyDown={menuKeyDown} /></label>}
+            <div className="command-menu-list" role="listbox" aria-label={t('commands.kind.command')} ref={listRef}>
             {rows.map((row) => {
               if (row.type === 'heading') {
                 return (
@@ -702,9 +703,9 @@ export function Composer({
                 </button>
               );
             })}
-            {!rows.length && <p className="pop-note">没有匹配的结果</p>}
+            {!rows.length && <p className="pop-note">{t('composer.noMatch')}</p>}
             </div>
-            {addOpen && catalog === 'skills' && actions.some(a => a.id === 'skills') && <button type="button" className="composer-menu-footer" onClick={() => { setAddOpen(false); setDismissed(true); onAction('skills'); }}>管理技能<IconChevron size={14} /></button>}
+            {addOpen && catalog === 'skills' && actions.some(a => a.id === 'skills') && <button type="button" className="composer-menu-footer" onClick={() => { setAddOpen(false); setDismissed(true); onAction('skills'); }}>{t('composer.manageSkills')}<IconChevron size={14} /></button>}
           </div>
         )}
 
@@ -724,22 +725,22 @@ export function Composer({
           {planAction && <div className="composer-plan-action">{planAction}</div>}
 
           {queued.length > 0 && (
-            <div className="queue" aria-label="排队中的消息">
+            <div className="queue" aria-label={t('composer.queued')}>
               {queued.map((q) => (
                 <div key={q.id} className="queue-item">
-                  <span className="queue-badge">排队</span>
+                  <span className="queue-badge">{t('composer.queue')}</span>
                   <span className="queue-text">
-                    {q.text || (q.videos ? '视频' : '图片')}
-                    {q.images > 0 && q.text && <span className="muted"> · {q.images} 张图</span>}
-                    {!!q.videos && <span className="muted"> · {q.videos} 个视频</span>}
+                    {q.text || (q.videos ? t('videos.video') : t('images.image'))}
+                    {q.images > 0 && q.text && <span className="muted"> · {t('composer.images', q.images)}</span>}
+                    {!!q.videos && <span className="muted"> · {t('composer.videos', q.videos!)}</span>}
                   </span>
-                  <button type="button" className="queue-now" title="打断当前这一轮，马上发送这条" onClick={() => onSendQueuedNow(q.id)}>
-                    立即发送
+                  <button type="button" className="queue-now" title={t('composer.sendNowHint')} onClick={() => onSendQueuedNow(q.id)}>
+                    {t('composer.sendNow')}
                   </button>
-                  <button type="button" className="queue-remove" aria-label="撤回到输入框里编辑" title="编辑" onClick={() => void editQueued(q.id)}>
+                  <button type="button" className="queue-remove" aria-label={t('composer.editQueued')} title={t('composer.edit')} onClick={() => void editQueued(q.id)}>
                     <IconEdit size={13} />
                   </button>
-                  <button type="button" className="queue-remove" aria-label="取消这条排队的消息" onClick={() => onRemoveQueued(q.id)}>
+                  <button type="button" className="queue-remove" aria-label={t('composer.cancelQueued')} onClick={() => onRemoveQueued(q.id)}>
                     <IconClose size={13} />
                   </button>
                 </div>
@@ -748,37 +749,37 @@ export function Composer({
           )}
 
           {(images.length > 0 || videos.length > 0 || preparing > 0) && (
-            <div className="attachments" aria-label="要发送的附件">
+            <div className="attachments" aria-label={t('composer.attachments')}>
               {images.map((img) => (
                 <div key={img.id} className="attachment">
                   <button
                     type="button"
                     className="attachment-view"
-                    aria-label={`预览 ${img.name}`}
-                    title="预览"
+                    aria-label={t('preview.label', img.name)}
+                    title={t('files.preview')}
                     onClick={() => setPreview(img)}
                   >
                     <img src={img.previewUrl} alt={img.name} />
                   </button>
-                  <button type="button" className="attachment-remove" aria-label={`移除 ${img.name}`} onClick={() => removeImage(img.id)}>
+                  <button type="button" className="attachment-remove" aria-label={t('composer.remove', img.name)} onClick={() => removeImage(img.id)}>
                     <IconClose size={12} />
                   </button>
                 </div>
               ))}
               {videos.map(video => <div key={video.id} className="attachment video-attachment">
-                <button type="button" className="video-card" aria-label={`预览视频：${video.name}`} onClick={() => setVideoPreview(video)}>
-                  <IconPlay size={20} /><span><span className="video-name">{video.name}</span><span className="video-size">视频 · {sizeLabel(video.file.size)}</span></span>
+                <button type="button" className="video-card" aria-label={t('composer.previewVideo', video.name)} onClick={() => setVideoPreview(video)}>
+                  <IconPlay size={20} /><span><span className="video-name">{video.name}</span><span className="video-size">{t('videos.video')} · {sizeLabel(video.file.size)}</span></span>
                 </button>
-                <button type="button" className="attachment-remove" aria-label={`移除 ${video.name}`} onClick={() => { URL.revokeObjectURL(video.previewUrl); setVideos(current => current.filter(v => v.id !== video.id)); }}><IconClose size={12} /></button>
+                <button type="button" className="attachment-remove" aria-label={t('composer.remove', video.name)} onClick={() => { URL.revokeObjectURL(video.previewUrl); setVideos(current => current.filter(v => v.id !== video.id)); }}><IconClose size={12} /></button>
               </div>)}
               {Array.from({ length: preparing }, (_, i) => (
-                <div key={`p-${i}`} className="attachment pending" aria-label="正在处理图片" />
+                <div key={`p-${i}`} className="attachment pending" aria-label={t('composer.processing')} />
               ))}
             </div>
           )}
 
           {notes.length > 0 && (
-            <div className="notes" aria-label={`${notes.length} 条注释`}>
+            <div className="notes" aria-label={t('composer.notes', notes.length)}>
               {notes.map((n, i) => (
                 <div key={n.id} className="note-strip">
                   <span className="note-num">{i + 1}</span>
@@ -791,8 +792,8 @@ export function Composer({
                   <button
                     type="button"
                     className="quote-remove"
-                    aria-label={`移除注释 ${i + 1}`}
-                    title="移除注释"
+                    aria-label={t('composer.removeNote', i + 1)}
+                    title={t('composer.removeNoteTitle')}
                     onClick={() => setNotes((prev) => prev.filter((x) => x.id !== n.id))}
                   >
                     <IconClose size={13} />
@@ -802,11 +803,11 @@ export function Composer({
             </div>
           )}
 
-          {mentionOpen && <div className="coord-mention-menu" role="listbox" aria-label="选择协作智能体">
+          {mentionOpen && <div className="coord-mention-menu" role="listbox" aria-label={t('collab.choose')}>
             {(['member', 'agent'] as const).map(kind => <div key={kind}>
               {mentionRows.some(m => m.kind === kind) && <div className="coord-caption">
-                <span>{kind === 'member' ? '本次协作' : '可用实例 · 新建成员'}</span>
-                {kind === mentionRows[0]?.kind && <button type="button" className="icon-btn" aria-label="不选择智能体" title="不选择，@ 留作文字" onClick={() => { setMentionDismissed(true); ref.current?.focus(); }}><IconClose size={13} /></button>}
+                <span>{kind === 'member' ? t('composer.thisCollab') : t('composer.newMember')}</span>
+                {kind === mentionRows[0]?.kind && <button type="button" className="icon-btn" aria-label={t('composer.noMention')} title={t('composer.noMentionHint')} onClick={() => { setMentionDismissed(true); ref.current?.focus(); }}><IconClose size={13} /></button>}
               </div>}
               {mentionRows.map((m, i) => m.kind === kind && (
                 <button type="button" role="option" aria-selected={i === mentionActive} className={`pop-item compact${i === mentionActive ? ' selected' : ''}`} key={m.id} onClick={() => chooseMention(m)}>
@@ -820,12 +821,12 @@ export function Composer({
             ref={ref}
             rows={1}
             value={text}
-            placeholder={dragOver ? '松开以添加图片' : placeholder}
+            placeholder={dragOver ? t('composer.drop') : placeholder}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onKeyDown}
             onPaste={onPaste}
             disabled={disabled}
-            aria-label="消息"
+            aria-label={t('composer.message')}
             aria-expanded={menuOpen}
             aria-autocomplete="list"
           />
@@ -838,7 +839,7 @@ export function Composer({
                   {m.kind === 'member' ? (
                     <span className="coord-row-name">@{m.label}</span>
                   ) : (
-                    <Popover label="成员工作目录" triggerClassName="coord-row-name" triggerTitle="选择工作目录" trigger={<span>@{m.label}{m.cwd ? ` · ${m.cwd.split('/').pop()}` : ''}</span>}>
+                    <Popover label={t('composer.memberDir')} triggerClassName="coord-row-name" triggerTitle={t('composer.pickDir')} trigger={<span>@{m.label}{m.cwd ? ` · ${m.cwd.split('/').pop()}` : ''}</span>}>
                       {close => <>{mentionDirectories.map(dir => <button className="pop-item compact" key={dir} onClick={() => { setMentions(prev => prev.map(v => v === m ? { ...v, cwd: dir } : v)); close(); }}>{dir}</button>)}</>}
                     </Popover>
                   )}
@@ -846,8 +847,8 @@ export function Composer({
                     ref={(el) => { taskRefs.current[i] = el; }}
                     rows={1}
                     value={m.task ?? ''}
-                    placeholder="只给它的任务，留空由主智能体分工"
-                    aria-label={`给 ${m.label} 的任务`}
+                    placeholder={t('composer.taskPlaceholder')}
+                    aria-label={t('composer.taskFor', m.label)}
                     disabled={disabled}
                     onChange={(e) => { const task = e.target.value; setMentions(prev => prev.map(v => v === m ? { ...v, task } : v)); }}
                     onKeyDown={(e) => {
@@ -856,7 +857,7 @@ export function Composer({
                     }}
                   />
                   {m.kind === 'agent' && mentionExtra?.(m)}
-                  <button type="button" className="icon-btn" aria-label={`移除 ${m.label}`} onClick={() => setMentions(prev => prev.filter(v => v !== m))}><IconClose size={13} /></button>
+                  <button type="button" className="icon-btn" aria-label={t('composer.remove', m.label)} onClick={() => setMentions(prev => prev.filter(v => v !== m))}><IconClose size={13} /></button>
                 </div>
               ))}
             </div>
@@ -875,26 +876,26 @@ export function Composer({
               }}
             />
             {narrow ? <Popover
-              label="添加与模式"
+              label={t('composer.addAndMode')}
               triggerClassName={`tool-btn icon-only composer-add${planMode?.active ? ' plan-active' : ''}`}
-              triggerLabel="添加与模式"
-              triggerTitle={planMode?.active ? '添加附件 · 计划模式已开启' : '添加附件与选择模式'}
+              triggerLabel={t('composer.addAndMode')}
+              triggerTitle={planMode?.active ? t('composer.addPlanOn') : t('composer.addAndModeHint')}
               panelClassName="composer-add-menu"
               trigger={<IconPlus size={20} />}
               disabled={disabled || menuBusy || busy}
             >
               {close => <ComposerMenu close={close} commands={commands} planMode={planMode} goal={goal} running={running}
-                attachTitle={attachBlocked ? `${attachBlocked}；可以添加视频文件` : attachNote ?? '添加图片或视频（视频最大 100 MB）'}
+                attachTitle={attachBlocked ? t('composer.attachBlocked', attachBlocked) : attachNote ?? t('composer.attachHint')}
                 onAttach={() => fileRef.current?.click()} onGoal={chooseGoal} onBrowse={browse} />}
             </Popover> : <button ref={addRef} type="button" className={`tool-btn icon-only composer-add${planMode?.active ? ' plan-active' : ''}`}
-              aria-label="添加与模式" aria-haspopup="listbox" aria-expanded={addOpen} title={planMode?.active ? '添加与命令 · 计划模式已开启' : '添加附件、操作或技能'} disabled={disabled || menuBusy || busy}
+              aria-label={t('composer.addAndMode')} aria-haspopup="listbox" aria-expanded={addOpen} title={planMode?.active ? t('composer.addCommandsPlanOn') : t('composer.addActionsSkills')} disabled={disabled || menuBusy || busy}
               onClick={() => { setCatalog('all'); setAddQuery(''); setAddOpen(!addOpen); setDismissed(true); }}><IconPlus size={20} /></button>}
             {collaboration?.(mention => chooseMention(mention, false), mentions)}
             {left}
             <div className="spacer" />
             {right}
             {running && (
-              <button className="send-btn stop" onClick={onStop} aria-label="停止" title="停止这一轮">
+              <button className="send-btn stop" onClick={onStop} aria-label={t('composer.stop')} title={t('composer.stopTurn')}>
                 <IconStop size={16} />
               </button>
             )}
@@ -904,8 +905,8 @@ export function Composer({
                 className={`send-btn${slow ? ' sending' : ''}`}
                 onClick={() => void submit()}
                 disabled={!canSend}
-                aria-label={slow ? '正在发送' : running && !immediate ? '排队发送' : '发送'}
-                title={slow ? '正在发送…' : queueFull ? `最多排 ${MAX_QUEUED} 条` : running ? immediate ? '立即执行目标操作' : '这一轮结束后发送' : undefined}
+                aria-label={slow ? t('composer.sending') : running && !immediate ? t('composer.queueSend') : t('common.send')}
+                title={slow ? t('composer.sendingEllipsis') : queueFull ? t('composer.queueMax', MAX_QUEUED) : running ? immediate ? t('composer.goalNow') : t('composer.afterTurn') : undefined}
               >
                 {slow ? <span className="send-spinner" aria-hidden="true" /> : <IconSend size={16} />}
               </button>
@@ -913,10 +914,10 @@ export function Composer({
           </div>
         </div>
       </div>
-      {goalDialog && <Dialog title="设置目标" message="描述要完成的结果，智能体会持续执行。" confirmLabel={menuBusy ? '正在启动…' : '开始执行'}
+      {goalDialog && <Dialog title={t('goal.set')} message={t('composer.goalMessage')} confirmLabel={menuBusy ? t('composer.starting') : t('composer.start')}
         confirmDisabled={menuBusy || busy || disabled || running || planMode?.active || !goalText.trim() || /^(pause|resume|clear)$/.test(goalText.trim())}
         onCancel={() => { if (!menuBusy) setGoalDialog(false); }} onConfirm={() => void runMenuCommand(`/goal ${goalText.trim()}`)}>
-        <label className="dialog-field"><span>目标</span><textarea autoFocus className="goal-objective" aria-label="目标" placeholder="例如：修复登录问题，补齐回归测试并验证通过" rows={4} value={goalText} disabled={menuBusy} onChange={e => setGoalText(e.target.value)} /></label>
+        <label className="dialog-field"><span>{t('composer.goal')}</span><textarea autoFocus className="goal-objective" aria-label={t('composer.goal')} placeholder={t('composer.goalPlaceholder')} rows={4} value={goalText} disabled={menuBusy} onChange={e => setGoalText(e.target.value)} /></label>
       </Dialog>}
       {videoPreview && <VideoPreview url={videoPreview.previewUrl} name={videoPreview.name} onClose={() => setVideoPreview(null)} />}
       {preview && <Lightbox url={preview.previewUrl} name={preview.name} onClose={() => setPreview(null)} />}

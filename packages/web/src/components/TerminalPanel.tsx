@@ -12,6 +12,7 @@ import { folderName } from '../paths';
 import type { ToastState } from './Toast';
 import { useIsTouch } from '../hooks';
 import { IconArrowDown, IconArrowLeft, IconArrowRight, IconArrowUp, IconClose, IconSend, IconTerminal } from './icons';
+import { t } from '../i18n';
 
 interface Props {
   api: Api;
@@ -65,15 +66,15 @@ function keys(appCursor: boolean): Array<[string, string, JSX.Element?]> {
     ['Esc', '\x1b'],
     ['Tab', '\t'],
     ['Ctrl+C', '\x03'],
-    ['上', arrow('A'), <IconArrowUp size={16} />],
-    ['下', arrow('B'), <IconArrowDown size={16} />],
-    ['左', arrow('D'), <IconArrowLeft size={16} />],
-    ['右', arrow('C'), <IconArrowRight size={16} />],
+    [t('term.up'), arrow('A'), <IconArrowUp size={16} />],
+    [t('term.down'), arrow('B'), <IconArrowDown size={16} />],
+    [t('term.left'), arrow('D'), <IconArrowLeft size={16} />],
+    [t('term.right'), arrow('C'), <IconArrowRight size={16} />],
   ];
 }
 
 export function TerminalPanel({ api, cwd, toast, onClose, onError }: Props) {
-  // Bumped by 重新打开/重试: the whole terminal (xterm and stream) is rebuilt from scratch.
+  // Bumped by Reopen and Retry: the whole terminal (xterm and stream) is rebuilt from scratch.
   const [nonce, setNonce] = useState(0);
   const [phase, setPhase] = useState<'connecting' | 'running' | 'ended' | 'failed'>('connecting');
   const [failure, setFailure] = useState('');
@@ -240,30 +241,30 @@ export function TerminalPanel({ api, cwd, toast, onClose, onError }: Props) {
 
   return (
     <div className="dialog-scrim term-scrim">
-      <div className="panel term-panel" role="dialog" aria-modal="true" aria-label="终端">
+      <div className="panel term-panel" role="dialog" aria-modal="true" aria-label={t('term.title')}>
         <header className="panel-head">
           <div className="term-head-main">
             <h2 className="panel-title">
-              <IconTerminal size={20} /> 终端
+              <IconTerminal size={20} /> {t('term.title')}
             </h2>
             {info && (
               <button
                 className="term-cwd"
                 title={info.cwd}
-                onClick={() => void copyText(info.cwd).then((ok) => toast({ message: ok ? '已复制目录' : '复制失败，请手动复制' }))}
+                onClick={() => void copyText(info.cwd).then((ok) => toast({ message: ok ? t('term.copiedDir') : t('term.copyFailed') }))}
               >
                 {folderName(info.cwd)}
               </button>
             )}
           </div>
-          <button className="icon-btn" aria-label="关闭" onClick={onClose}>
+          <button className="icon-btn" aria-label={t('common.close')} onClick={onClose}>
             <IconClose size={18} />
           </button>
         </header>
         <div className="term-body" ref={hostRef} />
         {touch && (
           <div className="term-input">
-            <div className="term-keys" role="toolbar" aria-label="按键">
+            <div className="term-keys" role="toolbar" aria-label={t('term.keys')}>
               {keys(false).map(([label, , icon], i) => (
                 <button
                   key={label}
@@ -294,8 +295,8 @@ export function TerminalPanel({ api, cwd, toast, onClose, onError }: Props) {
                   // An empty field passes Backspace on, to rub out what is already at the prompt.
                   if (e.key === 'Backspace' && line === '' && !e.nativeEvent.isComposing) sendRef.current?.('\x7f');
                 }}
-                placeholder="输入命令，回车发送"
-                aria-label="终端输入"
+                placeholder={t('term.placeholder')}
+                aria-label={t('term.input')}
                 disabled={phase !== 'running'}
                 enterKeyHint="send"
                 autoCapitalize="off"
@@ -303,7 +304,7 @@ export function TerminalPanel({ api, cwd, toast, onClose, onError }: Props) {
                 autoComplete="off"
                 spellCheck={false}
               />
-              <button type="submit" className="term-send" aria-label="发送" disabled={phase !== 'running'}>
+              <button type="submit" className="term-send" aria-label={t('common.send')} disabled={phase !== 'running'}>
                 <IconSend size={16} />
               </button>
             </form>
@@ -311,17 +312,17 @@ export function TerminalPanel({ api, cwd, toast, onClose, onError }: Props) {
         )}
         {phase !== 'running' && (
           <div className="term-note" role="status">
-            {phase === 'connecting' && <p>连接中…</p>}
+            {phase === 'connecting' && <p>{t('term.connecting')}</p>}
             {phase === 'ended' && (
               <>
-                <p>终端已结束</p>
-                <button onClick={restart}>重新打开</button>
+                <p>{t('term.ended')}</p>
+                <button onClick={restart}>{t('term.reopen')}</button>
               </>
             )}
             {phase === 'failed' && (
               <>
-                <p>{failure || '打不开终端'}</p>
-                <button onClick={restart}>重试</button>
+                <p>{failure || t('term.failed')}</p>
+                <button onClick={restart}>{t('common.retry')}</button>
               </>
             )}
           </div>

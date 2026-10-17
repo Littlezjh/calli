@@ -3,6 +3,7 @@ import type { AgentInfo, Api, PlanQuota } from '../api';
 import { formatReset, quotaHeadline, quotaLevel, quotaRows } from '../quota';
 import { AgentMark } from './icons';
 import { IconClose, IconInfo, IconRefresh } from './icons';
+import { formatDateTime, t } from '../i18n';
 
 /**
  * Every agent's plan usage on one screen: each instance that can report quota gets a row with its
@@ -25,7 +26,7 @@ const REFRESH_MS = 60_000;
 
 const clock = (iso: string): string => {
   const at = new Date(iso);
-  return at.toLocaleString('zh-CN', { ...(at.toDateString() !== new Date().toDateString() ? { month: 'numeric', day: 'numeric' } as const : {}), hour: '2-digit', minute: '2-digit' });
+  return formatDateTime(at, { ...(at.toDateString() !== new Date().toDateString() ? { month: 'numeric', day: 'numeric' } as const : {}), hour: '2-digit', minute: '2-digit' });
 };
 
 type Reading = { api: Api; agent: string; quota: PlanQuota | null; failedAt?: string };
@@ -69,13 +70,13 @@ function QuotaRow({ api, agent, onError, refreshAll, askAll }: { api: Api; agent
           </span>
         ) : null}
         <span className="quota-board-name">{agent.label}</span>
-        <button type="button" className="icon-btn" aria-label={`刷新 ${agent.label} 的额度`} aria-busy={loading} onClick={() => setRefreshRow(n => n + 1)} disabled={loading}>
+        <button type="button" className="icon-btn" aria-label={t('quota.refreshAgent', agent.label)} aria-busy={loading} onClick={() => setRefreshRow(n => n + 1)} disabled={loading}>
           <IconRefresh size={15} />
         </button>
       </div>
-      {quota === null && loading && <p className="panel-empty">正在查询额度…</p>}
-      {quota === null && !loading && <p className="panel-empty">没有读到额度信息{failedAt ? '，上一次也失败了' : ''}。</p>}
-      {quota !== null && quota.windows.length === 0 && <p className="panel-empty">没有读到额度信息{failedAt ? '，上一次也失败了' : ''}。</p>}
+      {quota === null && loading && <p className="panel-empty">{t('quota.loading')}</p>}
+      {quota === null && !loading && <p className="panel-empty">{t('quota.noneRead', !!failedAt)}</p>}
+      {quota !== null && quota.windows.length === 0 && <p className="panel-empty">{t('quota.noneRead', !!failedAt)}</p>}
       {quota !== null && quota.windows.length > 0 && (
         <>
           <p className="quota-headline">{quotaHeadline(quota)}</p>
@@ -91,15 +92,15 @@ function QuotaRow({ api, agent, onError, refreshAll, askAll }: { api: Api; agent
               </div>
               <div className="quota-reset">
                 <span>{formatReset(w)}</span>
-                {w.loadPercent !== undefined && <span className={`quota-load${w.loadPercent >= 100 ? ' high' : ''}`}>负载 {w.loadPercent}%</span>}
+                {w.loadPercent !== undefined && <span className={`quota-load${w.loadPercent >= 100 ? ' high' : ''}`}>{t('quota.load', w.loadPercent)}</span>}
               </div>
             </div>
           ))}
         </>
       )}
       {quota && <p className="quota-checked" role="status">
-        更新于 {clock(quota.checkedAt)}
-        {loading ? ' · 更新中…' : failedAt ? ` · 上次刷新失败（${clock(failedAt)}），显示上次结果` : ''}
+        {t('quota.updatedAt', clock(quota.checkedAt))}
+        {loading ? ` · ${t('quota.updating')}` : failedAt ? ` · ${t('quota.lastFailed', clock(failedAt))}` : ''}
       </p>}
       {quota?.note && <p className="quota-note">{quota.note}</p>}
     </div>
@@ -130,19 +131,19 @@ export function QuotaBoard({ api, agents, current, onClose, onError }: Props) {
       <div className="panel quota-panel" role="dialog" aria-modal="true" aria-labelledby="quota-board-title" onClick={(e) => e.stopPropagation()}>
         <header className="panel-head">
           <h2 id="quota-board-title" className="panel-title">
-            <IconInfo size={20} /> 额度看板
+            <IconInfo size={20} /> {t('quota.title')}
           </h2>
           <span className="status-actions">
             <button type="button" className="text-btn strong" onClick={() => setAskAll((n) => n + 1)}>
-              <IconRefresh size={14} /> 全部刷新
+              <IconRefresh size={14} /> {t('quota.refreshAll')}
             </button>
-            <button className="icon-btn" aria-label="关闭" onClick={onClose}>
+            <button className="icon-btn" aria-label={t('common.close')} onClick={onClose}>
               <IconClose size={18} />
             </button>
           </span>
         </header>
         <div className="panel-list quota-list">
-          {rows.length === 0 && <p className="panel-empty">这台主机上还没有能报告额度的 agent。</p>}
+          {rows.length === 0 && <p className="panel-empty">{t('quota.noAgents')}</p>}
           {rows.map((agent) => (
             <QuotaRow key={agent.id} api={api} agent={agent} onError={onError} refreshAll={refreshAll} askAll={askAll} />
           ))}

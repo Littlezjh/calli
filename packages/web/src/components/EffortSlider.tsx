@@ -1,5 +1,6 @@
 import { useState, type CSSProperties, type PointerEvent } from 'react';
 import { EFFORT_LABELS } from '../permissions';
+import { t } from '../i18n';
 
 interface Props {
   levels: string[];
@@ -18,7 +19,7 @@ export function EffortSlider({ levels, value, onChange, onPreview }: Props) {
   const [dragAt, setDragAt] = useState<number | null>(null);
   const index = dragAt === null ? Math.max(0, options.indexOf(value)) : Math.round(dragAt);
   const at = dragAt ?? index;
-  const label = (i: number) => options[i] === null ? '默认' : (EFFORT_LABELS[options[i]!] ?? options[i]!);
+  const label = (i: number) => options[i] === null ? t('pickers.default') : (EFFORT_LABELS[options[i]!] ?? options[i]!);
   const position = (i: number) => `${i / levels.length * 100}%`;
   const levelAt = (event: PointerEvent<HTMLDivElement>) => {
     const rail = event.currentTarget.querySelector('.effort-rail')!.getBoundingClientRect();
@@ -31,7 +32,7 @@ export function EffortSlider({ levels, value, onChange, onPreview }: Props) {
       className={`effort-slider${index === 0 ? ' is-default' : ''}${dragAt === null ? '' : ' dragging'}`}
       role="slider"
       tabIndex={0}
-      aria-label="思考强度"
+      aria-label={t('effort.label')}
       aria-valuemin={0}
       aria-valuemax={levels.length}
       aria-valuenow={index}

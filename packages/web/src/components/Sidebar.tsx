@@ -9,6 +9,7 @@ import { timeAgo } from '../sessions';
 import { deliveredPreview } from '../timeline';
 import { HostSwitcher } from './Hosts';
 import { AgentMark, IconBell, IconChevron, IconClock, IconClose, IconEdit, IconFolder, IconFork, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconWorktree, IconSidebar } from './icons';
+import { t } from '../i18n';
 
 export { folderName } from '../paths';
 
@@ -131,7 +132,7 @@ export function Sidebar({
   // A long press on a row is the phone's right click.
   const longPress = useLongPress<Thread>(onThreadMenu);
   const [collapsed, toggle] = useStoredSet(`${storagePrefix}.collapsed`);
-  // The other way to read the list: by what is going on, not by where a thread is filed. Like Codex's "查看活动".
+  // The other way to read the list: by what is going on, not by where a thread is filed. Like Codex's activity view.
   const [byActivity, setByActivity] = useStoredFlag(`${storagePrefix}.activity`);
   const model = buildSidebar(threads, sections, search);
   const activity = byActivity ? buildActivity(threads, search, new Date(), selectedId) : null;
@@ -139,42 +140,42 @@ export function Sidebar({
   // While searching, everything is expanded so matches are never hidden inside a closed group.
   const isOpen = (key: string) => Boolean(search.trim()) || !collapsed.has(key);
 
-  const MARK_LABELS = { waiting: '等待处理', running: '运行中', error: '出错', unread: '有新结果' } as const;
+  const MARK_LABELS = { waiting: t('notices.unknown.label'), running: t('status.running'), error: t('status.error'), unread: t('sidebar.unread') } as const;
   const agentById = new Map(agents.map((a) => [a.id, a]));
   const tagged = taggedAgents(agents);
 
-  const row = (t: Thread, title = t.title, preview = t.preview) => {
-    const mark = threadMark(t, t.id === selectedId);
-    const agent = agentById.get(t.agent);
+  const row = (thread: Thread, title = thread.title, preview = thread.preview) => {
+    const mark = threadMark(thread, thread.id === selectedId);
+    const agent = agentById.get(thread.agent);
     // Filed by project, the list is for scanning: a title per row, as in Codex. The latest ask
     // shows where it helps finding something, by activity and in a search. A thread that needs a
     // hand says so in every view.
     const detail = byActivity || query ? preview : null;
-    const note = mark === 'waiting' ? waitingLabel(t) : mark === 'error' ? '出错了' : null;
+    const note = mark === 'waiting' ? waitingLabel(thread) : mark === 'error' ? t('sidebar.failed') : null;
     return (
     <div
-      key={t.id}
-      className={`thread-row${t.id === selectedId ? ' active' : ''}${mark === 'unread' || mark === 'waiting' ? ' attention' : ''}`}
+      key={thread.id}
+      className={`thread-row${thread.id === selectedId ? ' active' : ''}${mark === 'unread' || mark === 'waiting' ? ' attention' : ''}`}
       onContextMenu={(e) => {
         e.preventDefault();
-        onThreadMenu(t, e.clientX, e.clientY);
+        onThreadMenu(thread, e.clientX, e.clientY);
       }}
-      {...longPress(t)}
+      {...longPress(thread)}
     >
       {/* Two accounts of one agent share a mark; which one runs the thread shows on hover and in the
           open thread's top bar, not as text on every row. */}
-      <button className="thread-item" onClick={() => onSelect(t.id)} title={agent && tagged.has(agent.id) ? agent.label : undefined}>
-        {t.worktree ? (
-          <span className="thread-fork" role="img" aria-label={`工作树 ${t.worktree.branch}`} title={`在工作树里，分支 ${t.worktree.branch}`}>
+      <button className="thread-item" onClick={() => onSelect(thread.id)} title={agent && tagged.has(agent.id) ? agent.label : undefined}>
+        {thread.worktree ? (
+          <span className="thread-fork" role="img" aria-label={t('sidebar.worktree', thread.worktree.branch)} title={t('sidebar.inWorktree', thread.worktree.branch)}>
             <IconWorktree size={13} />
           </span>
-        ) : t.forkedFrom ? (
-          <span className="thread-fork" role="img" aria-label="分叉">
+        ) : thread.forkedFrom ? (
+          <span className="thread-fork" role="img" aria-label={t('sidebar.fork')}>
             <IconFork size={13} />
           </span>
         ) : (
-          t.schedule && (
-            <span className="thread-fork" role="img" aria-label={`定时任务 ${t.schedule.name}`} title={`定时任务「${t.schedule.name}」运行`}>
+          thread.schedule && (
+            <span className="thread-fork" role="img" aria-label={t('sidebar.schedule', thread.schedule.name)} title={t('sidebar.scheduleRun', thread.schedule.name)}>
               <IconClock size={13} />
             </span>
           )
@@ -185,7 +186,7 @@ export function Sidebar({
             {/* Beside the title, so the row stays one line like the rest. */}
             {note && <span className={`thread-note ${mark}`}>{note}</span>}
             {/* Out of its project group, a thread says where it is. */}
-            {byActivity && <span className="thread-dir">{folderName(projectDir(t).cwd)}</span>}
+            {byActivity && <span className="thread-dir">{folderName(projectDir(thread).cwd)}</span>}
           </span>
           {detail && <span className="thread-preview">{detail}</span>}
         </span>
@@ -196,12 +197,12 @@ export function Sidebar({
             </span>
           ) : (
             // An agent without a mark, or one this hub no longer has: its name, as before.
-            <span className="agent-tag">{t.agent}</span>
+            <span className="agent-tag">{thread.agent}</span>
           )}
-          {mark && <span className={`dot ${mark}`} role="img" aria-label={mark === 'waiting' ? waitingLabel(t) : MARK_LABELS[mark]} title={mark === 'waiting' ? waitingLabel(t) : MARK_LABELS[mark]} />}
+          {mark && <span className={`dot ${mark}`} role="img" aria-label={mark === 'waiting' ? waitingLabel(thread) : MARK_LABELS[mark]} title={mark === 'waiting' ? waitingLabel(thread) : MARK_LABELS[mark]} />}
         </span>
       </button>
-      <button className="row-more" aria-label={`“${t.title}” 的更多操作`} onClick={(e) => onThreadMenu(t, ...below(e))}>
+      <button className="row-more" aria-label={t('sidebar.more', thread.title)} onClick={(e) => onThreadMenu(thread, ...below(e))}>
         <IconMore size={16} />
       </button>
     </div>
@@ -210,25 +211,25 @@ export function Sidebar({
 
   const now = Date.now();
   /** Who in a team comes first: whoever is at work or waiting, then whoever was last heard from. */
-  const busy = (t: Thread) => (t.waiting ? 2 : t.status === 'running' ? 1 : 0);
+  const busy = (thread: Thread) => (thread.waiting ? 2 : thread.status === 'running' ? 1 : 0);
   const teamOrder = (a: Thread, b: Thread) => busy(b) - busy(a) || b.updatedAt.localeCompare(a.updatedAt);
 
   // Like Orca's agents under a task: the lead's row, then one line per member saying what it is doing.
-  const entry = (t: Thread) => {
-    const team = members?.get(t.id);
-    if (!team?.length) return row(t);
+  const entry = (thread: Thread) => {
+    const team = members?.get(thread.id);
+    if (!team?.length) return row(thread);
     const sorted = [...team].sort(teamOrder);
     const auto = sorted.some((m) => busy(m) > 0 || m.id === selectedId);
-    const open = Boolean(search.trim()) || (teamOpen.get(t.id) ?? auto);
+    const open = Boolean(search.trim()) || (teamOpen.get(thread.id) ?? auto);
     const working = sorted.filter((m) => m.status === 'running').length;
     const waiting = sorted.filter((m) => m.waiting).length;
     const marks = [...new Set(sorted.map((m) => threadMark(m, m.id === selectedId)).filter(Boolean))];
-    const current = t.id === selectedId || sorted.some((m) => m.id === selectedId);
-    return <div key={t.id} className={`handover-group team-group${open ? ' open' : ''}${current ? ' selected' : ''}`}>
-      {row(t)}
-      <button className="handover-toggle" aria-label={`${open ? '收起' : '展开'}智能体：${t.title}`} aria-expanded={open} onClick={() => setTeamOpen((old) => new Map(old).set(t.id, !open))}>
-        <span>{sorted.length} 个智能体</span>
-        {(waiting || working) > 0 && <span className="team-note">{waiting ? `${waiting} 待处理` : `${working} 运行中`}</span>}
+    const current = thread.id === selectedId || sorted.some((m) => m.id === selectedId);
+    return <div key={thread.id} className={`handover-group team-group${open ? ' open' : ''}${current ? ' selected' : ''}`}>
+      {row(thread)}
+      <button className="handover-toggle" aria-label={open ? t('sidebar.collapseTeam', thread.title) : t('sidebar.expandTeam', thread.title)} aria-expanded={open} onClick={() => setTeamOpen((old) => new Map(old).set(thread.id, !open))}>
+        <span>{t('sidebar.agents', sorted.length)}</span>
+        {(waiting || working) > 0 && <span className="team-note">{waiting ? t('sidebar.waitingCount', waiting) : t('team.running', working)}</span>}
         {!open && marks.length > 0 && <span className="handover-marks">{marks.map((mark) => <span key={mark} className={`dot ${mark}`} role="img" aria-label={MARK_LABELS[mark!]} title={MARK_LABELS[mark!]} />)}</span>}
         <IconChevron size={13} open={open} />
       </button>
@@ -244,7 +245,7 @@ export function Sidebar({
           onContextMenu={(e) => { e.preventDefault(); onThreadMenu(m, e.clientX, e.clientY); }}
           {...longPress(m)}
         >
-          <span className={`dot ${mark ?? 'idle'}`} role="img" aria-label={mark === 'waiting' ? waitingLabel(m) : mark ? MARK_LABELS[mark] : '空闲'} />
+          <span className={`dot ${mark ?? 'idle'}`} role="img" aria-label={mark === 'waiting' ? waitingLabel(m) : mark ? MARK_LABELS[mark] : t('status.idle')} />
           {agent?.icon ? <span className="agent-mark" role="img" aria-label={agent.label}><AgentMark path={agent.icon} size={compact ? 14 : 13} /></span> : null}
           <span className="handover-member-name team-member-text">{deliveredPreview(m.coordination?.doing ?? '') || m.title}</span>
           <time className="handover-member-time" dateTime={m.updatedAt}>{timeAgo(m.updatedAt, now)}</time>
@@ -257,36 +258,36 @@ export function Sidebar({
     if (members.length === 1) return entry(latest);
     const storageKey = `${hostId ?? 'local'}:${key}`;
     const expanded = Boolean(search.trim()) || expandedHandovers.has(storageKey);
-    const marks = [...new Set(members.filter((t) => t.id !== latest.id).map((t) => threadMark(t, t.id === selectedId)).filter(Boolean))];
-    const current = members.some((t) => t.id === selectedId);
+    const marks = [...new Set(members.filter((thread) => thread.id !== latest.id).map((thread) => threadMark(thread, thread.id === selectedId)).filter(Boolean))];
+    const current = members.some((thread) => thread.id === selectedId);
     // Like Orca's agents under a task: one card, the latest conversation on top, the chain folded below it.
     return <div key={key} className={`handover-group${expanded ? ' open' : ''}${current ? ' selected' : ''}`}>
       {row(latest, latest.title.replace(/(?:（接手）)+$/, ''))}
-      <button className="handover-toggle" aria-label={`${expanded ? '收起' : '展开'}交接记录：${latest.title}`} aria-expanded={expanded} onClick={() => setExpandedHandovers((old) => {
+      <button className="handover-toggle" aria-label={expanded ? t('sidebar.collapseHandover', latest.title) : t('sidebar.expandHandover', latest.title)} aria-expanded={expanded} onClick={() => setExpandedHandovers((old) => {
         const next = new Set(old);
         if (next.has(storageKey)) next.delete(storageKey); else next.add(storageKey);
         return next;
       })}>
-        <span>{members.length} 个会话</span>
-        {!expanded && marks.length > 0 && <span className="handover-marks">{marks.map((mark) => <span key={mark} className={`dot ${mark}`} role="img" aria-label={`其他交接会话：${MARK_LABELS[mark!]}`} title={`其他交接会话：${MARK_LABELS[mark!]}`} />)}</span>}
+        <span>{t('sidebar.sessions', members.length)}</span>
+        {!expanded && marks.length > 0 && <span className="handover-marks">{marks.map((mark) => <span key={mark} className={`dot ${mark}`} role="img" aria-label={t('sidebar.otherHandover', MARK_LABELS[mark!])} title={t('sidebar.otherHandover', MARK_LABELS[mark!])} />)}</span>}
         <IconChevron size={13} open={expanded} />
       </button>
-      {expanded && <div className="handover-members">{members.map((t) => {
-        const agent = agentById.get(t.agent);
-        const mark = threadMark(t, t.id === selectedId);
+      {expanded && <div className="handover-members">{members.map((thread) => {
+        const agent = agentById.get(thread.agent);
+        const mark = threadMark(thread, thread.id === selectedId);
         return <button
-          key={t.id}
-          className={`handover-member${t.id === selectedId ? ' active' : ''}`}
-          aria-current={t.id === selectedId ? 'true' : undefined}
-          onClick={() => onSelect(t.id)}
-          onContextMenu={(e) => { e.preventDefault(); onThreadMenu(t, e.clientX, e.clientY); }}
-          {...longPress(t)}
+          key={thread.id}
+          className={`handover-member${thread.id === selectedId ? ' active' : ''}`}
+          aria-current={thread.id === selectedId ? 'true' : undefined}
+          onClick={() => onSelect(thread.id)}
+          onContextMenu={(e) => { e.preventDefault(); onThreadMenu(thread, e.clientX, e.clientY); }}
+          {...longPress(thread)}
         >
-          <span className={`dot ${mark ?? 'idle'}`} role="img" aria-label={mark === 'waiting' ? waitingLabel(t) : mark ? MARK_LABELS[mark] : '空闲'} />
+          <span className={`dot ${mark ?? 'idle'}`} role="img" aria-label={mark === 'waiting' ? waitingLabel(thread) : mark ? MARK_LABELS[mark] : t('status.idle')} />
           {agent?.icon ? <span className="agent-mark"><AgentMark path={agent.icon} size={compact ? 14 : 13} /></span> : null}
-          <span className="handover-member-name">{agent?.label ?? t.agent}</span>
-          <span className="handover-member-role">{t.handover ? '接手' : '原始'}</span>
-          <time className="handover-member-time" dateTime={t.updatedAt}>{timeAgo(t.updatedAt, now)}</time>
+          <span className="handover-member-name">{agent?.label ?? thread.agent}</span>
+          <span className="handover-member-role">{thread.handover ? t('sidebar.successor') : t('sidebar.original')}</span>
+          <time className="handover-member-time" dateTime={thread.updatedAt}>{timeAgo(thread.updatedAt, now)}</time>
         </button>;
       })}</div>}
     </div>;
@@ -309,12 +310,12 @@ export function Sidebar({
 
   const empty = (
     <p className="group-empty top">
-      {search.trim() ? '没有标题或目录匹配的线程。' : compact ? '还没有线程。点“新线程”开始第一个。' : '还没有线程。在右边输入第一条消息就会创建。'}
+      {search.trim() ? t('sidebar.noMatch') : compact ? t('sidebar.emptyPhone') : t('sidebar.empty')}
     </p>
   );
 
   const groups = activity ? (
-    <nav className="thread-groups activity" aria-label="线程，按活动">
+    <nav className="thread-groups activity" aria-label={t('sidebar.threadsByActivity')}>
       {activity.count === 0 && empty}
       {activity.groups.map((g) => (
         <section key={g.key} className="thread-group" aria-label={g.label}>
@@ -324,7 +325,7 @@ export function Sidebar({
       ))}
     </nav>
   ) : (
-    <nav className="thread-groups" aria-label="线程">
+    <nav className="thread-groups" aria-label={t('sidebar.threads')}>
       {model.count === 0 && empty}
 
       {model.pinned.length > 0 &&
@@ -332,15 +333,15 @@ export function Sidebar({
           'pinned',
           <>
             <IconPin size={13} />
-            <span className="group-name">置顶</span>
+            <span className="group-name">{t('sidebar.pinned')}</span>
           </>,
           model.pinned,
         )}
 
       {(model.sections.length > 0 || (showEmptySections && !search.trim())) && (
         <div className="group-label-row">
-          <span className="group-label">分区</span>
-          <button className="group-add" aria-label="新建分区" title="新建分区" onClick={onNewSection}>
+          <span className="group-label">{t('sidebar.sections')}</span>
+          <button className="group-add" aria-label={t('sidebar.newSection')} title={t('sidebar.newSection')} onClick={onNewSection}>
             <IconPlus size={14} />
           </button>
         </div>
@@ -351,21 +352,21 @@ export function Sidebar({
           <span className="group-name">{section.name}</span>,
           list,
           <span className="group-head-actions">
-            <GroupAdd label={`在“${section.name}”新建线程`} onClick={() => onNewIn({ sectionId: section.id })} />
+            <GroupAdd label={t('sidebar.newInSection', section.name)} onClick={() => onNewIn({ sectionId: section.id })} />
             <button
               className="row-more"
-              aria-label={`分区“${section.name}”的更多操作`}
+              aria-label={t('sidebar.sectionMore', section.name)}
               onClick={(e) => onSectionMenu(section, ...below(e))}
             >
               <IconMore size={16} />
             </button>
           </span>,
-          compact ? '长按线程，选"移到分区"' : '右键线程，选"移到分区"',
+          compact ? t('sidebar.sectionHintPhone') : t('sidebar.sectionHint'),
         ),
       )}
-      {showEmptySections && model.sections.length === 0 && !search.trim() && <p className="group-empty">还没有分区。</p>}
+      {showEmptySections && model.sections.length === 0 && !search.trim() && <p className="group-empty">{t('sidebar.noSections')}</p>}
 
-      {model.projects.length > 0 && <div className="group-label">项目</div>}
+      {model.projects.length > 0 && <div className="group-label">{t('sidebar.projects')}</div>}
       {model.projects.map((p) =>
         group(
           `project:${p.key}`,
@@ -376,15 +377,15 @@ export function Sidebar({
             </span>
           </>,
           p.threads,
-          <GroupAdd label={`在 ${p.name} 新建线程`} onClick={() => onNewIn({ cwd: p.cwd })} />,
+          <GroupAdd label={t('sidebar.newInProject', p.name)} onClick={() => onNewIn({ cwd: p.cwd })} />,
         ),
       )}
       {model.scratch.length > 0 &&
         group(
           'scratch',
-          <span className="group-name">不在项目中</span>,
+          <span className="group-name">{t('projects.none')}</span>,
           model.scratch,
-          <GroupAdd label="新建不在项目中的线程" onClick={() => onNewIn({ scratch: true })} />,
+          <GroupAdd label={t('sidebar.newScratch')} onClick={() => onNewIn({ scratch: true })} />,
         )}
     </nav>
   );
@@ -393,10 +394,10 @@ export function Sidebar({
     <input
       type="search"
       className="sidebar-search"
-      placeholder={onSearch ? "搜索标题和对话内容" : "搜索线程"}
+      placeholder={onSearch ? t('sidebar.searchAll') : t('sidebar.search')}
       value={search}
       onChange={(e) => setSearch(e.target.value)}
-      aria-label="搜索线程"
+      aria-label={t('sidebar.search')}
       autoFocus
       onKeyDown={(e) => {
         if (e.key === 'Escape') closeSearch();
@@ -411,7 +412,7 @@ export function Sidebar({
           <label className="sidebar-search-box">
             <IconSearch size={compact ? 18 : 15} />
             {searchInput}
-            <button type="button" className="search-close" aria-label="关闭搜索" onClick={closeSearch}>
+            <button type="button" className="search-close" aria-label={t('sidebar.closeSearch')} onClick={closeSearch}>
               <IconClose size={compact ? 16 : 14} />
             </button>
           </label>
@@ -420,21 +421,21 @@ export function Sidebar({
             <span className="brand">Limi</span>
             <span className="sidebar-top-actions">
               {onHide && (
-                <button className="round-btn sidebar-hide" aria-label="隐藏侧边栏" title={`隐藏侧边栏（${SIDEBAR_SHORTCUT}）`} onClick={onHide}>
+                <button className="round-btn sidebar-hide" aria-label={t('sidebar.hide')} title={t('sidebar.hideKey', SIDEBAR_SHORTCUT)} onClick={onHide}>
                   <IconSidebar size={16} />
                 </button>
               )}
               <button
                 className={`round-btn activity-btn${byActivity ? ' on' : ''}`}
-                aria-label="按活动查看"
+                aria-label={t('sidebar.byActivity')}
                 aria-pressed={byActivity}
-                title={byActivity ? '回到按项目查看' : wanted > 0 ? `按活动查看（${wanted} 个线程有新动静）` : '按活动查看'}
+                title={byActivity ? t('sidebar.byProject') : wanted > 0 ? t('sidebar.byActivityCount', wanted) : t('sidebar.byActivity')}
                 onClick={() => setByActivity(!byActivity)}
               >
                 <IconBell size={compact ? 20 : 16} />
                 {wanted > 0 && <span className="activity-badge" aria-hidden="true" />}
               </button>
-              <button className="round-btn" aria-label="搜索线程" title="搜索线程" onClick={() => setSearching(true)}>
+              <button className="round-btn" aria-label={t('sidebar.search')} title={t('sidebar.search')} onClick={() => setSearching(true)}>
                 <IconSearch size={compact ? 20 : 16} />
               </button>
             </span>
@@ -445,41 +446,41 @@ export function Sidebar({
       {notice}
       <div className="sidebar-scroll">
         {onHost && !search.trim() && <HostSwitcher hosts={hosts} current={hostId} onPick={onHost} />}
-        {hostDown && <p className="group-empty top">这台机器现在连不上，它的线程要等连上才看得到。</p>}
+        {hostDown && <p className="group-empty top">{t('sidebar.hostDown')}</p>}
         {!hostDown && !search.trim() && (
           <div className="side-nav">
             {/* On a wide screen a new thread is the first row, like Codex; a phone keeps the floating button by the thumb. */}
             {!compact && (
               <button className="side-link" onClick={onNew}>
-                <IconEdit size={17} /> 新线程
+                <IconEdit size={17} /> {t('sidebar.newThread')}
               </button>
             )}
             {onOpenTodos && <button className={`side-link${todosActive ? ' active' : ''}`} aria-current={todosActive ? 'page' : undefined} onClick={onOpenTodos}>
-              <IconList size={compact ? 21 : 17} /> 计划
+              <IconList size={compact ? 21 : 17} /> {t('todos.title')}
             </button>}
             {onOpenSchedules && <button className={`side-link${schedulesActive ? ' active' : ''}`} aria-current={schedulesActive ? 'page' : undefined} onClick={onOpenSchedules}>
-              <IconClock size={compact ? 21 : 17} /> 定时任务
+              <IconClock size={compact ? 21 : 17} /> {t('sidebar.schedules')}
             </button>}
           </div>
         )}
         {!hostDown && groups}
         {!hostDown && onSearch && query.length >= SEARCH_MIN && (
-          <section className="search-hits" aria-label="对话内容">
-            <div className="search-hits-head">对话内容</div>
+          <section className="search-hits" aria-label={t('sidebar.inConversations')}>
+            <div className="search-hits-head">{t('sidebar.inConversations')}</div>
             {found?.for !== query ? (
-              <p className="group-empty">正在搜索…</p>
+              <p className="group-empty">{t('sidebar.searching')}</p>
             ) : found.hits.length === 0 ? (
-              <p className="group-empty">对话里没有找到。</p>
+              <p className="group-empty">{t('sidebar.notFound')}</p>
             ) : (
               found.hits.map((hit) => (
                 <button type="button" className={`search-hit${hit.threadId === selectedId ? ' active' : ''}`} key={`${hit.threadId}:${hit.turnId}:${hit.role}`} onClick={() => onOpenHit?.(hit)}>
                   <span className="search-hit-top">
                     <span className="thread-title">{hit.title}</span>
-                    {hit.archived && <span className="search-hit-tag">已归档</span>}
+                    {hit.archived && <span className="search-hit-tag">{t('activity.archived')}</span>}
                     <time dateTime={hit.ts}>{clockLabel(hit.ts)}</time>
                   </span>
                   <span className="search-hit-text">
-                    <span className="search-hit-who">{hit.role === 'user' ? '我：' : '回复：'}</span>
+                    <span className="search-hit-who">{hit.role === 'user' ? t('sidebar.me') : t('sidebar.reply')}</span>
                     {markTerms(hit.snippet, query).map((part, i) => (part.hit ? <mark key={i}>{part.text}</mark> : part.text))}
                   </span>
                 </button>
@@ -492,14 +493,14 @@ export function Sidebar({
       <div className="sidebar-float">
         {compact && !hostDown && (
           <button className="new-thread" onClick={onNew}>
-            <IconEdit size={19} /> 新线程
+            <IconEdit size={19} /> {t('sidebar.newThread')}
           </button>
         )}
         {/* The look, the archive, importing and signing out are not everyday things: they live behind this. */}
         <button
           className="round-btn"
-          aria-label="配置"
-          title="配置"
+          aria-label={t('sidebar.settings')}
+          title={t('sidebar.settings')}
           onClick={(e) => {
             const rect = e.currentTarget.getBoundingClientRect();
             onOpenSettings(rect.right, rect.top - 8);

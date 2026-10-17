@@ -6,6 +6,7 @@ import { Dialog, DialogSurface } from './Dialog';
 import { Menu, type MenuEntry } from './Menu';
 import { Popover } from './Popover';
 import { AgentMark, IconClock, IconClose, IconFolder, IconMore, IconPlay, IconPlus } from './icons';
+import { formatDate, formatList, t } from '../i18n';
 
 interface Props {
   api: Api;
@@ -26,15 +27,16 @@ interface Props {
 type Preset = 'minutes' | 'hourly' | 'daily' | 'weekdays' | 'weekly' | 'monthly' | 'custom';
 
 const PRESET_LABELS: Record<Exclude<Preset, 'custom'>, string> = {
-  minutes: '每隔几分钟',
-  hourly: '每小时',
-  daily: '每天',
-  weekdays: '每工作日',
-  weekly: '每周',
-  monthly: '每月',
+  minutes: t('sched.preset.minutes'),
+  hourly: t('sched.preset.hourly'),
+  daily: t('sched.preset.daily'),
+  weekdays: t('sched.preset.weekdays'),
+  weekly: t('sched.preset.weekly'),
+  monthly: t('sched.preset.monthly'),
 };
 
-const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+/** Sunday first, as cron counts them. 1 January 2023 was a Sunday. */
+const WEEKDAYS = Array.from({ length: 7 }, (_, d) => formatDate(new Date(2023, 0, 1 + d), { weekday: 'short' }));
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
@@ -93,20 +95,20 @@ function presetFromCron(cron: string): { preset: Preset; time: string; weekday: 
 }
 
 const RUN_LABELS: Record<ScheduleRun['status'], string> = {
-  running: '运行中',
-  done: '已完成',
-  error: '出错',
-  skipped: '跳过',
-  missed: '错过',
+  running: t('status.running'),
+  done: t('sched.run.done'),
+  error: t('status.error'),
+  skipped: t('sched.run.skipped'),
+  missed: t('sched.run.missed'),
 };
 
-/** "今天 09:02" / "10月12日 09:02", in this device's words. */
+/** "Today 09:02" or the date and time, in this device's words. */
 function whenLabel(iso: string): string {
   const at = new Date(iso);
   const now = new Date();
   const sameDay = at.getFullYear() === now.getFullYear() && at.getMonth() === now.getMonth() && at.getDate() === now.getDate();
   const hm = `${pad(at.getHours())}:${pad(at.getMinutes())}`;
-  return sameDay ? `今天 ${hm}` : `${at.getMonth() + 1}月${at.getDate()}日 ${hm}`;
+  return sameDay ? t('sched.today', hm) : `${formatDate(at, { month: 'short', day: 'numeric' })} ${hm}`;
 }
 
 /** The next run, said shortly: "14:30" today, else with its day. */
@@ -152,7 +154,7 @@ export function SchedulesPage({ api, schedules, agents, workdirs, refreshKey, on
     act(async () => {
       const out = await api.runSchedule(s.id);
       // The list comes back on its own; a skip says why it did not go.
-      if (out.status === 'skipped' || out.status === 'error') onError(new Error(out.message ?? (out.status === 'skipped' ? '上一轮还没有结束' : '没有运行')));
+      if (out.status === 'skipped' || out.status === 'error') onError(new Error(out.message ?? (out.status === 'skipped' ? t('sched.stillRunning') : t('sched.notRun'))));
     });
 
   const empty = schedules.length === 0;
@@ -162,19 +164,19 @@ export function SchedulesPage({ api, schedules, agents, workdirs, refreshKey, on
       <div className="sched-head">
         <div>
           <h2 className="sched-title">
-            <IconClock size={18} /> 定时任务
+            <IconClock size={18} /> {t('sidebar.schedules')}
           </h2>
-          <p className="sched-sub">按设定的时间自动让 agent 在指定目录里跑一段提示词，跑完的会话和其他会话在一起。</p>
+          <p className="sched-sub">{t('sched.hint')}</p>
         </div>
         <button className="btn-primary" onClick={() => setEditing('new')}>
-          <IconPlus size={15} /> 新建任务
+          <IconPlus size={15} /> {t('sched.new')}
         </button>
       </div>
 
       {empty && (
         <div className="sched-empty">
           <IconClock size={28} />
-          <p>还没有定时任务。建一个，比如每天早上让它看一遍构建、每周写一份进展。</p>
+          <p>{t('sched.empty')}</p>
         </div>
       )}
 
@@ -185,7 +187,7 @@ export function SchedulesPage({ api, schedules, agents, workdirs, refreshKey, on
           return (
             <li key={s.id} className={`sched-card${s.enabled ? '' : ' off'}`}>
               <div className="sched-main">
-                <button className="sched-open" onClick={() => setEditing(s)} title="查看和编辑">
+                <button className="sched-open" onClick={() => setEditing(s)} title={t('sched.viewEdit')}>
                   <span className="sched-name">
                     <span className={`sched-dot ${last ? STATUS_DOT[last.status] : 'none'}`} aria-hidden="true" />
                     {s.name}
@@ -197,12 +199,12 @@ export function SchedulesPage({ api, schedules, agents, workdirs, refreshKey, on
                       <span className="sched-agent-name">{agent?.label ?? s.agent}</span>
                     )}
                     {frequencyLabel(s)}
-                    {s.mode === 'same' ? ' · 固定线程' : ''}
+                    {s.mode === 'same' ? ` · ${t('sched.fixedThread')}` : ''}
                     {s.timezone && s.timezone !== Intl.DateTimeFormat().resolvedOptions().timeZone ? ` · ${s.timezone}` : ''}
                   </span>
                   <span className="sched-meta">
-                    {s.enabled ? (s.nextRunAt ? `下次 ${nextLabel(s.nextRunAt)}` : '没有下次运行') : '已停用'}
-                    {last && ` · 上次 ${RUN_LABELS[last.status]}`}
+                    {s.enabled ? (s.nextRunAt ? t('sched.next', nextLabel(s.nextRunAt)) : t('sched.noNext')) : t('sched.disabled')}
+                    {last && ` · ${t('sched.last', RUN_LABELS[last.status])}`}
                   </span>
                   {s.problem && <span className="sched-problem">{s.problem}</span>}
                 </button>
@@ -212,14 +214,14 @@ export function SchedulesPage({ api, schedules, agents, workdirs, refreshKey, on
                   className={`switch${s.enabled ? ' on' : ''}`}
                   role="switch"
                   aria-checked={s.enabled}
-                  aria-label={s.enabled ? '停用这个任务' : '启用这个任务'}
+                  aria-label={s.enabled ? t('sched.disable') : t('sched.enable')}
                   onClick={() => act(() => api.updateSchedule(s.id, { enabled: !s.enabled }))}
                 >
                   <span className="switch-knob" />
                 </button>
                 <button
                   className="icon-btn"
-                  aria-label={`${s.name} 的更多操作`}
+                  aria-label={t('sidebar.more', s.name)}
                   onClick={(e) => {
                     const rect = e.currentTarget.getBoundingClientRect();
                     setMenu({ schedule: s, x: rect.right - 208, y: rect.bottom + 4 });
@@ -235,14 +237,14 @@ export function SchedulesPage({ api, schedules, agents, workdirs, refreshKey, on
 
       {menu && (
         <Menu
-          label={`${menu.schedule.name} 的操作`}
+          label={t('skills.actions', menu.schedule.name)}
           x={menu.x}
           y={menu.y}
           items={[
-            { id: 'run', label: '立即运行', icon: IconPlay, onSelect: () => runNow(menu.schedule) },
-            { id: 'edit', label: '编辑', icon: IconClock, onSelect: () => setEditing(menu.schedule) },
+            { id: 'run', label: t('sched.runNow'), icon: IconPlay, onSelect: () => runNow(menu.schedule) },
+            { id: 'edit', label: t('composer.edit'), icon: IconClock, onSelect: () => setEditing(menu.schedule) },
             'separator' as const,
-            { id: 'delete', label: '删除', icon: IconClose, danger: true, onSelect: () => setDeleting(menu.schedule) },
+            { id: 'delete', label: t('common.delete'), icon: IconClose, danger: true, onSelect: () => setDeleting(menu.schedule) },
           ] satisfies MenuEntry[]}
           onClose={() => setMenu(null)}
         />
@@ -250,9 +252,9 @@ export function SchedulesPage({ api, schedules, agents, workdirs, refreshKey, on
 
       {deleting && (
         <Dialog
-          title="删除定时任务"
-          message={`删除「${deleting.name}」后不再自动运行。它已经建过的会话会保留。`}
-          confirmLabel="删除"
+          title={t('sched.deleteTitle')}
+          message={t('sched.deleteMessage', deleting.name)}
+          confirmLabel={t('common.delete')}
           danger
           onCancel={() => setDeleting(null)}
           onConfirm={(_, __) => {
@@ -418,22 +420,22 @@ function ScheduleEditor({ api, schedule, agents, workdirs, onCancel, onSaved, on
     <DialogSurface labelledBy="sched-editor-title" onClose={onCancel} busy={saving} className="sched-editor">
       <div className="sched-dialog-head">
         <h3 id="sched-editor-title" className="dialog-title">
-          {schedule ? '编辑任务' : '新建任务'}
+          {schedule ? t('sched.edit') : t('sched.new')}
         </h3>
-        <button className="icon-btn" aria-label="取消" onClick={onCancel}>
+        <button className="icon-btn" aria-label={t('common.cancel')} onClick={onCancel}>
           <IconClose />
         </button>
       </div>
 
       <div className="dialog-body sched-form">
         <label className="field">
-          <span className="field-label">名称</span>
-          <input value={name} placeholder="从提示词取" onChange={(e) => setName(e.target.value)} />
+          <span className="field-label">{t('mcp.name')}</span>
+          <input value={name} placeholder={t('sched.namePlaceholder')} onChange={(e) => setName(e.target.value)} />
         </label>
 
         <div className="field">
           <span className="field-label">Agent</span>
-          <div className="chip-row" role="radiogroup" aria-label="选择 agent">
+          <div className="chip-row" role="radiogroup" aria-label={t('sched.pickAgent')}>
             {usable.map((a) => (
               <button
                 key={a.id}
@@ -452,15 +454,15 @@ function ScheduleEditor({ api, schedule, agents, workdirs, onCancel, onSaved, on
         </div>
 
         <div className="field">
-          <span className="field-label">{bound ? '目录（跟随绑定的线程）' : '工作目录'}</span>
+          <span className="field-label">{bound ? t('sched.boundDir') : t('actions.cwd')}</span>
           {bound ? (
             <p className="field-static" title={bound.cwd}>
               {folderName(bound.cwd)}
             </p>
           ) : (
             <div className="field-inline">
-              <input value={cwd} spellCheck={false} onChange={(e) => setCwd(e.target.value)} aria-label="工作目录" />
-              <Popover label="常用目录" triggerLabel="常用目录" trigger={<IconFolder size={14} />} triggerClassName="btn-secondary" triggerTitle="常用目录">
+              <input value={cwd} spellCheck={false} onChange={(e) => setCwd(e.target.value)} aria-label={t('actions.cwd')} />
+              <Popover label={t('sched.commonDirs')} triggerLabel={t('sched.commonDirs')} trigger={<IconFolder size={14} />} triggerClassName="btn-secondary" triggerTitle={t('sched.commonDirs')}>
                 {(close) => (
                   <ul className="pick-list">
                     {dirOptions.map((d) => (
@@ -484,35 +486,35 @@ function ScheduleEditor({ api, schedule, agents, workdirs, onCancel, onSaved, on
         </div>
 
         <div className="field">
-          <span className="field-label">频率</span>
-          <div className="chip-row" role="radiogroup" aria-label="频率">
+          <span className="field-label">{t('sched.frequency')}</span>
+          <div className="chip-row" role="radiogroup" aria-label={t('sched.frequency')}>
             {(Object.keys(PRESET_LABELS) as Array<Exclude<Preset, 'custom'>>).map((p) => (
               <button key={p} type="button" className={`chip${preset === p ? ' on' : ''}`} role="radio" aria-checked={preset === p} onClick={() => setPreset(p)}>
                 {PRESET_LABELS[p]}
               </button>
             ))}
             <button type="button" className={`chip${preset === 'custom' ? ' on' : ''}`} role="radio" aria-checked={preset === 'custom'} onClick={() => setPreset('custom')}>
-              自定义
+              {t('sched.custom')}
             </button>
           </div>
           {preset === 'minutes' && (
             <div className="field-inline">
-              <span>每</span>
-              <input className="num" value={interval} inputMode="numeric" onChange={(e) => setIntervalValue(e.target.value)} aria-label="间隔分钟数" />
-              <span>分钟</span>
+              <span>{t('sched.every')}</span>
+              <input className="num" value={interval} inputMode="numeric" onChange={(e) => setIntervalValue(e.target.value)} aria-label={t('sched.intervalLabel')} />
+              <span>{t('sched.minutes')}</span>
             </div>
           )}
           {preset !== 'minutes' && preset !== 'custom' && preset !== 'hourly' && (
             <div className="field-inline">
-              <input className="num time" value={time} onChange={(e) => setTime(e.target.value)} placeholder="HH:MM" aria-label="运行时间" />
-              <span>运行</span>
+              <input className="num time" value={time} onChange={(e) => setTime(e.target.value)} placeholder="HH:MM" aria-label={t('sched.runTime')} />
+              <span>{t('sched.run')}</span>
             </div>
           )}
           {preset === 'hourly' && (
             <div className="field-inline">
-              <span>每小时的</span>
-              <input className="num time" value={time} onChange={(e) => setTime(e.target.value)} placeholder="HH:MM" aria-label="运行时间" />
-              <span>运行</span>
+              <span>{t('sched.everyHourAt')}</span>
+              <input className="num time" value={time} onChange={(e) => setTime(e.target.value)} placeholder="HH:MM" aria-label={t('sched.runTime')} />
+              <span>{t('sched.run')}</span>
             </div>
           )}
           {preset === 'weekly' && (
@@ -526,24 +528,24 @@ function ScheduleEditor({ api, schedule, agents, workdirs, onCancel, onSaved, on
           )}
           {preset === 'monthly' && (
             <div className="field-inline">
-              <span>每月</span>
-              <input className="num" value={day} inputMode="numeric" onChange={(e) => setDay(e.target.value)} aria-label="几号" />
-              <span>日</span>
+              <span>{t('sched.everyMonth')}</span>
+              <input className="num" value={day} inputMode="numeric" onChange={(e) => setDay(e.target.value)} aria-label={t('sched.dayOfMonth')} />
+              <span>{t('sched.daySuffix')}</span>
             </div>
           )}
           {preset === 'custom' && (
             <>
-              <input value={customCron} spellCheck={false} placeholder="分 时 日 月 周，如 30 9 * * 1-5" onChange={(e) => setCustomCron(e.target.value)} aria-label="cron 表达式" />
+              <input value={customCron} spellCheck={false} placeholder={t('sched.cronPlaceholder')} onChange={(e) => setCustomCron(e.target.value)} aria-label={t('sched.cron')} />
               {preview && preview.cron === cron && (
                 <p className="field-hint">
-                  {preview.description || '这个表达式不太常见'}
-                  {preview.fires.length > 0 && ` · 之后：${preview.fires.slice(0, 3).map(whenLabel).join('、')}`}
+                  {preview.description || t('sched.unusual')}
+                  {preview.fires.length > 0 && ` · ${t('sched.then', formatList(preview.fires.slice(0, 3).map(whenLabel)))}`}
                 </p>
               )}
             </>
           )}
-          {preset === 'hourly' && parseTime(time) === null && <p className="field-hint bad">时间写成 HH:MM，比如 09:30。</p>}
-          {preset !== 'custom' && preset !== 'hourly' && preset !== 'minutes' && parseTime(time) === null && <p className="field-hint bad">时间写成 HH:MM，比如 09:30。</p>}
+          {preset === 'hourly' && parseTime(time) === null && <p className="field-hint bad">{t('sched.timeFormat')}</p>}
+          {preset !== 'custom' && preset !== 'hourly' && preset !== 'minutes' && parseTime(time) === null && <p className="field-hint bad">{t('sched.timeFormat')}</p>}
           <label className="dialog-option" style={{ marginTop: '12px', marginBottom: 0 }}>
             <input
               type="checkbox"
@@ -551,16 +553,16 @@ function ScheduleEditor({ api, schedule, agents, workdirs, onCancel, onSaved, on
               onChange={(e) => setCatchUp(e.target.checked)}
             />
             <span className="dialog-option-text">
-              <span>停机错过后，启动时补跑一次</span>
+              <span>{t('sched.catchUp')}</span>
             </span>
           </label>
         </div>
 
         <label className="field">
-          <span className="field-label">时区</span>
+          <span className="field-label">{t('sched.timezone')}</span>
           <input
             value={timezone}
-            placeholder={`留空为服务器时区（当前系统：${Intl.DateTimeFormat().resolvedOptions().timeZone}）`}
+            placeholder={t('sched.timezonePlaceholder', Intl.DateTimeFormat().resolvedOptions().timeZone)}
             spellCheck={false}
             onChange={(e) => {
               setTimezone(e.target.value);
@@ -579,19 +581,19 @@ function ScheduleEditor({ api, schedule, agents, workdirs, onCancel, onSaved, on
                 setTzError(false);
               }
             }}
-            aria-label="时区"
+            aria-label={t('sched.timezone')}
           />
-          {tzError && <p className="field-hint bad">时区格式无效，请输入有效的 IANA 时区名，如 Asia/Shanghai。</p>}
+          {tzError && <p className="field-hint bad">{t('sched.timezoneInvalid')}</p>}
         </label>
 
         <div className="field">
-          <span className="field-label">会话</span>
-          <div className="chip-row" role="radiogroup" aria-label="执行模式">
+          <span className="field-label">{t('sched.session')}</span>
+          <div className="chip-row" role="radiogroup" aria-label={t('sched.mode')}>
             <button type="button" className={`chip${mode === 'new' ? ' on' : ''}`} role="radio" aria-checked={mode === 'new'} onClick={() => setMode('new')}>
-              每次新会话
+              {t('sched.newEachTime')}
             </button>
             <button type="button" className={`chip${mode === 'same' ? ' on' : ''}`} role="radio" aria-checked={mode === 'same'} onClick={() => setMode('same')}>
-              固定会话继续
+              {t('sched.continueSame')}
             </button>
           </div>
           {mode === 'same' && (
@@ -608,13 +610,13 @@ function ScheduleEditor({ api, schedule, agents, workdirs, onCancel, onSaved, on
                       setBoundThread(null);
                     }}
                   >
-                    解绑
+                    {t('sched.unbind')}
                   </button>
                 </>
               ) : (
                 <>
-                  <span className="field-hint">首次运行时自动新建</span>
-                  <Popover label="选择会话" triggerLabel="选择已有会话" trigger={<IconPlus size={14} />} triggerClassName="btn-secondary" triggerTitle="选择一个已有会话继续">
+                  <span className="field-hint">{t('sched.createdOnFirst')}</span>
+                  <Popover label={t('sched.pickSession')} triggerLabel={t('sched.pickExisting')} trigger={<IconPlus size={14} />} triggerClassName="btn-secondary" triggerTitle={t('sched.pickExistingHint')}>
                     {(close) => (
                       <ul className="pick-list">
                         {(threads ?? []).slice(0, 30).map((t) => (
@@ -637,18 +639,18 @@ function ScheduleEditor({ api, schedule, agents, workdirs, onCancel, onSaved, on
               )}
             </div>
           )}
-          {mode === 'same' && <p className="field-hint">固定会话里上下文会一直累积，适合周报、巡检日志这类。</p>}
+          {mode === 'same' && <p className="field-hint">{t('sched.sameHint')}</p>}
         </div>
 
         <label className="field">
-          <span className="field-label">提示词</span>
-          <textarea rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && isCommit(e) && e.preventDefault()} placeholder="要它做什么。写「{{date}}」会替换成当天的日期。" />
+          <span className="field-label">{t('sched.prompt')}</span>
+          <textarea rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && isCommit(e) && e.preventDefault()} placeholder={t('sched.promptPlaceholder')} />
         </label>
 
         {modes.length > 0 && (
           <div className="field">
-            <span className="field-label">权限</span>
-            <div className="chip-row" role="radiogroup" aria-label="权限">
+            <span className="field-label">{t('statusPanel.permission')}</span>
+            <div className="chip-row" role="radiogroup" aria-label={t('statusPanel.permission')}>
               {PERMISSION_ORDER.filter((m) => modes.includes(m)).map((m) => (
                 <button key={m} type="button" className={`chip${permissionValue === m ? ' on' : ''}`} role="radio" aria-checked={permissionValue === m} onClick={() => setPermission(m)}>
                   {PERMISSION_LABELS[m].short}
@@ -657,7 +659,7 @@ function ScheduleEditor({ api, schedule, agents, workdirs, onCancel, onSaved, on
             </div>
             <p className="field-hint">
               {permissionValue === 'full_access'
-                ? '任务在无人值守时运行，选了完全访问就不再有人把关。'
+                ? t('sched.fullAccessHint')
                 : PERMISSION_LABELS[permissionValue]?.hint ?? ''}
             </p>
           </div>
@@ -665,9 +667,9 @@ function ScheduleEditor({ api, schedule, agents, workdirs, onCancel, onSaved, on
 
         {schedule && (
           <div className="field">
-            <span className="field-label">运行记录</span>
+            <span className="field-label">{t('sched.runs')}</span>
             {runs === null || runs.length === 0 ? (
-              <p className="field-hint">{runs === null ? '读取中…' : '还没有运行过。'}</p>
+              <p className="field-hint">{runs === null ? t('activity.reading') : t('sched.noRuns')}</p>
             ) : (
               <ul className="sched-runs">
                 {runs.slice(0, 8).map((r) => (
@@ -678,7 +680,7 @@ function ScheduleEditor({ api, schedule, agents, workdirs, onCancel, onSaved, on
                     {r.message && <span className="sched-run-message" title={r.message}>{r.message}</span>}
                     {r.threadId && (
                       <button type="button" className="link" onClick={() => onOpenThread(r.threadId!)}>
-                        查看会话
+                        {t('sched.viewSession')}
                       </button>
                     )}
                   </li>
@@ -691,10 +693,10 @@ function ScheduleEditor({ api, schedule, agents, workdirs, onCancel, onSaved, on
 
       <div className="dialog-actions">
         <button type="button" className="ghost" onClick={onCancel}>
-          取消
+          {t('common.cancel')}
         </button>
         <button type="button" className="primary" disabled={!canSave} onClick={() => void save()}>
-          {schedule ? '保存修改' : '创建任务'}
+          {schedule ? t('sched.saveChanges') : t('sched.create')}
         </button>
       </div>
     </DialogSurface>

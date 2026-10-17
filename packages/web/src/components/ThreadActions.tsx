@@ -7,12 +7,13 @@ import { HandoverDialog, handoverMessage } from './HandoverDialog';
 import { Menu, type MenuEntry } from './Menu';
 import { IconArchive, IconCheck, IconCopy, IconDot, IconEdit, IconFork, IconHand, IconList, IconPin, IconPlus, IconTerminal, IconTrash, IconWorktree } from './icons';
 import type { ToastState } from './Toast';
+import { formatList, t } from '../i18n';
 
 interface Deps {
   api: Api | null;
   agents: AgentInfo[];
   sections: Section[];
-  /** The plan page's list, for the "关联到计划" submenu. */
+  /** The plan page's list, for the "link to plan" submenu. */
   todos: Todo[];
   /** A plan was linked or unlinked here: reload the list. */
   onTodosChange: () => void;
@@ -52,8 +53,8 @@ export type ThreadAction = 'rename' | 'pin' | 'fork' | 'archive' | 'restore' | '
 
 /** Why a thread cannot be forked right now, or null when it can. */
 export function forkBlocked(thread: Thread): string | null {
-  if (!thread.agentSessionId) return '还没有对话可以分叉，先发一条消息';
-  if (thread.status === 'running') return '等这一轮结束后再分叉';
+  if (!thread.agentSessionId) return t('actions.forkEmpty');
+  if (thread.status === 'running') return t('actions.forkRunning');
   return null;
 }
 
@@ -93,17 +94,17 @@ export function useThreadActions(deps: Deps) {
         return setDialog({ kind: 'fork', thread, turnId, branch: options.worktree.branch ?? null, changes: options.worktree.changes ?? 0 });
       }
     }
-    toast({ message: where === 'worktree' ? '正在新建工作树并分叉…' : '正在分叉…', busy: true });
+    toast({ message: where === 'worktree' ? t('actions.forkingWorktree') : t('actions.forking'), busy: true });
     try {
       const copy = await api.forkThread(thread.id, { turnId, worktree: where === 'worktree' });
       onThreadOpen(copy);
-      toast({ message: where === 'worktree' && copy.worktree ? `已分叉到新工作树，分支 ${copy.worktree.branch}` : '已分叉，现在在新线程里' });
+      toast({ message: where === 'worktree' && copy.worktree ? t('actions.forkedWorktree', copy.worktree.branch) : t('actions.forked') });
     } catch (e) {
       toast(null);
       // The agent keeps its own record of the conversation. A turn it has no record of (one that
       // never reached it, say) is not a place its copy can stop.
       if (turnId && e instanceof Error && /own history|cannot stop a copy|whole conversation/.test(e.message)) {
-        return toast({ message: '这一轮在 agent 自己的记录里对不上，没法从这里分叉；可以从最后一条回答分叉整个线程' });
+        return toast({ message: t('actions.forkMismatch') });
       }
       onError(e);
     }
@@ -119,10 +120,10 @@ export function useThreadActions(deps: Deps) {
         return void patch(thread, { pinned: !thread.pinned });
       case 'archive':
         return void patch(thread, { archived: true }, () =>
-          toast({ message: '已归档', action: { label: '撤销', run: () => void patch(thread, { archived: false }) } }),
+          toast({ message: t('archive.title'), action: { label: t('actions.undo'), run: () => void patch(thread, { archived: false }) } }),
         );
       case 'restore':
-        return void patch(thread, { archived: false }, () => toast({ message: '已恢复' }));
+        return void patch(thread, { archived: false }, () => toast({ message: t('actions.restored') }));
       case 'delete':
         return setDialog({ kind: 'delete', thread });
     }
@@ -132,7 +133,7 @@ export function useThreadActions(deps: Deps) {
     try {
       const text = await value;
       if (!text) return;
-      toast({ message: (await copyText(text)) ? `已复制${what}` : '复制失败，请手动选中文字复制' });
+      toast({ message: (await copyText(text)) ? t('actions.copied', what) : t('actions.copyFailed') });
     } catch (e) {
       onError(e);
     }
@@ -140,22 +141,22 @@ export function useThreadActions(deps: Deps) {
 
   const threadItems = (thread: Thread): MenuEntry[] => {
     const filed = sections.some((s) => s.id === thread.sectionId);
-    const linkedTodoIds = new Set(todos.filter((t) => t.threads.some((it) => it.id === thread.id)).map((t) => t.id));
-    const planChoices = todos.filter((t) => !t.parentId).slice(0, 30);
+    const linkedTodoIds = new Set(todos.filter((todo) => todo.threads.some((it) => it.id === thread.id)).map((todo) => todo.id));
+    const planChoices = todos.filter((todo) => !todo.parentId).slice(0, 30);
     return [
-      { id: 'terminal', label: '打开终端', icon: IconTerminal, onSelect: onOpenTerminal },
-      { id: 'rename', label: '重命名', icon: IconEdit, onSelect: () => run('rename', thread) },
-      { id: 'pin', label: thread.pinned ? '取消置顶' : '置顶', icon: IconPin, onSelect: () => run('pin', thread) },
+      { id: 'terminal', label: t('actions.terminal'), icon: IconTerminal, onSelect: onOpenTerminal },
+      { id: 'rename', label: t('actions.rename'), icon: IconEdit, onSelect: () => run('rename', thread) },
+      { id: 'pin', label: thread.pinned ? t('actions.unpin') : t('actions.pin'), icon: IconPin, onSelect: () => run('pin', thread) },
       {
         id: 'unread',
-        label: thread.unread ? '标记为已读' : '标记为未读',
+        label: thread.unread ? t('actions.markRead') : t('actions.markUnread'),
         icon: IconDot,
         onSelect: () => void patch(thread, { unread: !thread.unread }, thread.unread ? undefined : () => onMarkedUnread(thread)),
       },
       'separator',
       {
         id: 'section',
-        label: '移到分区',
+        label: t('actions.moveToSection'),
         icon: IconList,
         submenu: [
           ...sections.map((s) => ({
@@ -164,33 +165,33 @@ export function useThreadActions(deps: Deps) {
             checked: s.id === thread.sectionId,
             onSelect: () => void patch(thread, { sectionId: s.id === thread.sectionId ? null : s.id }),
           })),
-          ...(filed ? [{ id: 'unfile', label: '移出分区', onSelect: () => void patch(thread, { sectionId: null }) }] : []),
+          ...(filed ? [{ id: 'unfile', label: t('actions.unfile'), onSelect: () => void patch(thread, { sectionId: null }) }] : []),
           ...(sections.length ? (['separator'] as MenuEntry[]) : []),
-          { id: 'new-section', label: '新建分区…', icon: IconPlus, onSelect: () => setDialog({ kind: 'new-section', thread }) },
+          { id: 'new-section', label: t('actions.newSection'), icon: IconPlus, onSelect: () => setDialog({ kind: 'new-section', thread }) },
         ],
       },
       {
         id: 'todo',
-        label: '关联到计划',
+        label: t('actions.linkPlan'),
         icon: IconCheck,
         disabled: planChoices.length === 0,
         submenu: [
-          ...planChoices.map((t) => ({
-            id: `todo-${t.id}`,
-            label: t.text,
-            checked: linkedTodoIds.has(t.id),
+          ...planChoices.map((todo) => ({
+            id: `todo-${todo.id}`,
+            label: todo.text,
+            checked: linkedTodoIds.has(todo.id),
             onSelect: () =>
               void guard(async () => {
                 if (!api) return;
-                if (linkedTodoIds.has(t.id)) await api.unlinkTodo(t.id, thread.id);
-                else await api.linkTodo(t.id, thread.id);
+                if (linkedTodoIds.has(todo.id)) await api.unlinkTodo(todo.id, thread.id);
+                else await api.linkTodo(todo.id, thread.id);
                 onTodosChange();
               }),
           })),
           ...(planChoices.length ? (['separator'] as MenuEntry[]) : []),
           {
             id: 'new-todo',
-            label: '新建计划…',
+            label: t('actions.newPlan'),
             icon: IconPlus,
             onSelect: () =>
               void guard(async () => {
@@ -204,40 +205,40 @@ export function useThreadActions(deps: Deps) {
       },
       {
         id: 'copy',
-        label: '复制',
+        label: t('common.copy'),
         icon: IconCopy,
         submenu: [
-          { id: 'copy-md', label: '整段对话（Markdown）', onSelect: () => void copy(markdownOf(thread), '对话') },
+          { id: 'copy-md', label: t('actions.copyMarkdown'), onSelect: () => void copy(markdownOf(thread), t('actions.what.conversation')) },
           {
             id: 'copy-resume',
-            label: '终端恢复命令',
+            label: t('actions.resumeCommand'),
             disabled: !thread.resumeCommand,
-            onSelect: () => void copy(thread.resumeCommand, '恢复命令'),
+            onSelect: () => void copy(thread.resumeCommand, t('actions.what.resumeCommand')),
           },
           {
             id: 'copy-id',
-            label: '会话 ID',
+            label: t('statusPanel.sessionId'),
             disabled: !thread.agentSessionId,
-            onSelect: () => void copy(thread.agentSessionId, '会话 ID'),
+            onSelect: () => void copy(thread.agentSessionId, t('actions.what.sessionId')),
           },
-          { id: 'copy-cwd', label: '工作目录', onSelect: () => void copy(thread.cwd, '工作目录') },
+          { id: 'copy-cwd', label: t('actions.cwd'), onSelect: () => void copy(thread.cwd, t('actions.what.cwd')) },
         ],
       },
       ...(agents.find((a) => a.id === thread.agent)?.capabilities.fork
-        ? [{ id: 'fork', label: '分叉', icon: IconFork, disabled: forkBlocked(thread) !== null, onSelect: () => run('fork', thread) }]
+        ? [{ id: 'fork', label: t('sidebar.fork'), icon: IconFork, disabled: forkBlocked(thread) !== null, onSelect: () => run('fork', thread) }]
         : []),
-      { id: 'handover', label: '交接', icon: IconHand, onSelect: () => setDialog({ kind: 'handover', thread }) },
+      { id: 'handover', label: t('handover.title'), icon: IconHand, onSelect: () => setDialog({ kind: 'handover', thread }) },
       'separator',
       thread.archivedAt
-        ? { id: 'restore', label: '恢复', icon: IconArchive, onSelect: () => run('restore', thread) }
-        : { id: 'archive', label: '归档', icon: IconArchive, onSelect: () => run('archive', thread) },
-      { id: 'delete', label: '永久删除', icon: IconTrash, danger: true, onSelect: () => run('delete', thread) },
+        ? { id: 'restore', label: t('archive.restore'), icon: IconArchive, onSelect: () => run('restore', thread) }
+        : { id: 'archive', label: t('actions.archive'), icon: IconArchive, onSelect: () => run('archive', thread) },
+      { id: 'delete', label: t('archive.delete'), icon: IconTrash, danger: true, onSelect: () => run('delete', thread) },
     ];
   };
 
   const sectionItems = (section: Section): MenuEntry[] => [
-    { id: 'rename', label: '重命名分区', icon: IconEdit, onSelect: () => setDialog({ kind: 'rename-section', section }) },
-    { id: 'delete', label: '删除分区', icon: IconTrash, danger: true, onSelect: () => setDialog({ kind: 'delete-section', section }) },
+    { id: 'rename', label: t('actions.renameSection'), icon: IconEdit, onSelect: () => setDialog({ kind: 'rename-section', section }) },
+    { id: 'delete', label: t('actions.deleteSection'), icon: IconTrash, danger: true, onSelect: () => setDialog({ kind: 'delete-section', section }) },
   ];
 
   const close = () => setDialog(null);
@@ -255,14 +256,14 @@ export function useThreadActions(deps: Deps) {
     try {
       await api.deleteThread(thread.id, opts);
       onThreadRemove(thread.id);
-      toast({ message: opts.worktree ? '已删除，工作树和分支也删了' : '已删除' });
+      toast({ message: opts.worktree ? t('actions.deletedWorktree') : t('actions.deleted') });
     } catch (e) {
       const details = e instanceof ApiError ? e.details : {};
       // Nothing has been deleted in either case; the thread is still there to decide about.
       if (details.code === 'worktree_dirty') {
         return setDialog({ kind: 'delete-worktree', thread, agentSession: opts.agentSession, changes: Number(details.changes) || 0, commits: Number(details.commits) || 0 });
       }
-      if (details.code === 'worktree_shared') toast({ message: '还有别的线程在用这个工作树，什么都没删。先删那些线程，或者不勾选删除工作树' });
+      if (details.code === 'worktree_shared') toast({ message: t('actions.worktreeShared') });
       else onError(e);
     }
     close();
@@ -274,9 +275,9 @@ export function useThreadActions(deps: Deps) {
       const { thread } = dialog;
       dialogNode = (
         <Dialog
-          title="重命名线程"
-          input={{ initial: thread.title, label: '线程名称' }}
-          confirmLabel="保存"
+          title={t('actions.renameThread')}
+          input={{ initial: thread.title, label: t('actions.threadName') }}
+          confirmLabel={t('actions.save')}
           onConfirm={(title) => void guard(async () => onThreadChange(await api.updateThread(thread.id, { title: title ?? thread.title })))}
           onCancel={close}
         />
@@ -289,16 +290,16 @@ export function useThreadActions(deps: Deps) {
       // The checkboxes that apply, in the order they are shown.
       const extras = [
         ...(canDeleteSession
-          ? [{ id: 'session', label: `同时删除 ${agent?.label ?? thread.agent} 里的会话`, hint: '删除后在终端里也无法继续这次对话' }]
+          ? [{ id: 'session', label: t('actions.deleteSession', agent?.label ?? thread.agent), hint: t('actions.deleteSessionHint') }]
           : []),
-        ...(tree ? [{ id: 'worktree', label: '同时删除工作树和分支', hint: `${tree.branch}，在 ${folderName(tree.of)}/.worktrees 下` }] : []),
+        ...(tree ? [{ id: 'worktree', label: t('actions.deleteWorktree'), hint: t('actions.deleteWorktreeHint', tree.branch, folderName(tree.of)) }] : []),
       ];
       dialogNode = (
         <Dialog
-          title="永久删除这个线程？"
-          message={`“${thread.title}” 在这里的记录和图片会被删除，无法恢复。${agent?.label ?? thread.agent} 自己保存的会话默认不动，还能在终端里继续。${tree ? '工作树里的文件默认也不动。' : ''}`}
+          title={t('actions.deleteTitle')}
+          message={t('actions.deleteMessage', thread.title, agent?.label ?? thread.agent, Boolean(tree))}
           options={extras}
-          confirmLabel="永久删除"
+          confirmLabel={t('archive.delete')}
           danger
           onConfirm={(_, checked) => {
             const picked = (id: string) => checked[extras.findIndex((x) => x.id === id)] === true;
@@ -309,12 +310,12 @@ export function useThreadActions(deps: Deps) {
       );
     } else if (dialog.kind === 'delete-worktree') {
       const { thread, agentSession, changes, commits } = dialog;
-      const left = [changes > 0 && `${changes} 个文件没有提交`, commits > 0 && `${commits} 个提交只在这个分支上`].filter(Boolean).join('，');
+      const left = formatList([changes > 0 && t('actions.uncommitted', changes), commits > 0 && t('actions.unpushed', commits)].filter((x): x is string => Boolean(x)));
       dialogNode = (
         <Dialog
-          title="工作树里还有没存到别处的东西"
-          message={`${left}。连工作树一起删除后，这些就找不回来了。`}
-          confirmLabel="仍然删除"
+          title={t('actions.worktreeDirty')}
+          message={t('actions.worktreeDirtyMessage', left)}
+          confirmLabel={t('actions.deleteAnyway')}
           danger
           onConfirm={() => void removeThread(thread, { agentSession, worktree: true, force: true })}
           onCancel={close}
@@ -322,17 +323,16 @@ export function useThreadActions(deps: Deps) {
       );
     } else if (dialog.kind === 'fork') {
       const { thread, turnId, branch, changes } = dialog;
-      const carried = changes > 0 ? `，${changes} 个没提交的改动一起带过去` : '';
       dialogNode = (
         <ChoiceDialog
-          title="从这里分叉"
+          title={t('actions.forkTitle')}
           choices={[
-            { id: 'here', icon: <IconFork size={18} />, label: '在当前目录分叉', hint: '和原线程用同一份文件' },
+            { id: 'here', icon: <IconFork size={18} />, label: t('actions.forkHere'), hint: t('actions.forkHereHint') },
             {
               id: 'worktree',
               icon: <IconWorktree size={18} />,
-              label: '在新工作树分叉',
-              hint: `从${branch ? ` ${branch} ` : '当前提交'}新开一个分支和一份文件${carried}`,
+              label: t('actions.forkWorktree'),
+              hint: t('actions.forkWorktreeHint', branch, changes),
             },
           ]}
           onPick={(id) => {
@@ -346,10 +346,10 @@ export function useThreadActions(deps: Deps) {
       const { thread } = dialog;
       dialogNode = (
         <Dialog
-          title="新建分区"
-          message="分区是你自己起名的分组，比如一个需求或一个阶段。"
-          input={{ initial: '', label: '分区名称' }}
-          confirmLabel="创建"
+          title={t('sidebar.newSection')}
+          message={t('actions.sectionMessage')}
+          input={{ initial: '', label: t('actions.sectionName') }}
+          confirmLabel={t('actions.create')}
           onConfirm={(name) =>
             void guard(async () => {
               const section = await api.createSection(name ?? '');
@@ -364,9 +364,9 @@ export function useThreadActions(deps: Deps) {
       const { section } = dialog;
       dialogNode = (
         <Dialog
-          title="重命名分区"
-          input={{ initial: section.name, label: '分区名称' }}
-          confirmLabel="保存"
+          title={t('actions.renameSection')}
+          input={{ initial: section.name, label: t('actions.sectionName') }}
+          confirmLabel={t('actions.save')}
           onConfirm={(name) =>
             void guard(async () => {
               await api.renameSection(section.id, name ?? section.name);
@@ -385,9 +385,9 @@ export function useThreadActions(deps: Deps) {
       const { section } = dialog;
       dialogNode = (
         <Dialog
-          title={`删除分区“${section.name}”？`}
-          message="里面的线程不会被删除，会回到各自的项目下。"
-          confirmLabel="删除分区"
+          title={t('actions.deleteSectionTitle', section.name)}
+          message={t('actions.deleteSectionMessage')}
+          confirmLabel={t('actions.deleteSection')}
           danger
           onConfirm={() =>
             void guard(async () => {
@@ -419,7 +419,7 @@ export function useThreadActions(deps: Deps) {
   return {
     openThreadMenu: (thread: Thread, x: number, y: number) => setMenu({ thread, x, y }),
     openSectionMenu: (section: Section, x: number, y: number) => setMenu({ section, x, y }),
-    copyConversation: (thread: Thread) => void copy(markdownOf(thread), '对话'),
+    copyConversation: (thread: Thread) => void copy(markdownOf(thread), t('actions.what.conversation')),
     newSection: () => setDialog({ kind: 'new-section', thread: null }),
     /** Opens the handover, to pick who takes over or copy what it says. */
     handover: (thread: Thread) => setDialog({ kind: 'handover', thread }),
@@ -431,7 +431,7 @@ export function useThreadActions(deps: Deps) {
       if (!api) return;
       try {
         const result = await api.handoverSummary(thread.id);
-        if (!('summary' in result)) throw new Error('交接信息尚未就绪，请重试。');
+        if (!('summary' in result)) throw new Error(t('handover.notReady'));
         const successor = await api.createHandoverThread(thread.id, agent);
         await api.startTurn(successor.id, handoverMessage(api, result.summary));
         onThreadOpen(successor);

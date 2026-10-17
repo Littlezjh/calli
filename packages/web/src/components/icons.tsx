@@ -295,6 +295,12 @@ export const IconGlobe = (p: { size?: number }) => (
     <path d="M3.5 12h17M12 3.5c2.6 2.4 3.9 5.2 3.9 8.5s-1.3 6.1-3.9 8.5c-2.6-2.4-3.9-5.2-3.9-8.5s1.3-6.1 3.9-8.5z" />
   </Svg>
 );
+/** A character and a letter: the language the hub speaks. */
+export const IconLanguage = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M3 5.5h10M8 3.5v2M5 9.5c1.6 2.6 3.7 4.4 6.5 5.5M11.5 5.5c-.9 4.4-3.5 7.7-8 9.5M13 20.5l4-9.5 4 9.5M14.4 17.5h5.2" />
+  </Svg>
+);
 export const IconComputer = (p: { size?: number }) => (
   <Svg {...p}>
     <rect x="4" y="4" width="16" height="12" rx="2" />

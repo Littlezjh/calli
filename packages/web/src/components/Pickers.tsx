@@ -6,6 +6,7 @@ import { AgentMark, IconBolt, IconEffortGauge, IconCompress, IconRefresh, IconCh
 import { Popover } from './Popover';
 import { EffortSlider } from './EffortSlider';
 import { useIsNarrow } from '../hooks';
+import { t } from '../i18n';
 
 const PERMISSION_ICON: Record<string, (p: { size?: number }) => JSX.Element> = {
   ask: IconHand,
@@ -32,11 +33,11 @@ export function PermissionPicker({ modes, value, onChange, canAsk, openSignal, q
   const Icon = PERMISSION_ICON[value] ?? IconShield;
   return (
     <Popover
-      label="权限"
+      label={t('statusPanel.permission')}
       openSignal={openSignal}
       align={quietFor === undefined ? undefined : 'end'}
       triggerClassName={quietFor === undefined ? `tool-btn keep${value === 'full_access' ? ' warn' : ''}` : 'member-model set'}
-      triggerLabel={quietFor === undefined ? undefined : `${quietFor} 的权限`}
+      triggerLabel={quietFor === undefined ? undefined : t('pickers.permissionFor', quietFor)}
       triggerTitle={permissionHint(value, canAsk)}
       trigger={
         <>
@@ -47,7 +48,7 @@ export function PermissionPicker({ modes, value, onChange, canAsk, openSignal, q
     >
       {(close) => (
         <>
-          <div className="pop-title">{canAsk ? '如何批准 agent 的操作？' : '允许 agent 做什么？'}</div>
+          <div className="pop-title">{canAsk ? t('pickers.howApprove') : t('pickers.whatAllow')}</div>
           {ordered.map((m) => {
             const ItemIcon = PERMISSION_ICON[m] ?? IconShield;
             return (
@@ -123,20 +124,20 @@ function defaultTarget(models: ModelOption[]): string | undefined {
 
 /** The name shown for a model id. With no override, the model the agent's default points at. */
 export function modelName(models: ModelOption[], id: string | null): string {
-  if (id === null) return defaultTarget(models) ?? '默认模型';
+  if (id === null) return defaultTarget(models) ?? t('pickers.defaultModel');
   return models.find((m) => m.id === id)?.label ?? id;
 }
 
 /** Why pictures cannot be sent with this model, or null when they can. */
 export function imagesBlocked(models: ModelOption[], id: string | null): string | null {
   const option = resolveModel(models, id);
-  return option?.images === false && !option.imagesVia ? `${option.label} 不能读图片，请换一个模型` : null;
+  return option?.images === false && !option.imagesVia ? t('pickers.noImages', option.label) : null;
 }
 
 /** How pictures reach a model that cannot read them itself, or null when it reads them (or cannot get them at all). */
 export function imagesNote(models: ModelOption[], id: string | null): string | null {
   const option = resolveModel(models, id);
-  return option?.images === false && option.imagesVia ? `${option.label} 不能直接看图，会用 ${option.imagesVia} 交给能看图的模型` : null;
+  return option?.images === false && option.imagesVia ? t('pickers.imagesVia', option.label, option.imagesVia) : null;
 }
 
 /**
@@ -152,11 +153,11 @@ export function effortsForModel(models: ModelOption[], model: string | null, fal
  * (stored as null), so there is never a second, duplicate default row.
  */
 export function modelRows(models: ModelOption[]): Array<{ value: string | null; label: string; hint?: string }> {
-  const rest = models.filter((m) => m.id !== AGENT_DEFAULT).map((m) => ({ value: m.id, label: m.label, hint: [m.description, m.speeds?.some(isFastSpeed) ? '可加速' : ''].filter(Boolean).join(' · ') || undefined }));
+  const rest = models.filter((m) => m.id !== AGENT_DEFAULT).map((m) => ({ value: m.id, label: m.label, hint: [m.description, m.speeds?.some(isFastSpeed) ? t('pickers.canAccelerate') : ''].filter(Boolean).join(' · ') || undefined }));
   const target = defaultTarget(models);
   const first = target
-    ? { value: null, label: '默认', hint: `当前是 ${target}` }
-    : { value: null, label: '默认模型', hint: '使用 agent 自己配置的模型' };
+    ? { value: null, label: t('pickers.default'), hint: t('pickers.currently', target) }
+    : { value: null, label: t('pickers.defaultModel'), hint: t('pickers.agentModel') };
   return [first, ...rest];
 }
 
@@ -171,15 +172,15 @@ export function ModelPicker(props: ModelProps) {
   if (models.length === 0 && efforts.length === 0 && quietFor === undefined) {
     return (
       <Popover
-        label="模型"
+        label={t('statusPanel.model')}
         openSignal={openSignal}
         align="end"
         triggerClassName="tool-btn model-control-trigger"
-        triggerLabel="模型：暂无可选模型"
-        triggerTitle="暂无可选模型"
-        trigger={<><span className="model-trigger-name">模型</span><IconChevron size={13} open /></>}
+        triggerLabel={t('pickers.modelNoneLabel')}
+        triggerTitle={t('pickers.noModels')}
+        trigger={<><span className="model-trigger-name">{t('statusPanel.model')}</span><IconChevron size={13} open /></>}
       >
-        {close => <><div className="pop-title">暂无可选模型</div><p className="member-model-empty">还没有从这个实例读到可选模型。请检查实例的模型配置与登录状态，配置完成后刷新页面。</p>{props.onDiagnose && <button type="button" role="menuitem" className="pop-item compact" onClick={() => { close(); props.onDiagnose?.(); }}><span className="pop-item-label">检查实例</span></button>}</>}
+        {close => <><div className="pop-title">{t('pickers.noModels')}</div><p className="member-model-empty">{t('pickers.noModelsHint')}</p>{props.onDiagnose && <button type="button" role="menuitem" className="pop-item compact" onClick={() => { close(); props.onDiagnose?.(); }}><span className="pop-item-label">{t('pickers.diagnose')}</span></button>}</>}
       </Popover>
     );
   }
@@ -189,27 +190,27 @@ export function ModelPicker(props: ModelProps) {
     const chosen = [model ? modelName(models, model) : '', shownEffort ? (EFFORT_LABELS[shownEffort] ?? shownEffort) : ''].filter(Boolean).join(' · ');
     return (
       <Popover
-        label="模型与思考强度"
+        label={t('pickers.modelAndEffort')}
         align="end"
         panelClassName="model-control-panel"
         triggerClassName={`member-model${chosen ? ' set' : ''}`}
-        triggerLabel={`${quietFor} 的模型与思考强度`}
-        triggerTitle={chosen || '模型与思考强度：默认'}
+        triggerLabel={t('pickers.modelAndEffortFor', quietFor)}
+        triggerTitle={chosen || t('pickers.modelAndEffortDefault')}
         trigger={<><IconBolt size={14} />{chosen && <span>{chosen}</span>}</>}
       >
-        {() => (models.length === 0 && efforts.length === 0 ? <p className="member-model-empty">这个实例没有可选的模型或思考强度。</p> : <ModelControl {...props} />)}
+        {() => (models.length === 0 && efforts.length === 0 ? <p className="member-model-empty">{t('pickers.nothingToChoose')}</p> : <ModelControl {...props} />)}
       </Popover>
     );
   }
   return (
     <Popover
-      label="模型与思考强度"
+      label={t('pickers.modelAndEffort')}
       openSignal={openSignal}
       align="end"
       panelClassName="model-control-panel"
       triggerClassName={`tool-btn model-control-trigger${narrow && levels.length > 0 ? ' dial-only' : ''}`}
-      triggerTitle={`${modelName(models, model)} · ${shownEffort ? (EFFORT_LABELS[shownEffort] ?? shownEffort) : '默认强度'}`}
-      triggerLabel={`模型与思考强度：${modelName(models, model)} · ${shownEffort ? (EFFORT_LABELS[shownEffort] ?? shownEffort) : '默认强度'}`}
+      triggerTitle={`${modelName(models, model)} · ${shownEffort ? (EFFORT_LABELS[shownEffort] ?? shownEffort) : t('pickers.defaultEffort')}`}
+      triggerLabel={t('pickers.modelAndEffortIs', `${modelName(models, model)} · ${shownEffort ? (EFFORT_LABELS[shownEffort] ?? shownEffort) : t('pickers.defaultEffort')}`)}
       trigger={<>
         {/* A phone has room for the dial alone; the card it opens names the model. */}
         {!(narrow && levels.length > 0) && <span className="model-trigger-name">{modelName(models, model)}</span>}
@@ -236,8 +237,8 @@ function ModelControl({ models, model, efforts, effort, onModel, onEffort, speed
   return showModels ? (
     <>
       <div className="model-list-head">
-        {(levels.length > 0 || canAccelerate) && <button type="button" className="icon-btn model-back" aria-label="返回思考强度" onClick={() => setShowModels(false)}><IconChevron size={16} /></button>}
-        <span>选择模型</span>
+        {(levels.length > 0 || canAccelerate) && <button type="button" className="icon-btn model-back" aria-label={t('pickers.backToEffort')} onClick={() => setShowModels(false)}><IconChevron size={16} /></button>}
+        <span>{t('pickers.chooseModel')}</span>
       </div>
       <div className="pop-scroll">
         {modelRows(models).map((row) => (
@@ -255,21 +256,21 @@ function ModelControl({ models, model, efforts, effort, onModel, onEffort, speed
         {fastSpeed && standardSpeed ? <button
           type="button"
           className="model-speed-toggle"
-          aria-label={accelerated ? '关闭加速' : '开启加速'}
+          aria-label={accelerated ? t('pickers.accelOff') : t('pickers.accelOn')}
           aria-pressed={accelerated}
-          title={accelerated ? '关闭加速，恢复标准速度' : `${speed == null ? '当前沿用智能体设置；' : ''}开启加速，速度更快，用量可能增加`}
+          title={accelerated ? t('pickers.accelOffHint') : t('pickers.accelOnHint', speed == null)}
           onClick={() => onSpeed?.(accelerated ? standardSpeed.id : fastSpeed.id)}
         ><IconBolt size={19} /></button> : <span aria-hidden="true" />}
         <div className="effort-card-heading">
-          <div className="effort-value" aria-live="polite">{levels.length ? (shown ? (EFFORT_LABELS[shown] ?? shown) : '默认') : '无需设置强度'}</div>
-          <button type="button" className="effort-model" disabled={models.length === 0} onClick={() => setShowModels(true)} aria-label={`切换模型，当前 ${modelName(models, model)}`}>
+          <div className="effort-value" aria-live="polite">{levels.length ? (shown ? (EFFORT_LABELS[shown] ?? shown) : t('pickers.default')) : t('pickers.noEffort')}</div>
+          <button type="button" className="effort-model" disabled={models.length === 0} onClick={() => setShowModels(true)} aria-label={t('pickers.switchModel', modelName(models, model))}>
             <span>{modelName(models, model)}</span><IconChevron size={13} />
           </button>
         </div>
-        <button type="button" className="icon-btn effort-reset" aria-label="恢复默认强度" title="恢复默认强度" disabled={selected === null} onClick={() => onEffort(null)}><IconRefresh size={18} /></button>
+        <button type="button" className="icon-btn effort-reset" aria-label={t('pickers.resetEffort')} title={t('pickers.resetEffort')} disabled={selected === null} onClick={() => onEffort(null)}><IconRefresh size={18} /></button>
       </div>
       {levels.length > 0 ? <EffortSlider key={`${model ?? 'default'}:${levels.join(',')}`} levels={levels} value={selected} onChange={onEffort} onPreview={setPreview} />
-        : <div className="pop-note">当前模型不提供思考强度设置。</div>}
+        : <div className="pop-note">{t('pickers.modelNoEffort')}</div>}
     </div>
   );
 }
@@ -367,7 +368,7 @@ export function AgentPicker({ agents, value, onChange, accounts = [], onAddAccou
                   {a.account ? (
                     <span className="pop-item-hint">{a.account}</span>
                   ) : (
-                    !a.available && <span className="pop-item-hint">这台主机上没有找到</span>
+                    !a.available && <span className="pop-item-hint">{t('pickers.notFound')}</span>
                   )}
                 </span>
                 {a.id === value && (
@@ -380,7 +381,7 @@ export function AgentPicker({ agents, value, onChange, accounts = [], onAddAccou
           </>
         ) : (
           <>
-          <div className="pop-title">用哪个 agent？</div>
+          <div className="pop-title">{t('pickers.whichAgent')}</div>
           {groups.map((group) => {
             const solo = group.length === 1 ? group[0] : null;
             if (solo)
@@ -400,7 +401,7 @@ export function AgentPicker({ agents, value, onChange, accounts = [], onAddAccou
                   {marks && <span className="pop-item-icon">{solo.icon && <AgentMark path={solo.icon} size={16} />}</span>}
                   <span className="pop-item-text">
                     <span className="pop-item-label">{solo.label}</span>
-                    {!solo.available && <span className="pop-item-hint">这台主机上没有找到</span>}
+                    {!solo.available && <span className="pop-item-hint">{t('pickers.notFound')}</span>}
                   </span>
                   {solo.id === value && (
                     <span className="pop-item-check">
@@ -432,7 +433,7 @@ export function AgentPicker({ agents, value, onChange, accounts = [], onAddAccou
           })}
           {onAddAccount && accounts.length > 0 && (
             <>
-              <div className="pop-sep">已登录的账号</div>
+              <div className="pop-sep">{t('pickers.accounts')}</div>
               {accounts.map((a) => (
                 <button
                   key={a.id}
@@ -452,7 +453,7 @@ export function AgentPicker({ agents, value, onChange, accounts = [], onAddAccou
                 >
                   <span className="pop-item-text">
                     <span className="pop-item-label">{a.email}</span>
-                    <span className="pop-item-hint">{a.label} · 添加后用这个账号</span>
+                    <span className="pop-item-hint">{t('pickers.addAccount', a.label)}</span>
                   </span>
                   <span className="pop-item-check">
                     {adding === a.id ? <IconSparkle size={13} /> : <IconPlus size={14} />}
@@ -477,12 +478,12 @@ export function UsageMeter({ usage, onCompact, running, compactDisabled, compact
 }) {
   const [compacting, setCompacting] = useState(false);
   const { percent, high, detail } = usage ? usageSummary(usage)
-    : { percent: 0, high: false, detail: '暂未获取上下文用量，下一次响应后更新。' };
+    : { percent: 0, high: false, detail: t('pickers.contextUnknown') };
   // A ring of radius 6 has a circumference of about 37.7; the dash shows the used share of it.
   const circumference = 2 * Math.PI * 6;
   return (
     <Popover
-      label="上下文用量"
+      label={t('pickers.contextUsage')}
       align="end"
       triggerClassName={`usage${high ? ' high' : ''}`}
       trigger={
@@ -501,16 +502,16 @@ export function UsageMeter({ usage, onCompact, running, compactDisabled, compact
               transform="rotate(-90 8 8)"
             />
           </svg>
-          <span>{usage ? `${percent}%` : '上下文'}</span>
+          <span>{usage ? `${percent}%` : t('statusPanel.context')}</span>
         </>
       }
     >
       {(close) => (
         <>
-          <div className="pop-title">上下文</div>
+          <div className="pop-title">{t('statusPanel.context')}</div>
           <div className="pop-note">
             {detail}
-            {high && '。快满了，agent 可能很快会自动压缩前面的内容。'}
+            {high && t('pickers.contextHigh')}
           </div>
           {onCompact && <button type="button" className="pop-item compact context-compact" disabled={compacting || compactDisabled || compactQueued}
             onClick={async () => {
@@ -519,8 +520,8 @@ export function UsageMeter({ usage, onCompact, running, compactDisabled, compact
               finally { setCompacting(false); }
             }}>
             <span className="pop-item-icon"><IconCompress size={17} /></span>
-            <span className="pop-item-text"><span className="pop-item-label">{compacting ? '正在提交…' : compactQueued ? '已排队压缩' : '压缩'}</span>
-              <span className="pop-item-hint">{compactDisabled ? '消息队列已满' : running ? '本轮结束后压缩，保留当前草稿' : '精简较早的对话，释放上下文'}</span>
+            <span className="pop-item-text"><span className="pop-item-label">{compacting ? t('pickers.submitting') : compactQueued ? t('pickers.compactQueued') : t('pickers.compact')}</span>
+              <span className="pop-item-hint">{compactDisabled ? t('pickers.queueFull') : running ? t('pickers.compactAfter') : t('pickers.compactHint')}</span>
             </span>
           </button>}
         </>
@@ -543,25 +544,24 @@ interface WorkspaceProps {
  * `.worktrees/`. Offered only when the directory is in a repository, so it is not there otherwise.
  */
 export function WorkspacePicker({ branch, changes, worktree, onChange }: WorkspaceProps) {
-  const from = branch ? `从 ${branch} ` : '从当前提交';
   const rows = [
-    { value: false, icon: <IconFolder size={16} />, label: '当前目录', hint: '直接在这个目录里改' },
+    { value: false, icon: <IconFolder size={16} />, label: t('pickers.currentDir'), hint: t('pickers.currentDirHint') },
     {
       value: true,
       icon: <IconWorktree size={16} />,
-      label: '新工作树',
-      hint: `${from}新开一个分支，放在 .worktrees 下${changes > 0 ? `，带上 ${changes} 个没提交的改动` : ''}`,
+      label: t('pickers.newWorktree'),
+      hint: t('pickers.newWorktreeHint', branch, changes),
     },
   ];
   return (
     <Popover
-      label="在哪里工作"
+      label={t('pickers.where')}
       triggerClassName="context-btn workspace-btn"
-      triggerTitle={worktree ? '在新工作树里开始' : '在当前目录里开始'}
+      triggerTitle={worktree ? t('pickers.startWorktree') : t('pickers.startDir')}
       trigger={
         <>
           {worktree ? <IconWorktree size={14} /> : <IconFolder size={14} />}
-          <span>{worktree ? '新工作树' : '当前目录'}</span>
+          <span>{worktree ? t('pickers.newWorktree') : t('pickers.currentDir')}</span>
           <IconChevron size={12} open />
         </>
       }

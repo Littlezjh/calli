@@ -5,6 +5,7 @@ import { copyText } from '../clipboard';
 import { PERMISSION_LABELS } from '../permissions';
 import { usageSummary, type Usage } from '../timeline';
 import { IconCheck, IconClose, IconCopy, IconInfo } from './icons';
+import { t } from '../i18n';
 
 interface Props {
   /** The open thread, or null for a thread that has not been started yet. */
@@ -31,13 +32,13 @@ function CopyValue({ value }: { value: string }) {
     return () => clearTimeout(t);
   }, [done]);
   return (
-    <button type="button" className="quiet-btn" aria-label="复制" title={done ? '已复制' : '复制'} onClick={async () => setDone(await copyText(value))}>
+    <button type="button" className="quiet-btn" aria-label={t('common.copy')} title={done ? t('common.copied') : t('common.copy')} onClick={async () => setDone(await copyText(value))}>
       {done ? <IconCheck size={14} /> : <IconCopy size={14} />}
     </button>
   );
 }
 
-const STATUS_LABELS: Record<string, string> = { idle: '空闲', running: '运行中', error: '上一轮出错' };
+const STATUS_LABELS: Record<string, string> = { idle: t('status.idle'), running: t('status.running'), error: t('statusPanel.lastError') };
 
 /**
  * What `/status` shows in a terminal, for any agent: who is answering, with which settings, in
@@ -55,26 +56,26 @@ export function StatusPanel({ thread, agentLabel, model, permission, directory, 
   const summary = usage ? usageSummary(usage) : null;
   const rows: Array<[string, ReactNode, string?]> = [
     ['Agent', agentLabel],
-    ['模型', model],
-    ...(permission ? ([['权限', PERMISSION_LABELS[permission]?.label ?? permission]] as Array<[string, ReactNode]>) : []),
-    ['目录', <code key="dir">{directory}</code>, directory],
+    [t('statusPanel.model'), model],
+    ...(permission ? ([[t('statusPanel.permission'), PERMISSION_LABELS[permission]?.label ?? permission]] as Array<[string, ReactNode]>) : []),
+    [t('statusPanel.directory'), <code key="dir">{directory}</code>, directory],
   ];
   if (thread) {
-    rows.push(['状态', thread.waiting ? waitingLabel(thread) : (STATUS_LABELS[thread.status] ?? thread.status)]);
+    rows.push([t('statusPanel.status'), thread.waiting ? waitingLabel(thread) : (STATUS_LABELS[thread.status] ?? thread.status)]);
     rows.push(
       thread.agentSessionId
-        ? ['会话 ID', <code key="id">{thread.agentSessionId}</code>, thread.agentSessionId]
-        : ['会话 ID', <span key="id" className="muted">发出第一条消息后才有</span>],
+        ? [t('statusPanel.sessionId'), <code key="id">{thread.agentSessionId}</code>, thread.agentSessionId]
+        : [t('statusPanel.sessionId'), <span key="id" className="muted">{t('statusPanel.afterFirst')}</span>],
     );
-    if (thread.resumeCommand) rows.push(['终端里继续', <code key="resume">{thread.resumeCommand}</code>, thread.resumeCommand]);
+    if (thread.resumeCommand) rows.push([t('statusPanel.resume'), <code key="resume">{thread.resumeCommand}</code>, thread.resumeCommand]);
     rows.push([
-      '上下文',
+      t('statusPanel.context'),
       summary ? (
         <span key="usage" className={summary.high ? 'warn-text' : undefined}>
           {summary.percent}% · {summary.detail}
         </span>
       ) : (
-        <span key="usage" className="muted">agent 还没有报告</span>
+        <span key="usage" className="muted">{t('statusPanel.notReported')}</span>
       ),
     ]);
   }
@@ -84,9 +85,9 @@ export function StatusPanel({ thread, agentLabel, model, permission, directory, 
       <div className="panel status-panel" role="dialog" aria-modal="true" aria-labelledby="status-title" onClick={(e) => e.stopPropagation()}>
         <header className="panel-head">
           <h2 id="status-title" className="panel-title">
-            <IconInfo size={20} /> 状态
+            <IconInfo size={20} /> {t('statusPanel.status')}
           </h2>
-          <button className="icon-btn" aria-label="关闭" onClick={onClose}>
+          <button className="icon-btn" aria-label={t('common.close')} onClick={onClose}>
             <IconClose size={18} />
           </button>
         </header>
@@ -112,7 +113,7 @@ export function StatusPanel({ thread, agentLabel, model, permission, directory, 
                   onClose();
                 }}
               >
-                查看 {agentLabel} 的套餐额度
+                {t('statusPanel.quota', agentLabel)}
               </button>
             ) : (
               <button
@@ -123,7 +124,7 @@ export function StatusPanel({ thread, agentLabel, model, permission, directory, 
                   onClose();
                 }}
               >
-                查看 {agentLabel} 的套餐用量（/{usageCommand}）
+                {t('statusPanel.usage', agentLabel, usageCommand!)}
               </button>
             )}
           </div>

@@ -5,6 +5,7 @@ import { useIsNarrow } from '../hooks';
 import { Dialog, DialogSurface } from './Dialog';
 import { Menu, type MenuEntry } from './Menu';
 import { AgentMark, IconCheck, IconClose, IconCopy, IconEdit, IconInfo, IconMore, IconPlus, IconRefresh, IconRestore, IconSearch, IconTrash } from './icons';
+import { t } from '../i18n';
 
 /**
  * The MCP servers of every agent on every machine, in one view: a row per server, a column per
@@ -61,7 +62,7 @@ function configSummary(config: Record<string, unknown>): string {
     return args ? `${config.command} ${args}` : config.command;
   }
   if (typeof config.url === 'string' && config.url) return config.url;
-  return '未知配置';
+  return t('mcp.unknownConfig');
 }
 
 /** Split an args line the way a shell would, minus the escapes nobody types here. */
@@ -90,7 +91,7 @@ function marksFor(column: MachineColumn, agentIds: string[]): JSX.Element[] {
 /** Config as labeled lines for the detail dialog. Env values are part of the config, so they show
  * here — the list stays quiet about them. */
 function ConfigLines({ config }: { config: Record<string, unknown> | null }) {
-  if (!config || Object.keys(config).length === 0) return <p className="panel-empty">没有登记配置。</p>;
+  if (!config || Object.keys(config).length === 0) return <p className="panel-empty">{t('mcp.noConfig')}</p>;
   const lines: Array<[string, string]> = [];
   for (const [key, value] of Object.entries(config)) {
     if (key === 'env' && value && typeof value === 'object' && !Array.isArray(value)) {
@@ -141,8 +142,8 @@ export function McpPage({ api, token, hostId, hosts, agents, onError }: Props) {
   const load = useCallback(async () => {
     const generation = ++loadGeneration.current;
     const wanted: Array<{ id: string | null; label: string }> = [
-      { id: hostId ?? null, label: hostId ? (hosts.find((h) => h.id === hostId)?.label ?? hostId) : '本机' },
-      ...(hostId ? [{ id: null, label: '本机' }] : []),
+      { id: hostId ?? null, label: hostId ? (hosts.find((h) => h.id === hostId)?.label ?? hostId) : t('hosts.local') },
+      ...(hostId ? [{ id: null, label: t('hosts.local') }] : []),
       ...hosts.filter((h) => h.id !== hostId).map((h) => ({ id: h.id, label: h.label })),
     ];
     setColumns((prev) =>
@@ -218,7 +219,7 @@ export function McpPage({ api, token, hostId, hosts, agents, onError }: Props) {
     return out;
   }, [columns, entries, search]);
 
-  /** The business lines worth a filter chip: the ones in the registry, plus 未分组 when something has none. */
+  /** The business lines worth a filter chip: the ones in the registry, plus "ungrouped" when something has none. */
   const lines = useMemo(() => {
     const seen = new Set(entries.map((e) => e.businessLine).filter(Boolean));
     if (allRows.some((row) => !(row.entry?.businessLine ?? ''))) seen.add('');
@@ -251,13 +252,13 @@ export function McpPage({ api, token, hostId, hosts, agents, onError }: Props) {
   };
 
   const menuItems = (row: McpRow): MenuEntry[] => [
-    { id: 'view', label: '查看详情', icon: IconInfo, onSelect: () => setDetail(row) },
-    { id: 'note', label: row.entry ? '编辑标注' : '标注业务线与用途', icon: IconEdit, onSelect: () => setNote({ row }) },
-    { id: 'install', label: '安装到…', icon: IconRestore, onSelect: () => setInstall({ row }) },
+    { id: 'view', label: t('mcp.details'), icon: IconInfo, onSelect: () => setDetail(row) },
+    { id: 'note', label: row.entry ? t('mcp.editNote') : t('mcp.addNote'), icon: IconEdit, onSelect: () => setNote({ row }) },
+    { id: 'install', label: t('mcp.installTo'), icon: IconRestore, onSelect: () => setInstall({ row }) },
     'separator',
     ...row.places.map((place) => ({
       id: `remove:${place.machine.id ?? ''}:${place.agentId}`,
-      label: `移除（${place.machine.label} · ${place.machine.agents.find((a) => a.id === place.agentId)?.label ?? place.agentId}）`,
+      label: t('mcp.removeFrom', `${place.machine.label} · ${place.machine.agents.find((a) => a.id === place.agentId)?.label ?? place.agentId}`),
       icon: IconTrash,
       danger: true,
       onSelect: () => setRemoving({ row, place }),
@@ -267,7 +268,7 @@ export function McpPage({ api, token, hostId, hosts, agents, onError }: Props) {
           'separator' as MenuEntry,
           {
             id: 'unregister',
-            label: '删除登记',
+            label: t('mcp.unregister'),
             icon: IconTrash,
             danger: true,
             onSelect: () => setDeleting({ row }),
@@ -277,7 +278,7 @@ export function McpPage({ api, token, hostId, hosts, agents, onError }: Props) {
     'separator',
     {
       id: 'copy',
-      label: '复制配置',
+      label: t('mcp.copyConfig'),
       icon: IconCopy,
       disabled: row.config === null,
       onSelect: () => {
@@ -290,33 +291,33 @@ export function McpPage({ api, token, hostId, hosts, agents, onError }: Props) {
     <div className="skills-page mcp-page">
       <header className="skills-head">
         <h1 className="skills-title">MCP</h1>
-        <p className="skills-hint">各台机器各个 agent 配置的 MCP 服务在这里一览：标注业务线与用途，互相安装，按业务线浏览。</p>
+        <p className="skills-hint">{t('mcp.hint')}</p>
         <div className="skills-tools">
           <label className="skills-search">
             <IconSearch size={15} />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索名称、业务线、命令" aria-label="搜索 MCP" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('mcp.searchPlaceholder')} aria-label={t('mcp.search')} />
             {search && (
-              <button className="icon-btn" aria-label="清除搜索" onClick={() => setSearch('')}>
+              <button className="icon-btn" aria-label={t('skills.clearSearch')} onClick={() => setSearch('')}>
                 <IconClose size={14} />
               </button>
             )}
           </label>
-          <button className="icon-btn" aria-label="重新读取" title="重新读取" onClick={() => void load()}>
+          <button className="icon-btn" aria-label={t('skills.reload')} title={t('skills.reload')} onClick={() => void load()}>
             <IconRefresh size={17} />
           </button>
           <button className="primary" onClick={() => setNote({ row: null })}>
             <IconPlus size={15} />
-            登记 MCP
+            {t('mcp.register')}
           </button>
         </div>
         {lines.length > 1 && (
-          <div className="mcp-lines" role="group" aria-label="按业务线筛选">
+          <div className="mcp-lines" role="group" aria-label={t('mcp.filterLine')}>
             <button type="button" className={`mcp-line${line === null ? ' on' : ''}`} onClick={() => setLine(null)}>
-              全部
+              {t('trace.all')}
             </button>
             {lines.map((l) => (
               <button key={l} type="button" className={`mcp-line${line === l ? ' on' : ''}`} onClick={() => setLine(line === l ? null : l)}>
-                {l === '' ? '未分组' : l}
+                {l === '' ? t('mcp.ungrouped') : l}
               </button>
             ))}
           </div>
@@ -329,7 +330,7 @@ export function McpPage({ api, token, hostId, hosts, agents, onError }: Props) {
           {columns.map((c) => (
             <div key={c.id ?? 'local'} className="skills-cell skills-cell-machine" role="columnheader">
               {c.label}
-              {c.listing === null && c.error && <span className="skills-machine-error" title={c.error}>连不上</span>}
+              {c.listing === null && c.error && <span className="skills-machine-error" title={c.error}>{t('skills.unreachable')}</span>}
             </div>
           ))}
         </div>
@@ -338,34 +339,34 @@ export function McpPage({ api, token, hostId, hosts, agents, onError }: Props) {
       <div className="skills-list">
         {columns.filter((c) => c.error).map((c) => (
           <p className="skill-sync-error" key={c.id ?? 'local'}>
-            {c.label}：读取失败，点击重新读取重试。
+            {t('skills.readFailed', c.label)}
           </p>
         ))}
         {rows.length === 0 && (
-          <div className="panel-empty">{loading ? '正在读取各台机器的 MCP 配置…' : search || line !== null ? '没有匹配的 MCP。' : '还没有发现任何 MCP。各 agent 配置里出现后这里会列出来，也可以手动登记。'}</div>
+          <div className="panel-empty">{loading ? t('mcp.loading') : search || line !== null ? t('mcp.noMatch') : t('mcp.empty')}</div>
         )}
         {groups.map(([group, groupRows]) => (
           <section key={group} className="mcp-group">
             <div className="mcp-group-head">
-              <span className="mcp-group-name">{group === '' ? '未分组' : group}</span>
+              <span className="mcp-group-name">{group === '' ? t('mcp.ungrouped') : group}</span>
               <span className="mcp-group-count">{groupRows.length}</span>
             </div>
             {groupRows.map((row) => (
               <div key={row.name} className="skills-grid skills-row" style={gridStyle} role="row">
-                <button type="button" className="skills-cell skills-cell-name" role="cell" onClick={() => setDetail(row)} title="查看详情">
+                <button type="button" className="skills-cell skills-cell-name" role="cell" onClick={() => setDetail(row)} title={t('mcp.details')}>
                   <span className="skills-name-col">
                     <span className="skills-name">
                       {row.name}
-                      {row.entry?.server && <span className="mcp-badge" title="配置登记在 hub，未确认装在哪台机器">已登记</span>}
-                      {differs(row) && <span className="skills-differs" title="各处的配置内容不一样">配置不同</span>}
+                      {row.entry?.server && <span className="mcp-badge" title={t('mcp.registeredHint')}>{t('mcp.registered')}</span>}
+                      {differs(row) && <span className="skills-differs" title={t('mcp.differsHint')}>{t('mcp.differs')}</span>}
                     </span>
                     {(row.entry?.description || configSummary(row.config ?? {})) && (
                       <span className="skills-desc">{row.entry?.description || configSummary(row.config ?? {})}</span>
                     )}
                     <span className="skills-meta">
                       {row.places.length
-                        ? `装在 ${new Set(row.places.map((p) => p.machine.id)).size} 台机器 · ${row.places.length} 个 agent`
-                        : '尚未装到任何 agent'}
+                        ? t('mcp.installedOn', new Set(row.places.map((p) => p.machine.id)).size, row.places.length)
+                        : t('mcp.notInstalled')}
                       {row.entry?.businessLine ? ` · ${row.entry.businessLine}` : ''}
                     </span>
                   </span>
@@ -381,16 +382,16 @@ export function McpPage({ api, token, hostId, hosts, agents, onError }: Props) {
                     return (
                       <div key={column.id ?? 'local'} className="skills-cell skills-cell-machine" role="cell">
                         {here.length > 0 ? (
-                          <span className="skill-marks" title={`装在 ${column.label}`}>{marksFor(column, here.map((p) => p.agentId))}</span>
+                          <span className="skill-marks" title={t('skills.installedOn', column.label)}>{marksFor(column, here.map((p) => p.agentId))}</span>
                         ) : (
-                          <button type="button" className="skill-add" disabled={!column.listing || row.config === null} title={`安装到 ${column.label}`} onClick={() => setInstall({ row })}>
-                            <IconPlus size={11} /> 安装
+                          <button type="button" className="skill-add" disabled={!column.listing || row.config === null} title={t('mcp.installOn', column.label)} onClick={() => setInstall({ row })}>
+                            <IconPlus size={11} /> {t('mcp.install')}
                           </button>
                         )}
                       </div>
                     );
                   })}
-                <button type="button" className="row-more" aria-label={`${row.name} 的操作`} onClick={openMenu(row)}>
+                <button type="button" className="row-more" aria-label={t('skills.actions', row.name)} onClick={openMenu(row)}>
                   <IconMore size={15} />
                 </button>
                 {narrow && !single && (
@@ -402,7 +403,7 @@ export function McpPage({ api, token, hostId, hosts, agents, onError }: Props) {
                           <span className="skills-mobile-label">{column.label}</span>
                           {here.length ? marksFor(column, here.map((p) => p.agentId)) : (
                             <button type="button" className="skill-add" disabled={!column.listing || row.config === null} onClick={() => setInstall({ row })}>
-                              <IconPlus size={11} /> 安装
+                              <IconPlus size={11} /> {t('mcp.install')}
                             </button>
                           )}
                         </span>
@@ -416,15 +417,15 @@ export function McpPage({ api, token, hostId, hosts, agents, onError }: Props) {
         ))}
       </div>
 
-      {menu && <Menu label={`${menu.row.name} 的操作`} x={menu.x} y={menu.y} items={menuItems(menu.row)} onClose={() => setMenu(null)} />}
+      {menu && <Menu label={t('skills.actions', menu.row.name)} x={menu.x} y={menu.y} items={menuItems(menu.row)} onClose={() => setMenu(null)} />}
       {detail && <McpDetail row={detail} onClose={() => setDetail(null)} onNote={() => { setDetail(null); setNote({ row: detail }); }} />}
       {note && <McpNoteDialog row={note.row} client={clientFor(null)} onClose={() => setNote(null)} onDone={load} onError={onError} />}
       {install && <McpInstall row={install.row} columns={columns} clientFor={clientFor} onClose={() => setInstall(null)} onDone={load} onError={onError} />}
       {removing && (
         <Dialog
-          title={`移除 ${removing.row.name}？`}
-          message={`从 ${removing.place.machine.label} 的 ${removing.place.machine.agents.find((a) => a.id === removing.place.agentId)?.label ?? removing.place.agentId} 配置中移除（${removing.place.server.sourcePath}）。其他机器和其他 agent 不受影响。`}
-          confirmLabel="移除"
+          title={t('hosts.removeTitle', removing.row.name)}
+          message={t('mcp.removeMessage', removing.place.machine.label, removing.place.machine.agents.find((a) => a.id === removing.place.agentId)?.label ?? removing.place.agentId, removing.place.server.sourcePath)}
+          confirmLabel={t('hosts.remove')}
           danger
           onConfirm={() => {
             const target = removing;
@@ -439,9 +440,9 @@ export function McpPage({ api, token, hostId, hosts, agents, onError }: Props) {
       )}
       {deleting && (
         <Dialog
-          title={`删除 ${deleting.row.name} 的登记？`}
-          message={`只删除 hub 里的业务线与用途标注${deleting.row.entry?.server ? '和登记的配置' : ''}，不动任何 agent 的配置。`}
-          confirmLabel="删除登记"
+          title={t('mcp.unregisterTitle', deleting.row.name)}
+          message={t('mcp.unregisterMessage', Boolean(deleting.row.entry?.server))}
+          confirmLabel={t('mcp.unregister')}
           danger
           onConfirm={() => {
             const target = deleting;
@@ -466,19 +467,19 @@ function McpDetail({ row, onClose, onNote }: { row: McpRow; onClose: () => void;
         <h2 id="mcp-detail-title" className="skill-dialog-title">
           {row.name}
         </h2>
-        <button className="icon-btn" aria-label="关闭" onClick={onClose}>
+        <button className="icon-btn" aria-label={t('common.close')} onClick={onClose}>
           <IconClose size={16} />
         </button>
       </div>
       <div className="skill-dialog-body">
         <p className="mcp-detail-line">
-          {row.entry?.businessLine ? <span className="mcp-line on static">{row.entry.businessLine}</span> : <span className="mcp-detail-muted">未标注业务线</span>}
-          {row.entry?.description ? <span className="mcp-detail-desc">{row.entry.description}</span> : <button className="mcp-detail-note" onClick={onNote}>写两句它是干什么的</button>}
+          {row.entry?.businessLine ? <span className="mcp-line on static">{row.entry.businessLine}</span> : <span className="mcp-detail-muted">{t('mcp.noLine')}</span>}
+          {row.entry?.description ? <span className="mcp-detail-desc">{row.entry.description}</span> : <button className="mcp-detail-note" onClick={onNote}>{t('mcp.describe')}</button>}
         </p>
         <ConfigLines config={row.config} />
         <div className="mcp-places">
-          <div className="skill-sync-label">装在哪里</div>
-          {row.places.length === 0 && <p className="panel-empty">尚未装到任何 agent。</p>}
+          <div className="skill-sync-label">{t('mcp.where')}</div>
+          {row.places.length === 0 && <p className="panel-empty">{t('mcp.notInstalledDot')}</p>}
           {row.places.map((place) => (
             <p key={`${place.machine.id ?? ''}:${place.agentId}`} className="mcp-place">
               <span className="skill-marks">{marksFor(place.machine, [place.agentId])}</span>
@@ -547,55 +548,55 @@ function McpNoteDialog({ row, client, onClose, onDone, onError }: { row: McpRow 
     <DialogSurface className="skill-dialog" labelledBy="mcp-note-title" onClose={onClose} busy={busy}>
       <div className="skill-dialog-head">
         <h2 id="mcp-note-title" className="skill-dialog-title">
-          {row ? `标注 ${row.name}` : '登记 MCP'}
+          {row ? t('mcp.noteTitle', row.name) : t('mcp.register')}
         </h2>
-        <button className="icon-btn" aria-label="关闭" onClick={onClose} disabled={busy}>
+        <button className="icon-btn" aria-label={t('common.close')} onClick={onClose} disabled={busy}>
           <IconClose size={16} />
         </button>
       </div>
       <div className="skill-dialog-body mcp-note">
         <label className="mcp-field">
-          <span>名称</span>
-          <input value={name} onChange={(e) => setName(e.target.value)} disabled={Boolean(row)} placeholder="server 名，如 github" autoFocus={!row} />
+          <span>{t('mcp.name')}</span>
+          <input value={name} onChange={(e) => setName(e.target.value)} disabled={Boolean(row)} placeholder={t('mcp.namePlaceholder')} autoFocus={!row} />
         </label>
         <label className="mcp-field">
-          <span>业务线</span>
-          <input value={businessLine} onChange={(e) => setBusinessLine(e.target.value)} placeholder="如：数据平台" />
+          <span>{t('mcp.line')}</span>
+          <input value={businessLine} onChange={(e) => setBusinessLine(e.target.value)} placeholder={t('mcp.linePlaceholder')} />
         </label>
         <label className="mcp-field">
-          <span>它是干什么的</span>
-          <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} placeholder="给大家看的一句话说明" />
+          <span>{t('mcp.purpose')}</span>
+          <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} placeholder={t('mcp.purposePlaceholder')} />
         </label>
         <div className="mcp-field">
-          <span>登记配置（可选，供安装到各机器）</span>
+          <span>{t('mcp.configLabel')}</span>
           <div className="mcp-kind">
             <label className={`skill-source${kind === 'command' ? ' picked' : ''}`}>
               <input type="radio" name="mcp-kind" checked={kind === 'command'} onChange={() => setKind('command')} disabled={busy} />
-              <span>本地命令</span>
+              <span>{t('mcp.localCommand')}</span>
             </label>
             <label className={`skill-source${kind === 'url' ? ' picked' : ''}`}>
               <input type="radio" name="mcp-kind" checked={kind === 'url'} onChange={() => setKind('url')} disabled={busy} />
-              <span>HTTP 地址</span>
+              <span>{t('mcp.httpUrl')}</span>
             </label>
           </div>
           {kind === 'command' ? (
             <>
-              <input value={command} onChange={(e) => setCommand(e.target.value)} placeholder="命令，如 npx" />
-              <input value={args} onChange={(e) => setArgs(e.target.value)} placeholder="参数，空格分隔，可加引号，如 -y @playwright/mcp@latest" />
-              <textarea value={env} onChange={(e) => setEnv(e.target.value)} rows={2} placeholder={'环境变量，每行一个 KEY=VALUE'} />
+              <input value={command} onChange={(e) => setCommand(e.target.value)} placeholder={t('mcp.commandPlaceholder')} />
+              <input value={args} onChange={(e) => setArgs(e.target.value)} placeholder={t('mcp.argsPlaceholder')} />
+              <textarea value={env} onChange={(e) => setEnv(e.target.value)} rows={2} placeholder={t('mcp.envPlaceholder')} />
             </>
           ) : (
             <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://example.com/mcp" />
           )}
-          <p className="mcp-field-hint">留空则只保存标注，不改任何 agent 的配置。</p>
+          <p className="mcp-field-hint">{t('mcp.configHint')}</p>
         </div>
       </div>
       <div className="dialog-actions">
         <button className="ghost" onClick={onClose} disabled={busy}>
-          取消
+          {t('common.cancel')}
         </button>
         <button className="primary" disabled={busy || !name.trim()} onClick={() => void save()}>
-          {busy ? '保存中…' : '保存'}
+          {busy ? t('mcp.saving') : t('actions.save')}
         </button>
       </div>
     </DialogSurface>
@@ -628,7 +629,7 @@ function McpInstall({
   /** The configs this server has: the registered one plus one per distinct copy found. */
   const sources = useMemo(() => {
     const out: Array<{ key: string; label: string; note: string; config: Record<string, unknown> }> = [];
-    if (row.entry?.server) out.push({ key: 'entry', label: '登记的配置', note: configSummary(row.entry.server), config: row.entry.server });
+    if (row.entry?.server) out.push({ key: 'entry', label: t('mcp.registeredConfig'), note: configSummary(row.entry.server), config: row.entry.server });
     const seen = new Set(out.map((s) => JSON.stringify(s.config)));
     for (const place of row.places) {
       const key = JSON.stringify(place.server.config);
@@ -636,7 +637,7 @@ function McpInstall({
       seen.add(key);
       out.push({
         key: `${place.machine.id ?? ''}:${place.agentId}`,
-        label: `${place.machine.label} 的配置`,
+        label: t('mcp.machineConfig', place.machine.label),
         note: configSummary(place.server.config),
         config: place.server.config,
       });
@@ -711,13 +712,13 @@ function McpInstall({
   const label = (outcome: McpInstallOutcome | undefined): { text: string; tone: 'ok' | 'warn' | 'bad' | 'none' } => {
     switch (outcome?.status) {
       case 'installed':
-        return { text: '已装上', tone: 'ok' };
+        return { text: t('skills.installed'), tone: 'ok' };
       case 'same':
-        return { text: '已是这个配置', tone: 'none' };
+        return { text: t('mcp.same'), tone: 'none' };
       case 'exists':
-        return { text: '配置不同', tone: 'warn' };
+        return { text: t('mcp.differs'), tone: 'warn' };
       case 'error':
-        return { text: '失败', tone: 'bad' };
+        return { text: t('team.failed'), tone: 'bad' };
       default:
         return { text: '', tone: 'none' };
     }
@@ -730,17 +731,17 @@ function McpInstall({
     <DialogSurface className="skill-dialog skill-sync" labelledBy="mcp-install-title" onClose={onClose} busy={busy}>
       <div className="skill-dialog-head">
         <h2 id="mcp-install-title" className="skill-dialog-title">
-          安装「{row.name}」
+          {t('mcp.installTitle', row.name)}
         </h2>
-        <button className="icon-btn" aria-label="关闭" onClick={onClose} disabled={busy}>
+        <button className="icon-btn" aria-label={t('common.close')} onClick={onClose} disabled={busy}>
           <IconClose size={16} />
         </button>
       </div>
 
       <div className="skill-sync-scroll">
         <div className="skill-sync-group">
-          <div className="skill-sync-label">用哪份配置</div>
-          {sources.length === 0 && <p className="panel-empty">这个服务还没有可安装的配置，先在登记里写一份。</p>}
+          <div className="skill-sync-label">{t('mcp.whichConfig')}</div>
+          {sources.length === 0 && <p className="panel-empty">{t('mcp.noSources')}</p>}
           {sources.map((s) => (
             <label key={s.key} className={`skill-source${source === s ? ' picked' : ''}`}>
               <input type="radio" name={`mcp-source-${row.name}`} checked={source === s} disabled={busy || Boolean(done)} onChange={() => setSourceKey(s.key)} />
@@ -755,37 +756,37 @@ function McpInstall({
         </div>
 
         <div className="skill-sync-group">
-          <div className="skill-sync-label">装到哪些 agent</div>
+          <div className="skill-sync-label">{t('skills.to')}</div>
           {columns.map((column) => {
             const reachable = column.listing !== null;
-            const chips = targets.filter((t) => t.machine === column);
+            const chips = targets.filter((target) => target.machine === column);
             return (
               <div key={column.id ?? 'local'} className="skill-target-row">
                 <span className="skill-target-machine">{column.label}</span>
                 <span className="skill-target-agents">
-                  {!reachable && <span className="skill-target-none">连不上，稍后再试</span>}
-                  {reachable && chips.map((t) => {
-                    const outcome = done?.get(t.key);
+                  {!reachable && <span className="skill-target-none">{t('skills.unreachableLater')}</span>}
+                  {reachable && chips.map((target) => {
+                    const outcome = done?.get(target.key);
                     const state = label(outcome);
                     return (
                       <button
-                        key={t.key}
+                        key={target.key}
                         type="button"
-                        className={`skill-target${checked.has(t.key) ? ' on' : ''}${outcome ? ` ${state.tone}` : ''}`}
+                        className={`skill-target${checked.has(target.key) ? ' on' : ''}${outcome ? ` ${state.tone}` : ''}`}
                         disabled={busy || Boolean(done)}
-                        aria-pressed={checked.has(t.key)}
-                        title={t.has ? '这个 agent 已配置此服务；配置不同时会先询问是否覆盖' : '这个 agent 还没有'}
-                        onClick={() => toggle(t.key)}
+                        aria-pressed={checked.has(target.key)}
+                        title={target.has ? t('mcp.hasServer') : t('mcp.notYet')}
+                        onClick={() => toggle(target.key)}
                       >
-                        {t.icon ? <AgentMark path={t.icon} size={13} /> : null}
-                        <span className="skill-target-name">{t.label}</span>
+                        {target.icon ? <AgentMark path={target.icon} size={13} /> : null}
+                        <span className="skill-target-name">{target.label}</span>
                         {outcome ? (
                           state.tone === 'ok' ? <IconCheck size={12} /> : <span className={`skill-target-state ${state.tone}`}>{state.text}</span>
                         ) : null}
                       </button>
                     );
                   })}
-                  {reachable && chips.length === 0 && <span className="skill-target-none">没有支持写入的 agent</span>}
+                  {reachable && chips.length === 0 && <span className="skill-target-none">{t('mcp.noTargets')}</span>}
                 </span>
               </div>
             );
@@ -796,7 +797,7 @@ function McpInstall({
           <div className="skill-sync-results">
             {[...done.values()].filter((o) => o.status === 'error').map((o) => (
               <p key={`err:${o.machineId}:${o.agent}`} className="skill-sync-error">
-                {o.agent}：{o.error ?? '装不上'}
+                {o.agent}：{o.error ?? t('skills.installFailed')}
               </p>
             ))}
           </div>
@@ -807,23 +808,23 @@ function McpInstall({
         {existsKeys && existsKeys.size > 0 ? (
           <>
             <button className="ghost" onClick={onClose}>
-              关闭
+              {t('common.close')}
             </button>
             <button className="primary" onClick={() => void run(existsKeys)}>
-              覆盖 {existsKeys.size} 处
+              {t('skills.overwrite', existsKeys.size)}
             </button>
           </>
         ) : done ? (
           <button className="primary" onClick={onClose}>
-            完成
+            {t('step.done')}
           </button>
         ) : (
           <>
             <button className="ghost" onClick={onClose} disabled={busy}>
-              取消
+              {t('common.cancel')}
             </button>
             <button className="primary" disabled={busy || !source || checked.size === 0} onClick={() => void run()}>
-              {busy ? '安装中…' : `安装到 ${checked.size} 个 agent`}
+              {busy ? t('mcp.installing') : t('mcp.installCount', checked.size)}
             </button>
           </>
         )}

@@ -12,6 +12,7 @@ import { buildTodoBoard, indentPlace, linkableThreads, moveTodo, openRows, outde
 import { Dialog } from './Dialog';
 import { Menu, type MenuEntry } from './Menu';
 import { IconArrowDown, IconArrowUp, IconCheck, IconChevron, IconClose, IconGrip, IconList, IconMore, IconPlus } from './icons';
+import { t } from '../i18n';
 
 interface Props {
   api: Api;
@@ -128,7 +129,7 @@ function TodoEditor({
           onDeleteEmpty();
         }
       }}
-      aria-label="编辑计划"
+      aria-label={t('todos.edit')}
     />
   );
 }
@@ -321,14 +322,14 @@ export function TodosPage({ api, todos, threads, refreshKey, onReload, onChange,
         ? [
             {
               id: 'up',
-              label: '上移',
+              label: t('todos.moveUp'),
               icon: IconArrowUp,
               disabled: at <= 0,
               onSelect: () => void relocate(todo.id, { parentId: todo.parentId, before: siblings[at - 1]?.id ?? null }),
             },
             {
               id: 'down',
-              label: '下移',
+              label: t('todos.moveDown'),
               icon: IconArrowDown,
               disabled: at === -1 || at >= siblings.length - 1,
               onSelect: () => void relocate(todo.id, { parentId: todo.parentId, before: siblings[at + 2]?.id ?? null }),
@@ -339,11 +340,11 @@ export function TodosPage({ api, todos, threads, refreshKey, onReload, onChange,
     return [
       ...moves,
       ...(isTop
-        ? [{ id: 'add-child', label: '加子项', icon: IconPlus, onSelect: () => setChild({ parentId: todo.id, text: '' }) }]
+        ? [{ id: 'add-child', label: t('todos.addChild'), icon: IconPlus, onSelect: () => setChild({ parentId: todo.id, text: '' }) }]
         : []),
       {
         id: 'link',
-        label: '关联线程',
+        label: t('todos.link'),
         icon: IconList,
         disabled: choices.length === 0,
         submenu: choices.map((t) => ({
@@ -353,20 +354,20 @@ export function TodosPage({ api, todos, threads, refreshKey, onReload, onChange,
         })),
       },
       'separator',
-      { id: 'delete', label: '删除', icon: IconClose, danger: true, onSelect: () => setDeleting(todo) },
+      { id: 'delete', label: t('common.delete'), icon: IconClose, danger: true, onSelect: () => setDeleting(todo) },
     ];
   };
 
   const chip = (todo: Todo, thread: Thread) => (
     <span key={thread.id} className={`todo-chip${thread.archivedAt ? ' archived' : ''}`}>
       <span className={`todo-chip-dot ${thread.status}${thread.waiting ? ' waiting' : ''}`} />
-      <button type="button" className="todo-chip-name" title={`打开线程：${thread.title}`} onClick={() => onOpenThread(thread.id)}>
+      <button type="button" className="todo-chip-name" title={t('todos.openThread', thread.title)} onClick={() => onOpenThread(thread.id)}>
         {thread.title || thread.cwd}
       </button>
       <button
         type="button"
         className="todo-chip-unlink"
-        aria-label="取消关联这个线程"
+        aria-label={t('todos.unlink')}
         onClick={() => void act(() => api.unlinkTodo(todo.id, thread.id))}
       >
         <IconClose size={11} />
@@ -384,7 +385,7 @@ export function TodosPage({ api, todos, threads, refreshKey, onReload, onChange,
             <button
               type="button"
               className="todo-grip"
-              aria-label={`拖动“${todo.text}”调整顺序`}
+              aria-label={t('todos.drag', todo.text)}
               tabIndex={-1}
               onPointerDown={(e) => startDrag(e, todo)}
             >
@@ -394,7 +395,7 @@ export function TodosPage({ api, todos, threads, refreshKey, onReload, onChange,
           <button
             type="button"
             className={`todo-check${todo.done ? ' done' : ''}`}
-            aria-label={todo.done ? '标记为未完成' : '标记为已完成'}
+            aria-label={todo.done ? t('todos.markOpen') : t('todos.markDone')}
             onClick={() => toggle(todo)}
           >
             {todo.done && <IconCheck size={12} />}
@@ -412,7 +413,7 @@ export function TodosPage({ api, todos, threads, refreshKey, onReload, onChange,
             <button
               type="button"
               className={`todo-text${todo.done ? ' done' : ''}`}
-              title="点击编辑"
+              title={t('todos.clickToEdit')}
               onClick={() => setEditing({ id: todo.id, text: todo.text })}
             >
               {todo.text}
@@ -421,7 +422,7 @@ export function TodosPage({ api, todos, threads, refreshKey, onReload, onChange,
           <button
             type="button"
             className="row-more"
-            aria-label={`计划“${todo.text}”的更多操作`}
+            aria-label={t('todos.more', todo.text)}
             onClick={(e) => {
               const [x, y] = below(e);
               setMenu({ todo, x, y });
@@ -440,7 +441,7 @@ export function TodosPage({ api, todos, threads, refreshKey, onReload, onChange,
                 <input
                   className="todo-add"
                   autoFocus
-                  placeholder="加一个子项，回车确认"
+                  placeholder={t('todos.childPlaceholder')}
                   value={child.text}
                   onChange={(e) => setChild({ parentId: todo.id, text: e.target.value })}
                   onKeyDown={(e) => {
@@ -456,7 +457,7 @@ export function TodosPage({ api, todos, threads, refreshKey, onReload, onChange,
                       setChild(null);
                     }
                   }}
-                  aria-label="新子项"
+                  aria-label={t('todos.newChild')}
                 />
               </div>
             )}
@@ -469,8 +470,8 @@ export function TodosPage({ api, todos, threads, refreshKey, onReload, onChange,
   return (
     <div className="todos-page" ref={pageRef}>
       <header className="todos-head">
-        <h1 className="todos-title">计划</h1>
-        <p className="todos-hint">长期的计划，做完划掉；计划可以关联线程，跟着线程推进。</p>
+        <h1 className="todos-title">{t('todos.title')}</h1>
+        <p className="todos-hint">{t('todos.hint')}</p>
       </header>
 
       <div className="todos-list">
@@ -480,7 +481,7 @@ export function TodosPage({ api, todos, threads, refreshKey, onReload, onChange,
           <span className="todo-check blank" aria-hidden="true" />
           <input
             className="todo-add"
-            placeholder={empty ? '写下第一条计划，回车添加' : '添加一条计划，回车确认'}
+            placeholder={empty ? t('todos.firstPlaceholder') : t('todos.addPlaceholder')}
             value={adding}
             onChange={(e) => setAdding(e.target.value)}
             onKeyDown={(e) => {
@@ -489,7 +490,7 @@ export function TodosPage({ api, todos, threads, refreshKey, onReload, onChange,
                 setAdding('');
               }
             }}
-            aria-label="新计划"
+            aria-label={t('todos.new')}
           />
         </div>
       </div>
@@ -498,7 +499,7 @@ export function TodosPage({ api, todos, threads, refreshKey, onReload, onChange,
         <div className="todos-done-group">
           <button type="button" className="todos-done-head" aria-expanded={showDone} onClick={toggleDone}>
             <IconChevron size={13} open={showDone} />
-            已完成 {board.done.length}
+            {t('todos.done', board.done.length)}
           </button>
           {showDone && board.done.map((n) => row(n, false))}
         </div>
@@ -508,7 +509,7 @@ export function TodosPage({ api, todos, threads, refreshKey, onReload, onChange,
 
       {menu && (
         <Menu
-          label="计划操作"
+          label={t('todos.actions')}
           x={menu.x}
           y={menu.y}
           items={menuEntries(menu.todo)}
@@ -517,9 +518,9 @@ export function TodosPage({ api, todos, threads, refreshKey, onReload, onChange,
       )}
       {deleting && (
         <Dialog
-          title="删除计划"
-          message={deleting.parentId ? '删除这个子项？' : '删除这条计划？它的子项和线程关联会一起删除。'}
-          confirmLabel="删除"
+          title={t('todos.deleteTitle')}
+          message={deleting.parentId ? t('todos.deleteChild') : t('todos.deletePlan')}
+          confirmLabel={t('common.delete')}
           danger
           onConfirm={() => {
             setDeleting(null);

@@ -6,6 +6,7 @@ import { useIsNarrow } from '../hooks';
 import { Dialog, DialogSurface } from './Dialog';
 import { Menu, type MenuEntry } from './Menu';
 import { AgentMark, IconCheck, IconClose, IconCopy, IconInfo, IconMore, IconPlus, IconRefresh, IconRestore, IconSearch, IconTrash } from './icons';
+import { formatDate, formatTime, t } from '../i18n';
 
 /**
  * The skills of every agent on every machine, in one view: a row per skill, a column per machine,
@@ -53,11 +54,11 @@ function bytes(n: number): string {
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
-/** "14:05" today, "3月12日" before that: enough to tell copies apart. */
+/** "14:05" today, the date before that: enough to tell copies apart. */
 function when(iso: string, now = new Date()): string {
   const at = new Date(iso);
   const sameDay = at.toDateString() === now.toDateString();
-  return sameDay ? at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : `${at.getMonth() + 1}月${at.getDate()}日`;
+  return sameDay ? formatTime(at, { hour: '2-digit', minute: '2-digit' }) : formatDate(at, { month: 'short', day: 'numeric' });
 }
 
 /** The mark of an agent, with its name for hover and screen readers. */
@@ -98,8 +99,8 @@ export function SkillsPage({ api, token, hostId, hosts, agents, onError }: Props
     const generation = ++loadGeneration.current;
     // Keep the hub and offline machines visible even while viewing a remote machine.
     const wanted: Array<{ id: string | null; label: string }> = [
-      { id: hostId ?? null, label: hostId ? (hosts.find((h) => h.id === hostId)?.label ?? hostId) : '本机' },
-      ...(hostId ? [{ id: null, label: '本机' }] : []),
+      { id: hostId ?? null, label: hostId ? (hosts.find((h) => h.id === hostId)?.label ?? hostId) : t('hosts.local') },
+      ...(hostId ? [{ id: null, label: t('hosts.local') }] : []),
       ...hosts.filter((h) => h.id !== hostId).map((h) => ({ id: h.id, label: h.label })),
     ];
     setColumns((prev) =>
@@ -165,16 +166,16 @@ export function SkillsPage({ api, token, hostId, hosts, agents, onError }: Props
   };
 
   const menuItems = (row: SkillRow): MenuEntry[] => [
-    { id: 'view', label: '查看说明', icon: IconInfo, onSelect: () => setPreview({ row, column: row.places[0].machine }) },
-    { id: 'sync', label: '同步到…', icon: IconRestore, onSelect: () => setSync({ row }) },
+    { id: 'view', label: t('skills.view'), icon: IconInfo, onSelect: () => setPreview({ row, column: row.places[0].machine }) },
+    { id: 'sync', label: t('skills.syncTo'), icon: IconRestore, onSelect: () => setSync({ row }) },
     'separator',
     ...row.places.flatMap((p) =>
       p.entry.locations.map((location) => ({
         id: `remove:${p.machine.id ?? ''}:${location.path}`,
         label:
           p.entry.locations.length > 1
-            ? `删除（${p.machine.label} · ${when(location.mtime)}）`
-            : `删除（${p.machine.label}）`,
+            ? t('skills.deleteFrom', `${p.machine.label} · ${when(location.mtime)}`)
+            : t('skills.deleteFrom', p.machine.label),
         icon: IconTrash,
         danger: true,
         onSelect: () => setRemoving({ row, column: p.machine, entry: p.entry, path: location.path }),
@@ -183,7 +184,7 @@ export function SkillsPage({ api, token, hostId, hosts, agents, onError }: Props
     'separator',
     {
       id: 'copy',
-      label: '复制名称',
+      label: t('skills.copyName'),
       icon: IconCopy,
       onSelect: () => {
         void copyText(row.name);
@@ -194,19 +195,19 @@ export function SkillsPage({ api, token, hostId, hosts, agents, onError }: Props
   return (
     <div className="skills-page">
       <header className="skills-head">
-        <h1 className="skills-title">技能</h1>
-        <p className="skills-hint">查看各台机器、各个 agent 的全局技能，选择来源与目标同步。</p>
+        <h1 className="skills-title">{t('composerMenu.skills')}</h1>
+        <p className="skills-hint">{t('skills.hint')}</p>
         <div className="skills-tools">
           <label className="skills-search">
             <IconSearch size={15} />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="搜索技能" aria-label="搜索技能" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('skills.search')} aria-label={t('skills.search')} />
             {search && (
-              <button className="icon-btn" aria-label="清除搜索" onClick={() => setSearch('')}>
+              <button className="icon-btn" aria-label={t('skills.clearSearch')} onClick={() => setSearch('')}>
                 <IconClose size={14} />
               </button>
             )}
           </label>
-          <button className="icon-btn" aria-label="重新读取" title="重新读取" onClick={() => void load()}>
+          <button className="icon-btn" aria-label={t('skills.reload')} title={t('skills.reload')} onClick={() => void load()}>
             <IconRefresh size={17} />
           </button>
         </div>
@@ -218,16 +219,16 @@ export function SkillsPage({ api, token, hostId, hosts, agents, onError }: Props
           {columns.map((c) => (
             <div key={c.id ?? 'local'} className="skills-cell skills-cell-machine" role="columnheader">
               {c.label}
-              {c.listing === null && c.error && <span className="skills-machine-error" title={c.error}>连不上</span>}
+              {c.listing === null && c.error && <span className="skills-machine-error" title={c.error}>{t('skills.unreachable')}</span>}
             </div>
           ))}
         </div>
       )}
 
       <div className="skills-list">
-        {columns.filter((c) => c.error).map((c) => <p className="skill-sync-error" key={c.id ?? 'local'}>{c.label}：读取失败，点击重新读取重试。</p>)}
+        {columns.filter((c) => c.error).map((c) => <p className="skill-sync-error" key={c.id ?? 'local'}>{t('skills.readFailed', c.label)}</p>)}
         {rows.length === 0 && (
-          <div className="panel-empty">{loading ? '正在读取各台机器的技能…' : search ? '没有匹配的技能。' : '这台机器上还没有技能。装好之后再回来看。'}</div>
+          <div className="panel-empty">{loading ? t('skills.loading') : search ? t('skills.noMatch') : t('skills.empty')}</div>
         )}
         {rows.map((row) => (
           <div key={row.name} className="skills-grid skills-row" style={gridStyle} role="row">
@@ -236,20 +237,20 @@ export function SkillsPage({ api, token, hostId, hosts, agents, onError }: Props
               className="skills-cell skills-cell-name"
               role="cell"
               onClick={() => setPreview({ row, column: row.places[0].machine })}
-              title="查看说明"
+              title={t('skills.view')}
             >
               <span className="skills-name-col">
                 <span className="skills-name">
                   {row.name}
-                  {differs(row) && <span className="skills-differs" title="各处的副本内容不一样">版本不同</span>}
+                  {differs(row) && <span className="skills-differs" title={t('skills.differsHint')}>{t('skills.differs')}</span>}
                 </span>
                 {row.description && <span className="skills-desc">{row.description}</span>}
                 <span className="skills-meta">
-                  {row.places[0].entry.fileCount} 个文件 · {bytes(row.places[0].entry.sizeBytes)}
+                  {t('skills.files', row.places[0].entry.fileCount)} · {bytes(row.places[0].entry.sizeBytes)}
                 </span>
               </span>
               {single && row.places[0] && (
-                <span className="skill-marks" title={`装在这台机器，${row.places[0].entry.agents.length} 个 agent 可用`}>
+                <span className="skill-marks" title={t('skills.installedHere', row.places[0].entry.agents.length)}>
                   {marksFor(row.places[0].machine, row.places[0].entry.agents)}
                 </span>
               )}
@@ -260,16 +261,16 @@ export function SkillsPage({ api, token, hostId, hosts, agents, onError }: Props
                 return (
                   <div key={column.id ?? 'local'} className="skills-cell skills-cell-machine" role="cell">
                     {place ? (
-                      <span className="skill-marks" title={`装在 ${column.label}`}>{marksFor(column, place.entry.agents)}</span>
+                      <span className="skill-marks" title={t('skills.installedOn', column.label)}>{marksFor(column, place.entry.agents)}</span>
                     ) : (
-                      <button type="button" className="skill-add" disabled={!column.listing} title={`同步到 ${column.label}`} onClick={() => setSync({ row })}>
-                        <IconPlus size={11} /> 同步
+                      <button type="button" className="skill-add" disabled={!column.listing} title={t('skills.syncToMachine', column.label)} onClick={() => setSync({ row })}>
+                        <IconPlus size={11} /> {t('skills.sync')}
                       </button>
                     )}
                   </div>
                 );
               })}
-            <button type="button" className="row-more" aria-label={`${row.name} 的操作`} onClick={openMenu(row)}>
+            <button type="button" className="row-more" aria-label={t('skills.actions', row.name)} onClick={openMenu(row)}>
               <IconMore size={15} />
             </button>
             {narrow && !single && (
@@ -279,7 +280,7 @@ export function SkillsPage({ api, token, hostId, hosts, agents, onError }: Props
                   return (
                     <span key={column.id ?? 'local'} className="skills-mobile-machine">
                       <span className="skills-mobile-label">{column.label}</span>
-                      {place ? marksFor(column, place.entry.agents) : <button type="button" className="skill-add" disabled={!column.listing} onClick={() => setSync({ row })}><IconPlus size={11} /> 同步</button>}
+                      {place ? marksFor(column, place.entry.agents) : <button type="button" className="skill-add" disabled={!column.listing} onClick={() => setSync({ row })}><IconPlus size={11} /> {t('skills.sync')}</button>}
                     </span>
                   );
                 })}
@@ -289,14 +290,14 @@ export function SkillsPage({ api, token, hostId, hosts, agents, onError }: Props
         ))}
       </div>
 
-      {menu && <Menu label={`${menu.row.name} 的操作`} x={menu.x} y={menu.y} items={menuItems(menu.row)} onClose={() => setMenu(null)} />}
+      {menu && <Menu label={t('skills.actions', menu.row.name)} x={menu.x} y={menu.y} items={menuItems(menu.row)} onClose={() => setMenu(null)} />}
       {preview && <SkillPreview column={preview.column} row={preview.row} clientFor={clientFor} onClose={() => setPreview(null)} onError={onError} />}
       {sync && <SkillSync row={sync.row} columns={columns} clientFor={clientFor} onClose={() => setSync(null)} onDone={load} onError={onError} />}
       {removing && (
         <Dialog
-          title={`删除技能 ${removing.row.name}？`}
-          message={`从 ${removing.column.label} 的 ${removing.path} 移除。agent 下次启动就看不到它了；其他机器不受影响。`}
-          confirmLabel="删除"
+          title={t('skills.deleteTitle', removing.row.name)}
+          message={t('skills.deleteMessage', removing.column.label, removing.path)}
+          confirmLabel={t('common.delete')}
           danger
           onConfirm={() => {
             const target = removing;
@@ -341,19 +342,19 @@ function SkillPreview({ row, column, clientFor, onClose, onError }: { row: Skill
             {row.name}
           </h2>
           {place && <span className="skill-marks">{marksFor(column, place.entry.agents)}</span>}
-          <button className="icon-btn" aria-label="关闭" onClick={onClose}>
+          <button className="icon-btn" aria-label={t('common.close')} onClick={onClose}>
             <IconClose size={16} />
           </button>
         </div>
         {place && (
           <p className="skill-dialog-meta">
-            {column.label} · {place.entry.locations[0].path} · {place.entry.fileCount} 个文件 · {bytes(place.entry.sizeBytes)} · 更新于 {when(place.entry.locations[0].mtime)}
+            {column.label} · {place.entry.locations[0].path} · {t('skills.files', place.entry.fileCount)} · {bytes(place.entry.sizeBytes)} · {t('quota.updatedAt', when(place.entry.locations[0].mtime))}
           </p>
         )}
         <div className="skill-dialog-body">
-          {error && <div className="panel-empty">读不到说明：{error}</div>}
-          {!error && !detail && <div className="panel-empty">读取中…</div>}
-          {detail && <div className="markdown skill-md">{detail.skillMd ? <Markdown>{detail.skillMd}</Markdown> : <p className="panel-empty">这个技能没有写说明。</p>}</div>}
+          {error && <div className="panel-empty">{t('skills.noDoc', error)}</div>}
+          {!error && !detail && <div className="panel-empty">{t('activity.reading')}</div>}
+          {detail && <div className="markdown skill-md">{detail.skillMd ? <Markdown>{detail.skillMd}</Markdown> : <p className="panel-empty">{t('skills.noDescription')}</p>}</div>}
         </div>
     </DialogSurface>
   );
@@ -483,15 +484,15 @@ function SkillSync({
   const label = (outcome: SkillInstallOutcome | undefined): { text: string; tone: 'ok' | 'warn' | 'bad' | 'none' } => {
     switch (outcome?.status) {
       case 'installed':
-        return { text: '已装上', tone: 'ok' };
+        return { text: t('skills.installed'), tone: 'ok' };
       case 'same':
-        return { text: '已是这个版本', tone: 'none' };
+        return { text: t('skills.same'), tone: 'none' };
       case 'exists':
-        return { text: '版本不同', tone: 'warn' };
+        return { text: t('skills.differs'), tone: 'warn' };
       case 'no_dir':
-        return { text: '不支持', tone: 'bad' };
+        return { text: t('diag.unsupportedCap'), tone: 'bad' };
       case 'error':
-        return { text: '失败', tone: 'bad' };
+        return { text: t('team.failed'), tone: 'bad' };
       default:
         return { text: '', tone: 'none' };
     }
@@ -504,16 +505,16 @@ function SkillSync({
     <DialogSurface className="skill-dialog skill-sync" labelledBy="skill-sync-title" onClose={onClose} busy={busy}>
         <div className="skill-dialog-head">
           <h2 id="skill-sync-title" className="skill-dialog-title">
-            同步「{row.name}」
+            {t('skills.syncTitle', row.name)}
           </h2>
-          <button className="icon-btn" aria-label="关闭" onClick={onClose} disabled={busy}>
+          <button className="icon-btn" aria-label={t('common.close')} onClick={onClose} disabled={busy}>
             <IconClose size={16} />
           </button>
         </div>
 
         <div className="skill-sync-scroll">
           <div className="skill-sync-group">
-            <div className="skill-sync-label">从哪里复制</div>
+            <div className="skill-sync-label">{t('skills.from')}</div>
             {sources.map((s) => (
               <label key={`${s.machine.id ?? ''}:${s.place.path}`} className={`skill-source${source === s ? ' picked' : ''}`}>
                 <input
@@ -535,37 +536,37 @@ function SkillSync({
           </div>
 
           <div className="skill-sync-group">
-            <div className="skill-sync-label">装到哪些 agent</div>
+            <div className="skill-sync-label">{t('skills.to')}</div>
             {columns.map((column) => {
               const reachable = column.listing !== null;
-              const chips = targets.filter((t) => t.machine === column);
+              const chips = targets.filter((target) => target.machine === column);
               return (
                 <div key={column.id ?? 'local'} className="skill-target-row">
                   <span className="skill-target-machine">{column.label}</span>
                   <span className="skill-target-agents">
-                    {!reachable && <span className="skill-target-none">连不上，稍后再试</span>}
-                    {reachable && chips.map((t) => {
-                      const outcome = done?.get(t.key);
+                    {!reachable && <span className="skill-target-none">{t('skills.unreachableLater')}</span>}
+                    {reachable && chips.map((target) => {
+                      const outcome = done?.get(target.key);
                       const state = label(outcome);
                       return (
                         <button
-                          key={t.key}
+                          key={target.key}
                           type="button"
-                          className={`skill-target${checked.has(t.key) ? ' on' : ''}${outcome ? ` ${state.tone}` : ''}`}
+                          className={`skill-target${checked.has(target.key) ? ' on' : ''}${outcome ? ` ${state.tone}` : ''}`}
                           disabled={busy || Boolean(done)}
-                          aria-pressed={checked.has(t.key)}
-                          title={t.hasSkill ? '这个 agent 已有此技能；版本不同时会先询问是否覆盖' : '这个 agent 尚未安装'}
-                          onClick={() => toggle(t.key)}
+                          aria-pressed={checked.has(target.key)}
+                          title={target.hasSkill ? t('skills.hasSkill') : t('skills.notInstalled')}
+                          onClick={() => toggle(target.key)}
                         >
-                          {t.agent.icon ? <AgentMark path={t.agent.icon} size={13} /> : null}
-                          <span className="skill-target-name">{t.agent.label}</span>
+                          {target.agent.icon ? <AgentMark path={target.agent.icon} size={13} /> : null}
+                          <span className="skill-target-name">{target.agent.label}</span>
                           {outcome ? (
                             state.tone === 'ok' ? <IconCheck size={12} /> : <span className={`skill-target-state ${state.tone}`}>{state.text}</span>
                           ) : null}
                         </button>
                       );
                     })}
-                    {reachable && chips.length === 0 && <span className="skill-target-none">没有可装的 agent</span>}
+                    {reachable && chips.length === 0 && <span className="skill-target-none">{t('skills.noTargets')}</span>}
                   </span>
                 </div>
               );
@@ -576,7 +577,7 @@ function SkillSync({
             <div className="skill-sync-results">
               {[...done.values()].filter((o) => o.status === 'error' || o.status === 'no_dir').map((o) => (
                 <p key={`err:${o.machineId}:${o.agent}`} className="skill-sync-error">
-                  {o.agent}：{o.error ?? '装不上'}
+                  {o.agent}：{o.error ?? t('skills.installFailed')}
                 </p>
               ))}
             </div>
@@ -587,23 +588,23 @@ function SkillSync({
           {existsKeys && existsKeys.size > 0 ? (
             <>
               <button className="ghost" onClick={onClose}>
-                关闭
+                {t('common.close')}
               </button>
               <button className="primary" onClick={() => void run(existsKeys)}>
-                覆盖 {existsKeys.size} 处
+                {t('skills.overwrite', existsKeys.size)}
               </button>
             </>
           ) : done ? (
             <button className="primary" onClick={onClose}>
-              完成
+              {t('step.done')}
             </button>
           ) : (
             <>
               <button className="ghost" onClick={onClose} disabled={busy}>
-                取消
+                {t('common.cancel')}
               </button>
               <button className="primary" disabled={busy || checked.size === 0} onClick={() => void run()}>
-                {busy ? '同步中…' : `同步到 ${checked.size} 个 agent`}
+                {busy ? t('skills.syncing') : t('skills.syncCount', checked.size)}
               </button>
             </>
           )}

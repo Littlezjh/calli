@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Api } from '../api';
 import { IconClose, IconExternal, IconRefresh } from './icons';
+import { t } from '../i18n';
 
 /**
  * A page an agent wrote, rendered: the file is served from the thread's directory through a
@@ -45,19 +46,19 @@ export function PreviewPanel({ api, threadId, path, onClose, onError }: Props) {
 
   return (
     <div className="preview-scrim" onClick={onClose}>
-      <div className="preview" role="dialog" aria-modal="true" aria-label={`预览 ${name}`} onClick={(e) => e.stopPropagation()}>
+      <div className="preview" role="dialog" aria-modal="true" aria-label={t('preview.label', name)} onClick={(e) => e.stopPropagation()}>
         <div className="preview-bar">
           <span className="preview-name" title={path}>
             {name}
           </span>
           <span className="preview-actions">
             <button className="ghost" onClick={() => void load()}>
-              <IconRefresh size={14} /> 刷新
+              <IconRefresh size={14} /> {t('preview.refresh')}
             </button>
             <button className="ghost" onClick={() => url && window.open(url, '_blank', 'noopener,noreferrer')}>
-              <IconExternal size={14} /> 新标签页
+              <IconExternal size={14} /> {t('preview.newTab')}
             </button>
-            <button className="ghost" onClick={onClose} aria-label="关闭预览">
+            <button className="ghost" onClick={onClose} aria-label={t('preview.close')}>
               <IconClose size={14} />
             </button>
           </span>
@@ -71,10 +72,10 @@ export function PreviewPanel({ api, threadId, path, onClose, onError }: Props) {
             // run, its own assets load same-origin, and the app stays out of reach. Without
             // allow-same-origin the frame would be opaque and the browser would block its CSS.
             sandbox="allow-scripts allow-same-origin"
-            title={`预览 ${name}`}
+            title={t('preview.label', name)}
           />
         ) : (
-          <div className="preview-loading">正在打开…</div>
+          <div className="preview-loading">{t('preview.opening')}</div>
         )}
       </div>
     </div>

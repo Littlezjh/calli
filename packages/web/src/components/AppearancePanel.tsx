@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { MODES, PALETTES, type Appearance, type Theme } from '../appearance';
 import { IconCheck, IconClose, IconPalette } from './icons';
+import { t } from '../i18n';
 
 interface Props {
   appearance: Appearance;
@@ -48,17 +49,17 @@ export function AppearancePanel({ appearance, theme, onChange, onClose }: Props)
       <div className="panel look-panel" role="dialog" aria-modal="true" aria-labelledby="look-title" onClick={(e) => e.stopPropagation()}>
         <header className="panel-head">
           <h2 id="look-title" className="panel-title">
-            <IconPalette size={20} /> 外观
+            <IconPalette size={20} /> {t('appearance.title')}
           </h2>
-          <button className="icon-btn" aria-label="关闭" onClick={onClose}>
+          <button className="icon-btn" aria-label={t('common.close')} onClick={onClose}>
             <IconClose size={18} />
           </button>
         </header>
-        <p className="panel-hint">只改这台设备上的样子，选了就生效。</p>
+        <p className="panel-hint">{t('appearance.hint')}</p>
 
         <div className="panel-list look-body">
           <h3 id="look-mode" className="look-heading">
-            模式
+            {t('appearance.mode')}
           </h3>
           <div className="look-grid modes" role="radiogroup" aria-labelledby="look-mode">
             {MODES.map((m) => (
@@ -87,7 +88,7 @@ export function AppearancePanel({ appearance, theme, onChange, onClose }: Props)
           </div>
 
           <h3 id="look-palette" className="look-heading">
-            主题
+            {t('appearance.palette')}
           </h3>
           <div className="look-grid" role="radiogroup" aria-labelledby="look-palette">
             {PALETTES.map((p) => (

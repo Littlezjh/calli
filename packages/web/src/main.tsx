@@ -3,7 +3,11 @@ import { createRoot } from 'react-dom/client';
 import { App, type AppStart } from './App';
 import { loadToken, saveToken } from './api';
 import { loadHost, saveHost } from './hosts';
+import { localeTag } from './i18n';
 import './styles.css';
+
+// The language was settled when the i18n module loaded; the page says so for fonts, screen readers and spell check.
+document.documentElement.lang = localeTag();
 
 /**
  * Which machine the page shows, and whether it is connected at all. Each machine is a hub of its

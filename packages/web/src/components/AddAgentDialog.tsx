@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { DiscoveredAgent } from './Pickers';
 import { IconClose, IconPlus, IconSparkle } from './icons';
+import { t } from '../i18n';
 
 /**
  * CLIs on this host that look like another copy of a known agent. Adding one is rare, so it lives
@@ -33,15 +34,15 @@ export function AddAgentDialog({ found, onAdd, onClose }: Props) {
       <div className="dialog add-agent" role="dialog" aria-modal="true" aria-labelledby="add-agent-title" onClick={(e) => e.stopPropagation()}>
         <div className="dialog-title-row">
           <h2 id="add-agent-title" className="dialog-title">
-            添加 agent
+            {t('addAgent.title')}
           </h2>
-          <button className="icon-btn" aria-label="关闭" onClick={onClose}>
+          <button className="icon-btn" aria-label={t('common.close')} onClick={onClose}>
             <IconClose size={18} />
           </button>
         </div>
-        <p className="dialog-message">在这台主机上发现的其他 agent 命令。添加后作为新 agent 使用，会出现在 agent 选择器里。</p>
+        <p className="dialog-message">{t('addAgent.message')}</p>
         <div className="handover-targets">
-          {rows.length === 0 && <p className="handover-note">没有新的可添加项。</p>}
+          {rows.length === 0 && <p className="handover-note">{t('addAgent.none')}</p>}
           {rows.map((d) => (
             <button
               key={d.id}

@@ -1,5 +1,6 @@
 import { IconClose } from './icons';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { t } from '../i18n';
 
 interface Props {
   title: string;
@@ -85,7 +86,7 @@ export function Dialog({ title, message, input, options = [], confirmLabel, dang
         ))}
         <div className="dialog-actions">
           <button className="ghost" onClick={onCancel}>
-            取消
+            {t('common.cancel')}
           </button>
           <button className={danger ? 'danger' : 'primary'} onClick={submit} disabled={confirmDisabled || (!!input && !value.trim())}>
             {confirmLabel}
@@ -184,7 +185,7 @@ export function PanelDialog({ title, children, onClose, className = '' }: { titl
   return <div className="dialog-scrim" onClick={onClose}>
     <section className={`panel ${className}`} role="dialog" aria-modal="true" aria-label={title} onClick={event => event.stopPropagation()}>
       <header className="panel-head"><h2 className="panel-title">{title}</h2>
-        <button ref={close} className="icon-btn" aria-label="关闭" onClick={onClose}><IconClose size={18} /></button>
+        <button ref={close} className="icon-btn" aria-label={t('common.close')} onClick={onClose}><IconClose size={18} /></button>
       </header>{children}
     </section>
   </div>;

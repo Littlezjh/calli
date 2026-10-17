@@ -64,7 +64,8 @@ import { NoteMarks, type NoteMark } from './components/NoteMarks';
 import { Toast, type ToastState } from './components/Toast';
 import { ConnectDialog, DemoBar } from './components/ConnectDialog';
 import { DemoApi, DemoError } from './demo/DemoApi';
-import { IconCheck, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconMore, IconPalette, IconPlus, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal } from './components/icons';
+import { IconCheck, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconMore, IconPalette, IconPlus, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconLanguage } from './components/icons';
+import { chooseLocale, LOCALES, localeChoice, t } from './i18n';
 
 const sleep = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve) => {
@@ -356,7 +357,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const onSkills = view === 'skills' && !selectedId;
   const onMcp = view === 'mcp' && !selectedId;
   /** The name of the page the main area shows instead of a thread, for the top bar; null on a thread. */
-  const viewTitle = onTodos ? '计划' : onSchedules ? '定时任务' : onActivity ? '概览' : onSkills ? '技能' : onMcp ? 'MCP' : null;
+  const viewTitle = onTodos ? t('todos.title') : onSchedules ? t('sidebar.schedules') : onActivity ? t('activity.title') : onSkills ? t('composerMenu.skills') : onMcp ? 'MCP' : null;
   const onPage = viewTitle !== null;
 
   // The address follows what the main area shows. Replaced, not pushed: going between the pages and
@@ -462,7 +463,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     // In the demo, doing something asks to connect; a part it has no data for just stays empty.
     if (e instanceof DemoError) {
       if (e.write) askToConnect();
-    } else if (e instanceof AuthError) signOut('token 无效或已过期，请重新输入');
+    } else if (e instanceof AuthError) signOut(t('app.tokenExpired'));
     // A machine that dropped is explained in the main area; the hub is asked at once how it is.
     else if (e instanceof ApiError && e.details.code === 'host_offline') void reloadHosts();
     else setError(message(e));
@@ -548,7 +549,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         try {
           await api.stream('/api/stream', refresh, ctrl.signal);
         } catch (e) {
-          if (e instanceof AuthError) return signOut('token 无效或已过期，请重新输入');
+          if (e instanceof AuthError) return signOut(t('app.tokenExpired'));
           // On another machine, a stream that will not open is how its dropping first shows.
           if (api.host && !ctrl.signal.aborted) void reloadHosts();
         }
@@ -571,7 +572,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     if (Date.now() - updateAskedAt.current < UPDATE_CHECK_MS) return;
     updateAskedAt.current = Date.now();
     void newerBuildAvailable().then((newer) => {
-      if (newer) setToast({ message: '有新版本', action: { label: '刷新', run: () => window.location.reload() }, sticky: true });
+      if (newer) setToast({ message: t('app.newVersion'), action: { label: t('preview.refresh'), run: () => window.location.reload() }, sticky: true });
     });
   };
 
@@ -634,7 +635,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
             ctrl.signal,
           );
         } catch (e) {
-          if (e instanceof AuthError) return signOut('token 无效或已过期，请重新输入');
+          if (e instanceof AuthError) return signOut(t('app.tokenExpired'));
         }
         await sleep(1500, ctrl.signal);
       }
@@ -1038,7 +1039,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       // The composer keeps the draft; the dialog says it will still be there.
       if (e instanceof DemoError) {
         if (showcase) showcase.onInstall();
-        else setConnectAsk({ reason: '连接后再发送，输入框里的内容会留着。' });
+        else setConnectAsk({ reason: t('app.connectToSend') });
       }
       else handleError(e);
       throw e;
@@ -1071,7 +1072,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   };
 
   const editQueued = async (queuedId: string) => {
-    if (!selectedId) throw new Error('没有打开的线程');
+    if (!selectedId) throw new Error(t('composer.noThread'));
     const taken = await api.removeQueued(selectedId, queuedId);
     refreshThreads();
     return { ...taken, videos: await restoreVideos(api, selectedId, taken.videos) };
@@ -1143,7 +1144,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       if (thread.archivedAt) {
         thread = await api.updateThread(hit.threadId, { archived: false });
         setArchiveKey((k) => k + 1);
-        setToast({ message: '已从归档恢复' });
+        setToast({ message: t('app.unarchived') });
       }
       openThread(thread);
       setJump({ threadId: hit.threadId, turnId: hit.turnId });
@@ -1159,7 +1160,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       if (thread.archivedAt) {
         thread = await api.updateThread(threadId, { archived: false });
         setArchiveKey((k) => k + 1);
-        setToast({ message: '已从归档恢复' });
+        setToast({ message: t('app.unarchived') });
       }
       openThread(thread);
       setImportOpen(false);
@@ -1185,7 +1186,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     try {
       const updated = await api.updateThread(id, { workMode: mode });
       setThreads(prev => prev.map(t => t.id === id ? updated : t));
-      if (execute) await api.startTurn(id, '按我们讨论的计划开始执行。');
+      if (execute) await api.startTurn(id, t('app.executePlan'));
     } catch (error) { handleError(error); }
     finally { setModeBusy(false); }
   };
@@ -1242,35 +1243,35 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   // What the slash menu offers besides the agent's own commands. The keywords include the names
   // these have in the agents' terminals (/clear, /resume, /export, /status), so habits still work.
   const hubActions: HubAction[] = [
-    { id: 'new', label: '新线程', hint: '开始一个新的对话', keywords: ['new', 'clear'] },
-    { id: 'status', label: '状态', hint: '会话、模型、上下文和终端恢复命令', keywords: ['status', 'info'] },
-    { id: 'term', label: '终端', hint: '在这台主机上开一个真的终端', keywords: ['term', 'terminal', 'shell', '命令行'] },
+    { id: 'new', label: t('sidebar.newThread'), hint: t('app.cmd.new'), keywords: ['new', 'clear'] },
+    { id: 'status', label: t('statusPanel.status'), hint: t('app.cmd.status'), keywords: ['status', 'info'] },
+    { id: 'term', label: t('term.title'), hint: t('app.cmd.term'), keywords: ['term', 'terminal', 'shell', '命令行'] },
     ...(agents.some((a) => a.capabilities.quota)
-      ? [{ id: 'usage', label: '额度', hint: '所有 agent 的用量、重置时间和刷新', keywords: ['usage', 'quota', '额度', 'cost'] }]
+      ? [{ id: 'usage', label: t('app.quota'), hint: t('app.cmd.usage'), keywords: ['usage', 'quota', '额度', 'cost'] }]
       : []),
-    { id: 'activity', label: '概览', hint: '每天的提问、工具与 MCP，每一轮的执行轨迹', keywords: ['activity', 'overview', 'trace', '概览', '轨迹'] },
-    { id: 'skills', label: '技能', hint: '各机器各 agent 的技能，互相同步', keywords: ['skills', 'skill', '技能'] },
-    { id: 'mcp', label: 'MCP', hint: '各机器各 agent 的 MCP 服务，按业务线管理', keywords: ['mcp', 'server', '业务线'] },
+    { id: 'activity', label: t('activity.title'), hint: t('app.cmd.activity'), keywords: ['activity', 'overview', 'trace', '概览', '轨迹'] },
+    { id: 'skills', label: t('composerMenu.skills'), hint: t('app.cmd.skills'), keywords: ['skills', 'skill', '技能'] },
+    { id: 'mcp', label: 'MCP', hint: t('app.cmd.mcp'), keywords: ['mcp', 'server', '业务线'] },
     ...(models.length || effortLevels.length
-      ? [{ id: 'model', label: '模型与思考强度', hint: modelName(models, model), keywords: ['model', 'effort', 'thinking'] }]
+      ? [{ id: 'model', label: t('pickers.modelAndEffort'), hint: modelName(models, model), keywords: ['model', 'effort', 'thinking'] }]
       : []),
     ...(permissionModes.length
-      ? [{ id: 'permission', label: '权限', hint: PERMISSION_LABELS[permission]?.label ?? '', keywords: ['permission', 'permissions', 'approvals', 'mode'] }]
+      ? [{ id: 'permission', label: t('statusPanel.permission'), hint: PERMISSION_LABELS[permission]?.label ?? '', keywords: ['permission', 'permissions', 'approvals', 'mode'] }]
       : []),
     ...(selected
       ? [
-          { id: 'rename', label: '重命名', hint: '给这个线程改名', keywords: ['rename', 'name'] },
-          { id: 'pin', label: selected.pinned ? '取消置顶' : '置顶', hint: '固定在侧边栏顶部', keywords: ['pin'] },
+          { id: 'rename', label: t('actions.rename'), hint: t('app.cmd.rename'), keywords: ['rename', 'name'] },
+          { id: 'pin', label: selected.pinned ? t('actions.unpin') : t('actions.pin'), hint: t('app.cmd.pin'), keywords: ['pin'] },
           ...(activeCaps?.fork && !forkBlocked(selected)
-            ? [{ id: 'fork', label: '分叉', hint: '复制这个线程，另走一条路', keywords: ['fork', 'branch', 'clone'] }]
+            ? [{ id: 'fork', label: t('sidebar.fork'), hint: t('app.cmd.fork'), keywords: ['fork', 'branch', 'clone'] }]
             : []),
-          { id: 'export', label: '复制对话', hint: '整段对话复制成 Markdown', keywords: ['export', 'copy'] },
-          { id: 'archive', label: '归档', hint: '从侧边栏收起，随时可以恢复', keywords: ['archive'] },
+          { id: 'export', label: t('app.cmd.exportLabel'), hint: t('app.cmd.export'), keywords: ['export', 'copy'] },
+          { id: 'archive', label: t('actions.archive'), hint: t('app.cmd.archive'), keywords: ['archive'] },
         ]
       : []),
-    ...(importAgents.length ? [{ id: 'import', label: '导入历史', hint: '把终端里聊过的会话接到这里', keywords: ['import', 'resume', 'history'] }] : []),
-    { id: 'appearance', label: '外观', hint: '浅色、深色和主题', keywords: ['theme', 'appearance', 'dark', 'light', '主题'] },
-    { id: 'help', label: '全部命令', hint: '这个菜单里就是能用的全部命令', keywords: ['help', 'commands'] },
+    ...(importAgents.length ? [{ id: 'import', label: t('import.title'), hint: t('app.cmd.import'), keywords: ['import', 'resume', 'history'] }] : []),
+    { id: 'appearance', label: t('appearance.title'), hint: t('app.cmd.appearance'), keywords: ['theme', 'appearance', 'dark', 'light', '主题'] },
+    { id: 'help', label: t('app.cmd.helpLabel'), hint: t('app.cmd.help'), keywords: ['help', 'commands'] },
   ];
 
   const runHubAction = (id: string) => {
@@ -1294,7 +1295,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   // The hub has its own controls for these; going through the agent would leave them out of sync.
   const hiddenCommands = [...(models.length ? ['model'] : []), ...(effortLevels.length ? ['effort'] : []), ...(activeCaps?.quota ? ['usage'] : [])];
 
-  const attachBlocked = !activeCaps?.images ? `${agentLabel(activeAgent)} 不支持发图片` : imagesBlocked(models, model);
+  const attachBlocked = !activeCaps?.images ? t('app.noImages', agentLabel(activeAgent)) : imagesBlocked(models, model);
 
   // The top bar names a thread's agent and directory, so the composer does not repeat them: its
   // strip is only for choosing them, before the thread exists.
@@ -1303,7 +1304,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       <AgentPicker agents={agents} value={draftAgent} onChange={pickAgent} accounts={accounts} onAddAccount={addAccount} />
       <ProjectPicker
         projects={projectOptions}
-        machineLabel={host?.label ?? (hostId ? '远程机器' : '本机')}
+        machineLabel={host?.label ?? (hostId ? t('app.remoteMachine') : t('hosts.local'))}
         remote={Boolean(hostId)}
         cwd={draftCwd}
         scratch={draftScratch}
@@ -1327,7 +1328,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       {draftSectionId && sections.some((s) => s.id === draftSectionId) && (
         <button
           className="context-chip"
-          title="新线程会归入这个分区，点一下取消"
+          title={t('app.sectionChip')}
           onClick={() => setDraftSectionId(null)}
         >
           <IconList size={13} />
@@ -1374,34 +1375,34 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           ] : [];
   const collaborationIcon = (m: AgentMention) => agents.find((a) => a.id === (m.kind === 'agent' ? m.id : coordination?.members.find((v) => v.id === m.id)?.thread?.agent))?.icon;
 
-  const collaborationControl = (select: (mention: AgentMention) => void, chosen: AgentMention[]) => ((activeCaps?.coordination || selected?.coordination) && <CoordinationPopover label="协作" panelClassName="coord-picker-panel" triggerClassName={`tool-btn coord-tool${selected?.coordination || draftCollaboration ? ' on' : ''}`} triggerLabel="协作" triggerTitle={selected?.coordination || draftCollaboration ? '协作已启用' : '协作'} trigger={<><IconAgents size={16} /><span>协作</span></>}>
+  const collaborationControl = (select: (mention: AgentMention) => void, chosen: AgentMention[]) => ((activeCaps?.coordination || selected?.coordination) && <CoordinationPopover label={t('app.collab')} panelClassName="coord-picker-panel" triggerClassName={`tool-btn coord-tool${selected?.coordination || draftCollaboration ? ' on' : ''}`} triggerLabel={t('app.collab')} triggerTitle={selected?.coordination || draftCollaboration ? t('app.collabOn') : t('app.collab')} trigger={<><IconAgents size={16} /><span>{t('app.collab')}</span></>}>
       {close => <CollaborationMenu options={collaborationOptions} selected={chosen} icon={collaborationIcon}
         onSelect={mention => { close(); select(mention); }}
-        unavailable={selected?.coordination && !leading ? '请回到主线程选择协作成员' : running ? '当前轮结束后可添加助手' : '暂无可用的协作智能体'}
+        unavailable={selected?.coordination && !leading ? t('app.collabBack') : running ? t('app.collabAfterTurn') : t('app.collabNone')}
         settings={<div className="coord-setup">
-        <p>设置成员的目录、权限和默认模型。选择助手并发送任务后会自动启用协作。</p>
+        <p>{t('app.collabHint')}</p>
         {!selected?.coordination && <>
-          <div className="coord-caption">允许使用的目录</div>
-          {[...new Set([activeCwd, ...workdirs].filter(Boolean))].map(dir => <button className="pop-item compact" role="menuitemcheckbox" aria-checked={(collaborationDirectories.length ? collaborationDirectories : [activeCwd]).includes(dir)} key={dir} onClick={() => setCollaborationDirectories(prev => { const current = prev.length ? prev : [activeCwd]; return current.includes(dir) ? current.filter(v => v !== dir) : [...current, dir]; })}>{(collaborationDirectories.length ? collaborationDirectories : [activeCwd]).includes(dir) ? '已选 · ' : ''}{dir}</button>)}
+          <div className="coord-caption">{t('app.collabDirs')}</div>
+          {[...new Set([activeCwd, ...workdirs].filter(Boolean))].map(dir => <button className="pop-item compact" role="menuitemcheckbox" aria-checked={(collaborationDirectories.length ? collaborationDirectories : [activeCwd]).includes(dir)} key={dir} onClick={() => setCollaborationDirectories(prev => { const current = prev.length ? prev : [activeCwd]; return current.includes(dir) ? current.filter(v => v !== dir) : [...current, dir]; })}>{(collaborationDirectories.length ? collaborationDirectories : [activeCwd]).includes(dir) ? `${t('app.chosen')} · ` : ''}{dir}</button>)}
           <button className="pop-item compact" disabled={running} onClick={() => {
             if (selected) void api.configureCoordination(selected.id, { directories: collaborationDirectories.length ? collaborationDirectories : [selected.cwd], defaults: startingDefaults, permission: memberPermission }).then(value => { setCoordination(value); void refreshThreads(); close(); }).catch(handleError);
             else { setDraftCollaboration(v => !v); close(); }
-          }}>{draftCollaboration ? '关闭协作' : running ? '当前轮结束后可启用' : '启用协作'}</button>
+          }}>{draftCollaboration ? t('app.collabOff') : running ? t('app.collabEnableAfter') : t('app.collabEnable')}</button>
         </>}
         {(!selected?.coordination || leading) && teamAgents.length > 0 && <>
-          <div className="coord-caption">成员的权限</div>
+          <div className="coord-caption">{t('app.memberPermission')}</div>
           {PERMISSION_ORDER.map((mode) => <button type="button" className="pop-item compact" role="menuitemradio" aria-checked={mode === teamPermission} key={mode} title={permissionHint(mode, true)} onClick={() => chooseMemberPermission(mode)}>
             <span className="pop-item-text"><span className="pop-item-label">{PERMISSION_LABELS[mode].label}</span></span>
             {mode === teamPermission && <span className="pop-item-check"><IconCheck size={15} /></span>}
           </button>)}
-          <div className="coord-caption">成员的模型与思考强度</div>
+          <div className="coord-caption">{t('app.memberModel')}</div>
           {teamAgents.map((a) => <div className="coord-default" key={a.id}>
             <span className="pop-item-icon">{a.icon ? <AgentMark path={a.icon} size={15} /> : null}</span>
             <span className="coord-default-name">{a.label}</span>
             {memberModel(a)}
           </div>)}
         </>}
-        {selected?.coordination && <button className="pop-item compact" onClick={() => { setAgentsOpen(true); setFiles(null); close(); }}>查看智能体</button>}
+        {selected?.coordination && <button className="pop-item compact" onClick={() => { setAgentsOpen(true); setFiles(null); close(); }}>{t('team.view')}</button>}
       </div>} />}
     </CoordinationPopover>);
 
@@ -1424,7 +1425,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const teamWaiting = Boolean(coordination?.members.some((m) => m.thread?.waiting));
   const teamRunning = coordination?.members.filter((m) => m.thread?.status === 'running').length ?? 0;
   const teamShown = Boolean(selected?.coordination && (selected.coordination.rootId !== selected.id || selected.coordination.children > 0) && !onPage && hostUp);
-  const teamNote = teamWaiting ? '待批准' : teamRunning ? `${teamRunning} 运行中` : selected?.coordination?.paused ? '已暂停' : '';
+  const teamNote = teamWaiting ? t('app.teamWaiting') : teamRunning ? t('team.running', teamRunning) : selected?.coordination?.paused ? t('team.paused') : '';
 
   // Older daemons advertise /compact before they expose the dedicated capability.
   const canCompact = activeCaps?.compact ?? (commandsByKey[commandsKey] ?? []).some((command) => command.name === 'compact' && command.kind !== 'skill');
@@ -1465,7 +1466,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           api={api}
           roots={workdirs}
           selected={draftCwd}
-          machine={host?.label ?? (hostId ? '远程机器' : '本机')}
+          machine={host?.label ?? (hostId ? t('app.remoteMachine') : t('hosts.local'))}
           onRootsChange={applyWorkdirs}
           onManageRoots={() => {
             setShowDirPicker(false);
@@ -1487,7 +1488,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
             setProjectDialog(null);
             setDraftCwd(path);
             setDraftScratch(false);
-            setToast({ message: `已新建项目 ${folderName(path)}` });
+            setToast({ message: t('app.projectCreated', folderName(path)) });
           }}
         />
       )}
@@ -1526,28 +1527,28 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
 
       <main className="main" ref={mainRef}>
         <header className="topbar">
-          <button className="icon-btn menu-btn" aria-label="打开线程列表" aria-expanded={listOpen} onClick={() => setDrawer((v) => !v)}>
+          <button className="icon-btn menu-btn" aria-label={t('app.openList')} aria-expanded={listOpen} onClick={() => setDrawer((v) => !v)}>
             {compact ? <IconBack size={22} /> : <IconMenu />}
           </button>
           {/* With the list put away, the way back and a new thread move up here. */}
           {sidebarHidden && !compact && (
             <div className="topbar-lead">
-              <button className="icon-btn" aria-label="显示侧边栏" title={`显示侧边栏（${SIDEBAR_SHORTCUT}）`} onClick={toggleSidebar}>
+              <button className="icon-btn" aria-label={t('app.showSidebar')} title={t('app.showSidebarKey', SIDEBAR_SHORTCUT)} onClick={toggleSidebar}>
                 <IconSidebar />
               </button>
-              <button className="icon-btn" aria-label="新线程" title="新线程" onClick={() => newThread()}>
+              <button className="icon-btn" aria-label={t('sidebar.newThread')} title={t('sidebar.newThread')} onClick={() => newThread()}>
                 <IconEdit />
               </button>
             </div>
           )}
           <div className="topbar-heading">
             {/* Every page names itself here, the way a thread does: the bar is never left blank. */}
-            <div className="topbar-title">{host && !hostUp ? host.label : viewTitle ?? (selected ? selected.title : '新线程')}</div>
+            <div className="topbar-title">{host && !hostUp ? host.label : viewTitle ?? (selected ? selected.title : t('sidebar.newThread'))}</div>
             {!selected && host && hostUp && <div className="topbar-sub">{host.label}</div>}
             {selected && (
               <div className="topbar-sub" title={selected.cwd}>
                 {agentLabel(selected.agent)} ·{' '}
-                {selected.scratch ? '不在项目中' : selected.worktree ? `${folderName(selected.worktree.of)} · ${selected.worktree.branch}` : folderName(selected.cwd)}
+                {selected.scratch ? t('projects.none') : selected.worktree ? `${folderName(selected.worktree.of)} · ${selected.worktree.branch}` : folderName(selected.cwd)}
                 {host && ` · ${host.label}`}
               </div>
             )}
@@ -1556,11 +1557,11 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
             <div className="topbar-actions">
               {teamShown && selected.coordination!.rootId !== selected.id && (
                 <button className="coord-status" onClick={() => pick(selected.coordination!.rootId)}>
-                  <IconBack size={14} /><span>返回主线程</span>
+                  <IconBack size={14} /><span>{t('app.backToLead')}</span>
                 </button>
               )}
               {teamShown && selected.coordination!.rootId === selected.id && !(roomy && !agentsOpen && !files && coordination) && (
-                <button className={`coord-status${teamWaiting ? ' attention' : ''}`} aria-label="查看智能体" aria-pressed={agentsOpen} title={`${selected.coordination!.children} 个智能体`} onClick={() => { setAgentsStart(null); setAgentsOpen((v) => !v); setFiles(null); }}>
+                <button className={`coord-status${teamWaiting ? ' attention' : ''}`} aria-label={t('team.view')} aria-pressed={agentsOpen} title={t('sidebar.agents', selected.coordination!.children)} onClick={() => { setAgentsStart(null); setAgentsOpen((v) => !v); setFiles(null); }}>
                   <IconAgents size={15} />
                   <span>{selected.coordination!.children}</span>
                   {teamNote && <span className="coord-status-note">{teamNote}</span>}
@@ -1568,24 +1569,24 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
               )}
               <button
                 className={`icon-btn topbar-files${files ? ' on' : ''}`}
-                aria-label="文件"
+                aria-label={t('files.files')}
                 aria-pressed={Boolean(files)}
-                title="文件"
+                title={t('files.files')}
                 onClick={() => { setAgentsOpen(false); setFiles(files ? null : { path: null, seq: ++filesSeq.current }); }}
               >
                 <IconFiles />
               </button>
               {!compact && (
-                <button className="icon-btn topbar-term" aria-label="打开终端" title="终端" onClick={() => (demo ? askToConnect() : setTermOpen(true))}>
+                <button className="icon-btn topbar-term" aria-label={t('actions.terminal')} title={t('term.title')} onClick={() => (demo ? askToConnect() : setTermOpen(true))}>
                   <IconTerminal />
                 </button>
               )}
-              <button className="icon-btn topbar-new" aria-label="新线程" onClick={() => newThread()}>
+              <button className="icon-btn topbar-new" aria-label={t('sidebar.newThread')} onClick={() => newThread()}>
                 <IconEdit />
               </button>
               <button
                 className="icon-btn topbar-more"
-                aria-label="这个线程的更多操作"
+                aria-label={t('app.threadMore')}
                 onClick={(e) => {
                   const rect = e.currentTarget.getBoundingClientRect();
                   threadActions.openThreadMenu(selected, rect.right - 200, rect.bottom + 6);
@@ -1604,7 +1605,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         {error && (
           <div className="banner" role="alert">
             <span>{error}</span>
-            <button className="icon-btn" aria-label="关闭提示" onClick={() => setError(null)}>
+            <button className="icon-btn" aria-label={t('app.dismiss')} onClick={() => setError(null)}>
               ×
             </button>
           </div>
@@ -1661,7 +1662,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         ) : (
         <div key="thread" className="scroller" ref={scrollerRef} onScroll={onScroll} {...gestureProps}>
           {selected && <TurnRuler scrollerRef={scrollerRef} previews={turnPreviewMap} />}
-          {selected && eventsLoading && <div className="loading-note">加载中…</div>}
+          {selected && eventsLoading && <div className="loading-note">{t('common.loading')}</div>}
           {showcase && selected && !eventsLoading && !timeline.items.length && showcase.intro(selected.id)}
           {selected ? (
             <ThreadView
@@ -1698,7 +1699,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
             />
           ) : (
             <div className="empty">
-              <h2>{draftScratch ? '我们应该做些什么？' : `我们应该在 ${folderName(draftCwd) || '这里'} 中做些什么？`}</h2>
+              <h2>{draftScratch ? t('app.emptyScratch') : t('app.emptyIn', folderName(draftCwd))}</h2>
             </div>
           )}
         </div>
@@ -1706,7 +1707,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
 
         <div className="jump-anchor">
           {selected && !atBottom && (
-            <button className="jump-btn" aria-label="回到底部" onClick={jumpToBottom}>
+            <button className="jump-btn" aria-label={t('app.toBottom')} onClick={jumpToBottom}>
               <IconArrowDown size={17} />
             </button>
           )}
@@ -1723,7 +1724,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           draftKey={hostId ? `host:${hostId}:${selectedId ?? 'new'}` : selectedId ?? 'new'}
           running={running}
           disabled={modeBusy || (!selected && !draftCwd)}
-          placeholder={demo ? '连接 hub 后就能发消息' : workMode === 'plan' && !running ? '先分析和讨论方案' : selected ? (running ? '追加一条，这一轮结束后发送' : '继续这个线程') : draftScratch ? '随便问点什么' : `在 ${folderName(draftCwd) || '工作目录'} 中开始`}
+          placeholder={demo ? t('app.placeholder.demo') : workMode === 'plan' && !running ? t('composerMenu.planOn') : selected ? (running ? t('sideChat.queuePlaceholder') : t('app.placeholder.continue')) : draftScratch ? t('app.placeholder.scratch') : t('app.placeholder.startIn', folderName(draftCwd))}
           onSend={send}
           mentionOptions={collaborationOptions}
           mentionIcon={collaborationIcon}
@@ -1731,7 +1732,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           mentionExtra={(m) => { const a = agents.find((v) => v.id === m.id); return a ? memberModel(a) : null; }}
           mentionDirectories={coordination?.directories ?? (collaborationDirectories.length ? collaborationDirectories : [activeCwd])}
           onStop={stop}
-          planAction={selected && workMode === 'plan' && !running && timeline.items.some(it => it.kind === 'assistant' || it.kind === 'proposal') ? <><span>可以继续讨论，也可以开始执行</span><button className="primary" disabled={modeBusy} onClick={() => void changeWorkMode('execute', true)}>开始执行</button></> : null}
+          planAction={selected && workMode === 'plan' && !running && timeline.items.some(it => it.kind === 'assistant' || it.kind === 'proposal') ? <><span>{t('app.planReady')}</span><button className="primary" disabled={modeBusy} onClick={() => void changeWorkMode('execute', true)}>{t('composer.start')}</button></> : null}
           header={header}
           planMode={activeCaps?.workModes?.includes('plan') ? { active: workMode === 'plan', disabled: running || modeBusy, onChange: active => void changeWorkMode(active ? 'plan' : 'execute') } : undefined}
           left={left}
@@ -1760,7 +1761,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         const a = agents.find((v) => v.id === thread.agent);
         return a ? <MemberModel agent={a} models={modelsByAgent[a.id] ?? []} value={{ model: thread.model ?? null, effort: thread.effort ?? null }} onNeed={needModels} onChange={({ model, effort }) => { void api.updateThread(thread.id, { model, effort }).then(() => refreshThreads()).catch(handleError); }}
           permission={a.capabilities.permissionModes.length ? thread.permissionMode : undefined} onPermission={(permissionMode) => { void api.updateThread(thread.id, { permissionMode }).then(() => refreshThreads()).catch(handleError); }} /> : null;
-      }} leadAgent={threads.find((t) => t.id === coordination.rootId)?.agent} phone={compact} onClose={() => setAgentsOpen(false)} onOpen={thread => { openThread(thread); setAgentsOpen(false); }} onAdjust={name => { setAgentsOpen(false); setSelectedId(coordination.rootId); setRestore({ text: `请调整「${name}」的任务：`, nonce: Date.now() }); }} onRefresh={() => { void refreshThreads(); }} onError={handleError} />}
+      }} leadAgent={threads.find((t) => t.id === coordination.rootId)?.agent} phone={compact} onClose={() => setAgentsOpen(false)} onOpen={thread => { openThread(thread); setAgentsOpen(false); }} onAdjust={name => { setAgentsOpen(false); setSelectedId(coordination.rootId); setRestore({ text: t('app.adjustTask', name), nonce: Date.now() }); }} onRefresh={() => { void refreshThreads(); }} onError={handleError} />}
       {files && selected && api && <FilesPanel api={api} threadId={selected.id} target={files} phone={compact} onClose={() => setFiles(null)} />}
       {preview && api && (
         <PreviewPanel api={api} threadId={preview.threadId} path={preview.path} onClose={() => setPreview(null)} onError={handleError} />
@@ -1817,7 +1818,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           onImported={(thread) => {
             openThread(thread);
             setImportOpen(false);
-            setToast({ message: '已导入' });
+            setToast({ message: t('import.imported') });
           }}
           onOpen={(threadId) => void openImported(threadId)}
           onClose={() => setImportOpen(false)}
@@ -1826,9 +1827,9 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       )}
       {pendingSend && (
         <Dialog
-          title="这个会话刚在终端里用过"
-          message="终端和网页写的是同一个会话，两边轮流发会把顺序搅乱。确认要在这里继续发送吗？"
-          confirmLabel="仍然发送"
+          title={t('app.terminalBusy')}
+          message={t('app.terminalBusyMessage')}
+          confirmLabel={t('app.sendAnyway')}
           onCancel={() => {
             pendingSend.reject(new Error('not sent'));
             setPendingSend(null);
@@ -1842,18 +1843,18 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       )}
       {settingsAt && (
         <Menu
-          label="配置"
+          label={t('sidebar.settings')}
           x={settingsAt.x}
           y={settingsAt.y}
           corner="bottom-right"
           onClose={() => setSettingsAt(null)}
-          items={showcase ? [{ id: 'install', label: '安装 Limi', icon: IconSignIn, onSelect: () => { setDrawer(false); showcase.onInstall(); } }] : [
+          items={showcase ? [{ id: 'install', label: t('app.install'), icon: IconSignIn, onSelect: () => { setDrawer(false); showcase.onInstall(); } }] : [
             // The demo's way in. The look works as it is; the hub's own machinery is left out.
             ...(demo
               ? [
                   {
                     id: 'connect',
-                    label: '连接 hub',
+                    label: t('connect.connectHub'),
                     icon: IconSignIn,
                     onSelect: () => {
                       setDrawer(false);
@@ -1865,7 +1866,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
               : []),
             {
               id: 'appearance',
-              label: '外观',
+              label: t('appearance.title'),
               icon: IconPalette,
               onSelect: () => {
                 setAppearanceOpen(true);
@@ -1873,8 +1874,19 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
               },
             },
             {
+              id: 'language',
+              label: t('locale.menu'),
+              icon: IconLanguage,
+              // Each language is named in itself, so it can be found from any of the others.
+              submenu: [
+                { id: 'locale:system', label: t('locale.system'), checked: localeChoice() === 'system', onSelect: () => chooseLocale('system') },
+                'separator' as const,
+                ...LOCALES.map((l) => ({ id: `locale:${l.id}`, label: l.name, checked: localeChoice() === l.id, onSelect: () => chooseLocale(l.id) })),
+              ],
+            },
+            {
               id: 'archive',
-              label: '已归档',
+              label: t('archive.title'),
               icon: IconArchive,
               onSelect: () => {
                 setArchiveOpen(true);
@@ -1885,7 +1897,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
               ? [
                   {
                     id: 'quota',
-                    label: '额度',
+                    label: t('app.quota'),
                     icon: IconGauge,
                     onSelect: () => {
                       setQuotaOpen(true);
@@ -1898,7 +1910,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
               ? [
                   {
                     id: 'add-agent',
-                    label: '添加 agent',
+                    label: t('addAgent.title'),
                     icon: IconPlus,
                     onSelect: () => {
                       setAddAgentOpen(true);
@@ -1908,16 +1920,16 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
                 ]
               : []),
             // The overview reads only this hub's own log, so the demo has one to show too.
-            { id: 'activity', label: '概览', icon: IconActivity, onSelect: openActivity },
+            { id: 'activity', label: t('activity.title'), icon: IconActivity, onSelect: openActivity },
             ...(demo
               ? []
               : [
-                  { id: 'observability', label: '用量与诊断', icon: IconGauge, onSelect: () => { setObservability('usage'); setDrawer(false); } },
-                  { id: 'skills', label: '技能', icon: IconSparkle, onSelect: openSkills },
+                  { id: 'observability', label: t('obs.title'), icon: IconGauge, onSelect: () => { setObservability('usage'); setDrawer(false); } },
+                  { id: 'skills', label: t('composerMenu.skills'), icon: IconSparkle, onSelect: openSkills },
                   { id: 'mcp', label: 'MCP', icon: IconGlobe, onSelect: openMcp },
                   {
                     id: 'hosts',
-                    label: '机器',
+                    label: t('hosts.machines'),
                     icon: IconServer,
                     onSelect: () => {
                       setHostsOpen(true);
@@ -1929,7 +1941,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
               ? [
                   {
                     id: 'import',
-                    label: '导入历史',
+                    label: t('import.title'),
                     icon: IconImport,
                     onSelect: () => {
                       setImportOpen(true);
@@ -1939,7 +1951,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
                 ]
               : []),
             // Signing out costs the saved token, so it asks first.
-            ...(demo ? [] : ['separator' as const, { id: 'sign-out', label: '退出', icon: IconSignOut, danger: true, onSelect: () => setConfirmSignOut(true) }]),
+            ...(demo ? [] : ['separator' as const, { id: 'sign-out', label: t('app.signOut'), icon: IconSignOut, danger: true, onSelect: () => setConfirmSignOut(true) }]),
           ]}
         />
       )}
@@ -1950,9 +1962,9 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       {connectAsk && !showcase && <ConnectDialog reason={connectAsk.reason} onCancel={() => setConnectAsk(null)} onConnected={(t) => onToken(t)} />}
       {confirmSignOut && (
         <Dialog
-          title="退出登录？"
-          message="这台设备上保存的 token 会被清除，回到示例数据。"
-          confirmLabel="退出"
+          title={t('app.signOutTitle')}
+          message={t('app.signOutMessage')}
+          confirmLabel={t('app.signOut')}
           onCancel={() => setConfirmSignOut(false)}
           onConfirm={() => {
             setConfirmSignOut(false);

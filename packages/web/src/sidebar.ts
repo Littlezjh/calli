@@ -1,6 +1,7 @@
 /** How threads are arranged in the sidebar. Pure, so it can be tested directly. */
 import type { AgentInfo, Section, Thread } from './api';
 import { folderName } from './paths';
+import { t } from './i18n';
 
 /**
  * Which agents need their name next to their mark: a mark several agents share is only
@@ -124,11 +125,11 @@ export function buildActivity(threads: Thread[], search: string, now: Date, sele
 
   const today = startOfDay(now);
   const ages: Array<{ key: string; label: string; within: number }> = [
-    { key: 'today', label: '今天', within: 0 },
-    { key: 'yesterday', label: '昨天', within: 1 },
-    { key: 'week', label: '过去 7 天', within: 7 },
-    { key: 'month', label: '过去 30 天', within: 30 },
-    { key: 'older', label: '更早', within: Infinity },
+    { key: 'today', label: t('sidebar.group.today'), within: 0 },
+    { key: 'yesterday', label: t('sidebar.group.yesterday'), within: 1 },
+    { key: 'week', label: t('sidebar.group.week'), within: 7 },
+    { key: 'month', label: t('sidebar.group.month'), within: 30 },
+    { key: 'older', label: t('sidebar.group.older'), within: Infinity },
   ];
   const byAge = new Map<string, Thread[]>();
   for (const t of visible.filter((t) => urgency(t, selectedId) === null).sort(newestFirst)) {
@@ -139,7 +140,7 @@ export function buildActivity(threads: Thread[], search: string, now: Date, sele
   }
 
   return {
-    groups: [{ key: 'priority', label: '优先级', threads: priority }, ...ages.map((a) => ({ key: a.key, label: a.label, threads: byAge.get(a.key) ?? [] }))].filter(
+    groups: [{ key: 'priority', label: t('sidebar.group.priority'), threads: priority }, ...ages.map((a) => ({ key: a.key, label: a.label, threads: byAge.get(a.key) ?? [] }))].filter(
       (g) => g.threads.length > 0,
     ),
     count: visible.length,

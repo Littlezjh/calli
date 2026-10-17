@@ -1,8 +1,9 @@
+import { t } from './i18n';
 /** Permission levels as the UI shows them. Values match the daemon's PERMISSION_MODES. */
 export const PERMISSION_LABELS: Record<string, { label: string; short: string; hint: string }> = {
-  ask: { label: '请求批准', short: '请求批准', hint: '修改文件和运行命令前都先询问' },
-  auto_edit: { label: '帮我批准', short: '帮我批准', hint: '常规操作自动通过，只在有风险时询问' },
-  full_access: { label: '完全访问权限', short: '完全访问', hint: '不再询问，可直接修改文件和运行命令' },
+  ask: { label: t('permission.ask'), short: t('permission.ask.short'), hint: t('permission.ask.hint') },
+  auto_edit: { label: t('permission.auto_edit'), short: t('permission.auto_edit.short'), hint: t('permission.auto_edit.hint') },
+  full_access: { label: t('permission.full_access'), short: t('permission.full_access.short'), hint: t('permission.full_access.hint') },
 };
 
 /**
@@ -10,7 +11,7 @@ export const PERMISSION_LABELS: Record<string, { label: string; short: string; h
  * whatever it would have asked about, so "auto" there means edits only.
  */
 export function permissionHint(mode: string, canAsk: boolean): string {
-  if (mode === 'auto_edit' && !canAsk) return '自动修改文件；运行命令等需要批准的操作会被拒绝';
+  if (mode === 'auto_edit' && !canAsk) return t('permission.auto_edit.noAsk');
   return PERMISSION_LABELS[mode]?.hint ?? '';
 }
 
@@ -26,11 +27,11 @@ export function startingPermission(caps: { permissionModes: string[]; defaultPer
 export const PERMISSION_ORDER = ['ask', 'auto_edit', 'full_access'];
 
 export const EFFORT_LABELS: Record<string, string> = {
-  off: '关闭',
-  minimal: '极低',
-  low: '低',
-  medium: '中',
-  high: '高',
-  xhigh: '超高',
-  max: '最大',
+  off: t('effort.off'),
+  minimal: t('effort.minimal'),
+  low: t('effort.low'),
+  medium: t('effort.medium'),
+  high: t('effort.high'),
+  xhigh: t('effort.xhigh'),
+  max: t('effort.max'),
 };

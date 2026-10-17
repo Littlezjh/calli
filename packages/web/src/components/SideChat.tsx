@@ -7,6 +7,7 @@ import { buildTimeline, splitNotes, withNotes, type StoredEvent } from '../timel
 import { Composer } from './Composer';
 import { ThreadView } from './ThreadView';
 import { IconClose } from './icons';
+import { t } from '../i18n';
 
 /** Events are collected briefly before the view updates, as in the main conversation. */
 const FLUSH_MS = 40;
@@ -170,7 +171,7 @@ export function SideChat({
       await api.startTurn(threadId, text, outgoing, { queue: true, videos: await Promise.all(videos.map(async video => (await api.uploadVideo(threadId, video.file)).id)) });
       return;
     }
-    const title = `追问：${quoteText.replace(/\s+/g, ' ').slice(0, 24)}`;
+    const title = t('sideChat.threadTitle', quoteText.replace(/\s+/g, ' ').slice(0, 24));
     let created: Thread;
     let firstText = text;
     if (forkSourceId) {
@@ -187,7 +188,7 @@ export function SideChat({
       // says which thread the notes were lifted out of.
       created = await api.createThread({ agent, cwd, permissionMode, model, effort, title });
       const { notes, body } = splitNotes(text);
-      if (sourceTitle && notes.length) firstText = withNotes(notes, `（注释引自线程「${sourceTitle}」）\n\n${body}`);
+      if (sourceTitle && notes.length) firstText = withNotes(notes, `${t('sideChat.notesFrom', sourceTitle)}\n\n${body}`);
     }
     setThread(created);
     onThreadCreated(created);
@@ -202,15 +203,15 @@ export function SideChat({
 
   return (
     <div className="dialog-scrim side-chat-scrim" onClick={onClose}>
-      <aside className="side-chat" role="dialog" aria-modal="true" aria-label="侧边提问" onClick={(e) => e.stopPropagation()}>
+      <aside className="side-chat" role="dialog" aria-modal="true" aria-label={t('sideChat.title')} onClick={(e) => e.stopPropagation()}>
         <header className="side-chat-head">
           <div className="side-chat-heading">
-            <div className="side-chat-title">侧边提问</div>
+            <div className="side-chat-title">{t('sideChat.title')}</div>
             <div className="side-chat-sub">
               {agentLabel} · {folderName(cwd)}
             </div>
           </div>
-          <button className="icon-btn" aria-label="关闭" onClick={onClose}>
+          <button className="icon-btn" aria-label={t('common.close')} onClick={onClose}>
             <IconClose />
           </button>
         </header>
@@ -237,7 +238,7 @@ export function SideChat({
 
         <Composer
           running={running}
-          placeholder={running ? '追加一条，这一轮结束后发送' : '问点什么…'}
+          placeholder={running ? t('sideChat.queuePlaceholder') : t('sideChat.placeholder')}
           onSend={send}
           onStop={() => threadId && api.cancel(threadId).catch(onError)}
           header={null}
@@ -252,7 +253,7 @@ export function SideChat({
           queued={thread?.queued ?? []}
           onRemoveQueued={(id) => threadId && api.removeQueued(threadId, id).catch(onError)}
           onEditQueued={async (id) => {
-            if (!threadId) throw new Error('没有打开的线程');
+            if (!threadId) throw new Error(t('composer.noThread'));
             const taken = await api.removeQueued(threadId, id);
             return { ...taken, videos: await restoreVideos(api, threadId, taken.videos) };
           }}

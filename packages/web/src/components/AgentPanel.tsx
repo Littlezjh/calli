@@ -5,6 +5,7 @@ import { buildTalks } from '../coordination';
 import { buildTimeline, clockLabel, deliveredPreview, type StoredEvent } from '../timeline';
 import { Prose, ThreadView } from './ThreadView';
 import { AgentMark, IconAgents, IconChevron, IconClose } from './icons';
+import { t } from '../i18n';
 
 /** The width the user dragged the panel to, on a wide screen. Unset, the panel keeps its own. */
 const WIDTH_KEY = 'rah.agents.width';
@@ -13,12 +14,12 @@ const MIN_WIDTH = 320;
 const MIN_MAIN = 380;
 const clampWidth = (w: number) => Math.max(MIN_WIDTH, Math.min(w, window.innerWidth - MIN_MAIN));
 
-const labels: Record<string, string> = { queued: '排队中', running: '运行中', returned: '已返回', failed: '失败', stopped: '已停止', interrupted: '中断' };
+const labels: Record<string, string> = { queued: t('team.queued'), running: t('status.running'), returned: t('team.returned'), failed: t('team.failed'), stopped: t('team.stopped'), interrupted: t('team.interrupted') };
 export function memberStatus(m: Coordination['members'][number]): string {
-  if (!m.thread) return '不可用';
+  if (!m.thread) return t('team.unavailable');
   if (m.thread.waiting) return waitingLabel(m.thread);
-  if (m.thread.status === 'running') return '运行中';
-  return labels[m.latest?.state ?? ''] ?? '尚未派发';
+  if (m.thread.status === 'running') return t('status.running');
+  return labels[m.latest?.state ?? ''] ?? t('team.notDispatched');
 }
 
 /**
@@ -27,10 +28,10 @@ export function memberStatus(m: Coordination['members'][number]): string {
  */
 export function TeamCard({ team, agents, onOpen }: { team: Coordination; agents: AgentInfo[]; onOpen: (memberId?: string) => void }) {
   const running = team.members.filter(m => m.thread?.status === 'running').length;
-  return <aside className="team-card" aria-label="协作智能体">
-    <button type="button" className="team-card-head" aria-label="查看智能体" onClick={() => onOpen()}>
-      <IconAgents size={15} /><strong>智能体</strong>
-      <span>{team.paused ? '已暂停' : running ? `${running} 运行中` : `${team.members.length} 个`}</span>
+  return <aside className="team-card" aria-label={t('team.collaborators')}>
+    <button type="button" className="team-card-head" aria-label={t('team.view')} onClick={() => onOpen()}>
+      <IconAgents size={15} /><strong>{t('team.agents')}</strong>
+      <span>{team.paused ? t('team.paused') : running ? t('team.running', running) : t('team.count', team.members.length)}</span>
     </button>
     {team.members.map(m => {
       const icon = agents.find(a => a.id === m.thread?.agent)?.icon;
@@ -64,15 +65,15 @@ function Said({ who, to, at, state, text, failed }: { who: Speaker; to?: string;
         <div className="talk-line">
           <strong>{who.name}</strong>
           <span className="talk-tag">{who.tag}</span>
-          {to && <span className="talk-to">发给 {to}</span>}
+          {to && <span className="talk-to">{t('team.to', to)}</span>}
           {at && <time dateTime={at}>{clockLabel(at)}</time>}
         </div>
-        {long && !open ? <p className="talk-preview">{preview}</p> : <Prose className="talk-text" text={text || '没有文字输出。'} />}
+        {long && !open ? <p className="talk-preview">{preview}</p> : <Prose className="talk-text" text={text || t('team.noText')} />}
         {(long || state || failed) && (
           <div className="talk-foot">
-            {failed && <span className="talk-failed">失败</span>}
+            {failed && <span className="talk-failed">{t('team.failed')}</span>}
             {state && <span>{state}</span>}
-            {long && <button type="button" className="text-btn" aria-expanded={open} onClick={() => setOpen((v) => !v)}>{open ? '收起' : '展开全文'}</button>}
+            {long && <button type="button" className="text-btn" aria-expanded={open} onClick={() => setOpen((v) => !v)}>{open ? t('common.collapse') : t('common.expandAll')}</button>}
           </div>
         )}
       </div>
@@ -119,8 +120,8 @@ export function AgentPanel({ api, team, agents, leadAgent, memberModel, start, p
   const speaker = (id: string): Speaker => {
     const m = team.members.find(v => v.id === id);
     const agent = agents.find(a => a.id === (m ? m.thread?.agent : leadAgent));
-    return m ? { name: m.name, tag: agent?.label ?? m.thread?.agent ?? '成员', icon: agent?.icon ?? null, lead: false }
-      : { name: '主智能体', tag: agent?.label ?? '主控', icon: agent?.icon ?? null, lead: true };
+    return m ? { name: m.name, tag: agent?.label ?? m.thread?.agent ?? t('team.member'), icon: agent?.icon ?? null, lead: false }
+      : { name: t('team.lead'), tag: agent?.label ?? t('team.leadTag'), icon: agent?.icon ?? null, lead: true };
   };
   const [events, setEvents] = useState<StoredEvent[]>([]);
   const [connected, setConnected] = useState(true);
@@ -200,25 +201,25 @@ export function AgentPanel({ api, team, agents, leadAgent, memberModel, start, p
       requestAnimationFrame(() => { if (el) el.scrollTop += el.scrollHeight - height; });
     } catch (err) { onError(err); } finally { setLoadingOlder(false); }
   };
-  return <aside ref={panel} className={`agent-panel${memberId ? ' detail' : ''}`} role="region" aria-label="智能体面板" style={width === null ? undefined : { ['--agent-panel-width' as string]: `${width}px` }}>
-    <div className="agent-panel-resize" onPointerDown={startResize} onDoubleClick={() => { setWidth(null); localStorage.removeItem(WIDTH_KEY); }} role="separator" aria-orientation="vertical" aria-label="调整宽度" title="拖动调整宽度，双击恢复" />
+  return <aside ref={panel} className={`agent-panel${memberId ? ' detail' : ''}`} role="region" aria-label={t('team.panel')} style={width === null ? undefined : { ['--agent-panel-width' as string]: `${width}px` }}>
+    <div className="agent-panel-resize" onPointerDown={startResize} onDoubleClick={() => { setWidth(null); localStorage.removeItem(WIDTH_KEY); }} role="separator" aria-orientation="vertical" aria-label={t('common.resize')} title={t('team.resizeHint')} />
     <header className="agent-panel-head">
-      {memberId && <button className="icon-btn" aria-label="返回智能体列表" onClick={() => setMemberId(null)}><span className="coord-back"><IconChevron /></span></button>}
-      <div className="agent-panel-heading"><strong>{member?.name ?? '智能体'}</strong><span>{thread ? (agents.find(a => a.id === thread.agent)?.label ?? thread.agent) : team.paused ? '已暂停，发消息即可继续' : `${team.members.filter(m => m.thread?.status === 'running').length} 运行中 · ${team.members.length} 个成员`}</span></div>
+      {memberId && <button className="icon-btn" aria-label={t('team.back')} onClick={() => setMemberId(null)}><span className="coord-back"><IconChevron /></span></button>}
+      <div className="agent-panel-heading"><strong>{member?.name ?? t('team.agents')}</strong><span>{thread ? (agents.find(a => a.id === thread.agent)?.label ?? thread.agent) : team.paused ? t('team.pausedHint') : t('team.summary', team.members.filter(m => m.thread?.status === 'running').length, team.members.length)}</span></div>
       {thread && memberModel?.(thread)}
-      <button className="icon-btn" aria-label="关闭智能体面板" onClick={onClose}><IconClose /></button>
+      <button className="icon-btn" aria-label={t('team.close')} onClick={onClose}><IconClose /></button>
     </header>
     {thread && <div className="agent-panel-location" title={thread.cwd}>{memberStatus(member!)} · {thread.cwd}</div>}
-    {!connected && <div className="agent-panel-notice">连接中断，正在重连；状态可能未更新</div>}
+    {!connected && <div className="agent-panel-notice">{t('team.reconnecting')}</div>}
     <div className="agent-panel-body" ref={body} onScroll={() => {
       if (!body.current) return;
       if (!memberId) listScroll.current = body.current.scrollTop;
       stick.current = body.current.scrollHeight - body.current.scrollTop - body.current.clientHeight < 80;
       setAtBottom(stick.current);
     }}>
-      {!memberId && team.messages.length > 0 && <div className="agent-tabs" role="tablist" aria-label="智能体面板内容">
-        <button role="tab" aria-selected={tab === 'members'} onClick={() => setTab('members')}>成员 · {team.members.length}</button>
-        <button role="tab" aria-selected={tab === 'talk'} onClick={() => setTab('talk')}>消息 · {talks.length}</button>
+      {!memberId && team.messages.length > 0 && <div className="agent-tabs" role="tablist" aria-label={t('team.content')}>
+        <button role="tab" aria-selected={tab === 'members'} onClick={() => setTab('members')}>{t('team.membersTab', team.members.length)}</button>
+        <button role="tab" aria-selected={tab === 'talk'} onClick={() => setTab('talk')}>{t('team.messagesTab', talks.length)}</button>
       </div>}
       {!memberId && tab === 'talk' && team.messages.length > 0 ? <div className="talks">
         {talks.map((talk, i) => {
@@ -228,7 +229,7 @@ export function AgentPanel({ api, team, agents, leadAgent, memberModel, start, p
           return <section className="talk" key={root.id}>
             <Said who={speaker(root.from)} to={speaker(root.to).name} at={root.createdAt} text={talk.text} state={waiting ? labels[root.state] ?? root.state : undefined} failed={waiting && root.state === 'failed'} />
             {talk.replies.length > 0 && <button type="button" className="talk-replies" aria-expanded={open} onClick={() => setOpened(prev => ({ ...prev, [root.id]: !open }))}>
-              <IconChevron size={13} open={open} />{talk.replies.length} 条回复{talk.replies.some(r => r.failed) ? ' · 有失败' : ''}
+              <IconChevron size={13} open={open} />{t('team.replies', talk.replies.length)}{talk.replies.some(r => r.failed) ? ` · ${t('team.someFailed')}` : ''}
             </button>}
             {open && talk.replies.length > 0 && <div className="talk-thread">
               {talk.replies.map(r => <Said key={r.id} who={speaker(r.from)} at={r.at} text={r.text} failed={r.failed} />)}
@@ -236,22 +237,22 @@ export function AgentPanel({ api, team, agents, leadAgent, memberModel, start, p
           </section>;
         })}
       </div> : !memberId ? <>
-        {!team.members.length && <div className="agent-panel-empty"><IconAgents size={32} /><strong>尚未派发任务</strong><p>在输入框输入 @ 选择助手，<br />告诉主智能体如何分工。</p></div>}
+        {!team.members.length && <div className="agent-panel-empty"><IconAgents size={32} /><strong>{t('team.emptyTitle')}</strong><p>{t('team.emptyHint1')}<br />{t('team.emptyHint2')}</p></div>}
         {team.members.map(m => <button className="agent-member" key={m.id} onClick={() => setMemberId(m.id)}>
           <div className="agent-member-line"><strong>{m.name}</strong><span className={m.thread?.waiting ? 'coord-attention' : ''}>{memberStatus(m)}</span></div>
           <div className="coord-caption">{m.thread?.agent} · {m.thread?.cwd.split('/').slice(-2).join('/')}</div>
-          <p>{m.latest?.result?.split('<limi-coordination>')[0].slice(-160) || m.latest?.text.slice(0, 160) || '等待任务'}</p>
-          {m.thread?.unread && <span className="coord-unread">有新输出</span>}
+          <p>{m.latest?.result?.split('<limi-coordination>')[0].slice(-160) || m.latest?.text.slice(0, 160) || t('team.waitingTask')}</p>
+          {m.thread?.unread && <span className="coord-unread">{t('team.newOutput')}</span>}
         </button>)}
-      </> : thread ? <ThreadView items={timeline.items} roots={[thread.cwd, thread.cwdReal]} loadImage={id => api.attachment(thread.id, id)} loadFile={path => api.threadFile(thread.id, path)} onDecide={(id, option) => { api.decide(id, option === null ? { cancel: true } : { optionId: option }).then(onRefresh).catch(onError); }} hasOlder={older} loadingOlder={loadingOlder} onLoadOlder={() => void loadOlder()} /> : <div className="agent-panel-empty">该子线程已不可用</div>}
+      </> : thread ? <ThreadView items={timeline.items} roots={[thread.cwd, thread.cwdReal]} loadImage={id => api.attachment(thread.id, id)} loadFile={path => api.threadFile(thread.id, path)} onDecide={(id, option) => { api.decide(id, option === null ? { cancel: true } : { optionId: option }).then(onRefresh).catch(onError); }} hasOlder={older} loadingOlder={loadingOlder} onLoadOlder={() => void loadOlder()} /> : <div className="agent-panel-empty">{t('team.childGone')}</div>}
     </div>
-    {memberId && !atBottom && <button className="agent-panel-latest" onClick={() => { stick.current = true; if (body.current) body.current.scrollTop = body.current.scrollHeight; }}>查看最新输出</button>}
+    {memberId && !atBottom && <button className="agent-panel-latest" onClick={() => { stick.current = true; if (body.current) body.current.scrollTop = body.current.scrollHeight; }}>{t('team.latest')}</button>}
     <footer className="agent-panel-footer">
       {member && thread ? <>
-        <button onClick={() => onAdjust(member.name)}>让主智能体调整</button>
-        <button onClick={() => onOpen(thread)}>展开查看</button>
-        {thread.status === 'running' && <button onClick={() => { api.cancel(thread.id).then(onRefresh).catch(onError); }}>停止任务</button>}
-      </> : <button title={team.paused ? '让排队的消息继续投递；给主智能体发消息也会继续' : '停下主智能体和所有成员正在做的事，排队的消息不再投递'} onClick={() => { api.configureCoordination(team.rootId, { action: team.paused ? 'resume' : 'stop' }).then(onRefresh).catch(onError); }}>{team.paused ? '继续协作' : '全部停止'}</button>}
+        <button onClick={() => onAdjust(member.name)}>{t('team.adjust')}</button>
+        <button onClick={() => onOpen(thread)}>{t('team.open')}</button>
+        {thread.status === 'running' && <button onClick={() => { api.cancel(thread.id).then(onRefresh).catch(onError); }}>{t('team.stopTask')}</button>}
+      </> : <button title={team.paused ? t('team.resumeHint') : t('team.stopHint')} onClick={() => { api.configureCoordination(team.rootId, { action: team.paused ? 'resume' : 'stop' }).then(onRefresh).catch(onError); }}>{team.paused ? t('team.resume') : t('team.stopAll')}</button>}
     </footer>
   </aside>;
 }

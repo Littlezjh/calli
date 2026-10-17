@@ -6,11 +6,12 @@ import { PanelDialog } from './Dialog';
 import { Popover } from './Popover';
 import { TpmChart } from './TpmChart';
 import { IconCheck, IconCopy, IconRefresh, IconChevron } from './icons';
+import { formatDateTime, t } from '../i18n';
 
-const time = (s: string) => new Date(s).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-const cost = (value: UsageSample['cost']) => value ? `${value.estimated ? '估算 ' : ''}${value.currency} ${value.amount.toFixed(4)}` : '未知';
-const scope = { request: '模型请求', turn: '整轮汇总', update: '用量增量' };
-const status: Record<string, string> = { running: '运行中', done: '完成', error: '出错', cancelled: '已停止' };
+const time = (s: string) => formatDateTime(s, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+const cost = (value: UsageSample['cost']) => value ? `${value.estimated ? `${t('obs.estimated')} ` : ''}${value.currency} ${value.amount.toFixed(4)}` : t('common.unknown');
+const scope = { request: t('obs.scope.request'), turn: t('obs.scope.turn'), update: t('obs.scope.update') };
+const status: Record<string, string> = { running: t('status.running'), done: t('step.done'), error: t('status.error'), cancelled: t('team.stopped') };
 
 function Select({ label, value, options, onPick }: { label: string; value: string; options: Array<{ id: string; label: string }>; onPick: (id: string) => void }) {
   return <Popover label={label} triggerClassName="text-btn obs-select" triggerLabel={label} trigger={<>{options.find(o => o.id === value)?.label ?? label}<IconChevron size={12} open /></>}>
@@ -28,13 +29,13 @@ function Count({ values }: { values: Array<number | null | undefined> }) {
 
 function Sample({ sample }: { sample: UsageSample }) {
   return <div className="obs-sample">
-    <div className="obs-sample-head"><strong>{scope[sample.scope]}{sample.timing === 'estimated' ? ' · 时间估算' : ''}</strong><span>{sample.model ?? '实际模型未知'}{sample.provider ? ` · ${sample.provider}` : ''}</span></div>
+    <div className="obs-sample-head"><strong>{scope[sample.scope]}{sample.timing === 'estimated' ? ` · ${t('chart.estimated')}` : ''}</strong><span>{sample.model ?? t('obs.modelUnknown')}{sample.provider ? ` · ${sample.provider}` : ''}</span></div>
     <dl className="obs-details">
       {[
-        ['输入', numberLabel(sample.input)], ['输出', numberLabel(sample.output)], ['总 token', numberLabel(sample.total)],
-        ['缓存读取', numberLabel(sample.cacheRead)], ['缓存写入', numberLabel(sample.cacheWrite)], ['推理', numberLabel(sample.reasoning)],
-        ['费用', cost(sample.cost)], ['请求耗时', durationLabel(sample.durationMs)], ['首 token 延迟', durationLabel(sample.ttftMs)],
-        ['上游账号', sample.account ?? '未报告'],
+        [t('obs.input'), numberLabel(sample.input)], [t('obs.output'), numberLabel(sample.output)], [t('obs.totalTokens'), numberLabel(sample.total)],
+        [t('obs.cacheRead'), numberLabel(sample.cacheRead)], [t('obs.cacheWrite'), numberLabel(sample.cacheWrite)], [t('obs.reasoning'), numberLabel(sample.reasoning)],
+        [t('obs.cost'), cost(sample.cost)], [t('obs.duration'), durationLabel(sample.durationMs)], [t('obs.ttft'), durationLabel(sample.ttftMs)],
+        [t('obs.account'), sample.account ?? t('obs.notReported')],
       ].map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{value}</dd></div>)}
     </dl>
     {sample.error && <p className="obs-error">{sample.error}</p>}
@@ -55,7 +56,7 @@ function UsageView({ api, agents }: { api: Api; agents: AgentInfo[] }) {
       if (pending) return;
       pending = true;
       try { const data = await api.usageReport(Number(hours), agent); if (alive) { setReport(data); setError(''); } }
-      catch { if (alive) setError('统计读取失败，请重试；远程机器可能需要更新服务。'); }
+      catch { if (alive) setError(t('obs.loadFailed')); }
       finally { pending = false; }
     };
     void read();
@@ -64,40 +65,40 @@ function UsageView({ api, agents }: { api: Api; agents: AgentInfo[] }) {
   }, [api, hours, agent, refresh]);
   return <>
     <div className="obs-toolbar">
-      <Select label="统计范围" value={hours} options={[{ id: '1', label: '最近 1 小时' }, { id: '24', label: '最近 24 小时' }, { id: '168', label: '最近 7 天' }]} onPick={setHours} />
-      <Select label="统计实例" value={agent} options={[{ id: '', label: '全部实例' }, ...agents.map(a => ({ id: a.id, label: a.label }))]} onPick={setAgent} />
-      <Select label="TPM 口径" value={metric} options={[{ id: 'total', label: '合计 token' }, { id: 'output', label: '仅输出 token' }]} onPick={id => setMetric(id as 'total' | 'output')} />
-      <button className="icon-btn" aria-label="刷新统计" onClick={() => setRefresh(n => n + 1)}><IconRefresh size={16} /></button>
+      <Select label={t('activity.range')} value={hours} options={[{ id: '1', label: t('obs.lastHour') }, { id: '24', label: t('obs.last24h') }, { id: '168', label: t('obs.last7d') }]} onPick={setHours} />
+      <Select label={t('obs.instance')} value={agent} options={[{ id: '', label: t('obs.allInstances') }, ...agents.map(a => ({ id: a.id, label: a.label }))]} onPick={setAgent} />
+      <Select label={t('obs.metric')} value={metric} options={[{ id: 'total', label: t('obs.metricTotal') }, { id: 'output', label: t('obs.metricOutput') }]} onPick={id => setMetric(id as 'total' | 'output')} />
+      <button className="icon-btn" aria-label={t('obs.refresh')} onClick={() => setRefresh(n => n + 1)}><IconRefresh size={16} /></button>
     </div>
     {error && <p role="alert" className="obs-error">{error}</p>}
-    {!report && !error && <p className="panel-empty">正在读取用量…</p>}
+    {!report && !error && <p className="panel-empty">{t('obs.loading')}</p>}
     {report && <>
       <div className="obs-metrics">
-        <div className="obs-metric obs-primary"><span>{metric === 'output' ? '输出 TPM' : 'TPM'} · 最近 60 秒</span><Count values={[metric === 'output' ? report.outputTpm : report.tpm]} /><small>Token / 分钟 · <span className="obs-token-unit">K 千 · M 百万</span></small></div>
-        <div className="obs-metric"><span>总 token</span><Count values={[report.totals.total]} /><small>{report.measuredSamples} 条已报告用量</small></div>
-        <div className="obs-metric"><span>输入 / 输出</span><Count values={[report.totals.input, report.totals.output]} /><small>输入包含缓存 token</small></div>
-        <div className="obs-metric"><span>缓存读取 / 写入</span><Count values={[report.totals.cacheRead, report.totals.cacheWrite]} /><small>未知字段不计入合计</small></div>
-        <div className="obs-metric"><span>已报告费用</span><strong className="obs-cost">{Object.entries(report.costs).map(([currency, v]) => cost({ currency, ...v })).join(' · ') || '未知'}</strong><small>仅含报告费用的记录</small></div>
-        <div className="obs-metric"><span>执行轮次 / 出错</span><strong>{report.turns} / {report.errors}</strong><small>一轮可能包含多次模型请求</small></div>
+        <div className="obs-metric obs-primary"><span>{metric === 'output' ? t('chart.outputTpm') : 'TPM'} · {t('obs.last60s')}</span><Count values={[metric === 'output' ? report.outputTpm : report.tpm]} /><small>{t('obs.perMinute')} · <span className="obs-token-unit">{t('obs.units')}</span></small></div>
+        <div className="obs-metric"><span>{t('obs.totalTokens')}</span><Count values={[report.totals.total]} /><small>{t('obs.samples', report.measuredSamples)}</small></div>
+        <div className="obs-metric"><span>{t('obs.inputOutput')}</span><Count values={[report.totals.input, report.totals.output]} /><small>{t('obs.inputIncludesCache')}</small></div>
+        <div className="obs-metric"><span>{t('obs.cacheReadWrite')}</span><Count values={[report.totals.cacheRead, report.totals.cacheWrite]} /><small>{t('obs.unknownExcluded')}</small></div>
+        <div className="obs-metric"><span>{t('obs.reportedCost')}</span><strong className="obs-cost">{Object.entries(report.costs).map(([currency, v]) => cost({ currency, ...v })).join(' · ') || t('common.unknown')}</strong><small>{t('obs.costOnly')}</small></div>
+        <div className="obs-metric"><span>{t('obs.turnsErrors')}</span><strong>{report.turns} / {report.errors}</strong><small>{t('obs.turnHint')}</small></div>
       </div>
       {report.series && <TpmChart series={report.series} agents={agents} metric={metric} empty={metric === 'output' ? !report.outputMeasuredSamples : !report.measuredSamples} />}
-      <p className="obs-note">仅统计这台机器启用统计后在 Limi 中执行的用量，不回填历史或分叉副本。TPM 为最近 60 秒的 token 用量；成批上报按两次报告之间的时间平摊，时间分布标为估算，总量来自原生记录。尚未完成的模型请求可能还没有用量，空闲时为 0；未知不代表零。</p>
-      <div className="obs-list-title"><h3>最近执行</h3><span>更新于 {time(report.checkedAt)} · 最多 100 轮</span></div>
-      {!report.rows.length && <p className="panel-empty">还没有执行记录。发送一条消息后，这里会开始记录。</p>}
+      <p className="obs-note">{t('obs.note')}</p>
+      <div className="obs-list-title"><h3>{t('obs.recent')}</h3><span>{t('quota.updatedAt', time(report.checkedAt))} · {t('obs.max100')}</span></div>
+      {!report.rows.length && <p className="panel-empty">{t('obs.noRows')}</p>}
       {report.rows.map(row => <details className="obs-turn" key={`${row.threadId}:${row.turnId}`}>
         <summary><div><strong>{row.title}</strong><span>{agents.find(a => a.id === row.agent)?.label ?? row.agent} · {time(row.startedAt)}</span></div><span className={row.status === 'error' ? 'obs-error' : ''}>{status[row.status] ?? row.status}</span></summary>
         <div className="obs-turn-body">
-          <p className="obs-note">所选模型：{row.configuredModel ?? '原生默认'} · 实例账号：{row.linkedAccount ?? '未标记'}<br />首段输出等待：{durationLabel(row.firstOutputMs)}（含启动、排队和工具等待，不等于上游首 token 延迟）</p>
+          <p className="obs-note">{t('obs.rowModel', row.configuredModel ?? t('obs.nativeDefault'), row.linkedAccount ?? t('obs.unmarked'))}<br />{t('obs.firstOutput', durationLabel(row.firstOutputMs))}</p>
           {row.error && <p className="obs-error">{row.error}</p>}
-          {row.samples.length ? row.samples.map(s => <Sample key={s.id} sample={s} />) : <p className="obs-note">此轮没有原生用量报告，token、费用和上游请求信息保持未知。</p>}
+          {row.samples.length ? row.samples.map(s => <Sample key={s.id} sample={s} />) : <p className="obs-note">{t('obs.noSamples')}</p>}
         </div>
       </details>)}
     </>}
   </>;
 }
 
-const states: Record<string, string> = { ready: '模型可读取', missing: 'CLI 不可用', empty: '没有可选模型', authentication: '登录需检查', unsupported: '版本不兼容', timeout: '读取超时', failed: '读取失败' };
-const capabilities: Array<[string, string]> = [['resume', '恢复会话'], ['approvals', '审批'], ['images', '图片输入'], ['history', '历史导入'], ['fork', '分叉'], ['compact', '上下文压缩'], ['quota', '套餐额度'], ['coordination', '协作'], ['goal', '原生目标']];
+const states: Record<string, string> = { ready: t('diag.ready'), missing: t('diag.missing'), empty: t('diag.empty'), authentication: t('diag.authentication'), unsupported: t('diag.unsupported'), timeout: t('diag.timeout'), failed: t('diag.failed') };
+const capabilities: Array<[string, string]> = [['resume', t('diag.cap.resume')], ['approvals', t('diag.cap.approvals')], ['images', t('diag.cap.images')], ['history', t('diag.cap.history')], ['fork', t('diag.cap.fork')], ['compact', t('diag.cap.compact')], ['quota', t('diag.cap.quota')], ['coordination', t('diag.cap.coordination')], ['goal', t('diag.cap.goal')]];
 
 function DiagnosticRow({ api, agent, onResult }: { api: Api; agent: AgentInfo; onResult?: (data: AgentDiagnostic) => void }) {
   const [data, setData] = useState<AgentDiagnostic | null>(null);
@@ -110,21 +111,21 @@ function DiagnosticRow({ api, agent, onResult }: { api: Api; agent: AgentInfo; o
     let alive = true;
     setLoading(true); setError(''); setCopied(false);
     void api.agentDiagnostic(agent.id, refresh > 0).then(value => { if (alive) { setData(value); result.current?.(value); } }).catch(() => {
-      if (alive) setError('诊断读取失败，请重试；远程机器可能需要更新服务。');
+      if (alive) setError(t('diag.loadFailed'));
     }).finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [api, agent.id, refresh]);
   return <article className="obs-diagnostic">
-    <header><div><h3>{agent.label}</h3><span>{loading ? '正在检查…' : data ? states[data.state] ?? data.state : '尚未读取'}</span></div>
-      <div className="obs-actions"><button className="icon-btn" aria-label={`刷新 ${agent.label} 诊断`} disabled={loading} onClick={() => setRefresh(n => n + 1)}><IconRefresh size={16} /></button>
-        <button className="icon-btn" aria-label={`复制 ${agent.label} 诊断`} disabled={!data} onClick={async () => setCopied(await copyText(JSON.stringify(data, null, 2)))}>{copied ? <IconCheck size={16} /> : <IconCopy size={16} />}</button></div>
+    <header><div><h3>{agent.label}</h3><span>{loading ? t('diag.checking') : data ? states[data.state] ?? data.state : t('diag.notRead')}</span></div>
+      <div className="obs-actions"><button className="icon-btn" aria-label={t('diag.refresh', agent.label)} disabled={loading} onClick={() => setRefresh(n => n + 1)}><IconRefresh size={16} /></button>
+        <button className="icon-btn" aria-label={t('diag.copy', agent.label)} disabled={!data} onClick={async () => setCopied(await copyText(JSON.stringify(data, null, 2)))}>{copied ? <IconCheck size={16} /> : <IconCopy size={16} />}</button></div>
     </header>
     {error && <p className="obs-error" role="alert">{error}</p>}
     {data && <>
       <p>{data.message}</p>
-      <dl className="obs-details"><div><dt>CLI / 桥接程序版本</dt><dd>{data.version ?? '原生 CLI 未报告'}</dd></div><div><dt>接入协议</dt><dd>{data.protocol ?? '未获取'}</dd></div><div><dt>可选模型</dt><dd>{data.models.length}</dd></div><div><dt>检查时间</dt><dd>{time(data.checkedAt)}</dd></div></dl>
-      <div className="obs-capabilities">{capabilities.map(([key, label]) => <span key={key} className={(data.capabilities as unknown as Record<string, unknown>)[key] ? 'supported' : ''}>{label} · {(data.capabilities as unknown as Record<string, unknown>)[key] ? '支持' : '不支持'}</span>)}</div>
-      {data.models.length > 0 && <details><summary>查看模型列表</summary><div className="obs-models">{data.models.map(m => <span key={m.id}>{m.label}</span>)}</div></details>}
+      <dl className="obs-details"><div><dt>{t('diag.version')}</dt><dd>{data.version ?? t('diag.versionUnknown')}</dd></div><div><dt>{t('diag.protocol')}</dt><dd>{data.protocol ?? t('diag.protocolUnknown')}</dd></div><div><dt>{t('diag.models')}</dt><dd>{data.models.length}</dd></div><div><dt>{t('diag.checkedAt')}</dt><dd>{time(data.checkedAt)}</dd></div></dl>
+      <div className="obs-capabilities">{capabilities.map(([key, label]) => <span key={key} className={(data.capabilities as unknown as Record<string, unknown>)[key] ? 'supported' : ''}>{label} · {(data.capabilities as unknown as Record<string, unknown>)[key] ? t('diag.supported') : t('diag.unsupportedCap')}</span>)}</div>
+      {data.models.length > 0 && <details><summary>{t('diag.modelList')}</summary><div className="obs-models">{data.models.map(m => <span key={m.id}>{m.label}</span>)}</div></details>}
     </>}
   </article>;
 }
@@ -133,10 +134,10 @@ export function ObservabilityPanel({ api, agents, initial = 'usage', focusAgent,
   const [tab, setTab] = useState(initial);
   const close = useCallback(onClose, [onClose]);
   const ordered = [...agents].sort((a, b) => Number(b.id === focusAgent) - Number(a.id === focusAgent));
-  return <PanelDialog title="用量与诊断" className="obs-panel" onClose={close}>
-    <nav className="obs-tabs" aria-label="看板内容">{([['usage', '用量统计'], ['diagnostics', 'Agent 诊断']] as const).map(([id, label]) => <button key={id} className={tab === id ? 'selected' : ''} aria-pressed={tab === id} onClick={() => setTab(id)}>{label}</button>)}</nav>
+  return <PanelDialog title={t('obs.title')} className="obs-panel" onClose={close}>
+    <nav className="obs-tabs" aria-label={t('obs.tabs')}>{([['usage', t('obs.tab.usage')], ['diagnostics', t('obs.tab.diagnostics')]] as const).map(([id, label]) => <button key={id} className={tab === id ? 'selected' : ''} aria-pressed={tab === id} onClick={() => setTab(id)}>{label}</button>)}</nav>
     <div className="obs-body">{tab === 'usage' ? <UsageView api={api} agents={agents} /> : <>
-      <p className="obs-note">检查本机实例的 CLI、协议和模型列表，不发送模型消息。刷新会重新读取模型；支持项来自适配器声明，实际可用性仍取决于原生 CLI 版本与账号。</p>
+      <p className="obs-note">{t('diag.note')}</p>
       {ordered.map(agent => <DiagnosticRow key={agent.id} api={api} agent={agent} onResult={onResult} />)}
     </>}</div>
   </PanelDialog>;

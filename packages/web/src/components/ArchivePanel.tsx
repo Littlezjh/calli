@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { AgentInfo, Api, Thread } from '../api';
 import { folderName } from '../paths';
 import { IconArchive, IconClose, IconSearch } from './icons';
+import { formatDate, t } from '../i18n';
 
 interface Props {
   api: Api;
@@ -17,7 +18,7 @@ interface Props {
 function archivedOn(iso: string | null): string {
   if (!iso) return '';
   const d = new Date(iso);
-  return `归档于 ${d.getMonth() + 1}月${d.getDate()}日`;
+  return t('archive.archivedOn', formatDate(iso, { month: 'short', day: 'numeric' }));
 }
 
 /** Archived threads: out of the sidebar, still on disk, one tap from coming back. */
@@ -55,44 +56,44 @@ export function ArchivePanel({ api, agents, refreshKey, onRestore, onDelete, onC
       <div className="panel" role="dialog" aria-modal="true" aria-labelledby="archive-title" onClick={(e) => e.stopPropagation()}>
         <header className="panel-head">
           <h2 id="archive-title" className="panel-title">
-            <IconArchive size={20} /> 已归档
+            <IconArchive size={20} /> {t('archive.title')}
           </h2>
-          <button className="icon-btn" aria-label="关闭" onClick={onClose}>
+          <button className="icon-btn" aria-label={t('common.close')} onClick={onClose}>
             <IconClose size={18} />
           </button>
         </header>
-        <p className="panel-hint">归档的线程不会出现在侧边栏，随时可以恢复。</p>
+        <p className="panel-hint">{t('archive.hint')}</p>
         <label className="panel-search">
           <IconSearch size={16} />
           <input
             type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="搜索已归档线程"
-            aria-label="搜索已归档线程"
+            placeholder={t('archive.search')}
+            aria-label={t('archive.search')}
           />
         </label>
 
         <div className="panel-list">
-          {threads === null && <p className="panel-empty">正在加载…</p>}
+          {threads === null && <p className="panel-empty">{t('common.loading')}</p>}
           {threads !== null && shown.length === 0 && (
-            <p className="panel-empty">{threads.length === 0 ? '还没有归档的线程。在线程上右键选"归档"。' : '没有匹配的线程。'}</p>
+            <p className="panel-empty">{threads.length === 0 ? t('archive.empty') : t('archive.noMatch')}</p>
           )}
-          {shown.map((t) => (
-            <div key={t.id} className="panel-row">
+          {shown.map((thread) => (
+            <div key={thread.id} className="panel-row">
               <div className="panel-row-main">
-                <div className="panel-row-title">{t.title}</div>
+                <div className="panel-row-title">{thread.title}</div>
                 <div className="panel-row-meta">
-                  <span className="tag">{label(t.agent)}</span>
-                  <span>{folderName(t.cwd)}</span>
-                  <span>{archivedOn(t.archivedAt)}</span>
+                  <span className="tag">{label(thread.agent)}</span>
+                  <span>{folderName(thread.cwd)}</span>
+                  <span>{archivedOn(thread.archivedAt)}</span>
                 </div>
               </div>
-              <button className="text-btn" onClick={() => onRestore(t)}>
-                恢复
+              <button className="text-btn" onClick={() => onRestore(thread)}>
+                {t('archive.restore')}
               </button>
-              <button className="text-btn danger" onClick={() => onDelete(t)}>
-                永久删除
+              <button className="text-btn danger" onClick={() => onDelete(thread)}>
+                {t('archive.delete')}
               </button>
             </div>
           ))}

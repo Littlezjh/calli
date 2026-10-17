@@ -130,6 +130,18 @@ export async function startDaemon(env = {}, opts = {}) {
   };
 }
 
+/**
+ * The tests read the interface in its source language. Without this the page follows the
+ * browser's language, which on most machines is English.
+ */
+function inChinese(browser) {
+  const newContext = browser.newContext.bind(browser);
+  const newPage = browser.newPage.bind(browser);
+  browser.newContext = (options = {}) => newContext({ locale: 'zh-CN', ...options });
+  browser.newPage = (options = {}) => newPage({ locale: 'zh-CN', ...options });
+  return browser;
+}
+
 /** Finds a Chromium the installed playwright-core can drive: the cache, then a system Chrome. */
 export function launchBrowser() {
   const home = process.env.HOME ?? '';
@@ -140,7 +152,7 @@ export function launchBrowser() {
   ];
   return (async () => {
     try {
-      return await chromium.launch({ headless: true, args: ['--no-sandbox'] });
+      return inChinese(await chromium.launch({ headless: true, args: ['--no-sandbox'] }));
     } catch {
       // fall through to an explicit executable
     }
@@ -148,7 +160,7 @@ export function launchBrowser() {
     for (const executablePath of candidates) {
       if (!existsSync(executablePath)) continue;
       try {
-        return await chromium.launch({ headless: true, args: ['--no-sandbox'], executablePath });
+        return inChinese(await chromium.launch({ headless: true, args: ['--no-sandbox'], executablePath }));
       } catch (err) {
         lastErr = err;
       }

@@ -7,6 +7,7 @@ import { crumbsOf, escapeHtml, foldersTo, languageOf, parentDir, resolveRelative
 import { pictureUrl } from '../images';
 import { IMAGE_FILE } from '../paths';
 import { IconChevron, IconClose, IconCopy, IconFile, IconFolder, IconSearch, IconSidebar, IconWrap } from './icons';
+import { t } from '../i18n';
 
 /** What the panel is asked to show: a file (at a line), or with no path, the thread's folder. */
 export interface FilesTarget {
@@ -150,7 +151,7 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
         }
         setShown({ state: 'text', file });
       } catch {
-        setShown({ state: 'error', path, message: '找不到这个文件，或者它不在这个线程的目录里' });
+        setShown({ state: 'error', path, message: t('files.notFound') });
       }
     },
     [api, threadId],
@@ -249,9 +250,9 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
   const filter = (
     <label className="files-filter">
       <IconSearch size={14} />
-      <input value={query} placeholder="筛选文件…" aria-label="筛选文件" spellCheck={false} autoCapitalize="off" onChange={(e) => setQuery(e.target.value)} />
+      <input value={query} placeholder={t('files.filterPlaceholder')} aria-label={t('files.filter')} spellCheck={false} autoCapitalize="off" onChange={(e) => setQuery(e.target.value)} />
       {query && (
-        <button type="button" className="files-filter-clear" aria-label="清除筛选" onClick={() => setQuery('')}>
+        <button type="button" className="files-filter-clear" aria-label={t('files.clearFilter')} onClick={() => setQuery('')}>
           <IconClose size={12} />
         </button>
       )}
@@ -281,15 +282,15 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
           </button>
         );
       })}
-      {found.paths.length === 0 && <div className="files-note">没有匹配“{found.query}”的文件</div>}
-      {found.truncated && <div className="files-note">只列出前 {found.paths.length} 个，可以再多打几个字</div>}
+      {found.paths.length === 0 && <div className="files-note">{t('files.noMatch', found.query)}</div>}
+      {found.truncated && <div className="files-note">{t('files.truncatedResults', found.paths.length)}</div>}
     </div>
   );
 
   const treeRows = (path: string, depth: number): ReactNode => {
     const listing = dirs.get(path);
-    if (!listing || listing === 'loading') return <div className="files-note" style={{ paddingLeft: 12 + depth * 14 }}>加载中…</div>;
-    if (listing === 'error') return <div className="files-note" style={{ paddingLeft: 12 + depth * 14 }}>打不开这个文件夹</div>;
+    if (!listing || listing === 'loading') return <div className="files-note" style={{ paddingLeft: 12 + depth * 14 }}>{t('common.loading')}</div>;
+    if (listing === 'error') return <div className="files-note" style={{ paddingLeft: 12 + depth * 14 }}>{t('files.folderFailed')}</div>;
     return (
       <>
         {listing.entries.map((entry) => {
@@ -309,8 +310,8 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
             </div>
           );
         })}
-        {listing.entries.length === 0 && <div className="files-note" style={{ paddingLeft: 12 + depth * 14 }}>空文件夹</div>}
-        {listing.truncated && <div className="files-note" style={{ paddingLeft: 12 + depth * 14 }}>文件太多，只列出了一部分</div>}
+        {listing.entries.length === 0 && <div className="files-note" style={{ paddingLeft: 12 + depth * 14 }}>{t('files.emptyFolder')}</div>}
+        {listing.truncated && <div className="files-note" style={{ paddingLeft: 12 + depth * 14 }}>{t('files.tooMany')}</div>}
       </>
     );
   };
@@ -320,16 +321,16 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
       {!shown && (
         <div className="files-empty">
           <IconFile size={30} />
-          <span>{phone ? '' : '在右侧选一个文件查看'}</span>
+          <span>{phone ? '' : t('files.pick')}</span>
         </div>
       )}
-      {shown?.state === 'loading' && <div className="files-empty">加载中…</div>}
+      {shown?.state === 'loading' && <div className="files-empty">{t('common.loading')}</div>}
       {shown?.state === 'error' && <div className="files-empty">{shown.message}</div>}
       {shown?.state === 'picture' && (svg && source ? <SvgSource file={shown.file} wrap={wrap} /> : <div className="files-picture"><img src={shown.url} alt={shown.file.path} /></div>)}
       {shown?.state === 'text' && shown.file.text === null && (
         <div className="files-empty">
           <IconFile size={30} />
-          <span>二进制文件（{sizeLabel(shown.file.size)}），不能在这里查看</span>
+          <span>{t('files.binary', sizeLabel(shown.file.size))}</span>
         </div>
       )}
       {shown?.state === 'text' && shown.file.text !== null && markdown && !source && (
@@ -360,15 +361,15 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
         </div>
       )}
       {shown?.state === 'text' && shown.file.text !== null && (!markdown || source) && <Code key={`${shown.file.path}:${target.seq}`} file={shown.file} line={line} wrap={wrap} />}
-      {shown?.state === 'text' && shown.file.truncated && <div className="files-truncated">文件太长，只显示了前 {sizeLabel((shown.file.text ?? '').length)}</div>}
+      {shown?.state === 'text' && shown.file.truncated && <div className="files-truncated">{t('files.truncated', sizeLabel((shown.file.text ?? '').length))}</div>}
     </div>
   );
 
   const fileActions = filePath && (
     <>
       {(markdown || svg) && (
-        <button type="button" className={`icon-btn files-toggle${source ? ' on' : ''}`} aria-pressed={source} title={source ? '显示渲染结果' : '显示源码'} onClick={() => setSource((v) => !v)}>
-          <span className="files-toggle-text">{source ? '预览' : '源码'}</span>
+        <button type="button" className={`icon-btn files-toggle${source ? ' on' : ''}`} aria-pressed={source} title={source ? t('files.showRendered') : t('files.showSource')} onClick={() => setSource((v) => !v)}>
+          <span className="files-toggle-text">{source ? t('files.preview') : t('files.source')}</span>
         </button>
       )}
       {(shown?.state === 'text' || source) && (
@@ -376,8 +377,8 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
           type="button"
           className={`icon-btn${wrap ? ' on' : ''}`}
           aria-pressed={wrap}
-          aria-label="自动换行"
-          title="自动换行"
+          aria-label={t('files.wrap')}
+          title={t('files.wrap')}
           onClick={() => {
             setWrap(!wrap);
             remember(WRAP_KEY, !wrap);
@@ -386,7 +387,7 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
           <IconWrap size={16} />
         </button>
       )}
-      <button type="button" className="icon-btn" aria-label="复制路径" title={copied ? '已复制' : '复制路径'} onClick={() => void copyPath()}>
+      <button type="button" className="icon-btn" aria-label={t('files.copyPath')} title={copied ? t('common.copied') : t('files.copyPath')} onClick={() => void copyPath()}>
         <IconCopy size={16} />
       </button>
     </>
@@ -395,14 +396,14 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
   if (phone) {
     const inFolder = phoneFolder !== null;
     const folder = inFolder ? phoneFolder || root : null;
-    const name = inFolder ? crumbs[crumbs.length - 1]?.name ?? '文件' : (filePath ?? (shown && 'path' in shown ? shown.path : '')).split('/').pop();
+    const name = inFolder ? crumbs[crumbs.length - 1]?.name ?? t('files.files') : (filePath ?? (shown && 'path' in shown ? shown.path : '')).split('/').pop();
     return (
-      <div className="files-panel phone" role="dialog" aria-label="文件">
+      <div className="files-panel phone" role="dialog" aria-label={t('files.files')}>
         <div className="files-head">
           <button
             type="button"
             className="icon-btn"
-            aria-label={inFolder && shown ? '回到文件' : '关闭'}
+            aria-label={inFolder && shown ? t('files.backToFile') : t('common.close')}
             onClick={() => (inFolder && shown ? setPhoneFolder(null) : close())}
           >
             <span className="files-back">
@@ -424,7 +425,7 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
           </div>
           {!inFolder && fileActions}
           {!inFolder && (
-            <button type="button" className="icon-btn" aria-label="浏览文件夹" title="浏览文件夹" onClick={() => showFolder(filePath && root && filePath.startsWith(`${root}/`) ? parentDir(filePath) : (root ?? ''))}>
+            <button type="button" className="icon-btn" aria-label={t('files.browse')} title={t('files.browse')} onClick={() => showFolder(filePath && root && filePath.startsWith(`${root}/`) ? parentDir(filePath) : (root ?? ''))}>
               <IconFolder size={17} />
             </button>
           )}
@@ -432,7 +433,7 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
         {inFolder ? (
           <div className="files-list">
             {filter}
-            {results ?? (folder ? <div role="tree">{treeRows(folder, 0)}</div> : <div className="files-note">加载中…</div>)}
+            {results ?? (folder ? <div role="tree">{treeRows(folder, 0)}</div> : <div className="files-note">{t('common.loading')}</div>)}
           </div>
         ) : (
           viewer
@@ -442,10 +443,10 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
   }
 
   return (
-    <aside className="files-panel" style={{ width }} aria-label="文件">
-      <div className="files-resize" onPointerDown={startResize} role="separator" aria-orientation="vertical" aria-label="调整宽度" />
+    <aside className="files-panel" style={{ width }} aria-label={t('files.files')}>
+      <div className="files-resize" onPointerDown={startResize} role="separator" aria-orientation="vertical" aria-label={t('common.resize')} />
       <div className="files-head">
-        <nav className="files-crumbs" aria-label="路径">
+        <nav className="files-crumbs" aria-label={t('files.path')}>
           {crumbs.map((c, i) => {
             const last = i === crumbs.length - 1;
             return (
@@ -470,8 +471,8 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
             type="button"
             className={`icon-btn${treeOpen ? ' on' : ''}`}
             aria-pressed={treeOpen}
-            aria-label="文件树"
-            title="文件树"
+            aria-label={t('files.tree')}
+            title={t('files.tree')}
             onClick={() => {
               setTreeOpen(!treeOpen);
               remember(TREE_KEY, !treeOpen);
@@ -479,7 +480,7 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
           >
             <IconSidebar size={16} />
           </button>
-          <button type="button" className="icon-btn" aria-label="关闭文件" title="关闭" onClick={onClose}>
+          <button type="button" className="icon-btn" aria-label={t('files.close')} title={t('common.close')} onClick={onClose}>
             <IconClose size={16} />
           </button>
         </div>
@@ -489,7 +490,7 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
         {treeOpen && (
           <div className="files-tree">
             {filter}
-            <div className="files-tree-scroll">{results ?? (root ? <div role="tree">{treeRows(root, 0)}</div> : <div className="files-note">加载中…</div>)}</div>
+            <div className="files-tree-scroll">{results ?? (root ? <div role="tree">{treeRows(root, 0)}</div> : <div className="files-note">{t('common.loading')}</div>)}</div>
           </div>
         )}
       </div>
@@ -574,5 +575,5 @@ function chunks<T>(list: T[]): T[][] {
 
 /** An SVG's own text, for when the drawing is not what is wanted. */
 function SvgSource({ file, wrap }: { file: TextFile; wrap: boolean }) {
-  return file.text === null ? <div className="files-empty">无法显示源码</div> : <Code file={file} wrap={wrap} />;
+  return file.text === null ? <div className="files-empty">{t('files.noSource')}</div> : <Code file={file} wrap={wrap} />;
 }

@@ -3,6 +3,7 @@ import type { ActivityDay, ActivityReport, AgentInfo, Api, SystemPrompt } from '
 import { Dialog } from './Dialog';
 import { AgentMark } from './icons';
 import { TracePanel } from './TracePanel';
+import { t } from '../i18n';
 
 interface Props {
   api: Api;
@@ -29,17 +30,15 @@ function localDayKey(date: Date): string {
   return new Date(date.getTime() - offset).toISOString().slice(0, 10);
 }
 
-const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'];
-
-/** 「今天」「昨天」「10 月 14 日 · 周三」— the sidebar's activity view words days the same way. */
+/** "Today", "Yesterday", then the date and weekday: the sidebar's activity view words days the same way. */
 function dayTitle(date: string, now: Date): string {
   const day = new Date(`${date}T00:00:00`);
   if (Number.isNaN(day.getTime())) return date;
   const today = localDayKey(now);
   const yesterday = localDayKey(new Date(now.getTime() - 86_400_000));
-  if (date === today) return '今天';
-  if (date === yesterday) return '昨天';
-  return `${day.getMonth() + 1} 月 ${day.getDate()} 日 · 周${WEEKDAYS[day.getDay()]}`;
+  if (date === today) return t('sidebar.group.today');
+  if (date === yesterday) return t('sidebar.group.yesterday');
+  return t('activity.day', day);
 }
 
 const timeOf = (ts: string): string => {
@@ -107,8 +106,8 @@ export function ActivityPage({ api, agents, onOpenThread, onError }: Props) {
   return (
     <div className="activity-page">
       <header className="activity-head">
-        <h1 className="activity-title">概览</h1>
-        <div className="activity-range" role="group" aria-label="统计范围">
+        <h1 className="activity-title">{t('activity.title')}</h1>
+        <div className="activity-range" role="group" aria-label={t('activity.range')}>
           {RANGES.map((r) => (
             <button
               key={r}
@@ -124,15 +123,15 @@ export function ActivityPage({ api, agents, onOpenThread, onError }: Props) {
                 }
               }}
             >
-              {r} 天
+              {t('activity.days', r)}
             </button>
           ))}
         </div>
-        <p className="activity-hint">每天问了什么、调了哪些工具和 MCP；点提问看那一轮的执行轨迹。</p>
+        <p className="activity-hint">{t('activity.hint')}</p>
       </header>
 
-      {loading && !report && <div className="activity-empty">读取中…</div>}
-      {!loading && days.length === 0 && <div className="activity-empty">这段时间还没有提问。</div>}
+      {loading && !report && <div className="activity-empty">{t('activity.reading')}</div>}
+      {!loading && days.length === 0 && <div className="activity-empty">{t('activity.empty')}</div>}
 
       {days.map((day) => {
         // Newest asks first within the day; conversations follow their newest ask.
@@ -145,17 +144,17 @@ export function ActivityPage({ api, agents, onOpenThread, onError }: Props) {
             <header className="activity-day-head">
               <h2>{dayTitle(day.date, new Date())}</h2>
               <span className="activity-day-stats">
-                {day.turns} 轮 · {day.threads} 个会话
+                {t('activity.stats', day.turns, day.threads)}
               </span>
             </header>
 
             {day.tools.length > 0 && (
               <div className="activity-tools">
-                {day.tools.map((t) => (
-                  <span key={t.name} className={`activity-chip${t.mcp ? ' mcp' : ''}`} title={t.mcp ? `MCP 工具：${t.name}` : t.name}>
-                    {t.mcp && <span className="activity-chip-tag">mcp</span>}
-                    {toolLabel(t.name, t.server)}
-                    <span className="activity-chip-count">{t.count}</span>
+                {day.tools.map((tool) => (
+                  <span key={tool.name} className={`activity-chip${tool.mcp ? ' mcp' : ''}`} title={tool.mcp ? t('activity.mcpTool', tool.name) : tool.name}>
+                    {tool.mcp && <span className="activity-chip-tag">mcp</span>}
+                    {toolLabel(tool.name, tool.server)}
+                    <span className="activity-chip-count">{tool.count}</span>
                   </span>
                 ))}
               </div>
@@ -176,11 +175,11 @@ export function ActivityPage({ api, agents, onOpenThread, onError }: Props) {
                     </button>
                     <span className="activity-thread-agent">
                       {info?.label ?? asks[0].agent}
-                      {asks[0].archived ? ' · 已归档' : ''}
+                      {asks[0].archived ? ` · ${t('activity.archived')}` : ''}
                     </span>
                     {canReadPrompt.has(asks[0].agent) && (
                       <button type="button" className="activity-sys-btn" onClick={() => openPrompt(day, threadId)}>
-                        系统提示词
+                        {t('activity.systemPrompt')}
                       </button>
                     )}
                   </header>
@@ -190,7 +189,7 @@ export function ActivityPage({ api, agents, onOpenThread, onError }: Props) {
                         <button type="button" className="activity-ask" onClick={() => setTrace({ threadId, turnId: p.turnId })} title={p.text}>
                           <span className="activity-ask-time">{timeOf(p.ts)}</span>
                           <span className="activity-ask-text">{p.text}</span>
-                          {p.tools ? <span className="activity-ask-tools">{p.tools} 个工具</span> : null}
+                          {p.tools ? <span className="activity-ask-tools">{t('activity.tools', p.tools)}</span> : null}
                         </button>
                       </li>
                     ))}
@@ -201,7 +200,7 @@ export function ActivityPage({ api, agents, onOpenThread, onError }: Props) {
 
             {day.morePrompts > 0 && (
               <p className="activity-more">
-                当天还有 {day.morePrompts} 条提问，都在各自的会话里。
+                {t('activity.more', day.morePrompts)}
               </p>
             )}
           </section>
@@ -256,9 +255,9 @@ function SystemPromptDialog({ view, onClose }: { view: PromptView; onClose: () =
 
   return (
     <Dialog
-      title="系统提示词"
-      message={prompt ? `${view.title} · 来自${prompt.source}` : view.title}
-      confirmLabel="关闭"
+      title={t('activity.systemPrompt')}
+      message={prompt ? t('activity.from', view.title, prompt.source) : view.title}
+      confirmLabel={t('common.close')}
       onConfirm={onClose}
       onCancel={onClose}
       className="activity-sys-dialog"
@@ -266,7 +265,7 @@ function SystemPromptDialog({ view, onClose }: { view: PromptView; onClose: () =
       {error ? (
         <p className="activity-sys-error">{error}</p>
       ) : !prompt ? (
-        <p className="activity-sys-loading">读取中…</p>
+        <p className="activity-sys-loading">{t('activity.reading')}</p>
       ) : (
         <div className="activity-sys-body">
           <pre>{prompt.text}</pre>
@@ -274,7 +273,7 @@ function SystemPromptDialog({ view, onClose }: { view: PromptView; onClose: () =
       )}
       {prompt && (
         <button type="button" className="activity-sys-copy" onClick={copy}>
-          {copied ? '已复制' : '复制全文'}
+          {copied ? t('common.copied') : t('activity.copyAll')}
         </button>
       )}
     </Dialog>

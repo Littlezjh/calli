@@ -3,6 +3,7 @@ import { ApiError, type Api, type ProjectDirectoryInfo, type WorkdirsConfig } fr
 import { folderName } from '../paths';
 import { Dialog } from './Dialog';
 import { IconChevron, IconFolder } from './icons';
+import { t } from '../i18n';
 
 interface DirectoryPickerProps {
   api: Api;
@@ -17,13 +18,13 @@ interface DirectoryPickerProps {
 
 function explain(error: unknown): string {
   if (error instanceof ApiError) {
-    if (error.status === 404 && error.message === 'not found') return '这台机器的服务尚不支持浏览家目录，请更新服务，或在「可用目录」中填写项目路径。';
-    if (error.status === 404) return '找不到这个目录，它可能已被移动或删除。';
-    if (error.status === 403) return '无法浏览这个目录：它不在浏览范围内，或当前用户没有读取权限。';
-    if (/too wide/.test(error.message)) return '请进入具体项目，不能添加家目录或根目录本身。';
-    if (/no such directory/.test(error.message)) return '找不到这个目录，它可能已被移动或删除。';
+    if (error.status === 404 && error.message === 'not found') return t('dir.noBrowse');
+    if (error.status === 404) return t('dir.notFound');
+    if (error.status === 403) return t('dir.forbidden');
+    if (/too wide/.test(error.message)) return t('dir.tooWide');
+    if (/no such directory/.test(error.message)) return t('dir.notFound');
   }
-  return error instanceof Error ? error.message : '无法读取目录，请重试。';
+  return error instanceof Error ? error.message : t('dir.unreadable');
 }
 
 export function DirectoryPicker({ api, roots, selected, machine, onRootsChange, onManageRoots, onSelect, onClose }: DirectoryPickerProps) {
@@ -95,9 +96,9 @@ export function DirectoryPicker({ api, roots, selected, machine, onRootsChange, 
 
   return (
     <Dialog
-      title="在哪个目录里工作？"
+      title={t('dir.title')}
       className="project-browser"
-      confirmLabel={busy ? '正在添加…' : info && !info.allowed ? '添加并使用' : '用这个目录'}
+      confirmLabel={busy ? t('dir.adding') : info && !info.allowed ? t('dir.addAndUse') : t('dir.use')}
       confirmDisabled={!info?.selectable || busy}
       onConfirm={() => void useDirectory()}
       onCancel={() => { if (!busy) onClose(); }}
@@ -105,25 +106,25 @@ export function DirectoryPicker({ api, roots, selected, machine, onRootsChange, 
       <p className="project-browser-machine">{machine}</p>
       <div className="project-browser-controls" aria-busy={busy}>
         <div className="project-browser-nav">
-          <button disabled={busy} type="button" className="ghost" onClick={() => navigate(null)}>可用目录</button>
-          <button disabled={busy} type="button" className="ghost" onClick={() => navigate('')}>浏览家目录</button>
-          {info?.parent && <button disabled={busy} type="button" className="ghost" onClick={() => navigate(info.parent)}>上一级</button>}
+          <button disabled={busy} type="button" className="ghost" onClick={() => navigate(null)}>{t('dir.available')}</button>
+          <button disabled={busy} type="button" className="ghost" onClick={() => navigate('')}>{t('dir.browseHome')}</button>
+          {info?.parent && <button disabled={busy} type="button" className="ghost" onClick={() => navigate(info.parent)}>{t('dir.up')}</button>}
         </div>
-        <p className="project-browser-path">{at === null ? '已添加的项目位置' : info?.path || at || '正在打开家目录…'}</p>
-        <input disabled={busy} aria-label="搜索当前目录" placeholder="搜索当前目录下的文件夹" className="picker-search" value={search} onChange={(e) => setSearch(e.target.value)} />
-        <div className="project-browser-list" aria-label="文件夹">
-          {at !== null && !info && !error ? <p className="project-browser-note" role="status">正在读取目录…</p> : shown.map((folder) => (
+        <p className="project-browser-path">{at === null ? t('dir.added') : info?.path || at || t('dir.openingHome')}</p>
+        <input disabled={busy} aria-label={t('dir.search')} placeholder={t('dir.searchPlaceholder')} className="picker-search" value={search} onChange={(e) => setSearch(e.target.value)} />
+        <div className="project-browser-list" aria-label={t('dir.folders')}>
+          {at !== null && !info && !error ? <p className="project-browser-note" role="status">{t('dir.reading')}</p> : shown.map((folder) => (
             <button disabled={busy} type="button" className="project-browser-folder" key={folder.path} onClick={() => navigate(folder.path)}>
               <IconFolder size={19} />
               <span><span>{folder.name}</span>{at === null && <small>{folder.path}</small>}</span>
               <IconChevron size={14} />
             </button>
           ))}
-          {(at === null || info) && shown.length === 0 && <p className="project-browser-note">{search ? '没有匹配的文件夹' : '这里没有可浏览的子目录'}</p>}
+          {(at === null || info) && shown.length === 0 && <p className="project-browser-note">{search ? t('dir.noMatch') : t('dir.empty')}</p>}
         </div>
-        {error && <div className="project-browser-error" role="alert">{error} <button disabled={busy} type="button" className="ghost" onClick={() => navigate(at)}>重试</button></div>}
-        {info && !info.allowed && <p className="project-browser-note">{info.selectable ? '添加后，这个项目将出现在这台机器的可用目录中。' : '请进入具体项目文件夹，再添加并使用。'}</p>}
-        <button disabled={busy} type="button" className="ghost project-browser-manage" onClick={onManageRoots}>手动添加目录…</button>
+        {error && <div className="project-browser-error" role="alert">{error} <button disabled={busy} type="button" className="ghost" onClick={() => navigate(at)}>{t('common.retry')}</button></div>}
+        {info && !info.allowed && <p className="project-browser-note">{info.selectable ? t('dir.willAppear') : t('dir.enterProject')}</p>}
+        <button disabled={busy} type="button" className="ghost project-browser-manage" onClick={onManageRoots}>{t('dir.manual')}</button>
       </div>
     </Dialog>
   );

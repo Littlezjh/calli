@@ -1,3 +1,4 @@
+import { t } from './i18n';
 /** Last path segment, for showing a project name without the full path. */
 export function folderName(path: string): string {
   const parts = path.split('/').filter(Boolean);
@@ -40,7 +41,7 @@ const ATTACHMENT_PATH = /(?:\/[^\s"'`]*)?\/attachments\/[0-9a-f-]{36}\/[0-9a-f-]
 
 /** Replaces the paths of pictures the user sent with a name, where an agent mentions them (it opens them by path). */
 export function nameAttachments(text: string): string {
-  return text.replace(ATTACHMENT_PATH, '发送的图片');
+  return text.replace(ATTACHMENT_PATH, t('view.sentImage'));
 }
 
 /** File names the hub can show as pictures. Whether a file really is one is for the daemon to say. */

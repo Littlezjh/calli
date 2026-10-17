@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Api, ApiError, AuthError } from '../api';
 import { DialogSurface } from './Dialog';
+import { t } from '../i18n';
 
 interface Props {
   /** Why it opened, under the title: what was being done, or why the old token stopped working. */
@@ -28,7 +29,7 @@ export function ConnectDialog({ reason, onConnected, onCancel }: Props) {
       await new Api(token).agents();
       onConnected(token);
     } catch (e) {
-      setError(e instanceof AuthError ? 'token 不对，请检查后重试。' : e instanceof ApiError ? e.message : '连不上 hub，请检查地址和网络。');
+      setError(e instanceof AuthError ? t('connect.badToken') : e instanceof ApiError ? e.message : t('connect.unreachable'));
       setBusy(false);
       input.current?.focus();
     }
@@ -43,12 +44,12 @@ export function ConnectDialog({ reason, onConnected, onCancel }: Props) {
         }}
       >
         <h2 id="connect-title" className="dialog-title">
-          连接到 hub
+          {t('connect.title')}
         </h2>
         {reason && <p className="connect-reason">{reason}</p>}
-        <p className="dialog-message">输入 hub 的访问 token，只保存在这台设备上。</p>
+        <p className="dialog-message">{t('connect.message')}</p>
         <label className="dialog-field connect-field">
-          <span className="sr-only">访问 token</span>
+          <span className="sr-only">{t('connect.token')}</span>
           <input
             ref={input}
             type="password"
@@ -59,7 +60,7 @@ export function ConnectDialog({ reason, onConnected, onCancel }: Props) {
               setError(null);
             }}
             placeholder="RAH_TOKEN"
-            aria-label="访问 token"
+            aria-label={t('connect.token')}
             aria-invalid={error ? true : undefined}
             disabled={busy}
           />
@@ -69,14 +70,14 @@ export function ConnectDialog({ reason, onConnected, onCancel }: Props) {
             {error}
           </p>
         ) : (
-          <p className="field-hint">token 是 hub 所在机器上 .env 里的 RAH_TOKEN。</p>
+          <p className="field-hint">{t('connect.tokenHint')}</p>
         )}
         <div className="dialog-actions">
           <button type="button" className="ghost" onClick={onCancel} disabled={busy}>
-            取消
+            {t('common.cancel')}
           </button>
           <button type="submit" className="primary" disabled={busy || !value.trim()}>
-            {busy ? <span className="connect-spinner" aria-label="正在连接" /> : '连接'}
+            {busy ? <span className="connect-spinner" aria-label={t('connect.connecting')} /> : t('connect.connect')}
           </button>
         </div>
       </form>
@@ -89,11 +90,11 @@ export function DemoBar({ compact, onConnect }: { compact?: boolean; onConnect: 
   return (
     <div className="demo-bar" role="note">
       <span className="demo-bar-text">
-        <strong>示例数据</strong>
-        {!compact && <span className="demo-bar-more">，不会发给任何 agent。</span>}
+        <strong>{t('connect.demo')}</strong>
+        {!compact && <span className="demo-bar-more">{t('connect.demoMore')}</span>}
       </span>
       <button type="button" className="primary demo-bar-btn" onClick={onConnect}>
-        连接 hub
+        {t('connect.connectHub')}
       </button>
     </div>
   );

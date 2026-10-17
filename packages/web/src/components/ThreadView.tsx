@@ -37,6 +37,7 @@ import {
 } from '../timeline';
 import { Lightbox } from './Lightbox';
 import { ActivityIcon, IconAgents, IconCheck, IconChevron, IconClose, IconCompact, IconCopy, IconFile, IconFork, IconHand, IconQuote, IconWorktree } from './icons';
+import { t } from '../i18n';
 
 interface Props {
   items: Item[];
@@ -70,7 +71,7 @@ interface Props {
 /** Lines of one diff shown before the rest is folded away. */
 const MAX_DIFF_LINES = 400;
 
-/** How many turns stay rendered before the rest folds into "上 N 条消息". */
+/** How many turns stay rendered before the rest folds into "N earlier messages". */
 const RECENT_TURNS = 30;
 /** Scrolling up to within this distance of the top unfolds or fetches the earlier turns. */
 const NEAR_TOP_PX = 600;
@@ -191,16 +192,16 @@ export function ThreadView({ items, roots, loadImage, loadFile, onOpenFile, onPr
               )}
               {body && (
                 <div className="bubble">
-                  {item.fromTerminal && <span className="term-chip" title="这轮是在终端里发的">终端</span>}
-                  {item.scheduled && <span className="term-chip" title="这轮是定时任务发的">定时</span>}
-                  {item.workMode === 'plan' && <span className="term-chip">计划</span>}
+                  {item.fromTerminal && <span className="term-chip" title={t('view.fromTerminal')}>{t('term.title')}</span>}
+                  {item.scheduled && <span className="term-chip" title={t('view.fromSchedule')}>{t('view.scheduled')}</span>}
+                  {item.workMode === 'plan' && <span className="term-chip">{t('view.plan')}</span>}
                   {body}
                 </div>
               )}
               {!body && (item.fromTerminal || item.scheduled) && (
                 <div className="bubble">
-                  {item.fromTerminal && <span className="term-chip" title="这轮是在终端里发的">终端</span>}
-                  {item.scheduled && <span className="term-chip" title="这轮是定时任务发的">定时</span>}
+                  {item.fromTerminal && <span className="term-chip" title={t('view.fromTerminal')}>{t('term.title')}</span>}
+                  {item.scheduled && <span className="term-chip" title={t('view.fromSchedule')}>{t('view.scheduled')}</span>}
                 </div>
               )}
             </div>
@@ -209,7 +210,7 @@ export function ThreadView({ items, roots, loadImage, loadFile, onOpenFile, onPr
         case 'input':
           return <InputCard key={item.key} item={item} onAnswer={onAnswer} />;
         case 'proposal':
-          return <div className="row" key={item.key}><section className="proposal"><div className="proposal-heading">{item.done ? '方案' : '正在整理计划'}</div><Prose text={item.text} /></section></div>;
+          return <div className="row" key={item.key}><section className="proposal"><div className="proposal-heading">{item.done ? t('view.proposal') : t('view.planning')}</div><Prose text={item.text} /></section></div>;
         case 'assistant':
           if (!item.text) return null;
           return <AssistantMessage key={item.key} text={item.text} done={item.done} roots={roots} loadFile={loadFile} onOpen={show} />;
@@ -232,13 +233,13 @@ export function ThreadView({ items, roots, loadImage, loadFile, onOpenFile, onPr
         case 'actions':
           return (
             <div key={item.key} className="row message-actions">
-              <CopyButton text={item.text} label="复制回答" />
+              <CopyButton text={item.text} label={t('view.copyAnswer')} />
               {onFork && (forkAnyTurn || item.key === lastKey) && (
                 <button
                   type="button"
                   className="quiet-btn"
-                  aria-label="分叉"
-                  title={item.key === lastKey ? '分叉：复制这个线程，从这里另走一条路' : '分叉：从这一轮之后另走一条路，后面的不带过去'}
+                  aria-label={t('sidebar.fork')}
+                  title={item.key === lastKey ? t('view.forkLast') : t('view.forkHere')}
                   onClick={() => onFork(item.turnId)}
                 >
                   <IconFork size={15} />
@@ -259,9 +260,9 @@ export function ThreadView({ items, roots, loadImage, loadFile, onOpenFile, onPr
                 {item.planExhausted && takeover && item === items[items.length - 1] && (
                   <div className="error-actions">
                     <button className="primary" onClick={takeover.go} disabled={takeover.busy}>
-                      <IconHand size={15} /> {takeover.busy ? '正在交接…' : `交给 ${takeover.label} 接手`}
+                      <IconHand size={15} /> {takeover.busy ? t('view.handingOver') : t('view.handTo', takeover.label)}
                     </button>
-                    <button className="ghost" onClick={takeover.choose} disabled={takeover.busy}>选择其他智能体</button>
+                    <button className="ghost" onClick={takeover.choose} disabled={takeover.busy}>{t('view.chooseOther')}</button>
                   </div>
                 )}
               </div>
@@ -269,10 +270,10 @@ export function ThreadView({ items, roots, loadImage, loadFile, onOpenFile, onPr
           );
         case 'fork':
           return (
-            <div key={item.key} className="row fork-mark" role="separator" aria-label={item.branch ? `从这里分叉，在工作树 ${item.branch}` : '从这里分叉'}>
+            <div key={item.key} className="row fork-mark" role="separator" aria-label={item.branch ? t('view.forkedInWorktree', item.branch) : t('view.forkedHere')}>
               <span className="fork-mark-label">
                 {item.branch ? <IconWorktree size={15} /> : <IconFork size={15} />}
-                从这里分叉
+                {t('view.forkedHere')}
                 {item.branch && <span className="fork-mark-branch">{item.branch}</span>}
               </span>
             </div>
@@ -287,17 +288,17 @@ export function ThreadView({ items, roots, loadImage, loadFile, onOpenFile, onPr
         {folded && (
           <div className="row">
             <button className="older-messages" onClick={expand}>
-              上 {hiddenMessages} 条消息
+              {t('view.older', hiddenMessages)}
             </button>
           </div>
         )}
         {!folded && hasOlder && (
           <div className="row older-row">
             {loadingOlder ? (
-              <span className="spinner" role="status" aria-label="正在加载更早的消息" />
+              <span className="spinner" role="status" aria-label={t('view.loadingOlder')} />
             ) : (
               <button className="older-messages" onClick={onLoadOlder}>
-                加载更早的消息
+                {t('view.loadOlder')}
               </button>
             )}
           </div>
@@ -322,7 +323,7 @@ function CopyButton({ text, label }: { text: string; label: string }) {
       type="button"
       className="quiet-btn"
       aria-label={label}
-      title={state === 'failed' ? '复制失败，请手动选中文字' : state === 'done' ? '已复制' : label}
+      title={state === 'failed' ? t('view.copyFailed') : state === 'done' ? t('common.copied') : label}
       onClick={async () => setState((await copyText(text)) ? 'done' : 'failed')}
     >
       {state === 'done' ? <IconCheck size={15} /> : <IconCopy size={15} />}
@@ -384,24 +385,24 @@ function CodeBlock({ children }: { children?: ReactNode }) {
         <span>{language}</span>
         <span className="code-actions">
           {drawn && (
-            <span className="code-views" role="group" aria-label="显示方式">
+            <span className="code-views" role="group" aria-label={t('view.display')}>
               <button type="button" aria-pressed={!showCode} onClick={() => setShowCode(false)}>
-                预览
+                {t('files.preview')}
               </button>
               <button type="button" aria-pressed={showCode} onClick={() => setShowCode(true)}>
-                代码
+                {t('view.code')}
               </button>
             </span>
           )}
-          <CopyButton text={text} label="复制代码" />
+          <CopyButton text={text} label={t('view.copyCode')} />
         </span>
       </div>
       {drawn && !showCode ? (
         diagram !== null ? (
-          <div className="code-diagram" role="img" aria-label="这段 Mermaid 画出的图" dangerouslySetInnerHTML={{ __html: diagram }} />
+          <div className="code-diagram" role="img" aria-label={t('view.mermaid')} dangerouslySetInnerHTML={{ __html: diagram }} />
         ) : (
-          <button type="button" className="code-picture" aria-label="查看大图" onClick={() => picture && pictures?.show(picture, 'drawing.svg')}>
-            <img src={picture ?? undefined} alt="这段 SVG 画出的图" onError={() => picture && setFailed(picture)} />
+          <button type="button" className="code-picture" aria-label={t('view.enlarge')} onClick={() => picture && pictures?.show(picture, 'drawing.svg')}>
+            <img src={picture ?? undefined} alt={t('view.svg')} onError={() => picture && setFailed(picture)} />
           </button>
         )
       ) : (
@@ -461,8 +462,8 @@ function MarkdownLink({ href, title, children }: { href?: string; title?: string
 
   const { path } = target;
   const picture = pictures !== null && IMAGE_FILE.test(path);
-  const copy = async () => setNote((await copyText(path)) ? '已复制路径' : '复制失败，请手动选中');
-  const failed = async () => setNote((await copyText(path)) ? '无法预览，已复制路径' : '无法预览，请检查文件是否还在');
+  const copy = async () => setNote((await copyText(path)) ? t('view.pathCopied') : t('view.copyFailedSelect'));
+  const failed = async () => setNote((await copyText(path)) ? t('view.noPreviewCopied') : t('view.noPreview'));
   const act = () => {
     // The path is copied in the click itself where it can be: a browser may refuse once a fetch has come between.
     if (picture) pictures.openFile(path).catch(failed);
@@ -474,7 +475,7 @@ function MarkdownLink({ href, title, children }: { href?: string; title?: string
       className="file-link"
       role="button"
       tabIndex={0}
-      title={title ?? (picture ? `查看图片：${path}` : pictures?.openText ? `打开文件：${path}` : `复制路径：${path}`)}
+      title={title ?? (picture ? t('view.viewImage', path) : pictures?.openText ? t('view.openFile', path) : t('view.copyPath', path))}
       onClick={act}
       onKeyDown={(e: KeyboardEvent) => {
         if (e.key !== 'Enter' && e.key !== ' ') return;
@@ -557,14 +558,14 @@ const DeliveredNote = memo(function DeliveredNote({ turnId, note, text }: { turn
       <button type="button" className="delivered-head" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
         <span className="delivered-title">
           <IconAgents size={15} />
-          <span className="delivered-from">{note.from || '成员'}</span>
-          <span className="muted">的{note.kind === 'result' ? '结果' : '任务'}</span>
-          {note.failed && <span className="delivered-failed">失败</span>}
+          <span className="delivered-from">{note.from || t('team.member')}</span>
+          <span className="muted">{note.kind === 'result' ? t('view.deliveredResult') : t('view.deliveredTask')}</span>
+          {note.failed && <span className="delivered-failed">{t('team.failed')}</span>}
           <IconChevron size={14} open={open} />
         </span>
         {!open && preview && <span className="delivered-preview">{preview}</span>}
       </button>
-      {open && <Prose className="delivered-body" text={text || '没有文字输出。'} />}
+      {open && <Prose className="delivered-body" text={text || t('team.noText')} />}
     </div>
   );
 });
@@ -593,7 +594,7 @@ function FileImage({ path, roots, load, onOpen }: { path: string; roots: string[
   if (!url) return null;
   return (
     <figure className="file-image">
-      <button type="button" onClick={() => onOpen(url, path)} aria-label={`查看大图：${path}`}>
+      <button type="button" onClick={() => onOpen(url, path)} aria-label={t('view.enlargePath', path)}>
         <img src={url} alt={path} />
       </button>
       <figcaption title={path}>{relativePath(path, roots)}</figcaption>
@@ -617,7 +618,7 @@ function InputCard({ item, onAnswer }: { item: Extract<Item, { kind: 'input' }>;
     finally { setBusy(false); }
   };
   const singleApproval = item.inputKind === 'plan' && item.questions.length === 1 && item.questions[0].options.length === 1;
-  return <div className="row"><section className={`input-card${pending ? ' pending' : ''}`} aria-label={item.inputKind === 'plan' ? '计划审批' : '智能体提问'}>
+  return <div className="row"><section className={`input-card${pending ? ' pending' : ''}`} aria-label={item.inputKind === 'plan' ? t('view.planApproval') : t('view.agentQuestion')}>
     <div className="proposal-heading"><IconHand size={17} />{item.title}</div>
     {item.plan && <Prose text={item.plan} />}
     {pending ? <>
@@ -629,13 +630,13 @@ function InputCard({ item, onAnswer }: { item: Extract<Item, { kind: 'input' }>;
             if (!q.multiple) setCustom(prev => ({ ...prev, [q.id]: '' }));
           }}><span><strong>{o.label}</strong>{o.description && <small>{o.description}</small>}</span><span className="input-check">{checked && <IconCheck size={15} />}</span></button>;
         })}</div>
-        {q.freeText && <textarea aria-label={`${q.question}：补充回答`} placeholder={q.options.length ? '或输入你的想法' : '输入回答'} value={custom[q.id] ?? ''} maxLength={8000} onChange={e => setCustom(prev => ({ ...prev, [q.id]: e.target.value }))} rows={2} />}
+        {q.freeText && <textarea aria-label={t('view.extraAnswer', q.question)} placeholder={q.options.length ? t('view.orType') : t('view.typeAnswer')} value={custom[q.id] ?? ''} maxLength={8000} onChange={e => setCustom(prev => ({ ...prev, [q.id]: e.target.value }))} rows={2} />}
       </fieldset>)}
-      {singleApproval && item.questions[0].freeText && <textarea aria-label="计划修改意见" placeholder="也可以写下修改意见" rows={2} maxLength={8000} value={custom[item.questions[0].id] ?? ''} onChange={e => setCustom({ [item.questions[0].id]: e.target.value })} />}
-      <div className="input-actions"><button className="primary" disabled={busy || !onAnswer || (!singleApproval && !ready)} onClick={() => void submit({ answers: singleApproval && !custom[item.questions[0].id]?.trim() ? { [item.questions[0].id]: [item.questions[0].options[0].value] } : values })}>{busy ? '正在提交…' : singleApproval ? custom[item.questions[0].id]?.trim() ? '提交修改意见' : '开始执行' : '提交回答'}</button>
-        <button className="ghost" disabled={busy || !onAnswer} onClick={() => void submit({ cancelled: true })}>{item.inputKind === 'plan' ? '继续讨论' : '跳过'}</button></div>
+      {singleApproval && item.questions[0].freeText && <textarea aria-label={t('view.planFeedback')} placeholder={t('view.planFeedbackPlaceholder')} rows={2} maxLength={8000} value={custom[item.questions[0].id] ?? ''} onChange={e => setCustom({ [item.questions[0].id]: e.target.value })} />}
+      <div className="input-actions"><button className="primary" disabled={busy || !onAnswer || (!singleApproval && !ready)} onClick={() => void submit({ answers: singleApproval && !custom[item.questions[0].id]?.trim() ? { [item.questions[0].id]: [item.questions[0].options[0].value] } : values })}>{busy ? t('pickers.submitting') : singleApproval ? custom[item.questions[0].id]?.trim() ? t('view.submitFeedback') : t('composer.start') : t('view.submitAnswer')}</button>
+        <button className="ghost" disabled={busy || !onAnswer} onClick={() => void submit({ cancelled: true })}>{item.inputKind === 'plan' ? t('view.keepDiscussing') : t('view.skip')}</button></div>
       {error && <div className="input-error" role="alert">{error}</div>}
-    </> : <div className="input-result">{'cancelled' in item.answer! ? '本次询问已结束' : item.inputKind === 'plan' ? '已提交计划意见' : Object.values(item.answer!.answers).flat().join(' · ') || '已跳过'}</div>}
+    </> : <div className="input-result">{'cancelled' in item.answer! ? t('view.questionEnded') : item.inputKind === 'plan' ? t('view.feedbackSent') : Object.values(item.answer!.answers).flat().join(' · ') || t('view.skipped')}</div>}
   </section></div>;
 }
 
@@ -646,7 +647,7 @@ function PlanCard({ item }: { item: Extract<Item, { kind: 'plan' }> }) {
     <div className="row">
       <div className="plan">
         <div className="plan-head">
-          <span>计划</span>
+          <span>{t('view.plan')}</span>
           <span className="muted">
             {completed}/{item.entries.length}
           </span>
@@ -661,7 +662,7 @@ function PlanCard({ item }: { item: Extract<Item, { kind: 'plan' }> }) {
                   {state === 'completed' && <IconCheck size={12} />}
                 </span>
                 <span className="plan-text">{entry.content}</span>
-                <span className="sr-only">{state === 'completed' ? '（已完成）' : state === 'active' ? '（进行中）' : '（未开始）'}</span>
+                <span className="sr-only">{state === 'completed' ? t('view.entryDone') : state === 'active' ? t('view.entryActive') : t('view.entryPending')}</span>
               </li>
             );
           })}
@@ -691,11 +692,11 @@ function SentImage({ image, load, onOpen }: { image: ImageRef; load: (id: string
     };
   }, [image.id, load]);
 
-  if (failed) return <div className="sent-image missing">图片无法加载</div>;
-  if (!url) return <div className="sent-image loading" aria-label="正在加载图片" />;
+  if (failed) return <div className="sent-image missing">{t('view.imageFailed')}</div>;
+  if (!url) return <div className="sent-image loading" aria-label={t('view.imageLoading')} />;
   return (
-    <button type="button" className="sent-image" onClick={() => onOpen(url)} aria-label="查看大图">
-      <img src={url} alt="发送的图片" />
+    <button type="button" className="sent-image" onClick={() => onOpen(url)} aria-label={t('view.enlarge')}>
+      <img src={url} alt={t('view.sentImage')} />
     </button>
   );
 }
@@ -712,7 +713,7 @@ function WorkLabel({ item }: { item: Extract<Item, { kind: 'work' }> }) {
     return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', tick); };
   }, [item.done, item.timed, item.startedAt]);
   const time = item.timed ? durationLabel(item.startedAt, item.done ? item.endedAt : now) : '';
-  const label = !item.done ? time ? `工作中 · ${time}` : '工作中' : item.stopped ? stoppedLabel(time) : time ? `用时 ${time}` : '已处理';
+  const label = !item.done ? time ? `${t('view.working')} · ${time}` : t('view.working') : item.stopped ? stoppedLabel(time) : time ? t('view.workedFor', time) : t('view.processed');
   return <span className="work-label">{label}</span>;
 }
 
@@ -729,7 +730,7 @@ function WorkGroup({ item, roots }: { item: Extract<Item, { kind: 'work' }>; roo
     <div className="row work">
       <button className="work-toggle" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
         <WorkLabel item={item} />
-        {count > 0 && <span className="muted">· {count} 步</span>}
+        {count > 0 && <span className="muted">· {t('view.steps', count)}</span>}
         <IconChevron size={14} open={open} />
       </button>
       {open && (
@@ -766,7 +767,7 @@ const WorkNote = memo(function WorkNote({ text }: { text: string }) {
 
 /**
  * One stretch of the agent's thinking, kept small: while it is being thought, a line or two of
- * where it has got to; afterwards a single "思考 · X 秒" line. Either opens up to the whole text.
+ * where it has got to; afterwards a single "Thought · Xs" line. Either opens up to the whole text.
  * A model can think for minutes before it acts, and that must not fill the screen.
  */
 const ThinkingBlock = memo(function ThinkingBlock({ thought, live }: { thought: Thought; live: boolean }) {
@@ -779,7 +780,7 @@ const ThinkingBlock = memo(function ThinkingBlock({ thought, live }: { thought: 
   return (
     <div className="thinking">
       <button className="thinking-toggle" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-        <span>{live ? '思考中' : `思考 · ${secs}`}</span>
+        <span>{live ? t('view.thinking') : t('view.thought', secs)}</span>
         <IconChevron size={13} open={open} />
       </button>
       {open ? (
@@ -806,7 +807,7 @@ const RUN_FOLD_MIN = 2;
 
 /**
  * A stretch of thinking and tool calls between two things the agent said. Several calls fold into
- * one line that counts them by kind ("已浏览 2 个文件，搜索 1 次"), the way Codex does, and open to
+ * one line that counts them by kind ("explored 2 files, searched 1 time"), the way Codex does, and open to
  * the calls themselves. In a run that is still going on, what is in flight stays on screen as
  * itself; only what is over is folded.
  */
@@ -850,7 +851,7 @@ function StepRow({ step, roots }: { step: Step; roots: string[] }) {
   const [open, setOpen] = useState(false);
   // An edit is best shown as its diff; the raw arguments would repeat the same text as JSON.
   const showInput = step.input !== undefined && step.diffs.length === 0 && JSON.stringify(step.input) !== '{}';
-  const result = step.status === 'completed' ? '成功' : step.status === 'failed' ? '失败' : null;
+  const result = step.status === 'completed' ? t('view.succeeded') : step.status === 'failed' ? t('team.failed') : null;
   const hasContent = showInput || step.diffs.length > 0 || Boolean(step.output);
   const hasDetail = hasContent || result !== null;
   return (
@@ -866,7 +867,7 @@ function StepRow({ step, roots }: { step: Step; roots: string[] }) {
             {showInput && <pre>{JSON.stringify(step.input, null, 2)}</pre>}
             {step.diffs.length > 0 && <DiffView diffs={step.diffs} />}
             {step.output && <pre>{step.output}</pre>}
-            {!hasContent && <div className="step-detail-empty">工具未返回详细信息</div>}
+            {!hasContent && <div className="step-detail-empty">{t('view.noDetail')}</div>}
           </div>
           {result && <div className="step-result">{result}</div>}
         </div>
@@ -904,7 +905,7 @@ function DiffView({ diffs }: { diffs: FileDiff[] }) {
                 <span className="diff-text">{line.text || ' '}</span>
               </div>
             ))}
-            {hidden > 0 && <div className="diff-more">还有 {hidden} 行没有显示</div>}
+            {hidden > 0 && <div className="diff-more">{t('view.moreLines', hidden)}</div>}
           </div>
         );
       })}
@@ -922,7 +923,7 @@ function ChangesCard({ item, roots, onPreview }: { item: Extract<Item, { kind: '
     <div className="row">
       <div className="changes">
         <div className="changes-head">
-          <span>已更改 {item.files.length} 个文件</span>
+          <span>{t('markdown.changed', item.files.length)}</span>
           <Stats added={item.added} removed={item.removed} />
         </div>
         {item.files.map((file: FileChange) => {
@@ -940,8 +941,8 @@ function ChangesCard({ item, roots, onPreview }: { item: Extract<Item, { kind: '
                 <Stats added={file.added} removed={file.removed} />
               </button>
               {onPreview && PREVIEW_FILE.test(file.path) && (
-                <button className="changes-preview" title="在预览里打开这个页面" onClick={() => onPreview(file.path)}>
-                  预览
+                <button className="changes-preview" title={t('view.previewPage')} onClick={() => onPreview(file.path)}>
+                  {t('files.preview')}
                 </button>
               )}
               {open && <DiffView diffs={file.diffs} />}
@@ -957,13 +958,13 @@ function ChangesCard({ item, roots, onPreview }: { item: Extract<Item, { kind: '
 function optionLabel(option: ApprovalOption): string {
   switch (option.kind) {
     case 'allow_once':
-      return '允许这一次';
+      return t('view.allowOnce');
     case 'allow_always':
-      return '始终允许';
+      return t('view.allowAlways');
     case 'reject_once':
-      return '拒绝';
+      return t('view.reject');
     case 'reject_always':
-      return '始终拒绝';
+      return t('view.rejectAlways');
     default:
       return option.name;
   }
@@ -1010,11 +1011,11 @@ function ApprovalCard({
               })}
               {!canReject && (
                 <button className="ghost" onClick={() => onDecide(item.approvalId, null)}>
-                  取消
+                  {t('common.cancel')}
                 </button>
               )}
             </div>
-            {always && <div className="approval-note">始终允许：{always.name}</div>}
+            {always && <div className="approval-note">{t('view.alwaysAllowNote', always.name)}</div>}
           </>
         ) : (
           <div className="approval-result">{decisionLabel(item)}</div>
@@ -1028,19 +1029,19 @@ function ApprovalCard({
 function decisionLabel(item: Extract<Item, { kind: 'approval' }>): string {
   const d = item.decision;
   if (!d) return '';
-  if ('cancelled' in d) return '已取消';
+  if ('cancelled' in d) return t('view.cancelled');
   const option = item.options.find((o) => o.optionId === d.optionId);
   switch (option?.kind) {
     case 'allow_once':
-      return '已允许这一次';
+      return t('view.allowedOnce');
     case 'allow_always':
-      return '已允许，之后不再询问';
+      return t('view.allowedAlways');
     case 'reject_once':
-      return '已拒绝';
+      return t('view.rejected');
     case 'reject_always':
-      return '已拒绝，之后不再询问';
+      return t('view.rejectedAlways');
     default:
-      return `已选择：${option?.name ?? d.optionId}`;
+      return t('view.chose', option?.name ?? d.optionId);
   }
 }
 
@@ -1051,7 +1052,7 @@ function SentNotes({ notes }: { notes: Note[] }) {
     <>
       <button type="button" className="notes-chip" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
         <IconQuote size={12} />
-        {notes.length} 条注释
+        {t('composer.notes', notes.length)}
         <IconChevron size={12} open={open} />
       </button>
       {open && (
@@ -1073,5 +1074,5 @@ function SentNotes({ notes }: { notes: Note[] }) {
 
 /** A turn the user stopped, said the way Codex says it. */
 function stoppedLabel(time: string): string {
-  return time ? `你在 ${time} 后停止了` : '已停止';
+  return time ? t('view.stoppedAfter', time) : t('team.stopped');
 }
