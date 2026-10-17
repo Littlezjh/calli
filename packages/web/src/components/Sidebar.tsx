@@ -13,6 +13,9 @@ import { AgentMark, IconBell, IconChevron, IconClock, IconClose, IconEdit, IconF
 export { folderName } from '../paths';
 
 interface Props {
+  /** Keeps a standalone walkthrough's preferences separate from the workspace. */
+  storagePrefix?: string;
+  showEmptySections?: boolean;
   /** Puts the list away on a wide screen; the top bar then has the button to bring it back. */
   onHide?: () => void;
   threads: Thread[];
@@ -29,10 +32,10 @@ interface Props {
   onThreadMenu: (thread: Thread, x: number, y: number) => void;
   onSectionMenu: (section: Section, x: number, y: number) => void;
   onNewSection: () => void;
-  onOpenTodos: () => void;
+  onOpenTodos?: () => void;
   /** The plan page is what the main area shows. */
   todosActive?: boolean;
-  onOpenSchedules: () => void;
+  onOpenSchedules?: () => void;
   /** The scheduled-task page is what the main area shows. */
   schedulesActive?: boolean;
   /** The phone layout: the list is a page of its own under the conversation, laid out for thumbs. */
@@ -75,6 +78,8 @@ function GroupAdd({ label, onClick }: { label: string; onClick: () => void }) {
 export const SIDEBAR_SHORTCUT = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⇧⌘S' : 'Ctrl+Shift+S';
 
 export function Sidebar({
+  storagePrefix = 'rah.sidebar',
+  showEmptySections = true,
   threads,
   members,
   sections,
@@ -125,9 +130,9 @@ export function Sidebar({
   };
   // A long press on a row is the phone's right click.
   const longPress = useLongPress<Thread>(onThreadMenu);
-  const [collapsed, toggle] = useStoredSet('rah.sidebar.collapsed');
+  const [collapsed, toggle] = useStoredSet(`${storagePrefix}.collapsed`);
   // The other way to read the list: by what is going on, not by where a thread is filed. Like Codex's "查看活动".
-  const [byActivity, setByActivity] = useStoredFlag('rah.sidebar.activity');
+  const [byActivity, setByActivity] = useStoredFlag(`${storagePrefix}.activity`);
   const model = buildSidebar(threads, sections, search);
   const activity = byActivity ? buildActivity(threads, search, new Date(), selectedId) : null;
   const wanted = attentionCount(threads, selectedId);
@@ -332,7 +337,7 @@ export function Sidebar({
           model.pinned,
         )}
 
-      {(model.sections.length > 0 || !search.trim()) && (
+      {(model.sections.length > 0 || (showEmptySections && !search.trim())) && (
         <div className="group-label-row">
           <span className="group-label">分区</span>
           <button className="group-add" aria-label="新建分区" title="新建分区" onClick={onNewSection}>
@@ -358,7 +363,7 @@ export function Sidebar({
           compact ? '长按线程，选"移到分区"' : '右键线程，选"移到分区"',
         ),
       )}
-      {model.sections.length === 0 && !search.trim() && <p className="group-empty">还没有分区。</p>}
+      {showEmptySections && model.sections.length === 0 && !search.trim() && <p className="group-empty">还没有分区。</p>}
 
       {model.projects.length > 0 && <div className="group-label">项目</div>}
       {model.projects.map((p) =>
@@ -449,12 +454,12 @@ export function Sidebar({
                 <IconEdit size={17} /> 新线程
               </button>
             )}
-            <button className={`side-link${todosActive ? ' active' : ''}`} aria-current={todosActive ? 'page' : undefined} onClick={onOpenTodos}>
+            {onOpenTodos && <button className={`side-link${todosActive ? ' active' : ''}`} aria-current={todosActive ? 'page' : undefined} onClick={onOpenTodos}>
               <IconList size={compact ? 21 : 17} /> 计划
-            </button>
-            <button className={`side-link${schedulesActive ? ' active' : ''}`} aria-current={schedulesActive ? 'page' : undefined} onClick={onOpenSchedules}>
+            </button>}
+            {onOpenSchedules && <button className={`side-link${schedulesActive ? ' active' : ''}`} aria-current={schedulesActive ? 'page' : undefined} onClick={onOpenSchedules}>
               <IconClock size={compact ? 21 : 17} /> 定时任务
-            </button>
+            </button>}
           </div>
         )}
         {!hostDown && groups}

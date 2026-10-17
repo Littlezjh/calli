@@ -183,14 +183,15 @@ export function useStoredFlag(key: string): [boolean, (on: boolean) => void] {
  * <html>: `data-theme` (light or dark, already resolved against the system) and `data-palette`.
  * The stylesheet does the rest. Returns the resolved theme too, for what has to follow it.
  */
-export function useAppearance(): [Appearance, (next: Appearance) => void, Theme] {
-  const [appearance, setAppearance] = useState<Appearance>(() => {
+export function useAppearance(storageKey = APPEARANCE_KEY, forced?: Appearance): [Appearance, (next: Appearance) => void, Theme] {
+  const [saved, setAppearance] = useState<Appearance>(() => {
     try {
-      return parseAppearance(localStorage.getItem(APPEARANCE_KEY));
+      return parseAppearance(localStorage.getItem(storageKey));
     } catch {
       return parseAppearance(null);
     }
   });
+  const appearance = forced ?? saved;
   const theme = resolveTheme(appearance.mode, useMediaQuery('(prefers-color-scheme: dark)'));
 
   useLayoutEffect(() => {
@@ -202,7 +203,7 @@ export function useAppearance(): [Appearance, (next: Appearance) => void, Theme]
   const save = (next: Appearance) => {
     setAppearance(next);
     try {
-      localStorage.setItem(APPEARANCE_KEY, JSON.stringify(next));
+      localStorage.setItem(storageKey, JSON.stringify(next));
     } catch {
       // Storage unavailable: the choice lasts until the page reloads.
     }

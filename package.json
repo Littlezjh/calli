@@ -10,11 +10,15 @@
   "scripts": {
     "dev:daemon": "npm run dev -w @rah/daemon",
     "dev:web": "npm run dev -w @rah/web",
+    "dev:site": "npm run dev -w @rah/site",
+    "build:site": "npm run build -w @rah/site",
+    "preview:site": "npm run preview -w @rah/site",
+    "test:site": "npm run build:site && node --test packages/site/e2e/*.spec.mjs",
     "build": "npm run build -w @rah/daemon && npm run build -w @rah/web",
-    "test": "npm test -w @rah/daemon && npm test -w @rah/web",
+    "test": "npm test -w @rah/daemon && npm test -w @rah/web && npm test -w @rah/site",
     "test:e2e": "npm run build && cd packages/e2e && node --test test/*.spec.mjs",
     "setup": "node scripts/setup.mjs",
-    "typecheck": "npm run typecheck -w @rah/daemon && npm run typecheck -w @rah/web",
+    "typecheck": "npm run typecheck -w @rah/daemon && npm run typecheck -w @rah/web && npm run typecheck -w @rah/site",
     "check:publish": "node scripts/check-publish.mjs"
   },
   "devDependencies": {

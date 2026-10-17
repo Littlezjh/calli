@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN" data-page="site">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="description" content="Limi，用最简单的方式管理你的 coding agent。集中查看任务、继续对话、处理审批，电脑和手机都能用。" />
+    <meta property="og:title" content="Limi · 简单管理你的所有 agent" />
+    <meta property="og:description" content="一个轻巧的工作台，随时接手你的 agent。打开网页，先体验一下。" />
+    <meta property="og:type" content="website" />
+    <title>Limi · 简单管理你的所有 agent</title>
+    <link rel="icon" href="./limi-icon.png" type="image/png" />
+    <script>
+      try {
+        var mode = JSON.parse(localStorage.getItem('limi.site.appearance') || '{}').mode;
+        document.documentElement.dataset.theme = mode === 'dark' || (mode !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./src/main.tsx"></script>
+  </body>
+</html>

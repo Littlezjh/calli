@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN" data-page="showcase">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="robots" content="noindex" />
+    <title>Limi · 引导体验</title>
+    <link rel="icon" href="../limi-icon.png" type="image/png" />
+    <script>
+      var mode = new URLSearchParams(location.search).get('theme');
+      document.documentElement.dataset.theme = mode === 'dark' || (mode !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="../src/demo.tsx"></script>
+  </body>
+</html>

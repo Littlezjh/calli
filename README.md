@@ -65,6 +65,27 @@ npm run dev:web                              # Vite，http://127.0.0.1:5173，/a
 
 daemon 在 `packages/daemon` 目录里运行，所以用 `RAH_ENV_FILE` 指向根目录的 `.env`。没有设置 `RAH_ENV_FILE` 时，读取的是当前目录下的 `.env`。
 
+## 产品官网与引导体验
+
+官网：[maxliux5.github.io/limi](https://maxliux5.github.io/limi/)。
+
+仓库包含独立的中文产品官网，展示「简单管理你的所有 agent」的定位。官网内嵌 Limi 的真实界面，提供发起任务、处理审批、讨论方案三个引导场景。扩展机制作为规划中的产品方向介绍，首个待验证需求为 BotMux 飞书提醒，具体边界见 [扩展设计](docs/extensions-design.md)。
+
+```bash
+npm run dev:site       # 开发官网，默认端口 5174
+npm run build:site     # 输出 packages/site/dist
+npm run preview:site   # 预览构建后的静态站点
+npm run test:site      # 构建并运行官网浏览器测试
+```
+
+`packages/site/dist` 可以单独部署到静态托管服务，支持网站根目录和子目录。首页是 `index.html`，独立体验入口是 `demo/index.html`；托管服务需要支持目录首页。开发与本地预览默认只监听本机。
+
+GitHub Pages 通过 `.github/workflows/pages.yml` 发布：推送到 `main` 后，自动安装依赖、检查并构建官网，再上传 `packages/site/dist`；也可在 Actions 中手动运行「Deploy website」。首次启用需在仓库 Settings → Pages 选择 GitHub Actions 作为发布来源。Pages 仅托管官网和本地模拟体验，运行 agent 的 hub 仍部署在自己的主机上。
+
+体验区进入可视范围或点击场景后才加载，手机保留内嵌交互并提供「全屏体验」。官网使用自己的轻量图标和静态资源目录，不复制 hub 的应用清单。安装区包含启动后打开工作台、输入 token 及远程访问说明。
+
+引导体验仅在浏览器内回放预置事件，不需要 daemon，不读取已保存的 hub token，不发送 `/api/` 请求，也不运行真实 agent。回复、命令结果和文件改动都是示例；切换任务可浏览不同流程，重新体验会清空本轮演示。普通 hub 的入口、登录和原有只读示例保持不变。官网独立构建，不由 `scripts/restart.sh` 部署。
+
 ## 远程访问
 
 - 默认只监听 `127.0.0.1`。

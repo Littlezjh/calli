@@ -184,14 +184,14 @@ export function demoData(now = Date.now()): DemoData {
     dark.add(turn, at(41), 'tool.end', { id: 'c1', status: 'completed', output: 'src/theme.ts:1:export const themes = {\nsrc/main.tsx:8:applyTheme(document.documentElement);' });
     dark.add(turn, at(40), 'tool.start', {
       id: 'c2',
-      title: '编辑 src/theme.ts',
+      title: 'src/theme.ts',
       kind: 'edit',
       content: [{ type: 'diff', path: `${STOREFRONT}/src/theme.ts`, oldText: THEME_BEFORE, newText: THEME_AFTER }],
     });
     dark.add(turn, at(40), 'tool.end', { id: 'c2', status: 'completed' });
     dark.add(turn, at(40), 'tool.start', {
       id: 'c3',
-      title: '编辑 src/pages/Settings.tsx',
+      title: 'src/pages/Settings.tsx',
       kind: 'edit',
       content: [{ type: 'diff', path: `${STOREFRONT}/src/pages/Settings.tsx`, oldText: SETTINGS_BEFORE, newText: SETTINGS_AFTER }],
     });
@@ -225,12 +225,12 @@ export function demoData(now = Date.now()): DemoData {
     scroll.add(null, at(9), 'thread.created');
     scroll.add(turn, at(8), 'turn.started', { text: '商品列表往下滚的时候会跳一下，图片加载出来以后更明显。查一下原因并修掉。' });
     scroll.add(turn, at(8), 'reasoning.delta', { text: '跳动多半是行高在图片加载后变了，虚拟列表用的还是旧高度。先读列表组件。' });
-    scroll.add(turn, at(8), 'tool.start', { id: 's1', title: '读取 src/components/ProductList.tsx', kind: 'read' });
+    scroll.add(turn, at(8), 'tool.start', { id: 's1', title: 'src/components/ProductList.tsx', kind: 'read' });
     scroll.add(turn, at(8), 'tool.end', { id: 's1', status: 'completed' });
     scroll.add(turn, at(7), 'message.delta', { text: '找到了：行高只在第一次渲染时量一次，图片加载后没有重新量。改成图片加载完再量。' });
     scroll.add(turn, at(7), 'tool.start', {
       id: 's2',
-      title: '编辑 src/components/ProductList.tsx',
+      title: 'src/components/ProductList.tsx',
       kind: 'edit',
       content: [{ type: 'diff', path: `${STOREFRONT}/src/components/ProductList.tsx`, oldText: LIST_BEFORE, newText: LIST_AFTER }],
     });
@@ -319,7 +319,7 @@ export function demoData(now = Date.now()): DemoData {
     const turn = 'turn-tests-1';
     tests.add(null, at(20), 'thread.created');
     tests.add(turn, at(19), 'turn.started', { text: '给 /users 接口补上缺的测试。' });
-    tests.add(turn, at(19), 'tool.start', { id: 't1', title: '读取 test/users.test.ts', kind: 'read' });
+    tests.add(turn, at(19), 'tool.start', { id: 't1', title: 'test/users.test.ts', kind: 'read' });
     tests.add(turn, at(19), 'tool.end', { id: 't1', status: 'completed' });
     tests.add(turn, at(17), 'tool.start', { id: 't2', title: 'npm test -- users', kind: 'execute', input: { command: 'npm test -- users' } });
     tests.add(turn, at(16), 'tool.end', { id: 't2', status: 'completed', output: 'Tests  14 passed' });

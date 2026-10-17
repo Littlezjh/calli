@@ -1,6 +1,7 @@
 import type { WorkMode } from './api';
 import { HandoverTrail } from './components/HandoverTrail';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import type { Theme } from './appearance';
 import {
   Api,
   ApiError,
@@ -133,6 +134,17 @@ function MemberModel({ agent, models, value, permission, onNeed, onChange, onPer
   </>);
 }
 
+/** Presentation overrides for the standalone, local-only product walkthrough. */
+export interface Showcase {
+  api: Api;
+  initialThreadId: string;
+  theme: Theme;
+  notice: (threadId: string | null) => ReactNode;
+  intro: (threadId: string) => ReactNode;
+  composer: (threadId: string | null) => ReactNode;
+  onInstall: () => void;
+}
+
 interface AppProps {
   /** The hub's access token; empty shows the demo workspace, which talks to no daemon. */
   token: string;
@@ -145,12 +157,13 @@ interface AppProps {
   /** Switches machines. The app starts over on the new one, with what the switch was made from still open. */
   onHost?: (id: string | null, start?: AppStart) => void;
   start?: AppStart;
+  showcase?: Showcase;
 }
 
 /** What is open when the app starts over on another machine: the phone's thread list, or the machines panel. */
 export type AppStart = 'list' | 'machines';
 
-export function App({ token, onToken, connect, hostId = null, onHost, start }: AppProps) {
+export function App({ token, onToken, connect, hostId = null, onHost, start, showcase }: AppProps) {
   // Asking for the token, and why: what was being done, or why the old one stopped working.
   const [connectAsk, setConnectAsk] = useState<{ reason?: string } | null>(connect ?? null);
   // Looking at another machine, every call is answered by its daemon, through the hub.
@@ -160,7 +173,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
   const hostUp = !hostId || !hostsLoaded || host?.status === 'online';
   // A machine that comes back gets a new client, so everything is read from it again.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const api = useMemo<Api>(() => (token ? new Api(token, '', hostId) : new DemoApi()), [token, hostId, hostUp]);
+  const api = useMemo<Api>(() => showcase?.api ?? (token ? new Api(token, '', hostId) : new DemoApi()), [token, hostId, hostUp, showcase?.api]);
   const demo = api.demo;
   const [hostsOpen, setHostsOpen] = useState(start === 'machines');
   // A machine that was removed (here or on another device) has nothing to show: back to the hub's own.
@@ -208,7 +221,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
   const [todosKey, setTodosKey] = useState(0);
   /** The same, for the open scheduled-task page. */
   const [schedulesKey, setSchedulesKey] = useState(0);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(showcase?.initialThreadId ?? null);
   const [coordination, setCoordination] = useState<Coordination | null>(null);
   const memberDefaultsKey = hostId ? `${MEMBER_DEFAULTS_KEY}:${hostId}` : MEMBER_DEFAULTS_KEY;
   const [memberDefaults, setMemberDefaults] = useState(() => savedMemberDefaults(memberDefaultsKey));
@@ -235,6 +248,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
   const [drawer, setDrawer] = useState(start === 'list');
   // On a wide screen the list can be put away for room, like Codex; remembered on this device.
   const [sidebarHidden, setSidebarHidden] = useState(() => {
+    if (showcase) return false;
     try {
       return window.localStorage.getItem(SIDEBAR_HIDDEN_KEY) === '1';
     } catch {
@@ -244,7 +258,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
   const toggleSidebar = useCallback(() => {
     setSidebarHidden((hidden) => {
       try {
-        window.localStorage.setItem(SIDEBAR_HIDDEN_KEY, hidden ? '0' : '1');
+        if (!showcase) window.localStorage.setItem(SIDEBAR_HIDDEN_KEY, hidden ? '0' : '1');
       } catch {
         // Not remembered, still toggled.
       }
@@ -270,7 +284,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
   const [confirmSignOut, setConfirmSignOut] = useState(false);
   /** Where the settings menu opened from, while it is open. */
   const [settingsAt, setSettingsAt] = useState<{ x: number; y: number } | null>(null);
-  const [appearance, setAppearance, theme] = useAppearance();
+  const [appearance, setAppearance, theme] = useAppearance(showcase ? 'limi.showcase.appearance' : undefined, showcase ? { mode: showcase.theme, palette: 'paper' } : undefined);
   const [appearanceOpen, setAppearanceOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastState | null>(null);
@@ -439,7 +453,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
   // Whether the user has a hand on the scroller, and when they last did.
   const gesture = useRef({ held: false, at: 0 });
 
-  const askToConnect = () => setConnectAsk((cur) => cur ?? {});
+  const askToConnect = () => showcase ? showcase.onInstall() : setConnectAsk((cur) => cur ?? {});
 
   // The app starts over on the demo; a token that stopped working says so in the connect dialog.
   const signOut = (msg?: string) => onToken('', msg);
@@ -553,6 +567,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
   // to the foreground, at most once in a while.
   const updateAskedAt = useRef(0);
   const checkForUpdate = () => {
+    if (showcase) return;
     if (Date.now() - updateAskedAt.current < UPDATE_CHECK_MS) return;
     updateAskedAt.current = Date.now();
     void newerBuildAvailable().then((newer) => {
@@ -1021,7 +1036,10 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
       void refreshThreads();
     } catch (e) {
       // The composer keeps the draft; the dialog says it will still be there.
-      if (e instanceof DemoError) setConnectAsk({ reason: '连接后再发送，输入框里的内容会留着。' });
+      if (e instanceof DemoError) {
+        if (showcase) showcase.onInstall();
+        else setConnectAsk({ reason: '连接后再发送，输入框里的内容会留着。' });
+      }
       else handleError(e);
       throw e;
     }
@@ -1104,6 +1122,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
   };
 
   const newThread = (opts: { cwd?: string; sectionId?: string | null; scratch?: boolean } = {}) => {
+    if (showcase) { showcase.onInstall(); return; }
     setSelectedId(null);
     setView('thread');
     setDrawer(false);
@@ -1475,6 +1494,8 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
       {projectDialog === 'roots' && <RootsDialog api={api} roots={roots} onChange={applyWorkdirs} onCancel={() => setProjectDialog(null)} />}
       <aside className="sidebar">
         <Sidebar
+          storagePrefix={showcase ? 'limi.showcase.sidebar' : undefined}
+          showEmptySections={!showcase}
           threads={threads.filter((t) => !t.coordination || t.coordination.rootId === t.id || !threads.some((r) => r.id === t.coordination!.rootId))}
           members={teamMembers}
           sections={sections}
@@ -1495,11 +1516,11 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
           onThreadMenu={threadActions.openThreadMenu}
           onSectionMenu={threadActions.openSectionMenu}
           onNewSection={threadActions.newSection}
-          onOpenTodos={openTodos}
+          onOpenTodos={showcase ? undefined : openTodos}
           todosActive={onTodos}
-          onOpenSchedules={openSchedules}
+          onOpenSchedules={showcase ? undefined : openSchedules}
           schedulesActive={onSchedules}
-          notice={demo && compact ? <DemoBar compact onConnect={askToConnect} /> : undefined}
+          notice={demo && compact ? showcase ? showcase.notice(selectedId) : <DemoBar compact onConnect={askToConnect} /> : undefined}
         />
       </aside>
 
@@ -1576,7 +1597,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
           )}
         </header>
 
-        {demo && <DemoBar compact={compact} onConnect={askToConnect} />}
+        {demo && (showcase ? showcase.notice(selectedId) : <DemoBar compact={compact} onConnect={askToConnect} />)}
 
         {selected && !onPage && hostUp && <HandoverTrail thread={selected} threads={threads} agentLabel={agentLabel} onSelect={pick} />}
 
@@ -1641,6 +1662,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
         <div key="thread" className="scroller" ref={scrollerRef} onScroll={onScroll} {...gestureProps}>
           {selected && <TurnRuler scrollerRef={scrollerRef} previews={turnPreviewMap} />}
           {selected && eventsLoading && <div className="loading-note">加载中…</div>}
+          {showcase && selected && !eventsLoading && !timeline.items.length && showcase.intro(selected.id)}
           {selected ? (
             <ThreadView
               items={timeline.items}
@@ -1697,7 +1719,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
         )}
 
         {!onPage && !(host && !hostUp) && (
-        <Composer
+        showcase ? showcase.composer(selectedId) : <Composer
           draftKey={hostId ? `host:${hostId}:${selectedId ?? 'new'}` : selectedId ?? 'new'}
           running={running}
           disabled={modeBusy || (!selected && !draftCwd)}
@@ -1825,7 +1847,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
           y={settingsAt.y}
           corner="bottom-right"
           onClose={() => setSettingsAt(null)}
-          items={[
+          items={showcase ? [{ id: 'install', label: '安装 Limi', icon: IconSignIn, onSelect: () => { setDrawer(false); showcase.onInstall(); } }] : [
             // The demo's way in. The look works as it is; the hub's own machinery is left out.
             ...(demo
               ? [
@@ -1925,7 +1947,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start }: A
       {appearanceOpen && (
         <AppearancePanel appearance={appearance} theme={theme} onChange={setAppearance} onClose={() => setAppearanceOpen(false)} />
       )}
-      {connectAsk && <ConnectDialog reason={connectAsk.reason} onCancel={() => setConnectAsk(null)} onConnected={(t) => onToken(t)} />}
+      {connectAsk && !showcase && <ConnectDialog reason={connectAsk.reason} onCancel={() => setConnectAsk(null)} onConnected={(t) => onToken(t)} />}
       {confirmSignOut && (
         <Dialog
           title="退出登录？"
