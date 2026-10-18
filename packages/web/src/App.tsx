@@ -1873,7 +1873,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         <div className="composer-slot">
         {selectedId && <WorkSummary items={workSources} />}
         {showcase ? showcase.composer(selectedId) : <>
-        {selected?.coordination?.team && selected.coordination.rootId === selected.id && ['awaiting_confirm', 'needs_attention'].includes(selected.coordination.team.status) && <div className="team-task-notice"><span>{selected.coordination.team.error ?? t(`teams.${selected.coordination.team.status}`)}</span>{selected.coordination.team.status === 'awaiting_confirm' && <button className="ghost" onClick={() => void api.configureCoordination(selected.id, { action: 'confirm' }).then(value => { setCoordination(value); void refreshThreads(); }).catch(handleError)}>{t('teams.confirm')}</button>}</div>}
+        {selected?.coordination?.team && selected.coordination.rootId === selected.id && ['awaiting_confirm', 'needs_attention'].includes(selected.coordination.team.status) && <div className="team-task-notice">{selected.coordination.team.status === 'needs_attention' && <span>{selected.coordination.team.error}</span>}{selected.coordination.team.status === 'awaiting_confirm' && <button className="ghost" onClick={() => void api.configureCoordination(selected.id, { action: 'confirm' }).then(value => { setCoordination(value); void refreshThreads(); }).catch(handleError)}>{t('teams.confirm')}</button>}</div>}
         {!selected && draftTeam && <div className="team-text-only">{t('teams.attachments')}</div>}
         <Composer
           draftKey={hostId ? `host:${hostId}:${selectedId ?? (draftTeam ? `new:team:${draftTeam}` : 'new')}` : selectedId ?? (draftTeam ? `new:team:${draftTeam}` : 'new')}
