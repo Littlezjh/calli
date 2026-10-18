@@ -43,6 +43,7 @@ export interface ExtensionHostOptions {
   /** Notifications waiting per extension before the queue is dropped for a `host.resync`. */
   queueLimit?: number;
   externalDir?: string;
+  externalCatalog?: { manifest: ExtensionManifest; origin: string }[];
 }
 
 /** Hooks every running extension gets, declared or not: they are about the extension and its delivery. */
@@ -101,6 +102,7 @@ export class ExtensionHost {
   private readonly store: ExtensionStore;
   private readonly source: HostSource;
   private readonly catalog: ExtensionManifest[];
+  private readonly externalCatalog: NonNullable<ExtensionHostOptions['externalCatalog']>;
   private readonly turnStart?: ExtensionHostOptions['turnStart'];
   private readonly queueLimit: number;
   private readonly implementations = new Map<string, DaemonExtension>();
@@ -118,6 +120,7 @@ export class ExtensionHost {
     if (opts.externalDir) this.external = new ExternalExtensions(opts.externalDir, opts.source, this.generation, () => this.changed(), () => this.catalog.map(m => m.id));
     this.source = opts.source;
     this.catalog = opts.catalog;
+    this.externalCatalog = opts.externalDir ? opts.externalCatalog ?? [] : [];
     this.turnStart = opts.turnStart;
     this.queueLimit = Math.max(2, opts.queueLimit ?? DEFAULT_QUEUE_LIMIT);
   }
@@ -147,7 +150,15 @@ export class ExtensionHost {
   /** The catalog with this machine's state, for `GET /api/extensions`. */
   list(): ExtensionState[] {
     const records = new Map(this.store.list().map((r) => [r.id, r]));
-    return [...this.catalog.map((m) => this.state(m, records.get(m.id) ?? null)), ...(this.external?.list() ?? [])];
+    const external = new Map((this.external?.list() ?? []).map(s => [s.manifest.id, s]));
+    for (const { manifest, origin } of this.externalCatalog) {
+      const installed = external.get(manifest.id);
+      external.set(manifest.id, installed ? { ...installed, preset: true } : {
+        manifest, origin, preset: true, source: 'external', installed: false, enabled: false,
+        granted: [], installedAt: null, updatedAt: null,
+      });
+    }
+    return [...this.catalog.map((m) => this.state(m, records.get(m.id) ?? null)), ...external.values()];
   }
 
   /** Called with no arguments whenever an extension is installed, removed, enabled or disabled. */

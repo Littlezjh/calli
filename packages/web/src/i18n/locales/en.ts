@@ -1343,6 +1343,9 @@ export const en: Messages = {
   'demo.notInDemo': 'Not part of the demo',
 
   // External work sources
+  'work.supported': 'Supported plugin',
+  'work.notInstalled': 'Not installed',
+  'work.toolPrerequisite': 'Installs the connector plugin. Install the tool itself separately.',
   "work.configure": (name: string) => `Configure ${name}`,
   "work.save": "Save settings",
   "work.detect": "Save and detect",

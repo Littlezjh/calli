@@ -11,7 +11,7 @@ export function useWorkSources(api: Api, extensions: ExtensionState[] | null, ac
   useEffect(() => {
     let alive = true, busy = false;
     setItems([]);
-    if (!active || api.demo || !extensions?.some(s => s.source === 'external')) return;
+    if (!active || api.demo || !extensions?.some(s => s.source === 'external' && s.installed)) return;
     if (consumer && !extensions.some(s => s.manifest.id === consumer && s.enabled && s.granted.includes('worksource.read'))) return;
     const read = async () => {
       if (busy || document.visibilityState === 'hidden') return;

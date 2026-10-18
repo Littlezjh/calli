@@ -2,6 +2,7 @@ import { CoordinationManager, coordinationServer } from './coordination.js';
 import { loadConfig, loadDotEnv } from './config.js';
 import { ExtensionHost } from './extension-host.js';
 import { loadCatalog } from './extensions.js';
+import { loadSupportedExternalCatalog } from './external-extensions.js';
 import { createHttpServer, listenPrivate } from './http.js';
 import { HostRegistry } from './hosts.js';
 import { AgentRegistry, defaultInstances } from './agents.js';
@@ -66,6 +67,7 @@ async function main(): Promise<void> {
     source: manager,
     catalog: loadCatalog(),
     externalDir: join(config.dataDir, 'extensions'),
+    externalCatalog: loadSupportedExternalCatalog(),
     turnStart: (threadId, turnId) => store.listEventsOfType(threadId, 'turn.started').find((e) => e.turnId === turnId),
   });
   extensions.start();

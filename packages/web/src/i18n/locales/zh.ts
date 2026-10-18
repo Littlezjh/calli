@@ -1343,6 +1343,9 @@ export const zh = {
   'demo.notInDemo': '示例里没有这部分',
 
   // External work sources
+  'work.supported': '支持的插件',
+  'work.notInstalled': '未安装',
+  'work.toolPrerequisite': '此处安装连接插件，工具本体仍由你自行安装。',
   "work.configure": (name: string) => `配置「${name}」`,
   "work.save": "保存配置",
   "work.detect": "保存并检测",

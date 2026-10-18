@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { c as createTar } from 'tar';
-import { ExternalExtensions, externalManifest } from '../src/external-extensions.js';
+import { ExternalExtensions, externalManifest, loadSupportedExternalCatalog } from '../src/external-extensions.js';
 import { ExtensionHost } from '../src/extension-host.js';
 import { createHttpServer } from '../src/http.js';
 import { Store } from '../src/store.js';
@@ -121,7 +121,7 @@ test('commands are argument arrays, omit hub credentials, bound output and cance
 test('all external HTTP endpoints use the authenticated host, with explicit view content grants', async t => {
   const { root, source } = setup(t);
   const store = new Store(join(root, 'store'));
-  const extensions = new ExtensionHost({ store: store.extensions, source, catalog: [board], externalDir: join(root, 'http-extensions') });
+  const extensions = new ExtensionHost({ store: store.extensions, source, catalog: [board], externalCatalog: loadSupportedExternalCatalog(), externalDir: join(root, 'http-extensions') });
   extensions.start();
   const server = createHttpServer({ manager: source as any, extensions, token: 'external-test-token', webDir: null, version: 'test' });
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
@@ -129,8 +129,19 @@ test('all external HTTP endpoints use the authenticated host, with explicit view
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const api = (path: string, method = 'GET', body?: unknown) => fetch(base + path, { method, headers: { Authorization: 'Bearer external-test-token', 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
   assert.equal((await fetch(base + '/api/extensions')).status, 401);
-  const preview = await (await api('/api/extensions/prepare', 'POST', { origin: packageDir })).json();
+  const catalog = await (await api('/api/extensions')).json();
+  const supported = catalog.find((s: any) => s.manifest.id === 'loopx');
+  assert.equal(supported.preset, true);
+  assert.equal(supported.installed, false);
+  assert.equal(supported.enabled, false);
+  assert.deepEqual(extensions.external!.list(), [], 'discovery does not install or start a plugin');
+  assert.deepEqual(await extensions.external!.projections(), []);
+  const preview = await (await api('/api/extensions/prepare', 'POST', { origin: supported.origin })).json();
   assert.equal((await api('/api/extensions/commit', 'POST', { token: preview.token, granted: preview.manifest.permissions })).status, 200);
+  const installed = (await (await api('/api/extensions')).json()).filter((s: any) => s.manifest.id === 'loopx');
+  assert.equal(installed.length, 1, 'installed entry replaces the preset');
+  assert.equal(installed[0].installed, true);
+  assert.equal(installed[0].preset, true);
   assert.equal((await api('/api/extensions/loopx/configuration')).status, 200);
   assert.equal((await api('/api/extensions/loopx/configuration', 'PUT', { settings: { executable }, bindings: [] })).status, 200);
   assert.equal((await api('/api/extensions/loopx/detect', 'POST')).status, 200);
@@ -140,6 +151,10 @@ test('all external HTTP endpoints use the authenticated host, with explicit view
   assert.equal((await api('/api/extensions/loopx/rollback', 'POST')).status, 400);
   assert.equal((await api('/api/extensions/loopx', 'PATCH', { enabled: false })).status, 200);
   assert.equal((await api('/api/extensions/loopx', 'DELETE')).status, 204);
+  const removed = (await (await api('/api/extensions')).json()).find((s: any) => s.manifest.id === 'loopx');
+  assert.equal(removed.preset, true);
+  assert.equal(removed.installed, false);
+  assert.equal(removed.origin, supported.origin, 'uninstall restores the catalog source');
 });
 
 test('failed upgrade handshake keeps the running version; the old preview cannot be replayed', async t => {

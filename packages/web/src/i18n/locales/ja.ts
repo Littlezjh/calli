@@ -1341,6 +1341,9 @@ export const ja: Messages = {
   'demo.notInDemo': 'サンプルにはこの部分がありません',
 
   // External work sources
+  'work.supported': '対応プラグイン',
+  'work.notInstalled': '未インストール',
+  'work.toolPrerequisite': '連携プラグインをインストールします。ツール本体は別途インストールしてください。',
   "work.configure": (name: string) => `${name} を設定`,
   "work.save": "設定を保存",
   "work.detect": "保存して検出",

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { lstat, mkdir, readFile, readdir, copyFile, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { t as listTar, x as extractTar } from 'tar';
 import type { ExtensionConfiguration, ExtensionDetection, ExtensionManifest, ExtensionPackagePreview, ExtensionState, WorkBinding, WorkProjection, WorkSnapshot } from '@rah/extension-api';
 import { checkManifest, exactGrant } from './extensions.js';
@@ -16,6 +17,15 @@ const keyPattern = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
 const fail = (message: string): never => { throw new HttpError(400, message); };
 const safeRelative = (path: string) => path.length > 0 && !isAbsolute(path) && !path.includes('\\') && !path.split('/').includes('..');
 const strings = (value: unknown): value is Record<string, string> => Boolean(value) && typeof value === 'object' && !Array.isArray(value) && Object.values(value!).every(v => typeof v === 'string' && v.length <= 4096);
+
+/** Discovery reads manifests only; it never installs or starts a supported package. */
+export function loadSupportedExternalCatalog(): { manifest: ExtensionManifest; origin: string }[] {
+  return ['ext-loopx'].flatMap(name => {
+    const origin = fileURLToPath(new URL(`../../${name}/`, import.meta.url));
+    try { return [{ manifest: externalManifest(JSON.parse(readFileSync(join(origin, 'manifest.json'), 'utf8'))), origin }]; }
+    catch { console.warn(`Supported extension package unavailable: ${name}`); return []; }
+  });
+}
 
 export function externalManifest(value: unknown): ExtensionManifest {
   const m = checkManifest(value);
