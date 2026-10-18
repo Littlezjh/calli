@@ -4,6 +4,7 @@
 
 import type { ComponentType, ReactNode } from 'react';
 import type { ExtensionManifest, HostIconName } from './manifest.js';
+import type { WebHostMemory } from './memory.js';
 import type { ThreadSummary } from './summary.js';
 
 export type Locale = 'zh' | 'en' | 'ja';
@@ -67,6 +68,8 @@ export interface PopoverOptionProps {
 
 /** Host components. They follow theme, density and phone layout like core screens. */
 export interface WebHostUi {
+  /** Markdown without raw HTML, external media or active links. */
+  Markdown: ComponentType<{ text: string }>;
   Icon: ComponentType<{ name: HostIconName | 'pin' | 'clock' | 'worktree' | 'fork' | 'team' | 'check' | 'chevron' | 'close'; size?: number }>;
   /** The agent instance's mark and, with `label`, its name. */
   AgentMark: ComponentType<{ agentId: string; size?: number; label?: boolean }>;
@@ -88,6 +91,7 @@ export interface WebHostNavigate {
 export interface WebHost {
   extensionId: string;
   threads: WebHostThreads;
+  memory: WebHostMemory;
   connection: WebHostConnection;
   agents(): AgentInfo[];
   navigate: WebHostNavigate;

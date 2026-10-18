@@ -65,6 +65,7 @@ async function main(): Promise<void> {
     store: store.extensions,
     source: manager,
     catalog: loadCatalog(),
+    adapters,
     turnStart: (threadId, turnId) => store.listEventsOfType(threadId, 'turn.started').find((e) => e.turnId === turnId),
   });
   extensions.start();

@@ -347,6 +347,7 @@ export interface AgentInfo {
     coordination?: boolean;
     resume: boolean;
     approvals: boolean;
+    memory?: boolean;
     permissionModes: string[];
     /** The level a new thread starts at. Missing: `auto_edit`. */
     defaultPermissionMode?: string;
@@ -1097,6 +1098,16 @@ export class Api {
   }
 
   /** Limi extensions this daemon ships, and which are installed on its machine. */
+  memorySources(extensionId: string): Promise<import('@rah/extension-api').MemorySource[]> {
+    return this.send('GET', `/api/extensions/${encodeURIComponent(extensionId)}/memory/sources`);
+  }
+  memoryList(extensionId: string, sourceId: string): Promise<import('@rah/extension-api').MemoryIndex> {
+    return this.send('GET', `/api/extensions/${encodeURIComponent(extensionId)}/memory/${encodeURIComponent(sourceId)}/files`);
+  }
+  memoryRead(extensionId: string, sourceId: string, fileId: string): Promise<import('@rah/extension-api').MemoryDocument> {
+    return this.send('GET', `/api/extensions/${encodeURIComponent(extensionId)}/memory/${encodeURIComponent(sourceId)}/document?id=${encodeURIComponent(fileId)}`);
+  }
+
   extensions(): Promise<ExtensionState[]> {
     return this.request('GET', '/api/extensions');
   }

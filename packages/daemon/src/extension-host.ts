@@ -1,4 +1,6 @@
-import { randomUUID } from 'node:crypto';
+import type { AgentAdapter, MemoryReader } from './adapters/types.js';
+import type { MemorySource } from '@rah/extension-api';
+import { createHash, randomUUID } from 'node:crypto';
 import type {
   DaemonExtension,
   Envelope,
@@ -33,6 +35,7 @@ export interface HostSource {
 }
 
 export interface ExtensionHostOptions {
+  adapters?: ReadonlyMap<string, AgentAdapter>;
   store: ExtensionStore;
   source: HostSource;
   /** Extensions that ship with Limi (see extensions.ts, loadCatalog). */
@@ -95,11 +98,13 @@ interface Subscriber {
 export class ExtensionHost {
   /** Changes every daemon start: extensions that see a new one re-read their state. */
   readonly generation = randomUUID();
+  private readonly adapters: ReadonlyMap<string, AgentAdapter>;
   private readonly store: ExtensionStore;
   private readonly source: HostSource;
   private readonly catalog: ExtensionManifest[];
   private readonly turnStart?: ExtensionHostOptions['turnStart'];
   private readonly queueLimit: number;
+  private readonly memoryAccessVersions = new Map<string, number>();
   private readonly implementations = new Map<string, DaemonExtension>();
   private readonly subscribers = new Map<string, Subscriber>();
   private readonly listeners = new Set<() => void>();
@@ -111,6 +116,7 @@ export class ExtensionHost {
   private unsubscribe: (() => void) | null = null;
 
   constructor(opts: ExtensionHostOptions) {
+    this.adapters = opts.adapters ?? new Map();
     this.store = opts.store;
     this.source = opts.source;
     this.catalog = opts.catalog;
@@ -156,6 +162,7 @@ export class ExtensionHost {
     const grant = exactGrant(manifest, granted);
     if (!grant) throw new HttpError(400, '授予的权限须与扩展声明的权限完全一致');
     const record = this.store.install(id, manifest.version, grant);
+    this.bumpMemoryAccess(id);
     this.sync(id);
     this.changed();
     return this.state(manifest, record);
@@ -163,6 +170,7 @@ export class ExtensionHost {
 
   uninstall(id: string): void {
     this.manifest(id);
+    this.bumpMemoryAccess(id);
     this.deactivate(id, 'uninstalled');
     if (this.store.remove(id)) this.changed();
   }
@@ -174,6 +182,7 @@ export class ExtensionHost {
     if (!record) throw new HttpError(409, '扩展尚未安装');
     if (enabled && !exactGrant(manifest, record.granted)) throw new HttpError(409, '扩展需要的权限有变化，请重新安装以确认');
     const updated = this.store.setEnabled(id, enabled)!;
+    this.bumpMemoryAccess(id);
     if (enabled) this.sync(id);
     else this.deactivate(id, 'disabled');
     this.changed();
@@ -196,6 +205,60 @@ export class ExtensionHost {
     } catch {
       return null;
     }
+  }
+
+  private bumpMemoryAccess(id: string): void {
+    this.memoryAccessVersions.set(id, (this.memoryAccessVersions.get(id) ?? 0) + 1);
+  }
+
+  private memoryVersion(id: string): number {
+    this.require(id, 'memory.read');
+    return this.memoryAccessVersions.get(id) ?? 0;
+  }
+
+  private checkMemoryVersion(id: string, version: number): void {
+    if (this.memoryVersion(id) !== version) throw new HttpError(403, 'Memory permission changed');
+  }
+
+  private async memoryProviders(): Promise<Array<{ source: MemorySource; reader: MemoryReader }>> {
+    const sources = new Map<string, { source: MemorySource; reader: MemoryReader }>();
+    for (const [agentId, adapter] of this.adapters) {
+      if (!adapter.capabilities.memory || !adapter.memoryReader) continue;
+      const reader = adapter.memoryReader();
+      const id = createHash('sha256').update(await reader.root()).digest('hex').slice(0, 32);
+      let group = sources.get(id);
+      if (!group) {
+        group = { source: { id, agents: [] }, reader };
+        sources.set(id, group);
+      }
+      group.source.agents.push({ id: agentId, label: adapter.label });
+    }
+    return [...sources.values()];
+  }
+
+  async memorySources(extensionId: string): Promise<MemorySource[]> {
+    const version = this.memoryVersion(extensionId);
+    const sources = await this.memoryProviders();
+    this.checkMemoryVersion(extensionId, version);
+    return sources.map(({ source }) => source);
+  }
+
+  async memoryList(extensionId: string, sourceId: string) {
+    const version = this.memoryVersion(extensionId);
+    const provider = (await this.memoryProviders()).find(p => p.source.id === sourceId);
+    if (!provider) throw new HttpError(404, 'Memory source not found');
+    const result = await provider.reader.list();
+    this.checkMemoryVersion(extensionId, version);
+    return result;
+  }
+
+  async memoryRead(extensionId: string, sourceId: string, fileId: string) {
+    const version = this.memoryVersion(extensionId);
+    const provider = (await this.memoryProviders()).find(p => p.source.id === sourceId);
+    if (!provider) throw new HttpError(404, 'Memory source not found');
+    const result = await provider.reader.read(fileId);
+    this.checkMemoryVersion(extensionId, version);
+    return result;
   }
 
   // ---------------------------------------------------------------- internals

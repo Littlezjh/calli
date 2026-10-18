@@ -84,6 +84,7 @@ function parseGrant(json: string): Permission[] {
 
 /** Every permission name in the contract. Kept in step with packages/extension-api/permissions.d.ts. */
 export const PERMISSIONS: ReadonlySet<Permission> = new Set<Permission>([
+  'memory.read',
   'events.summary',
   'progress.read',
   'worksource.read',
@@ -103,7 +104,7 @@ const ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
  * The manifests of the extensions that ship with Limi, by package directory under packages/.
  * Resolved from this file, so the source run (src/) and the build (dist/) find the same files.
  */
-const BUILTIN_PACKAGES = ['ext-board'];
+const BUILTIN_PACKAGES = ['ext-board', 'ext-memory'];
 
 export function builtinManifestPaths(): string[] {
   return BUILTIN_PACKAGES.map((dir) => fileURLToPath(new URL(`../../${dir}/manifest.json`, import.meta.url)));

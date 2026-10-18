@@ -5,3 +5,4 @@ export * from './manifest.js';
 export * from './permissions.js';
 export * from './summary.js';
 export * from './hooks.js';
+export * from './memory.js';

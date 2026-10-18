@@ -3,6 +3,7 @@
 // run as the daemon user.
 
 /**
+ * - `memory.read`      — generated memory documents of this machine's supported instances. (v1)
  * - `events.summary`   — whitelisted metadata of threads, turns and waits. No message text,
  *                        images, tool input/output, answers, `preview` or queued text. (v1)
  * - `progress.read`    — step snapshots agents report (`plan.updated`), per thread. (planned)
@@ -18,6 +19,7 @@
  * reading the hub token, the raw Api, changing prompts or rewriting messages.
  */
 export type Permission =
+  | 'memory.read'
   | 'events.summary'
   | 'progress.read'
   | 'worksource.read'

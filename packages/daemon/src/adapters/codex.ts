@@ -6,6 +6,7 @@ import { trackCompaction } from './compaction.js';
 import { goalSummary, parseGoalCommand, type GoalControl, type GoalCommand } from './native-goal.js';
 import { sessionEnvironment } from './types.js';
 import { spawn } from 'node:child_process';
+import { CodexMemoryReader } from './codex-memory.js';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { EmittedEvent } from '../events.js';
@@ -843,6 +844,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
   readonly label = 'Codex';
   readonly icon = CODEX_ICON;
   readonly capabilities = {
+    memory: true,
     workModes: ['execute', 'plan'] as const,
     speed: true,
     goal: { controls: ['show', 'pause', 'clear'] as const, actions: ['set', 'show', 'pause', 'resume', 'clear'] as const },
@@ -948,6 +950,10 @@ export class CodexAppServerAdapter implements AgentAdapter {
       if (found !== null) text = found;
     });
     return text ? { text, source: 'Codex 会话文件' } : null;
+  }
+
+  memoryReader() {
+    return new CodexMemoryReader(join(configDirectory(this.env, 'CODEX_HOME', ['.codex'], process.cwd()), 'memories'));
   }
 
   skillDirs(): SkillDir[] {

@@ -193,3 +193,29 @@ test('malformed extension routes safely fall back to threads', () => {
     assert.equal(resolveExtensionRoute(hash, [state(manifest('probe'), true)]), null);
   }
 });
+
+test('memory host never queries without installation and drops results after revocation', async () => {
+  const memoryManifest = { ...manifest('memory'), permissions: ['memory.read'] as const };
+  const m: ExtensionManifest = { ...memoryManifest, permissions: [...memoryManifest.permissions] };
+  const input = (installed: boolean, enabled = installed): HostInputs => ({ ...authorizedInputs(), extension: state(m, installed, enabled) });
+  let reads = 0;
+  let deliver!: (value: import('@rah/extension-api').MemoryDocument) => void;
+  const live = createWebHost('memory', input(false), {
+    openThread: () => {}, ui: () => ({}) as never,
+    api: {
+      memorySources: async () => { reads++; return [{ id: 'source', agents: [] }]; },
+      memoryList: async () => ({ state: 'empty', files: [], checkedAt: '', partial: false }),
+      memoryRead: () => new Promise(resolve => { reads++; deliver = resolve; }),
+    },
+  });
+  await assert.rejects(live.host.memory.sources());
+  assert.equal(reads, 0);
+  live.update(input(true));
+  assert.equal((await live.host.memory.sources())[0].id, 'source');
+  const pending = live.host.memory.read('source', 'MEMORY.md');
+  live.update(input(true, false));
+  deliver({ id: 'MEMORY.md', text: 'private', modifiedAt: '', truncated: false });
+  await assert.rejects(pending);
+  await assert.rejects(live.host.memory.sources());
+  assert.equal(reads, 2);
+});

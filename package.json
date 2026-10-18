@@ -18,7 +18,7 @@
     "test": "npm test -w @rah/daemon && npm test -w @rah/web && npm test -w @rah/ext-board && npm test -w @rah/site",
     "test:e2e": "npm run build && cd packages/e2e && node --test test/*.spec.mjs",
     "setup": "node scripts/setup.mjs",
-    "typecheck": "npm run typecheck -w @rah/daemon && npm run typecheck -w @rah/web && npm run typecheck -w @rah/ext-board && npm run typecheck -w @rah/site",
+    "typecheck": "npm run typecheck -w @rah/daemon && npm run typecheck -w @rah/web && npm run typecheck -w @rah/ext-board && npm run typecheck -w @rah/site && npm run typecheck -w @rah/ext-memory",
     "check:publish": "node scripts/check-publish.mjs"
   },
   "devDependencies": {

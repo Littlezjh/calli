@@ -1,12 +1,14 @@
 /**
  * The `WebHost` an extension view receives: the thread summaries, the stream's health, a few
  * actions and the host components. It is built from what the page already holds (App's thread
- * list, refreshed from /api/stream), so a view adds no requests of its own and never sees the
- * token, the raw Api or anything outside the summaries.
+ * list, refreshed from /api/stream). Native memory is queried separately through a permissioned
+ * facade; views never see the token or the raw Api.
  */
 import type { ExtensionState, ThreadSummary } from '@rah/extension-api';
 import type { AgentInfo as HostAgentInfo, ConnectionState, WebHost, WebHostStorage, WebHostUi } from '@rah/extension-api/web';
 import type { AgentInfo } from '../api';
+import type { Api } from '../api';
+import { memoryMessages } from './memory-messages';
 import { locale } from '../i18n';
 import { hasPermission } from './permissions';
 
@@ -51,7 +53,7 @@ export function extensionStorage(extensionId: string, store: Pick<Storage, 'getI
 export function createWebHost(
   extensionId: string,
   initial: HostInputs,
-  deps: { openThread: (id: string) => void; ui: (agents: () => AgentInfo[]) => WebHostUi; storage?: WebHostStorage; onError?: (error: unknown) => void },
+  deps: { api?: Pick<Api, 'memorySources' | 'memoryList' | 'memoryRead'>; openThread: (id: string) => void; ui: (agents: () => AgentInfo[]) => WebHostUi; storage?: WebHostStorage; onError?: (error: unknown) => void },
 ): LiveHost {
   let inputs = initial;
   const allowed = (value: HostInputs) => value.extension?.manifest.id === extensionId && hasPermission(value.extension, 'events.summary');
@@ -67,8 +69,36 @@ export function createWebHost(
   const connectionListeners = new Set<(state: ConnectionState) => void>();
   const ui = deps.ui(() => inputs.agents);
 
+  const memoryAllowed = () => inputs.extension?.manifest.id === extensionId && hasPermission(inputs.extension, 'memory.read');
+  async function memoryRequest<T>(read: () => Promise<T>): Promise<T> {
+    if (!memoryAllowed() || !deps.api) throw new Error('Memory permission required');
+    const value = await read();
+    if (!memoryAllowed()) throw new Error('Memory permission revoked');
+    return value;
+  }
+
   const host: Omit<WebHost, 'narrow'> = {
     extensionId,
+    memory: {
+      sources: () => memoryRequest(() => deps.api!.memorySources(extensionId)),
+      list: (sourceId) => memoryRequest(() => deps.api!.memoryList(extensionId, sourceId)),
+      read: (sourceId, fileId) => memoryRequest(() => deps.api!.memoryRead(extensionId, sourceId, fileId)),
+      messages: memoryMessages,
+      subscribe(listener) {
+        const refresh = () => {
+          if (memoryAllowed() && typeof document !== 'undefined' && document.visibilityState === 'visible') listener();
+        };
+        const connection = () => { if (inputs.connection === 'live') refresh(); };
+        const timer = setInterval(refresh, 30_000);
+        if (typeof document !== 'undefined') document.addEventListener('visibilitychange', refresh);
+        connectionListeners.add(connection);
+        return () => {
+          clearInterval(timer);
+          if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', refresh);
+          connectionListeners.delete(connection);
+        };
+      },
+    },
     threads: {
       snapshot: () => allowed(inputs) ? inputs.threads : [],
       subscribe(listener) {
