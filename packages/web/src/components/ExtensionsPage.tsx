@@ -99,13 +99,17 @@ export function ExtensionsPage({ api, demo = false, extensions, threads = [], on
                     <h2 className="ext-card-name">{m.name[lang]}</h2>
                     <div className="ext-card-meta">
                       <span>{t('extensions.version', m.version)}</span>
-                      <span>{t(s.source === 'external' ? 'work.external' : 'extensions.builtin')}</span>
+                      <span>{t(s.preset ? 'work.supported' : s.source === 'external' ? 'work.external' : 'extensions.builtin')}</span>
+                      {!s.installed && s.preset && <span>{t('work.notInstalled')}</span>}
                       {s.installed && <span className={`ext-card-state${s.enabled ? ' on' : ''}`}>{confirm ? t('extensions.needsConfirm') : s.enabled ? t('extensions.installed') : t('extensions.disabled')}</span>}
                     </div>
                   </div>
                   <div className="ext-card-actions">
                     {!s.installed || confirm ? (
-                      <button type="button" className="primary" disabled={busy !== null} onClick={() => setInstalling(s)}>
+                      <button type="button" className="primary" disabled={busy !== null} onClick={() => {
+                        if (s.source === 'external' && s.origin) void run(m.id, async () => { setPreview(await api.prepareExtension(s.origin!)); });
+                        else setInstalling(s);
+                      }}>
                         {confirm ? t('extensions.confirmAgain') : t('extensions.install')}
                       </button>
                     ) : (
@@ -120,8 +124,9 @@ export function ExtensionsPage({ api, demo = false, extensions, threads = [], on
                     )}
                   </div>
                 </div>
-                {s.source === 'external' && <div className="ext-external-actions"><button className="ghost" onClick={() => setConfiguring(s)}>{t('work.settings')}</button>{s.previousVersion && <button className="ghost" disabled={busy !== null} onClick={() => void run(m.id, () => api.rollbackExtension(m.id))}>{t('work.rollback', s.previousVersion)}</button>}<span className="ext-origin" title={s.origin}>{s.origin}</span></div>}
+                {s.source === 'external' && s.installed && <div className="ext-external-actions"><button className="ghost" onClick={() => setConfiguring(s)}>{t('work.settings')}</button>{s.previousVersion && <button className="ghost" disabled={busy !== null} onClick={() => void run(m.id, () => api.rollbackExtension(m.id))}>{t('work.rollback', s.previousVersion)}</button>}<span className="ext-origin" title={s.origin}>{s.origin}</span></div>}
                 <p className="ext-card-desc">{m.description[lang]}</p>
+                {s.preset && !s.installed && <p className="ext-config-hint">{t('work.toolPrerequisite')}</p>}
                 <div className="ext-card-section">{t('extensions.permissions')}</div>
                 <Permissions list={m.permissions} />
               </article>
@@ -169,7 +174,7 @@ export function ExtensionsPage({ api, demo = false, extensions, threads = [], on
             setRemoving(null);
             void run(s.manifest.id, async () => {
               await api.uninstallExtension(s.manifest.id);
-              onReload?.();
+              if (onReload && !demo) { onReload(); return; }
               return { ...s, installed: false, enabled: false, granted: [], installedAt: null, updatedAt: null };
             });
           }}

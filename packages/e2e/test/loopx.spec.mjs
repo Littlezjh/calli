@@ -14,6 +14,36 @@ before(async () => {
 after(async () => { await browser?.close(); await daemon?.stop(); });
 async function shot(page, name) { if (shots) { mkdirSync(shots, { recursive: true }); await page.screenshot({ path: join(shots, name + '.png'), animations: 'disabled' }); } }
 
+test('supported LoopX is visible before installation and remains discoverable after removal', async () => {
+  for (const mobile of [false, true]) for (const theme of ['light', 'dark']) {
+    const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1400, height: 900 }, colorScheme: theme, isMobile: mobile, hasTouch: mobile });
+    try {
+      const page = await context.newPage();
+      await openUi(page, daemon); await page.goto(daemon.base + '/#/extensions');
+      const card = page.locator('.ext-card').filter({ has: page.getByRole('heading', { name: 'LoopX', exact: true }) });
+      await card.getByText('未安装', { exact: true }).waitFor();
+      await card.getByText('支持的插件', { exact: true }).waitFor();
+      assert.equal(await card.getByRole('button', { name: '配置关联' }).count(), 0);
+      await card.scrollIntoViewIfNeeded();
+      await shot(page, `loopx-catalog-${mobile ? 'phone' : 'desktop'}-${theme}`);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+      if (!mobile && theme === 'light') {
+        await card.getByRole('button', { name: '安装', exact: true }).click();
+        await page.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click();
+        await card.getByText('未安装', { exact: true }).waitFor();
+        await card.getByRole('button', { name: '安装', exact: true }).click();
+        await page.getByRole('dialog').getByRole('button', { name: '安装', exact: true }).click();
+        await card.getByRole('button', { name: '配置关联' }).waitFor();
+        assert.equal(await card.count(), 1);
+        await card.getByRole('button', { name: '卸载', exact: true }).click();
+        await page.getByRole('dialog').getByRole('button', { name: '卸载', exact: true }).click();
+        await card.getByText('未安装', { exact: true }).waitFor();
+        await card.getByRole('button', { name: '安装', exact: true }).waitFor();
+      }
+    } finally { await context.close(); }
+  }
+});
+
 test('install an independent LoopX package, configure and inspect shared work in all layouts', async () => {
   const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
   const page = await context.newPage(); const errors = []; page.on('pageerror', e => errors.push(e.message));

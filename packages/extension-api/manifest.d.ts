@@ -106,4 +106,6 @@ export interface ExtensionState {
   origin?: string;
   digest?: string;
   previousVersion?: string;
+  /** Listed by the host as a supported optional package, even before installation. */
+  preset?: boolean;
 }
