@@ -11,6 +11,11 @@ export function coordinationFixture(text) {
     if (body.endsWith('TEAM_SHORT')) return '@dev TEAM_SHORT_WORK';
     if (body.endsWith('TEAM_SHORT_WORK')) return '@lead TEAM_FINISH';
     if (body.endsWith('TEAM_MEMBER_ERROR')) return '@dev fail';
+    if (body.endsWith('TEAM_WAIT_FLOW')) return '@dev TEAM_WAIT_DRAFT';
+    if (body.endsWith('TEAM_WAIT_DRAFT')) return '@reviewer TEAM_REVIEW_WAIT';
+    if (body.endsWith('TEAM_CYCLE')) return '@dev TEAM_CYCLE_DEV';
+    if (body.endsWith('TEAM_CYCLE_DEV')) return '@reviewer TEAM_CYCLE_REVIEW';
+    if (body.endsWith('TEAM_CYCLE_REVIEW')) return '@lead TEAM_FINISH';
     if (body.endsWith('TEAM_MULTI')) return '@dev TEAM_MULTI_DEV\n@reviewer TEAM_MULTI_REVIEW';
     if (body.endsWith('TEAM_MULTI_DEV')) return '@lead Developer finished';
     if (body.endsWith('TEAM_MULTI_REVIEW')) return 'Reviewer finished';

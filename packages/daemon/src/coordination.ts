@@ -566,11 +566,23 @@ export class CoordinationManager {
     const task = t.team!;
     if (task.status === 'needs_attention') task.deliveries = 0;
     const notices = new Set(task.continuationNotices);
+    const live = new Set<string>();
+    for (const member of [{ id: t.rootId, name: task.entry }, ...t.members]) {
+      if (t.deliveries.some(d => d.to === member.id && (d.state === 'queued' || d.state === 'running'))
+        || this.store.getThread(member.id)?.status === 'running'
+        || (this.store.getThread(member.id) && this.manager.threadView(member.id).queued.length)) live.add(member.name);
+    }
+    // Propagate activity upstream before closing anything. Idle cycles alone cannot keep work alive.
+    let previousSize: number;
+    do {
+      previousSize = live.size;
+      for (const delegation of task.delegations) {
+        if (!delegation.closed && live.has(delegation.to)) live.add(delegation.from);
+      }
+    } while (live.size !== previousSize);
     for (const delegation of task.delegations) {
-      if (delegation.closed) continue;
+      if (delegation.closed || live.has(delegation.to)) continue;
       const target = delegation.to === task.entry ? t.rootId : t.members.find(m => m.name === delegation.to)?.id;
-      if (target && (t.deliveries.some(d => d.to === target && (d.state === 'queued' || d.state === 'running'))
-        || this.store.getThread(target)?.status === 'running' || (this.store.getThread(target) && this.manager.threadView(target).queued.length))) continue;
       delegation.closed = true;
       // A later reply turn may contain the result of downstream work; keep that instead of the initial request's answer.
       const start = t.deliveries.findIndex(d => d.id === delegation.deliveryId);

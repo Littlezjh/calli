@@ -3,7 +3,7 @@ if (process.argv.includes('--version')) { process.stdout.write('fixture 1.2.3\n'
 // Fake pi RPC process for tests. Speaks pi's JSONL RPC protocol on stdio.
 // Prompt text drives behaviour: "slow" waits until abort, "fail" ends with an error.
 import { coordinationFixture } from './coordination.mjs';
-import { readFileSync } from 'node:fs';
+import { readFileSync, watchFile, unwatchFile } from 'node:fs';
 import { basename } from 'node:path';
 import { createInterface } from 'node:readline';
 
@@ -40,6 +40,7 @@ if (sessionIdx >= 0 && home && home !== here) {
 }
 const out = (obj) => process.stdout.write(JSON.stringify(obj) + '\n');
 let running = false;
+let pendingTeamReview = null;
 let contextUnknown = false;
 
 // "think" maps like a real provider: null means unsupported, xhigh/max need an explicit mapping.
@@ -212,6 +213,27 @@ rl.on('line', (line) => {
         out({ type: 'agent_settled', aborted: false });
         return;
       }
+      // A file gate lets team tests keep a reviewer working across pause/continue without timing races.
+      if (cmd.message.split('<limi-team>')[0].trim().endsWith('TEAM_REVIEW_WAIT')) {
+        reply({ disposition: 'started' });
+        out({ type: 'agent_start' });
+        running = true;
+        const file = 'team-review-release';
+        const finish = () => {
+          if (!pendingTeamReview) return;
+          let result;
+          try { result = readFileSync(file, 'utf8').trim(); } catch { return; }
+          pendingTeamReview(); pendingTeamReview = null;
+          if (result === 'error') out({ type: 'message_end', message: { role: 'assistant', stopReason: 'error', errorMessage: 'reviewer exploded' } });
+          else out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'Reviewed TEAM_APPROVED' } });
+          running = false;
+          out({ type: 'agent_settled', aborted: false });
+        };
+        pendingTeamReview = () => unwatchFile(file, finish);
+        watchFile(file, { interval: 20 }, finish);
+        finish();
+        return;
+      }
       const collaboration = coordinationFixture(cmd.message);
       if (collaboration !== null) {
         reply({ disposition: 'started' });
@@ -344,6 +366,7 @@ rl.on('line', (line) => {
       return out({ type: 'agent_settled', aborted: false });
     }
     case 'abort':
+      if (pendingTeamReview) { pendingTeamReview(); pendingTeamReview = null; }
       if (pendingCompact) { const cancelCompact = pendingCompact; pendingCompact = null; cancelCompact(); }
       reply({});
       if (running) {

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -417,5 +417,84 @@ test('continuation preserves a queued delegation while closing a stopped member'
     mocked.mock.restore();
     await h.settled(threadId);
     assert.match(String(h.store.listEventsOfType(threadId, 'turn.started').at(-1)!.data.text), /dev（已停止/);
+  } finally { await h.close(); }
+});
+
+for (const action of ['userSpoke', 'resume'] as const) test(`${action} preserves an idle member waiting on a live downstream after budget exhaustion`, async () => {
+  const h = await setup();
+  try {
+    h.teams.save({ ...h.definition, budget: { maxDeliveries: 2 } }, h.definition.id);
+    const { threadId } = await h.dispatch('TEAM_WAIT_FLOW');
+    await wait(() => {
+      const view = h.coordination.view(threadId)!;
+      return view.members.some(m => m.name === 'reviewer' && m.thread?.status === 'running')
+        && view.messages.length === 2 && view.messages[0].state === 'returned';
+    });
+    // The lead attempts one more dispatch while the reviewer is still working.
+    await h.coordination.userSpoke(threadId);
+    await h.manager.startTurn(threadId, { text: 'TEAM_FLOW' });
+    await h.settled(threadId, 'needs_attention');
+    const paused = h.coordination.view(threadId)!;
+    assert.match(paused.team!.error!, /预算/);
+    assert.equal(paused.members.find(m => m.name === 'dev')!.thread!.status, 'idle');
+    assert.equal(paused.members.find(m => m.name === 'reviewer')!.thread!.status, 'running');
+    assert.equal(paused.team!.delegations.length, 2);
+    await h.coordination[action](threadId);
+    const resumed = h.coordination.view(threadId)!;
+    assert.ok(resumed.team!.delegations.every(d => !d.closed));
+    assert.doesNotMatch(h.coordination.instructions(threadId, 'preview'), /以下委派没有交回/);
+    assert.equal(resumed.team!.continuationNotices, undefined);
+    writeFileSync(join(h.cwd, 'team-review-release'), 'ok');
+    await h.settled(threadId);
+    const complete = h.coordination.view(threadId)!;
+    assert.ok(complete.team!.delegations.every(d => d.closed));
+    assert.equal(complete.messages.length, 4);
+    const returned = complete.messages.find(d => d.to === threadId)!;
+    // An unauthorized @lead would survive as literal text in an automatic return with no replyTo.
+    assert.equal(returned.text, 'Completed TEAM_DELIVERED');
+    assert.equal(returned.replyTo, paused.team!.delegations[0].deliveryId);
+    assert.doesNotMatch(String(h.store.listEventsOfType(threadId, 'turn.started').at(-1)!.data.text), /以下委派没有交回/);
+  } finally { await h.close(); }
+});
+
+for (const action of ['userSpoke', 'resume'] as const) test(`${action} closes the entire idle chain when its downstream reviewer fails`, async () => {
+  const h = await setup();
+  try {
+    const { threadId } = await h.dispatch('TEAM_WAIT_FLOW');
+    await wait(() => h.coordination.view(threadId)!.members.some(m => m.name === 'reviewer' && m.thread?.status === 'running'));
+    writeFileSync(join(h.cwd, 'team-review-release'), 'error');
+    await h.settled(threadId, 'needs_attention');
+    await h.coordination[action](threadId);
+    const resumed = h.coordination.view(threadId)!;
+    assert.equal(resumed.team!.delegations.length, 2);
+    assert.ok(resumed.team!.delegations.every(d => d.closed));
+    assert.equal(resumed.team!.continuationNotices!.length, 2);
+    const notice = h.coordination.instructions(threadId, 'preview');
+    assert.match(notice, /dev（已返回但未送达：@reviewer TEAM_REVIEW_WAIT）/);
+    assert.match(notice, /reviewer（失败：reviewer exploded）/);
+    await h.manager.startTurn(threadId, { text: 'TEAM_FINISH' });
+    await h.settled(threadId);
+  } finally { await h.close(); }
+});
+
+test('an idle delegation cycle does not keep itself alive on continuation', async () => {
+  const h = await setup();
+  try {
+    h.teams.save({ ...h.definition, relations: [...h.definition.relations, { kind: 'delegate', from: ['reviewer'], to: 'lead' }] }, h.definition.id);
+    const { threadId } = await h.dispatch('TEAM_CYCLE');
+    await wait(() => {
+      const view = h.coordination.view(threadId)!;
+      return view.messages.length === 3 && view.messages.every(d => d.state === 'returned') && !!view.team!.resultTurnId;
+    });
+    const before = h.coordination.view(threadId)!;
+    assert.deepEqual(before.team!.delegations.map(d => [d.from, d.to]), [['lead', 'dev'], ['dev', 'reviewer'], ['reviewer', 'lead']]);
+    assert.ok(before.team!.delegations.every(d => !d.closed));
+    await h.manager.cancelTurn(threadId);
+    await h.coordination.resume(threadId);
+    const resumed = h.coordination.view(threadId)!;
+    assert.ok(resumed.team!.delegations.every(d => d.closed));
+    assert.equal(resumed.team!.continuationNotices!.length, 3);
+    await h.manager.startTurn(threadId, { text: 'TEAM_FINISH' });
+    await h.settled(threadId);
   } finally { await h.close(); }
 });
