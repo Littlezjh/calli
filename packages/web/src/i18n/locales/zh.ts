@@ -1079,6 +1079,8 @@ export const zh = {
   'view.thinking': '思考中',
   'view.thought': (time: string) => `思考 · ${time}`,
   'view.succeeded': '成功',
+  'view.detailMore': '继续加载',
+  'view.detailFailed': '详情加载失败',
   'view.noDetail': '工具未返回详细信息',
   'view.moreLines': (n: number) => `还有 ${n} 行没有显示`,
   'view.previewPage': '在预览里打开这个页面',

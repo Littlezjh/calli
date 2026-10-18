@@ -1,3 +1,4 @@
+import { mergeHistory, watchHistory } from '../history';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Api, type AgentMention, type Thread } from '../api';
 import type { PreparedImage } from '../images';
@@ -8,18 +9,6 @@ import { Composer } from './Composer';
 import { ThreadView } from './ThreadView';
 import { IconClose } from './icons';
 import { t } from '../i18n';
-
-/** Events are collected briefly before the view updates, as in the main conversation. */
-const FLUSH_MS = 40;
-
-const sleep = (ms: number, signal: AbortSignal) =>
-  new Promise<void>((resolve) => {
-    const t = setTimeout(resolve, ms);
-    signal.addEventListener('abort', () => {
-      clearTimeout(t);
-      resolve();
-    });
-  });
 
 interface Props {
   api: Api;
@@ -89,70 +78,31 @@ export function SideChat({
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  // The new thread's log, live. It starts empty, so there is nothing older to page in.
   useEffect(() => {
     setEvents([]);
     if (!threadId) return;
     const ctrl = new AbortController();
-    const id = threadId;
-    let buffer: StoredEvent[] = [];
-    let flushTimer: ReturnType<typeof setTimeout> | undefined;
     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
-    const flush = () => {
-      flushTimer = undefined;
-      const batch = buffer;
-      buffer = [];
-      if (ctrl.signal.aborted || batch.length === 0) return;
-      setEvents((prev) => {
-        let last = prev.length ? prev[prev.length - 1].seq : 0;
-        const fresh = batch.filter((ev) => (ev.seq > last ? ((last = ev.seq), true) : false));
-        return fresh.length ? [...prev, ...fresh] : prev;
-      });
-    };
-    (async () => {
-      let after = 0;
-      try {
-        const initial = await api.eventsTail(id);
-        if (ctrl.signal.aborted) return;
-        // A forked side chat inherits the whole conversation as the agent's context, but the panel
-        // starts empty, as Codex's side conversation does: only what is asked here is shown.
-        setEvents(thread?.forkedFrom ? initial.filter((ev) => ev.seq > baseSeq.current) : initial);
-        after = initial.at(-1)?.seq ?? 0;
-      } catch (e) {
-        if (!ctrl.signal.aborted) onError(e);
-        return;
-      }
-      while (!ctrl.signal.aborted) {
-        try {
-          await api.stream(`/api/threads/${id}/stream?after=${after}`, (ev) => {
-            after = Math.max(after, ev.seq);
-            buffer.push(ev);
-            flushTimer ??= setTimeout(flush, FLUSH_MS);
-            // Turns starting and finishing change the thread itself (queued messages, status).
-            if (ev.type.startsWith('turn.')) {
-              clearTimeout(refreshTimer);
-              refreshTimer = setTimeout(() => {
-                api
-                  .thread(id)
-                  .then((t) => setThread((cur) => (cur?.id === id ? t : cur)))
-                  .catch(() => undefined);
-              }, 300);
-            }
-          }, ctrl.signal);
-        } catch {
-          // The stream retries below; errors the whole app should see come through elsewhere.
+    const visible = (events: StoredEvent[]) => thread?.forkedFrom ? events.filter(e => e.seq > baseSeq.current) : events;
+    void watchHistory(api, threadId, ctrl.signal, {
+      minimumSeq: thread?.forkedFrom ? baseSeq.current : undefined,
+      page: page => setEvents(visible(page.events)),
+      events: batch => {
+        setEvents(previous => visible(mergeHistory(previous, batch)));
+        if (batch.some(e => e.type.startsWith('turn.') || e.type === 'history.reset')) {
+          clearTimeout(refreshTimer);
+          refreshTimer = setTimeout(() => {
+            api.thread(threadId).then(t => {
+              if (!ctrl.signal.aborted) setThread(cur => cur?.id === threadId ? t : cur);
+            }).catch(() => undefined);
+          }, 300);
         }
-        await sleep(1500, ctrl.signal);
-      }
-    })();
-    return () => {
-      ctrl.abort();
-      clearTimeout(flushTimer);
-      clearTimeout(refreshTimer);
-    };
-    // The panel owns exactly one thread, so the id is all this effect needs.
+      },
+      error: onError,
+    });
+    return () => { ctrl.abort(); clearTimeout(refreshTimer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [threadId]);
+  }, [api, threadId]);
 
   // Small panel, simple rule: stay at the bottom unless the reader has moved up.
   useEffect(() => {
@@ -182,7 +132,7 @@ export function SideChat({
       // could be counted as inherited.
       const forked = await api.forkThread(forkSourceId);
       created = await api.updateThread(forked.id, { title });
-      baseSeq.current = (await api.eventsTail(created.id)).at(-1)?.seq ?? 0;
+      baseSeq.current = (await api.historyPosition(created.id)).snapshotSeq;
     } else {
       // A fresh agent seeing a bare snippet has nothing to go on but the words, so the message
       // says which thread the notes were lifted out of.
@@ -219,6 +169,8 @@ export function SideChat({
         <div className="side-chat-body" ref={scrollerRef} onScroll={onScroll}>
           {thread ? (
             <ThreadView
+              historyApi={api}
+              historyThreadId={thread.id}
               items={timeline.items}
               roots={roots}
               loadImage={loadImage}

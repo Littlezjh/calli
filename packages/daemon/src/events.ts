@@ -95,7 +95,7 @@ function textOfContent(content: unknown): string {
     .join('\n');
 }
 
-function toolText(output: unknown, content: unknown): string {
+export function toolText(output: unknown, content: unknown): string {
   if (output !== undefined && output !== null && output !== '') {
     return typeof output === 'string' ? output : JSON.stringify(output, null, 2);
   }

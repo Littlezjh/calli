@@ -14,8 +14,9 @@ let dataDir;
 let workdir;
 const shots = process.env.RAH_E2E_SHOTS_DIR;
 
-/** More events than one page of history reaches back, so each turn below is a page of its own. */
+/** Long thoughts must not change the number of answer summaries in a page. */
 const LONG_TURN = 21_000;
+const recent = [...Array.from({ length: 7 }, (_, i) => `middle-${i}`), 'latest'];
 
 before(async () => {
   await buildOnce();
@@ -26,10 +27,10 @@ before(async () => {
   const store = new Store(dataDir);
   store.createThread({ id: 'long', agent: 'pi', cwd: workdir, title: 'long thread', permissionMode: 'auto_edit', model: null, effort: null });
   store.transaction(() => {
-    for (const name of ['first', 'second', 'latest']) {
+    for (const name of ['first', 'second', ...recent]) {
       const add = (type, data) => store.appendEvent('long', name, type, data);
       add('turn.started', { text: `${name} question` });
-      for (let i = 0; i < LONG_TURN; i++) add('reasoning.delta', { text: 'thinking. ' });
+      for (let i = 0; i < (name.startsWith('middle-') ? 1 : LONG_TURN); i++) add('reasoning.delta', { text: 'thinking. ' });
       add('tool.start', { id: `${name}-ls`, title: 'ls', kind: 'execute', status: 'in_progress' });
       add('tool.end', { id: `${name}-ls`, status: 'completed', output: 'a.txt' });
       for (let i = 0; i < 40; i++) add('message.delta', { text: `${name} answer line ${i}\n\n` });
@@ -38,7 +39,7 @@ before(async () => {
   });
   store.createThread({ id: 'snapshots', agent: 'pi', cwd: workdir, title: '按需加载对话', permissionMode: 'auto_edit', model: null, effort: null });
   store.transaction(() => {
-    for (let i = 1; i <= 8; i++) {
+    for (let i = 1; i <= 12; i++) {
       const add = (type, data) => store.appendEvent('snapshots', `turn-${i}`, type, data);
       add('turn.started', { text: `第 ${i} 轮问题` });
       add('tool.start', { id: `check-${i}`, kind: 'execute', title: '检查结果', status: 'in_progress' });
@@ -79,22 +80,22 @@ test('the newest turn opens whole and at the bottom; older turns page in from th
   await openUi(page, daemon);
   const requests = [];
   page.on('request', (r) => {
-    if (r.url().includes('/events?')) requests.push(r.url().split('/events?')[1]);
+    if (r.url().includes('/threads/long/history')) requests.push(r.url().split('/history')[1]);
   });
   await page.locator('.menu-btn').click();
   await page.locator('.thread-title', { hasText: 'long thread' }).first().click();
 
-  // The turn is longer than a page reaches back, and its question is there all the same.
+  // Even an exceptionally long thought leaves all eight questions and answers in the page.
   await page.getByText('latest answer line 39').waitFor({ timeout: 15_000 });
-  assert.deepEqual(await questions(), ['latest question']);
+  assert.deepEqual(await questions(), recent.map(name => `${name} question`));
   assert.equal((await view()).dist, 0, 'a reopened thread sits at its newest line');
-  assert.deepEqual(requests, ['tail=1']);
+  assert.deepEqual(requests, ['']);
 
   // Scrolling near the top loads a page automatically. Hold its response to measure the
   // viewport before prepending, rather than clicking again and inadvertently loading two pages.
   let releaseOlder;
   const holdOlder = new Promise((resolve) => { releaseOlder = resolve; });
-  await page.route('**/events?before=*', async (route) => {
+  await page.route('**/history?before=*', async (route) => {
     await holdOlder;
     await route.continue();
   });
@@ -109,25 +110,25 @@ test('the newest turn opens whole and at the bottom; older turns page in from th
   releaseOlder();
   await page.getByText('second question').waitFor({ timeout: 15_000 });
   await page.waitForTimeout(300);
-  assert.deepEqual(await questions(), ['second question', 'latest question']);
+  assert.deepEqual(await questions(), ['first question', 'second question', ...recent.map(name => `${name} question`)]);
   const afterLoad = await view();
   assert.ok(Math.abs(afterLoad.latestTop - before.latestTop) <= 4, `what was on screen stays put (${before.latestTop} → ${afterLoad.latestTop})`);
 
   // The last page reaches the start of the log, and the button goes away.
   await toTop();
   await page.getByText('first question').waitFor({ timeout: 15_000 });
-  assert.deepEqual(await questions(), ['first question', 'second question', 'latest question']);
+  assert.deepEqual(await questions(), ['first question', 'second question', ...recent.map(name => `${name} question`)]);
   await page.waitForTimeout(300);
   assert.equal(await older.count(), 0, 'nothing older is left to load');
 });
 
 test('copying the conversation takes all of it, not only the turns on screen', async () => {
-  // A fresh visit: only the newest turn is loaded.
+  // A fresh visit: eight recent turns are loaded; the first two are only in the export.
   await openUi(page, daemon);
   await page.locator('.menu-btn').click();
   await page.locator('.thread-title', { hasText: 'long thread' }).first().click();
   await page.getByText('latest answer line 39').waitFor({ timeout: 15_000 });
-  assert.deepEqual(await questions(), ['latest question']);
+  assert.deepEqual(await questions(), recent.map(name => `${name} question`));
 
   await page.locator('.composer textarea').click();
   await page.keyboard.type('/export');
@@ -146,24 +147,24 @@ test('opening a snapshot-heavy conversation loads only recent turns in desktop a
       const page = await context.newPage();
       await openUi(page, daemon);
       if (mobile) await page.locator('.menu-btn').click();
-      const response = page.waitForResponse(r => r.url().endsWith('/api/threads/snapshots/events?tail=1'));
+      const response = page.waitForResponse(r => r.url().endsWith('/api/threads/snapshots/history'));
       await page.locator('.thread-title', { hasText: '按需加载对话' }).first().click();
       const data = await (await response).json();
-      assert.equal(data.filter(e => e.type === 'turn.started').length, 3);
+      assert.equal(data.events.filter(e => e.type === 'turn.started').length, 8);
       assert.ok(JSON.stringify(data).length < 40_000, 'the first response excludes old turns and superseded tool snapshots');
-      await page.getByText('第 8 轮回答结束', { exact: true }).waitFor();
-      assert.deepEqual(await page.locator('.thread .bubble').allTextContents(), ['第 6 轮问题', '第 7 轮问题', '第 8 轮问题']);
+      await page.getByText('第 12 轮回答结束', { exact: true }).waitFor();
+      assert.deepEqual(await page.locator('.thread .bubble').allTextContents(), Array.from({ length: 8 }, (_, i) => `第 ${i + 5} 轮问题`));
       await page.waitForFunction(() => { const el = document.querySelector('.scroller'); return el.scrollHeight - el.scrollTop - el.clientHeight < 2; });
       if (shots) await page.screenshot({ path: join(shots, `history-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`), animations: 'disabled' });
-      for (let n = 0; n < 2; n++) {
+      for (let n = 0; n < 1; n++) {
         const count = await page.locator('.thread .bubble').count();
-        const response = page.waitForResponse(r => r.url().includes('/api/threads/snapshots/events?before='));
+        const response = page.waitForResponse(r => r.url().includes('/api/threads/snapshots/history?before='));
         await page.mouse.move(page.viewportSize().width / 2, 200);
         await page.mouse.wheel(0, -100_000);
         await response;
         await page.waitForFunction(count => document.querySelectorAll('.thread .bubble').length > count, count);
       }
-      assert.deepEqual(await page.locator('.thread .bubble').allTextContents(), Array.from({ length: 8 }, (_, i) => `第 ${i + 1} 轮问题`));
+      assert.deepEqual(await page.locator('.thread .bubble').allTextContents(), Array.from({ length: 12 }, (_, i) => `第 ${i + 1} 轮问题`));
       assert.equal(await page.getByRole('button', { name: '加载更早的消息' }).count(), 0);
     } finally { await context.close(); }
   }
