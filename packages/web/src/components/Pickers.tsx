@@ -293,6 +293,7 @@ export interface DiscoveredAccount {
 }
 
 interface AgentProps {
+  teams?: import('../api').TeamSummary[];
   agents: AgentInfo[];
   value: string;
   onChange: (id: string) => void;
@@ -321,8 +322,9 @@ function groupLabel(group: AgentInfo[]): string {
   return group.reduce((short, a) => (a.label.length < short.length ? a.label : short), group[0].label);
 }
 
-export function AgentPicker({ agents, value, onChange, accounts = [], onAddAccount }: AgentProps) {
+export function AgentPicker({ agents, value, onChange, accounts = [], onAddAccount, teams = [] }: AgentProps) {
   const current = agents.find((a) => a.id === value);
+  const team = teams.find(t => `team:${t.id}` === value);
   const [adding, setAdding] = useState<string | null>(null);
   /** The group whose accounts are on screen, drilled in from the list of agents. */
   const [openGroup, setOpenGroup] = useState<string | null>(null);
@@ -337,7 +339,7 @@ export function AgentPicker({ agents, value, onChange, accounts = [], onAddAccou
       trigger={
         <>
           {current?.icon && <AgentMark path={current.icon} size={14} />}
-          <span>{current?.label ?? value}</span>
+          <span>{team?.name ?? current?.label ?? value}</span>
           <IconChevron size={12} open />
         </>
       }
@@ -381,6 +383,7 @@ export function AgentPicker({ agents, value, onChange, accounts = [], onAddAccou
           </>
         ) : (
           <>
+          {teams.length > 0 && <><div className="pop-title">{t('teams.title')}</div>{teams.map(team => <button key={team.id} type="button" className="pop-item compact" role="menuitemradio" aria-checked={value === `team:${team.id}`} onClick={() => { onChange(`team:${team.id}`); close(); }}>{team.name}{value === `team:${team.id}` && <IconCheck size={16} />}</button>)}</>}
           <div className="pop-title">{t('pickers.whichAgent')}</div>
           {groups.map((group) => {
             const solo = group.length === 1 ? group[0] : null;

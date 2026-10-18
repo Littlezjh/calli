@@ -9709,3 +9709,51 @@ button.trace-step-head:hover { background: var(--hover); }
 
 .ext-command-spec { display: block; overflow-wrap: anywhere; font-family: monospace; font-size: 11px; margin-top: 4px; }
 .history-status { display: flex; align-items: center; gap: 8px; padding: 8px 0; color: var(--muted); font-size: 12px; }
+
+/* Reusable teams: configuration is a document; roles stay readable on a phone. */
+.teams-page { max-width: 900px; margin: 0 auto; padding: 36px 32px 72px; }
+.teams-page-head, .team-definition, .team-member-head { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.teams-page-head > button { flex-shrink: 0; white-space: nowrap; }
+.teams-page h1 { margin: 0; font-size: 26px; font-weight: 600; letter-spacing: -.5px; }
+.teams-page-head p { color: var(--muted); margin: 12px 0 24px; line-height: 1.6; }
+.teams-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.teams-actions button, .teams-page .ghost, .teams-page .primary { display: inline-flex; align-items: center; gap: 6px; }
+.teams-list { margin-top: 28px; border-top: 1px solid var(--border); }
+.team-definition { padding: 24px 0; border-bottom: 1px solid var(--border); }
+.team-definition-main { min-width: 0; overflow-wrap: anywhere; }
+.team-definition h2, .team-relations h2 { font-size: 16px; margin: 0 0 8px; }
+.team-definition p { font-size: 14px; line-height: 1.6; margin: 0 0 10px; }
+.team-definition .muted { font-size: 12px; }
+.teams-empty { text-align: center; color: var(--muted); padding: 72px 20px; }
+.teams-error { color: var(--warn); font-size: 13px; overflow-wrap: anywhere; margin: 10px 0; }
+.team-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; }
+.team-fields label, .team-field { display: flex; min-width: 0; flex-direction: column; gap: 8px; font-size: 12px; color: var(--muted); }
+.team-fields input, .team-fields textarea, .team-choice { width: 100%; min-width: 0; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font: inherit; font-size: 14px; }
+.team-fields textarea { resize: vertical; line-height: 1.6; }
+.team-choice { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.team-choice span { overflow: hidden; text-overflow: ellipsis; }
+.team-field-wide { grid-column: 1 / -1; }
+.team-members { margin-top: 24px; display: grid; gap: 16px; }
+.team-member-editor { padding: 22px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }
+.team-member-head { margin-bottom: 18px; }
+.team-member-head strong { font-family: var(--mono); font-size: 14px; }
+.team-links { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 18px; }
+.team-links > span { color: var(--muted); font-size: 12px; margin-right: 6px; }
+.team-link { background: var(--surface); display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 6px 12px; font-size: 12px; color: var(--muted); }
+.team-link.selected { background: var(--active); border-color: var(--border-strong); color: var(--text); }
+.team-task-settings { margin-top: 24px; }
+.team-relations { background: var(--surface-2); border-radius: var(--radius); padding: 20px; margin-top: 24px; font-size: 13px; }
+.teams-save { display: flex; justify-content: flex-end; padding-top: 24px; }
+.team-task-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.team-task-status > span:last-child { flex-shrink: 0; }
+.team-task-status { display: flex; white-space: nowrap; gap: 4px; color: var(--muted); font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.team-task-status.attention, .team-task-notice { color: var(--warn); }
+.team-task-notice { display: flex; align-items: center; gap: 12px; justify-content: space-between; font-size: 13px; padding: 8px 12px; max-width: var(--content-w); margin: 0 auto; }
+.team-text-only { color: var(--muted); font-size: 12px; padding: 8px 12px; }
+@media (max-width: 600px) {
+  .teams-page { padding: 22px 18px 48px; }
+  .teams-page h1 { font-size: 22px; }
+  .team-fields { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .team-member-editor { padding: 16px; }
+  .team-definition { align-items: flex-start; flex-direction: column; gap: 12px; }
+}

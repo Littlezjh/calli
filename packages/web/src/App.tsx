@@ -53,6 +53,9 @@ import type { AgentMention, Coordination, MemberDefault, SearchHit } from './api
 import { Popover as CoordinationPopover } from './components/Popover';
 import { SideChat } from './components/SideChat';
 import { McpPage } from './components/McpPage';
+import { TeamsPage } from './components/TeamsPage';
+import { teamRecipient } from './teams';
+import type { TeamSummary } from './api';
 import { SkillsPage } from './components/SkillsPage';
 import { SchedulesPage } from './components/SchedulesPage';
 import { TodosPage } from './components/TodosPage';
@@ -103,14 +106,15 @@ const isNearBottom = (el: HTMLElement) => el.scrollHeight - el.scrollTop - el.cl
 /** The plan page's address. Threads have none: the main area showing a thread is the plain URL. */
 const TODOS_HASH = '#/todos';
 const SKILLS_HASH = '#/skills';
+const TEAMS_HASH = '#/teams';
 const MCP_HASH = '#/mcp';
 const SCHEDULES_HASH = '#/schedules';
 const ACTIVITY_HASH = '#/activity';
 const EXTENSIONS_HASH = '#/extensions';
 /** The hub's own pages. Any other `#/…` may be an extension's view; see extensions/routes.ts. */
-const CORE_ROUTES = [TODOS_HASH, SKILLS_HASH, MCP_HASH, SCHEDULES_HASH, ACTIVITY_HASH, EXTENSIONS_HASH];
+const CORE_ROUTES = [TEAMS_HASH, TODOS_HASH, SKILLS_HASH, MCP_HASH, SCHEDULES_HASH, ACTIVITY_HASH, EXTENSIONS_HASH];
 
-type MainView = 'thread' | 'todos' | 'schedules' | 'activity' | 'skills' | 'mcp' | 'extensions' | 'ext';
+type MainView = 'teams' | 'thread' | 'todos' | 'schedules' | 'activity' | 'skills' | 'mcp' | 'extensions' | 'ext';
 
 /** The page an address opens; null for none (a thread). Skills and MCP are the hub's own machinery, which the demo has none of. */
 function viewForHash(hash: string, connected: boolean): MainView | null {
@@ -121,6 +125,8 @@ function viewForHash(hash: string, connected: boolean): MainView | null {
       return 'schedules';
     case ACTIVITY_HASH:
       return 'activity';
+    case TEAMS_HASH:
+      return connected ? 'teams' : null;
     case SKILLS_HASH:
       return connected ? 'skills' : null;
     case MCP_HASH:
@@ -218,6 +224,11 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     if (hostId && hostsLoaded && !host) onHost?.(null, hostsOpen ? 'machines' : undefined);
   }, [hostId, hostsLoaded, host, onHost, hostsOpen]);
 
+  const [teamDefinitions, setTeamDefinitions] = useState<TeamSummary[]>([]);
+  const reloadTeams = useCallback(() => { if (!api.demo) void api.teams().then(setTeamDefinitions).catch(() => setTeamDefinitions([])); }, [api]);
+  useEffect(reloadTeams, [reloadTeams]);
+  const [draftTeam, setDraftTeam] = useState<string | null>(null);
+  useEffect(() => setDraftTeam(null), [api]);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   /** CLIs on PATH that look like extra agents, offered in the picker. */
   const [discovered, setDiscovered] = useState<DiscoveredAgent[]>([]);
@@ -393,6 +404,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const onTodos = view === 'todos' && !selectedId;
   const onSchedules = view === 'schedules' && !selectedId;
   const onActivity = view === 'activity' && !selectedId;
+  const onTeams = view === 'teams' && !selectedId;
   const onSkills = view === 'skills' && !selectedId;
   const onMcp = view === 'mcp' && !selectedId;
   const onExtensions = view === 'extensions' && !selectedId;
@@ -401,7 +413,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const extOpen = onExt && extensions && extTarget ? resolveExtensionRoute(extTarget, extensions) : null;
   const extName = extOpen ? extensions?.find((e) => e.manifest.id === extOpen.extensionId)?.manifest.name[locale()] ?? extOpen.extensionId : '';
   /** The name of the page the main area shows instead of a thread, for the top bar; null on a thread. */
-  const viewTitle = onTodos
+  const viewTitle = onTeams ? t('teams.title') : onTodos
     ? t('todos.title')
     : onSchedules
       ? t('sidebar.schedules')
@@ -435,11 +447,11 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   // threads is not a trail for the back button to walk.
   const extWant = onExt ? (extOpen ? extensionHash(extOpen) : extTarget ?? '') : '';
   useEffect(() => {
-    const want = onTodos ? TODOS_HASH : onSchedules ? SCHEDULES_HASH : onActivity ? ACTIVITY_HASH : onSkills ? SKILLS_HASH : onMcp ? MCP_HASH : onExtensions ? EXTENSIONS_HASH : extWant;
+    const want = onTeams ? TEAMS_HASH : onTodos ? TODOS_HASH : onSchedules ? SCHEDULES_HASH : onActivity ? ACTIVITY_HASH : onSkills ? SKILLS_HASH : onMcp ? MCP_HASH : onExtensions ? EXTENSIONS_HASH : extWant;
     if (window.location.hash !== want) {
       window.history.replaceState(window.history.state, '', want || window.location.pathname + window.location.search);
     }
-  }, [onTodos, onActivity, onSkills, onSchedules, onMcp, onExtensions, extWant]);
+  }, [onTeams, onTodos, onActivity, onSkills, onSchedules, onMcp, onExtensions, extWant]);
 
   // Whether the directory a new thread would start in is a git repository. Asked once per directory picked.
   useEffect(() => {
@@ -1082,6 +1094,12 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     setError(null);
     try {
       let id = selectedId;
+      if (!id && draftTeam) {
+        if (images.length || videos.length) throw new Error(t('teams.attachments'));
+        const task = await api.dispatchTeam(draftTeam, text, draftCwd);
+        setSelectedId(task.threadId); setDraftTeam(null); setDraftSectionId(null);
+        setView('thread'); void refreshThreads(); return;
+      }
       if (!id) {
         const t = await api.createThread({
           agent: draftAgent,
@@ -1185,6 +1203,8 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     setView('activity');
     setDrawer(false);
   };
+
+  const openTeams = () => { setSelectedId(null); setView('teams'); setDrawer(false); reloadTeams(); };
 
   const openSkills = () => {
     setSelectedId(null);
@@ -1399,20 +1419,20 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   // The hub has its own controls for these; going through the agent would leave them out of sync.
   const hiddenCommands = [...(models.length ? ['model'] : []), ...(effortLevels.length ? ['effort'] : []), ...(activeCaps?.quota ? ['usage'] : [])];
 
-  const attachBlocked = !activeCaps?.images ? t('app.noImages', agentLabel(activeAgent)) : imagesBlocked(models, model);
+  const attachBlocked = !selected && draftTeam ? t('teams.attachments') : !activeCaps?.images ? t('app.noImages', agentLabel(activeAgent)) : imagesBlocked(models, model);
 
   // The top bar names a thread's agent and directory, so the composer does not repeat them: its
   // strip is only for choosing them, before the thread exists.
   const header = selected ? null : (
     <>
-      <AgentPicker agents={agents} value={draftAgent} onChange={pickAgent} accounts={accounts} onAddAccount={addAccount} />
+      <AgentPicker agents={agents} teams={teamDefinitions} value={draftTeam ? `team:${draftTeam}` : draftAgent} onChange={value => { const id = teamRecipient(value); setDraftTeam(id); if (id) { setDraftScratch(false); setDraftWorktree(false); setDraftCollaboration(false); } else pickAgent(value); }} accounts={accounts} onAddAccount={addAccount} />
       <ProjectPicker
         projects={projectOptions}
         machineLabel={host?.label ?? (hostId ? t('app.remoteMachine') : t('hosts.local'))}
         remote={Boolean(hostId)}
         cwd={draftCwd}
         scratch={draftScratch}
-        scratchAvailable={scratchAvailable}
+        scratchAvailable={scratchAvailable && !draftTeam}
         onPick={(cwd) => {
           setDraftCwd(cwd);
           setDraftScratch(false);
@@ -1428,7 +1448,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         onPick={(id) => { if (id !== hostId) onHost(id); }}
         onManage={() => setHostsOpen(true)}
       />}
-      {offer && !draftScratch && <WorkspacePicker branch={offer.branch} changes={offer.changes} worktree={draftWorktree} onChange={setDraftWorktree} />}
+      {offer && !draftScratch && !draftTeam && <WorkspacePicker branch={offer.branch} changes={offer.changes} worktree={draftWorktree} onChange={setDraftWorktree} />}
       {draftSectionId && sections.some((s) => s.id === draftSectionId) && (
         <button
           className="context-chip"
@@ -1473,13 +1493,13 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     );
   };
 
-  const collaborationOptions: AgentMention[] = (selected?.coordination ? selected.coordination.rootId === selected.id : activeCaps?.coordination && !(selected && running)) ? [
+  const collaborationOptions: AgentMention[] = (!draftTeam && !selected?.coordination?.team && (selected?.coordination ? selected.coordination.rootId === selected.id : activeCaps?.coordination && !(selected && running))) ? [
             ...(coordination?.members.map(m => ({ id: m.id, label: m.name, kind: 'member' as const })) ?? []),
             ...agents.filter(a => a.available && a.capabilities.coordination && (!coordination || coordination.agents.includes(a.id))).map(a => ({ id: a.id, label: a.label, kind: 'agent' as const })),
           ] : [];
   const collaborationIcon = (m: AgentMention) => agents.find((a) => a.id === (m.kind === 'agent' ? m.id : coordination?.members.find((v) => v.id === m.id)?.thread?.agent))?.icon;
 
-  const collaborationControl = (select: (mention: AgentMention) => void, chosen: AgentMention[]) => ((activeCaps?.coordination || selected?.coordination) && <CoordinationPopover label={t('app.collab')} panelClassName="coord-picker-panel" triggerClassName={`tool-btn coord-tool${selected?.coordination || draftCollaboration ? ' on' : ''}`} triggerLabel={t('app.collab')} triggerTitle={selected?.coordination || draftCollaboration ? t('app.collabOn') : t('app.collab')} trigger={<><IconAgents size={16} /><span>{t('app.collab')}</span></>}>
+  const collaborationControl = (select: (mention: AgentMention) => void, chosen: AgentMention[]) => (!draftTeam && !selected?.coordination?.team && (activeCaps?.coordination || selected?.coordination) && <CoordinationPopover label={t('app.collab')} panelClassName="coord-picker-panel" triggerClassName={`tool-btn coord-tool${selected?.coordination || draftCollaboration ? ' on' : ''}`} triggerLabel={t('app.collab')} triggerTitle={selected?.coordination || draftCollaboration ? t('app.collabOn') : t('app.collab')} trigger={<><IconAgents size={16} /><span>{t('app.collab')}</span></>}>
       {close => <CollaborationMenu options={collaborationOptions} selected={chosen} icon={collaborationIcon}
         onSelect={mention => { close(); select(mention); }}
         unavailable={selected?.coordination && !leading ? t('app.collabBack') : running ? t('app.collabAfterTurn') : t('app.collabNone')}
@@ -1649,8 +1669,9 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           <div className="topbar-heading">
             {/* Every page names itself here, the way a thread does: the bar is never left blank. */}
             <div className="topbar-title">{host && !hostUp ? host.label : viewTitle ?? (selected ? selected.title : t('sidebar.newThread'))}</div>
+            {selected?.coordination?.team && <div className={`team-task-status${['awaiting_confirm', 'needs_attention'].includes(selected.coordination.team.status) ? ' attention' : ''}`}><span className="team-task-name">{selected.coordination.team.name}</span><span> · {t(`teams.${selected.coordination.team.status}`)}</span></div>}
             {!selected && host && hostUp && <div className="topbar-sub">{host.label}</div>}
-            {selected && (
+            {selected && !selected.coordination?.team && (
               <div className="topbar-sub" title={selected.cwd}>
                 {agentLabel(selected.agent)} ·{' '}
                 {selected.scratch ? t('projects.none') : selected.worktree ? `${folderName(selected.worktree.of)} · ${selected.worktree.branch}` : folderName(selected.cwd)}
@@ -1743,6 +1764,8 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
               <div className="loading-note">{t('common.loading')}</div>
             )}
           </div>
+        ) : onTeams ? (
+          <div key="teams" className="scroller"><TeamsPage api={api} agents={agents} onReload={reloadTeams} /></div>
         ) : onSkills ? (
           // The skills page spans the machines from the hub, so it carries its own scroller too.
           <div key="skills" className="scroller">
@@ -1850,8 +1873,10 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         <div className="composer-slot">
         {selectedId && <WorkSummary items={workSources} />}
         {showcase ? showcase.composer(selectedId) : <>
+        {selected?.coordination?.team && selected.coordination.rootId === selected.id && ['awaiting_confirm', 'needs_attention'].includes(selected.coordination.team.status) && <div className="team-task-notice"><span>{selected.coordination.team.error ?? t(`teams.${selected.coordination.team.status}`)}</span>{selected.coordination.team.status === 'awaiting_confirm' && <button className="ghost" onClick={() => void api.configureCoordination(selected.id, { action: 'confirm' }).then(value => { setCoordination(value); void refreshThreads(); }).catch(handleError)}>{t('teams.confirm')}</button>}</div>}
+        {!selected && draftTeam && <div className="team-text-only">{t('teams.attachments')}</div>}
         <Composer
-          draftKey={hostId ? `host:${hostId}:${selectedId ?? 'new'}` : selectedId ?? 'new'}
+          draftKey={hostId ? `host:${hostId}:${selectedId ?? (draftTeam ? `new:team:${draftTeam}` : 'new')}` : selectedId ?? (draftTeam ? `new:team:${draftTeam}` : 'new')}
           running={running}
           disabled={modeBusy || (!selected && !draftCwd)}
           placeholder={demo ? t('app.placeholder.demo') : workMode === 'plan' && !running ? t('composerMenu.planOn') : selected ? (running ? t('sideChat.queuePlaceholder') : t('app.placeholder.continue')) : draftScratch ? t('app.placeholder.scratch') : t('app.placeholder.startIn', folderName(draftCwd))}
@@ -1863,14 +1888,15 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           mentionDirectories={coordination?.directories ?? (collaborationDirectories.length ? collaborationDirectories : [activeCwd])}
           onStop={stop}
           header={header}
-          planMode={activeCaps?.workModes?.includes('plan') ? { active: workMode === 'plan', disabled: running || modeBusy, onChange: active => void changeWorkMode(active ? 'plan' : 'execute') } : undefined}
-          left={left}
-          right={right}
+          planMode={!draftTeam && activeCaps?.workModes?.includes('plan') ? { active: workMode === 'plan', disabled: running || modeBusy, onChange: active => void changeWorkMode(active ? 'plan' : 'execute') } : undefined}
+          left={draftTeam ? undefined : left}
+          right={draftTeam ? undefined : right}
           commands={commandsByKey[commandsKey] ?? []}
           goal={activeCaps?.goal}
           actions={hubActions}
           hiddenCommands={hiddenCommands}
           onAction={runHubAction}
+          attachmentsBlocked={!selected && draftTeam ? t('teams.attachments') : undefined}
           attachBlocked={attachBlocked}
           attachNote={imagesNote(models, model)}
           onError={setError}
@@ -2083,6 +2109,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
               ? []
               : [
                   { id: 'observability', label: t('obs.title'), icon: IconGauge, onSelect: () => { setObservability('usage'); setDrawer(false); } },
+                  { id: 'teams', label: t('teams.title'), icon: IconAgents, onSelect: openTeams },
                   { id: 'skills', label: t('composerMenu.skills'), icon: IconSparkle, onSelect: openSkills },
                   { id: 'mcp', label: 'MCP', icon: IconGlobe, onSelect: openMcp },
                   {

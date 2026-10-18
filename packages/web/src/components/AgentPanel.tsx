@@ -122,7 +122,7 @@ export function AgentPanel({ api, team, agents, leadAgent, memberModel, start, p
     const m = team.members.find(v => v.id === id);
     const agent = agents.find(a => a.id === (m ? m.thread?.agent : leadAgent));
     return m ? { name: m.name, tag: agent?.label ?? m.thread?.agent ?? t('team.member'), icon: agent?.icon ?? null, lead: false }
-      : { name: t('team.lead'), tag: agent?.label ?? t('team.leadTag'), icon: agent?.icon ?? null, lead: true };
+      : { name: team.team?.entry ?? t('team.lead'), tag: agent?.label ?? t('team.leadTag'), icon: agent?.icon ?? null, lead: true };
   };
   const [events, setEvents] = useState<StoredEvent[]>([]);
   const [connected, setConnected] = useState(true);
@@ -226,7 +226,7 @@ export function AgentPanel({ api, team, agents, leadAgent, memberModel, start, p
         {team.members.map(m => <button className="agent-member" key={m.id} onClick={() => setMemberId(m.id)}>
           <div className="agent-member-line"><strong>{m.name}</strong><span className={m.thread?.waiting ? 'coord-attention' : ''}>{memberStatus(m)}</span></div>
           <div className="coord-caption">{m.thread?.agent} · {m.thread?.cwd.split('/').slice(-2).join('/')}</div>
-          <p>{m.latest?.result?.split('<limi-coordination>')[0].slice(-160) || m.latest?.text.slice(0, 160) || t('team.waitingTask')}</p>
+          <p>{m.latest?.result?.split(/<limi-(?:coordination|team)>/)[0].slice(-160) || m.latest?.text.slice(0, 160) || t('team.waitingTask')}</p>
           {m.thread?.unread && <span className="coord-unread">{t('team.newOutput')}</span>}
         </button>)}
       </> : thread ? <ThreadView historyApi={api} historyThreadId={thread.id} items={timeline.items} roots={[thread.cwd, thread.cwdReal]} loadImage={id => api.attachment(thread.id, id)} loadFile={path => api.threadFile(thread.id, path)} hasOlder={older} loadingOlder={loadingOlder} onLoadOlder={() => void loadOlder()} /> : <div className="agent-panel-empty">{t('team.childGone')}</div>}

@@ -118,7 +118,16 @@ export interface TurnTrace {
 
 /** The model and thinking effort members of one instance start with; null leaves the agent's own. */
 export interface MemberDefault { model: string | null; effort: string | null; /** Set where this instance's members differ from the team's level. */ permission?: string }
+export type TeamStatus = 'running' | 'awaiting_confirm' | 'needs_attention' | 'done';
+export interface TeamSummary { id: string; name: string; description?: string; entry: string; memberCount: number }
+export interface TeamMember { name: string; agent: string; model?: string; effort?: string; cwd?: string; instruction?: string }
+export interface TeamDefinition {
+  id?: string; name: string; description?: string; entry: string; members: TeamMember[];
+  relations: Array<{ kind: 'delegate'; from: string[]; to: string }>;
+  budget?: { maxDeliveries?: number }; createdAt?: string; updatedAt?: string;
+}
 export interface Coordination {
+  team?: { taskId: string; status: TeamStatus; entry: string; snapshot: { name: string }; error?: string };
   rootId: string; paused: boolean; directories: string[]; agents: string[];
   /** By instance id. Absent from older daemons. */
   defaults?: Record<string, MemberDefault>;
@@ -134,7 +143,7 @@ export interface CoordinationMessage {
 }
 export interface Thread {
   /** `doing`, on a member: its latest task while it works, the opening of its answer once it has returned. */
-  coordination?: { rootId: string; children: number; paused: boolean; doing?: string };
+  coordination?: { rootId: string; children: number; paused: boolean; doing?: string; team?: { name: string; status: TeamStatus; role: string; error?: string } };
   id: string;
   agent: string;
   cwd: string;
@@ -810,6 +819,15 @@ export class Api {
   worktreeOptions(cwd: string): Promise<ForkOptions['worktree']> {
     return this.request('GET', `/api/worktree-options?cwd=${encodeURIComponent(cwd)}`);
   }
+
+  teams(): Promise<TeamSummary[]> { return this.request('GET', '/api/teams'); }
+  team(id: string): Promise<TeamDefinition> { return this.request('GET', `/api/teams/${id}`); }
+  teamTemplate(): Promise<TeamDefinition> { return this.request('GET', '/api/teams/template'); }
+  saveTeam(value: TeamDefinition): Promise<TeamDefinition> { return this.request(value.id ? 'PUT' : 'POST', `/api/teams${value.id ? '/' + value.id : ''}`, value); }
+  deleteTeam(id: string): Promise<void> { return this.request('DELETE', `/api/teams/${id}`); }
+  importTeam(value: unknown): Promise<TeamDefinition> { return this.request('POST', '/api/teams/import', value); }
+  exportTeam(id: string): Promise<TeamDefinition> { return this.request('GET', `/api/teams/${id}/export`); }
+  dispatchTeam(id: string, text: string, cwd: string): Promise<{ taskId: string; threadId: string }> { return this.request('POST', `/api/teams/${id}/tasks`, { text, cwd, source: { kind: 'web' } }); }
 
   coordination(id: string): Promise<Coordination | null> { return this.request('GET', `/api/threads/${id}/coordination`); }
   /** Turns of any thread on this machine, archived ones too, in which the words were said. */

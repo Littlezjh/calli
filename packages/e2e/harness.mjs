@@ -116,6 +116,7 @@ export async function startDaemon(env = {}, opts = {}) {
 
   return {
     base,
+    pid: child.pid,
     token: TOKEN,
     dataDir,
     workdir,

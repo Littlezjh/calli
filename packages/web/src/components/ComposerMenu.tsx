@@ -12,6 +12,7 @@ interface Props {
   goal?: GoalCapability;
   running: boolean;
   attachTitle: string;
+  attachDisabled?: boolean;
   onAttach: () => void;
   onBrowse: (section: 'actions' | 'skills') => void;
   onGoal: (action: GoalAction) => void;
@@ -22,14 +23,14 @@ export const GOAL_LABELS: Record<GoalAction, string> = {
   set: t('goal.set'), show: t('goal.show'), pause: t('goal.pause'), resume: t('goal.resume'), clear: t('goal.clear'),
 };
 /** A compact phone menu. Browsing opens the composer's full-width command palette. */
-export function ComposerMenu({ commands, planMode, goal, running, attachTitle, onAttach, onBrowse, onGoal, close }: Props) {
+export function ComposerMenu({ commands, planMode, goal, running, attachTitle, attachDisabled, onAttach, onBrowse, onGoal, close }: Props) {
   const [page, setPage] = useState<'home' | 'goal'>('home');
   const unknownKinds = commands.some(c => !c.kind);
   const skillTitle = unknownKinds ? t('composerMenu.skillsAndCommands') : t('composerMenu.skills');
   const pick = (action: () => void) => { close(); action(); };
 
   if (page === 'home') return <div className="composer-menu-list">
-    <button type="button" role="menuitem" className="pop-item" title={attachTitle} onClick={() => pick(onAttach)}>
+    <button type="button" role="menuitem" className="pop-item" title={attachTitle} disabled={attachDisabled} onClick={() => pick(onAttach)}>
       <span className="pop-item-icon"><IconPaperclip size={19} /></span><span className="pop-item-label">{t('composerMenu.attach')}</span>
     </button>
     {(planMode || goal) && <div className="pop-divider" />}

@@ -142,6 +142,7 @@ interface Props {
   onAction: (id: string) => void;
   /** Why pictures cannot be attached right now, or null when they can. */
   attachBlocked: string | null;
+  attachmentsBlocked?: string;
   /** Something worth knowing about how attached pictures will be read, shown on the attach button. */
   attachNote?: string | null;
   onError: (message: string) => void;
@@ -195,6 +196,7 @@ export function Composer({
   hiddenCommands,
   onAction,
   attachBlocked,
+  attachmentsBlocked,
   attachNote,
   onError,
   queued,
@@ -440,6 +442,7 @@ export function Composer({
   );
 
   const addFiles = async (files: File[]) => {
+    if (attachmentsBlocked) return onError(attachmentsBlocked);
     const pickedVideos = files.filter(isVideo);
     if (pickedVideos.length) {
       const room = MAX_VIDEOS - videos.length;
@@ -555,6 +558,7 @@ export function Composer({
 
   const submit = async () => {
     if (!canSend) return;
+    if (attachmentsBlocked && (images.length || videos.length)) return onError(attachmentsBlocked);
     if (images.length && attachBlocked) return onError(attachBlocked);
     setBusy(true);
     sendingRef.current = true;
@@ -892,6 +896,7 @@ export function Composer({
               disabled={disabled || menuBusy || busy}
             >
               {close => <ComposerMenu close={close} commands={commands} planMode={planMode} goal={goal} running={running}
+                attachDisabled={Boolean(attachmentsBlocked)}
                 attachTitle={attachBlocked ? t('composer.attachBlocked', attachBlocked) : attachNote ?? t('composer.attachHint')}
                 onAttach={() => fileRef.current?.click()} onGoal={chooseGoal} onBrowse={browse} />}
             </Popover> : <button ref={addRef} type="button" className="tool-btn icon-only composer-add"
