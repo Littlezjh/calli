@@ -3,7 +3,30 @@ import { readFileSync, writeFileSync } from 'node:fs';
 
 // Deliberately use the same CLI a real agent would execute, with its injected environment.
 export function coordinationFixture(text) {
-  const body = text.split('<limi-coordination>')[0].trim();
+  const body = text.split(/<limi-(?:coordination|team)>/)[0].trim();
+  if (text.includes('<limi-team>')) {
+    if (body.endsWith('TEAM_ENV')) return `limi-ready:${Boolean(process.env.LIMI_SOCKET && process.env.LIMI_KEY)}`;
+    if (body.endsWith('TEAM_MEMBER_ERROR')) return '@dev fail';
+    if (body.endsWith('TEAM_MULTI')) return '@dev TEAM_MULTI_DEV\n@reviewer TEAM_MULTI_REVIEW';
+    if (body.endsWith('TEAM_MULTI_DEV')) return '@lead Developer finished';
+    if (body.endsWith('TEAM_MULTI_REVIEW')) return 'Reviewer finished';
+    if (body.endsWith('Developer finished') || body.endsWith('Reviewer finished')) return 'All available results summarized.';
+    if (body.endsWith('TEAM_CUSTOM')) return '@lead Do TEAM_CUSTOM_WORK';
+    if (body.endsWith('TEAM_FLOW')) return '@dev Implement TEAM_DRAFT';
+    if (body.endsWith('TEAM_REWORK')) return '@dev Implement TEAM_DRAFT_REWORK';
+    if (body.endsWith('TEAM_DRAFT_REWORK')) return '@reviewer Review TEAM_REVIEW_ONE';
+    if (body.endsWith('TEAM_REVIEW_ONE')) return '@dev Fix TEAM_FIX_ONE';
+    if (body.endsWith('TEAM_FIX_ONE')) return '@reviewer Review TEAM_REVIEW_TWO';
+    if (body.endsWith('TEAM_REVIEW_TWO')) return '@dev Fix TEAM_FIX_TWO';
+    if (body.endsWith('TEAM_FIX_TWO')) return '@reviewer Review TEAM_REVIEW';
+    if (body.endsWith('TEAM_DRAFT')) return '@reviewer Review TEAM_REVIEW';
+    if (body.endsWith('TEAM_REVIEW')) return 'Reviewed TEAM_APPROVED';
+    if (body.endsWith('TEAM_APPROVED')) return '@lead Completed TEAM_DELIVERED';
+    if (body.endsWith('TEAM_DELIVERED')) return 'Implementation and review complete.';
+    if (body.endsWith('TEAM_BUDGET')) return '@dev Loop TEAM_LOOP';
+    if (body.endsWith('TEAM_LOOP')) return '@lead Continue TEAM_BUDGET';
+    if (body.endsWith('TEAM_BUDGET')) return '@dev Loop TEAM_LOOP';
+  }
   if (body.endsWith('LIMI_REPORT')) return '文档审查完成。\n\n已检查接口约定、目录分工和异常处理。建议补充重启后的恢复步骤，测试覆盖其余预期行为。';
   if (body === 'LIMI_ENV') return `limi-ready:${Boolean(process.env.LIMI_SOCKET && process.env.LIMI_KEY)};cwd:${process.cwd()}`;
   const command = /LIMI_COMMAND:([A-Za-z0-9+/=]+)/.exec(body);

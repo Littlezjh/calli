@@ -349,7 +349,9 @@ export interface AgentAdapter {
 
 /** Preserve account environment and its PATH while exposing the runtime CLI. */
 export function sessionEnvironment(base: Record<string, string>, context?: Record<string, string>): NodeJS.ProcessEnv {
-  const env = { ...process.env, ...base, ...context };
+  // A daemon launched from another agent must never lend that agent's scoped credentials
+  // to a new session. Undefined also masks inherited keys in adapters that merge env again.
+  const env: NodeJS.ProcessEnv = { ...process.env, ...base, LIMI_SOCKET: undefined, LIMI_KEY: undefined, LIMI_BIN_DIR: undefined, ...context };
   if (context?.LIMI_BIN_DIR) env.PATH = `${context.LIMI_BIN_DIR}${process.platform === 'win32' ? ';' : ':'}${base.PATH ?? process.env.PATH ?? ''}`;
   return env;
 }

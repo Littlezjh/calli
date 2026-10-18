@@ -545,6 +545,15 @@ export class Store {
     }
   }
 
+  teamRecords(): Array<{ id: string; data: string }> {
+    this.db.exec('CREATE TABLE IF NOT EXISTS teams (id TEXT PRIMARY KEY, data TEXT NOT NULL)');
+    return this.db.prepare('SELECT id, data FROM teams ORDER BY rowid').all() as Array<{ id: string; data: string }>;
+  }
+  saveTeam(id: string, data: string): void {
+    this.db.prepare('INSERT INTO teams (id, data) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data').run(id, data);
+  }
+  deleteTeam(id: string): void { this.db.prepare('DELETE FROM teams WHERE id = ?').run(id); }
+
   coordinationRecords(): Array<{ id: string; data: string }> {
     this.db.exec('CREATE TABLE IF NOT EXISTS coordination (id TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE, data TEXT NOT NULL)');
     return this.db.prepare('SELECT id, data FROM coordination').all() as Array<{ id: string; data: string }>;

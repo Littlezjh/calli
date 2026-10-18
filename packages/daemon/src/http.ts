@@ -588,6 +588,25 @@ export function createHttpServer(deps: HttpDeps): Server {
       });
     }
 
+    if (parts[0] === 'api' && parts[1] === 'teams') {
+      const teams = manager.coordination?.definitions;
+      if (!teams) throw new HttpError(501, '团队服务未启用');
+      const id = parts[2], sub = parts[3];
+      if (!id && method === 'GET') return sendJson(res, 200, teams.list().map(({ id, name, description, entry, members }) => ({ id, name, description, entry, memberCount: members.length })));
+      if (!id && method === 'POST') return sendJson(res, 201, teams.save(await readJson(req)));
+      if (id === 'template' && method === 'GET') return sendJson(res, 200, await teams.template());
+      if (id === 'import' && method === 'POST') return sendJson(res, 201, teams.import(await readJson(req)));
+      if (id && !sub && method === 'GET') return sendJson(res, 200, teams.get(id));
+      if (id && !sub && method === 'PUT') return sendJson(res, 200, teams.save(await readJson(req), id));
+      if (id && !sub && method === 'DELETE') { teams.remove(id); res.writeHead(204).end(); return; }
+      if (id && sub === 'export' && method === 'GET') return sendJson(res, 200, teams.export(id));
+      if (id && sub === 'tasks' && method === 'POST') {
+        const body = await readJson(req);
+        return sendJson(res, 202, await teams.dispatch({ teamId: id, text: body.text, cwd: body.cwd, source: { kind: body.source?.kind === 'web' ? 'web' : body.source?.kind === 'cli' ? 'cli' : 'http' } }));
+      }
+      throw new HttpError(404, 'not found');
+    }
+
     // /api/threads/:id ...
     if (parts[0] === 'api' && parts[1] === 'threads' && parts[2]) {
       const threadId = parts[2];
@@ -600,6 +619,7 @@ export function createHttpServer(deps: HttpDeps): Server {
         if (method === 'GET') return sendJson(res, 200, collaboration.view(threadId));
         if (method === 'POST') {
           const body = await readJson(req);
+          if (body.action === 'confirm') return sendJson(res, 200, await collaboration.confirm(threadId));
           if (body.action === 'resume') return sendJson(res, 200, await collaboration.resume(threadId));
           if (body.action === 'permission') return sendJson(res, 200, await collaboration.setPermission(threadId, body.permission));
           if (body.action === 'defaults') return sendJson(res, 200, await collaboration.setDefaults(threadId, body.defaults));
@@ -734,6 +754,7 @@ export function createHttpServer(deps: HttpDeps): Server {
 
       if (method === 'POST' && sub === 'turns') {
         const body = await readJson(req, MAX_TURN_BODY);
+        if (manager.coordination?.metadata(threadId)?.team && (typeof body.text !== 'string' || !body.text.trim() || body.text.length > 32000)) throw new HttpError(400, '团队任务需要 1～32000 字符');
         manager.coordination?.mentionText(threadId, body.text, body.mentions);
         await manager.coordination?.userSpoke(threadId);
         return sendJson(res, 202, await manager.startTurn(threadId, { text: body.text, images: body.images, videos: body.videos, queue: body.queue, mentions: body.mentions, workMode: body.workMode }));

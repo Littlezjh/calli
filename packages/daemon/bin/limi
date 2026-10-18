@@ -6,11 +6,44 @@ if (!args.length || args.includes('--help')) {
   console.log(`limi agents | status | result ID | stop NAME
 limi spawn --agent ID --name NAME [--cwd DIR] [--model ID] [--effort LEVEL] --message-file FILE --request-id KEY
 limi send NAME --message-file FILE --request-id KEY
+limi team ls
+limi team run NAME|ID [--cwd DIR] --task-file FILE|-
+Team commands use LIMI_URL (or local RAH_PORT), LIMI_TOKEN (or RAH_TOKEN).
 FILE may be - for stdin. Reuse the request ID only when retrying the same request.
 Members can message existing teammates; only the lead can spawn or stop members.`);
   process.exit(0);
 }
 try {
+  if (args[0] === 'team') {
+    const base = process.env.LIMI_URL || `http://127.0.0.1:${process.env.RAH_PORT || 8787}`;
+    const token = process.env.LIMI_TOKEN || process.env.RAH_TOKEN;
+    if (!token) throw new Error('Set LIMI_TOKEN or RAH_TOKEN for team commands.');
+    const api = async (path, body) => {
+      const response = await fetch(new URL(path, base), { method: body ? 'POST' : 'GET', signal: AbortSignal.timeout(30000), headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) });
+      const value = await response.json();
+      if (!response.ok) throw new Error(value.error || `HTTP ${response.status}`);
+      return value;
+    };
+    const [, command, ...flags] = args;
+    if (command === 'ls' && !flags.length) console.log(JSON.stringify(await api('/api/teams')));
+    else if (command === 'run') {
+      const target = flags.shift(); let cwd = process.cwd(), file;
+      if (!target || target.startsWith('--')) throw new Error('Give a team name or ID.');
+      while (flags.length) {
+        const flag = flags.shift(), value = flags.shift();
+        if (value === undefined) throw new Error(`Missing value: ${flag}`);
+        if (flag === '--cwd') cwd = value;
+        else if (flag === '--task-file') file = value;
+        else throw new Error(`Invalid argument: ${flag}`);
+      }
+      if (!file) throw new Error('Give --task-file FILE or --task-file - for stdin.');
+      const teams = await api('/api/teams');
+      const team = teams.find(t => t.id === target) || teams.find(t => t.name === target);
+      if (!team) throw new Error(`Team not found: ${target}`);
+      console.log(JSON.stringify(await api(`/api/teams/${encodeURIComponent(team.id)}/tasks`, { text: readFileSync(file === '-' ? 0 : file, 'utf8'), cwd, source: { kind: 'cli' } })));
+    } else throw new Error('Use limi team ls or limi team run NAME|ID --task-file FILE.');
+    process.exit(0);
+  }
   const [op, ...rest] = args;
   const input = { op };
   if (rest[0] && !rest[0].startsWith('--')) input.target = rest.shift();
