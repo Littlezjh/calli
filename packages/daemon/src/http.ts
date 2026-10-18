@@ -343,9 +343,35 @@ export function createHttpServer(deps: HttpDeps): Server {
       return;
     }
 
+    if (parts[1] === 'work-sources' && method === 'GET') {
+      const consumer = url.searchParams.get('consumer') || undefined;
+      if (consumer && !extensions?.list().some(s => s.manifest.id === consumer && s.enabled && s.granted.includes('worksource.read'))) throw new HttpError(403, 'work_source_permission_required');
+      const result = await extensions?.external?.projections(consumer, url.searchParams.get('threadId') || undefined, url.searchParams.get('refresh') === '1') ?? [];
+      if (consumer && !extensions?.list().some(s => s.manifest.id === consumer && s.enabled && s.granted.includes('worksource.read'))) throw new HttpError(403, 'work_source_permission_required');
+      return sendJson(res, 200, result);
+    }
     // Limi extensions: the built-in catalog and what is installed on this machine.
     if (parts[1] === 'extensions') {
       if (!extensions) throw new HttpError(501, '此 daemon 未启用扩展');
+      const external = extensions.external;
+      if (parts[2] === 'prepare' && method === 'POST') {
+        if (!external) throw new HttpError(501, 'external_extensions_unavailable');
+        const body = await readJson(req);
+        return sendJson(res, 200, await external.prepare(body?.origin, body?.sha256));
+      }
+      if (parts[2] === 'commit' && method === 'POST') {
+        if (!external) throw new HttpError(501, 'external_extensions_unavailable');
+        const body = await readJson(req);
+        return sendJson(res, 200, await external.install(body?.token, body?.granted));
+      }
+      if (external?.has(parts[2])) {
+        if (parts[3] === 'configuration') {
+          if (method === 'GET') return sendJson(res, 200, external.configuration(parts[2]));
+          if (method === 'PUT') return sendJson(res, 200, await external.configure(parts[2], await readJson(req)));
+        }
+        if (parts[3] === 'detect' && method === 'POST') return sendJson(res, 200, await external.detect(parts[2]));
+        if (parts[3] === 'rollback' && method === 'POST') return sendJson(res, 200, external.rollback(parts[2]));
+      }
       // GET /api/extensions
       if (method === 'GET' && !parts[2]) return sendJson(res, 200, extensions.list());
       // POST /api/extensions/:id/install { granted }: exactly the permissions the manifest asks for

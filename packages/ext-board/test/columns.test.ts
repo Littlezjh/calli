@@ -136,10 +136,10 @@ test('translations preserve numeric messages and English plurals', () => {
   assert.equal(t('ja', 'title'), 'ボード');
 });
 
-test('manifest declares the board route and only summary permission', () => {
+test('manifest declares the board route and scoped work content permission', () => {
   assert.equal(manifest.id, 'board');
   assert.equal(manifest.apiVersion, 1);
-  assert.deepEqual(manifest.permissions, ['events.summary']);
+  assert.deepEqual(manifest.permissions, ['events.summary', 'worksource.read']);
   assert.deepEqual(manifest.contributes.views, [{
     id: 'board', title: manifest.name, icon: 'board', route: '#/board', sidebar: { pinned: true },
   }]);

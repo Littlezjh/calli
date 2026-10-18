@@ -4,7 +4,7 @@
  * list, refreshed from /api/stream), so a view adds no requests of its own and never sees the
  * token, the raw Api or anything outside the summaries.
  */
-import type { ExtensionState, ThreadSummary } from '@rah/extension-api';
+import type { ExtensionState, ThreadSummary, WorkProjection } from '@rah/extension-api';
 import type { AgentInfo as HostAgentInfo, ConnectionState, WebHost, WebHostStorage, WebHostUi } from '@rah/extension-api/web';
 import type { AgentInfo } from '../api';
 import { locale } from '../i18n';
@@ -13,6 +13,7 @@ import { hasPermission } from './permissions';
 export interface HostInputs {
   extension: ExtensionState | null;
   threads: ThreadSummary[];
+  workSources?: WorkProjection[];
   connection: ConnectionState;
   /** ISO time of the last thread list read from the daemon. */
   observedAt: string | null;
@@ -63,6 +64,8 @@ export function createWebHost(
       }
     }
   }
+  const workListeners = new Set<(items: WorkProjection[]) => void>();
+  const workAllowed = (v: HostInputs) => v.extension?.manifest.id === extensionId && hasPermission(v.extension, 'worksource.read') ? v.workSources ?? [] : [];
   const threadListeners = new Set<(threads: ThreadSummary[]) => void>();
   const connectionListeners = new Set<(state: ConnectionState) => void>();
   const ui = deps.ui(() => inputs.agents);
@@ -76,6 +79,7 @@ export function createWebHost(
         return () => void threadListeners.delete(listener);
       },
     },
+    workSources: { snapshot: () => workAllowed(inputs), subscribe(listener) { workListeners.add(listener); return () => void workListeners.delete(listener); } },
     connection: {
       state: () => inputs.connection,
       observedAt: () => inputs.observedAt,
@@ -96,6 +100,7 @@ export function createWebHost(
     update(next) {
       const before = inputs;
       inputs = next;
+      if (JSON.stringify(workAllowed(before)) !== JSON.stringify(workAllowed(next))) notify(workListeners, workAllowed(next));
       // The page re-reads the list on every event; listeners hear only when a summary changed.
       const key = JSON.stringify(allowed(next) ? next.threads : []);
       if (key !== threadsKey || allowed(next) !== allowed(before)) {

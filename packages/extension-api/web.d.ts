@@ -1,3 +1,4 @@
+import type { WorkProjection } from './work.js';
 // Browser side of the contract: what a built-in extension's view receives from the host.
 // Views import nothing from packages/web or packages/daemon; everything they need is on `WebHost`.
 // Styling: only the variables at the top of packages/web/src/styles.css. No custom colours.
@@ -67,6 +68,7 @@ export interface PopoverOptionProps {
 
 /** Host components. They follow theme, density and phone layout like core screens. */
 export interface WebHostUi {
+  WorkSummary: ComponentType<{ items: WorkProjection[] }>;
   Icon: ComponentType<{ name: HostIconName | 'pin' | 'clock' | 'worktree' | 'fork' | 'team' | 'check' | 'chevron' | 'close'; size?: number }>;
   /** The agent instance's mark and, with `label`, its name. */
   AgentMark: ComponentType<{ agentId: string; size?: number; label?: boolean }>;
@@ -88,6 +90,7 @@ export interface WebHostNavigate {
 export interface WebHost {
   extensionId: string;
   threads: WebHostThreads;
+  workSources: { snapshot(): WorkProjection[]; subscribe(listener: (items: WorkProjection[]) => void): Unsubscribe };
   connection: WebHostConnection;
   agents(): AgentInfo[];
   navigate: WebHostNavigate;

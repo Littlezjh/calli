@@ -1,4 +1,4 @@
-import type { ExtensionState, Permission } from '@rah/extension-api';
+import type { ExtensionState, Permission, ExtensionPackagePreview, ExtensionConfiguration, ExtensionDetection, WorkProjection } from '@rah/extension-api';
 export type WorkMode = 'execute' | 'plan';
 export interface UserQuestion { id: string; question: string; header?: string; options: Array<{ value: string; label: string; description?: string }>; multiple?: boolean; freeText?: boolean; required?: boolean }
 export type UserInputAnswer = { answers: Record<string, string[]> } | { cancelled: true };
@@ -1094,6 +1094,32 @@ export class Api {
   /** Takes one server out of one instance's config on this machine. */
   mcpRemove(agent: string, name: string): Promise<void> {
     return this.request('DELETE', `/api/mcp?agent=${encodeURIComponent(agent)}&name=${encodeURIComponent(name)}`);
+  }
+
+  prepareExtension(origin: string, sha256?: string): Promise<ExtensionPackagePreview> {
+    return this.request('POST', '/api/extensions/prepare', { origin, sha256 });
+  }
+  commitExtension(token: string, granted: Permission[]): Promise<ExtensionState> {
+    return this.request('POST', '/api/extensions/commit', { token, granted });
+  }
+  extensionConfiguration(id: string): Promise<ExtensionConfiguration> {
+    return this.request('GET', `/api/extensions/${encodeURIComponent(id)}/configuration`);
+  }
+  configureExtension(id: string, config: ExtensionConfiguration): Promise<ExtensionConfiguration> {
+    return this.request('PUT', `/api/extensions/${encodeURIComponent(id)}/configuration`, config);
+  }
+  detectExtension(id: string): Promise<ExtensionDetection> {
+    return this.request('POST', `/api/extensions/${encodeURIComponent(id)}/detect`);
+  }
+  rollbackExtension(id: string): Promise<ExtensionState> {
+    return this.request('POST', `/api/extensions/${encodeURIComponent(id)}/rollback`);
+  }
+  workSources(options: { consumer?: string; threadId?: string; refresh?: boolean } = {}): Promise<WorkProjection[]> {
+    const params = new URLSearchParams();
+    if (options.consumer) params.set('consumer', options.consumer);
+    if (options.threadId) params.set('threadId', options.threadId);
+    if (options.refresh) params.set('refresh', '1');
+    return this.request('GET', `/api/work-sources?${params}`);
   }
 
   /** Limi extensions this daemon ships, and which are installed on its machine. */

@@ -193,3 +193,17 @@ test('malformed extension routes safely fall back to threads', () => {
     assert.equal(resolveExtensionRoute(hash, [state(manifest('probe'), true)]), null);
   }
 });
+
+test('work projections update live and disappear immediately when content permission is revoked', () => {
+  const m = manifest('work-view'); m.permissions.push('worksource.read');
+  const initial: HostInputs = { extension: state(m, true), threads: [], agents: [], connection: 'live', observedAt: null, workSources: [] };
+  const live = createWebHost('work-view', initial, { openThread: () => {}, ui: () => ({}) as never });
+  const received: unknown[] = [];
+  live.host.workSources.subscribe(items => received.push(items));
+  const projection = { sourceId: 'source', sourceName: text('Source'), binding: { id: 'b', externalId: 'g', settings: {}, threadIds: ['a'], consumers: [] }, snapshot: null, freshness: 'unknown' as const, observedAt: null, generation: 'g', revision: 1 };
+  live.update({ ...initial, workSources: [projection] });
+  assert.deepEqual(live.host.workSources.snapshot(), [projection]);
+  live.update({ ...initial, extension: { ...initial.extension!, granted: ['events.summary'] }, workSources: [projection] });
+  assert.deepEqual(live.host.workSources.snapshot(), []);
+  assert.deepEqual(received, [[projection], []]);
+});

@@ -1,3 +1,4 @@
+import { WorkSummary } from './work';
 /**
  * The host components extension views draw with. They are the hub's own (icons.tsx, Popover, the
  * styles.css variables), so an extension looks like the rest of the interface without shipping
@@ -133,5 +134,5 @@ export function hostUi(agents: () => AgentInfo[]): WebHostUi {
       </span>
     );
   }
-  return { Icon: HostIcon, AgentMark, RelativeTime, Popover: HostPopover, PopoverOption, EmptyState };
+  return { WorkSummary, Icon: HostIcon, AgentMark, RelativeTime, Popover: HostPopover, PopoverOption, EmptyState };
 }

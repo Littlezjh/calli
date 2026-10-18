@@ -1,5 +1,8 @@
 # 工作台扩展：用看板验证 Limi 扩展
 
+> 实现更新：内置扩展宿主、独立外部工作数据源和 LoopX 首版已落地。本文保留原设计与后续能力；当前接口、兼容范围及验证限制以 [LoopX 接入记录](loopx-integration.md) 为准。
+
+
 状态：设计稿，未实现。本文用「看板」这个真实需求，检验 [Limi 扩展机制](extensions-design.md) 能不能既保持简洁好看，又让看板、LoopX 这类工具真正接进来。愿景见 [VISION.md](VISION.md)，可点击的界面草图见 [design/extension-workbench.html](design/extension-workbench.html)（演示用，没有真实接口）。
 
 依据的现有设计和代码：

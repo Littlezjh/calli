@@ -1,3 +1,4 @@
+import { useWorkSources, WorkSummary } from './extensions/work';
 import type { WorkMode } from './api';
 import { HandoverTrail } from './components/HandoverTrail';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -419,9 +420,10 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const onPage = viewTitle !== null;
   // What an extension view is handed: the summaries of the threads the page holds, and how fresh they are.
   const connectionShown: ConnectionState = api.demo || (host && !hostUp) ? 'offline' : connection;
+  const workSources = useWorkSources(api, extensions, Boolean(selectedId) || onExt, onExt ? extOpen?.extensionId : undefined, selectedId ?? undefined);
   const extInputs = useMemo(
-    () => (onExt ? { threads: threadSummaries(threads, selectedId), connection: connectionShown, observedAt: api.demo ? null : observedAt, agents, extension: extensions?.find(e => e.manifest.id === extOpen?.extensionId) ?? null } : null),
-    [onExt, threads, selectedId, connectionShown, observedAt, agents, api.demo, extensions, extOpen?.extensionId],
+    () => (onExt ? { workSources, threads: threadSummaries(threads, selectedId), connection: connectionShown, observedAt: api.demo ? null : observedAt, agents, extension: extensions?.find(e => e.manifest.id === extOpen?.extensionId) ?? null } : null),
+    [workSources, onExt, threads, selectedId, connectionShown, observedAt, agents, api.demo, extensions, extOpen?.extensionId],
   );
 
   // An extension view that is not there (never installed, removed, switched off, or an address
@@ -578,7 +580,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   }, [api]);
   const changeExtension = (next: ExtensionState) => {
     extensionRequest.current++;
-    setExtensions(list => list?.map(e => e.manifest.id === next.manifest.id ? next : e) ?? list);
+    setExtensions(list => next.installed || next.source === 'builtin' ? [...(list ?? []).filter(e => e.manifest.id !== next.manifest.id), next] : (list ?? []).filter(e => e.manifest.id !== next.manifest.id));
   };
   useEffect(() => {
     setExtensions(null);
@@ -1776,6 +1778,8 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
               api={api}
               demo={demo}
               extensions={extensions}
+              threads={threads}
+              onReload={() => void reloadExtensions()}
               onChange={changeExtension}
               onError={handleError}
             />
@@ -1892,6 +1896,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
 
         {!onPage && !(host && !hostUp) && (
         <div className="composer-slot">
+        {selectedId && <WorkSummary items={workSources} />}
         {showcase ? showcase.composer(selectedId) : <>
         <Composer
           draftKey={hostId ? `host:${hostId}:${selectedId ?? 'new'}` : selectedId ?? 'new'}

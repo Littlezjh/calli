@@ -3,6 +3,7 @@ import type { ThreadSummary } from '@rah/extension-api';
 import type { ExtensionViewProps, WebHost } from '@rah/extension-api/web';
 import { buildColumns, COLUMN_IDS, emptyFilters, parseFilters, projectName, showStaleWarning, type BoardFilters, type ColumnId } from './columns';
 import { t } from './i18n';
+import type { WorkProjection } from '@rah/extension-api';
 
 const FILTERS_KEY = 'filters.v1';
 
@@ -18,7 +19,7 @@ function toggle<T>(values: T[], value: T): T[] {
   return values.includes(value) ? values.filter((item) => item !== value) : [...values, value];
 }
 
-function ThreadCard({ thread, host, now }: { thread: ThreadSummary; host: WebHost; now: number }) {
+function ThreadCard({ thread, host, now, work }: { thread: ThreadSummary; host: WebHost; now: number; work: WorkProjection[] }) {
   const locale = host.locale();
   const { AgentMark, Icon, RelativeTime } = host.ui;
   const start = thread.runningSince ? Date.parse(thread.runningSince) : NaN;
@@ -37,7 +38,7 @@ function ThreadCard({ thread, host, now }: { thread: ThreadSummary; host: WebHos
   ];
 
   return (
-    <button type="button" className="ext-board-card" onClick={() => host.navigate.openThread(thread.id)}>
+    <article className={`ext-board-card-wrap${work.length ? ' has-work' : ''}`}><button type="button" className="ext-board-card" onClick={() => host.navigate.openThread(thread.id)}>
       <span className="ext-board-card-heading">
         <span className="ext-board-card-title">{thread.title || t(locale, 'untitled')}</span>
         {thread.pinned && <span className="ext-board-pin" title={t(locale, 'pinned')} aria-label={t(locale, 'pinned')}><Icon name="pin" size={13} /></span>}
@@ -59,7 +60,7 @@ function ThreadCard({ thread, host, now }: { thread: ThreadSummary; host: WebHos
           </span>)}
         </span>}
       </span>
-    </button>
+    </button>{work.length > 0 && <host.ui.WorkSummary items={work} />}</article>
   );
 }
 
@@ -67,6 +68,8 @@ function ThreadCard({ thread, host, now }: { thread: ThreadSummary; host: WebHos
 export function BoardView({ host }: ExtensionViewProps) {
   const locale = host.locale();
   const { Popover, PopoverOption, Icon, RelativeTime, EmptyState } = host.ui;
+  const [work, setWork] = useState(() => host.workSources.snapshot());
+  useEffect(() => { const off = host.workSources.subscribe(setWork); setWork(host.workSources.snapshot()); return off; }, [host.workSources]);
   const [threads, setThreads] = useState(() => host.threads.snapshot());
   const [connection, setConnection] = useState(() => ({ state: host.connection.state(), observedAt: host.connection.observedAt() }));
   const [now, setNow] = useState(Date.now);
@@ -192,7 +195,7 @@ export function BoardView({ host }: ExtensionViewProps) {
             {t(locale, column.id)}<span className="ext-board-count">{column.total}</span>
           </h2>}
           <div className="ext-board-cards">
-            {column.threads.map((thread) => <ThreadCard key={thread.id} thread={thread} host={host} now={now} />)}
+            {column.threads.map((thread) => <ThreadCard work={work.filter(p => p.binding.threadIds.includes(thread.id))} key={thread.id} thread={thread} host={host} now={now} />)}
             {!empty && column.total === 0 && <p className="ext-board-column-empty">{t(locale, 'emptyColumn')}</p>}
             {column.olderCount > 0 && <button
               type="button"

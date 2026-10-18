@@ -1,3 +1,4 @@
+import { ExternalExtensions } from './external-extensions.js';
 import { randomUUID } from 'node:crypto';
 import type {
   DaemonExtension,
@@ -41,6 +42,7 @@ export interface ExtensionHostOptions {
   turnStart?: (threadId: string, turnId: string) => StoredEvent | undefined;
   /** Notifications waiting per extension before the queue is dropped for a `host.resync`. */
   queueLimit?: number;
+  externalDir?: string;
 }
 
 /** Hooks every running extension gets, declared or not: they are about the extension and its delivery. */
@@ -93,6 +95,7 @@ interface Subscriber {
 }
 
 export class ExtensionHost {
+  readonly external?: ExternalExtensions;
   /** Changes every daemon start: extensions that see a new one re-read their state. */
   readonly generation = randomUUID();
   private readonly store: ExtensionStore;
@@ -112,6 +115,7 @@ export class ExtensionHost {
 
   constructor(opts: ExtensionHostOptions) {
     this.store = opts.store;
+    if (opts.externalDir) this.external = new ExternalExtensions(opts.externalDir, opts.source, this.generation, () => this.changed(), () => this.catalog.map(m => m.id));
     this.source = opts.source;
     this.catalog = opts.catalog;
     this.turnStart = opts.turnStart;
@@ -121,12 +125,14 @@ export class ExtensionHost {
   /** Starts listening, wakes the enabled extensions and tells them the machine is ready. Once, after restart recovery. */
   start(): void {
     if (this.unsubscribe) return;
+    this.external?.start();
     this.unsubscribe = this.source.subscribe((ev) => this.onEvent(ev));
     for (const manifest of this.catalog) this.sync(manifest.id);
     for (const sub of this.subscribers.values()) this.enqueue(sub, 'machine.ready', { generation: this.generation }, 0);
   }
 
   dispose(): void {
+    this.external?.dispose();
     this.unsubscribe?.();
     this.unsubscribe = null;
     for (const id of [...this.subscribers.keys()]) this.deactivate(id, 'stopping');
@@ -141,7 +147,7 @@ export class ExtensionHost {
   /** The catalog with this machine's state, for `GET /api/extensions`. */
   list(): ExtensionState[] {
     const records = new Map(this.store.list().map((r) => [r.id, r]));
-    return this.catalog.map((m) => this.state(m, records.get(m.id) ?? null));
+    return [...this.catalog.map((m) => this.state(m, records.get(m.id) ?? null)), ...(this.external?.list() ?? [])];
   }
 
   /** Called with no arguments whenever an extension is installed, removed, enabled or disabled. */
@@ -162,12 +168,14 @@ export class ExtensionHost {
   }
 
   uninstall(id: string): void {
+    if (this.external?.has(id)) return this.external.uninstall(id);
     this.manifest(id);
     this.deactivate(id, 'uninstalled');
     if (this.store.remove(id)) this.changed();
   }
 
   setEnabled(id: string, enabled: unknown): ExtensionState {
+    if (this.external?.has(id)) return this.external.setEnabled(id, enabled);
     const manifest = this.manifest(id);
     if (typeof enabled !== 'boolean') throw new HttpError(400, 'enabled 须为布尔值');
     const record = this.store.get(id);

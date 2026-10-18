@@ -48,11 +48,29 @@ export interface ViewContribution {
 
 export interface Contributions {
   views?: ViewContribution[];
+  workSource?: boolean;
 }
 
-/** Where the code comes from. v1 only has extensions that ship with Limi. */
-export type ExtensionSource = 'builtin';
+/** Built-in views ship with Limi; optional work sources are installed separately. */
+export type ExtensionSource = 'builtin' | 'external';
 
+export interface ExtensionSetting {
+  key: string;
+  label: LocalizedText;
+  scope: 'installation' | 'binding';
+  kind?: 'text' | 'path';
+  default?: string;
+  required?: boolean;
+}
+export interface ExtensionCommand {
+  id: string;
+  executable: string | { setting: string };
+  args: (string | { setting: string } | { binding: 'externalId' })[];
+  env?: Record<string, string>;
+  scope: 'installation' | 'binding';
+  effect: 'read' | 'runtime';
+  timeoutMs?: number;
+}
 export interface ExtensionManifest {
   /** Lowercase letters, digits and `-`. Stable across versions. */
   id: string;
@@ -66,8 +84,12 @@ export interface ExtensionManifest {
   contributes: Contributions;
   /** Notifications the extension wants. It receives nothing it did not declare. Empty for view-only extensions. */
   subscribes?: NotificationHook[];
-  /** Requests the extension answers. Planned; v1 hosts ignore it. */
+  /** Requests the extension answers. External work sources implement the supported subset. */
   answers?: RequestHook[];
+  /** External packages contain a self-contained Node ESM entry, never browser code. */
+  process?: { entry: string };
+  commands?: ExtensionCommand[];
+  settings?: ExtensionSetting[];
 }
 
 /** One row of `GET /api/extensions`: the catalog entry plus its state on this machine. */
@@ -81,4 +103,7 @@ export interface ExtensionState {
   granted: Permission[];
   installedAt: string | null;
   updatedAt: string | null;
+  origin?: string;
+  digest?: string;
+  previousVersion?: string;
 }

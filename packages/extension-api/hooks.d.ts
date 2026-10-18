@@ -117,9 +117,13 @@ export interface RequestContext {
 }
 
 export interface RequestPayloads {
-  /** @status planned — is the tool the extension wraps installed, and which version. */
+  'worksource.snapshot': {
+    in: { binding: import('./work.js').WorkBinding };
+    out: import('./work.js').WorkSnapshot;
+  };
+  /** Implemented for external work sources: installed tool and verified version. */
   'extension.detect': { in: Record<string, never>; out: { ok: boolean; version?: string; missing?: string } };
-  /** @status planned */
+  /** External work sources validate installation settings before saving. */
   'extension.validateSettings': { in: { settings: Record<string, unknown> }; out: { errors: Record<string, string> } };
   /** @status planned — per-instance report of one capability, e.g. memory. */
   'capability.status': {
@@ -190,8 +194,8 @@ export interface HostApi {
   'turns.transcript': { in: { threadId: string; turnId: string }; out: { role: 'user' | 'agent'; text: string }[] };
   /** @status planned — needs `files.read`. */
   'files.read': { in: { threadId: string; path: string }; out: { text: string; truncated: boolean } };
-  /** @status planned — needs `commands.run`; only commands declared in the manifest. */
-  'commands.run': { in: { command: string; args: Record<string, string>; threadId?: string }; out: { code: number; stdout: string; stderr: string } };
+  /** External work sources: needs `commands.run`; arguments come from saved settings and bindings. */
+  'commands.run': { in: { command: string; bindingId?: string }; out: { code: number; stdout: string; stderr: string } };
   /** @status planned — needs `notify`. */
   notify: { in: { dedupeKey: string; threadId?: string; title: string; kind: 'approval' | 'question' | 'plan' | 'error' | 'done' }; out: Record<string, never> };
   /** @status planned — refetch this extension's content in one slot. */

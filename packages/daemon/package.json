@@ -13,7 +13,8 @@
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "0.89.0",
-    "node-pty": "^1.1.0"
+    "node-pty": "^1.1.0",
+    "tar": "^7.5.22"
   },
   "devDependencies": {
     "@rah/extension-api": "*",
