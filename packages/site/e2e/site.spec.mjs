@@ -101,6 +101,55 @@ for (const phone of [false, true]) for (const theme of ['light', 'dark']) {
   });
 }
 
+for (const phone of [false, true]) for (const theme of ['light', 'dark']) {
+  test(`appearance menu switches both ways: ${phone ? 'phone' : 'desktop'}, ${theme}`, async () => {
+    const { page, context, errors } = await open({ phone, theme });
+    const activate = locator => phone ? locator.tap() : locator.click();
+    const trigger = page.getByRole('button', { name: '选择外观', exact: true });
+    try {
+      await page.addStyleTag({ content: 'html { scroll-behavior: auto !important; }' });
+      for (const [mode, label] of [['dark', '深色'], ['light', '浅色'], ['system', '跟随系统']]) {
+        // A sticky header must not trap the mobile sheet, even after scrolling.
+        await page.evaluate(y => scrollTo(0, y), mode === 'light' ? 500 : 0);
+        await activate(trigger);
+        const menu = page.getByRole('menu', { name: '选择外观', exact: true });
+        await menu.waitFor();
+        await page.waitForTimeout(250);
+        const choices = await menu.getByRole('menuitemradio').evaluateAll(items => items.map(item => {
+          const r = item.getBoundingClientRect();
+          return {
+            label: item.textContent,
+            inside: r.top >= 0 && r.bottom <= innerHeight && r.left >= 0 && r.right <= innerWidth,
+            reachable: item.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)),
+          };
+        }));
+        assert.equal(choices.length, 3);
+        for (const choice of choices) {
+          assert.ok(choice.inside && choice.reachable, `${choice.label} must be visible and reachable: ${JSON.stringify(choice)}`);
+        }
+        if (mode === 'dark') await page.screenshot({ path: `${shots}/${phone ? 'phone' : 'desktop'}-${theme}-appearance-menu.png` });
+        await activate(menu.getByRole('menuitemradio', { name: label, exact: true }));
+        await menu.waitFor({ state: 'detached' });
+        const expected = mode === 'system' ? theme : mode;
+        await page.waitForFunction(value => document.documentElement.dataset.theme === value && document.querySelector('iframe').contentDocument.documentElement.dataset.theme === value, expected);
+        assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('limi.site.appearance')).mode), mode);
+        if (mode === 'light') {
+          await page.reload();
+          await page.locator('iframe.is-ready').waitFor();
+          assert.equal(await page.locator('html').getAttribute('data-theme'), 'light');
+        }
+      }
+      await page.emulateMedia({ colorScheme: theme === 'light' ? 'dark' : 'light' });
+      await page.waitForFunction(value => document.documentElement.dataset.theme === value, theme === 'light' ? 'dark' : 'light');
+      await activate(trigger);
+      if (phone) await page.locator('.pop-scrim').tap({ position: { x: 5, y: 200 } });
+      else await page.keyboard.press('Escape');
+      await page.getByRole('menu', { name: '选择外观', exact: true }).waitFor({ state: 'detached' });
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  });
+}
+
 for (const phone of [false, true]) test(`approval, question, reset, install guidance and theme changes: ${phone ? 'phone' : 'desktop'}`, async () => {
   const { page, context, demo, errors, calls } = await open({ phone });
   try {

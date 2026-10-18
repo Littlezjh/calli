@@ -88,6 +88,8 @@ html[data-page='site'], [data-page='site'] body { height: auto; min-height: 100%
 }
 @media (max-width: 700px) {
   .site-wrap { width: calc(100% - 36px); }
+  /* A backdrop filter traps fixed sheets inside the header instead of the viewport. */
+  .site-nav { background: var(--bg); backdrop-filter: none; }
   .site-nav nav { height: 62px; gap: 12px; }
   .site-brand { font-size: 21px; gap: 8px; }
   .site-links { margin-left: auto; gap: 14px; }
