@@ -46,6 +46,8 @@ async function send(thread, text) {
 async function selectThread(page, thread, mobile) {
   if (mobile) await page.locator('.menu-btn').click();
   await page.locator('.thread-title', { hasText: thread.title }).first().click();
+  // On a phone an empty box is one line until it is touched; the context ring is on its second.
+  if (mobile) await page.locator('.composer textarea').tap();
 }
 
 test('Codex shows current context on desktop and phone in both themes, including after reload', async () => {

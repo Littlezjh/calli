@@ -327,6 +327,19 @@ test('a phone folds the empty composer to one line while a turn runs, and opens 
       await page.getByRole('button', { name: '协作', exact: true }).waitFor();
       await page.getByRole('button', { name: '停止', exact: true }).click();
       await page.getByRole('button', { name: '停止', exact: true }).waitFor({ state: 'hidden' });
+      // Idle, it folds the same way: nothing being written is one line.
+      await page.locator('.composer textarea').focus();
+      await page.locator('.composer textarea').blur();
+      await page.locator('.composer-box.collapsed textarea[placeholder="继续这个线程"]').waitFor();
+      assert.equal(await page.getByRole('button', { name: '协作', exact: true }).count(), 0);
+      if (shots) await page.screenshot({ path: join(shots, `composer-collapsed-idle-phone-${colorScheme}.png`), animations: 'disabled' });
+      await page.locator('.composer-box.collapsed textarea').tap();
+      await page.getByRole('button', { name: '协作', exact: true }).waitFor();
+      // A new thread keeps its strip of agent and directory in view: that is the choice being made.
+      await openUi(page, daemon);
+      await page.locator('.composer .composer-context').waitFor();
+      await page.locator('.composer textarea').blur();
+      assert.equal(await page.locator('.composer-box.collapsed').count(), 0);
     } finally { await context.close(); }
   }
   // Desktop keeps the whole box, running or not.

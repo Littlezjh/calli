@@ -1373,8 +1373,16 @@ html.list-open body {
   transition: color 0.12s;
 }
 
-.work-toggle:hover {
-  color: var(--text);
+/* The whole line is one colour, the step count included. Only a pointer that can hover darkens it:
+   on a touch screen a tap would leave it dark. */
+.work-toggle .muted {
+  color: inherit;
+}
+
+@media (hover: hover) {
+  .work-toggle:hover {
+    color: var(--text);
+  }
 }
 
 .work-label { font-variant-numeric: tabular-nums; }

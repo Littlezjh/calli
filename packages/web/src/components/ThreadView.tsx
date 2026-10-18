@@ -878,6 +878,15 @@ function WorkGroup({ item, roots }: { item: Extract<Item, { kind: 'work' }>; roo
   useEffect(() => {
     if (item.done) setOpen(false);
   }, [item.done]);
+  // A turn still running when the thread is opened starts folded, its steps not yet fetched, so the
+  // page draws first. Then it opens: what is going on now is what the thread was opened to see.
+  useEffect(() => {
+    if (item.done || !item.deferred) return;
+    const frame = requestAnimationFrame(() => setOpen(true));
+    return () => cancelAnimationFrame(frame);
+    // Once, on arrival: folding it again by hand is left alone.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const resource = useHistoryResource<HistoryWork>('work', item.deferred, open);
   const loaded = useMemo(() => resource.value ? buildTimeline(hydrateWork(resource.value.events, item.liveEvents ?? [], resource.value.version)).items.find((i): i is Extract<Item, { kind: 'work' }> => i.kind === 'work') : undefined, [resource.value, item.liveEvents]);
   const count = item.count ?? item.steps.length;

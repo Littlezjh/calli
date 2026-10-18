@@ -24,6 +24,8 @@ test('lightning toggles speed, restores selection, sends in Plan and clears on m
       await openUi(page, daemon);
       if (mobile) await page.locator('.menu-btn').click();
       await page.locator('.thread-title', { hasText: title }).first().click();
+      // On a phone an empty box is one line until it is touched; the controls are on its second.
+      if (mobile) await page.locator('.composer textarea').tap();
       const picker = () => page.getByRole('button', { name: /^模型与思考强度：/ });
       const toggle = async (name, keyboard = false) => {
         const button = page.getByRole('button', { name, exact: true });
@@ -46,6 +48,8 @@ test('lightning toggles speed, restores selection, sends in Plan and clears on m
       await page.reload();
       if (mobile) await page.locator('.menu-btn').click();
       await page.locator('.thread-title', { hasText: title }).first().click();
+      // On a phone an empty box is one line until it is touched; the controls are on its second.
+      if (mobile) await page.locator('.composer textarea').tap();
       await picker().click();
       assert.equal(await page.getByRole('button', { name: '关闭加速', exact: true }).getAttribute('aria-pressed'), 'true');
       await toggle('关闭加速');
@@ -110,6 +114,8 @@ test('a newer UI keeps the lightning toggle with older Hub model responses in al
       await openUi(page, daemon);
       if (mobile) await page.locator('.menu-btn').click();
       await page.locator('.thread-title', { hasText: title }).first().click();
+      // On a phone an empty box is one line until it is touched; the controls are on its second.
+      if (mobile) await page.locator('.composer textarea').tap();
       await page.getByRole('button', { name: /^模型与思考强度：/ }).click();
       assert.equal(await page.getByRole('button', { name: '关闭加速', exact: true }).getAttribute('aria-pressed'), 'true');
       if (shots) await page.screenshot({ animations: 'disabled', path: join(shots, `legacy-${agent}-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });

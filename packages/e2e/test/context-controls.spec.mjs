@@ -38,6 +38,8 @@ async function select(page, thread, mobile = false) {
   await openUi(page, daemon);
   if (mobile) await page.locator('.menu-btn').click();
   await page.locator('.thread-title', { hasText: thread.title }).first().click();
+  // On a phone an empty box is one line until it is touched; the controls are on its second.
+  if (mobile) await page.locator('.composer textarea').tap();
   await page.locator('.usage:visible').waitFor();
 }
 async function shot(page, name) {

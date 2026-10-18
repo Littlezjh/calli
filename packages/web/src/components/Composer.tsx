@@ -547,10 +547,45 @@ export function Composer({
   };
 
   const hasContent = text.trim() !== '' || images.length > 0 || videos.length > 0 || notes.length > 0 || mentions.some((m) => m.task?.trim());
-  // On a phone, a running turn with nothing being written gives up the room: one line, back to
-  // two the moment the box is touched. Anything in it, waiting in it, or focus keeps the whole box.
+  // On a phone, a box with nothing being written gives up the room: one line, back to two the
+  // moment it is touched. Anything in it, waiting in it, or focus keeps the whole box; so does a
+  // new thread's strip of agent and directory, which is the choice being made.
   const [focused, setFocused] = useState(false);
-  const collapsed = narrow && running && !hasContent && queued.length === 0 && preparing === 0 && !focused;
+  // Folding moves everything above the box down. A tap elsewhere takes the focus at the press, so
+  // the box waits for the finger to lift, and the tap to land where it was aimed, before it folds.
+  // `leaving` calls off a fold that is still waiting.
+  const pressing = useRef(false);
+  const leaving = useRef<(() => void) | null>(null);
+  const leave = () => {
+    leaving.current?.();
+    if (!pressing.current) return setFocused(false);
+    const off = () => {
+      document.removeEventListener('pointerup', fold, true);
+      document.removeEventListener('pointercancel', fold, true);
+    };
+    const fold = () => {
+      off();
+      const timer = window.setTimeout(() => { leaving.current = null; setFocused(false); }, 0);
+      leaving.current = () => window.clearTimeout(timer);
+    };
+    document.addEventListener('pointerup', fold, true);
+    document.addEventListener('pointercancel', fold, true);
+    leaving.current = off;
+  };
+  useEffect(() => {
+    const down = () => { pressing.current = true; };
+    const up = () => { pressing.current = false; };
+    document.addEventListener('pointerdown', down, true);
+    document.addEventListener('pointerup', up);
+    document.addEventListener('pointercancel', up);
+    return () => {
+      document.removeEventListener('pointerdown', down, true);
+      document.removeEventListener('pointerup', up);
+      document.removeEventListener('pointercancel', up);
+      leaving.current?.();
+    };
+  }, []);
+  const collapsed = narrow && !header && !hasContent && queued.length === 0 && preparing === 0 && !focused;
   const goalControl = text.trim() === '/goal' ? 'show' : text.trim() === '/goal pause' ? 'pause' : text.trim() === '/goal clear' ? 'clear' : null;
   const immediate = !!goalControl && !!goal?.controls.includes(goalControl) && !images.length && !videos.length && !notes.length && !mentions.length;
   const queueFull = running && !immediate && queued.length >= MAX_QUEUED;
@@ -717,11 +752,15 @@ export function Composer({
 
         <div
           className={`composer-box${dragOver ? ' drag-over' : ''}${collapsed ? ' collapsed' : ''}`}
-          onFocus={() => setFocused(true)}
+          onFocus={() => {
+            leaving.current?.();
+            leaving.current = null;
+            setFocused(true);
+          }}
           onBlur={(e) => {
             // A tap on a button in the box moves the focus to it; the box stays whole so the
             // change of shape cannot pull the button out from under the finger.
-            if (!e.currentTarget.contains(e.relatedTarget)) setFocused(false);
+            if (!e.currentTarget.contains(e.relatedTarget)) leave();
           }}
           onDragOver={(e) => {
             if (!hasFiles(e)) return;
@@ -832,7 +871,7 @@ export function Composer({
             ref={ref}
             rows={1}
             value={text}
-            placeholder={dragOver ? t('composer.drop') : collapsed ? t('composer.appendOne') : placeholder}
+            placeholder={dragOver ? t('composer.drop') : collapsed && running ? t('composer.appendOne') : placeholder}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onKeyDown}
             onPaste={onPaste}

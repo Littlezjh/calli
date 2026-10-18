@@ -38,6 +38,8 @@ test('zcode context and compression work with measured or unknown usage on deskt
       await openUi(page, daemon);
       if (mobile) await page.locator('.menu-btn').click();
       await page.locator('.thread-title', { hasText: title }).first().click();
+      // On a phone an empty box is one line until it is touched; the context ring is on its second.
+      if (mobile) await page.locator('.composer textarea').tap();
       // On phones the visible trigger is the ring; its text is intentionally hidden.
       await page.locator('.usage:visible').getByText(measured ? '38%' : '上下文', { exact: true }).waitFor({ state: 'attached' });
       const input = page.locator('.composer textarea');

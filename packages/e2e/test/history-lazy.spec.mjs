@@ -211,13 +211,18 @@ test('opening a running task starts with a summary then merges subsequent full l
         await page.locator('.thread-item').filter({ hasText: '途中打开' }).first().click();
         await connected;
         const work = page.locator('.work').last();
-        assert.equal(await work.locator('.work-toggle').getAttribute('aria-expanded'), 'false');
-        assert.equal(requests.filter(u => /\/history\/(work|detail)/.test(u)).length, 0);
+        // The running turn's steps are fetched once the page has drawn, and open on their own:
+        // what is going on now is what the thread was opened to see.
+        await work.locator('.work-toggle[aria-expanded="true"]').waitFor();
+        await work.locator('.work-body').waitFor();
         await page.getByText('hi there slowthink attach-running', { exact: true }).waitFor();
         // Wait for the original task to settle, so the last tool's complete live output is here.
         while ((await (await api(daemon, `/api/threads/${thread.id}`)).json()).status === 'running') await new Promise(resolve => setTimeout(resolve, 25));
         await work.locator('.work-label').filter({ hasText: '用时' }).waitFor();
         await work.locator('.work-toggle').click();
+        // One colour for the whole line, the step count included, after a tap or under the pointer.
+        const colors = await work.locator('.work-toggle').evaluate(el => [...el.querySelectorAll('.work-label, .muted')].map(n => getComputedStyle(n).color));
+        assert.equal(new Set(colors).size, 1, `the work line is one colour (${colors.join(' / ')})`);
         await work.locator('.run-head').click();
         const tool = work.locator('.step').filter({ hasText: 'npm test' });
         await tool.locator('.step-head').click();

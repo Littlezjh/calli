@@ -106,7 +106,8 @@ test('tool results stay at the bottom right of expanded details, including empty
         await checkResult(page.locator('.step'), '成功');
         await shot('tools-diff');
         await select('正在执行记录');
-        await page.locator('.work-toggle').click();
+        // A running turn opens its steps by itself once the thread has drawn.
+        await page.locator('.work-toggle[aria-expanded="true"]').waitFor();
         await page.locator('.step-head').click();
         await page.locator('.step-detail').getByText('Compiling…', { exact: true }).waitFor();
         assert.equal(await page.locator('.step-result').count(), 0, 'running calls have no final result');
