@@ -55,6 +55,14 @@ import { SkillsPage } from './components/SkillsPage';
 import { SchedulesPage } from './components/SchedulesPage';
 import { TodosPage } from './components/TodosPage';
 import { ActivityPage } from './components/ActivityPage';
+import { ExtensionsPage } from './components/ExtensionsPage';
+import type { ExtensionNavEntry } from './components/Sidebar';
+import type { ExtensionState } from '@rah/extension-api';
+import type { ConnectionState } from '@rah/extension-api/web';
+import { ExtensionView } from './extensions/ExtensionView';
+import { threadSummaries } from './extensions/project';
+import { createThreadFeed } from './extensions/thread-feed';
+import { enabledViews, extensionHash, looksLikeExtensionRoute, resolveExtensionRoute } from './extensions/routes';
 import { AgentPicker, type DiscoveredAccount, type DiscoveredAgent, effortsForModel, imagesBlocked, imagesNote, modelName, speedsForModel, ModelPicker, PermissionPicker, UsageMeter, WorkspacePicker } from './components/Pickers';
 import { Sidebar, SIDEBAR_SHORTCUT } from './components/Sidebar';
 import { forkBlocked, useThreadActions } from './components/ThreadActions';
@@ -65,8 +73,8 @@ import { NoteMarks, type NoteMark } from './components/NoteMarks';
 import { Toast, type ToastState } from './components/Toast';
 import { ConnectDialog, DemoBar } from './components/ConnectDialog';
 import { DemoApi, DemoError } from './demo/DemoApi';
-import { IconCheck, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconMore, IconPalette, IconPlus, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconLanguage } from './components/icons';
-import { chooseLocale, LOCALES, localeChoice, t } from './i18n';
+import { IconCheck, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconMore, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconLanguage } from './components/icons';
+import { chooseLocale, locale, LOCALES, localeChoice, t } from './i18n';
 
 const sleep = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve) => {
@@ -98,6 +106,30 @@ const SKILLS_HASH = '#/skills';
 const MCP_HASH = '#/mcp';
 const SCHEDULES_HASH = '#/schedules';
 const ACTIVITY_HASH = '#/activity';
+const EXTENSIONS_HASH = '#/extensions';
+/** The hub's own pages. Any other `#/…` may be an extension's view; see extensions/routes.ts. */
+const CORE_ROUTES = [TODOS_HASH, SKILLS_HASH, MCP_HASH, SCHEDULES_HASH, ACTIVITY_HASH, EXTENSIONS_HASH];
+
+type MainView = 'thread' | 'todos' | 'schedules' | 'activity' | 'skills' | 'mcp' | 'extensions' | 'ext';
+
+/** The page an address opens; null for none (a thread). Skills and MCP are the hub's own machinery, which the demo has none of. */
+function viewForHash(hash: string, connected: boolean): MainView | null {
+  switch (hash) {
+    case TODOS_HASH:
+      return 'todos';
+    case SCHEDULES_HASH:
+      return 'schedules';
+    case ACTIVITY_HASH:
+      return 'activity';
+    case SKILLS_HASH:
+      return connected ? 'skills' : null;
+    case MCP_HASH:
+      return connected ? 'mcp' : null;
+    case EXTENSIONS_HASH:
+      return 'extensions';
+  }
+  return looksLikeExtensionRoute(hash, CORE_ROUTES) ? 'ext' : null;
+}
 
 /** Whether the thread list is put away on a wide screen. */
 const SIDEBAR_HIDDEN_KEY = 'rah.sidebar.hidden';
@@ -207,21 +239,24 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const [sections, setSections] = useState<Section[]>([]);
   const [todos, setTodos] = useState<Todo[]>([]);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
-  /** What the main area shows: a thread (or the blank one a new thread starts from), the plan page, the scheduled-task page, the overview page, or the skills page. */
+  /** What the main area shows: a thread (or the blank one a new thread starts from), one of the hub's pages, or an extension's view. */
   // Those pages have addresses of their own, so a reload or a bookmark lands back on them.
-  const [view, setView] = useState<'thread' | 'todos' | 'schedules' | 'activity' | 'skills' | 'mcp'>(() =>
-    window.location.hash === TODOS_HASH
-      ? 'todos'
-      : window.location.hash === SCHEDULES_HASH
-        ? 'schedules'
-        : window.location.hash === ACTIVITY_HASH
-          ? 'activity'
-          : window.location.hash === SKILLS_HASH && token
-            ? 'skills'
-            : window.location.hash === MCP_HASH && token
-              ? 'mcp'
-              : 'thread',
-  );
+  const [view, setView] = useState<MainView>(() => viewForHash(window.location.hash, Boolean(token)) ?? 'thread');
+  /** The address of the extension view asked for. Which view that is waits for the list of extensions. */
+  const [extTarget, setExtTarget] = useState<string | null>(() => (viewForHash(window.location.hash, Boolean(token)) === 'ext' ? window.location.hash : null));
+  /** The extension catalog and what is installed on the machine on screen; null until read. */
+  const [extensions, setExtensions] = useState<ExtensionState[] | null>(null);
+  /** How the list stream is doing, and when the thread list was last read: how extension views tell whether what they show may be stale. */
+  const [connection, setConnection] = useState<ConnectionState>('reconnecting');
+  const [observedAt, setObservedAt] = useState<string | null>(null);
+  const threadFeed = useMemo(() => createThreadFeed(api, (list, at) => {
+    setThreads(list);
+    setObservedAt(at);
+  }, setConnection), [api]);
+  useEffect(() => {
+    threadFeed.start();
+    return () => threadFeed.dispose();
+  }, [threadFeed]);
   /** Bumped by daemon broadcasts, so the open plan page reloads. */
   const [todosKey, setTodosKey] = useState(0);
   /** The same, for the open scheduled-task page. */
@@ -360,18 +395,50 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const onActivity = view === 'activity' && !selectedId;
   const onSkills = view === 'skills' && !selectedId;
   const onMcp = view === 'mcp' && !selectedId;
+  const onExtensions = view === 'extensions' && !selectedId;
+  const onExt = view === 'ext' && !selectedId;
+  /** The extension view on screen; null while the list of extensions is still being read. */
+  const extOpen = onExt && extensions && extTarget ? resolveExtensionRoute(extTarget, extensions) : null;
+  const extName = extOpen ? extensions?.find((e) => e.manifest.id === extOpen.extensionId)?.manifest.name[locale()] ?? extOpen.extensionId : '';
   /** The name of the page the main area shows instead of a thread, for the top bar; null on a thread. */
-  const viewTitle = onTodos ? t('todos.title') : onSchedules ? t('sidebar.schedules') : onActivity ? t('activity.title') : onSkills ? t('composerMenu.skills') : onMcp ? 'MCP' : null;
+  const viewTitle = onTodos
+    ? t('todos.title')
+    : onSchedules
+      ? t('sidebar.schedules')
+      : onActivity
+        ? t('activity.title')
+        : onSkills
+          ? t('composerMenu.skills')
+          : onMcp
+            ? 'MCP'
+            : onExtensions
+              ? t('extensions.title')
+              : onExt
+                ? (extOpen?.view.title[locale()] ?? '')
+                : null;
   const onPage = viewTitle !== null;
+  // What an extension view is handed: the summaries of the threads the page holds, and how fresh they are.
+  const connectionShown: ConnectionState = api.demo || (host && !hostUp) ? 'offline' : connection;
+  const extInputs = useMemo(
+    () => (onExt ? { threads: threadSummaries(threads, selectedId), connection: connectionShown, observedAt: api.demo ? null : observedAt, agents, extension: extensions?.find(e => e.manifest.id === extOpen?.extensionId) ?? null } : null),
+    [onExt, threads, selectedId, connectionShown, observedAt, agents, api.demo, extensions, extOpen?.extensionId],
+  );
+
+  // An extension view that is not there (never installed, removed, switched off, or an address
+  // nothing claims) is the thread view instead, once the list says so.
+  useEffect(() => {
+    if (view === 'ext' && !selectedId && extensions && !(extTarget && resolveExtensionRoute(extTarget, extensions))) setView('thread');
+  }, [view, selectedId, extensions, extTarget]);
 
   // The address follows what the main area shows. Replaced, not pushed: going between the pages and
   // threads is not a trail for the back button to walk.
+  const extWant = onExt ? (extOpen ? extensionHash(extOpen) : extTarget ?? '') : '';
   useEffect(() => {
-    const want = onTodos ? TODOS_HASH : onSchedules ? SCHEDULES_HASH : onActivity ? ACTIVITY_HASH : onSkills ? SKILLS_HASH : onMcp ? MCP_HASH : '';
+    const want = onTodos ? TODOS_HASH : onSchedules ? SCHEDULES_HASH : onActivity ? ACTIVITY_HASH : onSkills ? SKILLS_HASH : onMcp ? MCP_HASH : onExtensions ? EXTENSIONS_HASH : extWant;
     if (window.location.hash !== want) {
       window.history.replaceState(window.history.state, '', want || window.location.pathname + window.location.search);
     }
-  }, [onTodos, onActivity, onSkills, onSchedules, onMcp]);
+  }, [onTodos, onActivity, onSkills, onSchedules, onMcp, onExtensions, extWant]);
 
   // Whether the directory a new thread would start in is a git repository. Asked once per directory picked.
   useEffect(() => {
@@ -391,33 +458,22 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   // Projects for a new thread: where threads went lately, newest first, then roots not used yet.
   const projectOptions = useMemo(() => buildProjectOptions(threads, workdirs, draftCwd), [threads, workdirs, draftCwd]);
 
-  // An address typed or followed while the page is open.
+  // An address typed or followed while the page is open. Signing in or out changes what may be
+  // opened, so the listener is renewed with the token.
   useEffect(() => {
     const onHash = () => {
-      if (window.location.hash === TODOS_HASH) {
-        setSelectedId(null);
-        setView('todos');
-        setDrawer(false);
-      }
-      if (window.location.hash === SCHEDULES_HASH) {
-        setSelectedId(null);
-        setView('schedules');
-        setDrawer(false);
-      }
-      if (window.location.hash === ACTIVITY_HASH) {
-        setSelectedId(null);
-        setView('activity');
-        setDrawer(false);
-      }
-      if (window.location.hash === SKILLS_HASH && token) {
-        setSelectedId(null);
-        setView('skills');
-        setDrawer(false);
-      }
+      const hash = window.location.hash;
+      const next = viewForHash(hash, Boolean(token));
+      if (!next) return;
+      // An address no enabled extension claims is let through too: it lands on the thread view.
+      setSelectedId(null);
+      setView(next);
+      if (next === 'ext') setExtTarget(hash);
+      setDrawer(false);
     };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
-  }, []);
+  }, [token]);
 
   // Both spellings of the thread's directory; kept stable so the thread view is not re-rendered for nothing.
   const threadRoots = useMemo(() => (selected ? [selected.cwd, selected.cwdReal] : []), [selected?.cwd, selected?.cwdReal]);
@@ -507,7 +563,28 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     else setError(message(e));
   };
 
-  const refreshThreads = () => api?.threads().then(setThreads).catch(() => undefined);
+  const refreshThreads = () => threadFeed.read().catch(() => undefined);
+  // An older daemon has no extensions. One that drops for a moment keeps the list it gave: an open
+  // view stays and says it may be stale, instead of closing under the reader.
+  const extensionRequest = useRef(0);
+  const reloadExtensions = useCallback(async () => {
+    const request = ++extensionRequest.current;
+    try {
+      const next = await api.extensions();
+      if (request === extensionRequest.current) setExtensions(next);
+    } catch {
+      if (request === extensionRequest.current) setExtensions(cur => cur ?? []);
+    }
+  }, [api]);
+  const changeExtension = (next: ExtensionState) => {
+    extensionRequest.current++;
+    setExtensions(list => list?.map(e => e.manifest.id === next.manifest.id ? next : e) ?? list);
+  };
+  useEffect(() => {
+    setExtensions(null);
+    void reloadExtensions();
+    return () => { extensionRequest.current++; };
+  }, [reloadExtensions]);
   const reloadTodos = useCallback(() => api?.todos().then(setTodos).catch(() => undefined), [api]);
   const reloadSchedules = useCallback(
     () => api?.schedules().then(setSchedules).catch(() => setSchedules([])),
@@ -521,10 +598,10 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     let cancelled = false;
     (async () => {
       try {
-        const [a, c, t, s, td, sc] = await Promise.all([
+        const [a, c, , s, td, sc] = await Promise.all([
           api.agents(),
           api.workdirs(),
-          api.threads(),
+          threadFeed.read(),
           api.sections(),
           api.todos().catch(() => []),
           api.schedules().catch(() => []),
@@ -532,7 +609,6 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         if (cancelled) return;
         setAgents(a);
         applyWorkdirs(c);
-        setThreads(t);
         setSections(s);
         setTodos(td);
         setSchedules(sc);
@@ -563,12 +639,13 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   // Thread-list changes, pushed by the daemon. Refresh is debounced.
   useEffect(() => {
     if (!api) return;
+    threadFeed.stream(false);
     const ctrl = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const refresh = () => {
       clearTimeout(timer);
       timer = setTimeout(() => {
-        api.threads().then(setThreads).catch(() => undefined);
+        void threadFeed.read().catch(() => undefined);
         // Plan chips show thread states; a bumped key reloads the open page.
         setTodosKey((k) => k + 1);
         // Scheduled runs finish and problems appear the same way.
@@ -583,14 +660,23 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         if (attempt > 0) {
           refresh();
           checkForUpdate();
+          void reloadExtensions();
         }
         try {
-          await api.stream('/api/stream', refresh, ctrl.signal);
+          await api.stream<StoredEvent>(
+            '/api/stream',
+            (ev) => (ev.type === 'extensions.changed' ? void reloadExtensions() : refresh()),
+            ctrl.signal,
+            undefined,
+            () => threadFeed.stream(true),
+          );
         } catch (e) {
           if (e instanceof AuthError) return signOut(t('app.tokenExpired'));
           // On another machine, a stream that will not open is how its dropping first shows.
           if (api.host && !ctrl.signal.aborted) void reloadHosts();
         }
+        // The demo has no hub; anywhere else, a stream that ended is being retried.
+        if (!ctrl.signal.aborted) threadFeed.stream(false);
         await sleep(2000, ctrl.signal);
       }
     })();
@@ -1160,6 +1246,30 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     setDrawer(false);
   };
 
+  const openExtensions = () => {
+    setSelectedId(null);
+    setView('extensions');
+    setDrawer(false);
+  };
+
+  /** Opens an extension's view by its address, the way the sidebar entry and a bookmark do. */
+  const openExtensionView = (hash: string) => {
+    setSelectedId(null);
+    setExtTarget(hash);
+    setView('ext');
+    setDrawer(false);
+  };
+  // Views enabled extensions pin, after the hub's own entries.
+  const extensionNav: ExtensionNavEntry[] = enabledViews(extensions ?? [])
+    .filter((v) => v.view.sidebar?.pinned)
+    .map((v) => ({
+      key: `${v.extensionId}/${v.view.id}`,
+      label: v.view.title[locale()],
+      icon: v.view.icon,
+      active: Boolean(extOpen && extOpen.extensionId === v.extensionId && extOpen.view.id === v.view.id),
+      onOpen: () => openExtensionView(extensionHash(v)),
+    }));
+
   const newThread = (opts: { cwd?: string; sectionId?: string | null; scratch?: boolean } = {}) => {
     if (showcase) { showcase.onInstall(); return; }
     setSelectedId(null);
@@ -1292,6 +1402,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     { id: 'activity', label: t('activity.title'), hint: t('app.cmd.activity'), keywords: ['activity', 'overview', 'trace', '概览', '轨迹'] },
     { id: 'skills', label: t('composerMenu.skills'), hint: t('app.cmd.skills'), keywords: ['skills', 'skill', '技能'] },
     { id: 'mcp', label: 'MCP', hint: t('app.cmd.mcp'), keywords: ['mcp', 'server', '业务线'] },
+    { id: 'extensions', label: t('extensions.title'), hint: t('app.cmd.extensions'), keywords: ['extensions', 'extension', 'plugin', 'board', '扩展', '插件', '看板'] },
     ...(models.length || effortLevels.length
       ? [{ id: 'model', label: t('pickers.modelAndEffort'), hint: modelName(models, model), keywords: ['model', 'effort', 'thinking'] }]
       : []),
@@ -1324,6 +1435,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     if (id === 'activity') return openActivity();
     if (id === 'skills') return openSkills();
     if (id === 'mcp') return openMcp();
+    if (id === 'extensions') return openExtensions();
     if (id === 'export' && selected) return threadActions.copyConversation(selected);
     if (id === 'model') return setModelSignal((n) => n + 1);
     if (id === 'permission') return setPermissionSignal((n) => n + 1);
@@ -1561,6 +1673,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           todosActive={onTodos}
           onOpenSchedules={showcase ? undefined : openSchedules}
           schedulesActive={onSchedules}
+          extensionNav={showcase ? undefined : extensionNav}
           notice={demo && compact ? showcase ? showcase.notice(selectedId) : <DemoBar compact onConnect={askToConnect} /> : undefined}
         />
       </aside>
@@ -1655,6 +1768,26 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           // The machine's threads are over there; until it is back there is only this to say.
           <div key="host-down" className="scroller">
             <HostDown host={host} onRetry={() => api.reconnectHost(host.id).catch(() => undefined).then(reloadHosts)} />
+          </div>
+        ) : onExtensions ? (
+          // A document-style page like the others; installing here changes the machine on screen.
+          <div key="extensions" className="scroller">
+            <ExtensionsPage
+              api={api}
+              demo={demo}
+              extensions={extensions}
+              onChange={changeExtension}
+              onError={handleError}
+            />
+          </div>
+        ) : onExt ? (
+          // An extension's view, behind a boundary of its own. Until the list is read, it is on its way.
+          <div key={`ext:${extOpen ? `${extOpen.extensionId}/${extOpen.view.id}` : ''}`} className="scroller">
+            {extOpen && extInputs ? (
+              <ExtensionView extensionId={extOpen.extensionId} viewId={extOpen.view.id} name={extName} inputs={extInputs} onOpenThread={pick} />
+            ) : (
+              <div className="loading-note">{t('common.loading')}</div>
+            )}
           </div>
         ) : onSkills ? (
           // The skills page spans the machines from the hub, so it carries its own scroller too.
@@ -1987,6 +2120,8 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
               : []),
             // The overview reads only this hub's own log, so the demo has one to show too.
             { id: 'activity', label: t('activity.title'), icon: IconActivity, onSelect: openActivity },
+            // The demo can try them too: what it installs lasts as long as the page.
+            { id: 'extensions', label: t('extensions.title'), icon: IconPuzzle, onSelect: openExtensions },
             ...(demo
               ? []
               : [

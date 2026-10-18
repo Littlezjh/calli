@@ -1,4 +1,6 @@
-import { Api, type FolderListing, type SearchHit, type TextFile, type Thread, type VideoRef } from '../api';
+import type { ExtensionManifest, ExtensionState, Permission } from '@rah/extension-api';
+import { Api, ApiError, type FolderListing, type SearchHit, type TextFile, type Thread, type VideoRef } from '../api';
+import { BUILTIN_MANIFESTS } from '../extensions/catalog';
 import type { DemoData } from './data';
 import { t } from '../i18n';
 
@@ -37,11 +39,50 @@ export class DemoApi extends Api {
   }
 
   protected override async send<T>(method: string, url: string, body?: unknown): Promise<T> {
+    const extensions = this.extensionAnswer(method, url, body);
+    if (extensions !== undefined) return structuredClone(extensions) as T;
     const data = await this.workspace();
     const answer = route(data, method, url, body);
     if (answer === undefined) throw new DemoError(method !== 'GET');
     // A copy, so a page that changes what it was given cannot change the demo under it.
     return structuredClone(answer) as T;
+  }
+
+  /**
+   * Extensions can be tried in the demo: the catalog is the one the page ships with, and what is
+   * installed is kept on this page only, so the board can be seen on the made-up threads.
+   */
+  private readonly installed = new Map<string, { enabled: boolean; granted: Permission[]; at: string }>();
+
+  private extensionAnswer(method: string, url: string, body: unknown): unknown {
+    const parts = new URL(url, 'http://demo').pathname.split('/').filter(Boolean).slice(1);
+    if (parts[0] !== 'extensions') return undefined;
+    const state = (m: ExtensionManifest): ExtensionState => {
+      const r = this.installed.get(m.id);
+      return { manifest: m, source: 'builtin', installed: Boolean(r), enabled: Boolean(r?.enabled), granted: r?.granted ?? [], installedAt: r?.at ?? null, updatedAt: r?.at ?? null };
+    };
+    if (method === 'GET' && !parts[1]) return BUILTIN_MANIFESTS.map(state);
+    const m = BUILTIN_MANIFESTS.find((x) => x.id === parts[1]);
+    if (!m) throw new ApiError(t('demo.notInDemo'), {}, 404);
+    const at = new Date().toISOString();
+    if (method === 'POST' && parts[2] === 'install' && !parts[3]) {
+      const granted = (body as { granted?: unknown } | undefined)?.granted;
+      const exact = Array.isArray(granted) && granted.length === m.permissions.length && m.permissions.every((p) => granted.includes(p));
+      if (!exact) throw new ApiError(t('demo.notInDemo'), {}, 400);
+      this.installed.set(m.id, { enabled: true, granted: [...m.permissions], at });
+      return state(m);
+    }
+    if (method === 'PATCH' && !parts[2]) {
+      const r = this.installed.get(m.id);
+      if (!r) throw new ApiError(t('demo.notInDemo'), {}, 409);
+      this.installed.set(m.id, { ...r, enabled: (body as { enabled?: unknown } | undefined)?.enabled === true, at });
+      return state(m);
+    }
+    if (method === 'DELETE' && !parts[2]) {
+      this.installed.delete(m.id);
+      return null;
+    }
+    return undefined;
   }
 
   override stream<T>(_path: string, _onEvent: (ev: T) => void, signal: AbortSignal): Promise<void> {

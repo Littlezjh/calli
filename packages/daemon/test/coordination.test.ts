@@ -365,3 +365,26 @@ test('queued collaboration restores structured targets and compiles them once on
     assert.match(String(event.data.text), /只给建议/);
   } finally { await h.close(); }
 });
+
+test('imported and terminal-synced member turns never deliver collaboration results', async () => {
+  const h = await setup();
+  try {
+    await h.team.enable(h.root.id);
+    const job = await h.team.command(h.root.id, spawn('history-reader')) as { to: string; id: string };
+    await wait(() => h.team.view(h.root.id)!.messages.some(d => d.id === job.id && d.state === 'returned'));
+    const before = h.team.view(h.root.id)!.messages.length;
+    for (const flag of ['imported', 'fromTerminal']) {
+      for (const type of ['turn.done', 'turn.error']) {
+        const turnId = `history-${flag}-${type}`;
+        (h.manager as any).emitThreadEvent(job.to, turnId, 'turn.started', { [flag]: true });
+        (h.manager as any).emitThreadEvent(job.to, turnId, 'message.delta', { text: 'Historical answer', [flag]: true });
+        (h.manager as any).emitThreadEvent(job.to, turnId, type, { [flag]: true });
+      }
+    }
+    // A serial command is a barrier after every queued finished() callback.
+    await h.team.command(h.root.id, { op: 'status' });
+    const messages = h.team.view(h.root.id)!.messages;
+    assert.equal(messages.some(d => d.key.includes(':history-')), false);
+    assert.equal(messages.length, before);
+  } finally { await h.close(); }
+});

@@ -77,6 +77,8 @@ export type ThreadView = Omit<ThreadRecord, 'worktree'> & {
   queued: Array<{ id: string; text: string; images: number; videos: number }>;
   /** Turns the terminal added to this session since the hub last wrote to it. */
   terminalActivity: boolean;
+  /** When the running turn started; null while nothing runs. */
+  runningSince: string | null;
 };
 
 interface QueuedTurn {
@@ -180,7 +182,7 @@ export class ThreadManager {
   }
   private readonly sessions = new Map<string, AgentSession>();
   /** Turns in flight. `cancelRequested` covers cancels that arrive before the agent session exists. */
-  private readonly running = new Map<string, { turnId: string; cancelRequested: boolean }>();
+  private readonly running = new Map<string, { turnId: string; cancelRequested: boolean; since: string }>();
   readonly inputs = new UserInputs((thread, turn, type, data) => this.emitThreadEvent(thread, turn, type, data));
   private readonly changingModes = new Set<string>();
   private readonly approvals = new Map<string, PendingApproval>();
@@ -634,7 +636,8 @@ export class ThreadManager {
       worktree = { ...thread.worktree, ofReal };
     }
     const scratch = this.dirs.scratchRoot !== null && isWithinWorkdirs(thread.cwd, [this.dirs.scratchRoot]);
-    return { ...thread, worktree, resumeCommand, cwdReal, waiting, waitingReason, queued, terminalActivity, scratch, coordination: this.coordination?.metadata(thread.id) };
+    const runningSince = this.running.get(thread.id)?.since ?? null;
+    return { ...thread, worktree, resumeCommand, cwdReal, waiting, waitingReason, queued, terminalActivity, scratch, runningSince, coordination: this.coordination?.metadata(thread.id) };
   }
 
   /**
@@ -1442,7 +1445,8 @@ export class ThreadManager {
         // A control must not wait behind the work it is supposed to stop. It has its own
         // transcript entry, but does not claim or release the running turn's lock/hooks.
         const turnId = randomUUID();
-        this.emitThreadEvent(threadId, turnId, 'turn.started', { text: originalText });
+        // Marked, so whoever reads turn endings can tell an answer to a control from finished work.
+        this.emitThreadEvent(threadId, turnId, 'turn.started', { text: originalText, control: true });
         if (goalAction === 'pause') {
           for (const [id, approval] of this.approvals) {
             if (approval.threadId === threadId) this.resolveApproval(id, { cancelled: true });
@@ -1483,7 +1487,7 @@ export class ThreadManager {
     try {
       this.store.transaction(() => {
         delivery?.claim();
-        this.running.set(threadId, { turnId, cancelRequested: false });
+        this.running.set(threadId, { turnId, cancelRequested: false, since: new Date().toISOString() });
         this.store.updateThread(threadId, { status: 'running', workMode: thread.workMode ?? 'execute', hubTurnAt: new Date().toISOString() }, { touch: true });
         if (thread.title === 'New thread') {
           const title = askedText(rawText).split('\n')[0].slice(0, 60) || (storedVideos.length ? '视频' : '图片');

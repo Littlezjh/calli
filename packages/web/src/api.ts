@@ -1,3 +1,4 @@
+import type { ExtensionState, Permission } from '@rah/extension-api';
 export type WorkMode = 'execute' | 'plan';
 export interface UserQuestion { id: string; question: string; header?: string; options: Array<{ value: string; label: string; description?: string }>; multiple?: boolean; freeText?: boolean; required?: boolean }
 export type UserInputAnswer = { answers: Record<string, string[]> } | { cancelled: true };
@@ -171,6 +172,8 @@ export interface Thread {
   waitingReason?: 'approval' | 'question' | 'plan' | null;
   /** Messages sent while a turn was running; they go out as turns finish. */
   queued: QueuedMessage[];
+  /** When the running turn started. Missing from older daemons, null while nothing runs. */
+  runningSince?: string | null;
   /** Shell command that continues this conversation in a terminal. Null before the first message. */
   resumeCommand: string | null;
   /** `cwd` with symlinks resolved, which is how agents report file paths. */
@@ -1093,6 +1096,24 @@ export class Api {
     return this.request('DELETE', `/api/mcp?agent=${encodeURIComponent(agent)}&name=${encodeURIComponent(name)}`);
   }
 
+  /** Limi extensions this daemon ships, and which are installed on its machine. */
+  extensions(): Promise<ExtensionState[]> {
+    return this.request('GET', '/api/extensions');
+  }
+
+  /** Installs with the permissions the user confirmed, which must be exactly the ones the extension asks for. */
+  installExtension(id: string, granted: Permission[]): Promise<ExtensionState> {
+    return this.request('POST', `/api/extensions/${encodeURIComponent(id)}/install`, { granted });
+  }
+
+  uninstallExtension(id: string): Promise<void> {
+    return this.request('DELETE', `/api/extensions/${encodeURIComponent(id)}`);
+  }
+
+  setExtensionEnabled(id: string, enabled: boolean): Promise<ExtensionState> {
+    return this.request('PATCH', `/api/extensions/${encodeURIComponent(id)}`, { enabled });
+  }
+
   /** The registry of notes and manually registered servers, on this daemon. */
   mcpEntries(): Promise<McpEntry[]> {
     return this.request('GET', '/api/mcp/entries');
@@ -1159,10 +1180,11 @@ export class Api {
    * `idleMs` is taken for dead; and when the page comes back to the foreground, one that has been
    * silent for a few seconds is not waited on at all.
    */
-  async stream<T = StoredEvent>(path: string, onEvent: (ev: T) => void, signal: AbortSignal, idleMs = STREAM_IDLE_MS): Promise<void> {
+  async stream<T = StoredEvent>(path: string, onEvent: (ev: T) => void, signal: AbortSignal, idleMs = STREAM_IDLE_MS, onOpen?: () => void): Promise<void> {
     const res = await fetch(this.url(path), { headers: this.headers({ Accept: 'text/event-stream' }), signal });
     if (res.status === 401) throw new AuthError('unauthorized');
     if (!res.ok || !res.body) throw new Error(`stream failed: HTTP ${res.status}`);
+    onOpen?.();
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buf = '';

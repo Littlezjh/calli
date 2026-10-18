@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Section, Thread } from '../src/api.js';
-import { buildActivity, buildSidebar, handoverGroups, markTerms, searchTerms, taggedAgents } from '../src/sidebar.js';
+import { buildActivity, buildSidebar, handoverGroups, markTerms, searchTerms, taggedAgents, threadAttention } from '../src/sidebar.js';
+import { threadMark } from '../src/notices.js';
 
 let clock = 0;
 function thread(id: string, over: Partial<Thread> = {}): Thread {
@@ -185,4 +186,34 @@ test('the searched words are marked in a found passage, whatever their case and 
   assert.deepEqual(markTerms('额度看板', '额度 额度看板'), [{ text: '额度看板', hit: true }]);
   assert.deepEqual(markTerms('没有命中', '别的'), [{ text: '没有命中', hit: false }]);
   assert.deepEqual(markTerms('原样', '  '), [{ text: '原样', hit: false }]);
+});
+
+test('threadAttention: waits first, in the kind asked, then results nobody has looked at', () => {
+  assert.deepEqual(threadAttention(thread('a', { waiting: true, waitingReason: 'approval', unread: true, status: 'running' }), null), { kind: 'approval' });
+  assert.deepEqual(threadAttention(thread('a', { waiting: true, waitingReason: 'question' }), null), { kind: 'question' });
+  assert.deepEqual(threadAttention(thread('a', { waiting: true, waitingReason: 'plan' }), null), { kind: 'plan' });
+  // Older daemons only say that something is awaited.
+  assert.deepEqual(threadAttention(thread('a', { waiting: true }), null), { kind: 'approval' });
+  // A wait stays a wait on screen: it is the thread asking, not news.
+  assert.deepEqual(threadAttention(thread('a', { waiting: true, waitingReason: 'question' }), 'a'), { kind: 'question' });
+  assert.deepEqual(threadAttention(thread('a', { unread: true, status: 'error' }), null), { kind: 'error' });
+  assert.deepEqual(threadAttention(thread('a', { unread: true }), null), { kind: 'unread' });
+  assert.equal(threadAttention(thread('a', { unread: true, status: 'error' }), 'a'), null, 'the thread on screen is being read');
+  assert.equal(threadAttention(thread('a', { status: 'error' }), null), null, 'a failure already looked at wants nothing');
+  assert.equal(threadAttention(thread('a', { status: 'running' }), null), null);
+});
+
+test('the sidebar dot, the activity order and threadAttention agree', () => {
+  const cases = [
+    thread('w', { waiting: true, waitingReason: 'approval', status: 'running' }),
+    thread('e', { unread: true, status: 'error' }),
+    thread('u', { unread: true }),
+    thread('r', { status: 'running' }),
+    thread('i'),
+  ];
+  const marks = cases.map((c) => threadMark(c, false));
+  assert.deepEqual(marks, ['waiting', 'error', 'unread', 'running', null]);
+  const priority = buildActivity(cases, '', new Date('2026-01-02T00:00:00Z'), null).groups.find((g) => g.key === 'priority')!;
+  assert.deepEqual(priority.threads.map((x) => x.id), ['w', 'e', 'u', 'r']);
+  assert.deepEqual(cases.map((c) => threadAttention(c, null)?.kind ?? null), ['approval', 'error', 'unread', null, null]);
 });

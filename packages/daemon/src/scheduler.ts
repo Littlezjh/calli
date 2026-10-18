@@ -5,6 +5,7 @@ import type { AgentAdapter } from './adapters/types.js';
 import { countCronFires, cronMatches, describeCron, isValidTimezone, nextCron, parseCron, zonedParts, type CronFields } from './cron.js';
 import type { StoredEvent } from './events.js';
 import { HttpError } from './errors.js';
+import { turnOutcome } from './lifecycle.js';
 import type { ScheduleRecord, ScheduleRunRecord, Store, ThreadRecord } from './store.js';
 import type { ThreadManager } from './threads.js';
 import { isWithinWorkdirs } from './workdirs.js';
@@ -22,7 +23,7 @@ export interface ScheduleView extends ScheduleRecord {
 }
 
 /** How a fire ended, remembered briefly in case the turn finishes before its run row is written. */
-interface TurnOutcome {
+interface RunOutcome {
   status: ScheduleRunRecord['status'];
   message: string | null;
 }
@@ -57,7 +58,7 @@ export class Scheduler {
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly listeners = new Set<ChangeListener>();
   /** Turn endings that arrived before (or without) a run row, keyed by turn id. */
-  private readonly outcomes = new Map<string, TurnOutcome>();
+  private readonly outcomes = new Map<string, RunOutcome>();
 
   constructor(
     private readonly store: Store,
@@ -90,11 +91,12 @@ export class Scheduler {
 
   /** A turn's ending settles its run: done, error, or skipped when it was stopped. */
   private onTurnEvent(ev: StoredEvent): void {
-    if ((ev.type !== 'turn.done' && ev.type !== 'turn.error') || !ev.turnId) return;
-    const outcome: TurnOutcome =
-      ev.type === 'turn.error'
-        ? { status: 'error', message: String(ev.data.message ?? 'agent error') }
-        : ev.data.stopReason === 'cancelled'
+    const end = turnOutcome(ev);
+    if (!end || !ev.turnId) return;
+    const outcome: RunOutcome =
+      end.outcome === 'error' || end.outcome === 'interrupted'
+        ? { status: 'error', message: end.message }
+        : end.outcome === 'cancelled'
           ? { status: 'skipped', message: '这一轮被打断' }
           : { status: 'done', message: null };
     const run = this.store.findScheduleRunByTurn(ev.turnId);

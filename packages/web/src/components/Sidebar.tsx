@@ -8,10 +8,21 @@ import { buildActivity, buildSidebar, handoverGroups, markTerms, projectDir, SEA
 import { timeAgo } from '../sessions';
 import { deliveredPreview } from '../timeline';
 import { HostSwitcher } from './Hosts';
+import type { HostIconName } from '@rah/extension-api';
+import { HostIcon } from '../extensions/ui';
 import { AgentMark, IconBell, IconChevron, IconClock, IconClose, IconEdit, IconFolder, IconFork, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconWorktree, IconSidebar } from './icons';
 import { t } from '../i18n';
 
 export { folderName } from '../paths';
+
+/** A sidebar row an extension view pinned: its name, its icon, and whether it is on screen. */
+export interface ExtensionNavEntry {
+  key: string;
+  label: string;
+  icon: HostIconName;
+  active: boolean;
+  onOpen: () => void;
+}
 
 interface Props {
   /** Keeps a standalone walkthrough's preferences separate from the workspace. */
@@ -39,6 +50,8 @@ interface Props {
   onOpenSchedules?: () => void;
   /** The scheduled-task page is what the main area shows. */
   schedulesActive?: boolean;
+  /** Entries enabled extensions pin to the sidebar, after the hub's own pages. */
+  extensionNav?: ExtensionNavEntry[];
   /** The phone layout: the list is a page of its own under the conversation, laid out for thumbs. */
   compact?: boolean;
   /** Opens the settings menu, where the look, the archive, importing and signing out are. It grows up and to the left from the point given. */
@@ -96,6 +109,7 @@ export function Sidebar({
   todosActive = false,
   onOpenSchedules,
   schedulesActive = false,
+  extensionNav = [],
   compact = false,
   onOpenSettings,
   notice,
@@ -461,6 +475,11 @@ export function Sidebar({
             {onOpenSchedules && <button className={`side-link${schedulesActive ? ' active' : ''}`} aria-current={schedulesActive ? 'page' : undefined} onClick={onOpenSchedules}>
               <IconClock size={compact ? 21 : 17} /> {t('sidebar.schedules')}
             </button>}
+            {extensionNav.map((entry) => (
+              <button key={entry.key} className={`side-link${entry.active ? ' active' : ''}`} aria-current={entry.active ? 'page' : undefined} onClick={entry.onOpen}>
+                <HostIcon name={entry.icon} size={compact ? 21 : 17} /> {entry.label}
+              </button>
+            ))}
           </div>
         )}
         {!hostDown && groups}

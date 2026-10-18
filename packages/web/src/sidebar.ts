@@ -1,4 +1,5 @@
 /** How threads are arranged in the sidebar. Pure, so it can be tested directly. */
+import type { Attention } from '@rah/extension-api';
 import type { AgentInfo, Section, Thread } from './api';
 import { folderName } from './paths';
 import { t } from './i18n';
@@ -100,11 +101,26 @@ export interface ActivityModel {
 const DAY_MS = 24 * 60 * 60 * 1000;
 const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 
+/**
+ * What a thread wants from a person, most pressing first: an approval, a question, a plan to
+ * confirm, then a result nobody has looked at, a failed one named as such. Null when it wants
+ * nothing. The sidebar, its dots and the summaries extensions read all go by this, so a thread is
+ * in the same state everywhere. The thread on screen is being read right now: it is never unread.
+ */
+export function threadAttention(t: Pick<Thread, 'id' | 'waiting' | 'waitingReason' | 'unread' | 'status'>, selectedId: string | null): Attention | null {
+  // Older daemons do not say what is awaited; approvals were all there was.
+  if (t.waiting) return { kind: t.waitingReason ?? 'approval' };
+  if (t.unread && t.id !== selectedId) return { kind: t.status === 'error' ? 'error' : 'unread' };
+  return null;
+}
+
+/** Whether an attention is a person being waited on, as against a result to look at. */
+export const isWait = (a: Attention | null): boolean => a !== null && a.kind !== 'unread' && a.kind !== 'error';
+
 /** What a thread wants, most pressing first; null when it wants nothing. */
 function urgency(t: Thread, selectedId: string | null): number | null {
-  if (t.waiting) return 0;
-  // The thread on screen is being read right now.
-  if (t.unread && t.id !== selectedId) return 1;
+  const attention = threadAttention(t, selectedId);
+  if (attention) return isWait(attention) ? 0 : 1;
   if (t.status === 'running') return 2;
   return null;
 }

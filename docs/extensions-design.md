@@ -231,6 +231,33 @@ agent 原生资源按各家的机制生效，Limi 扩展由扩展宿主管理，
 
 宿主不提供这些接口：处理审批、写 agent 的目录或配置、读取 Hub token、调用原始 Api、修改 prompt 或改写消息、直接操作页面。新建线程另行设计。
 
+### hook 清单与首版实现状态
+
+类型定义在 `packages/extension-api`（只有类型，`hooks.d.ts` 是唯一来源）。本表与它一致；「首版」列为 v1 的由第一个宿主实现，其余只保留名称和形状，宿主暂不接受。
+
+| 形态 | hook | 生命周期 | 首版 |
+| --- | --- | --- | --- |
+| 通知 | `extension.activated`、`extension.deactivating` | 扩展自身 | v1 |
+| 通知 | `extension.settingsChanged` | 扩展自身 | 规划 |
+| 通知 | `machine.ready` | 机器 | v1 |
+| 通知 | `machine.stopping` | 机器 | 规划 |
+| 通知 | `agent.changed` | agent 实例 | 规划 |
+| 通知 | `thread.created`、`thread.changed` | 线程 | v1（来源先给 `new`、`import`、`unknown`） |
+| 通知 | `thread.deleted` | 线程 | 规划 |
+| 通知 | `turn.started`、`turn.finished` | 轮次 | v1（统一结果：`ok`、`cancelled`、`error`、`interrupted`） |
+| 通知 | `attention.raised`、`attention.resolved` | 等人 | v1 |
+| 通知 | `host.resync` | 投递 | v1（队列溢出或重启后重取快照，不回放） |
+| 通知 | `schedule.runFinished`、`handover.created`、`team.changed` | 下一轮、交接、协作 | 规划 |
+| 请求 | `extension.detect`、`extension.validateSettings`、`capability.status` | 扩展、实例 | 规划 |
+| 请求 | `ui.threadStatus`、`ui.threadBadge`、`ui.threadActions`、`ui.commands`、`ui.panel`、`ui.page`、`ui.settings` | 界面 | 规划（内置扩展的视图先经 `@rah/extension-api/web` 的 `WebHost` 绘制） |
+| 请求 | `progress.snapshot`、`card.forToolResult`、`handover.context` | 进度、工具结果、交接 | 规划 |
+| 请求 | `driver.next`、`channel.deliver` | 下一轮、提醒 | 规划 |
+| 宿主接口 | `events.subscribe`、`threads.list`、`threads.get`、`storage.get`、`storage.set` | — | v1 |
+| 宿主接口 | `turns.summary`、`turns.transcript`、`files.read`、`commands.run`、`notify`、`ui.invalidate`、`threads.send` | — | 规划 |
+| 贡献点 | `contributes.views`（主区域视图、侧栏固定入口、路由别名） | 界面 | v1 |
+
+首版安装只覆盖内置目录：「配置 → 扩展」列出随 Limi 发布的扩展，安装时确认清单里的权限，状态按机器存在 daemon；外部包的安装见 M6。
+
 ### 三种接入方式怎么对应
 
 - **清单**：通知触发声明的命令，事件里的白名单字段只能作为声明过的参数传入。只读查询执行声明的只读命令，读取它输出的 JSON；`channel.deliver` 执行声明为有副作用的命令，属于事先授权的自动动作，按授权范围执行；首批不支持用清单实现 `driver.next`。动作只有 `notify` 和执行声明的命令。

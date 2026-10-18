@@ -268,6 +268,26 @@ export const IconList = (p: { size?: number }) => (
     <path d="M9 7h11M9 12h11M9 17h11M4.5 7h.01M4.5 12h.01M4.5 17h.01" />
   </Svg>
 );
+/** Three columns of cards: the board, a view of threads by what they need. */
+export const IconBoard = (p: { size?: number }) => (
+  <Svg {...p}>
+    <rect x="4" y="4" width="4" height="13" rx="1.2" />
+    <rect x="10" y="4" width="4" height="8" rx="1.2" />
+    <rect x="16" y="4" width="4" height="16" rx="1.2" />
+  </Svg>
+);
+/** An empty tray: a page with nothing in it right now. */
+export const IconTray = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M4 13.5l2.4-7.2A2 2 0 0 1 8.3 5h7.4a2 2 0 0 1 1.9 1.3L20 13.5V18a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zM4 13.5h4.5l1.2 2.5h4.6l1.2-2.5H20" />
+  </Svg>
+);
+/** A piece that slots in: extensions. */
+export const IconPuzzle = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M10 4.5a2 2 0 1 1 4 0V6h3.5a1 1 0 0 1 1 1v3.5H17a2 2 0 1 0 0 4h1.5V18a1 1 0 0 1-1 1H14v-1.5a2 2 0 1 0-4 0V19H6.5a1 1 0 0 1-1-1v-3.5H7a2 2 0 1 0 0-4H5.5V7a1 1 0 0 1 1-1H10z" />
+  </Svg>
+);
 export const IconSparkle = (p: { size?: number }) => (
   <Svg {...p}>
     <path d="M12 4l1.8 4.7L18.5 10.5l-4.7 1.8L12 17l-1.8-4.7L5.5 10.5l4.7-1.8zM18.5 15.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z" />

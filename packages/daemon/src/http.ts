@@ -8,6 +8,7 @@ import type { ApprovalDecision } from './adapters/types.js';
 import type { AgentRegistry } from './agents.js';
 import type { StoredEvent } from './events.js';
 import { HttpError } from './errors.js';
+import type { ExtensionHost } from './extension-host.js';
 import type { HostRegistry } from './hosts.js';
 import { checkGrant, cookieValue, makeGrant, PREVIEW_COOKIE, readPreviewFile } from './preview.js';
 import type { Scheduler } from './scheduler.js';
@@ -27,6 +28,8 @@ export interface HttpDeps {
   hosts?: HostRegistry;
   /** Scheduled tasks. Optional so tests can run without one. */
   scheduler?: Scheduler;
+  /** Limi extensions on this machine. Optional so tests can run without them. */
+  extensions?: ExtensionHost;
   /**
    * Requests need no token: the server listens on a socket only this user can open, and a hub
    * reaches it over SSH. Such a server shows this machine only, never the machines added to it.
@@ -58,6 +61,8 @@ const GLOBAL_EVENT_TYPES = new Set([
   'input.request',
   'input.resolved',
   'todo.updated',
+  // Not a thread event: written by the extension host's own subscription below, like schedules.changed.
+  'extensions.changed',
 ]);
 
 const MIME: Record<string, string> = {
@@ -174,7 +179,7 @@ function serveStatic(res: ServerResponse, webDir: string, urlPath: string): void
 }
 
 export function createHttpServer(deps: HttpDeps): Server {
-  const { manager, registry, terminals, hosts, scheduler, trusted, token, webDir, version } = deps;
+  const { manager, registry, terminals, hosts, scheduler, extensions, trusted, token, webDir, version } = deps;
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? '/', 'http://localhost');
@@ -336,6 +341,25 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (!manager.mcp.entries.remove(parts[3])) throw new HttpError(404, `没有名为 ${parts[3]} 的登记条目`);
       res.writeHead(204).end();
       return;
+    }
+
+    // Limi extensions: the built-in catalog and what is installed on this machine.
+    if (parts[1] === 'extensions') {
+      if (!extensions) throw new HttpError(501, '此 daemon 未启用扩展');
+      // GET /api/extensions
+      if (method === 'GET' && !parts[2]) return sendJson(res, 200, extensions.list());
+      // POST /api/extensions/:id/install { granted }: exactly the permissions the manifest asks for
+      if (method === 'POST' && parts[2] && parts[3] === 'install' && !parts[4]) {
+        return sendJson(res, 200, extensions.install(parts[2], (await readJson(req))?.granted));
+      }
+      // PATCH /api/extensions/:id { enabled }
+      if (method === 'PATCH' && parts[2] && !parts[3]) return sendJson(res, 200, extensions.setEnabled(parts[2], (await readJson(req))?.enabled));
+      // DELETE /api/extensions/:id
+      if (method === 'DELETE' && parts[2] && !parts[3]) {
+        extensions.uninstall(parts[2]);
+        res.writeHead(204).end();
+        return;
+      }
     }
 
     // GET /api/config: the project roots, and whether threads can work outside a project
@@ -526,9 +550,14 @@ export function createHttpServer(deps: HttpDeps): Server {
       const offSchedules = scheduler?.subscribe(() =>
         writeEvent(res, { threadId: '', seq: 0, turnId: null, type: 'schedules.changed', ts: new Date().toISOString(), data: {} }),
       );
+      // So does the extension list: an install on one device shows up on the others.
+      const offExtensions = extensions?.onChange(() =>
+        writeEvent(res, { threadId: '', seq: 0, turnId: null, type: 'extensions.changed', ts: new Date().toISOString(), data: {} }),
+      );
       return finishStream(req, res, () => {
         offThreads();
         offSchedules?.();
+        offExtensions?.();
       });
     }
 

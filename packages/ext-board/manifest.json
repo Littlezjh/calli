@@ -1,0 +1,21 @@
+{
+  "id": "board",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "name": { "zh": "看板", "en": "Board", "ja": "ボード" },
+  "description": {
+    "zh": "按待处理、运行中和空闲查看线程，快速找到需要你关注的会话。",
+    "en": "See threads that need attention, are running, or are idle, and open the conversation.",
+    "ja": "対応が必要なスレッド、実行中、待機中のスレッドを一覧し、会話を開きます。"
+  },
+  "permissions": ["events.summary"],
+  "contributes": {
+    "views": [{
+      "id": "board",
+      "title": { "zh": "看板", "en": "Board", "ja": "ボード" },
+      "icon": "board",
+      "route": "#/board",
+      "sidebar": { "pinned": true }
+    }]
+  }
+}

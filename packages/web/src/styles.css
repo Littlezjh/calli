@@ -4682,6 +4682,237 @@ input.picker-search {
   margin: 0 0 6px;
 }
 
+/* ---------- Extensions (Settings → Extensions) ---------- */
+
+/* One card per extension, in the plan page's column: what it is, what it may read, and the one thing to do. */
+.ext-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ext-card {
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  transition: opacity 0.12s;
+}
+
+.ext-card[aria-busy='true'] {
+  opacity: 0.6;
+}
+
+.ext-card-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.ext-card-icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.ext-card-titles {
+  flex: 1;
+  min-width: 0;
+}
+
+.ext-card-name {
+  margin: 0;
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 620;
+}
+
+.ext-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 0;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.ext-card-meta > span + span::before {
+  content: '·';
+  margin: 0 7px;
+  color: var(--faint);
+}
+
+.ext-card-state.on {
+  color: var(--positive);
+}
+
+.ext-card-actions {
+  display: flex;
+  flex: none;
+  gap: 8px;
+}
+
+.ext-card-actions .primary,
+.ext-card-actions .ghost {
+  min-height: 32px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+
+.ext-card-actions .ext-remove {
+  color: var(--danger);
+}
+
+.ext-card-desc {
+  margin: 12px 0 0;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.ext-card-section {
+  margin: 16px 0 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ext-perms {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ext-perms li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.ext-perm-icon {
+  display: inline-flex;
+  flex: none;
+  margin-top: 2px;
+  color: var(--muted);
+}
+
+.ext-perm-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ext-perm-label {
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 550;
+}
+
+.ext-perm-hint,
+.ext-perms-none,
+.ext-install-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.ext-install-dialog .ext-perms {
+  margin: 2px 0 14px;
+}
+
+.ext-demo-note {
+  margin-top: 8px;
+  font-size: 13px;
+}
+
+@media (max-width: 640px) {
+  .ext-card {
+    padding: 16px;
+  }
+
+  .ext-card-head {
+    flex-wrap: wrap;
+  }
+
+  /* On a phone the buttons take their own row, wide enough for a thumb. */
+  .ext-card-actions {
+    order: 3;
+    width: 100%;
+  }
+
+  .ext-card-actions .primary,
+  .ext-card-actions .ghost {
+    flex: 1;
+    min-height: 38px;
+  }
+}
+
+/* Host components that extension views draw with (extensions/ui.tsx). */
+.ext-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 48px 16px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.ext-empty-art {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--faint);
+}
+
+.ext-empty p {
+  margin: 0;
+  font-size: 14px;
+}
+
+.ext-agent {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: var(--muted);
+}
+
+.ext-agent-name {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ext-time {
+  white-space: nowrap;
+}
+
+.ext-failed p {
+  margin: 10px 0 18px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
 .panel-tabs {
   margin: 0 18px 10px;
 }

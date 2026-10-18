@@ -1,6 +1,7 @@
 /** What deserves the user's attention in threads they are not looking at. Pure, so it can be tested directly. */
 import type { Thread } from './api';
 import { t } from './i18n';
+import { isWait, threadAttention } from './sidebar';
 
 export interface Notice {
   threadId: string;
@@ -56,8 +57,8 @@ export type ThreadMark = 'waiting' | 'running' | 'error' | 'unread' | null;
  * news like any other result: once the thread has been looked at, the dot goes; the error stays in the thread.
  */
 export function threadMark(thread: Thread, selected: boolean): ThreadMark {
-  if (thread.waiting) return 'waiting';
+  const attention = threadAttention(thread, selected ? thread.id : null);
+  if (isWait(attention)) return 'waiting';
   if (thread.status === 'running') return 'running';
-  if (thread.unread && !selected) return thread.status === 'error' ? 'error' : 'unread';
-  return null;
+  return attention?.kind === 'error' || attention?.kind === 'unread' ? attention.kind : null;
 }

@@ -1,5 +1,7 @@
 import { CoordinationManager, coordinationServer } from './coordination.js';
 import { loadConfig, loadDotEnv } from './config.js';
+import { ExtensionHost } from './extension-host.js';
+import { loadCatalog } from './extensions.js';
 import { createHttpServer, listenPrivate } from './http.js';
 import { HostRegistry } from './hosts.js';
 import { AgentRegistry, defaultInstances } from './agents.js';
@@ -57,6 +59,15 @@ async function main(): Promise<void> {
   const coordination = new CoordinationManager(store, manager, coordinationPath);
   const collaborationServer = coordinationServer(coordination);
   if (!await listenPrivate(collaborationServer, coordinationPath)) throw new Error('Collaboration socket is already in use');
+  // Extensions start after recovery, scheduling and collaboration, and before anything is served,
+  // so the first thing they hear is a machine that is ready.
+  const extensions = new ExtensionHost({
+    store: store.extensions,
+    source: manager,
+    catalog: loadCatalog(),
+    turnStart: (threadId, turnId) => store.listEventsOfType(threadId, 'turn.started').find((e) => e.turnId === turnId),
+  });
+  extensions.start();
   const terminals = new TerminalManager({ workdirs: () => dirs.all(), shell: config.termShell ?? undefined });
   // Other machines, each reached over SSH through its daemon's socket.
   const hosts = new HostRegistry({ file: join(config.dataDir, 'hosts.json'), ssh: config.sshCommand });
@@ -64,16 +75,16 @@ async function main(): Promise<void> {
   // Previews are served on a port of their own: the iframe needs an origin separate from the app
   // (see preview.ts). One port past the app's is the default; RAH_PREVIEW_PORT picks another.
   const previewPort = Number(process.env.RAH_PREVIEW_PORT) || config.port + 1;
-  const server = createHttpServer({ manager, registry, terminals, hosts, scheduler, token: config.token, webDir: config.webDir, version: VERSION, previewPort });
+  const server = createHttpServer({ manager, registry, terminals, hosts, scheduler, extensions, token: config.token, webDir: config.webDir, version: VERSION, previewPort });
   // Same requests, other origin: preview frames load from here so their pages cannot reach the
   // app, while their own CSS and scripts load same-origin. Without the port, previews say so.
-  const preview = createHttpServer({ manager, registry, terminals, hosts, scheduler, token: config.token, webDir: null, version: VERSION, previewPort });
+  const preview = createHttpServer({ manager, registry, terminals, hosts, scheduler, extensions, token: config.token, webDir: null, version: VERSION, previewPort });
   preview.on('error', (err: NodeJS.ErrnoException) => {
     console.warn(`warning: preview port ${previewPort} unavailable (${err.code}); previews disabled`);
   });
   preview.listen(previewPort, config.host, () => console.log(`previews on http://${config.host}:${previewPort}`));
   // The same API on a socket only this user can open: how a hub on another machine reaches this one.
-  const local = config.socket ? createHttpServer({ manager, registry, terminals, scheduler, trusted: true, token: config.token, webDir: null, version: VERSION }) : null;
+  const local = config.socket ? createHttpServer({ manager, registry, terminals, scheduler, extensions, trusted: true, token: config.token, webDir: null, version: VERSION }) : null;
   let ownsSocket = false;
   if (local && config.socket) {
     listenPrivate(local, config.socket)
@@ -101,6 +112,7 @@ async function main(): Promise<void> {
     // that looks does not take a stopped daemon for a running one.
     if (ownsSocket && config.socket) rmSync(config.socket, { force: true });
     hosts.dispose();
+    extensions.dispose();
     coordination.dispose();
     collaborationServer.close();
     rmSync(coordinationPath, { force: true });

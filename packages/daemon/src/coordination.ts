@@ -7,6 +7,7 @@ import type { Store } from './store.js';
 import type { ThreadManager } from './threads.js';
 import type { StoredEvent } from './events.js';
 import { HttpError } from './errors.js';
+import { turnOutcome } from './lifecycle.js';
 import { isWithinWorkdirs } from './workdirs.js';
 
 type Member = { id: string; name: string };
@@ -57,9 +58,10 @@ export class CoordinationManager {
       // A team is paused only by the user stopping it; a restart leaves it as it was and goes on.
       const team = JSON.parse(row.data) as Team;
       for (const job of [...team.deliveries]) if (job.state === 'running') {
-        const end = store.listEvents(job.to, 0, -1).find(e => e.turnId === job.turnId && (e.type === 'turn.done' || e.type === 'turn.error'));
-        if (!end || end.data.code === 'interrupted') { job.state = 'interrupted'; continue; }
-        job.state = end.data.stopReason === 'cancelled' ? 'stopped' : end.type === 'turn.error' ? 'failed' : 'returned';
+        const end = store.listEvents(job.to, 0, -1).find(e => e.turnId === job.turnId && turnOutcome(e));
+        const outcome = end && turnOutcome(end)!.outcome;
+        if (!end || outcome === 'interrupted') { job.state = 'interrupted'; continue; }
+        job.state = outcome === 'cancelled' ? 'stopped' : outcome === 'error' ? 'failed' : 'returned';
         job.result = turnAnswer(store.listEvents(job.to, 0, -1), job.turnId) || String(end.data.message ?? '');
         const key = `result:${job.to}:${job.turnId}`;
         if (job.to !== team.rootId && job.state !== 'stopped' && !team.deliveries.some(d => d.key === key)) {
@@ -71,7 +73,7 @@ export class CoordinationManager {
     }
     manager.coordination = this;
     this.unsubscribe = manager.subscribe((event) => {
-      if (event.type === 'turn.done' || event.type === 'turn.error') {
+      if (turnOutcome(event)) {
         void this.serial(() => this.finished(event)).catch(() => undefined);
       }
       if (event.type === 'thread.updated') this.schedule();
@@ -336,12 +338,15 @@ export class CoordinationManager {
   private name(t: Team, id: string): string { return id === t.rootId ? '主智能体' : t.members.find(m => m.id === id)?.name ?? id; }
 
   private finished(ev: StoredEvent): void {
+    const end = turnOutcome(ev);
+    if (!end || end.imported || end.fromTerminal) return;
     const t = this.team(ev.threadId);
     if (!t || !ev.turnId) return;
     const job = t.deliveries.find(d => d.to === ev.threadId && d.turnId === ev.turnId);
     const result = turnAnswer(this.store.listEvents(ev.threadId, 0, -1), ev.turnId);
-    const stopped = ev.data.stopReason === 'cancelled';
-    const state = stopped ? 'stopped' : ev.type === 'turn.error' ? 'failed' : 'returned';
+    const outcome = end.outcome;
+    const stopped = outcome === 'cancelled';
+    const state = stopped ? 'stopped' : outcome === 'error' || outcome === 'interrupted' ? 'failed' : 'returned';
     if (job) { job.state = state; job.result = result || String(ev.data.message ?? ''); }
     if (!this.closed && !t.paused && !stopped && ev.threadId !== t.rootId) {
       // Replies to a peer go back to that peer. Result notifications never create reply loops.

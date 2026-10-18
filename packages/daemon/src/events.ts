@@ -26,7 +26,9 @@ export type EventType =
   /** Something on the plan page changed. Broadcast only, never stored in an event log. */
   | 'todo.updated'
   /** The scheduled-task list changed. Broadcast only, never stored in an event log. */
-  | 'schedules.changed';
+  | 'schedules.changed'
+  /** An extension was installed, removed, enabled or disabled. Broadcast only, never stored in an event log. */
+  | 'extensions.changed';
 
 export interface StoredEvent {
   threadId: string;
