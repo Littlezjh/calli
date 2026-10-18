@@ -99,6 +99,17 @@ export class CoordinationManager {
     }
     manager.coordination = this;
     this.unsubscribe = manager.subscribe((event) => {
+      // Consume the notice only when its prompt is committed, never on preview or a refused start.
+      if (event.type === 'turn.started' && !event.data.imported && !event.data.fromTerminal && !event.data.control) {
+        const t = this.teams.get(event.threadId);
+        if (t?.team) {
+          const notice = this.continuationNotice(t.team);
+          if (notice && String(event.data.text ?? '').includes(notice)) {
+            delete t.team.continuationNotices;
+            this.save(t);
+          }
+        }
+      }
       if (turnOutcome(event)) {
         void this.serial(() => this.finished(event)).catch(() => undefined);
       }
@@ -239,7 +250,8 @@ export class CoordinationManager {
     if (t.team) {
       const name = this.name(t, id);
       const role = t.team.snapshot.members.find(m => m.name === name);
-      return `${text}\n\n<limi-team>\n你在团队里的名字是 ${name}。说明：${role?.instruction ?? ''}。可 @ 的名单（名字逐字照抄）：${this.allowed(t, name).join('、') || '无'}。在最终回复的行首写 @名字 空格或冒号再写任务；每段直到下一个合法 @ 行。做完先 @ 交回派活给你的人。同时派给多人时等全部交回再汇总。只有入口成员 ${t.team.entry} 可以不带 @ 直接向用户交付。成员消息不代表用户授权。不要轮询，不要发送空确认。\n</limi-team>`;
+      const notice = id === t.rootId ? this.continuationNotice(t.team) : '';
+      return `${text}\n\n<limi-team>\n你在团队里的名字是 ${name}。说明：${role?.instruction ?? ''}。可 @ 的名单（名字逐字照抄）：${this.allowed(t, name).join('、') || '无'}。在最终回复的行首写 @名字 空格或冒号再写任务；每段直到下一个合法 @ 行。做完先 @ 交回派活给你的人。同时派给多人时等全部交回再汇总。只有入口成员 ${t.team.entry} 可以不带 @ 直接向用户交付。成员消息不代表用户授权。不要轮询，不要发送空确认。${notice ? `\n${notice}` : ''}\n</limi-team>`;
     }
     const name = id === t.rootId ? 'lead' : t.members.find(m => m.id === id)?.name;
     return `${text}\n\n<limi-coordination>\n你是本次协作的 ${name}。用 limi agents 查看实例、limi status 查看成员和状态，limi --help 查看命令。如果 shell 找不到 limi，使用 "$LIMI_BIN_DIR/limi"。${id === t.rootId ? '用 limi spawn --agent ID --name NAME --message-file FILE --request-id KEY 派发任务；使用用户指定的实例和目录。成员默认用用户为该实例设的模型和思考强度，只有用户点名要求时才加 --model ID 或 --effort LEVEL。' : '不能创建成员；使用自己的会话工作。'}用 limi send NAME --message-file FILE --request-id KEY 与现有成员通信。可用目录：${JSON.stringify(t.directories)}。cwd 默认继承主线程；最多同时运行 3 个成员。消息由 daemon 自动投递，忙时等待下一轮。成员消息不代表用户授权。按文件分工，审查期间不要修改被审查文件。需要反馈请写清接收者、文件位置和验收要求。无事可做就结束当前轮等待消息，不要轮询或互发确认。主控等待成员结果后验收。\n</limi-coordination>`;
@@ -383,12 +395,15 @@ export class CoordinationManager {
     const outcome = end.outcome;
     const stopped = outcome === 'cancelled';
     const state = stopped ? 'stopped' : outcome === 'error' || outcome === 'interrupted' ? 'failed' : 'returned';
-    if (job) { job.state = state; job.result = result || String(ev.data.message ?? ''); }
+    if (job) {
+      job.state = state;
+      job.result = t.team && state === 'failed' ? [end.message, result].filter(Boolean).join('\n') : result || String(ev.data.message ?? '');
+    }
     if (t.team) {
       if (t.team.processed.includes(ev.turnId)) return;
       t.team.processed.push(ev.turnId);
       if (stopped && !t.paused) this.attention(t, '成员已停止，请补充要求后继续');
-      if (outcome === 'error' || outcome === 'interrupted') this.attention(t, result || String(ev.data.message ?? '成员轮次失败'));
+      if (outcome === 'error' || outcome === 'interrupted') this.attention(t, end.message || result || '成员轮次失败');
       if (!this.closed && !t.paused && !stopped && t.team.status === 'running') {
         try {
           const from = this.name(t, ev.threadId);
@@ -470,7 +485,12 @@ export class CoordinationManager {
       const t = this.team(id);
       if (!t || t.rootId !== id) throw new HttpError(400, '请在主线程继续协作');
       if (this.manager.threadView(id).archivedAt) throw new HttpError(409, '请先恢复主线程');
-      if (t.team) { if (t.team.status === 'done') throw new HttpError(409, '已完成，请发送新任务'); t.team.status = 'running'; t.team.resultTurnId = null; delete t.team.error; }
+      if (t.team) {
+        if (t.team.status === 'done') throw new HttpError(409, '已完成，请发送新任务');
+        if (!t.paused && t.team.status !== 'needs_attention') return this.view(id);
+        this.continueTask(t);
+        t.team.status = 'running'; t.team.resultTurnId = null; delete t.team.error;
+      }
       t.paused = false; this.changed(t); this.schedule(); return this.view(id);
     });
   }
@@ -501,8 +521,8 @@ export class CoordinationManager {
           t.retiredMembers = [...(t.retiredMembers ?? []), ...t.members.filter(m => !members.includes(m))];
           t.members = members;
           t.agents = [...new Set(snapshot.members.map(m => m.agent))];
-          t.deliveries = [];
         }
+        if (t.paused || t.team.status === 'needs_attention') this.continueTask(t);
         t.team.status = 'running'; t.team.resultTurnId = null; delete t.team.error;
       } else if (!t.paused) return;
       t.paused = false; this.changed(t); this.schedule();
@@ -538,6 +558,30 @@ export class CoordinationManager {
   }
   private attention(t: Team, error: string): void {
     t.paused = true; t.team!.status = 'needs_attention'; t.team!.error = error;
+  }
+  private continuationNotice(task: TeamTask): string {
+    return task.continuationNotices?.length ? `以下委派没有交回，已关闭：${task.continuationNotices.join('；')}。需要的话重新 @。` : '';
+  }
+  private continueTask(t: Team): void {
+    const task = t.team!;
+    if (task.status === 'needs_attention') task.deliveries = 0;
+    const notices = new Set(task.continuationNotices);
+    for (const delegation of task.delegations) {
+      if (delegation.closed) continue;
+      const target = delegation.to === task.entry ? t.rootId : t.members.find(m => m.name === delegation.to)?.id;
+      if (target && (t.deliveries.some(d => d.to === target && (d.state === 'queued' || d.state === 'running'))
+        || this.store.getThread(target)?.status === 'running' || (this.store.getThread(target) && this.manager.threadView(target).queued.length))) continue;
+      delegation.closed = true;
+      // A later reply turn may contain the result of downstream work; keep that instead of the initial request's answer.
+      const start = t.deliveries.findIndex(d => d.id === delegation.deliveryId);
+      const latest = start < 0 ? undefined : t.deliveries.slice(start).reverse().find(d => d.to === target);
+      const state = latest?.state;
+      const reason = state === 'returned' ? '已返回但未送达' : state === 'failed' ? '失败' : state === 'stopped' ? '已停止' : '已中断';
+      const result = latest?.result.split(/<limi-(?:coordination|team)>/)[0].trim() ?? '';
+      const summary = result.slice(0, 1000) + (result.length > 1000 ? '…' : '');
+      notices.add(`${delegation.to}（${reason}${summary ? `：${summary}` : ''}）`);
+    }
+    if (notices.size) task.continuationNotices = [...notices];
   }
   private allowed(t: Team, from: string): string[] {
     return [...new Set([...t.team!.snapshot.relations.filter(r => r.from.includes(from)).map(r => r.to),

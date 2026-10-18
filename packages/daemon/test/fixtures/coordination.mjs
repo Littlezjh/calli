@@ -6,6 +6,10 @@ export function coordinationFixture(text) {
   const body = text.split(/<limi-(?:coordination|team)>/)[0].trim();
   if (text.includes('<limi-team>')) {
     if (body.endsWith('TEAM_ENV')) return `limi-ready:${Boolean(process.env.LIMI_SOCKET && process.env.LIMI_KEY)}`;
+    if (body.endsWith('TEAM_FINISH')) return 'Task finished after continuation.';
+    if (body.endsWith('TEAM_STOP')) return '@dev slow\n@reviewer TEAM_MULTI_REVIEW';
+    if (body.endsWith('TEAM_SHORT')) return '@dev TEAM_SHORT_WORK';
+    if (body.endsWith('TEAM_SHORT_WORK')) return '@lead TEAM_FINISH';
     if (body.endsWith('TEAM_MEMBER_ERROR')) return '@dev fail';
     if (body.endsWith('TEAM_MULTI')) return '@dev TEAM_MULTI_DEV\n@reviewer TEAM_MULTI_REVIEW';
     if (body.endsWith('TEAM_MULTI_DEV')) return '@lead Developer finished';

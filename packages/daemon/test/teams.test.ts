@@ -13,6 +13,7 @@ import { PiRpcAdapter } from '../src/adapters/pi.js';
 import { CoordinationManager } from '../src/coordination.js';
 import { parseTeamMentions } from '../src/teams.js';
 import { createHttpServer } from '../src/http.js';
+import { HttpError } from '../src/errors.js';
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 async function setup() {
@@ -119,23 +120,28 @@ for (const scenario of ['TEAM_FLOW', 'TEAM_REWORK']) test(`scripted ${scenario}:
     assert.notEqual(next.team!.taskId, rootId); assert.equal(next.team!.snapshot.description, 'changed later');
     assert.deepEqual(next.members.map(m => m.id), view.members.map(m => m.id));
     assert.equal(next.team!.history[0].taskId, rootId);
+    assert.deepEqual(next.messages.slice(0, view.messages.length), view.messages);
+    assert.equal(next.messages.length, view.messages.length * 2);
     h.teams.remove(h.definition.id); await h.coordination.confirm(threadId);
     await h.coordination.userSpoke(threadId); await h.manager.startTurn(threadId, { text: 'after deletion' }); await h.settled(threadId);
   } finally { await h.close(); }
 });
 
-test('budget exhaustion pauses, stop preserves pause, and user input resumes', async () => {
+for (const action of ['userSpoke', 'resume'] as const) test(`budget exhaustion grants a fresh budget on ${action} and the same task can finish`, async () => {
   const h = await setup();
   try {
     h.teams.save({ ...h.definition, budget: { maxDeliveries: 2 } }, h.definition.id);
-    const { threadId } = await h.dispatch('TEAM_BUDGET'); await h.settled(threadId, 'needs_attention');
+    const { threadId } = await h.dispatch(action === 'userSpoke' ? 'TEAM_FLOW' : 'TEAM_BUDGET'); await h.settled(threadId, 'needs_attention');
     assert.equal(h.coordination.view(threadId)!.paused, true);
     assert.equal(h.coordination.view(threadId)!.team!.deliveries, 2);
     await assert.rejects(h.coordination.confirm(threadId), /待确认/);
-    await h.coordination.userSpoke(threadId);
-    assert.equal(h.coordination.view(threadId)!.team!.status, 'running');
-    await h.manager.cancelTurn(threadId); assert.equal(h.coordination.view(threadId)!.paused, true);
-    await h.coordination.userSpoke(threadId); assert.equal(h.coordination.view(threadId)!.paused, false);
+    const taskId = h.coordination.view(threadId)!.team!.taskId;
+    await h.coordination[action](threadId);
+    assert.equal(h.coordination.view(threadId)!.team!.deliveries, 0);
+    await h.manager.startTurn(threadId, { text: 'TEAM_SHORT' });
+    await h.settled(threadId);
+    assert.equal(h.coordination.view(threadId)!.team!.taskId, taskId);
+    assert.equal(h.coordination.view(threadId)!.team!.deliveries, 2);
   } finally { await h.close(); }
 });
 
@@ -189,6 +195,14 @@ for (const text of ['fail', 'TEAM_MEMBER_ERROR']) test(`errors in ${text} stop r
     assert.ok(h.coordination.view(threadId)!.team!.error);
     await h.coordination.userSpoke(threadId);
     assert.equal(h.coordination.view(threadId)!.team!.status, 'running');
+    await h.manager.startTurn(threadId, { text: 'TEAM_FINISH' });
+    await h.settled(threadId);
+    if (text === 'TEAM_MEMBER_ERROR') {
+      const prompt = h.store.listEventsOfType(threadId, 'turn.started').at(-1)!.data.text;
+      assert.match(String(prompt), /以下委派没有交回，已关闭：dev（失败：provider exploded/);
+      assert.ok(h.coordination.view(threadId)!.team!.delegations.every(d => d.closed));
+      assert.doesNotMatch(h.coordination.instructions(threadId, 'next'), /以下委派没有交回/);
+    }
   } finally { await h.close(); }
 });
 
@@ -277,5 +291,131 @@ test('a crash after task creation but before its first turn is an interrupted ta
     const restored = new CoordinationManager(h.store, h.manager, join(h.dir, 'restart.sock'));
     try { assert.equal(restored.view(fresh.id)!.team!.status, 'needs_attention'); assert.equal(restored.view(fresh.id)!.paused, true); }
     finally { restored.dispose(); }
+  } finally { await h.close(); }
+});
+
+for (const action of ['userSpoke', 'resume'] as const) test(`stopping the root closes running and queued delegations on ${action}`, async context => {
+  const h = await setup();
+  try {
+    h.teams.save({ ...h.definition, relations: [{ kind: 'delegate', from: ['lead'], to: 'dev' }, { kind: 'delegate', from: ['lead'], to: 'reviewer' }] }, h.definition.id);
+    const start = h.manager.startTurn.bind(h.manager);
+    const mocked = context.mock.method(h.manager, 'startTurn', async (...args: Parameters<typeof start>) => {
+      if (args[2] && h.manager.threadView(args[0]).title === 'reviewer') throw new HttpError(409, 'busy');
+      return start(...args);
+    });
+    const { threadId } = await h.dispatch('TEAM_STOP');
+    await wait(() => {
+      const view = h.coordination.view(threadId)!;
+      return view.messages.some(d => d.state === 'queued') && view.members.some(m => m.name === 'dev' && m.thread?.status === 'running');
+    });
+    await h.manager.cancelTurn(threadId);
+    await wait(() => h.coordination.view(threadId)!.messages.every(d => d.state === 'stopped'));
+    assert.equal(h.coordination.view(threadId)!.paused, true);
+    mocked.mock.restore();
+    await h.coordination[action](threadId);
+    const notice = h.coordination.instructions(threadId, 'preview');
+    assert.match(notice, /dev（已停止/); assert.match(notice, /reviewer（已停止/);
+    assert.equal(h.coordination.instructions(threadId, 'preview'), notice);
+    await h.manager.startTurn(threadId, { text: 'TEAM_FINISH' });
+    await h.settled(threadId);
+    assert.match(String(h.store.listEventsOfType(threadId, 'turn.started').at(-1)!.data.text), /以下委派没有交回/);
+    assert.doesNotMatch(h.coordination.instructions(threadId, 'next'), /以下委派没有交回/);
+  } finally { await h.close(); }
+});
+
+test('delivery startup failure is closed on resume and the notice survives a refused turn', async context => {
+  const h = await setup();
+  try {
+    const start = h.manager.startTurn.bind(h.manager);
+    const mocked = context.mock.method(h.manager, 'startTurn', async (...args: Parameters<typeof start>) => {
+      if (args[2]) throw new Error('Delivery launch rejected');
+      return start(...args);
+    });
+    const { threadId } = await h.dispatch('TEAM_FLOW'); await h.settled(threadId, 'needs_attention');
+    mocked.mock.restore();
+    await h.coordination.resume(threadId);
+    await assert.rejects(h.manager.startTurn(threadId, { text: 'TEAM_FINISH', videos: ['missing-video'] }));
+    assert.match(h.coordination.instructions(threadId, 'preview'), /dev（失败：Delivery launch rejected）/);
+    await h.manager.startTurn(threadId, { text: 'TEAM_FINISH' }); await h.settled(threadId);
+    const prompt = String(h.store.listEventsOfType(threadId, 'turn.started').at(-1)!.data.text);
+    assert.match(prompt, /dev（失败：Delivery launch rejected）/);
+    assert.doesNotMatch(h.coordination.instructions(threadId, 'next'), /以下委派没有交回/);
+  } finally { await h.close(); }
+});
+
+test('resume preserves an unpaused awaiting_confirm task and its confirmable result', async () => {
+  const h = await setup();
+  try {
+    const { threadId } = await h.dispatch(); await h.settled(threadId);
+    const before = h.coordination.view(threadId);
+    const response = await fetch(`${h.base}/api/threads/${threadId}/coordination`, {
+      method: 'POST', headers: { Authorization: 'Bearer test-token', 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'resume' }),
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(h.coordination.view(threadId), before);
+    await h.coordination.confirm(threadId);
+    assert.equal(h.coordination.view(threadId)!.team!.status, 'done');
+  } finally { await h.close(); }
+});
+
+test('mixed interrupted and committed unprocessed results survive recovery as a durable one-time notice', async () => {
+  const h = await setup();
+  let restored: CoordinationManager | undefined;
+  try {
+    h.teams.save({ ...h.definition, relations: [{ kind: 'delegate', from: ['lead'], to: 'dev' }, { kind: 'delegate', from: ['lead'], to: 'reviewer' }] }, h.definition.id);
+    const { threadId } = await h.dispatch('TEAM_MULTI'); await h.settled(threadId);
+    h.coordination.dispose();
+    // Restore the durable mailbox boundary before either member's finish was processed.
+    const record = JSON.parse(h.store.coordinationRecords().find(r => r.id === threadId)!.data);
+    record.deliveries = record.deliveries.filter((d: any) => d.kind === 'message');
+    const dev = record.members.find((m: any) => m.name === 'dev');
+    const reviewer = record.members.find((m: any) => m.name === 'reviewer');
+    const devJob = record.deliveries.find((d: any) => d.to === dev.id);
+    const reviewJob = record.deliveries.find((d: any) => d.to === reviewer.id);
+    devJob.turnId = 'interrupted-member-turn';
+    h.store.appendEvent(dev.id, devJob.turnId, 'turn.started', { text: 'Pending implementation' });
+    h.store.updateThread(dev.id, { status: 'running' });
+    h.manager.recoverInterrupted();
+    for (const d of record.deliveries) { d.state = 'running'; d.result = ''; }
+    for (const d of record.team.delegations) d.closed = false;
+    record.team.processed = record.team.processed.filter((id: string) => id !== reviewJob.turnId);
+    record.team.status = 'running'; record.team.resultTurnId = null;
+    h.store.saveCoordination(threadId, JSON.stringify(record));
+    restored = new CoordinationManager(h.store, h.manager, join(h.dir, 'restored.sock'));
+    await restored.userSpoke(threadId); // Serializes after the recovery replay.
+    assert.ok(restored.view(threadId)!.team!.delegations.every(d => d.closed));
+    assert.match(restored.instructions(threadId, 'preview'), /reviewer（已返回但未送达：Reviewer finished）/);
+    assert.match(restored.instructions(threadId, 'preview'), /dev（失败：The hub restarted/);
+    restored.dispose();
+    restored = new CoordinationManager(h.store, h.manager, join(h.dir, 'restored-again.sock'));
+    await h.manager.startTurn(threadId, { text: 'TEAM_FINISH' });
+    await wait(() => restored!.view(threadId)!.team!.status === 'awaiting_confirm');
+    const prompt = String(h.store.listEventsOfType(threadId, 'turn.started').at(-1)!.data.text);
+    assert.match(prompt, /reviewer（已返回但未送达：Reviewer finished）/);
+    assert.doesNotMatch(restored.instructions(threadId, 'next'), /以下委派没有交回/);
+    assert.equal(restored.view(threadId)!.messages.length, 2);
+  } finally { restored?.dispose(); await h.close(); }
+});
+
+test('continuation preserves a queued delegation while closing a stopped member', async context => {
+  const h = await setup();
+  try {
+    h.teams.save({ ...h.definition, relations: [{ kind: 'delegate', from: ['lead'], to: 'dev' }, { kind: 'delegate', from: ['lead'], to: 'reviewer' }] }, h.definition.id);
+    const start = h.manager.startTurn.bind(h.manager);
+    const mocked = context.mock.method(h.manager, 'startTurn', async (...args: Parameters<typeof start>) => {
+      if (args[2] && h.manager.threadView(args[0]).title === 'reviewer') throw new HttpError(409, 'busy');
+      return start(...args);
+    });
+    const { threadId } = await h.dispatch('TEAM_STOP');
+    await wait(() => h.coordination.view(threadId)!.messages.some(d => d.state === 'queued') && h.coordination.view(threadId)!.members.some(m => m.name === 'dev' && m.thread?.status === 'running'));
+    const dev = h.coordination.view(threadId)!.members.find(m => m.name === 'dev')!;
+    await h.manager.cancelTurn(dev.id); await h.settled(threadId, 'needs_attention');
+    await h.coordination.resume(threadId);
+    const delegates = h.coordination.view(threadId)!.team!.delegations;
+    assert.equal(delegates.find(d => d.to === 'dev')!.closed, true);
+    assert.equal(delegates.find(d => d.to === 'reviewer')!.closed, false);
+    mocked.mock.restore();
+    await h.settled(threadId);
+    assert.match(String(h.store.listEventsOfType(threadId, 'turn.started').at(-1)!.data.text), /dev（已停止/);
   } finally { await h.close(); }
 });

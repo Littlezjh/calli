@@ -20,6 +20,7 @@ export interface TeamTask {
   resultTurnId: string | null; deliveries: number; createdAt: string; error?: string;
   delegations: { from: string; to: string; deliveryId: string; closed: boolean }[];
   processed: string[];
+  continuationNotices?: string[];
   history: { taskId: string; name: string; createdAt: string; resultTurnId: string | null }[];
 }
 
