@@ -6,13 +6,14 @@
 
 <p align="center">a simple way to manage agents</p>
 
-Limi 是一个 agent 管理工作台。把远程主机上的 Claude Code、Codex、pi、Antigravity 等 coding agent 集中到浏览器里，统一查看和管理。
+Limi 是一个开源的 agent 工作台。用简单的界面管理 TRAE、zcode、Claude Code、Codex、pi、Antigravity 等国内外 agent，通过插件把好用的工具接进来。电脑和手机都能用，也欢迎每个人参与改进。
 
 打开网页就能：
 
 - 看每个 agent 在做什么——进展、审批、用量
 - 随时发消息、补充要求、处理审批
-- 一处管理多个 agent 和多台机器
+- 一处管理多个 agent 和多台机器，保存团队分工、交接任务
+- 按需安装线程看板、Memory 记忆看板，或连接 LoopX 查看目标进度
 
 Limi 不动 agent 本身的目录、配置和会话，装好即用。名字来自 Limacia 海蛞蝓，图标是一只带橙色短触角、奶油白身体的小伙伴，配上浅薄荷绿背景，希望工作台也能轻松、亲切一些。
 
@@ -40,8 +41,20 @@ Limi 不动 agent 本身的目录、配置和会话，装好即用。名字来�
 | pi | `pi --mode rpc` | 无（pi 本身没有） | 有。纯文本模型需要装 pi 扩展 `pi-aux-vision` | 有 |
 | Antigravity | `agy` 的无界面 stream-json 模式 | 无（不能询问，只有"自动改文件"和"完全访问"两档） | 有（按文件路径交给它） | 暂无 |
 | Codex | `codex app-server` | 有 | 有 | 有 |
+| TRAE CLI | app-server 执行，ACP 模型与历史接口 | 有 | 有 | 有 |
+| zcode | `zcode app-server` 精简接入 | 有 | 按原生模型能力 | 暂无 |
 
-pi 和 agy 要先在主机上装好并登录。没装的 agent 在界面里显示为不可用。
+各家 agent CLI 需要先在主机上装好并完成登录或鉴权。没装的 agent 在界面里显示为不可用；各家的能力和接入边界见 [架构说明](docs/PLAN.md)。
+
+## 插件与参与
+
+在「配置 → 扩展」按需安装：
+
+- **线程看板**：按待处理、运行中、空闲查看当前机器的线程。
+- **Memory 记忆看板**：只读浏览 Codex 已有的记忆文档，不生成或同步记忆。
+- **LoopX**：需先安装并配置 LoopX，关联目标和线程后，在会话与看板中查看目标、待办和待决定事项。当前不提供自动推进。
+
+skills 和 MCP 属于 agent 资源，通过各自的管理页操作，与 Limi 插件分开。想接入工具、贡献一个工作视图，或者反馈使用中的问题，可以从 [参与和插件指南](docs/contributing-extensions.md) 开始。独立数据源可放在自己的仓库；当前还没有自动收录的插件市场。
 
 ## 快速开始
 
@@ -69,7 +82,7 @@ daemon 在 `packages/daemon` 目录里运行，所以用 `RAH_ENV_FILE` 指向�
 
 官网：[maxliux5.github.io/limi](https://maxliux5.github.io/limi/)。
 
-仓库包含独立的中文产品官网，展示「简单管理你的所有 agent」的现有能力，以及「用一个简单的界面，把 agent 和它周边的工具串起来」的扩展方向。官网内嵌 Limi 的真实界面，提供发起任务、处理审批、讨论方案三个引导场景。技能和 MCP 已有管理页面；统一的扩展入口、BotMux 提醒和 LoopX 集成仍在规划与验证中，具体边界见 [扩展设计](docs/extensions-design.md)。
+仓库包含独立的中文产品官网，展示「简单管理更多国内外 agent、按需安装插件、一起参与建设」的方向。官网保留真实界面的任务、审批和方案体验，介绍已可安装的线程看板、Memory 只读看板、LoopX 工作数据源，并提供插件贡献与需求反馈入口。技能和 MCP 通过各自的资源页管理；BotMux 提醒与通用任务控制仍在规划，具体状态见 [扩展设计](docs/extensions-design.md)。
 
 ```bash
 npm run dev:site       # 开发官网，默认端口 5174

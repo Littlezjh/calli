@@ -5,11 +5,13 @@ import { useAppearance } from '../../web/src/hooks';
 import { MODES } from '../../web/src/appearance';
 import { copyText } from '../../web/src/clipboard';
 import { Popover } from '../../web/src/components/Popover';
-import { AgentMark, IconAgents, IconArrowRight, IconCheck, IconComputer, IconCopy, IconGlobe, IconPalette, IconRestore, IconServer, IconShield } from '../../web/src/components/icons';
-import { ANTIGRAVITY_ICON, CLAUDE_ICON, CODEX_ICON, PI_ICON } from '../../daemon/src/adapters/icons';
+import { AgentMark, IconAgents, IconArrowRight, IconCheck, IconComputer, IconCopy, IconGlobe, IconPalette, IconRestore, IconBoard, IconPuzzle, IconSparkle } from '../../web/src/components/icons';
+import { ANTIGRAVITY_ICON, CLAUDE_ICON, CODEX_ICON, PI_ICON, TRAE_ICON, ZCODE_ICON } from '../../daemon/src/adapters/icons';
 import { SCENARIOS } from './scenarios';
 import '../../web/src/styles.css';
 import './site.css';
+import { zh as copy } from '../../web/src/i18n/locales/site/zh';
+import { PLUGINS } from './plugins';
 
 const REPOSITORY = 'https://github.com/maxliux5/limi';
 const INSTALL = `git clone https://github.com/maxliux5/limi.git
@@ -19,8 +21,9 @@ npm run setup
 npm run build
 RAH_ENV_FILE=../../.env npm start -w @rah/daemon`;
 const agents = [
+  { name: 'TRAE CLI', icon: TRAE_ICON }, { name: 'zcode', icon: ZCODE_ICON },
   { name: 'Codex', icon: CODEX_ICON }, { name: 'Claude Code', icon: CLAUDE_ICON },
-  { name: 'pi', icon: PI_ICON }, { name: 'Antigravity', icon: ANTIGRAVITY_ICON },
+  { name: 'pi', icon: PI_ICON, TRAE_ICON, ZCODE_ICON }, { name: 'Antigravity', icon: ANTIGRAVITY_ICON },
 ];
 
 function Home() {
@@ -32,7 +35,7 @@ function Home() {
   const [source, setSource] = useState(() => `./demo/?scene=theme&theme=${theme}`);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
-  const [copyStatus, setCopyStatus] = useState('复制命令');
+  const [copyStatus, setCopyStatus] = useState<'copy' | 'copied' | 'copyFailed'>('copy');
   const copyTimer = useRef<ReturnType<typeof setTimeout>>();
   const sendTheme = () => frame.current?.contentWindow?.postMessage({ type: 'limi:theme', theme }, location.origin);
   useEffect(() => {
@@ -66,71 +69,109 @@ function Home() {
     setStarted(true); setActive(scene); setReady(false); setFailed(false);
     setSource(`./demo/?scene=${scene}&theme=${theme}&restart=${Date.now()}`);
   };
-  const copy = async () => {
-    setCopyStatus(await copyText(INSTALL) ? '已复制' : '请选中命令复制');
+  const copyCommands = async () => {
+    setCopyStatus(await copyText(INSTALL) ? 'copied' : 'copyFailed');
     clearTimeout(copyTimer.current);
-    copyTimer.current = setTimeout(() => setCopyStatus('复制命令'), 2500);
+    copyTimer.current = setTimeout(() => setCopyStatus('copy'), 2500);
   };
 
   return <>
-    <a className="site-skip" href="#experience" onClick={() => setStarted(true)}>跳到产品体验</a>
+    <a className="site-skip" href="#experience" onClick={() => setStarted(true)}>{copy.skip}</a>
     <header className="site-nav">
-      <nav className="site-wrap" aria-label="主导航">
+      <nav className="site-wrap" aria-label={copy.nav}>
         <a className="site-brand" href="#"><img src="./limi-icon.png" alt="" width="32" height="32" />Limi</a>
-        <div className="site-links"><a href="#experience" onClick={() => setStarted(true)}>体验</a><a href="#features">为什么选 Limi</a><a href={REPOSITORY} target="_blank" rel="noopener noreferrer">GitHub <span className="site-outward"><IconArrowRight size={12} /></span></a></div>
-        <Popover label="选择外观" triggerLabel="选择外观" triggerClassName="site-theme" trigger={<IconPalette size={18} />} align="end">
+        <div className="site-links">
+          <a href="#experience" onClick={() => setStarted(true)}>{copy.experience}</a>
+          <a href="#extensions">{copy.extensions}</a>
+          <a href="#contribute">{copy.participate}</a>
+          <a href={REPOSITORY} target="_blank" rel="noopener noreferrer">GitHub <span className="site-outward"><IconArrowRight size={12} /></span></a>
+        </div>
+        <Popover label={copy.appearance} triggerLabel={copy.appearance} triggerClassName="site-theme" trigger={<IconPalette size={18} />} align="end">
           {close => <>{MODES.map(mode => <button key={mode.id} className="pop-item" role="menuitemradio" aria-checked={appearance.mode === mode.id} onClick={() => { setAppearance({ mode: mode.id, palette: 'paper' }); close(); }}><span>{mode.name}</span>{appearance.mode === mode.id && <IconCheck size={15} />}</button>)}</>}
         </Popover>
-        <a className="site-button site-button-small" href="#install">开始安装</a>
+        <a className="site-button site-button-small" href="#install">{copy.install}</a>
       </nav>
     </header>
 
     <main>
       <section className="site-hero site-wrap" aria-labelledby="hero-title">
-        <p className="site-eyebrow"><span className="site-status-dot" /> 一个轻巧的 agent 工作台</p>
-        <h1 id="hero-title">简单管理<br /><span>你的所有 agent。</span></h1>
-        <p className="site-lede"><span>不同的 agent 和机器，都在一个网页里。</span><span>查看进展、继续对话、处理审批，随时接手。</span></p>
-        <div className="site-actions"><a className="site-button" href="#experience" onClick={() => setStarted(true)}>立即体验 <IconArrowRight size={17} /></a><a className="site-button site-button-secondary" href="#install">在自己的机器上使用</a></div>
-        <p className="site-meta">开源 · 自托管 · 电脑与手机</p>
+        <p className="site-eyebrow">{copy.eyebrow}</p>
+        <h1 id="hero-title">{copy.heroFirst}<br /><span>{copy.heroSecond}</span></h1>
+        <p className="site-lede"><span>{copy.ledeFirst}</span><span>{copy.ledeSecond}</span></p>
+        <div className="site-actions">
+          <a className="site-button" href="#experience" onClick={() => setStarted(true)}>{copy.tryNow} <IconArrowRight size={17} /></a>
+          <a className="site-button site-button-secondary" href="#extensions">{copy.explorePlugins}</a>
+        </div>
+        <p className="site-meta">{copy.meta}</p>
       </section>
 
       <section className="site-experience site-wrap" id="experience" aria-labelledby="experience-title">
-        <div className="site-section-head"><div><p className="site-eyebrow">先用一下</p><h2 id="experience-title">你的下一个任务，从这里开始。</h2></div><p>真实界面，预置任务。<br />无需账号，也不用安装。</p></div>
+        <div className="site-section-head"><div><p className="site-eyebrow">{copy.experienceEyebrow}</p><h2 id="experience-title">{copy.experienceTitle}</h2></div><p>{copy.experienceDescription}</p></div>
         <div className="site-demo-window">
           <div className="site-demo-toolbar">
-            <div className="site-demo-tabs" role="group" aria-label="选择体验任务">{SCENARIOS.map((scenario, i) => <button key={scenario.id} aria-pressed={active === scenario.id} onClick={() => loadScene(scenario.id)}><span className="site-step-number">0{i + 1}</span>{scenario.label}</button>)}</div>
-            <div className="site-demo-tools"><button title="重新体验" aria-label="重新体验" onClick={() => loadScene(active)}><IconRestore size={17} /></button><a className="site-open-demo" href={`./demo/?scene=${active}&theme=${theme}`} target="_blank" rel="noopener noreferrer" title="在新页面体验" aria-label="在新页面体验"><IconGlobe size={17} /><span>全屏体验</span></a></div>
+            <div className="site-demo-tabs" role="group" aria-label={copy.chooseTask}>{SCENARIOS.map((scenario, i) => <button key={scenario.id} aria-pressed={active === scenario.id} onClick={() => loadScene(scenario.id)}><span className="site-step-number">0{i + 1}</span>{scenario.label}</button>)}</div>
+            <div className="site-demo-tools"><button title={copy.restart} aria-label={copy.restart} onClick={() => loadScene(active)}><IconRestore size={17} /></button><a className="site-open-demo" href={`./demo/?scene=${active}&theme=${theme}`} target="_blank" rel="noopener noreferrer" title={copy.newWindow} aria-label={copy.newWindow}><IconGlobe size={17} /><span>{copy.fullScreen}</span></a></div>
           </div>
           <div className="site-frame-area" ref={frameArea}>
-            {started && <iframe key={source} ref={frame} src={source} title="Limi 产品引导体验" className={ready ? 'is-ready' : ''} onError={() => setFailed(true)} />}
-            {!ready && <div className="site-frame-loading" role="status"><img src="./limi-icon.png" alt="" width="56" height="56" /><p>{failed ? '体验区暂时没有加载完成' : started ? '正在准备你的工作台…' : '用一个预置任务，体验 Limi'}</p>{(failed || !started) && <button className="site-button site-button-small" onClick={() => loadScene(active)}>{failed ? '重新加载' : '开始体验'}</button>}</div>}
+            {started && <iframe key={source} ref={frame} src={source} title={copy.iframeTitle} className={ready ? 'is-ready' : ''} onError={() => setFailed(true)} />}
+            {!ready && <div className="site-frame-loading" role="status"><img src="./limi-icon.png" alt="" width="56" height="56" /><p>{failed ? copy.loadFailed : started ? copy.loading : copy.loadPrompt}</p>{(failed || !started) && <button className="site-button site-button-small" onClick={() => loadScene(active)}>{failed ? copy.reload : copy.startDemo}</button>}</div>}
           </div>
         </div>
-        <p className="site-demo-note"><span className="site-status-dot" /> 所有操作都是本地模拟，不会运行真实 agent。<span>想用自己的项目？<a href="#install">开始安装 <IconArrowRight size={13} /></a></span></p>
-        <div className="site-agents" aria-label="已支持的 agent">{agents.map(agent => <span key={agent.name}><AgentMark path={agent.icon} size={18} />{agent.name}</span>)}</div>
+        <p className="site-demo-note">{copy.demoNote}<span>{copy.ownProject}<a href="#install">{copy.install} <IconArrowRight size={13} /></a></span></p>
+        <div className="site-agents" aria-label={copy.supportedAgents}>{agents.map(agent => <span key={agent.name}><AgentMark path={agent.icon} size={18} />{agent.name}</span>)}</div>
+        <p className="site-agent-note">{copy.agentNote}</p>
       </section>
 
       <section className="site-features site-wrap" id="features" aria-labelledby="features-title">
-        <div className="site-section-head"><div><p className="site-eyebrow">少一点管理，多一点专注</p><h2 id="features-title">让日常工作，顺手一点。</h2></div></div>
+        <div className="site-section-head"><div><p className="site-eyebrow">{copy.featuresEyebrow}</p><h2 id="features-title">{copy.featuresTitle}</h2></div></div>
         <div className="site-feature-grid">
-          <article><div className="site-feature-icon"><IconAgents size={24} /></div><h3>一处看清进展</h3><p>哪个任务在运行，哪个在等你审批，哪个已经完成。不同 agent 的会话，放在一起管理。</p><div className="site-feature-detail"><span className="site-task-dot" />修复列表滚动<span className="site-status-label">等待审批</span></div></article>
-          <article><div className="site-feature-icon"><IconComputer size={24} /></div><h3>随时接手任务</h3><p>电脑上查看改动，手机上补充要求。agent 在远程主机上工作，你从浏览器进入。</p><div className="site-feature-detail"><IconServer size={16} /><span>远程主机</span><span className="site-connection-line" /><IconGlobe size={16} /><span>你的浏览器</span></div></article>
-          <article><div className="site-feature-icon"><IconShield size={24} /></div><h3>少一点干预</h3><p>尽量沿用 agent 原有的配置和工作方式。优先接入原生能力，减少额外的指令与上下文负担。</p><div className="site-feature-detail"><IconCheck size={16} /><span>熟悉的 agent，熟悉的工作方式</span></div></article>
+          {[
+            { Icon: IconAgents, title: copy.manageTitle, description: copy.manageDescription, detail: copy.manageDetail },
+            { Icon: IconPuzzle, title: copy.teamTitle, description: copy.teamDescription, detail: copy.teamDetail },
+            { Icon: IconComputer, title: copy.mobileTitle, description: copy.mobileDescription, detail: copy.mobileDetail },
+          ].map(({ Icon, title, description, detail }) => <article key={title}>
+            <div className="site-feature-icon"><Icon size={24} /></div><h3>{title}</h3><p>{description}</p>
+            <p className="site-feature-footnote">{detail}</p>
+          </article>)}
         </div>
       </section>
 
-      <section className="site-principle site-wrap" aria-labelledby="principle-title">
-        <div className="site-principle-inner"><div><p className="site-eyebrow">我们想坚持的事</p><h2 id="principle-title">默认简单。<br /><span>按需扩展。</span></h2></div><div className="site-principle-copy"><p>用一个简单的界面，把 agent 和它周边的工具串起来。从已有的技能和 MCP 管理出发，让更多能力按需接入。</p><p className="site-roadmap"><span>规划中</span>统一的扩展入口、BotMux 飞书提醒、LoopX 进度与操作，让工具融入同一个工作台。接入方案仍在验证，功能尚未上线。</p></div></div>
+      <section className="site-extensions site-wrap" id="extensions" aria-labelledby="extensions-title">
+        <div className="site-section-head"><div><p className="site-eyebrow">{copy.pluginEyebrow}</p><h2 id="extensions-title">{copy.pluginTitle}</h2></div></div>
+        <p className="site-section-intro">{copy.pluginIntro}</p>
+        <div className="site-plugin-grid" aria-label={copy.pluginCatalog}>
+          {PLUGINS.map(plugin => {
+            const Icon = { board: IconBoard, memory: IconSparkle, loopx: IconRestore }[plugin.id];
+            return <article className="site-plugin" key={plugin.id} data-plugin={plugin.id}>
+              <div className="site-plugin-heading"><Icon size={22} /><span>{plugin.kind}</span></div>
+              <h3>{plugin.title}</h3><p>{plugin.description}</p>
+              <p className="site-plugin-note">{plugin.note}</p>
+              <a href={`${REPOSITORY}/blob/main/docs/contributing-extensions.md#${plugin.id}`} target="_blank" rel="noopener noreferrer" aria-label={`${copy.pluginReadMore} · ${plugin.title}`}>{copy.pluginReadMore}<IconArrowRight size={15} /></a>
+            </article>;
+          })}
+        </div>
+        <div className="site-resources"><div><h3>{copy.resourcesTitle}</h3><p>{copy.resourcesDescription}</p></div><a href={`${REPOSITORY}/blob/main/docs/contributing-extensions.md#选择一种参与方式`} target="_blank" rel="noopener noreferrer">{copy.resourcesLink}<IconArrowRight size={15} /></a></div>
+        <p className="site-roadmap"><span>{copy.upNext}</span>{copy.roadmap} <a href={`${REPOSITORY}/blob/main/docs/TODO.md#6-扩展机制`} target="_blank" rel="noopener noreferrer">{copy.roadmapLink}<IconArrowRight size={12} /></a></p>
+      </section>
+
+      <section className="site-community site-wrap" id="contribute" aria-labelledby="community-title">
+        <div className="site-community-inner">
+          <div><p className="site-eyebrow">{copy.communityEyebrow}</p><h2 id="community-title">{copy.communityFirst}<br /><span>{copy.communitySecond}</span></h2></div>
+          <div className="site-community-copy"><p>{copy.communityDescription}</p>
+            <div className="site-community-actions"><a className="site-button" href={`${REPOSITORY}/blob/main/docs/contributing-extensions.md`} target="_blank" rel="noopener noreferrer">{copy.contributePlugin}<IconArrowRight size={16} /></a><a className="site-button site-button-secondary" href={`${REPOSITORY}/issues/new`} target="_blank" rel="noopener noreferrer">{copy.shareNeed}</a></div>
+            <p className="site-community-note">{copy.contributionNote}</p>
+          </div>
+        </div>
       </section>
 
       <section className="site-install site-wrap" id="install" aria-labelledby="install-title">
-        <div><p className="site-eyebrow">带回自己的工作台</p><h2 id="install-title">你的 agent，<br />现在更好管理了。</h2><p>在运行 agent 的主机上安装 Limi，<br className="site-desktop-break" />然后从电脑或手机的浏览器访问。</p><p className="site-install-requirement">需要 Node.js 22 或更高版本。<br />远程访问请使用 VPN 等可信网络。</p><a className="site-doc-link" href={`${REPOSITORY}#快速开始`} target="_blank" rel="noopener noreferrer">阅读完整安装说明 <IconArrowRight size={16} /></a></div>
-        <div className="site-install-guide"><div className="site-code-card"><div className="site-code-head"><span>在主机终端运行</span><button onClick={() => void copy()} aria-live="polite">{copyStatus === '已复制' ? <IconCheck size={14} /> : <IconCopy size={14} />}{copyStatus}</button></div><pre><code>{INSTALL}</code></pre></div>
-          <ol className="site-install-steps"><li>在这台主机的浏览器打开 <code>http://127.0.0.1:8787/</code>。</li><li>点击「连接 hub」，粘贴 <code>npm run setup</code> 输出的访问 token。</li><li>手机或另一台电脑使用主机的可达地址，按<a href={`${REPOSITORY}#远程访问`} target="_blank" rel="noopener noreferrer">远程访问说明</a>配置网络后连接。</li></ol>
+        <div><p className="site-eyebrow">{copy.installEyebrow}</p><h2 id="install-title">{copy.installFirst}<br />{copy.installSecond}</h2><p>{copy.installDescription}</p><p className="site-install-requirement">{copy.installRequirement}</p><a className="site-doc-link" href={`${REPOSITORY}#快速开始`} target="_blank" rel="noopener noreferrer">{copy.installDocs}<IconArrowRight size={16} /></a></div>
+        <div className="site-install-guide"><div className="site-code-card"><div className="site-code-head"><span>{copy.terminal}</span><button onClick={() => void copyCommands()} aria-live="polite">{copyStatus === 'copied' ? <IconCheck size={14} /> : <IconCopy size={14} />}{copy[copyStatus]}</button></div><pre><code>{INSTALL}</code></pre></div>
+          <ol className="site-install-steps"><li>{copy.openLocal} <code>http://127.0.0.1:8787/</code></li><li>{copy.connect}</li><li>{copy.remote} <a href={`${REPOSITORY}#远程访问`} target="_blank" rel="noopener noreferrer">{copy.remoteDocs}</a></li></ol>
         </div>
       </section>
     </main>
-    <footer className="site-footer site-wrap"><a className="site-brand" href="#"><img src="./limi-icon.png" alt="" width="28" height="28" />Limi</a><span>简单管理你的所有 agent。</span><div><a href={REPOSITORY} target="_blank" rel="noopener noreferrer">查看源码</a><a href={`${REPOSITORY}/blob/main/LICENSE`} target="_blank" rel="noopener noreferrer">MIT 许可</a></div></footer>
+    <footer className="site-footer site-wrap"><a className="site-brand" href="#"><img src="./limi-icon.png" alt="" width="28" height="28" />Limi</a><span>{copy.footer}</span><div><a href={REPOSITORY} target="_blank" rel="noopener noreferrer">{copy.source}</a><a href={`${REPOSITORY}/blob/main/LICENSE`} target="_blank" rel="noopener noreferrer">{copy.license}</a></div></footer>
   </>;
 }
 

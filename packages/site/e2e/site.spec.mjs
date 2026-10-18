@@ -62,6 +62,18 @@ for (const phone of [false, true]) for (const theme of ['light', 'dark']) {
       const frame = page.frames().find(frame => frame.url().includes('/demo/'));
       assert.equal(await frame.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
       await page.screenshot({ path: `${shots}/${phone ? 'phone' : 'desktop'}-${theme}.png`, fullPage: true });
+      await page.getByRole('link', { name: '看看现有插件', exact: true }).click();
+      await page.locator('#extensions').scrollIntoViewIfNeeded();
+      assert.equal(await page.locator('.site-plugin').count(), 3);
+      await page.getByRole('heading', { name: 'Memory 记忆看板', exact: true }).waitFor();
+      assert.match(await page.locator('[data-plugin="loopx"]').innerText(), /当前接入只展示状态/);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+      await page.screenshot({ path: `${shots}/${phone ? 'phone' : 'desktop'}-${theme}-extensions.png` });
+      await page.locator('#contribute').scrollIntoViewIfNeeded();
+      assert.match(await page.getByRole('link', { name: '贡献一个插件', exact: true }).getAttribute('href'), /docs\/contributing-extensions\.md$/);
+      assert.match(await page.getByRole('link', { name: '提一个需求', exact: true }).getAttribute('href'), /\/issues\/new$/);
+      await page.screenshot({ path: `${shots}/${phone ? 'phone' : 'desktop'}-${theme}-contribute.png` });
+      await page.locator('#experience').scrollIntoViewIfNeeded();
       assert.equal(await demo.getByRole('button', { name: '计划', exact: true }).count(), 0);
       assert.equal(await demo.getByRole('button', { name: '定时任务', exact: true }).count(), 0);
       assert.equal(await demo.getByText('还没有分区。', { exact: true }).count(), 0);
@@ -103,7 +115,7 @@ for (const phone of [false, true]) test(`approval, question, reset, install guid
     await page.locator('iframe.is-ready').waitFor();
     await demo.getByRole('button', { name: '发送示例任务' }).click();
     await demo.getByText('集中一张表', { exact: true }).click({ timeout: 12_000 });
-    await demo.getByRole('button', { name: '提交回答' }).click();
+    // The current single-choice sheet submits immediately on selection.
     await demo.getByRole('heading', { name: '迁移到集中声明的路由表' }).waitFor();
     await demo.getByRole('button', { name: '重新体验', exact: true }).click();
     await demo.getByRole('button', { name: '发送示例任务' }).waitFor();

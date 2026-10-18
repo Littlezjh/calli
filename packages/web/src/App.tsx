@@ -1910,7 +1910,9 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           onNotesChange={onNotesChange}
           lastSent={selected ? lastSent : null}
         />
-        {waitingOn && selected && (
+        </>}
+        {/* Guided demos replace the composer, but use the same approval and question sheets. */}
+        {waitingOn && selected && (!showcase || waitingOn.target.kind !== 'hub-plan') && (
           <ActionSheet
             key={waitingOn.target.item.key}
             target={waitingOn.target}
@@ -1934,8 +1936,6 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
             }}
           />
         )}
-        </>
-        }
         </div>
         )}
       </main>
