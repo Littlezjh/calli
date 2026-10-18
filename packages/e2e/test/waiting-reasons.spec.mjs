@@ -63,8 +63,12 @@ test('answering and cancelling remove the waiting labels', { timeout: 30000 }, a
     const page = await context.newPage();
     await openUi(page, daemon);
     await page.locator('.thread-title', { hasText: cases[0].title }).click();
-    await page.getByRole('radio', { name: /桌面和手机/ }).click();
-    await page.getByRole('button', { name: '提交回答', exact: true }).click();
+    // The question is asked in the sheet over the composer. The form's choice goes first; its
+    // optional free-text follow-up is asked next, and 提交 sends the whole form.
+    const sheet = page.getByRole('dialog', { name: '智能体提问' });
+    await sheet.getByRole('radio', { name: /桌面和手机/ }).click();
+    await sheet.getByRole('button', { name: '提交', exact: true }).click();
+    await page.locator('.action-sheet').waitFor({ state: 'detached' });
     await page.locator('.thread-row').filter({ hasText: cases[0].title }).locator('.thread-note').waitFor({ state: 'detached' });
     for (const item of cases.slice(1)) {
       assert.equal((await api(daemon, `/api/threads/${item.id}/cancel`, { method: 'POST', body: '{}' })).status, 200);

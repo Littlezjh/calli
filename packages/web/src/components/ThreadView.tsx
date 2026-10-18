@@ -1,5 +1,4 @@
-import type { UserInputAnswer } from '../api';
-import { Children, createContext, isValidElement, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { Children, createContext, Fragment, isValidElement, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { renderMermaidDiagram } from '../mermaid';
@@ -36,7 +35,8 @@ import {
   type WorkSection,
 } from '../timeline';
 import { Lightbox } from './Lightbox';
-import { ActivityIcon, IconAgents, IconCheck, IconChevron, IconClose, IconCompact, IconCopy, IconFile, IconFork, IconHand, IconQuote, IconWorktree } from './icons';
+import { PlanCopyButton, PlanDownloadButton, PlanReader } from './PlanReader';
+import { ActivityIcon, IconAgents, IconCheck, IconChevron, IconClose, IconCompact, IconCopy, IconFile, IconFork, IconHand, IconList, IconQuote, IconWorktree } from './icons';
 import { t } from '../i18n';
 
 interface Props {
@@ -51,8 +51,6 @@ interface Props {
   onOpenFile?: (path: string) => Promise<void>;
   /** Renders a page the agent wrote, from the thread's directory. HTML and SVG files. */
   onPreview?: (path: string) => void;
-  onAnswer?: (id: string, answer: UserInputAnswer) => Promise<void>;
-  onDecide: (approvalId: string, optionId: string | null) => void;
   /** The thread's log continues below what is in memory: one more history page can be fetched. */
   hasOlder?: boolean;
   loadingOlder?: boolean;
@@ -76,7 +74,7 @@ const RECENT_TURNS = 30;
 /** Scrolling up to within this distance of the top unfolds or fetches the earlier turns. */
 const NEAR_TOP_PX = 600;
 
-export function ThreadView({ items, roots, loadImage, loadFile, onOpenFile, onPreview, onDecide, onAnswer, hasOlder, loadingOlder, onLoadOlder, onFork, forkAnyTurn, takeover }: Props) {
+export function ThreadView({ items, roots, loadImage, loadFile, onOpenFile, onPreview, hasOlder, loadingOlder, onLoadOlder, onFork, forkAnyTurn, takeover }: Props) {
   const [lightbox, setLightbox] = useState<{ url: string; name?: string } | null>(null);
   const show = useCallback((url: string, name?: string) => setLightbox({ url, name }), []);
   // A picture opened from a link in an answer is fetched for the occasion, and let go of when it is closed.
@@ -208,9 +206,21 @@ export function ThreadView({ items, roots, loadImage, loadFile, onOpenFile, onPr
           );
         }
         case 'input':
-          return <InputCard key={item.key} item={item} onAnswer={onAnswer} />;
+          // A native plan approval shows its plan as the card; the decision itself is asked in the
+          // sheet, and answered or not, the card stays where it stood.
+          if (item.inputKind === 'plan' && item.plan) {
+            return (
+              <Fragment key={item.key}>
+                <ProposalCard text={item.plan} />
+                <TraceLine mark={planTrace(item)} />
+              </Fragment>
+            );
+          }
+          // An ordinary question leaves just a trace once it has been answered; while it waits,
+          // the sheet at the bottom is where it is asked.
+          return <TraceLine key={item.key} mark={questionTrace(item)} />;
         case 'proposal':
-          return <div className="row" key={item.key}><section className="proposal"><div className="proposal-heading">{item.done ? t('view.proposal') : t('view.planning')}</div><Prose text={item.text} /></section></div>;
+          return <ProposalCard key={item.key} text={item.text} streaming={!item.done} />;
         case 'assistant':
           if (!item.text) return null;
           return <AssistantMessage key={item.key} text={item.text} done={item.done} roots={roots} loadFile={loadFile} onOpen={show} />;
@@ -219,7 +229,7 @@ export function ThreadView({ items, roots, loadImage, loadFile, onOpenFile, onPr
         case 'work':
           return <WorkGroup key={item.key} item={item} roots={roots} />;
         case 'approval':
-          return <ApprovalCard key={item.key} item={item} roots={roots} onDecide={onDecide} />;
+          return <TraceLine key={item.key} mark={approvalTrace(item, roots)} />;
         case 'changes':
           return <ChangesCard key={item.key} item={item} roots={roots} onPreview={onPreview} />;
         case 'stopped': {
@@ -602,42 +612,95 @@ function FileImage({ path, roots, load, onOpen }: { path: string; roots: string[
   );
 }
 
-function InputCard({ item, onAnswer }: { item: Extract<Item, { kind: 'input' }>; onAnswer?: (id: string, answer: UserInputAnswer) => Promise<void> }) {
-  const [answers, setAnswers] = useState<Record<string, string[]>>({});
-  const [custom, setCustom] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const pending = !item.answer;
-  const values = Object.fromEntries(item.questions.map(q => [q.id, custom[q.id]?.trim() ? q.multiple ? [...(answers[q.id] ?? []), custom[q.id].trim()] : [custom[q.id].trim()] : answers[q.id] ?? []]));
-  const ready = item.questions.every(q => q.required === false || values[q.id].length);
-  const submit = async (answer: UserInputAnswer) => {
-    if (!onAnswer || busy) return;
-    setBusy(true); setError('');
-    try { await onAnswer(item.inputId, answer); }
-    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-    finally { setBusy(false); }
-  };
-  const singleApproval = item.inputKind === 'plan' && item.questions.length === 1 && item.questions[0].options.length === 1;
-  return <div className="row"><section className={`input-card${pending ? ' pending' : ''}`} aria-label={item.inputKind === 'plan' ? t('view.planApproval') : t('view.agentQuestion')}>
-    <div className="proposal-heading"><IconHand size={17} />{item.title}</div>
-    {item.plan && <Prose text={item.plan} />}
-    {pending ? <>
-      {!singleApproval && item.questions.map(q => <fieldset key={q.id} disabled={busy} className="input-question"><legend>{q.question}</legend>
-        <div className="input-options" role={q.multiple ? 'group' : 'radiogroup'} aria-label={q.question}>{q.options.map(o => {
-          const checked = (answers[q.id] ?? []).includes(o.value) && (q.multiple || !custom[q.id]?.trim());
-          return <button type="button" key={o.value} role={q.multiple ? 'checkbox' : 'radio'} aria-checked={checked} className={`input-option${checked ? ' selected' : ''}`} onClick={() => {
-            setAnswers(prev => ({ ...prev, [q.id]: q.multiple ? checked ? (prev[q.id] ?? []).filter(v => v !== o.value) : [...(prev[q.id] ?? []), o.value] : [o.value] }));
-            if (!q.multiple) setCustom(prev => ({ ...prev, [q.id]: '' }));
-          }}><span><strong>{o.label}</strong>{o.description && <small>{o.description}</small>}</span><span className="input-check">{checked && <IconCheck size={15} />}</span></button>;
-        })}</div>
-        {q.freeText && <textarea aria-label={t('view.extraAnswer', q.question)} placeholder={q.options.length ? t('view.orType') : t('view.typeAnswer')} value={custom[q.id] ?? ''} maxLength={8000} onChange={e => setCustom(prev => ({ ...prev, [q.id]: e.target.value }))} rows={2} />}
-      </fieldset>)}
-      {singleApproval && item.questions[0].freeText && <textarea aria-label={t('view.planFeedback')} placeholder={t('view.planFeedbackPlaceholder')} rows={2} maxLength={8000} value={custom[item.questions[0].id] ?? ''} onChange={e => setCustom({ [item.questions[0].id]: e.target.value })} />}
-      <div className="input-actions"><button className="primary" disabled={busy || !onAnswer || (!singleApproval && !ready)} onClick={() => void submit({ answers: singleApproval && !custom[item.questions[0].id]?.trim() ? { [item.questions[0].id]: [item.questions[0].options[0].value] } : values })}>{busy ? t('pickers.submitting') : singleApproval ? custom[item.questions[0].id]?.trim() ? t('view.submitFeedback') : t('composer.start') : t('view.submitAnswer')}</button>
-        <button className="ghost" disabled={busy || !onAnswer} onClick={() => void submit({ cancelled: true })}>{item.inputKind === 'plan' ? t('view.keepDiscussing') : t('view.skip')}</button></div>
-      {error && <div className="input-error" role="alert">{error}</div>}
-    </> : <div className="input-result">{'cancelled' in item.answer! ? t('view.questionEnded') : item.inputKind === 'plan' ? t('view.feedbackSent') : Object.values(item.answer!.answers).flat().join(' · ') || t('view.skipped')}</div>}
-  </section></div>;
+/** How deep a plan card goes before the rest fades away, and over what distance it fades. */
+const PLAN_FADE_PX = 64;
+
+/**
+ * A plan in the thread: a small card holding the opening of the plan, fading out where it is cut,
+ * and opening to the whole of it. While it is still being written it follows along, pinned to the
+ * newest lines with the top fading instead.
+ */
+function ProposalCard({ text, streaming = false }: { text: string; streaming?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [overflow, setOverflow] = useState(false);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (streaming) el.scrollTop = el.scrollHeight;
+    setOverflow(el.scrollHeight - el.clientHeight > PLAN_FADE_PX / 2);
+  }, [text, streaming]);
+  return (
+    <div className="row">
+      <section className={`proposal${streaming ? ' streaming' : ''}${overflow ? ' overflow' : ''}`}>
+        <div className="proposal-head">
+          <span className="proposal-title">
+            <IconList size={16} />
+            {streaming ? t('plan.cardStreaming') : t('plan.cardTitle')}
+          </span>
+          <span className="proposal-tools">
+            <PlanDownloadButton text={text} />
+            <PlanCopyButton text={text} />
+          </span>
+        </div>
+        <button type="button" className="proposal-body" aria-label={t('plan.openFull')} title={t('plan.openFull')} onClick={() => setOpen(true)}>
+          <div className="proposal-scroll" ref={scrollRef}>
+            <Prose text={text} />
+          </div>
+        </button>
+      </section>
+      {open && <PlanReader text={text} onClose={() => setOpen(false)} />}
+    </div>
+  );
+}
+
+/** What a resolved question, plan decision or approval says, and which mark leads it. */
+type Trace = { icon: 'check' | 'hand'; text: string } | null;
+
+/** An answered question: what was asked, in short, and what was picked. */
+function questionTrace(item: Extract<Item, { kind: 'input' }>): Trace {
+  const answer = item.answer;
+  if (!answer) return null;
+  if ('cancelled' in answer) {
+    const asked = item.questions[0]?.question ?? item.title ?? '';
+    return { icon: 'hand', text: 'ended' in answer ? t('trace.ended', asked) : t('trace.skipped', asked) };
+  }
+  const parts = item.questions.map((q) => {
+    const said = (answer.answers[q.id] ?? []).map((value) => q.options.find((o) => o.value === value)?.label ?? value).join(' · ');
+    return `${q.header || q.question}：${said}`;
+  });
+  return { icon: 'check', text: t('trace.answered', parts) };
+}
+
+/** A plan approval the agent asked for: carried out, sent back with changes, or left behind. */
+function planTrace(item: Extract<Item, { kind: 'input' }>): Trace {
+  const answer = item.answer;
+  if (!answer) return null;
+  if ('cancelled' in answer) return { icon: 'hand', text: t('trace.planSkipped') };
+  const q = item.questions[0];
+  const said = q ? (answer.answers[q.id] ?? [])[0] ?? '' : '';
+  if (q && said === q.options[0]?.value) return { icon: 'check', text: t('trace.planConfirmed') };
+  return { icon: 'hand', text: t('trace.planReturned', said) };
+}
+
+/** A tool approval: allowed, or refused (which a cancellation amounts to here). */
+function approvalTrace(item: Extract<Item, { kind: 'approval' }>, roots: string[]): Trace {
+  const decision = item.decision;
+  if (!decision) return null;
+  const title = shortenPaths(item.title, roots);
+  const allowed = 'optionId' in decision && item.options.find((o) => o.optionId === decision.optionId)?.kind.startsWith('allow');
+  return { icon: allowed ? 'check' : 'hand', text: allowed ? t('trace.allowed', title) : t('trace.rejected', title) };
+}
+
+/** What an answered question or approval leaves behind: one quiet line, there but not in the way. */
+function TraceLine({ mark }: { mark: Trace }) {
+  if (!mark) return null;
+  return (
+    <div className="trace-line">
+      {mark.icon === 'check' ? <IconCheck size={13} /> : <IconHand size={13} />}
+      <span className="trace-line-text">{mark.text}</span>
+    </div>
+  );
 }
 
 /** The agent's own task list for the turn: what is done, what it is on, what is left. */
@@ -876,7 +939,7 @@ function StepRow({ step, roots }: { step: Step; roots: string[] }) {
   );
 }
 
-function Stats({ added, removed }: { added: number; removed: number }) {
+export function Stats({ added, removed }: { added: number; removed: number }) {
   return (
     <span className="diff-stats">
       <span className="diff-added">+{added}</span>
@@ -886,7 +949,7 @@ function Stats({ added, removed }: { added: number; removed: number }) {
 }
 
 /** One or more edited regions of a file, as numbered lines with added and removed lines tinted. */
-function DiffView({ diffs }: { diffs: FileDiff[] }) {
+export function DiffView({ diffs }: { diffs: FileDiff[] }) {
   const regions = useMemo(() => diffs.map((d) => numberLines(diffLines(d.oldText, d.newText))), [diffs]);
   let budget = MAX_DIFF_LINES;
   return (
@@ -955,7 +1018,7 @@ function ChangesCard({ item, roots, onPreview }: { item: Extract<Item, { kind: '
 }
 
 /** The button text for an approval option. The agent's own wording is kept where it carries the scope. */
-function optionLabel(option: ApprovalOption): string {
+export function optionLabel(option: ApprovalOption): string {
   switch (option.kind) {
     case 'allow_once':
       return t('view.allowOnce');
@@ -967,81 +1030,6 @@ function optionLabel(option: ApprovalOption): string {
       return t('view.rejectAlways');
     default:
       return option.name;
-  }
-}
-
-function ApprovalCard({
-  item,
-  roots,
-  onDecide,
-}: {
-  item: Extract<Item, { kind: 'approval' }>;
-  roots: string[];
-  onDecide: (approvalId: string, optionId: string | null) => void;
-}) {
-  const pending = item.decision === null;
-  const canReject = item.options.some((o) => o.kind.startsWith('reject'));
-  // "Always allow" means different things each time (this file, this folder, this command), so say which.
-  const always = item.options.find((o) => o.kind === 'allow_always');
-  let primaryUsed = false;
-  return (
-    <div className="row">
-      <div className={`approval${pending ? ' pending' : ''}`}>
-        <div className="approval-title">
-          {pending && <span className="dot waiting" aria-hidden="true" />}
-          <span>{shortenPaths(item.title, roots)}</span>
-        </div>
-        {item.command && <pre className="approval-command">{item.command}</pre>}
-        {item.diffs.length > 0 && (
-          <div className="approval-preview">
-            <DiffView diffs={item.diffs} />
-          </div>
-        )}
-        {pending ? (
-          <>
-            <div className="approval-actions">
-              {item.options.map((o) => {
-                const primary = o.kind === 'allow_once' && !primaryUsed;
-                if (primary) primaryUsed = true;
-                return (
-                  <button key={o.optionId} className={primary ? 'primary' : 'ghost'} title={o.name} onClick={() => onDecide(item.approvalId, o.optionId)}>
-                    {optionLabel(o)}
-                  </button>
-                );
-              })}
-              {!canReject && (
-                <button className="ghost" onClick={() => onDecide(item.approvalId, null)}>
-                  {t('common.cancel')}
-                </button>
-              )}
-            </div>
-            {always && <div className="approval-note">{t('view.alwaysAllowNote', always.name)}</div>}
-          </>
-        ) : (
-          <div className="approval-result">{decisionLabel(item)}</div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/** What the user chose, in words. Falls back to the option's own name for kinds we do not know. */
-function decisionLabel(item: Extract<Item, { kind: 'approval' }>): string {
-  const d = item.decision;
-  if (!d) return '';
-  if ('cancelled' in d) return t('view.cancelled');
-  const option = item.options.find((o) => o.optionId === d.optionId);
-  switch (option?.kind) {
-    case 'allow_once':
-      return t('view.allowedOnce');
-    case 'allow_always':
-      return t('view.allowedAlways');
-    case 'reject_once':
-      return t('view.rejected');
-    case 'reject_always':
-      return t('view.rejectedAlways');
-    default:
-      return t('view.chose', option?.name ?? d.optionId);
   }
 }
 

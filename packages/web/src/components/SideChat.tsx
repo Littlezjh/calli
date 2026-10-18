@@ -223,9 +223,6 @@ export function SideChat({
               roots={roots}
               loadImage={loadImage}
               loadFile={loadFile}
-              onDecide={(approvalId, optionId) =>
-                api.decide(approvalId, optionId === null ? { cancel: true } : { optionId }).catch(onError)
-              }
             />
           ) : (
             <div className="side-chat-intro">

@@ -1,6 +1,7 @@
 import { piUsage } from './usage.js';
 import { cliDiagnostic, probeWithDeadline } from './diagnostics.js';
 import { isCompaction, trackCompaction } from './compaction.js';
+import { PlanReply } from './plan-reply.js';
 import { sessionEnvironment } from './types.js';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from 'node:fs';
@@ -365,7 +366,7 @@ class PiSession implements AgentSession {
   private firstTokenMs: number | undefined;
   private readonly pending = new Map<string, { resolve(v: any): void; reject(e: Error): void }>();
   private hooks: TurnHooks | null = null;
-  private turn: { resolve(r: TurnResult): void; error?: string } | null = null;
+  private turn: { resolve(r: TurnResult): void; error?: string; plan?: PlanReply } | null = null;
   private buffer = '';
   private exited = false;
   private compactionSequence = 0;
@@ -529,7 +530,11 @@ class PiSession implements AgentSession {
       return;
     }
     const ev = mapPiEvent(record);
-    if (ev && this.hooks) this.hooks.emit(ev);
+    if (!ev || !this.hooks) return;
+    const plan = this.turn?.plan;
+    if (plan && ev.type === 'message.delta') return plan.add(String(ev.data.text ?? ''));
+    if (plan && ev.type === 'tool.start') plan.aside();
+    this.hooks.emit(ev);
   }
 
   private async reportUsage(): Promise<void> {
@@ -545,6 +550,7 @@ class PiSession implements AgentSession {
   private finishTurn(stopReason: string): void {
     const turn = this.turn;
     if (!turn) return;
+    turn.plan?.finish(stopReason === 'end_turn');
     this.turn = null;
     this.activeCompaction = null;
     this.hooks = null;
@@ -613,6 +619,8 @@ class PiSession implements AgentSession {
       // This is a conversational instruction, not a tool permission boundary.
       if (!input.text.trimStart().startsWith('/')) {
         if (this.workMode === 'plan') {
+          // pi has no plan of its own: what it answers with is the plan.
+          this.turn.plan = new PlanReply((ev) => hooks.emit(ev), 'plan');
           message = '[Hub work mode: plan]\n先分析需求并给出简短的设计方案和执行步骤。这一轮只讨论方案，不修改文件、不执行实施操作；等用户要求开始执行后再做。\n\n' + message;
         } else if (this.clearPlanInstruction) {
           message = '[Hub work mode: execute]\n已结束计划模式，按用户当前要求执行；此前只讨论、不实施的限制已解除。\n\n' + message;

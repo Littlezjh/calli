@@ -15,6 +15,9 @@ after(async () => { await browser?.close(); await daemon?.stop(); });
 
 const planChoice = page => page.getByRole(page.viewportSize().width <= 640 ? 'menuitemcheckbox' : 'option', { name: /^计划模式/ });
 const attachChoice = page => page.getByRole(page.viewportSize().width <= 640 ? 'menuitem' : 'option', { name: '添加图片或视频', exact: true });
+const questionSheet = page => page.getByRole('dialog', { name: '智能体提问' });
+const planSheet = page => page.getByRole('dialog', { name: '计划审批' });
+const composerHidden = page => page.locator('.composer-box').evaluate(el => getComputedStyle(el).visibility === 'hidden');
 
 const create = async (agent, title, workMode = 'plan') => {
   const res = await api(daemon, '/api/threads', { method: 'POST', body: JSON.stringify({ agent, title, cwd: daemon.workdir, workMode, permissionMode: 'full_access' }) });
@@ -30,74 +33,141 @@ const send = async (page, text) => {
   await page.getByRole('button', { name: '发送', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('.composer textarea')?.value === '');
 };
+const events = async threadId => (await (await api(daemon, `/api/threads/${threadId}/events`)).json());
+const waitIdle = async threadId => {
+  for (let i = 0; i < 200; i++) {
+    const view = await (await api(daemon, `/api/threads/${threadId}`)).json();
+    if (view.status !== 'running') return view;
+    await new Promise(r => setTimeout(r, 50));
+  }
+  assert.fail('turn did not finish');
+};
 
-test('pi plans and executes in the same conversation on desktop and phone in both themes', { timeout: 120000 }, async () => {
+test('pi plans show the card and the sheet; confirm, reject and skip each go their way', { timeout: 180000 }, async () => {
   for (const mobile of [false, true]) for (const colorScheme of ['light', 'dark']) {
     const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1400, height: 900 }, isMobile: mobile, hasTouch: mobile, colorScheme });
     try {
       const page = await context.newPage();
+      const device = mobile ? 'phone' : 'desktop';
       const title = `pi 设计方案 ${mobile} ${colorScheme}`;
       const thread = await create('pi', title, 'execute');
       await select(page, title, mobile);
       await page.getByRole('button', { name: '添加与模式', exact: true }).click();
       await planChoice(page).click();
+      // Plan mode is on: the pill says so, and × is the way off.
+      await page.locator('.plan-pill[aria-label="退出计划模式"]').waitFor();
       await page.locator('.composer textarea[placeholder="先分析和讨论方案"]').waitFor();
+      if (shots) await page.screenshot({ path: join(shots, `pill-${device}-${colorScheme}.png`), animations: 'disabled' });
       await send(page, '设计一个简洁的登录页');
-      await page.getByText('设计方案：', { exact: true }).waitFor();
-      await page.getByRole('button', { name: '开始执行', exact: true }).waitFor();
-      if (shots) await page.screenshot({ path: join(shots, `pi-plan-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
+      // pi's answer is the plan: a small card, and the decision asked in the sheet over the composer.
+      await page.locator('.proposal').getByText('设计方案：', { exact: true }).waitFor();
+      await planSheet(page).getByText('是否执行该方案？', { exact: true }).waitFor();
+      await planSheet(page).getByRole('button', { name: '确认执行该方案', exact: true }).waitFor();
+      assert.equal(await composerHidden(page), true, 'the composer steps out of sight for the sheet');
+      if (shots) await page.screenshot({ path: join(shots, `pi-plan-${device}-${colorScheme}.png`), animations: 'disabled' });
       const before = await (await api(daemon, `/api/threads/${thread.id}`)).json();
       await page.reload();
       if (mobile) await page.locator('.menu-btn').click();
       await page.locator('.thread-title', { hasText: title }).first().click();
-      await page.getByRole('button', { name: '开始执行', exact: true }).click();
-      await page.getByText(/此前只讨论、不实施的限制已解除/).waitFor();
+      await planSheet(page).getByRole('button', { name: '确认执行该方案', exact: true }).waitFor();
+      await planSheet(page).getByRole('button', { name: '确认执行该方案', exact: true }).click();
+      await page.getByText(/按我们讨论的计划开始执行/).first().waitFor();
+      await page.locator('.action-sheet').waitFor({ state: 'detached' });
       await page.getByRole('button', { name: '停止', exact: true }).waitFor({ state: 'hidden' });
-      const after = await (await api(daemon, `/api/threads/${thread.id}`)).json();
+      const after = await waitIdle(thread.id);
       assert.equal(after.workMode, 'execute');
       assert.equal(after.agentSessionId, before.agentSessionId);
+
+      // A plan sent back with what must change: the thread plans again.
+      await page.getByRole('button', { name: '添加与模式', exact: true }).click();
+      await planChoice(page).click();
+      await page.locator('.plan-pill[aria-label="退出计划模式"]').waitFor();
+      await send(page, '再规划一次注册页');
+      await planSheet(page).getByText('是否执行该方案？', { exact: true }).waitFor();
+      await planSheet(page).getByRole('button', { name: '跳过', exact: true }).waitFor();
+      await planSheet(page).locator('.sheet-input').fill('把登录改成手机号验证码');
+      if (shots) await page.screenshot({ path: join(shots, `pi-reject-${device}-${colorScheme}.png`), animations: 'disabled' });
+      await planSheet(page).getByRole('button', { name: '发送', exact: true }).click();
+      await page.getByText('把登录改成手机号验证码').first().waitFor();
+      const planning = await events(thread.id);
+      assert.equal(planning.filter(e => e.type === 'turn.started').at(-1).data.workMode, 'plan', 'the rejection starts its turn in plan mode');
+      // The replanned turn ends in a plan again, asked about once more; this time it is skipped.
+      await planSheet(page).getByText('是否执行该方案？', { exact: true }).waitFor();
+      await planSheet(page).getByRole('button', { name: '跳过', exact: true }).click();
+      await page.locator('.action-sheet').waitFor({ state: 'detached' });
+      assert.equal(await composerHidden(page), false, 'with the plan skipped, the composer is back');
+      await page.reload();
+      if (mobile) await page.locator('.menu-btn').click();
+      await page.locator('.thread-title', { hasText: title }).first().click();
+      await page.locator('.composer textarea').waitFor();
+      assert.equal(await page.locator('.action-sheet').count(), 0, 'a skipped plan is not asked about again after a refresh');
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
-      if (shots) await page.screenshot({ path: join(shots, `pi-execute-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
     } finally { await context.close(); }
   }
 });
 
-test('Plan discussion, questions, refresh and execution on desktop and phone in both themes', { timeout: 120000 }, async () => {
+test('questions answer from the sheet, leave a faint line, and the plan opens at full size', { timeout: 180000 }, async () => {
   for (const mobile of [false, true]) for (const colorScheme of ['light', 'dark']) {
     const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1400, height: 900 }, isMobile: mobile, hasTouch: mobile, colorScheme });
     try {
       const page = await context.newPage();
+      const device = mobile ? 'phone' : 'desktop';
       const title = `计划测试 ${mobile} ${colorScheme}`;
       const thread = await create('codex', title);
       await select(page, title, mobile);
       await page.getByRole('button', { name: '添加与模式', exact: true }).waitFor();
       await send(page, 'plan-question');
-      await page.getByRole('region', { name: '智能体提问' }).waitFor();
-      if (shots) await page.screenshot({ path: join(shots, `question-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
-      await page.reload();
-      if (mobile) await page.locator('.menu-btn').click();
-      await page.locator('.thread-title', { hasText: title }).first().click();
-      await page.getByRole('radio', { name: /桌面和手机/ }).click();
-      await page.getByRole('button', { name: '提交回答', exact: true }).click();
-      await page.getByRole('button', { name: '开始执行', exact: true }).waitFor();
+      await questionSheet(page).getByText('优先支持哪一端？', { exact: true }).waitFor();
+      await questionSheet(page).getByRole('radio', { name: /桌面和手机/ }).waitFor();
+      if (shots) await page.screenshot({ path: join(shots, `question-${device}-${colorScheme}.png`), animations: 'disabled' });
+      // One question, one tap: the option is the answer.
+      await questionSheet(page).getByRole('radio', { name: /桌面和手机/ }).click();
+      await questionSheet(page).waitFor({ state: 'detached' });
+      // The question leaves a trace, and what the agent says after it lands below that trace.
+      const trace = page.locator('.trace-line', { hasText: '已回答 · 范围：桌面和手机' });
+      await trace.waitFor();
+      const answer = page.getByText(/answer:/).first();
+      await answer.waitFor();
+      const order = await page.evaluate(() => {
+        const of = sel => document.querySelector(sel)?.getBoundingClientRect().top;
+        return { trace: of('.trace-line'), card: of('.proposal') };
+      });
+      assert.ok(order.trace >= 0 && order.trace < order.card, 'the trace stands above the plan that follows it');
+      if (shots) await page.screenshot({ path: join(shots, `trace-${device}-${colorScheme}.png`), animations: 'disabled' });
       await page.locator('.proposal').getByText('实施计划', { exact: true }).last().waitFor();
-      assert.equal(await page.getByText('正在整理…', { exact: true }).count(), 0);
-      if (shots) await page.screenshot({ path: join(shots, `plan-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
+      // The plan is in: plan mode is over (the box may be hidden behind the sheet asking about it).
+      await page.locator('.composer textarea[placeholder="继续这个线程"]').waitFor({ state: 'attached' });
+      // The plan is in: plan mode is over, and whether to run it is asked in the sheet.
+      await planSheet(page).getByText('是否执行该方案？', { exact: true }).waitFor();
+      // The card opens the whole plan; Esc brings the thread back.
+      await page.locator('.proposal .proposal-body').first().click();
+      await page.locator('.plan-reader').waitFor();
+      await page.locator('.plan-reader').getByText('实施计划').first().waitFor();
+      await page.locator('.plan-reader').getByRole('button', { name: '下载方案' }).waitFor();
+      await page.locator('.plan-reader').getByRole('button', { name: '拷贝方案' }).waitFor();
+      if (shots) await page.screenshot({ path: join(shots, `plan-reader-${device}-${colorScheme}.png`), animations: 'disabled' });
+      await page.keyboard.press('Escape');
+      await page.locator('.plan-reader').waitFor({ state: 'detached' });
       const before = await (await api(daemon, `/api/threads/${thread.id}`)).json();
-      await page.getByRole('button', { name: '开始执行', exact: true }).click();
+      await planSheet(page).getByRole('button', { name: '确认执行该方案', exact: true }).click();
       await page.getByText(/按我们讨论的计划开始执行/).first().waitFor();
       await page.getByRole('button', { name: '停止', exact: true }).waitFor({ state: 'hidden' });
-      const after = await (await api(daemon, `/api/threads/${thread.id}`)).json();
+      const after = await waitIdle(thread.id);
       assert.equal(after.workMode, 'execute'); assert.equal(after.permissionMode, 'full_access'); assert.equal(after.agentSessionId, before.agentSessionId);
       await page.getByRole('button', { name: '添加与模式', exact: true }).click();
       await planChoice(page).click();
-      await page.locator('.composer textarea[placeholder="先分析和讨论方案"]').waitFor();
+      await page.locator('.plan-pill[aria-label="退出计划模式"]').waitFor();
+      // Plan mode on again in a thread with history: nothing to start until there is a new plan.
+      assert.equal(await page.getByRole('button', { name: '确认执行该方案', exact: true }).count(), 0);
+      await page.locator('.plan-pill[aria-label="退出计划模式"]').click();
+      await page.locator('.composer textarea[placeholder="继续这个线程"]').waitFor();
+      assert.equal(await (await api(daemon, `/api/threads/${thread.id}`)).json().then(t => t.workMode), 'execute');
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
     } finally { await context.close(); }
   }
 });
 
-test('native plan approvals, cancellation, and unsupported agents', { timeout: 60000 }, async () => {
+test('native plan approvals and stopped questions leave their trace', { timeout: 60000 }, async () => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   try {
     const page = await context.newPage();
@@ -106,24 +176,51 @@ test('native plan approvals, cancellation, and unsupported agents', { timeout: 6
       const thread = await create(agent, title);
       await select(page, title, false);
       await send(page, 'plan-approval');
-      await page.getByRole('region', { name: '计划审批' }).waitFor();
-      await page.getByRole('button', { name: '开始执行', exact: true }).click();
-      await page.getByText('已提交计划意见', { exact: true }).waitFor();
+      // The plan itself is the card in the thread; the decision is the sheet.
+      await page.locator('.proposal').getByText('实施计划').first().waitFor();
+      await planSheet(page).getByText('是否执行该方案？', { exact: true }).waitFor();
+      await planSheet(page).getByRole('button', { name: '确认执行该方案', exact: true }).click();
+      await page.getByText('已确认执行', { exact: true }).waitFor();
       await page.getByRole('button', { name: '停止', exact: true }).waitFor({ state: 'hidden' });
-      const updated = await (await api(daemon, `/api/threads/${thread.id}`)).json();
+      const updated = await waitIdle(thread.id);
       assert.equal(updated.workMode, 'execute');
-      const events = await (await api(daemon, `/api/threads/${thread.id}/events`)).json();
-      assert.equal(events.filter(e => e.type === 'turn.started').length, 1);
+      assert.equal((await events(thread.id)).filter(e => e.type === 'turn.started').length, 1);
     }
-    const title = '取消计划提问'; await create('codex', title); await select(page, title, false); await send(page, 'plan-question');
-    await page.getByRole('button', { name: '提交回答', exact: true }).waitFor();
-    await page.getByRole('button', { name: '停止', exact: true }).click();
-    await page.getByText('本次询问已结束', { exact: true }).waitFor();
+    // A question the turn ran out under says so; one skipped says that instead.
+    const title = '取消计划提问';
+    const stopped = await create('codex', title);
+    await select(page, title, false); await send(page, 'plan-question');
+    await questionSheet(page).getByRole('radio', { name: /桌面和手机/ }).waitFor();
+    assert.equal((await api(daemon, `/api/threads/${stopped.id}/cancel`, { method: 'POST', body: '{}' })).status, 200);
+    await page.getByText('提问已结束 · 优先支持哪一端？', { exact: true }).waitFor();
     await create('pi', '普通 Pi', 'execute'); await select(page, '普通 Pi', false);
     await page.getByRole('button', { name: '添加与模式', exact: true }).click();
     assert.equal(await planChoice(page).count(), 1);
     assert.equal(await attachChoice(page).count(), 1);
   } finally { await context.close(); }
+});
+
+test('tool approvals are asked in the sheet, with the command one tap away', { timeout: 120000 }, async () => {
+  for (const mobile of [false, true]) for (const colorScheme of ['light', 'dark']) {
+    const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1400, height: 900 }, isMobile: mobile, hasTouch: mobile, colorScheme });
+    try {
+      const page = await context.newPage();
+      const title = `权限审批 ${mobile} ${colorScheme}`;
+      const thread = await create('codex', title, 'execute');
+      await api(daemon, `/api/threads/${thread.id}`, { method: 'PATCH', body: JSON.stringify({ permissionMode: 'ask' }) });
+      await select(page, title, mobile);
+      await send(page, 'please approve');
+      const sheet = page.getByRole('dialog', { name: '权限审批' });
+      await sheet.waitFor();
+      await sheet.getByText('运行命令', { exact: true }).waitFor();
+      await sheet.locator('.sheet-command').getByText('rm -rf /tmp/one/build').waitFor();
+      await sheet.getByRole('button', { name: '允许这一次', exact: true }).waitFor();
+      if (shots) await page.screenshot({ path: join(shots, `approval-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
+      await sheet.getByRole('button', { name: '允许这一次', exact: true }).click();
+      await page.getByText('已允许 · 运行命令', { exact: true }).waitFor();
+      await page.getByRole('button', { name: '停止', exact: true }).waitFor({ state: 'hidden' });
+    } finally { await context.close(); }
+  }
 });
 
 test('add menu keeps Plan and attachments accessible and the crowded mobile model dial circular', { timeout: 180000 }, async () => {
@@ -142,6 +239,7 @@ test('add menu keeps Plan and attachments accessible and the crowded mobile mode
       await add.click();
       assert.equal(await plan.getAttribute('aria-checked'), 'false');
       await plan.click();
+      await page.locator('.plan-pill[aria-label="退出计划模式"]').waitFor();
       await page.locator('.composer textarea[placeholder="先分析和讨论方案"]').waitFor();
       await add.click();
       assert.equal(await plan.getAttribute('aria-checked'), 'true');
@@ -150,9 +248,12 @@ test('add menu keeps Plan and attachments accessible and the crowded mobile mode
       await page.reload();
       if (mobile) await page.locator('.menu-btn').click();
       await page.locator('.thread-title', { hasText: title }).first().click();
+      await page.locator('.plan-pill[aria-label="退出计划模式"]').waitFor();
       await add.click();
       assert.equal(await plan.getAttribute('aria-checked'), 'true');
-      await plan.click();
+      await page.keyboard.press('Escape');
+      // The pill is the other way off plan mode.
+      await page.locator('.plan-pill[aria-label="退出计划模式"]').click();
       await page.locator('.composer textarea[placeholder="先分析和讨论方案"]').waitFor({ state: 'hidden' });
       const updated = await (await api(daemon, `/api/threads/${thread.id}`)).json();
       assert.equal(updated.workMode, 'execute');
@@ -200,4 +301,44 @@ test('add menu keeps Plan and attachments accessible and the crowded mobile mode
       await page.getByRole('button', { name: '停止', exact: true }).waitFor({ state: 'hidden' });
     } finally { await context.close(); }
   }
+});
+
+test('a phone folds the empty composer to one line while a turn runs, and opens it on touch', { timeout: 120000 }, async () => {
+  for (const colorScheme of ['light', 'dark']) {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, colorScheme });
+    try {
+      const page = await context.newPage();
+      const title = `折叠输入框 ${colorScheme}`;
+      const thread = await create('codex', title, 'execute');
+      await select(page, title, true);
+      await send(page, 'slow');
+      await page.getByRole('button', { name: '停止', exact: true }).waitFor();
+      await page.locator('.composer textarea').blur();
+      await page.locator('.composer-box.collapsed').waitFor();
+      await page.locator('.composer-box.collapsed textarea[placeholder="追加一条…"]').waitFor();
+      await page.locator('.composer-box.collapsed .composer-add').waitFor();
+      await page.locator('.composer-box.collapsed .send-btn.stop').waitFor();
+      assert.equal(await page.getByRole('button', { name: '协作', exact: true }).count(), 0, 'the folded line keeps only add, write and stop');
+      if (shots) await page.screenshot({ path: join(shots, `composer-collapsed-phone-${colorScheme}.png`), animations: 'disabled' });
+      // Touching the line is focus: the box comes back whole before the keyboard can cover it.
+      await page.locator('.composer-box.collapsed textarea').tap();
+      await page.locator('.composer-box.collapsed').waitFor({ state: 'detached' });
+      await page.locator('.composer textarea[placeholder="追加一条，这一轮结束后发送"]').waitFor();
+      await page.getByRole('button', { name: '协作', exact: true }).waitFor();
+      await page.getByRole('button', { name: '停止', exact: true }).click();
+      await page.getByRole('button', { name: '停止', exact: true }).waitFor({ state: 'hidden' });
+    } finally { await context.close(); }
+  }
+  // Desktop keeps the whole box, running or not.
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  try {
+    const page = await context.newPage();
+    const thread = await create('codex', '折叠输入框 桌面', 'execute');
+    await select(page, '折叠输入框 桌面', false);
+    await send(page, 'slow');
+    await page.getByRole('button', { name: '停止', exact: true }).waitFor();
+    await page.locator('.composer textarea').blur();
+    assert.equal(await page.locator('.composer-box.collapsed').count(), 0);
+    await page.getByRole('button', { name: '停止', exact: true }).click();
+  } finally { await context.close(); }
 });

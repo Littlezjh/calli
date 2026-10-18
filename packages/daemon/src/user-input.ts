@@ -55,7 +55,14 @@ export class UserInputs {
     return true;
   }
 
-  cancel(threadId: string, nativeId?: string): void {
-    for (const [id, p] of this.pending) if (p.threadId === threadId && (nativeId === undefined || p.request.id === nativeId)) this.answer(id, { cancelled: true });
+  /** `ended`: the turn ran out under the question (stopped, failed, expired), rather than the user leaving it unanswered. */
+  cancel(threadId: string, nativeId?: string, ended = false): void {
+    for (const [id, p] of this.pending) {
+      if (p.threadId !== threadId || (nativeId !== undefined && p.request.id !== nativeId)) continue;
+      this.pending.delete(id);
+      const answer: UserInputAnswer = { cancelled: true };
+      this.emit(p.threadId, p.turnId, 'input.resolved', { inputId: id, answer, ...(ended ? { reason: 'ended' } : {}) });
+      p.resolve(answer);
+    }
   }
 }

@@ -1,5 +1,6 @@
 import type { WorkMode } from './types.js';
 import { cliDiagnostic } from './diagnostics.js';
+import { PlanReply } from './plan-reply.js';
 import { sessionEnvironment } from './types.js';
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { homedir } from 'node:os';
@@ -257,6 +258,8 @@ interface Turn {
   resolve(result: TurnResult): void;
   started: Set<number>;
   cancelled: boolean;
+  /** In plan mode, the reply held back until it is known whether it is the plan. */
+  plan?: PlanReply;
 }
 
 class AgySession implements AgentSession {
@@ -342,7 +345,14 @@ class AgySession implements AgentSession {
       if (record.conversation_id) this.agentSessionId = String(record.conversation_id);
       this.ready?.resolve();
     } else if (record.event === 'step_update' && this.turn) {
-      for (const ev of mapAgyStep(record.step_update, this.turn.started)) this.turn.hooks.emit(ev);
+      const { hooks, plan } = this.turn;
+      for (const ev of mapAgyStep(record.step_update, this.turn.started)) {
+        if (plan && ev.type === 'message.delta') plan.add(String(ev.data.text ?? ''));
+        else {
+          if (plan && ev.type === 'tool.start') plan.aside();
+          hooks.emit(ev);
+        }
+      }
     } else if (record.event === 'result' && this.turn) {
       // After an interrupted or failed turn the process is on its way out; the next turn gets a new one.
       if (record.result?.status !== 'SUCCESS') this.stale = true;
@@ -353,6 +363,7 @@ class AgySession implements AgentSession {
   private finishTurn(result: TurnResult): void {
     const turn = this.turn;
     if (!turn) return;
+    turn.plan?.finish(result.stopReason === 'end_turn');
     this.turn = null;
     turn.resolve(result);
   }
@@ -395,7 +406,9 @@ class AgySession implements AgentSession {
     await live.start();
     if (this.child !== child) { await live.stop(); return { stopReason: 'error', error: 'agy 已退出' }; }
     try { return await new Promise<TurnResult>((resolve) => {
-      this.turn = { hooks, resolve, started: new Set(), cancelled: false };
+      // agy's plan mode has no plan of its own to send: what it answers with is the plan.
+      const plan = this.opts.workMode === 'plan' ? new PlanReply((ev) => hooks.emit(ev), 'plan') : undefined;
+      this.turn = { hooks, resolve, started: new Set(), cancelled: false, plan };
       child.stdin.write(JSON.stringify({ event: 'user', message: { content: input.text + imagePathNote(input.images) } }) + '\n');
       prepared();
     }); } finally { await live.stop(); }

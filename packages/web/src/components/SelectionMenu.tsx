@@ -27,23 +27,18 @@ function selectable(node: Node | null): boolean {
   return !el.closest('textarea, input, [contenteditable="true"], .side-chat, .lightbox, .dialog-scrim');
 }
 
-/** Room left under the passage on a touch screen for the selection's end handle. */
-const HANDLE_GAP = 26;
+/** How far a press may move and still count as a tap rather than a drag. */
+const TAP_SLOP = 10;
 
 /**
- * Centred on the passage, above it when there is room, below it otherwise. On a touch screen the
- * other way round: the system's own menu (copy, look up, translate) takes the space above.
+ * Centred on the passage, above it when there is room, below it otherwise.
  * The rect is on the screen; the menu is placed within the app's box, which a phone keyboard can
  * have moved down the page.
  */
-function placeNear(rect: DOMRect, width: number, below = false): { top: number; left: number } {
+function placeNear(rect: DOMRect, width: number): { top: number; left: number } {
   const left = Math.min(Math.max(rect.left + rect.width / 2 - width / 2, MARGIN), window.innerWidth - width - MARGIN);
   const above = rect.top - MENU_HEIGHT - 12;
-  const under = rect.bottom + (below ? HANDLE_GAP : 12);
-  const fitsUnder = under + MENU_HEIGHT + MARGIN <= window.innerHeight;
-  const top = below
-    ? fitsUnder || above < MARGIN ? Math.min(under, window.innerHeight - MENU_HEIGHT - MARGIN) : above
-    : above >= MARGIN ? above : Math.min(under, window.innerHeight - MENU_HEIGHT - MARGIN);
+  const top = above >= MARGIN ? above : Math.min(rect.bottom + 12, window.innerHeight - MENU_HEIGHT - MARGIN);
   const box = document.querySelector('.app')?.getBoundingClientRect();
   return { top: top - (box?.top ?? 0), left: left - (box?.left ?? 0) };
 }
@@ -65,9 +60,11 @@ export function SelectionMenu({ onNote, onSideAsk }: Props) {
   const textRef = useRef('');
   const rangeRef = useRef<Range | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
-  // On a touch screen the keyboard comes up over the lower half and the browser pans to the field,
-  // so a field beside the passage ends up under the keyboard or off the screen. There it sits at
-  // the bottom of the app instead, just above the keyboard, and shows the passage it is about.
+  // On a touch screen nothing goes beside the passage: the system's own menu (copy, look up,
+  // translate) sits there, above or below depending on the handles, and would cover ours. And when
+  // commenting, the keyboard comes up over the lower half and the browser pans to the field. So the
+  // menu, and then the field with the passage it is about, sit at the bottom of the app in the
+  // composer's place, just above the keyboard.
   const touch = useIsTouch();
   const touchRef = useRef(touch);
   touchRef.current = touch;
@@ -91,7 +88,8 @@ export function SelectionMenu({ onNote, onSideAsk }: Props) {
 
       textRef.current = text;
       rangeRef.current = range.cloneRange();
-      setPos(placeNear(rect, MENU_WIDTH, touchRef.current));
+      // On a touch screen the menu is docked at the bottom and only needs to know it is showing.
+      setPos(touchRef.current ? { top: 0, left: 0 } : placeNear(rect, MENU_WIDTH));
     };
 
     document.addEventListener('selectionchange', read);
@@ -114,17 +112,31 @@ export function SelectionMenu({ onNote, onSideAsk }: Props) {
     return () => void registry.delete('rah-note-pending');
   }, [commenting]);
 
-  // A press anywhere else drops a comment being written. Pointer events, not mouse ones: the tap
-  // that opened the field is followed by a compatibility mousedown where the finger was, which
-  // with the field docked away from there would close it at once. That tap's pointerdown is over
-  // before this listener exists.
+  // A tap anywhere else drops a comment being written; a drag (scrolling the thread to reread the
+  // passage, or a scrollbar) does not. So it is decided when the press ends: a press the browser
+  // took over for scrolling ends in pointercancel, and one that moved is not a tap. Pointer events,
+  // not mouse ones: the tap that opened the field is followed by a compatibility mousedown where
+  // the finger was, which with the field docked away from there would close it at once. That tap's
+  // pointerdown is over before these listeners exist, so its pointerup finds no press to end.
   useEffect(() => {
     if (!commenting) return;
+    let press: { id: number; x: number; y: number } | null = null;
     const onDown = (e: PointerEvent) => {
-      if (rootRef.current && !e.composedPath().includes(rootRef.current)) close();
+      press = rootRef.current && !e.composedPath().includes(rootRef.current) ? { id: e.pointerId, x: e.clientX, y: e.clientY } : null;
     };
+    const onUp = (e: PointerEvent) => {
+      if (press?.id === e.pointerId && Math.hypot(e.clientX - press.x, e.clientY - press.y) < TAP_SLOP) close();
+      press = null;
+    };
+    const onCancel = () => void (press = null);
     document.addEventListener('pointerdown', onDown);
-    return () => document.removeEventListener('pointerdown', onDown);
+    document.addEventListener('pointerup', onUp);
+    document.addEventListener('pointercancel', onCancel);
+    return () => {
+      document.removeEventListener('pointerdown', onDown);
+      document.removeEventListener('pointerup', onUp);
+      document.removeEventListener('pointercancel', onCancel);
+    };
   }, [commenting]);
 
   const close = () => {
@@ -203,7 +215,7 @@ export function SelectionMenu({ onNote, onSideAsk }: Props) {
   }
 
   return (
-    <div ref={rootRef} className="selection-menu" style={{ top: pos.top, left: pos.left }} role="toolbar" aria-label={t('selection.toolbar')}>
+    <div ref={rootRef} className={`selection-menu${touch ? ' docked' : ''}`} style={touch ? undefined : { top: pos.top, left: pos.left }} role="toolbar" aria-label={t('selection.toolbar')}>
       <button type="button" {...act(startComment)}>
         <IconQuote size={14} />
         {t('selection.note')}

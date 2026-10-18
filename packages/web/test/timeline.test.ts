@@ -864,6 +864,55 @@ test('native questions replay answers and cease waiting after cancellation or da
   const interrupted = buildTimeline([...asked, ev('turn.error', { code: 'interrupted' })]);
   const old = interrupted.items.find(it => it.kind === 'input');
   assert.ok(old && old.kind === 'input');
-  assert.deepEqual(old.answer, { cancelled: true });
+  assert.deepEqual(old.answer, { cancelled: true, ended: true });
   assert.equal(interrupted.awaitingApproval, false);
+});
+
+test('work after a question, plan or approval lands below the card, and tools started above still get their result', () => {
+  for (const card of [
+    ev('input.request', { inputId: 'q1', title: '范围', questions: [{ id: 'scope', question: '范围？', options: [{ value: '桌面', label: '桌面' }] }] }),
+    ev('approval.request', { approvalId: 'ap', title: 'Run', options: [{ optionId: 'ok', name: '允许这一次', kind: 'allow_once' }] }),
+    ev('plan.delta', { id: 'plan', text: '# 方案' }),
+  ]) {
+    seq = 0;
+    const events = [
+      ev('turn.started', { text: 'go' }),
+      ev('reasoning.delta', { text: 'thinking above' }),
+      ev('tool.start', { id: 'above', title: 'read', kind: 'read' }),
+      card,
+      ev('reasoning.delta', { text: 'thinking below' }),
+      ev('tool.end', { id: 'above', status: 'completed', output: 'result' }),
+      ev('message.delta', { text: 'answer' }),
+      ev('turn.done', {}),
+    ];
+    const tl = buildTimeline(events);
+    const kinds = tl.items.map(i => i.kind);
+    const cardAt = kinds.indexOf(card.type === 'input.request' ? 'input' : card.type === 'approval.request' ? 'approval' : 'proposal');
+    const works = tl.items.filter(i => i.kind === 'work');
+    assert.equal(works.length, 2, `${card.type}: the card ends the block above it`);
+    assert.ok(tl.items.indexOf(works[0]) < cardAt && cardAt < tl.items.indexOf(works[1]), `${card.type}: the new block is below the card`);
+    assert.ok(works[0].kind === 'work' && works[0].steps[0].output === 'result', `${card.type}: a tool started above the card still gets its result`);
+    assert.ok(works[1].kind === 'work' && works[1].entries[0].kind === 'thought', `${card.type}: thinking after the card goes into the new block`);
+    assert.ok(works.every(w => w.kind === 'work' && w.done), `${card.type}: every block is done when the turn ends`);
+  }
+});
+
+test('only the last work block hands its closing remark over as the answer', () => {
+  seq = 0;
+  const tl = buildTimeline([
+    ev('turn.started', { text: 'go' }),
+    ev('message.delta', { text: '第一段话' }),
+    ev('tool.start', { id: 'a', title: 'ls', kind: 'execute' }),
+    ev('input.request', { inputId: 'q1', title: '范围', questions: [{ id: 'scope', question: '范围？', options: [] }] }),
+    ev('input.resolved', { inputId: 'q1', answer: { cancelled: true } }),
+    ev('message.delta', { text: '最后一段话' }),
+    ev('tool.start', { id: 'b', title: 'ls', kind: 'execute' }),
+    ev('turn.done', {}),
+  ]);
+  const works = tl.items.filter(i => i.kind === 'work');
+  assert.equal(works.length, 2);
+  // The earlier remark stays a note inside its block; the last one becomes the answer.
+  assert.ok(works[0].kind === 'work' && works[0].entries.some(e => e.kind === 'note' && e.text === '第一段话'));
+  assert.ok(!tl.items.some(i => i.kind === 'assistant' && i.text === '第一段话'));
+  assert.ok(tl.items.some(i => i.kind === 'assistant' && i.text === '最后一段话'));
 });

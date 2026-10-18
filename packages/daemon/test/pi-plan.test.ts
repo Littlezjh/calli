@@ -9,7 +9,8 @@ const adapter = () => new PiRpcAdapter([process.execPath, fixture]);
 async function inspect(session: AgentSession, text = 'inspect-work-mode', images: TurnInput['images'] = []) {
   let output = '';
   const result = await session.prompt({ text, images }, {
-    emit: event => { if (event.type === 'message.delta') output += event.data.text; },
+    // In plan mode the reply comes back as the plan.
+    emit: event => { if (event.type === 'message.delta' || event.type === 'plan.completed') output += event.data.text; },
     approve: async () => ({ outcome: 'cancelled' }),
   });
   assert.equal(result.stopReason, 'end_turn');

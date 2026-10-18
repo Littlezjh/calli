@@ -817,7 +817,7 @@ export class Api {
     threadId: string,
     text: string,
     images: OutgoingImage[] = [],
-    opts: { queue?: boolean; mentions?: AgentMention[]; videos?: string[] } = {},
+    opts: { queue?: boolean; mentions?: AgentMention[]; videos?: string[]; workMode?: WorkMode } = {},
   ): Promise<{ turnId: string } | { queued: true; id: string }> {
     return this.request('POST', `/api/threads/${threadId}/turns`, {
       text,
@@ -825,6 +825,7 @@ export class Api {
       ...(opts.queue ? { queue: true } : {}),
       ...(opts.mentions?.length ? { mentions: opts.mentions } : {}),
       ...(opts.videos?.length ? { videos: opts.videos } : {}),
+      ...(opts.workMode ? { workMode: opts.workMode } : {}),
     });
   }
 

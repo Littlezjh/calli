@@ -181,6 +181,13 @@ function saveAs(href: string, name: string): void {
   link.remove();
 }
 
+/** Saves a made-up file (a plan as Markdown) under the name it gets. */
+export function downloadBlob(blob: Blob, name: string): void {
+  const href = URL.createObjectURL(blob);
+  saveAs(href, name);
+  setTimeout(() => URL.revokeObjectURL(href), 10_000);
+}
+
 /** Saves a picture shown from `url` as the file it is. The name gets an ending if it lacks one. */
 export async function savePicture(url: string, name?: string): Promise<void> {
   const blob = await (await fetch(url)).blob();

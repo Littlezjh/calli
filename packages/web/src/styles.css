@@ -1557,32 +1557,6 @@ html.list-open body {
   overflow-wrap: anywhere;
 }
 
-.approval {
-  padding: 14px 16px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
-  box-shadow: var(--shadow-card);
-}
-
-.approval-title {
-  margin-bottom: 10px;
-  font-family: var(--mono);
-  font-size: 13px;
-  overflow-wrap: anywhere;
-}
-
-.approval-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.approval-result {
-  color: var(--muted);
-  font-size: 13px;
-}
-
 .error-box {
   padding: 11px 14px;
   border-radius: var(--radius);
@@ -1860,6 +1834,46 @@ html.list-open body {
   gap: 4px;
   min-width: 0;
   padding: 6px 8px 8px;
+}
+
+/* On a phone, a running turn with an empty box leaves one line: add, write, stop. Touching the
+   line is focus, and focus brings the whole box back before the keyboard can cover anything. */
+.composer-box.collapsed {
+  flex-direction: row;
+  align-items: center;
+  gap: 2px;
+  border-radius: var(--radius-pill);
+  padding: 4px 6px 4px 4px;
+}
+
+.composer-box.collapsed .composer-context,
+.composer-box.collapsed .queue,
+.composer-box.collapsed .attachments,
+.composer-box.collapsed .notes,
+.composer-box.collapsed .coord-rows {
+  display: none;
+}
+
+.composer-box.collapsed textarea {
+  flex: 1;
+  min-height: 40px;
+  max-height: 40px;
+  padding: 10px 10px 10px 12px;
+  white-space: nowrap;
+}
+
+/* The bar's buttons join the row itself, the add button leading it. */
+.composer-box.collapsed .composer-bar {
+  display: contents;
+}
+
+.composer-box.collapsed .composer-bar > .pop,
+.composer-box.collapsed .composer-bar > .composer-add {
+  order: -1;
+}
+
+.composer-box.collapsed .spacer {
+  flex: none;
 }
 
 .spacer {
@@ -2499,17 +2513,28 @@ html.list-open body {
   background: var(--accent-soft);
 }
 
-/* On a touch screen the field takes the composer's place at the bottom of the app, just above the
-   keyboard, with the passage it is about shown above it. */
-.selection-menu.commenting.docked {
+/* On a touch screen the menu takes the composer's place at the bottom of the app, clear of the
+   system's own menu beside the passage; the comment field goes there too, just above the keyboard,
+   with the passage it is about shown above it. */
+.selection-menu.docked {
   left: 16px;
   right: 16px;
   bottom: calc(14px + var(--safe-bottom));
+  max-width: calc(var(--content-w) + 8px);
+  margin: 0 auto;
+}
+
+.selection-menu.docked:not(.commenting) button {
+  flex: 1;
+  justify-content: center;
+  padding: 11px 8px;
+  font-size: 14px;
+}
+
+.selection-menu.commenting.docked {
   flex-direction: column;
   align-items: stretch;
   gap: 6px;
-  max-width: calc(var(--content-w) + 8px);
-  margin: 0 auto;
   padding: 10px 6px 6px 14px;
   border-radius: var(--radius-lg);
 }
@@ -4882,9 +4907,27 @@ input.picker-search {
   border-radius: var(--radius-pill);
 }
 
-.composer-add.plan-active {
-  background: var(--active);
+/* Plan mode as a pill of its own: what is on shows, × takes it off. */
+.plan-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  height: 32px;
+  padding: 0 8px 0 10px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--hover);
   color: var(--text);
+  font-size: 13px;
+}
+
+.plan-pill:hover {
+  background: var(--active);
+}
+
+.plan-pill > svg:last-child {
+  color: var(--muted);
 }
 
 .pop > .pop-panel.composer-add-menu {
@@ -5444,49 +5487,9 @@ input.picker-search {
   background: transparent;
 }
 
-.approval.pending {
-  border-color: var(--border-strong);
-}
-
-.approval-title {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-
 .dot.waiting {
   flex-shrink: 0;
   background: var(--warn);
-}
-
-.approval-command {
-  margin: 0 0 12px;
-  padding: 9px 12px;
-  border-radius: var(--radius-sm);
-  background: var(--code-bg);
-  font-family: var(--mono);
-  font-size: 13px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.approval-preview {
-  max-height: 280px;
-  margin: 0 0 12px;
-  overflow: auto;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-}
-
-.approval-preview .diff {
-  border-top: 0;
-}
-
-.approval-note {
-  margin-top: 9px;
-  color: var(--muted);
-  font-size: 12.5px;
-  overflow-wrap: anywhere;
 }
 
 /* ---------- Back to bottom ---------- */
@@ -8221,26 +8224,497 @@ button.coord-row-name { cursor: pointer; }
 .obs-chart-table th, .obs-chart-table td { padding: 8px; text-align: right; border-bottom: 1px solid var(--border); font-weight: normal; }
 .obs-chart-table th:first-child { text-align: left; }
 
-/* Native planning and questions stay in the conversation on every screen size. */
-.proposal, .input-card { width: 100%; min-width: 0; padding: 20px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
-.proposal-heading { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; font-size: 13px; font-weight: 600; color: var(--muted); }
-.input-card.pending { border-color: var(--border-strong); }
-.input-question { border: 0; padding: 0; margin: 20px 0; min-width: 0; }
-.input-question legend { padding: 0; margin-bottom: 10px; font-size: 14px; font-weight: 500; line-height: 1.6; }
-.input-options { display: grid; gap: 8px; }
-.input-option { display: flex; align-items: center; justify-content: space-between; gap: 12px; text-align: left; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); color: var(--text); }
-.input-option:hover { background: var(--hover); }
-.input-option.selected { border-color: var(--accent); background: var(--active); }
-.input-option strong { font-size: 14px; font-weight: 500; }
-.input-option small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.5; }
-.input-check { display: inline-flex; width: 16px; flex-shrink: 0; }
-.input-card textarea { display: block; width: 100%; box-sizing: border-box; min-height: 72px; margin-top: 10px; padding: 12px; resize: vertical; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--text); font: inherit; font-size: 14px; }
-.input-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
-.input-result { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
-.input-error { color: var(--danger); font-size: 13px; margin-top: 10px; }
-.composer-plan-action { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 12px; }
-.composer-plan-action button { flex-shrink: 0; }
-@media (max-width: 600px) { .proposal, .input-card { padding: 16px; } }
+/* ---------- Plan card, plan reader, and the bottom sheet ---------- */
+
+/* A plan in the thread: a small card with the opening of the plan, fading out where it is cut. */
+.proposal {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.proposal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 8px 0 16px;
+}
+
+.proposal-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.proposal-tools {
+  display: inline-flex;
+  flex: none;
+}
+
+.proposal-tools .icon-btn {
+  width: 32px;
+  height: 32px;
+  color: var(--muted);
+}
+
+.proposal-body {
+  display: block;
+  width: 100%;
+  padding: 2px 16px 12px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.proposal-scroll {
+  max-height: 260px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.proposal-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* Only where the plan is cut off does it fade, over its last stretch; one still being written is
+   pinned to its newest lines and fades at the top instead. */
+.proposal.overflow .proposal-scroll {
+  mask-image: linear-gradient(#000 calc(100% - 64px), transparent 100%);
+}
+
+.proposal.streaming.overflow .proposal-scroll {
+  mask-image: linear-gradient(transparent 0, #000 64px);
+}
+
+/* What an answered question or approval left behind: one quiet line, there but not in the way. */
+.trace-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  color: var(--faint);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.trace-line > svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.trace-line-text {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+}
+
+/* A plan at full size: a panel over a scrim on a desktop, its own screen on a phone. */
+.plan-reader {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--scrim);
+  animation: fade-in 0.14s ease-out;
+}
+
+/* As tall as the plan makes it, never taller than most of the screen: a short plan must not sit
+   in a panel of empty page. */
+.plan-reader-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  width: min(860px, 92vw);
+  max-height: 86vh;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+}
+
+.plan-reader-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: none;
+  padding: 8px 10px 8px 8px;
+}
+
+.plan-reader-actions {
+  display: inline-flex;
+}
+
+.plan-reader-scroll {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.plan-reader-content {
+  max-width: var(--content-w);
+  margin: 0 auto;
+  padding: 4px 36px 56px;
+}
+
+@media (max-width: 640px) {
+  .plan-reader {
+    padding: 0;
+    background: var(--bg);
+  }
+
+  .plan-reader-panel {
+    width: 100%;
+    height: 100%;
+    max-height: none;
+    border-radius: 0;
+    background: var(--bg);
+    box-shadow: none;
+  }
+
+  /* Clear of the status bar, and roomy round buttons at the right, the way Codex has them. */
+  .plan-reader-top {
+    padding: calc(8px + env(safe-area-inset-top)) 14px 8px 8px;
+  }
+
+  .plan-reader .icon-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  .plan-reader-content {
+    padding: 0 20px calc(32px + var(--safe-bottom));
+  }
+
+  .proposal-scroll {
+    max-height: 220px;
+  }
+}
+
+/* Everything that needs the user's word, asked where the composer stands: the slot holds both the
+   box and the sheet, so on every screen the sheet sits exactly where the box does. */
+.composer-slot {
+  position: relative;
+  flex-shrink: 0;
+  width: 100%;
+}
+
+.action-sheet {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: calc(14px + var(--safe-bottom));
+  z-index: 60;
+  margin: 0 auto;
+  max-width: var(--content-w);
+}
+
+.action-sheet-card {
+  padding: 16px 20px 12px;
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+  animation: action-sheet-in 0.16s ease-out;
+}
+
+@keyframes action-sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .action-sheet-card {
+    animation: none;
+  }
+}
+
+/* The composer keeps its place and its draft; it only steps out of sight for the sheet. */
+.main:has(.action-sheet) .composer {
+  visibility: hidden;
+}
+
+.sheet-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.sheet-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sheet-back {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  color: var(--muted);
+}
+
+.sheet-count {
+  margin-left: auto;
+  flex: none;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.sheet-title {
+  margin: 2px 0 4px;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.sheet-options {
+  margin: 2px 0 0;
+}
+
+.sheet-option {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  position: relative;
+  width: 100%;
+  padding: 12px 10px 12px 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  text-align: left;
+  font: inherit;
+}
+
+/* A divider the row's own rounded corners cannot bend: a straight line above the row, not a
+   border on it. */
+.sheet-option + .sheet-option::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: var(--border);
+}
+
+.sheet-option:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.sheet-option:active:not(:disabled) {
+  background: var(--active);
+}
+
+.sheet-option:disabled {
+  opacity: 0.55;
+}
+
+.sheet-option-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.sheet-option-name {
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1.35;
+}
+
+.sheet-option.emphasised .sheet-option-name {
+  font-weight: 600;
+}
+
+.sheet-option-desc {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+/* The mark of a picked choice, or of the way Codex points out first: a filled circle with a tick. */
+.sheet-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 21px;
+  height: 21px;
+  flex: none;
+  border: 1.5px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--accent-fg);
+}
+
+.sheet-check.on {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: var(--shadow-radio);
+}
+
+.sheet-next {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+.sheet-bottom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.sheet-bottom > svg {
+  flex: none;
+  color: var(--muted);
+}
+
+.sheet-note {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.sheet-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 34px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 14.5px;
+}
+
+.sheet-input::placeholder {
+  color: var(--faint);
+}
+
+/* 16px keeps iOS from zooming the page when the field takes the focus. */
+@media (hover: none) {
+  .sheet-input {
+    font-size: 16px;
+  }
+}
+
+.sheet-skip {
+  min-height: 32px;
+  padding: 0 14px;
+}
+
+.sheet-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-fg);
+  transition: transform 0.12s;
+}
+
+.sheet-send:active {
+  transform: scale(0.94);
+}
+
+.sheet-error {
+  margin-top: 8px;
+  color: var(--danger);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+/* The command an approval is about, or the files it would change. */
+.sheet-command {
+  max-height: 7.5em;
+  margin: 8px 0 0;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--code-bg);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow-y: auto;
+}
+
+.sheet-files {
+  margin-top: 10px;
+}
+
+.sheet-file {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 2px 0;
+  font-size: 13px;
+}
+
+.sheet-file-path {
+  min-width: 0;
+  color: var(--muted);
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.sheet-diff-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 2px 6px 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+}
+
+.sheet-diff-toggle:hover {
+  color: var(--text);
+}
+
+.sheet-diff {
+  max-height: 40vh;
+  margin-top: 6px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.sheet-diff .diff {
+  border-top: 0;
+}
 
 /* ---------- Overview page ---------- */
 

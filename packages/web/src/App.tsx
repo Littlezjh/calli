@@ -28,6 +28,7 @@ import { PERMISSION_LABELS, PERMISSION_ORDER, permissionHint, startingPermission
 import { buildTimeline, toMarkdown, turnPreviews, type StoredEvent } from './timeline';
 import { newerBuildAvailable } from './version';
 import { AppearancePanel } from './components/AppearancePanel';
+import { ActionSheet, type SheetTarget } from './components/ActionSheet';
 import { ArchivePanel } from './components/ArchivePanel';
 import { Composer, prefillComposerDraft, type DraftNote } from './components/Composer';
 import { CollaborationMenu } from './components/CollaborationMenu';
@@ -103,6 +104,9 @@ const SIDEBAR_HIDDEN_KEY = 'rah.sidebar.hidden';
 
 /** What members of each instance start with, remembered on this device for the next team. */
 const MEMBER_DEFAULTS_KEY = 'rah.coord.defaults';
+
+/** A plan the user chose to leave be, by thread: the proposal's key, so a reload does not ask again. */
+const PLAN_SKIP_KEY = 'rah:plan-skipped';
 function savedMemberDefaults(key: string): Record<string, MemberDefault> {
   try {
     const saved = JSON.parse(localStorage.getItem(key) ?? '{}');
@@ -418,6 +422,40 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   // Both spellings of the thread's directory; kept stable so the thread view is not re-rendered for nothing.
   const threadRoots = useMemo(() => (selected ? [selected.cwd, selected.cwdReal] : []), [selected?.cwd, selected?.cwdReal]);
   const running = timeline.running || selected?.status === 'running';
+
+  // A plan the user chose to leave be: remembered on this device, so a reload does not ask again.
+  const [planSkip, setPlanSkip] = useState<string | null>(null);
+  useEffect(() => {
+    try {
+      setPlanSkip(selectedId ? localStorage.getItem(`${PLAN_SKIP_KEY}:${selectedId}`) : null);
+    } catch {
+      setPlanSkip(null);
+    }
+  }, [selectedId]);
+
+  // What is waiting for the user right now: the earliest of a pending question, a pending approval,
+  // or the last finished plan nothing has been said after. The bottom sheet asks about it in the
+  // composer's place.
+  const waiting = useMemo(() => {
+    const candidates: Array<{ order: number; target: SheetTarget }> = [];
+    timeline.items.forEach((it, order) => {
+      if (it.kind === 'approval' && it.decision === null) candidates.push({ order, target: { kind: 'approval', item: it } });
+      else if (it.kind === 'input' && it.answer === null) candidates.push({ order, target: { kind: it.inputKind === 'plan' ? 'plan-approval' : 'question', item: it } });
+    });
+    if (!timeline.running) {
+      for (let i = timeline.items.length - 1; i >= 0; i--) {
+        const it = timeline.items[i];
+        if (it.kind === 'user' && !it.coordination) break;
+        if (it.kind === 'proposal' && it.done) {
+          if (planSkip !== it.key) candidates.push({ order: i, target: { kind: 'hub-plan', item: it } });
+          break;
+        }
+      }
+    }
+    candidates.sort((a, b) => a.order - b.order);
+    return candidates;
+  }, [timeline, planSkip]);
+  const waitingOn = waiting[0] ?? null;
 
   // Members are listed under their lead in the sidebar, not as threads of their own.
   const teamMembers = useMemo(() => {
@@ -1184,8 +1222,10 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     const id = selected.id;
     setModeBusy(true);
     try {
-      const updated = await api.updateThread(id, { workMode: mode });
-      setThreads(prev => prev.map(t => t.id === id ? updated : t));
+      if ((selected.workMode ?? 'execute') !== mode) {
+        const updated = await api.updateThread(id, { workMode: mode });
+        setThreads(prev => prev.map(t => t.id === id ? updated : t));
+      }
       if (execute) await api.startTurn(id, t('app.executePlan'));
     } catch (error) { handleError(error); }
     finally { setModeBusy(false); }
@@ -1672,8 +1712,6 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
               loadFile={loadFile}
               onOpenFile={openFileLink}
               onPreview={selected ? (path) => setPreview({ threadId: selected.id, path }) : undefined}
-              onDecide={decide}
-              onAnswer={(id, answer) => api.answerInput(id, answer)}
               hasOlder={hasOlder}
               loadingOlder={loadingOlder}
               onLoadOlder={loadOlder}
@@ -1720,7 +1758,9 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         )}
 
         {!onPage && !(host && !hostUp) && (
-        showcase ? showcase.composer(selectedId) : <Composer
+        <div className="composer-slot">
+        {showcase ? showcase.composer(selectedId) : <>
+        <Composer
           draftKey={hostId ? `host:${hostId}:${selectedId ?? 'new'}` : selectedId ?? 'new'}
           running={running}
           disabled={modeBusy || (!selected && !draftCwd)}
@@ -1732,7 +1772,6 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           mentionExtra={(m) => { const a = agents.find((v) => v.id === m.id); return a ? memberModel(a) : null; }}
           mentionDirectories={coordination?.directories ?? (collaborationDirectories.length ? collaborationDirectories : [activeCwd])}
           onStop={stop}
-          planAction={selected && workMode === 'plan' && !running && timeline.items.some(it => it.kind === 'assistant' || it.kind === 'proposal') ? <><span>{t('app.planReady')}</span><button className="primary" disabled={modeBusy} onClick={() => void changeWorkMode('execute', true)}>{t('composer.start')}</button></> : null}
           header={header}
           planMode={activeCaps?.workModes?.includes('plan') ? { active: workMode === 'plan', disabled: running || modeBusy, onChange: active => void changeWorkMode(active ? 'plan' : 'execute') } : undefined}
           left={left}
@@ -1754,6 +1793,33 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           onNotesChange={onNotesChange}
           lastSent={selected ? lastSent : null}
         />
+        {waitingOn && selected && (
+          <ActionSheet
+            key={waitingOn.target.item.key}
+            target={waitingOn.target}
+            index={1}
+            total={waiting.length}
+            roots={threadRoots}
+            onAnswer={(id, answer) => api.answerInput(id, answer)}
+            onDecide={decide}
+            // The daemon has put the thread back in execute mode when the plan arrived; the call
+            // below only switches it when that did not happen, then sends the go-ahead.
+            onExecutePlan={running ? undefined : () => changeWorkMode('execute', true)}
+            onRejectPlan={(text) => void api.startTurn(selected.id, text, [], { workMode: 'plan' })}
+            onSkipPlan={() => {
+              if (waitingOn.target.kind !== 'hub-plan' || !selectedId) return;
+              try {
+                localStorage.setItem(`${PLAN_SKIP_KEY}:${selectedId}`, waitingOn.target.item.key);
+              } catch {
+                // Not remembered: the sheet stays away until the page reloads all the same.
+              }
+              setPlanSkip(waitingOn.target.item.key);
+            }}
+          />
+        )}
+        </>
+        }
+        </div>
         )}
       </main>
 

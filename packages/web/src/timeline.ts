@@ -121,7 +121,11 @@ export function deliveredPreview(text: string): string {
 
 export type Item =
   | { kind: 'proposal'; key: string; turnId: string; id: string; text: string; done: boolean }
-  | { kind: 'input'; key: string; turnId: string; inputId: string; title: string; inputKind?: string; plan?: string; questions: import('./api').UserQuestion[]; answer: import('./api').UserInputAnswer | null }
+  /**
+   * A question or plan approval the agent asked. `ended` on a cancelled answer means the turn ran
+   * out under it (stopped, failed), not that the user chose to leave it unanswered.
+   */
+  | { kind: 'input'; key: string; turnId: string; inputId: string; title: string; inputKind?: string; plan?: string; questions: import('./api').UserQuestion[]; answer: import('./api').UserInputAnswer | { cancelled: true; ended: true } | null }
   | { kind: 'user'; workMode?: string; key: string; turnId: string; text: string; images: ImageRef[]; videos?: VideoRef[]; fromTerminal?: boolean; scheduled?: boolean; coordination?: CoordinationNote }
   /** The turn's answer: the text after everything the agent did. */
   | { kind: 'assistant'; key: string; turnId: string; text: string; done: boolean }
@@ -383,23 +387,30 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
 
   /** Ends the open turn's items. A turn that ended gets its duration; one that was cut off keeps its last sign of life. */
   const closeTurn = (endedAt?: string) => {
-    const { work, answer, plan } = open;
-    if (work) {
+    const { answer, plan } = open;
+    // A card that asked the user something ended the block above it, so a turn can hold several
+    // work blocks. All of them are finished here; only the last can hand its closing remark over
+    // as the answer.
+    const works = items.filter((it): it is Work => it.kind === 'work' && it.turnId === open.turn);
+    for (const work of works) {
       work.done = true;
       for (const entry of work.entries) {
         if (entry.kind === 'compaction' && entry.status === 'in_progress') entry.status = 'interrupted';
       }
       if (endedAt) work.endedAt = endedAt;
+    }
+    const last = works.at(-1);
+    if (last && !answer) {
       // A turn whose last act was a tool call still said something: its last remark is the answer.
-      const last = answer ? -1 : work.entries.map((e) => e.kind).lastIndexOf('note');
-      if (last >= 0) {
-        const [note] = work.entries.splice(last, 1);
-        if (note.kind === 'note') items.splice(items.indexOf(work) + 1, 0, { kind: 'assistant', key: note.key, turnId: work.turnId, text: note.text, done: true });
+      const noteAt = last.entries.map((e) => e.kind).lastIndexOf('note');
+      if (noteAt >= 0) {
+        const [note] = last.entries.splice(noteAt, 1);
+        if (note.kind === 'note') items.splice(items.indexOf(last) + 1, 0, { kind: 'assistant', key: note.key, turnId: last.turnId, text: note.text, done: true });
       }
     }
     for (const item of items) if (item.turnId === open.turn) {
       if (item.kind === 'proposal') item.done = true;
-      if (item.kind === 'input' && !item.answer) item.answer = { cancelled: true };
+      if (item.kind === 'input' && !item.answer) item.answer = { cancelled: true, ended: true };
     }
     if (answer) answer.done = true;
     if (plan) plan.done = true;
@@ -520,10 +531,17 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
 
       case 'tool.update':
       case 'tool.end': {
-        // A result goes to the row its call started in. Text may have begun meanwhile; that does
-        // not make the result a new piece of work. A result whose call is not here updates nothing.
-        const { work } = open;
-        const step = work?.turnId === turn ? work.steps.find((s) => s.id === String(ev.data.id)) : undefined;
+        // A result goes to the row its call started in. The call may have started in a block above
+        // a card that asked the user something, so every block of the turn is searched, newest
+        // first. A result whose call is not here updates nothing.
+        let work: Work | undefined;
+        let step: Step | undefined;
+        for (let i = items.length - 1; i >= 0; i--) {
+          const it = items[i];
+          if (it.kind !== 'work' || it.turnId !== turn) continue;
+          step = it.steps.find((s) => s.id === String(ev.data.id));
+          if (step) { work = it; break; }
+        }
         if (!work || !step) break;
         applyToolData(step, ev.data);
         if (ev.type === 'tool.end') step.endedAt = ev.ts;
@@ -535,20 +553,35 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
       case 'plan.completed': {
         const id = String(ev.data.id ?? 'plan');
         let proposal = items.find((it): it is Extract<Item, { kind: 'proposal' }> => it.kind === 'proposal' && it.turnId === turn && it.id === id);
-        if (!proposal) { proposal = { kind: 'proposal', key, turnId: turn, id, text: '', done: false }; items.push(proposal); }
+        if (!proposal) {
+          // The card stands where the turn has got to; what the agent does after it goes below.
+          open.work = null;
+          open.answer = null;
+          proposal = { kind: 'proposal', key, turnId: turn, id, text: '', done: false };
+          items.push(proposal);
+        }
         if (ev.type === 'plan.completed') { proposal.text = String(ev.data.text ?? ''); proposal.done = true; }
         else proposal.text += String(ev.data.text ?? '');
         break;
       }
       case 'input.request':
+        // The question interrupts the turn's flow: work that goes on after it lands below it.
+        open.work = null;
+        open.answer = null;
         items.push({ kind: 'input', key, turnId: turn, inputId: String(ev.data.inputId), title: ev.data.title, inputKind: ev.data.kind, plan: ev.data.plan, questions: ev.data.questions ?? [], answer: null });
         break;
       case 'input.resolved':
-        for (const it of items) if (it.kind === 'input' && it.inputId === ev.data.inputId) it.answer = ev.data.answer;
+        for (const it of items) if (it.kind === 'input' && it.inputId === ev.data.inputId) {
+          // `reason: 'ended'`: the turn ran out under the question, not that the user skipped it.
+          it.answer = ev.data.reason === 'ended' ? { cancelled: true, ended: true } : ev.data.answer;
+        }
         break;
 
       case 'approval.request': {
         const toolCall = (ev.data.toolCall ?? {}) as { content?: unknown; rawInput?: { command?: unknown } };
+        // Like a question: what the agent does once it is granted goes below the card.
+        open.work = null;
+        open.answer = null;
         items.push({
           kind: 'approval',
           key,

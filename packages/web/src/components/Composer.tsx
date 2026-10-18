@@ -126,7 +126,6 @@ interface Props {
   onStop: () => void;
   /** Strip above the text area: which agent and which directory. */
   header: ReactNode;
-  planAction?: ReactNode;
   /** Native planning is offered in the add menu only when the agent supports it. */
   planMode?: { active: boolean; disabled: boolean; onChange: (active: boolean) => void };
   /** Controls at the left of the bottom bar, after the add menu. */
@@ -187,7 +186,6 @@ export function Composer({
   onSend,
   onStop,
   header,
-  planAction,
   planMode,
   left,
   right,
@@ -546,6 +544,10 @@ export function Composer({
   };
 
   const hasContent = text.trim() !== '' || images.length > 0 || videos.length > 0 || notes.length > 0 || mentions.some((m) => m.task?.trim());
+  // On a phone, a running turn with nothing being written gives up the room: one line, back to
+  // two the moment the box is touched. Anything in it, waiting in it, or focus keeps the whole box.
+  const [focused, setFocused] = useState(false);
+  const collapsed = narrow && running && !hasContent && queued.length === 0 && preparing === 0 && !focused;
   const goalControl = text.trim() === '/goal' ? 'show' : text.trim() === '/goal pause' ? 'pause' : text.trim() === '/goal clear' ? 'clear' : null;
   const immediate = !!goalControl && !!goal?.controls.includes(goalControl) && !images.length && !videos.length && !notes.length && !mentions.length;
   const queueFull = running && !immediate && queued.length >= MAX_QUEUED;
@@ -710,7 +712,13 @@ export function Composer({
         )}
 
         <div
-          className={`composer-box${dragOver ? ' drag-over' : ''}`}
+          className={`composer-box${dragOver ? ' drag-over' : ''}${collapsed ? ' collapsed' : ''}`}
+          onFocus={() => setFocused(true)}
+          onBlur={(e) => {
+            // A tap on a button in the box moves the focus to it; the box stays whole so the
+            // change of shape cannot pull the button out from under the finger.
+            if (!e.currentTarget.contains(e.relatedTarget)) setFocused(false);
+          }}
           onDragOver={(e) => {
             if (!hasFiles(e)) return;
             e.preventDefault();
@@ -722,7 +730,6 @@ export function Composer({
           onDrop={onDrop}
         >
           {header && <div className="composer-context">{header}</div>}
-          {planAction && <div className="composer-plan-action">{planAction}</div>}
 
           {queued.length > 0 && (
             <div className="queue" aria-label={t('composer.queued')}>
@@ -821,7 +828,7 @@ export function Composer({
             ref={ref}
             rows={1}
             value={text}
-            placeholder={dragOver ? t('composer.drop') : placeholder}
+            placeholder={dragOver ? t('composer.drop') : collapsed ? t('composer.appendOne') : placeholder}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onKeyDown}
             onPaste={onPaste}
@@ -877,9 +884,9 @@ export function Composer({
             />
             {narrow ? <Popover
               label={t('composer.addAndMode')}
-              triggerClassName={`tool-btn icon-only composer-add${planMode?.active ? ' plan-active' : ''}`}
+              triggerClassName="tool-btn icon-only composer-add"
               triggerLabel={t('composer.addAndMode')}
-              triggerTitle={planMode?.active ? t('composer.addPlanOn') : t('composer.addAndModeHint')}
+              triggerTitle={t('composer.addAndModeHint')}
               panelClassName="composer-add-menu"
               trigger={<IconPlus size={20} />}
               disabled={disabled || menuBusy || busy}
@@ -887,13 +894,29 @@ export function Composer({
               {close => <ComposerMenu close={close} commands={commands} planMode={planMode} goal={goal} running={running}
                 attachTitle={attachBlocked ? t('composer.attachBlocked', attachBlocked) : attachNote ?? t('composer.attachHint')}
                 onAttach={() => fileRef.current?.click()} onGoal={chooseGoal} onBrowse={browse} />}
-            </Popover> : <button ref={addRef} type="button" className={`tool-btn icon-only composer-add${planMode?.active ? ' plan-active' : ''}`}
-              aria-label={t('composer.addAndMode')} aria-haspopup="listbox" aria-expanded={addOpen} title={planMode?.active ? t('composer.addCommandsPlanOn') : t('composer.addActionsSkills')} disabled={disabled || menuBusy || busy}
+            </Popover> : <button ref={addRef} type="button" className="tool-btn icon-only composer-add"
+              aria-label={t('composer.addAndMode')} aria-haspopup="listbox" aria-expanded={addOpen} title={t('composer.addActionsSkills')} disabled={disabled || menuBusy || busy}
               onClick={() => { setCatalog('all'); setAddQuery(''); setAddOpen(!addOpen); setDismissed(true); }}><IconPlus size={20} /></button>}
-            {collaboration?.(mention => chooseMention(mention, false), mentions)}
-            {left}
+            {/* Plan mode is a pill of its own: what is on shows, and × takes it off. */}
+            {planMode?.active && (
+              <button
+                type="button"
+                className="plan-pill"
+                aria-label={t('composer.planExit')}
+                title={t('composer.planExit')}
+                onClick={() => planMode.onChange(false)}
+              >
+                <IconList size={15} />
+                <span>{t('composer.planPill')}</span>
+                <IconClose size={13} />
+              </button>
+            )}
+            {!collapsed && <>
+              {collaboration?.(mention => chooseMention(mention, false), mentions)}
+              {left}
+            </>}
             <div className="spacer" />
-            {right}
+            {!collapsed && right}
             {running && (
               <button className="send-btn stop" onClick={onStop} aria-label={t('composer.stop')} title={t('composer.stopTurn')}>
                 <IconStop size={16} />

@@ -639,7 +639,7 @@ export function createHttpServer(deps: HttpDeps): Server {
         const body = await readJson(req, MAX_TURN_BODY);
         manager.coordination?.mentionText(threadId, body.text, body.mentions);
         await manager.coordination?.userSpoke(threadId);
-        return sendJson(res, 202, await manager.startTurn(threadId, { text: body.text, images: body.images, videos: body.videos, queue: body.queue, mentions: body.mentions }));
+        return sendJson(res, 202, await manager.startTurn(threadId, { text: body.text, images: body.images, videos: body.videos, queue: body.queue, mentions: body.mentions, workMode: body.workMode }));
       }
 
       if (method === 'POST' && sub === 'videos' && !parts[4]) {

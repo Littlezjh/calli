@@ -1619,7 +1619,7 @@ export class ThreadManager {
   private async stopTurn(threadId: string): Promise<void> {
     const run = this.running.get(threadId);
     if (run) run.cancelRequested = true;
-    this.inputs.cancel(threadId);
+    this.inputs.cancel(threadId, undefined, true);
     for (const [approvalId, p] of this.approvals) {
       if (p.threadId === threadId) this.resolveApproval(approvalId, { cancelled: true });
     }
@@ -1685,7 +1685,7 @@ export class ThreadManager {
       this.emitThreadEvent(thread.id, turnId, 'turn.error', { message, ...(exhausted ? { code: 'plan_exhausted' } : {}) });
       await this.dropSession(thread.id);
     } finally {
-      this.inputs.cancel(thread.id);
+      this.inputs.cancel(thread.id, undefined, true);
       this.running.delete(thread.id);
       // The thread may have been deleted while its last turn was winding down.
       if (this.store.getThread(thread.id)) {
@@ -1739,10 +1739,18 @@ export class ThreadManager {
 
   private hooksFor(threadId: string, turnId: string): TurnHooks {
     return {
-      emit: (ev: EmittedEvent) => this.emitThreadEvent(threadId, turnId, ev.type, ev.data),
+      emit: (ev: EmittedEvent) => {
+        this.emitThreadEvent(threadId, turnId, ev.type, ev.data);
+        // A finished plan ends plan mode: what is said next, a go-ahead or a change to the plan, is
+        // a normal turn. The session takes the mode back on before that turn (ensureSession).
+        if (ev.type === 'plan.completed' && this.store.getThread(threadId)?.workMode === 'plan') {
+          this.store.updateThread(threadId, { workMode: 'execute' });
+          this.emitThreadEvent(threadId, null, 'thread.updated', {});
+        }
+      },
       requestInput: req => this.running.get(threadId)?.cancelRequested
         ? Promise.resolve({ cancelled: true }) : this.inputs.request(threadId, turnId, req),
-      cancelInput: id => this.inputs.cancel(threadId, id),
+      cancelInput: id => this.inputs.cancel(threadId, id, true),
       requestApproval: (req: ApprovalRequest) => {
         const approvalId = randomUUID();
         this.emitThreadEvent(threadId, turnId, 'approval.request', {

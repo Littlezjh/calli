@@ -32,7 +32,9 @@ for (const adapter of adapters()) {
     try {
       await s.setPermissionMode?.('full_access');
       assert.equal((await s.prompt(input('plan-draft'), hooks(events))).stopReason, 'end_turn');
-      assert.match(events.filter(e => e.type === 'message.delta').map(e => e.data.text).join(''), /mode:plan/);
+      // agy has no plan of its own, so what it answers in plan mode comes back as the plan.
+      assert.match(events.filter(e => e.type === 'message.delta' || e.type === 'plan.completed').map(e => e.data.text).join(''), /mode:plan/);
+      if (adapter.id === 'agy') assert.ok(events.some(e => e.type === 'plan.completed'));
       await s.setWorkMode!('execute');
       events.length = 0;
       assert.equal((await s.prompt(input('plan-draft'), hooks(events))).stopReason, 'end_turn');
@@ -152,7 +154,28 @@ test('HTTP mode and input lifecycle: persistence, invalid modes, busy changes, r
   const call = (path: string, method = 'GET', body?: unknown, auth = true) => fetch(base + path, { method, headers: { ...(auth ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) });
   const waitFor = async (f: () => boolean) => { for (let i = 0; i < 200; i++) { if (f()) return; await new Promise(r => setTimeout(r, 20)); } assert.fail('condition timed out'); };
   try {
-    assert.equal((await call('/api/threads', 'POST', { agent: 'pi', cwd: dir, workMode: 'plan' })).status, 201);
+    // pi's answer in plan mode is the plan; once it is in, the thread is back in execute mode and
+    // the next turn tells pi the planning is over.
+    const piCreated = await call('/api/threads', 'POST', { agent: 'pi', cwd: dir, workMode: 'plan' });
+    assert.equal(piCreated.status, 201);
+    const pi = await piCreated.json() as any;
+    assert.equal((await call(`/api/threads/${pi.id}/turns`, 'POST', { text: '设计登录页' })).status, 202);
+    await waitFor(() => store.getThread(pi.id)?.workMode === 'execute' && manager.threadView(pi.id).status !== 'running');
+    const piEvents = await (await call(`/api/threads/${pi.id}/events`)).json() as any[];
+    assert.ok(piEvents.some(e => e.type === 'plan.completed' && /设计方案/.test(e.data.text)));
+    assert.ok(!piEvents.some(e => e.type === 'message.delta' && /设计方案/.test(e.data.text)));
+    assert.ok(piEvents.some(e => e.type === 'thread.updated'));
+    assert.equal((await call(`/api/threads/${pi.id}/turns`, 'POST', { text: 'inspect-work-mode' })).status, 202);
+    await waitFor(() => manager.threadView(pi.id).status !== 'running');
+    const after = (await (await call(`/api/threads/${pi.id}/events`)).json() as any[]).filter(e => e.type === 'message.delta').map(e => e.data.text).join('');
+    assert.match(after, /Hub work mode: execute/);
+    // Sending with workMode switches the thread for that turn: how a plan is sent back for changes.
+    assert.equal((await call(`/api/threads/${pi.id}/turns`, 'POST', { text: 'inspect-work-mode', workMode: 'plan' })).status, 202);
+    await waitFor(() => manager.threadView(pi.id).status !== 'running');
+    const replanned = await (await call(`/api/threads/${pi.id}/events`)).json() as any[];
+    assert.equal((replanned.filter(e => e.type === 'turn.started').at(-1) as any).data.workMode, 'plan');
+    assert.equal((await call(`/api/threads/${pi.id}/turns`, 'POST', { text: 'bad mode', workMode: 'invalid' })).status, 400);
+    assert.equal((await call(`/api/threads/${pi.id}`, 'PATCH', { workMode: 'execute' })).status, 200);
     const created = await call('/api/threads', 'POST', { agent: 'codex', cwd: dir, workMode: 'plan', permissionMode: 'full_access' });
     assert.equal(created.status, 201);
     const th = await created.json() as any;
@@ -160,6 +183,7 @@ test('HTTP mode and input lifecycle: persistence, invalid modes, busy changes, r
     assert.equal((await call(`/api/threads/${th.id}`, 'PATCH', { workMode: 'invalid' })).status, 400);
     const reopened = new Store(dir); assert.equal(reopened.getThread(th.id)?.workMode, 'plan'); reopened.close();
     for (const cancel of [false, true]) {
+      if (store.getThread(th.id)?.workMode !== 'plan') assert.equal((await call(`/api/threads/${th.id}`, 'PATCH', { workMode: 'plan' })).status, 200);
       assert.equal((await call(`/api/threads/${th.id}/turns`, 'POST', { text: 'plan-question' })).status, 202);
       await waitFor(() => manager.threadView(th.id).waiting);
       assert.equal((await (await call(`/api/threads/${th.id}`)).json() as any).waitingReason, 'question');
@@ -176,6 +200,8 @@ test('HTTP mode and input lifecycle: persistence, invalid modes, busy changes, r
       assert.equal((await call(route, 'POST', { answers: { scope: ['桌面和手机'] } })).status, 404);
       assert.equal(manager.threadView(th.id).waiting, false);
       assert.equal(manager.threadView(th.id).waitingReason, null);
+      // A finished plan ends plan mode; a stopped one does not.
+      assert.equal(store.getThread(th.id)?.workMode, cancel ? 'plan' : 'execute');
     }
     assert.equal((await call(`/api/threads/${th.id}`, 'PATCH', { workMode: 'execute' })).status, 200);
     assert.equal(store.getThread(th.id)?.permissionMode, 'full_access');
@@ -183,7 +209,8 @@ test('HTTP mode and input lifecycle: persistence, invalid modes, busy changes, r
 });
 
 test('pending input reasons follow the oldest request and clear on cancellation', async () => {
-  const pending = new UserInputs(() => {});
+  const events: any[] = [];
+  const pending = new UserInputs((_thread, _turn, type, data) => events.push({ type, data }));
   const request: UserInputRequest = { title: 'Question', questions: [] };
   const question = pending.request('thread', 'turn', { ...request, id: 'question' });
   const plan = pending.request('thread', 'turn', { ...request, id: 'plan', kind: 'plan' });
@@ -196,4 +223,14 @@ test('pending input reasons follow the oldest request and clear on cancellation'
   await plan;
   assert.equal(pending.waitingReason('thread'), null);
   assert.equal(pending.waiting('thread'), false);
+  // A turn running out under a question says so in the log, apart from the user skipping it.
+  const ended = pending.request('thread', 'turn2', { ...request, id: 'question' });
+  pending.cancel('thread', undefined, true);
+  assert.deepEqual(await ended, { cancelled: true });
+  const last = events.filter(e => e.type === 'input.resolved').at(-1);
+  assert.equal(last.data.reason, 'ended');
+  const skipped = pending.request('thread', 'turn3', { ...request, id: 'question' });
+  pending.cancel('thread');
+  await skipped;
+  assert.equal(events.filter(e => e.type === 'input.resolved').at(-1).data.reason, undefined);
 });

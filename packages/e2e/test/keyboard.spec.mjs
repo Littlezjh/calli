@@ -87,10 +87,14 @@ test('a comment on a passage is written just above the keyboard, with the passag
     sel.removeAllRanges();
     sel.addRange(range);
   });
-  // The system's own menu (copy, look up) is above the passage; this one goes under it.
+  // The system's own menu (copy, look up, translate) sits beside the passage, above or below it;
+  // this one is docked at the bottom in the composer's place, clear of it wherever it goes.
   await page.locator('.selection-menu').waitFor({ timeout: 5_000 });
+  const menu = await box('.selection-menu');
+  assert.ok(menu.bottom <= 844 && menu.bottom > 844 - 60, `the menu is at the bottom of the screen (${menu.top}–${menu.bottom})`);
   const passage = await page.evaluate(() => getSelection().getRangeAt(0).getBoundingClientRect().bottom);
-  assert.ok((await box('.selection-menu')).top >= passage + 20, 'the menu is under the passage, clear of its handle');
+  assert.ok(menu.top > passage + 40, 'the menu is well away from the passage');
+  assert.equal(await page.locator('.composer-box').evaluate((el) => getComputedStyle(el).visibility), 'hidden', 'the composer makes way');
   await page.locator('.selection-menu button', { hasText: '注释' }).tap();
   await page.locator('.selection-comment').waitFor({ timeout: 5_000 });
 
@@ -101,10 +105,65 @@ test('a comment on a passage is written just above the keyboard, with the passag
   assert.equal(await page.locator('.selection-quote').innerText(), 'hi there');
 
   await page.locator('.selection-comment').fill('为什么');
+
+  // Dragging the thread to reread the passage keeps what is being written.
+  const thread = await box('.main .thread');
+  const x = 200;
+  const y = Math.round((Math.max(thread.top, 344) + 844) / 2);
+  const cdp = await page.context().newCDPSession(page);
+  const touch = (type, points) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: points });
+  await touch('touchStart', [{ x, y }]);
+  for (let i = 1; i <= 8; i++) await touch('touchMove', [{ x, y: y - i * 15 }]);
+  await touch('touchEnd', []);
+  await page.waitForTimeout(300);
+  assert.equal(await page.locator('.selection-comment').inputValue(), '为什么', 'a drag does not drop the comment');
+
   await page.locator('.selection-add').tap();
   await page.locator('.composer .note-strip, .composer .notes').first().waitFor({ timeout: 5_000 });
   assert.equal(await page.locator('.selection-menu').count(), 0);
+
+  // A tap elsewhere still drops a comment being written.
+  await page.evaluate(() => {
+    const el = document.querySelector('.main .thread .markdown');
+    const node = document.createTreeWalker(el, NodeFilter.SHOW_TEXT).nextNode();
+    const range = document.createRange();
+    range.setStart(node, 0);
+    range.setEnd(node, 5);
+    getSelection().removeAllRanges();
+    getSelection().addRange(range);
+  });
+  await page.locator('.selection-menu button', { hasText: '注释' }).tap();
+  await page.locator('.selection-comment').waitFor({ timeout: 5_000 });
+  await touch('touchStart', [{ x, y }]);
+  await touch('touchEnd', []);
+  await page.locator('.selection-menu').waitFor({ state: 'detached', timeout: 5_000 });
+  await cdp.detach();
   await keyboard(844, 0);
+});
+
+test('with the keyboard up, the question sheet sits just above it, where the composer was', async () => {
+  // A thread waiting on a question: the sheet takes the composer's place at the bottom.
+  const created = await api(daemon, '/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'claude', title: '键盘提问', cwd: daemon.workdir, workMode: 'plan', permissionMode: 'ask' }) });
+  assert.equal(created.status, 201);
+  const thread = await created.json();
+  await api(daemon, `/api/threads/${thread.id}/turns`, { method: 'POST', body: JSON.stringify({ text: 'plan-question' }) });
+  await openUi(page, daemon);
+  await page.locator('.menu-btn').click();
+  await page.locator('.thread-item', { hasText: '键盘提问' }).click();
+  await page.getByRole('dialog', { name: '智能体提问' }).waitFor({ timeout: 10_000 });
+  assert.equal(await page.locator('.composer-box').evaluate((el) => getComputedStyle(el).visibility), 'hidden', 'the composer makes way');
+
+  // The keyboard comes up over the lower half and Safari pans down the page.
+  await keyboard(500, 344);
+  const sheet = await box('.action-sheet-card');
+  assert.ok(sheet.top >= 344 && sheet.bottom <= 844, `the sheet is on the visible part (${sheet.top}–${sheet.bottom})`);
+  assert.ok(sheet.bottom > 844 - 80, `the sheet sits just above the keyboard (${sheet.bottom})`);
+  // What is there to pick is on screen too.
+  const options = await box('.sheet-options');
+  assert.ok(options.top >= 344 && options.bottom <= 844, `the options are on the visible part (${options.top}–${options.bottom})`);
+  await keyboard(844, 0);
+  await page.getByRole('button', { name: '跳过', exact: true }).click();
+  await page.locator('.action-sheet').waitFor({ state: 'detached' });
 });
 
 test('with the keyboard up, the terminal and its input line stay on the visible part', async () => {
