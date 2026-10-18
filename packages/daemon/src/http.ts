@@ -685,15 +685,14 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (method === 'GET' && sub === 'stream') {
         const after = Number(url.searchParams.get('after') ?? 0) || 0;
         manager.getThread(threadId); // 404 before opening the stream
-        if (url.searchParams.get('view') === 'summary') {
+        if (['summary', 'history'].includes(url.searchParams.get('view') ?? '')) {
           const history = manager.history(threadId);
           let buffer: HistoryEvent[] | null = [];
-          // Subscribe before asynchronous cold-history work, closing the snapshot/live gap.
+          // Catch up with summaries, then deliver complete live events without waiting for clicks.
           const off = manager.subscribe(ev => {
             if (ev.threadId !== threadId) return;
-            const projected = history.projected(ev);
-            if (buffer) buffer.push(projected);
-            else writeEvent(res, projected);
+            if (buffer) buffer.push(ev);
+            else writeEvent(res, ev);
           });
           res.once('close', off);
           try {

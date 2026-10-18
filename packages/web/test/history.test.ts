@@ -4,8 +4,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../../daemon/src/store';
-import { buildTimeline, type Item } from '../src/timeline';
-import { mergeHistory } from '../src/history';
+import { buildTimeline, hydrateHistoryFiles, type Item } from '../src/timeline';
+import { hydrateWork, mergeHistory } from '../src/history';
 import type { EventType } from '../../daemon/src/events';
 
 const visible = (items: Item[]) => items.map(i => i.kind === 'work' ? { kind: i.kind, key: i.key, count: i.count ?? i.steps.length, done: i.done, stopped: i.stopped, startedAt: i.startedAt, endedAt: i.endedAt }
@@ -56,4 +56,75 @@ test('reconnect replaces existing turns without deleting earlier pages or a newe
   const events = [event(1,'old'), event(4,'a'), event(8,'new')];
   const reset = { ...event(7,''), type: 'history.reset', data: { turns: ['a'], events: [event(2,'a'),event(7,'a')] } };
   assert.deepEqual(mergeHistory(events,[reset]).map(e => e.seq), [1,2,7,8]);
+});
+
+
+test('running history stays summarized while complete live events hydrate old and new tools locally', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rah-live-'));
+  const store = new Store(dir);
+  store.createThread({ id: 'th', agent: 'pi', cwd: dir, title: 'test', permissionMode: 'default', model: null, effort: null });
+  const add = (type: EventType, data: Record<string, unknown>) => store.appendEvent('th', 'turn', type, data);
+  try {
+    add('turn.started', { text: 'question' });
+    add('tool.start', { id: 'old', kind: 'execute', title: 'old tool', input: { beforeConnection: true } });
+    const page = await store.history.page('th');
+    assert.ok(page.events.some(e => e.type === 'history.work'));
+    assert.ok(!page.events.some(e => e.type.includes('tool.')));
+    const live = [
+      add('tool.end', { id: 'old', status: 'completed', output: 'old tool live result' }),
+      add('message.delta', { text: 'closing remark' }),
+      add('tool.start', { id: 'new', kind: 'execute', title: 'new tool', input: { liveInput: true } }),
+      add('tool.end', { id: 'new', status: 'completed', output: 'new tool live result', content: [{ type: 'diff', path: 'a.ts', oldText: 'old', newText: 'new\nline' }] }),
+      add('turn.done', {}),
+    ];
+    const timeline = buildTimeline(mergeHistory(page.events, live));
+    const work = timeline.items.find(i => i.kind === 'work')! as Extract<Item, { kind: 'work' }>;
+    assert.equal(work.count, 2);
+    assert.equal(work.done, true);
+    assert.ok(timeline.items.some(i => i.kind === 'assistant' && i.text === 'closing remark'));
+    const detail = await store.history.work('th', 'turn', work.deferred!.id);
+    const loaded = buildTimeline(hydrateWork(detail.events, work.liveEvents!, detail.version));
+    const steps = loaded.items.filter(i => i.kind === 'work').flatMap(i => i.steps);
+    assert.equal(steps.length, 2);
+    assert.ok(!loaded.items.filter(i => i.kind === 'work').flatMap(i => i.entries).some(e => e.kind === 'note' && e.text.includes('closing remark')), 'the final answer does not reappear in work details');
+    assert.equal(steps[0].output, 'old tool live result');
+    assert.equal(steps[1].output, 'new tool live result');
+    assert.deepEqual(steps[1].input, { liveInput: true });
+    assert.equal(steps[1].detail, undefined, 'a fully received live tool never needs a detail request');
+    const changes = (items: Item[]) => items.filter(i => i.kind === 'changes').map(i => [i.added, i.removed]);
+    assert.deepEqual(changes(hydrateHistoryFiles(timeline.items, new Map([[`turn:${work.key}`, detail.files as any]]))), changes(timeline.items), 'lazy work statistics never count a live edit twice');
+  } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+
+test('reconnect preserves received tool payloads but does not override missed newer output', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rah-reconnect-'));
+  const store = new Store(dir);
+  store.createThread({ id: 'th', agent: 'pi', cwd: dir, title: 'test', permissionMode: 'default', model: null, effort: null });
+  const add = (type: EventType, data: Record<string, unknown>) => store.appendEvent('th', 'turn', type, data);
+  try {
+    const received = [add('turn.started', { text: 'question' }), add('tool.start', { id: 'tool', input: { command: 'ls' } }), add('tool.update', { id: 'tool', output: 'received output' })];
+    add('message.delta', { text: 'missed progress' });
+    let snapshot = await store.history.since('th', received.at(-1)!.seq);
+    let reset = { threadId: 'th', turnId: null, type: 'history.reset', ts: '', seq: snapshot.snapshotSeq, data: snapshot };
+    const merged = mergeHistory(received, [reset]);
+    const end = add('tool.end', { id: 'tool', status: 'completed', output: 'last live output' });
+    const withEnd = mergeHistory(merged, [end]);
+    const beforeBuild = JSON.stringify(withEnd);
+    const work = buildTimeline(withEnd).items.find(i => i.kind === 'work')! as Extract<Item, { kind: 'work' }>;
+    buildTimeline(withEnd);
+    assert.equal(JSON.stringify(withEnd), beforeBuild, 'building a view never mutates retained event arrays');
+    let entries = await store.history.work('th', 'turn', work.deferred!.id);
+    let hydrated = buildTimeline(hydrateWork(entries.events, work.liveEvents!, entries.version));
+    let step = hydrated.items.filter(i => i.kind === 'work').flatMap(i => i.steps)[0];
+    assert.equal(step.detail, undefined);
+    assert.equal(step.output, 'last live output');
+    assert.deepEqual(step.input, { command: 'ls' });
+    add('tool.update', { id: 'tool', output: 'MISSED_NEWER_OUTPUT' });
+    entries = await store.history.work('th', 'turn', work.deferred!.id);
+    hydrated = buildTimeline(hydrateWork(entries.events, work.liveEvents!, entries.version));
+    step = hydrated.items.filter(i => i.kind === 'work').flatMap(i => i.steps)[0];
+    assert.ok(step.detail, 'a missed version still requires fetching');
+    assert.notEqual(step.output, 'last live output');
+  } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
 });

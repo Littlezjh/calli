@@ -242,9 +242,52 @@ export class HistoryStore {
     this.pending.set(key, promise);
     return promise;
   }
+  /** Read only event envelopes to locate answers. Never parse tool payloads or build projections. */
+  private directSummary(thread: string, start: number, end: number): HistoryEvent[] {
+    // Collapse text/thinking runs before returning metadata to JS. The window reads no data column.
+    const spans = this.db.prepare(`WITH ordered AS (
+      SELECT thread_id, turn_id, seq, type, ts, LAG(type) OVER (ORDER BY seq) AS previous
+      FROM events WHERE thread_id=? AND seq>=? AND seq<?
+    ), edges AS (
+      SELECT * FROM ordered WHERE type NOT IN ('message.delta', 'reasoning.delta') OR previous IS NULL OR previous<>type
+    ), spans AS (
+      SELECT *, LEAD(seq, 1, ?) OVER (ORDER BY seq) AS until FROM edges
+    ) SELECT thread_id, turn_id, seq, type, ts, until FROM spans
+      WHERE type NOT IN ('tool.update', 'tool.end') ORDER BY seq`).all(thread, start, end, end) as unknown as (Omit<Row, 'data'> & { until: number })[];
+    const ranges = new Map(spans.map(s => [s.seq, s.until]));
+    const read = this.db.prepare('SELECT data FROM events WHERE thread_id=? AND seq=?');
+    const readApproval = this.db.prepare("SELECT json_remove(data, '$.toolCall') AS data FROM events WHERE thread_id=? AND seq=?");
+    const skeleton = spans.map(row => {
+      let type = row.type;
+      let data: Record<string, any> = {};
+      if (type === 'tool.start') { type = 'history.tool.start'; data.id = String(row.seq); }
+      else if (type === 'reasoning.delta') { type = 'history.thought'; data.version = row.until - 1; }
+      else if (type !== 'message.delta') {
+        data = JSON.parse(String((type === 'approval.request' ? readApproval : read).get(thread, row.seq)!.data));
+      }
+      return { threadId: thread, turnId: row.turn_id, seq: row.seq, ts: row.ts, type, data };
+    });
+    const { summary } = partitionHistory(skeleton);
+    const done = skeleton.some(e => e.type === 'turn.done' || e.type === 'turn.error');
+    const resolved = new Set(skeleton.filter(e => e.type === 'approval.resolved').map(e => e.data.approvalId));
+    const out: HistoryEvent[] = [];
+    for (const e of summary) {
+      if (e.type === 'message.delta') {
+        const rows = this.db.prepare("SELECT * FROM events WHERE thread_id=? AND seq>=? AND seq<? AND type='message.delta' ORDER BY seq")
+          .all(thread, e.seq, ranges.get(e.seq)!) as unknown as Row[];
+        out.push(...compactDeltas(rows.map(eventOf) as StoredEvent[]));
+      } else {
+        if (e.type === 'history.work') e.data.version = end - 1;
+        if (!done && e.type === 'approval.request' && !resolved.has(e.data.approvalId)) e.data = JSON.parse(String(read.get(thread, e.seq)!.data));
+        out.push(e);
+      }
+    }
+    return out;
+  }
   private turnView(thread: string, turn: string, start: number, end: number): HistoryEvent[] {
-    const cached = this.db.prepare('SELECT data FROM history_turns WHERE thread_id=? AND turn_id=? AND version=?').get(thread, turn, end - 1) as { data: string } | undefined;
-    if (cached) return JSON.parse(cached.data);
+    // Existing projections are optional. Missing ones must never delay the first response.
+    const covered = this.db.prepare('SELECT 1 FROM history_coverage WHERE thread_id=? AND start_seq<=? AND end_seq>=?').get(thread, start, end - 1);
+    if (!covered) return this.directSummary(thread, start, end);
     const rows = compactHistory(this.rows(thread, start, end));
     const done = rows.some(e => e.type === 'turn.done' || e.type === 'turn.error');
     if (!done) {
@@ -254,8 +297,8 @@ export class HistoryStore {
         if (raw) e.data = JSON.parse(String(raw.data));
       }
     }
-    const view = done ? partitionHistory(rows).summary : rows;
-    if (done) this.db.prepare('INSERT OR REPLACE INTO history_turns VALUES (?, ?, ?, ?)').run(thread, turn, end - 1, JSON.stringify(view));
+    const view = partitionHistory(rows).summary;
+    for (const e of view) if (e.type === 'history.work') e.data.version = end - 1;
     return view;
   }
   async page(thread: string, before?: number, after = 0): Promise<HistoryPage> {
@@ -265,14 +308,13 @@ export class HistoryStore {
     const selected = starts.slice(0, 8).reverse();
     const hasOlder = starts.length > 8;
     const start = hasOlder ? selected[0].seq : after + 1;
-    await this.ensure(thread, start, end);
     const events: HistoryEvent[] = [];
     // A usage reading can precede all eight visible turns; paging must not erase the meter.
     const usage = this.db.prepare("SELECT * FROM events WHERE thread_id=? AND type='usage.updated' AND seq<? ORDER BY seq DESC LIMIT 1").get(thread, start) as unknown as Row | undefined;
     if (usage && !after) events.push(eventOf(usage));
-    if (!selected.length) events.push(...this.rows(thread, start, end));
+    if (!selected.length) events.push(...this.directSummary(thread, start, end));
     else {
-      events.push(...this.rows(thread, start, selected[0].seq));
+      events.push(...this.directSummary(thread, start, selected[0].seq));
       selected.forEach((s, i) => events.push(...this.turnView(thread, s.turn_id, s.seq, selected[i + 1]?.seq ?? end)));
     }
     return { events, snapshotSeq, nextCursor: hasOlder ? start : null, hasOlder };
@@ -285,20 +327,20 @@ export class HistoryStore {
     for (const turn of turns) {
       const { start, end } = this.bounds(thread, turn);
       const until = Math.min(end, snapshotSeq + 1);
-      await this.ensure(thread, start, until);
       events.push(...this.turnView(thread, turn, start, until).filter(e => e.turnId === turn));
     }
-    await this.ensure(thread, after + 1, snapshotSeq + 1);
-    events.push(...this.rows(thread, after + 1, snapshotSeq + 1).filter(e => e.turnId === null));
+    const global = this.db.prepare('SELECT * FROM events WHERE thread_id=? AND seq>? AND seq<=? AND turn_id IS NULL ORDER BY seq').all(thread, after, snapshotSeq) as unknown as Row[];
+    events.push(...global.map(eventOf));
     events.sort((a,b) => a.seq - b.seq);
     return { events, turns, snapshotSeq };
   }
-  async work(thread: string, turn: string, block: number, cursor = 0, expectedVersion?: number): Promise<{ events: HistoryEvent[]; version: number; nextCursor: number | null }> {
+  async work(thread: string, turn: string, block: number, cursor = 0, expectedVersion?: number): Promise<{ events: HistoryEvent[]; files: unknown[]; version: number; nextCursor: number | null }> {
     const { start, end } = this.bounds(thread, turn);
     if (expectedVersion !== undefined && expectedVersion !== end - 1) throw new HttpError(409, 'work changed; reload before continuing');
     await this.ensure(thread, start, end);
     const rows = compactHistory(this.rows(thread, start, end));
-    const entries = partitionHistory(rows).blocks.get(block);
+    const partition = partitionHistory(rows);
+    const entries = partition.blocks.get(block);
     if (!entries) throw new HttpError(404, 'work block not found');
     const list: HistoryEvent[] = [];
     const tools = new Map<string, HistoryEvent>();
@@ -310,7 +352,7 @@ export class HistoryStore {
       } else list.push(e);
     }
     const next = cursor + 100;
-    return { events: [rows.find(e => e.type === 'turn.started')!, ...list.slice(cursor, next)], version: end - 1, nextCursor: next < list.length ? next : null };
+    return { events: [rows.find(e => e.type === 'turn.started')!, ...list.slice(cursor, next)], files: (partition.summary.find(e => e.type === 'history.work' && e.seq === block)?.data.files ?? []) as unknown[], version: end - 1, nextCursor: next < list.length ? next : null };
   }
   async detail(thread: string, turn: string, id: number, offset = 0, expectedVersion?: number, path?: string): Promise<Record<string, unknown>> {
     const { start, end } = this.bounds(thread, turn);

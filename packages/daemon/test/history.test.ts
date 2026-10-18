@@ -89,7 +89,7 @@ test('reconnect replaces affected turns with summaries and keeps a final remark 
   } finally { f.close(); }
 });
 
-test('history HTTP APIs validate scope/cursors and summary SSE carries no deferred payload', async () => {
+test('history HTTP APIs validate scope/cursors and SSE catches up lightly then sends complete live events', async () => {
   const { createHttpServer } = await import('../src/http.js');
   const { ThreadManager } = await import('../src/threads.js');
   const { Workdirs } = await import('../src/workdirs.js');
@@ -118,13 +118,34 @@ test('history HTTP APIs validate scope/cursors and summary SSE carries no deferr
     assert.equal((await request(`/api/threads/thread/history/detail?turn=elsewhere&id=${id}`)).status, 404);
     const detail = await (await request(`/api/threads/thread/history/detail?turn=a&id=${id}`)).json() as any;
     assert.equal(detail.output, 'private output');
+    const since = f.store.history.since.bind(f.store.history);
+    f.store.history.since = async (...args) => {
+      const snapshot = await since(...args);
+      (manager as any).emitThreadEvent('thread', 'gap', 'turn.started', { text: 'snapshot gap' });
+      (manager as any).emitThreadEvent('thread', 'gap', 'tool.start', { id: 'gap-tool', input: { command: 'GAP_INPUT' } });
+      (manager as any).emitThreadEvent('thread', 'gap', 'tool.end', { id: 'gap-tool', output: 'GAP_OUTPUT', status: 'completed' });
+      return snapshot;
+    };
     const controller = new AbortController();
-    const stream = await fetch(base + '/api/threads/thread/stream?view=summary&after=0', { headers, signal: controller.signal });
+    const stream = await fetch(base + '/api/threads/thread/stream?view=history&after=0', { headers, signal: controller.signal });
     const reader = stream.body!.getReader();
     const first = new TextDecoder().decode((await reader.read()).value);
     assert.ok(first.includes('history.reset'));
     assert.ok(first.includes('answer'));
     assert.ok(!first.includes('private output'));
+    let gap = first;
+    while (!gap.includes('GAP_OUTPUT')) gap += new TextDecoder().decode((await reader.read()).value);
+    assert.equal(gap.split('GAP_OUTPUT').length - 1, 1);
+    assert.ok(gap.includes('GAP_INPUT'));
+    // The initial history omits outputs; an uninterrupted connection receives them in full.
+    (manager as any).emitThreadEvent('thread', 'live', 'turn.started', { text: 'next' });
+    (manager as any).emitThreadEvent('thread', 'live', 'tool.start', { id: 'live-tool', input: { command: 'LIVE_INPUT' } });
+    (manager as any).emitThreadEvent('thread', 'live', 'tool.end', { id: 'live-tool', status: 'completed', output: 'LIVE_OUTPUT' });
+    let live = '';
+    while (!live.includes('LIVE_OUTPUT')) live += new TextDecoder().decode((await reader.read()).value);
+    assert.ok(live.includes('event: tool.start'));
+    assert.ok(live.includes('LIVE_INPUT'));
+    assert.ok(live.includes('event: tool.end'));
     controller.abort();
   } finally {
     server.closeAllConnections();
@@ -144,8 +165,10 @@ test('large work blocks and text details paginate with a stable version; file re
       }
     });
     const page = await f.store.history.page('thread');
-    const first = page.events.find(e => e.type === 'history.tool.start')!;
-    const work = await f.store.history.work('thread', 'a', first.seq);
+    const block = page.events.find(e => e.type === 'history.work')!;
+    assert.equal(page.events.filter(e => e.type.startsWith('history.tool.')).length, 0);
+    const work = await f.store.history.work('thread', 'a', block.seq);
+    const first = work.events.find(e => e.type === 'history.tool.start')!;
     assert.equal(work.events.length, 101);
     assert.equal(work.nextCursor, 100);
     const second = await f.store.history.work('thread', 'a', first.seq, work.nextCursor!, work.version);
@@ -213,7 +236,7 @@ test('only pending approvals expose decision payloads and usage survives paginat
   } finally { f.close(); }
 });
 
-test('a build interrupted after writing rows repairs its coverage marker without replaying payloads', async () => {
+test('a missing coverage marker does not trigger repair on the summary path', async () => {
   const f = fixture();
   try {
     f.add('a', 'turn.started', { text: 'question' });
@@ -224,8 +247,9 @@ test('a build interrupted after writing rows repairs its coverage marker without
     db.prepare('DELETE FROM history_coverage WHERE thread_id=?').run('thread');
     await f.store.history.page('thread');
     const coverage = db.prepare('SELECT start_seq, end_seq FROM history_coverage WHERE thread_id=?').get('thread');
-    assert.equal(coverage?.start_seq, 1);
-    assert.equal(coverage?.end_seq, 4);
+    assert.equal(coverage, undefined);
+    await f.store.history.work('thread', 'a', 2);
+    assert.equal(db.prepare('SELECT end_seq FROM history_coverage WHERE thread_id=?').get('thread')?.end_seq, 4);
   } finally { f.close(); }
 });
 
@@ -244,5 +268,38 @@ test('a forked side chat reads only the new turns after its inherited boundary',
     assert.ok(page.events.every(e => e.seq > boundary));
     assert.equal(page.hasOlder, false);
     assert.equal(page.snapshotSeq, 6);
+  } finally { f.close(); }
+});
+
+
+test('cold summary and reconnect read no tool/thinking payload and write no projection rows', async () => {
+  const f = fixture();
+  try {
+    const db = (f.store as any).db as import('node:sqlite').DatabaseSync;
+    const put = db.prepare('INSERT INTO events VALUES (?, ?, ?, ?, ?, ?)');
+    const add = (seq: number, type: string, data: string) => put.run('thread', seq, 'cold', type, new Date(seq * 1000).toISOString(), data);
+    add(1, 'turn.started', '{"text":"question"}');
+    add(2, 'message.delta', '{"text":"intermediate"}');
+    // Invalid payloads make accidental JSON parsing fail, even for filtering. No payload is
+    // required to return an answer, its status/duration, or the number of tool calls.
+    add(3, 'reasoning.delta', 'UNREAD_THINKING');
+    add(4, 'tool.start', 'UNREAD_INPUT');
+    add(5, 'tool.update', 'UNREAD_OUTPUT');
+    add(6, 'tool.end', 'UNREAD_OUTPUT');
+    add(7, 'message.delta', '{"text":"final "}');
+    add(8, 'message.delta', '{"text":"answer"}');
+    add(9, 'turn.done', '{}');
+    const writes = Number(db.prepare('SELECT total_changes() AS n').get()!.n);
+    const page = await f.store.history.page('thread');
+    assert.equal(page.events.filter(e => e.type === 'message.delta').map(e => e.data.text).join(''), 'final answer');
+    assert.equal(page.events.find(e => e.type === 'history.work')!.data.count, 1);
+    assert.equal(page.events[0].ts, new Date(1000).toISOString());
+    assert.equal(page.events.at(-1)!.ts, new Date(9000).toISOString());
+    assert.ok(!JSON.stringify(page).includes('UNREAD'));
+    assert.ok(!JSON.stringify(page).includes('intermediate'));
+    const reconnect = await f.store.history.since('thread', 2);
+    assert.deepEqual(reconnect.events, page.events);
+    assert.equal(Number(db.prepare('SELECT total_changes() AS n').get()!.n), writes);
+    for (const table of ['history_rows', 'history_details', 'history_turns', 'history_coverage']) assert.equal(db.prepare(`SELECT count(*) AS n FROM ${table}`).get()!.n, 0);
   } finally { f.close(); }
 });

@@ -1,9 +1,10 @@
 import { Api, AuthError } from './api';
-import type { DetailRef, StoredEvent } from './timeline';
+import type { DetailRef, StoredEvent, Item } from './timeline';
 
 export interface HistoryPage { events: StoredEvent[]; snapshotSeq: number; nextCursor: number | null; hasOlder: boolean }
 export interface HistoryDetail { version: number; text?: string; input?: unknown; output?: string; content?: unknown; nextCursor: number | null }
-export interface HistoryWork { version: number; events: StoredEvent[]; nextCursor: number | null }
+export type WorkFiles = NonNullable<Extract<Item, { kind: 'work' }>['files']>;
+export interface HistoryWork { files?: WorkFiles; version: number; events: StoredEvent[]; nextCursor: number | null }
 export type ResourceKind = 'work' | 'detail' | 'file';
 
 /** Replace only the turns covered by a reconnect snapshot; keep previously paged history. */
@@ -12,7 +13,19 @@ export function mergeHistory(previous: StoredEvent[], updates: StoredEvent[]): S
   for (const ev of updates) {
     if (ev.type === 'history.reset') {
       const turns = new Set<string>(ev.data.turns);
-      const events = ev.data.events as StoredEvent[];
+      const received = out.flatMap(e => e.type === 'history.work' ? e.data.liveEvents ?? [] : e.type.startsWith('tool.') || e.type === 'reasoning.delta' ? [e] : []) as StoredEvent[];
+      const starts = new Map(received.filter(e => e.type === 'tool.start').map(e => [`${e.turnId}:${e.data.id}`, e.seq]));
+      const snapshot = ev.data.events as StoredEvent[];
+      const events = snapshot.map((event, i) => {
+        if (event.type !== 'history.work') return event;
+        const until = snapshot.slice(i + 1).find(e => e.turnId === event.turnId && e.type === 'history.work')?.seq ?? Infinity;
+        const local = received.filter(e => {
+          if (e.turnId !== event.turnId || e.seq > ev.seq) return false;
+          const start = e.type.startsWith('tool.') ? starts.get(`${e.turnId}:${e.data.id}`) : e.seq;
+          return start === undefined || start >= event.seq && start < until;
+        });
+        return { ...event, data: { ...event.data, liveEvents: [...new Map(local.map(e => [e.seq, e])).values()] } };
+      });
       const seqs = new Set(events.map(e => e.seq));
       const newer = out.filter(e => e.seq > ev.seq);
       out = [...out.filter(e => e.seq <= ev.seq && !turns.has(e.turnId ?? '') && !seqs.has(e.seq)), ...events, ...newer].sort((a,b) => a.seq - b.seq);
@@ -58,7 +71,7 @@ export async function watchHistory(api: Api, id: string, signal: AbortSignal, ca
           after = page.snapshotSeq; callbacks.page(page); loaded = true;
         }
         callbacks.connection?.(true);
-        await api.stream(`/api/threads/${id}/stream?view=summary&after=${after}`, (ev: StoredEvent) => {
+        await api.stream(`/api/threads/${id}/stream?view=history&after=${after}`, (ev: StoredEvent) => {
           after = Math.max(after, ev.seq);
           buffer.push(ev);
           timer ??= setTimeout(flush, 40);
@@ -86,7 +99,7 @@ export class HistoryClient {
   private cache = new Map<string, { value: unknown; bytes: number }>();
   private pending = new Map<string, Promise<any>>();
   private bytes = 0;
-  constructor(readonly api: Api, readonly threadId: string) {}
+  constructor(readonly api: Api, readonly threadId: string, private onWork?: (ref: DetailRef, value: HistoryWork) => void) {}
   private key(kind: ResourceKind, ref: DetailRef, path?: string, cursor?: number) { return JSON.stringify([kind, ref.turnId, ref.id, ref.version, path, cursor]); }
   invalidate(kind: ResourceKind, ref: DetailRef, path?: string) {
     const key = this.key(kind, ref, path);
@@ -113,9 +126,34 @@ export class HistoryClient {
     const request = (kind === 'work' ? this.api.historyWork(this.threadId, ref, cursor) : this.api.historyDetail(this.threadId, ref, cursor, kind === 'file' ? path : undefined))
       .then(value => {
         this.remember(kind, ref, value, path, cursor);
+        if (kind === 'work') this.onWork?.(ref, value as HistoryWork);
         return value;
       }).finally(() => this.pending.delete(key));
     this.pending.set(key, request);
     return request as Promise<T>;
   }
+}
+
+/** Merge the lazily fetched work skeleton with complete events already received live. */
+export function hydrateWork(history: StoredEvent[], live: StoredEvent[], snapshotSeq: number): StoredEvent[] {
+  const versions = new Map(history.filter(e => e.type === 'history.tool.start').map(e => [String(e.data.id), Number(e.data.detail?.version ?? 0)]));
+  const received = new Map<string, number>();
+  for (const e of live) if (e.type.startsWith('tool.')) received.set(String(e.data.id), Math.max(e.seq, received.get(String(e.data.id)) ?? 0));
+  const thoughts = history.filter(e => e.type === 'history.thought');
+  const localSeqs = new Set(live.filter(e => e.type === 'reasoning.delta').map(e => e.seq));
+  const events = new Map(history.map(e => [e.seq, e]));
+  for (const event of live) {
+    // The work snapshot already groups old text and excludes any closing remark promoted to
+    // the final answer. Only append text produced after that snapshot.
+    if (event.type === 'message.delta' && event.seq <= snapshotSeq) continue;
+    // A reconnect may have missed a newer tool update. Do not replace its metadata with stale
+    // local output; only a fully received version can satisfy a subsequent expansion locally.
+    if (event.type.startsWith('tool.') && (received.get(String(event.data.id)) ?? 0) < (versions.get(String(event.data.id)) ?? 0)) continue;
+    if (event.type === 'reasoning.delta') {
+      const thought = thoughts.find(t => event.seq >= t.seq && event.seq <= Number(t.data.detail?.version));
+      if (thought && (!localSeqs.has(thought.seq) || !localSeqs.has(Number(thought.data.detail?.version)))) continue;
+    }
+    events.set(event.seq, event);
+  }
+  return [...events.values()].sort((a, b) => a.seq - b.seq);
 }

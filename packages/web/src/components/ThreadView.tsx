@@ -1,5 +1,6 @@
+import { hydrateHistoryFiles } from '../timeline';
 import type { Api } from '../api';
-import { HistoryClient, type HistoryDetail, type HistoryWork, type ResourceKind } from '../history';
+import { hydrateWork, HistoryClient, type HistoryDetail, type HistoryWork, type ResourceKind, type WorkFiles } from '../history';
 import { Children, createContext, Fragment, isValidElement, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -81,8 +82,16 @@ const RECENT_TURNS = 30;
 /** Scrolling up to within this distance of the top unfolds or fetches the earlier turns. */
 const NEAR_TOP_PX = 600;
 
-export function ThreadView({ historyApi, historyThreadId, items, roots, loadImage, loadFile, onOpenFile, onPreview, hasOlder, loadingOlder, onLoadOlder, onFork, forkAnyTurn, takeover }: Props) {
-  const historyClient = useMemo(() => historyApi && historyThreadId ? new HistoryClient(historyApi, historyThreadId) : undefined, [historyApi, historyThreadId]);
+export function ThreadView({ historyApi, historyThreadId, items: originalItems, roots, loadImage, loadFile, onOpenFile, onPreview, hasOlder, loadingOlder, onLoadOlder, onFork, forkAnyTurn, takeover }: Props) {
+  const [loadedFiles, setLoadedFiles] = useState<{ client?: HistoryClient; files: Map<string, WorkFiles> }>({ files: new Map() });
+  const historyClient = useMemo(() => {
+    if (!historyApi || !historyThreadId) return undefined;
+    const client = new HistoryClient(historyApi, historyThreadId, (ref, work) => {
+      if (work.files) setLoadedFiles(previous => ({ client, files: new Map(previous.client === client ? previous.files : []).set(`${ref.turnId}:e${ref.id}`, work.files!) }));
+    });
+    return client;
+  }, [historyApi, historyThreadId]);
+  const items = useMemo(() => loadedFiles.client === historyClient ? hydrateHistoryFiles(originalItems, loadedFiles.files) : originalItems, [originalItems, loadedFiles, historyClient]);
   const [lightbox, setLightbox] = useState<{ url: string; name?: string } | null>(null);
   const show = useCallback((url: string, name?: string) => setLightbox({ url, name }), []);
   // A picture opened from a link in an answer is fetched for the occasion, and let go of when it is closed.
@@ -864,13 +873,13 @@ function WorkLabel({ item }: { item: Extract<Item, { kind: 'work' }> }) {
 
 function WorkGroup({ item, roots }: { item: Extract<Item, { kind: 'work' }>; roots: string[] }) {
   // Open while the turn runs so progress is visible; collapsed once it finishes.
-  const [open, setOpen] = useState(!item.done);
+  const [open, setOpen] = useState(!item.done && !item.deferred);
   // Collapse once the turn finishes; the user can still expand it afterwards.
   useEffect(() => {
     if (item.done) setOpen(false);
   }, [item.done]);
   const resource = useHistoryResource<HistoryWork>('work', item.deferred, open);
-  const loaded = useMemo(() => resource.value ? buildTimeline(resource.value.events).items.find((i): i is Extract<Item, { kind: 'work' }> => i.kind === 'work') : undefined, [resource.value]);
+  const loaded = useMemo(() => resource.value ? buildTimeline(hydrateWork(resource.value.events, item.liveEvents ?? [], resource.value.version)).items.find((i): i is Extract<Item, { kind: 'work' }> => i.kind === 'work') : undefined, [resource.value, item.liveEvents]);
   const count = item.count ?? item.steps.length;
   const sections = workSections(loaded?.entries ?? item.entries);
   return (
@@ -922,7 +931,7 @@ const WorkNote = memo(function WorkNote({ text }: { text: string }) {
 const ThinkingBlock = memo(function ThinkingBlock({ thought, live }: { thought: Thought; live: boolean }) {
   const [open, setOpen] = useState(false);
   const resource = useHistoryResource<HistoryDetail>('detail', thought.detail, open);
-  const text = resource.value?.text ?? thought.text;
+  const text = resource.value?.text !== undefined ? resource.value.text + (thought.updates ?? []).filter(e => e.seq > resource.value!.version).map(e => e.text).join('') : thought.text;
   const paragraphs = useMemo(() => splitThinking(text), [text]);
   if (paragraphs.length === 0 && !thought.detail) return null;
 
@@ -1003,7 +1012,13 @@ function StepRun({ run, live, roots }: { run: Extract<WorkSection, { kind: 'run'
 function StepRow({ step: original, roots }: { step: Step; roots: string[] }) {
   const [open, setOpen] = useState(false);
   const resource = useHistoryResource<HistoryDetail>('detail', original.detail, open);
-  const step = useMemo(() => resource.value ? { ...original, input: resource.value.input, output: resource.value.output, diffs: diffsOf(resource.value.content) } : original, [original, resource.value]);
+  const step = useMemo(() => {
+    if (!original.detail || !resource.value) return original;
+    const newer = (original.liveVersion ?? 0) > resource.value.version;
+    return { ...original, input: original.input ?? resource.value.input,
+      output: newer ? original.output || resource.value.output : resource.value.output,
+      diffs: newer && original.diffs.length ? original.diffs : diffsOf(resource.value.content) };
+  }, [original, resource.value]);
   // An edit is best shown as its diff; the raw arguments would repeat the same text as JSON.
   const showInput = step.input !== undefined && step.diffs.length === 0 && JSON.stringify(step.input) !== '{}';
   const result = step.status === 'completed' ? t('view.succeeded') : step.status === 'failed' ? t('team.failed') : null;

@@ -28,6 +28,7 @@ export interface FileDiff {
 }
 
 export interface Step {
+  liveVersion?: number;
   detail?: DetailRef;
   files?: Array<{ path: string; added: number; removed: number; detail: DetailRef }>;
   id: string;
@@ -78,6 +79,7 @@ export interface ApprovalOption {
 
 /** One stretch of the agent's thinking, between two things it did or said. */
 export interface Thought {
+  updates?: Array<{ seq: number; text: string }>;
   detail?: DetailRef;
   key: string;
   text: string;
@@ -142,6 +144,7 @@ export type Item =
   | {
       kind: 'work';
       deferred?: DetailRef;
+      liveEvents?: StoredEvent[];
       count?: number;
       files?: Array<{ path: string; added: number; removed: number; detail: DetailRef }>;
       key: string;
@@ -341,7 +344,7 @@ function applyToolData(step: Step, data: Record<string, any>): void {
   if (data.status) step.status = String(data.status);
   if (data.title) step.title = String(data.title);
   const diffs = diffsOf(data.content);
-  if (diffs.length) step.diffs = diffs;
+  if (diffs.length) { step.diffs = diffs; step.files = undefined; }
   const text = outputText(data.output) || textOfContent(data.content);
   if (text) step.output = text;
 }
@@ -435,6 +438,16 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
     lastSeq = Math.max(lastSeq, ev.seq);
     const key = `e${ev.seq}`;
     const turn = ev.turnId ?? '';
+    // Keep complete events received after a historical snapshot. They also hydrate deferred
+    // entries when expanded, including updates for tools whose starts predate this connection.
+    if (ev.type === 'tool.update' || ev.type === 'tool.end') {
+      for (const item of items) if (item.kind === 'work' && item.turnId === turn && item.deferred && ev.seq > item.deferred.version) {
+        (item.liveEvents ??= []).push(ev);
+      }
+    } else if (open.work?.deferred && ev.seq > open.work.deferred.version
+      && ['tool.start', 'reasoning.delta', 'message.delta', 'context.compaction', 'turn.done', 'turn.error'].includes(ev.type)) {
+      (open.work.liveEvents ??= []).push(ev);
+    }
 
     switch (ev.type) {
       case 'turn.started': {
@@ -501,6 +514,7 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
         if (last?.kind === 'thought') {
           last.thought.text += String(ev.data.text ?? '');
           last.thought.endedAt = ev.ts;
+          if (last.thought.detail && ev.seq > last.thought.detail.version) (last.thought.updates ??= []).push({ seq: ev.seq, text: String(ev.data.text ?? '') });
         } else {
           block.entries.push({ kind: 'thought', thought: { key, text: String(ev.data.text ?? ''), startedAt: ev.ts, endedAt: ev.ts } });
         }
@@ -512,6 +526,7 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
         block.deferred = { turnId: turn, id: ev.seq, version: ev.data.version };
         block.count = ev.data.count;
         block.files = ev.data.files;
+        block.liveEvents = [...(ev.data.liveEvents ?? [])];
         break;
       }
 
@@ -544,6 +559,7 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
       case 'history.tool.start':
       case 'tool.start': {
         const block = workBlock(key, ev.ts);
+        if (block.count !== undefined && ev.type === 'tool.start') block.count++;
         const step: Step = {
           id: String(ev.data.id),
           title: String(ev.data.title ?? ''),
@@ -579,6 +595,7 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
         }
         if (!work || !step) break;
         applyToolData(step, ev.data);
+        if (ev.type === 'tool.update' || ev.type === 'tool.end') step.liveVersion = ev.seq;
         if (ev.type === 'tool.end' || ev.type === 'history.tool.end') step.endedAt = ev.ts;
         work.endedAt = ev.ts;
         break;
@@ -720,6 +737,26 @@ export function imagePathsIn(text: string): string[] {
     add(m[1]);
   }
   return found;
+}
+
+/** Add file counts discovered on an explicit work expansion without changing the view layout. */
+export function hydrateHistoryFiles(items: Item[], files: Map<string, NonNullable<Extract<Item, { kind: 'work' }>['files']>>): Item[] {
+  if (!files.size) return items;
+  const finished = new Map<string, string | undefined>();
+  const stopped = new Set<string>();
+  for (const item of items) {
+    if (item.kind === 'actions') finished.set(item.turnId, item.at);
+    if (item.kind === 'work' && item.done) {
+      if (!finished.has(item.turnId)) finished.set(item.turnId, item.timed ? item.endedAt ?? undefined : undefined);
+      if (item.stopped) stopped.add(item.turnId);
+    }
+  }
+  return addTurnSummaries(items.filter(i => i.kind !== 'actions' && i.kind !== 'changes').map(i => {
+    if (i.kind !== 'work' || !files.has(`${i.turnId}:${i.key}`)) return i;
+    const shown = new Set(i.steps.map(step => step.id));
+    const local = new Set((i.liveEvents ?? []).filter(e => e.type === 'tool.start' && shown.has(String(e.data.id))).map(e => e.seq));
+    return { ...i, files: files.get(`${i.turnId}:${i.key}`)!.filter(file => !local.has(file.detail.id)) };
+  }), finished, stopped);
 }
 
 /**

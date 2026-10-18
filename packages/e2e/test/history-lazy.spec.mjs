@@ -11,7 +11,7 @@ test('eight history turns load answers first; work, tool output and diffs load o
   let browser;
   try {
     const thread = await (await api(daemon, '/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: daemon.workdir, title: '历史按需加载' }) })).json();
-    // Seed raw legacy data: the first request also exercises asynchronous projection building.
+    // Seed raw legacy data: the first request must work without building any projection.
     const db = new DatabaseSync(join(daemon.dataDir, 'hub.db'));
     let seq = Number(db.prepare('SELECT MAX(seq) AS seq FROM events WHERE thread_id=?').get(thread.id).seq ?? 0);
     const insert = db.prepare('INSERT INTO events VALUES (?, ?, ?, ?, ?, ?)');
@@ -37,6 +37,9 @@ test('eight history turns load answers first; work, tool output and diffs load o
     const warmBegin = performance.now();
     const warm = await (await api(daemon, `/api/threads/${thread.id}/history`)).text();
     const warmMs = performance.now() - warmBegin;
+    const inspect = new DatabaseSync(join(daemon.dataDir, 'hub.db'), { readOnly: true });
+    assert.equal(inspect.prepare('SELECT count(*) AS n FROM history_rows WHERE thread_id=? AND turn_id IS NOT NULL').get(thread.id).n, 0, 'opening history never builds projections');
+    inspect.close();
     const all = await (await api(daemon, `/api/threads/${thread.id}/events?all=1`)).json();
     const raw = JSON.stringify(all.filter(e => Number(e.turnId?.split('-')[1]) >= 5));
     assert.equal(cold.events.filter(e => e.type === 'turn.started').length, 8);
@@ -94,7 +97,7 @@ test('eight history turns load answers first; work, tool output and diffs load o
   } finally { await browser?.close(); await daemon.stop(); }
 });
 
-test('side chats preserve their fork boundary and fetch tool details only on expansion in every viewport', async () => {
+test('side chats preserve their fork boundary and expand received live output locally in every viewport', async () => {
   const daemon = await startDaemon();
   let browser;
   try {
@@ -132,12 +135,95 @@ test('side chats preserve their fork boundary and fetch tool details only on exp
         await side.locator('.work-toggle').click();
         await side.locator('.step-head').click();
         await side.locator('.step-detail pre').filter({ hasText: 'a.txt' }).waitFor();
-        assert.equal(details.length, 1);
+        assert.equal(details.length, 0);
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
         if (process.env.RAH_E2E_SHOTS_DIR) {
           mkdirSync(process.env.RAH_E2E_SHOTS_DIR, { recursive: true });
           await page.screenshot({ path: join(process.env.RAH_E2E_SHOTS_DIR, `history-side-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
         }
+      } finally { await context.close(); }
+    }
+  } finally { await browser?.close(); await daemon.stop(); }
+});
+
+
+test('uninterrupted live tasks deliver full tool output without any history detail requests in all layouts', async () => {
+  const daemon = await startDaemon();
+  let browser;
+  try {
+    browser = await launchBrowser();
+    for (const mobile of [false, true]) for (const colorScheme of ['light', 'dark']) {
+      const thread = await (await api(daemon, '/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: daemon.workdir, title: '实时完整事件' }) })).json();
+      const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 1000 }, isMobile: mobile, hasTouch: mobile, colorScheme });
+      try {
+        const page = await context.newPage();
+        const requests = [], errors = [];
+        page.on('request', req => requests.push(req.url()));
+        page.on('pageerror', err => errors.push(String(err)));
+        await openUi(page, daemon);
+        const connected = page.waitForResponse(r => r.url().includes(`/threads/${thread.id}/stream?`));
+        if (mobile) await page.locator('.menu-btn').click();
+        await page.locator(`.thread-item`).filter({ hasText: '实时完整事件' }).first().click();
+        await connected;
+        await api(daemon, `/api/threads/${thread.id}/turns`, { method: 'POST', body: JSON.stringify({ text: 'slowthink live-history-check' }) });
+        await page.locator('.work-body').waitFor();
+        await page.getByText('hi there slowthink live-history-check', { exact: true }).waitFor();
+        await page.locator('.work-toggle[aria-expanded="false"]').waitFor();
+        await page.locator('.work-toggle').click();
+        if (await page.locator('.run-head').count()) await page.locator('.run-head').last().click();
+        const tool = page.locator('.step').filter({ hasText: 'npm test' });
+        await tool.locator('.step-head').click();
+        await tool.locator('.step-detail').getByText('12 passed', { exact: true }).waitFor();
+        assert.equal(requests.filter(u => /\/history\/(work|detail)/.test(u)).length, 0, 'received live details expand locally');
+        assert.deepEqual(errors, []);
+        if (process.env.RAH_E2E_SHOTS_DIR) {
+          mkdirSync(process.env.RAH_E2E_SHOTS_DIR, { recursive: true });
+          await page.screenshot({ path: join(process.env.RAH_E2E_SHOTS_DIR, `history-live-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
+        }
+      } finally { await context.close(); }
+    }
+  } finally { await browser?.close(); await daemon.stop(); }
+});
+
+test('opening a running task starts with a summary then merges subsequent full live tools', async () => {
+  const daemon = await startDaemon();
+  let browser;
+  try {
+    browser = await launchBrowser();
+    for (const mobile of [false, true]) for (const colorScheme of ['light', 'dark']) {
+      const thread = await (await api(daemon, '/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: daemon.workdir, title: '途中打开' }) })).json();
+      const started = await (await api(daemon, `/api/threads/${thread.id}/turns`, { method: 'POST', body: JSON.stringify({ text: 'slowthink attach-running' }) })).json();
+      const deadline = Date.now() + 5000;
+      while (true) {
+        const events = await (await api(daemon, `/api/threads/${thread.id}/events?all=1`)).json();
+        if (events.some(e => e.turnId === started.turnId && e.type === 'tool.end')) break;
+        assert.ok(Date.now() < deadline, 'the first tool completed before opening history');
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 1000 }, isMobile: mobile, hasTouch: mobile, colorScheme });
+      try {
+        const page = await context.newPage();
+        const requests = [];
+        page.on('request', req => requests.push(req.url()));
+        await openUi(page, daemon);
+        const connected = page.waitForResponse(r => r.url().includes(`/threads/${thread.id}/stream?`));
+        if (mobile) await page.locator('.menu-btn').click();
+        await page.locator('.thread-item').filter({ hasText: '途中打开' }).first().click();
+        await connected;
+        const work = page.locator('.work').last();
+        assert.equal(await work.locator('.work-toggle').getAttribute('aria-expanded'), 'false');
+        assert.equal(requests.filter(u => /\/history\/(work|detail)/.test(u)).length, 0);
+        await page.getByText('hi there slowthink attach-running', { exact: true }).waitFor();
+        // Wait for the original task to settle, so the last tool's complete live output is here.
+        while ((await (await api(daemon, `/api/threads/${thread.id}`)).json()).status === 'running') await new Promise(resolve => setTimeout(resolve, 25));
+        await work.locator('.work-label').filter({ hasText: '用时' }).waitFor();
+        await work.locator('.work-toggle').click();
+        await work.locator('.run-head').click();
+        const tool = work.locator('.step').filter({ hasText: 'npm test' });
+        await tool.locator('.step-head').click();
+        await tool.locator('.step-detail').getByText('12 passed', { exact: true }).waitFor();
+        assert.equal(requests.filter(u => u.includes('/history/work')).length, 1);
+        assert.equal(requests.filter(u => u.includes('/history/detail')).length, 0, 'a tool received completely since connecting expands locally');
       } finally { await context.close(); }
     }
   } finally { await browser?.close(); await daemon.stop(); }
