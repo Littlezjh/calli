@@ -65,6 +65,11 @@ export class DemoApi extends Api {
     const m = BUILTIN_MANIFESTS.find((x) => x.id === parts[1]);
     if (!m) throw new ApiError(t('demo.notInDemo'), {}, 404);
     const at = new Date().toISOString();
+    if (method === 'GET' && parts[2] === 'memory' && parts[3] === 'sources') {
+      const r = this.installed.get(m.id);
+      if (!r?.enabled || !r.granted.includes('memory.read')) throw new ApiError(t('demo.notInDemo'), {}, 403);
+      return [];
+    }
     if (method === 'POST' && parts[2] === 'install' && !parts[3]) {
       const granted = (body as { granted?: unknown } | undefined)?.granted;
       const exact = Array.isArray(granted) && granted.length === m.permissions.length && m.permissions.every((p) => granted.includes(p));

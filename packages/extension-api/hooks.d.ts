@@ -12,6 +12,7 @@
 //   @status v1       implemented by the first host
 //   @status planned  name and shape reserved; hosts reject or ignore it for now
 
+import type { MemoryDocument, MemoryIndex, MemorySource } from './memory.js';
 import type { ExtensionManifest, LocalizedText } from './manifest.js';
 import type { Permission } from './permissions.js';
 import type { ThreadSummary, TurnSummary, WaitSummary } from './summary.js';
@@ -182,6 +183,13 @@ export type RequestFailureMode =
 // ---------------------------------------------------------------- host API
 
 export interface HostApi {
+  /** @status v1 — needs `memory.read`; groups instances using the same native store. */
+  'memory.sources': { in: Record<string, never>; out: MemorySource[] };
+  /** @status v1 — needs `memory.read`; bounded document inventory, not a count of memories. */
+  'memory.list': { in: { sourceId: string }; out: MemoryIndex };
+  /** @status v1 — needs `memory.read`; generated documents only, no arbitrary paths. */
+  'memory.read': { in: { sourceId: string; fileId: string }; out: MemoryDocument };
+
   /** @status v1 — needs `events.summary`. */
   'events.subscribe': { in: { hooks: NotificationHook[] }; out: { generation: string } };
   /** @status v1 — needs `events.summary`. Current state only; it does not replay history. */

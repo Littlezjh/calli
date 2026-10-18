@@ -68,6 +68,7 @@ async function main(): Promise<void> {
     catalog: loadCatalog(),
     externalDir: join(config.dataDir, 'extensions'),
     externalCatalog: loadSupportedExternalCatalog(),
+    adapters,
     turnStart: (threadId, turnId) => store.listEventsOfType(threadId, 'turn.started').find((e) => e.turnId === turnId),
   });
   extensions.start();

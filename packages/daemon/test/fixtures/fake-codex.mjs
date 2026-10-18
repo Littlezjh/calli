@@ -5,9 +5,18 @@ if (process.argv.includes('--version')) { process.stdout.write('fixture 1.2.3\n'
 // file, "approve" asks for a command approval, "deny" offers a plain decline, "slow" waits until
 // interrupted, "crash" exits. Settings ride with turn/start the way the adapter sends them.
 import { coordinationFixture } from './coordination.mjs';
-import { appendFileSync, readFileSync } from 'node:fs';
-import { basename } from 'node:path';
+import { appendFileSync, readFileSync, cpSync, existsSync, mkdirSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { createInterface } from 'node:readline';
+
+// Optional on-disk generated memory, read by the adapter without an RPC or a new turn.
+if (process.env.FAKE_CODEX_MEMORY_FIXTURE === '1' && process.env.CODEX_HOME) {
+  const memories = join(process.env.CODEX_HOME, 'memories');
+  if (!existsSync(memories)) {
+    mkdirSync(process.env.CODEX_HOME, { recursive: true });
+    cpSync(new URL('./codex-memory/', import.meta.url), memories, { recursive: true });
+  }
+}
 
 const rl = createInterface({ input: process.stdin });
 const out = (obj) => process.stdout.write(JSON.stringify(obj) + '\n');

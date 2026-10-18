@@ -7,3 +7,4 @@ export * from './summary.js';
 export * from './hooks.js';
 
 export * from './work.js';
+export * from './memory.js';

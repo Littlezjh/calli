@@ -1,3 +1,4 @@
+import type { MemoryDocument, MemoryIndex } from '@rah/extension-api';
 import type { ImageInput } from '../attachments.js';
 import type { EmittedEvent } from '../events.js';
 import type { GoalControl } from './native-goal.js';
@@ -228,12 +229,21 @@ export interface StartOptions {
   speed?: string | null;
 }
 
+export interface MemoryReader {
+  /** Canonical identity used only inside the daemon to merge shared stores. */
+  root(): Promise<string>;
+  list(): Promise<MemoryIndex>;
+  read(id: string): Promise<MemoryDocument>;
+}
+
 export interface AgentAdapter {
   readonly id: string;
   readonly label: string;
   /** The agent's mark: the path of a 24×24 drawing, filled with the even-odd rule. See icons.ts. */
   readonly icon?: string;
   readonly capabilities: {
+    /** The adapter can inspect existing generated memory; this does not imply generation is enabled. */
+    memory?: boolean;
     workModes?: readonly WorkMode[];
     speed?: boolean;
     /** Accepts runtime-only limi CLI connection context. */
@@ -269,6 +279,7 @@ export interface AgentAdapter {
     /** Whether the whole prompt the model runs with can be read from the agent's session file. */
     systemPrompt?: boolean;
   };
+  memoryReader?(): MemoryReader;
   /** Whether the agent can be started on this host. */
   available(): Promise<boolean>;
   /** Models the user can pick from. May start a short-lived process to ask the agent. */

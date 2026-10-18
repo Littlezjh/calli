@@ -4,6 +4,8 @@ import { WorkSummary } from './work';
  * styles.css variables), so an extension looks like the rest of the interface without shipping
  * any styling of its own.
  */
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { useEffect, useState, type ComponentProps } from 'react';
 import type { PopoverOptionProps, PopoverProps, WebHostUi } from '@rah/extension-api/web';
 import type { AgentInfo } from '../api';
@@ -117,6 +119,12 @@ function EmptyState({ text }: { text: string }) {
   );
 }
 
+function Markdown({ text }: { text: string }) {
+  return <div className="md"><ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml
+    components={{ a: ({ children }) => <span>{children}</span>, img: ({ alt }) => <span>{alt}</span> }}
+  >{text}</ReactMarkdown></div>;
+}
+
 /** The components handed to extension views. `agents` is read at render, so it is always current. */
 export function hostUi(agents: () => AgentInfo[]): WebHostUi {
   function AgentMark({ agentId, size = 14, label = false }: { agentId: string; size?: number; label?: boolean }) {
@@ -134,5 +142,5 @@ export function hostUi(agents: () => AgentInfo[]): WebHostUi {
       </span>
     );
   }
-  return { WorkSummary, Icon: HostIcon, AgentMark, RelativeTime, Popover: HostPopover, PopoverOption, EmptyState };
+  return { WorkSummary, Markdown, Icon: HostIcon, AgentMark, RelativeTime, Popover: HostPopover, PopoverOption, EmptyState };
 }

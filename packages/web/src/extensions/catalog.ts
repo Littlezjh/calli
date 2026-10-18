@@ -5,11 +5,13 @@
  */
 import type { ExtensionManifest } from '@rah/extension-api';
 import type { WebExtensionModule } from '@rah/extension-api/web';
+import memoryManifest from '@rah/ext-memory/manifest.json';
 import boardManifest from '@rah/ext-board/manifest.json';
 
 export const BUILTIN_MODULES: Record<string, () => Promise<{ default: WebExtensionModule }>> = {
   board: () => import('@rah/ext-board'),
+  memory: () => import('@rah/ext-memory'),
 };
 
 /** The same extensions' manifests, for the demo: it has no daemon to read the catalog from. */
-export const BUILTIN_MANIFESTS: ExtensionManifest[] = [boardManifest as ExtensionManifest];
+export const BUILTIN_MANIFESTS: ExtensionManifest[] = [boardManifest as ExtensionManifest, memoryManifest as ExtensionManifest];

@@ -375,6 +375,12 @@ export function createHttpServer(deps: HttpDeps): Server {
       }
       // GET /api/extensions
       if (method === 'GET' && !parts[2]) return sendJson(res, 200, extensions.list());
+      // Only the installed extension with a current grant may inspect native memory.
+      if (method === 'GET' && parts[2] && parts[3] === 'memory') {
+        if (parts[4] === 'sources' && !parts[5]) return sendJson(res, 200, await extensions.memorySources(parts[2]));
+        if (parts[4] && parts[5] === 'files' && !parts[6]) return sendJson(res, 200, await extensions.memoryList(parts[2], parts[4]));
+        if (parts[4] && parts[5] === 'document' && !parts[6]) return sendJson(res, 200, await extensions.memoryRead(parts[2], parts[4], url.searchParams.get('id') ?? ''));
+      }
       // POST /api/extensions/:id/install { granted }: exactly the permissions the manifest asks for
       if (method === 'POST' && parts[2] && parts[3] === 'install' && !parts[4]) {
         return sendJson(res, 200, extensions.install(parts[2], (await readJson(req))?.granted));

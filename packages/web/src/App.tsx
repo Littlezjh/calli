@@ -1759,7 +1759,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           // An extension's view, behind a boundary of its own. Until the list is read, it is on its way.
           <div key={`ext:${extOpen ? `${extOpen.extensionId}/${extOpen.view.id}` : ''}`} className="scroller">
             {extOpen && extInputs ? (
-              <ExtensionView extensionId={extOpen.extensionId} viewId={extOpen.view.id} name={extName} inputs={extInputs} onOpenThread={pick} />
+              <ExtensionView api={api} extensionId={extOpen.extensionId} viewId={extOpen.view.id} name={extName} inputs={extInputs} onOpenThread={pick} />
             ) : (
               <div className="loading-note">{t('common.loading')}</div>
             )}

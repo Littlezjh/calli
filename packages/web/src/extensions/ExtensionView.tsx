@@ -1,3 +1,4 @@
+import type { Api } from '../api';
 import { Component, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { WebExtensionModule } from '@rah/extension-api/web';
 import { useIsNarrow } from '../hooks';
@@ -7,6 +8,7 @@ import { createWebHost, type HostInputs } from './host';
 import { hostUi } from './ui';
 
 interface Props {
+  api: Api;
   extensionId: string;
   viewId: string;
   /** The extension's name in the language on screen, for what is said if it fails. */
@@ -50,7 +52,7 @@ function Failed({ name, onRetry }: { name: string; onRetry: () => void }) {
 type Loaded = { id: string; module: WebExtensionModule } | { id: string; error: unknown };
 
 /** An extension's view in the main area: its code loaded on first use, handed a `WebHost`, behind a boundary. */
-export function ExtensionView({ extensionId, viewId, name, inputs, onOpenThread }: Props) {
+export function ExtensionView({ api, extensionId, viewId, name, inputs, onOpenThread }: Props) {
   const narrow = useIsNarrow();
   const [attempt, setAttempt] = useState(0);
   const [failed, setFailed] = useState(false);
@@ -58,7 +60,7 @@ export function ExtensionView({ extensionId, viewId, name, inputs, onOpenThread 
   const openThread = useRef(onOpenThread);
   openThread.current = onOpenThread;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const live = useMemo(() => createWebHost(extensionId, inputs, { openThread: (id) => openThread.current(id), ui: hostUi, onError: () => setFailed(true) }), [extensionId, attempt, inputs.extension]);
+  const live = useMemo(() => createWebHost(extensionId, inputs, { api, openThread: (id) => openThread.current(id), ui: hostUi, onError: () => setFailed(true) }), [api, extensionId, attempt, inputs.extension]);
   useEffect(() => live.update(inputs), [live, inputs]);
   const host = useMemo(() => ({ ...live.host, narrow }), [live, narrow]);
 
