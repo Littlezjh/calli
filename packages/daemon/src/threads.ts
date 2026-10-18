@@ -1130,6 +1130,11 @@ export class ThreadManager {
     return this.store.listEvents(threadId, afterSeq);
   }
 
+  history(threadId: string) {
+    this.getThread(threadId);
+    return this.store.history;
+  }
+
   /**
    * Everything after a sequence number, however much that is: what a stream replays before it
    * goes live. Stopping at a page size here would leave a hole between the replay and the live

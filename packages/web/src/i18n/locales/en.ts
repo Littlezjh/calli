@@ -1079,6 +1079,8 @@ export const en: Messages = {
   'view.thinking': 'Thinking',
   'view.thought': (time: string) => `Thought · ${time}`,
   'view.succeeded': 'Succeeded',
+  'view.detailMore': 'Load more',
+  'view.detailFailed': 'Could not load details',
   'view.noDetail': 'The tool returned no details',
   'view.moreLines': (n: number) => `${n} more ${n === 1 ? 'line' : 'lines'} not shown`,
   'view.previewPage': 'Open this page in the preview',

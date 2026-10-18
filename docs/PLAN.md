@@ -34,6 +34,10 @@ daemon（Node.js，跑在远程主机上）
 
 Plan 交互参考了 [Cline 的 Plan / Act](https://docs.cline.bot/core-workflows/plan-and-act)：先讨论，切换后延续同一上下文；[OpenCode 的 Plan / Build](https://opencode.ai/v2/docs/agents) 将计划作为限制普通项目编辑的独立模式。[pi 官方说明](https://raw.githubusercontent.com/badlogic/pi-mono/main/packages/coding-agent/README.md) 明确不内置 Plan，交给扩展实现。Hub 据此统一入口和交互，执行策略仍接各 agent 的原生协议；协议依据包括 [Codex app-server](https://learn.chatgpt.com/docs/app-server) 与 [ACP Session Modes](https://agentclientprotocol.com/protocol/v1/session-modes)。
 
+## 历史加载
+
+历史先加载最近 8 轮的正文与概况，再按「工作记录 → 单项详情」逐层读取。Hub 统一事件层维护可重建的轻量索引，覆盖所有 agent、主对话、协作成员和侧聊；旧数据按访问区间分批构建。摘要 SSE 断线后只补齐受影响轮次，未展开的工具输出不传给浏览器。原始事件分页与完整导出接口保留兼容。具体结构、冷历史成本与验收见 [历史正文优先与详情按需加载](history-loading-design.md)。
+
 ## 统一事件
 
 | 事件 | 含义 |
@@ -58,7 +62,7 @@ Plan 交互参考了 [Cline 的 Plan / Act](https://docs.cline.bot/core-workflow
 - **事件日志是唯一真相。** 每个事件有递增的 `seq`，SSE 断线后用 `after=<seq>` 续传。
 - **上下文占用和累计用量分开。** Codex 取 `tokenUsage.last.totalTokens`，不能取会话累计的 `total`；pi 取 `contextUsage`，压缩后返回 `tokens: null` 时隐藏旧占用，等下一次响应更新；Claude 和 TRAE 取 ACP 的 `usage_update.used / size`。agy 尚未提供占用数据。前端只消费统一事件，不按 agent 分支；80% 提示只是界面阈值，不表示 agent 已触发自动压缩。
 - **压缩只认原生信号。** Codex / TRAE 的 `contextCompaction`、Claude ACP 的带标识工具事件或 `compaction_update`、Pi 新旧 compaction 事件、ZCode 保留在 `session.updated` 的原生压缩操作载荷，统一映射到 `context.compaction`。在工作记录中按发生顺序独立显示，不计入工具步数；重复通知只更新同一行，未收到成功通知不显示“已压缩”。手动 `/compact` 沿用现有操作行，不重复展示。刷新与翻页从事件日志回放；旧日志缺失的事件不倒推补造，agy 暂无可靠信号。
-- **读回来按轮次分页。** 文字和思考是一个片段存一条，长轮次有上万条。打开线程最多取最新 3 轮（`events?tail`），同时按 2,000 条事件预算确定边界；更早的从顶部一页页取（`events?before=<seq>`）。一页总是从某一轮的开头开始，单轮再长也整轮给。轮次起点有独立索引，避免扫描工具输出。数据库游标逐条读取并立即合并连续工具快照，避免把整页原始快照同时放进内存；随后把同一轮里连续的同类文字片段合并成首尾两条，原始存储不变。SSE 续传把游标之后的全部补完再接实时事件，不按页截断。
+- **原始事件接口按轮次分页（兼容）。** 文字和思考是一个片段存一条，长轮次有上万条。打开线程最多取最新 3 轮（`events?tail`），同时按 2,000 条事件预算确定边界；更早的从顶部一页页取（`events?before=<seq>`）。一页总是从某一轮的开头开始，单轮再长也整轮给。轮次起点有独立索引，避免扫描工具输出。数据库游标逐条读取并立即合并连续工具快照，避免把整页原始快照同时放进内存；随后把同一轮里连续的同类文字片段合并成首尾两条，原始存储不变。SSE 续传把游标之后的全部补完再接实时事件，不按页截断。
 - **一轮一个工作块。** 一轮里做的事（思考、工具调用、中途说的话）按发生顺序收在一个块里，运行中展开并显示“工作中 · 已用时长 · N 步”，计时按轮次开始时间每秒更新，不依赖新事件，刷新后继续；只刷新时间文字，不重绘 Markdown 和工具内容。停止或完成后计时固定，结束后折成"用时 X · N 步"；块后面的文字才是回答。思考只露最新几行，想完是一行。
 - **工作图标按操作统一。** 摘要和明细共用同一套图标：读取用展开的书页，编辑用铅笔，命令用带边框的终端，搜索用放大镜，网页用地球，其他工具用扳手。统一 18 px、圆头线条与文字间距，窄屏长命令不挤压图标；仍按统一事件里的操作类型呈现，不在前端按 agent 分支。
 - **页面自己发现断线和新版本。** 事件流 40 秒没有任何字节（daemon 每 15 秒发一次 ping）就当它死了重连，回到前台时静默超过 5 秒也立刻重连；线程列表流重连后重新拉一次列表。回到前台或重连时比对 `index.html` 里的入口脚本，不一样就提示"有新版本"。

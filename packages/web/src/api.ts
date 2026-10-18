@@ -4,6 +4,8 @@ export interface UserQuestion { id: string; question: string; header?: string; o
 export type UserInputAnswer = { answers: Record<string, string[]> } | { cancelled: true };
 import type { UsageReport, AgentDiagnostic } from './observability';
 import type { StoredEvent } from './timeline';
+import type { DetailRef } from './timeline';
+import type { HistoryPage, HistoryDetail, HistoryWork } from './history';
 import { cachedQuota, clearQuotaCache, rememberQuota } from './quota-cache';
 import { localeTag, t } from './i18n';
 
@@ -747,6 +749,25 @@ export class Api {
 
   events(id: string, after = 0): Promise<StoredEvent[]> {
     return this.request('GET', `/api/threads/${id}/events?after=${after}`);
+  }
+
+  historyPage(id: string, before?: number, after?: number): Promise<HistoryPage> {
+    const params = new URLSearchParams();
+    if (before) params.set('before', String(before));
+    if (after) params.set('after', String(after));
+    return this.request('GET', `/api/threads/${id}/history${params.size ? `?${params}` : ''}`);
+  }
+
+  historyPosition(id: string): Promise<{ snapshotSeq: number }> {
+    return this.request('GET', `/api/threads/${id}/history?head=1`);
+  }
+
+  historyWork(id: string, ref: DetailRef, cursor?: number): Promise<HistoryWork> {
+    return this.request('GET', `/api/threads/${id}/history/work?turn=${encodeURIComponent(ref.turnId)}&id=${ref.id}${cursor ? `&cursor=${cursor}&version=${ref.version}` : ''}`);
+  }
+
+  historyDetail(id: string, ref: DetailRef, cursor?: number, path?: string): Promise<HistoryDetail> {
+    return this.request('GET', `/api/threads/${id}/history/detail?turn=${encodeURIComponent(ref.turnId)}&id=${ref.id}${cursor ? `&cursor=${cursor}&version=${ref.version}` : ''}${path === undefined ? '' : `&path=${encodeURIComponent(path)}`}`);
   }
 
   /** A thread's whole log, with streamed fragments merged: for copying the conversation out. */

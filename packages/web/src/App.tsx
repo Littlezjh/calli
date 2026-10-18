@@ -1,3 +1,4 @@
+import { historyPage, mergeHistory, watchHistory } from './history';
 import type { WorkMode } from './api';
 import { HandoverTrail } from './components/HandoverTrail';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -87,8 +88,6 @@ const sleep = (ms: number, signal: AbortSignal) =>
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** How long streamed events are collected before the view updates. Keeps long, fast streams smooth. */
-const FLUSH_MS = 40;
 
 /** How close to the end of the thread still counts as being at the bottom. */
 const NEAR_BOTTOM_PX = 160;
@@ -700,99 +699,50 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     });
   };
 
-  // Event log for the selected thread: the newest turns first (a long thread's full log can be
-  // tens of thousands of events), then a live stream that resumes from the last seq. Older
-  // turns are paged in on demand from the top.
+  const historyCursor = useRef<number | null>(null);
+  const olderRequest = useRef<object | null>(null);
   useEffect(() => {
-    setEvents([]);
-    setHasOlder(false);
-    setLoadingOlder(false);
-    setEventsLoading(Boolean(api && selectedId));
+    setEvents([]); setHasOlder(false); setLoadingOlder(false);
+    setEventsLoading(Boolean(api && selectedId)); historyCursor.current = null; olderRequest.current = null;
     if (!api || !selectedId) return;
     const ctrl = new AbortController();
-    const id = selectedId;
-    stickToBottom.current = true;
-    setAtBottom(true);
-
-    // A fast stream can deliver hundreds of events a second. Collect them briefly and update once,
-    // so the timeline is rebuilt at most ~25 times a second instead of once per event.
-    let buffer: StoredEvent[] = [];
-    let flushTimer: ReturnType<typeof setTimeout> | undefined;
-    const flush = () => {
-      flushTimer = undefined;
-      const batch = buffer;
-      buffer = [];
-      if (ctrl.signal.aborted || batch.length === 0) return;
-      setEvents((prev) => {
-        let last = prev.length ? prev[prev.length - 1].seq : 0;
-        const fresh = batch.filter((ev) => (ev.seq > last ? ((last = ev.seq), true) : false));
-        return fresh.length ? [...prev, ...fresh] : prev;
-      });
-    };
-
-    (async () => {
-      let after = 0;
-      try {
-        const initial = await api.eventsTail(id);
-        if (ctrl.signal.aborted) return;
-        setEvents(initial);
-        setEventsLoading(false);
-        // A thread's log starts at seq 1; a page that starts later has turns before it.
-        setHasOlder(initial.length > 0 && initial[0].seq > 1);
-        after = initial.at(-1)?.seq ?? 0;
-      } catch (e) {
-        if (!ctrl.signal.aborted) {
-          setEventsLoading(false);
-          handleError(e);
-        }
-        return;
-      }
-      while (!ctrl.signal.aborted) {
-        try {
-          await api.stream(
-            `/api/threads/${id}/stream?after=${after}`,
-            (ev) => {
-              after = Math.max(after, ev.seq);
-              buffer.push(ev);
-              flushTimer ??= setTimeout(flush, FLUSH_MS);
-            },
-            ctrl.signal,
-          );
-        } catch (e) {
-          if (e instanceof AuthError) return signOut(t('app.tokenExpired'));
-        }
-        await sleep(1500, ctrl.signal);
-      }
-    })();
-    return () => {
-      ctrl.abort();
-      clearTimeout(flushTimer);
-    };
+    stickToBottom.current = true; setAtBottom(true);
+    void watchHistory(api, selectedId, ctrl.signal, {
+      page: page => {
+        setEvents(page.events); setEventsLoading(false);
+        historyCursor.current = page.nextCursor; setHasOlder(page.hasOlder);
+      },
+      events: batch => setEvents(previous => mergeHistory(previous, batch)),
+      error: error => { setEventsLoading(false); handleError(error); },
+    });
+    return () => ctrl.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, selectedId]);
 
   /** Prepends the page of turns before the loaded ones, keeping the scroll position on the same content. */
   const loadOlder = async () => {
     const id = selectedId;
-    const first = events[0]?.seq ?? 0;
-    if (!api || !id || loadingOlder || first <= 1) return;
+    const first = historyCursor.current ?? 0;
+    if (!api || !id || loadingOlder || olderRequest.current || first <= 1) return;
+    const request = {}; olderRequest.current = request;
     setLoadingOlder(true);
     try {
-      const older = await api.eventsBefore(id, first);
+      const page = await historyPage(api, id, first);
+      const older = page.events;
       // The answer is for the thread that asked; another one may be open by now.
-      if (shownThread.current !== id) return;
-      setHasOlder(older.length > 0 && older[0].seq > 1);
+      if (shownThread.current !== id || olderRequest.current !== request) return;
+      setHasOlder(page.hasOlder); historyCursor.current = page.nextCursor;
       const el = scrollerRef.current;
       const fromBottom = el ? el.scrollHeight - el.scrollTop : 0;
-      setEvents((prev) => (prev[0]?.seq === first ? [...older, ...prev] : prev));
+      setEvents((prev) => mergeHistory(older, prev));
       // New content lands above the viewport; stay on the same row while it inserts.
       requestAnimationFrame(() => {
         if (el && !stickToBottom.current) el.scrollTop = el.scrollHeight - fromBottom;
       });
     } catch (e) {
-      handleError(e);
+      if (olderRequest.current === request) handleError(e);
     } finally {
-      setLoadingOlder(false);
+      if (olderRequest.current === request) { olderRequest.current = null; setLoadingOlder(false); }
     }
   };
 
@@ -1839,6 +1789,8 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           {showcase && selected && !eventsLoading && !timeline.items.length && showcase.intro(selected.id)}
           {selected ? (
             <ThreadView
+              historyApi={api ?? undefined}
+              historyThreadId={selected.id}
               items={timeline.items}
               roots={threadRoots}
               loadImage={loadImage}

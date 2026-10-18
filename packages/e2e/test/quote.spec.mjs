@@ -47,24 +47,26 @@ test('a selection in the answer becomes a quote in the composer and in the sent 
 
   await selectStartOfAnswer(7);
   await page.locator('.selection-menu').waitFor({ timeout: 5_000 });
-  assert.equal(await page.locator('.selection-menu').innerText(), '引用\n拷贝\n在侧边栏提问');
+  assert.equal(await page.locator('.selection-menu').innerText(), '注释\n拷贝\n在侧边栏提问');
 
   // Quoting closes the menu and parks the passage above what is typed.
-  await page.locator('.selection-menu button', { hasText: '引用' }).click();
-  await page.locator('.quote-strip').waitFor({ timeout: 5_000 });
-  assert.equal(await page.locator('.quote-strip').innerText(), 'hi ther');
+  await page.locator('.selection-menu button', { hasText: '注释' }).click();
+  await page.locator('.selection-add').click();
+  await page.locator('.composer .note-quote').waitFor({ timeout: 5_000 });
+  assert.equal(await page.locator('.composer .note-quote').innerText(), 'hi ther');
   assert.equal(await page.locator('.selection-menu').count(), 0);
 
   await page.locator('.composer textarea').click();
   await page.keyboard.type('why so');
   await page.keyboard.press('Enter');
-  await page.locator('.row.user .bubble-quote').last().waitFor({ timeout: 5_000 });
-  assert.equal(await page.locator('.row.user .bubble-quote').last().innerText(), 'hi ther');
+  await page.locator('.row.user .notes-chip').last().click();
+  await page.locator('.row.user .note-quote').last().waitFor({ timeout: 5_000 });
+  assert.equal(await page.locator('.row.user .note-quote').last().innerText(), 'hi ther');
   assert.equal(await page.locator('.row.user .bubble').last().innerText(), 'why so');
   // Wait for the turn to finish: the side chat in the next test forks this thread, and a fork
   // has to wait for a running turn.
   await page.waitForFunction(
-    () => [...document.querySelectorAll('.main .thread .markdown')].some((m) => m.textContent?.includes('hi there > hi ther')),
+    () => [...document.querySelectorAll('.main .thread .markdown')].some((m) => m.textContent?.includes('hi there [注释 1]')),
     null,
     { timeout: 15_000 },
   );
@@ -87,8 +89,9 @@ test('asking in the side chat opens a thread of its own', async () => {
   // The message carries the quote, and the side chat forks the conversation it came from: the
   // agent answers with the full history as context, while the panel shows only what is asked
   // here — one user turn, none of the inherited ones.
-  await page.locator('.side-chat .row.user .bubble-quote').waitFor({ timeout: 5_000 });
-  assert.equal(await page.locator('.side-chat .row.user .bubble-quote').innerText(), 'hi ther');
+  await page.locator('.side-chat .row.user .notes-chip').click();
+  await page.locator('.side-chat .row.user .note-quote').waitFor({ timeout: 5_000 });
+  assert.equal(await page.locator('.side-chat .row.user .note-quote').innerText(), 'hi ther');
   assert.equal(await page.locator('.side-chat .row.user .bubble').last().innerText(), 'go on');
   assert.equal(await page.locator('.side-chat .row.user').count(), 1, 'inherited turns stay with the agent, not on the panel');
   await page.waitForFunction(

@@ -16,6 +16,8 @@ export interface StoredEvent {
   data: Record<string, any>;
 }
 
+export interface DetailRef { turnId: string; id: number; version: number }
+
 /** One edited region of a file, as the agent reported it, with its line counts. */
 export interface FileDiff {
   path: string;
@@ -26,6 +28,8 @@ export interface FileDiff {
 }
 
 export interface Step {
+  detail?: DetailRef;
+  files?: Array<{ path: string; added: number; removed: number; detail: DetailRef }>;
   id: string;
   title: string;
   kind: string;
@@ -45,6 +49,7 @@ export interface ImageRef {
 
 /** Everything a turn did to one file. */
 export interface FileChange {
+  details?: DetailRef[];
   path: string;
   added: number;
   removed: number;
@@ -73,6 +78,7 @@ export interface ApprovalOption {
 
 /** One stretch of the agent's thinking, between two things it did or said. */
 export interface Thought {
+  detail?: DetailRef;
   key: string;
   text: string;
   startedAt: string;
@@ -135,6 +141,9 @@ export type Item =
    */
   | {
       kind: 'work';
+      deferred?: DetailRef;
+      count?: number;
+      files?: Array<{ path: string; added: number; removed: number; detail: DetailRef }>;
       key: string;
       turnId: string;
       entries: WorkEntry[];
@@ -288,7 +297,7 @@ export function splitUserQuote(text: string): { quote: string | null; body: stri
 // diff objects in the event log never change, so each one is measured only once.
 const diffCache = new WeakMap<object, FileDiff>();
 
-function diffsOf(content: unknown): FileDiff[] {
+export function diffsOf(content: unknown): FileDiff[] {
   if (!Array.isArray(content)) return [];
   const out: FileDiff[] = [];
   for (const part of content) {
@@ -327,6 +336,8 @@ function outputText(output: unknown): string {
 }
 
 function applyToolData(step: Step, data: Record<string, any>): void {
+  if (data.detail) step.detail = data.detail;
+  if (data.files) step.files = data.files;
   if (data.status) step.status = String(data.status);
   if (data.title) step.title = String(data.title);
   const diffs = diffsOf(data.content);
@@ -496,6 +507,24 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
         break;
       }
 
+      case 'history.work': {
+        const block = workBlock(key, ev.ts);
+        block.deferred = { turnId: turn, id: ev.seq, version: ev.data.version };
+        block.count = ev.data.count;
+        block.files = ev.data.files;
+        break;
+      }
+
+      case 'history.thought': {
+        const block = workBlock(`e${ev.data.id}`, ev.data.startedAt);
+        const thoughtKey = `e${ev.data.id}`;
+        const existing = block.entries.find(e => e.kind === 'thought' && e.thought.key === thoughtKey);
+        const thought: Thought = { key: thoughtKey, text: ev.data.text, startedAt: ev.data.startedAt, endedAt: ev.data.endedAt, detail: ev.data.detail };
+        if (existing?.kind === 'thought') existing.thought = thought;
+        else block.entries.push({ kind: 'thought', thought });
+        break;
+      }
+
       case 'context.compaction': {
         if (typeof ev.data.id !== 'string' || !ev.data.id) break;
         const existing = open.work?.turnId === turn
@@ -512,6 +541,7 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
         break;
       }
 
+      case 'history.tool.start':
       case 'tool.start': {
         const block = workBlock(key, ev.ts);
         const step: Step = {
@@ -522,6 +552,9 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
           input: ev.data.input,
           diffs: [],
           startedAt: ev.ts,
+          endedAt: ev.data.endedAt,
+          detail: ev.data.detail,
+          files: ev.data.files,
         };
         applyToolData(step, { content: ev.data.content });
         block.entries.push({ kind: 'step', step });
@@ -530,6 +563,8 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
       }
 
       case 'tool.update':
+      case 'history.tool.update':
+      case 'history.tool.end':
       case 'tool.end': {
         // A result goes to the row its call started in. The call may have started in a block above
         // a card that asked the user something, so every block of the turn is searched, newest
@@ -544,7 +579,7 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
         }
         if (!work || !step) break;
         applyToolData(step, ev.data);
-        if (ev.type === 'tool.end') step.endedAt = ev.ts;
+        if (ev.type === 'tool.end' || ev.type === 'history.tool.end') step.endedAt = ev.ts;
         work.endedAt = ev.ts;
         break;
       }
@@ -703,10 +738,20 @@ function addTurnSummaries(items: Item[], finished: Map<string, string | undefine
 
     // Only edits that went through count; a refused or failed edit changed nothing.
     const files = new Map<string, FileChange>();
+    const addSummary = (summary: { path: string; added: number; removed: number; detail: DetailRef }) => {
+      const file = files.get(summary.path) ?? { path: summary.path, added: 0, removed: 0, diffs: [], details: [] };
+      file.added += summary.added;
+      file.removed += summary.removed;
+      file.details ??= [];
+      if (!file.details.some(d => d.id === summary.detail.id)) file.details.push(summary.detail);
+      files.set(file.path, file);
+    };
     for (const it of turnItems) {
       if (it.kind !== 'work') continue;
+      for (const file of it.files ?? []) addSummary(file);
       for (const step of it.steps) {
         if (step.status !== 'completed') continue;
+        for (const file of step.files ?? []) addSummary(file);
         for (const diff of step.diffs) {
           const file = files.get(diff.path) ?? { path: diff.path, added: 0, removed: 0, diffs: [] };
           file.added += diff.added;

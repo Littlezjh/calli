@@ -1,3 +1,4 @@
+import { historyPage, mergeHistory, watchHistory } from '../history';
 import { waitingLabel } from '../notices';
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import type { AgentInfo, Api, Coordination, Thread } from '../api';
@@ -156,50 +157,34 @@ export function AgentPanel({ api, team, agents, leadAgent, memberModel, start, p
     window.addEventListener('popstate', pop);
     return () => { window.removeEventListener('popstate', pop); if (history.state?.limiAgents) history.back(); };
   }, [phone]);
+  const historyCursor = useRef<number | null>(null);
+  const olderRequest = useRef<object | null>(null);
   useEffect(() => {
-    setEvents([]); setOlder(false); setConnected(true); stick.current = true; setAtBottom(true);
+    setEvents([]); setOlder(false); setLoadingOlder(false); setConnected(true);
+    historyCursor.current = null; olderRequest.current = null; stick.current = true; setAtBottom(true);
     if (!memberId) { requestAnimationFrame(() => { if (body.current) body.current.scrollTop = listScroll.current; }); return; }
     const ctrl = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const id = memberId;
-    const run = async () => {
-      let after = 0;
-      let loaded = false;
-      while (!ctrl.signal.aborted) {
-        try {
-          if (!loaded) {
-            const initial = await api.eventsTail(id);
-            if (ctrl.signal.aborted) return;
-            setEvents(initial); after = initial.at(-1)?.seq ?? 0; setOlder((initial[0]?.seq ?? 0) > 1); loaded = true;
-          }
-          setConnected(true);
-          await api.stream(`/api/threads/${id}/stream?after=${after}`, ev => {
-            after = Math.max(after, ev.seq);
-            setEvents(prev => prev.some(e => e.seq === ev.seq) ? prev : [...prev, ev]);
-          }, ctrl.signal);
-        } catch { /* Reconnect with the last received sequence, including initial-load failures. */ }
-        if (!ctrl.signal.aborted) {
-          setConnected(false);
-          await new Promise<void>(resolve => {
-            const done = () => { clearTimeout(timer); ctrl.signal.removeEventListener('abort', done); resolve(); };
-            timer = setTimeout(done, 1500); ctrl.signal.addEventListener('abort', done, { once: true });
-          });
-        }
-      }
-    };
-    void run();
-    return () => { ctrl.abort(); clearTimeout(timer); };
+    void watchHistory(api, memberId, ctrl.signal, {
+      page: page => { setEvents(page.events); historyCursor.current = page.nextCursor; setOlder(page.hasOlder); },
+      events: batch => setEvents(previous => mergeHistory(previous, batch)),
+      error: onError,
+      connection: setConnected,
+    });
+    return () => ctrl.abort();
   }, [api, memberId]);
   useEffect(() => { if (memberId && stick.current && body.current) body.current.scrollTop = body.current.scrollHeight; }, [events, memberId]);
   const loadOlder = async () => {
-    if (!memberId || loadingOlder || !events.length) return;
+    if (!memberId || loadingOlder || olderRequest.current || !historyCursor.current) return;
+    const id = memberId;
+    const request = {}; olderRequest.current = request;
     setLoadingOlder(true);
     const el = body.current; const height = el?.scrollHeight ?? 0;
     try {
-      const before = await api.eventsBefore(memberId, events[0].seq);
-      setEvents(prev => [...before, ...prev]); setOlder((before[0]?.seq ?? 0) > 1);
+      const page = await historyPage(api, id, historyCursor.current);
+      if (latest.current.memberId !== id || olderRequest.current !== request) return;
+      setEvents(prev => mergeHistory(page.events, prev)); setOlder(page.hasOlder); historyCursor.current = page.nextCursor;
       requestAnimationFrame(() => { if (el) el.scrollTop += el.scrollHeight - height; });
-    } catch (err) { onError(err); } finally { setLoadingOlder(false); }
+    } catch (err) { if (olderRequest.current === request) onError(err); } finally { if (olderRequest.current === request) { olderRequest.current = null; setLoadingOlder(false); } }
   };
   return <aside ref={panel} className={`agent-panel${memberId ? ' detail' : ''}`} role="region" aria-label={t('team.panel')} style={width === null ? undefined : { ['--agent-panel-width' as string]: `${width}px` }}>
     <div className="agent-panel-resize" onPointerDown={startResize} onDoubleClick={() => { setWidth(null); localStorage.removeItem(WIDTH_KEY); }} role="separator" aria-orientation="vertical" aria-label={t('common.resize')} title={t('team.resizeHint')} />
@@ -244,7 +229,7 @@ export function AgentPanel({ api, team, agents, leadAgent, memberModel, start, p
           <p>{m.latest?.result?.split('<limi-coordination>')[0].slice(-160) || m.latest?.text.slice(0, 160) || t('team.waitingTask')}</p>
           {m.thread?.unread && <span className="coord-unread">{t('team.newOutput')}</span>}
         </button>)}
-      </> : thread ? <ThreadView items={timeline.items} roots={[thread.cwd, thread.cwdReal]} loadImage={id => api.attachment(thread.id, id)} loadFile={path => api.threadFile(thread.id, path)} hasOlder={older} loadingOlder={loadingOlder} onLoadOlder={() => void loadOlder()} /> : <div className="agent-panel-empty">{t('team.childGone')}</div>}
+      </> : thread ? <ThreadView historyApi={api} historyThreadId={thread.id} items={timeline.items} roots={[thread.cwd, thread.cwdReal]} loadImage={id => api.attachment(thread.id, id)} loadFile={path => api.threadFile(thread.id, path)} hasOlder={older} loadingOlder={loadingOlder} onLoadOlder={() => void loadOlder()} /> : <div className="agent-panel-empty">{t('team.childGone')}</div>}
     </div>
     {memberId && !atBottom && <button className="agent-panel-latest" onClick={() => { stick.current = true; if (body.current) body.current.scrollTop = body.current.scrollHeight; }}>{t('team.latest')}</button>}
     <footer className="agent-panel-footer">

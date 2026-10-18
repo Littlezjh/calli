@@ -34,6 +34,7 @@ for (const phone of [false, true]) for (const colorScheme of ['light', 'dark']) 
       // On the desktop collaboration is switched on first; on the phone the @ alone starts it.
       if (!phone) {
         await page.getByRole('button', { name: '协作', exact: true }).click();
+        await page.locator('.coord-picker-head button').click();
         await page.getByRole('button', { name: '启用协作', exact: true }).click();
         // Nobody is in the team yet: the button says it is on, and no line is added above the box.
         await page.locator('.coord-tool.on').waitFor();

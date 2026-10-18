@@ -1077,6 +1077,8 @@ export const ja: Messages = {
   'view.thinking': '思考中',
   'view.thought': (time: string) => `思考 · ${time}`,
   'view.succeeded': '成功',
+  'view.detailMore': 'さらに読み込む',
+  'view.detailFailed': '詳細を読み込めませんでした',
   'view.noDetail': 'ツールから詳細は返されませんでした',
   'view.moreLines': (n: number) => `表示していない行があと ${n} 行あります`,
   'view.previewPage': 'このページをプレビューで開く',

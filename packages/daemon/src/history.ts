@@ -1,0 +1,337 @@
+import type { DatabaseSync } from 'node:sqlite';
+import type { StoredEvent } from './events.js';
+import { compactDeltas, toolText } from './events.js';
+import { HttpError } from './errors.js';
+import { diffStats } from './history-diff.js';
+
+/** Read-model events are explicitly distinct from the complete event log. */
+export interface HistoryEvent extends Omit<StoredEvent, 'type'> { type: string }
+export interface HistoryPage {
+  events: HistoryEvent[];
+  snapshotSeq: number;
+  nextCursor: number | null;
+  hasOlder: boolean;
+}
+interface Row { thread_id: string; turn_id: string | null; seq: number; type: string; ts: string; data: string }
+interface Detail {
+  thread_id: string; turn_id: string; id: number; tool_id: string | null; kind: string;
+  version: number; input_seq: number | null; output_seq: number | null; diff_seq: number | null;
+  end_seq: number;
+}
+const eventOf = (r: Row): HistoryEvent => ({ threadId: r.thread_id, turnId: r.turn_id, seq: r.seq, type: r.type, ts: r.ts, data: JSON.parse(r.data) });
+const isWork = (e: HistoryEvent) => e.type === 'history.thought' || e.type === 'context.compaction' || e.type === 'history.tool.start';
+const isBoundary = (e: HistoryEvent) => ['input.request', 'approval.request', 'plan.delta', 'plan.completed'].includes(e.type);
+const hasOutput = (output: unknown, content: unknown): boolean => {
+  if (output !== undefined && output !== null && output !== '') return true;
+  if (typeof content === 'string') return content.length > 0;
+  return Array.isArray(content) && content.some(p => p?.type === 'text' && typeof p.text === 'string' && p.text.length > 0
+    || p?.type === 'content' && p.content?.type === 'text' && String(p.content.text ?? '').length > 0);
+};
+
+/** Partition with the same work/answer boundaries as the timeline; no translated UI strings. */
+export function partitionHistory(events: HistoryEvent[]): { summary: HistoryEvent[]; blocks: Map<number, HistoryEvent[]> } {
+  const summary: HistoryEvent[] = [];
+  const blocks = new Map<number, HistoryEvent[]>();
+  let block: HistoryEvent | undefined;
+  let answer: HistoryEvent[] = [];
+  let lastNote: HistoryEvent[] = [];
+  const tools = new Map<string, { block: HistoryEvent; data: Record<string, any> }>();
+  const plans = new Set<string>();
+  const flushAnswer = () => { summary.push(...answer); answer = []; };
+  const finish = () => {
+    if (!answer.length && block && lastNote.length) {
+      const entries = blocks.get(block.seq)!;
+      const remove = new Set(lastNote.map(e => e.seq));
+      blocks.set(block.seq, entries.filter(e => !remove.has(e.seq)));
+      const at = summary.indexOf(block);
+      summary.splice(at + 1, 0, ...lastNote);
+    }
+    flushAnswer(); block = undefined; lastNote = [];
+  };
+  for (const ev of events) {
+    if (ev.type === 'turn.started') { finish(); tools.clear(); plans.clear(); summary.push(ev); continue; }
+    if (ev.type === 'message.delta') { answer.push(ev); continue; }
+    if (isWork(ev)) {
+      if (!block) {
+        block = { ...ev, type: 'history.work', data: { count: 0, version: ev.seq, files: [] } };
+        blocks.set(block.seq, []); summary.push(block); lastNote = [];
+      }
+      const entries = blocks.get(block.seq)!;
+      if (answer.length) { entries.push(...answer); lastNote = answer; answer = []; }
+      entries.push(ev);
+      block.data.version = Math.max(Number(block.data.version), Number(ev.data.version ?? ev.seq));
+      if (ev.type === 'history.tool.start') {
+        block.data.count = Number(block.data.count) + 1;
+        tools.set(String(ev.data.id), { block, data: { ...ev.data } });
+      }
+      continue;
+    }
+    if (ev.type.startsWith('history.tool.')) {
+      const tool = tools.get(String(ev.data.id));
+      if (tool) {
+        blocks.get(tool.block.seq)!.push(ev);
+        Object.assign(tool.data, ev.data);
+        tool.block.data.version = ev.seq;
+      }
+      continue;
+    }
+    if (isBoundary(ev)) {
+      const plan = ev.type === 'plan.delta' || ev.type === 'plan.completed';
+      const id = String(ev.data.id ?? 'plan');
+      if (!plan || !plans.has(id)) { flushAnswer(); block = undefined; lastNote = []; }
+      if (plan) plans.add(id);
+    }
+    if (ev.type === 'turn.done' || ev.type === 'turn.error') finish();
+    summary.push(ev);
+  }
+  flushAnswer();
+  // Count only successful edits, exactly as the regular timeline does.
+  for (const { block: owner, data } of tools.values()) {
+    if (data.status !== 'completed') continue;
+    (owner.data.files as unknown[]).push(...(data.files ?? []));
+  }
+  return { summary, blocks };
+}
+
+/** Collapse superseded lightweight tool updates without changing interleaved text boundaries. */
+export function compactHistory(events: HistoryEvent[]): HistoryEvent[] {
+  const out: HistoryEvent[] = [];
+  for (const ev of events) {
+    const last = out.at(-1);
+    if (last && ev.type.startsWith('history.tool.') && ev.type !== 'history.tool.start'
+      && last.type.startsWith('history.tool.') && last.type !== 'history.tool.start'
+      && last.turnId === ev.turnId && last.data.id === ev.data.id) {
+      out[out.length - 1] = { ...ev, data: { ...last.data, ...ev.data } };
+    } else out.push(ev);
+  }
+  return compactDeltas(out as StoredEvent[]);
+}
+
+/** SQLite-backed projections. Raw payloads are referenced, never copied into the read model. */
+export class HistoryStore {
+  private pending = new Map<string, Promise<void>>();
+  private closed = false;
+  constructor(private db: DatabaseSync) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS history_rows (
+        thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+        seq INTEGER NOT NULL, turn_id TEXT, type TEXT NOT NULL, ts TEXT NOT NULL, data TEXT NOT NULL,
+        PRIMARY KEY(thread_id, seq));
+      CREATE INDEX IF NOT EXISTS history_rows_turn ON history_rows(thread_id, turn_id, seq);
+      CREATE TABLE IF NOT EXISTS history_details (
+        thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+        turn_id TEXT NOT NULL, id INTEGER NOT NULL, tool_id TEXT, kind TEXT NOT NULL,
+        version INTEGER NOT NULL, input_seq INTEGER, output_seq INTEGER, diff_seq INTEGER, end_seq INTEGER NOT NULL,
+        PRIMARY KEY(thread_id, turn_id, id));
+      CREATE UNIQUE INDEX IF NOT EXISTS history_tool ON history_details(thread_id, turn_id, tool_id) WHERE tool_id IS NOT NULL;
+      CREATE TABLE IF NOT EXISTS history_turns (
+        thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+        turn_id TEXT NOT NULL, version INTEGER NOT NULL, data TEXT NOT NULL,
+        PRIMARY KEY(thread_id, turn_id));
+      CREATE TABLE IF NOT EXISTS history_coverage (
+        thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+        start_seq INTEGER NOT NULL, end_seq INTEGER NOT NULL, PRIMARY KEY(thread_id, start_seq));
+    `);
+  }
+  close() { this.closed = true; }
+  projected(ev: StoredEvent): HistoryEvent {
+    if (ev.type === 'reasoning.delta' && ev.turnId) {
+      const d = this.db.prepare("SELECT id FROM history_details WHERE thread_id=? AND turn_id=? AND kind='thought' AND id<=? AND end_seq>=?").get(ev.threadId, ev.turnId, ev.seq, ev.seq) as { id: number } | undefined;
+      const r = d && this.db.prepare('SELECT * FROM history_rows WHERE thread_id=? AND seq=?').get(ev.threadId, d.id) as unknown as Row | undefined;
+      if (r) return { ...eventOf(r), seq: ev.seq };
+    }
+    const row = this.db.prepare('SELECT * FROM history_rows WHERE thread_id=? AND seq=?').get(ev.threadId, ev.seq) as unknown as Row | undefined;
+    if (!row) throw new Error('history projection missing');
+    return ev.type === 'approval.request' ? ev : eventOf(row);
+  }
+  private save(ev: HistoryEvent) {
+    this.db.prepare('INSERT OR REPLACE INTO history_rows VALUES (?, ?, ?, ?, ?, ?)')
+      .run(ev.threadId, ev.seq, ev.turnId, ev.type, ev.ts, JSON.stringify(ev.data));
+  }
+  private cover(thread: string, seq: number, through = seq) {
+    const ranges = this.db.prepare('SELECT start_seq, end_seq FROM history_coverage WHERE thread_id=? AND start_seq<=? AND end_seq>=?')
+      .all(thread, through + 1, seq - 1) as { start_seq: number; end_seq: number }[];
+    if (ranges.some(r => r.start_seq <= seq && r.end_seq >= through)) return;
+    const start = Math.min(seq, ...ranges.map(r => r.start_seq));
+    const end = Math.max(through, ...ranges.map(r => r.end_seq));
+    for (const r of ranges) if (r.start_seq !== start) this.db.prepare('DELETE FROM history_coverage WHERE thread_id=? AND start_seq=?').run(thread, r.start_seq);
+    this.db.prepare('INSERT INTO history_coverage VALUES (?, ?, ?) ON CONFLICT(thread_id, start_seq) DO UPDATE SET end_seq=excluded.end_seq').run(thread, start, end);
+  }
+  /** Called within the event writer's transaction, including imports and terminal sync. */
+  record(ev: StoredEvent): HistoryEvent {
+    const { threadId, turnId, seq, data } = ev;
+    if (turnId) this.db.prepare('DELETE FROM history_turns WHERE thread_id=? AND turn_id=?').run(threadId, turnId);
+    let view: HistoryEvent = ev;
+    if (ev.type.startsWith('tool.') && turnId) {
+      let detail = this.db.prepare('SELECT * FROM history_details WHERE thread_id=? AND turn_id=? AND tool_id=?')
+        .get(threadId, turnId, String(data.id)) as unknown as Detail | undefined;
+      if (!detail) {
+        this.db.prepare("INSERT INTO history_details VALUES (?, ?, ?, ?, 'tool', ?, NULL, NULL, NULL, ?)")
+          .run(threadId, turnId, seq, String(data.id), seq, seq);
+        detail = { thread_id: threadId, turn_id: turnId, id: seq, tool_id: String(data.id), kind: 'tool', version: seq, input_seq: null, output_seq: null, diff_seq: null, end_seq: seq };
+      }
+      const diffs = Array.isArray(data.content) ? data.content.filter((p: any) => p?.type === 'diff') as any[] : [];
+      // Match tool.start: input and initial content; later inputs are not replacements.
+      const inputSeq = ev.type === 'tool.start' && data.input !== undefined ? Math.max(seq, detail.input_seq ?? 0) : detail.input_seq;
+      const outputSeq = hasOutput(ev.type === 'tool.start' ? undefined : data.output, data.content) ? Math.max(seq, detail.output_seq ?? 0) : detail.output_seq;
+      const diffSeq = diffs.length ? Math.max(seq, detail.diff_seq ?? 0) : detail.diff_seq;
+      this.db.prepare('UPDATE history_details SET version=?, input_seq=?, output_seq=?, diff_seq=?, end_seq=? WHERE thread_id=? AND turn_id=? AND id=?')
+        .run(Math.max(seq, detail.version), inputSeq, outputSeq, diffSeq, Math.max(seq, detail.end_seq), threadId, turnId, detail.id);
+      const projected: Record<string, unknown> = { id: data.id, detail: { turnId, id: detail.id, version: seq } };
+      for (const field of ['kind', 'status', 'title']) if (data[field]) projected[field] = String(data[field]).slice(0, 240);
+      if (diffs.length) projected.files = diffs.map(p => ({ path: String(p.path ?? ''), ...diffStats(typeof p.oldText === 'string' ? p.oldText : null, typeof p.newText === 'string' ? p.newText : ''), detail: { turnId, id: detail!.id, version: seq } }));
+      view = { ...ev, type: `history.${ev.type}`, data: projected };
+    } else if (ev.type === 'reasoning.delta' && turnId) {
+      const prior = this.db.prepare("SELECT * FROM history_details WHERE thread_id=? AND turn_id=? AND kind='thought' AND end_seq=?")
+        .get(threadId, turnId, seq - 1) as unknown as Detail | undefined;
+      const id = prior?.id ?? seq;
+      this.db.prepare("INSERT INTO history_details VALUES (?, ?, ?, NULL, 'thought', ?, NULL, NULL, NULL, ?) ON CONFLICT(thread_id, turn_id, id) DO UPDATE SET version=excluded.version, end_seq=excluded.end_seq")
+        .run(threadId, turnId, id, seq, seq);
+      const prev = prior ? this.db.prepare('SELECT * FROM history_rows WHERE thread_id=? AND seq=?').get(threadId, id) as unknown as Row | undefined : undefined;
+      const before = prev ? eventOf(prev) : undefined;
+      view = { ...ev, type: 'history.thought', data: { id, text: (String(before?.data.text ?? '') + String(data.text ?? '')).slice(-240), version: seq, startedAt: before?.ts ?? ev.ts, endedAt: ev.ts, detail: { turnId, id, version: seq } } };
+      this.save({ ...view, seq: id, ts: before?.ts ?? ev.ts });
+      this.cover(threadId, seq);
+      return view;
+    }
+    if (ev.type === 'approval.request') {
+      const { toolCall: _toolCall, ...summary } = data;
+      view = { ...ev, data: summary };
+    }
+    this.save(view);
+    this.cover(threadId, seq);
+    return view;
+  }
+  latest(thread: string): number {
+    return Number((this.db.prepare('SELECT COALESCE(MAX(seq),0) AS n FROM events WHERE thread_id=?').get(thread) as any).n);
+  }
+  private rows(thread: string, start: number, end: number): HistoryEvent[] {
+    return (this.db.prepare('SELECT * FROM history_rows WHERE thread_id=? AND seq>=? AND seq<? ORDER BY seq').all(thread, start, end) as unknown as Row[]).map(eventOf);
+  }
+  private bounds(thread: string, turn: string): { start: number; end: number } {
+    const row = this.db.prepare("SELECT seq FROM events WHERE thread_id=? AND turn_id=? AND type='turn.started' ORDER BY seq LIMIT 1").get(thread, turn) as { seq: number } | undefined;
+    if (!row) throw new HttpError(404, 'turn not found');
+    const next = this.db.prepare("SELECT seq FROM events WHERE thread_id=? AND type='turn.started' AND seq>? ORDER BY seq LIMIT 1").get(thread, row.seq) as { seq: number } | undefined;
+    return { start: row.seq, end: next?.seq ?? this.latest(thread) + 1 };
+  }
+  /** Cold histories are built in bounded batches; concurrent readers share the same job. */
+  async ensure(thread: string, start: number, end: number): Promise<void> {
+    if (start >= end || this.db.prepare('SELECT 1 FROM history_coverage WHERE thread_id=? AND start_seq<=? AND end_seq>=?').get(thread, start, end - 1)) return;
+    const key = `${thread}:${start}:${end}`;
+    const existing = this.pending.get(key);
+    if (existing) return existing;
+    const run = async () => {
+      let after = start - 1;
+      while (!this.closed) {
+        const missing = this.db.prepare(`SELECT e.* FROM events e LEFT JOIN history_rows h ON h.thread_id=e.thread_id AND h.seq=e.seq
+          WHERE e.thread_id=? AND e.seq>? AND e.seq<? AND h.seq IS NULL
+          AND NOT EXISTS (SELECT 1 FROM history_details d WHERE d.thread_id=e.thread_id AND d.kind='thought' AND e.type='reasoning.delta' AND e.seq BETWEEN d.id AND d.end_seq)
+          ORDER BY e.seq LIMIT 64`).iterate(thread, after, end) as unknown as Iterable<Row>;
+        let count = 0;
+        let bytes = 0;
+        const began = performance.now();
+        for (const row of missing) {
+          this.record(eventOf(row) as StoredEvent); after = row.seq; count++; bytes += row.data.length;
+          if (bytes > 1024 * 1024 || performance.now() - began > 8) break;
+        }
+        if (!count) { this.cover(thread, start, end - 1); break; }
+        await new Promise<void>(resolve => setImmediate(resolve));
+      }
+    };
+    const promise = run().finally(() => this.pending.delete(key));
+    this.pending.set(key, promise);
+    return promise;
+  }
+  private turnView(thread: string, turn: string, start: number, end: number): HistoryEvent[] {
+    const cached = this.db.prepare('SELECT data FROM history_turns WHERE thread_id=? AND turn_id=? AND version=?').get(thread, turn, end - 1) as { data: string } | undefined;
+    if (cached) return JSON.parse(cached.data);
+    const rows = compactHistory(this.rows(thread, start, end));
+    const done = rows.some(e => e.type === 'turn.done' || e.type === 'turn.error');
+    if (!done) {
+      const resolved = new Set(rows.filter(e => e.type === 'approval.resolved').map(e => e.data.approvalId));
+      for (const e of rows) if (e.type === 'approval.request' && !resolved.has(e.data.approvalId)) {
+        const raw = this.db.prepare('SELECT data FROM events WHERE thread_id=? AND seq=?').get(thread, e.seq);
+        if (raw) e.data = JSON.parse(String(raw.data));
+      }
+    }
+    const view = done ? partitionHistory(rows).summary : rows;
+    if (done) this.db.prepare('INSERT OR REPLACE INTO history_turns VALUES (?, ?, ?, ?)').run(thread, turn, end - 1, JSON.stringify(view));
+    return view;
+  }
+  async page(thread: string, before?: number, after = 0): Promise<HistoryPage> {
+    const snapshotSeq = this.latest(thread);
+    const end = Math.min(before ?? snapshotSeq + 1, snapshotSeq + 1);
+    const starts = this.db.prepare("SELECT seq, turn_id FROM events WHERE thread_id=? AND type='turn.started' AND seq<? AND seq>? ORDER BY seq DESC LIMIT 9").all(thread, end, after) as { seq: number; turn_id: string }[];
+    const selected = starts.slice(0, 8).reverse();
+    const hasOlder = starts.length > 8;
+    const start = hasOlder ? selected[0].seq : after + 1;
+    await this.ensure(thread, start, end);
+    const events: HistoryEvent[] = [];
+    // A usage reading can precede all eight visible turns; paging must not erase the meter.
+    const usage = this.db.prepare("SELECT * FROM events WHERE thread_id=? AND type='usage.updated' AND seq<? ORDER BY seq DESC LIMIT 1").get(thread, start) as unknown as Row | undefined;
+    if (usage && !after) events.push(eventOf(usage));
+    if (!selected.length) events.push(...this.rows(thread, start, end));
+    else {
+      events.push(...this.rows(thread, start, selected[0].seq));
+      selected.forEach((s, i) => events.push(...this.turnView(thread, s.turn_id, s.seq, selected[i + 1]?.seq ?? end)));
+    }
+    return { events, snapshotSeq, nextCursor: hasOlder ? start : null, hasOlder };
+  }
+  /** Reconnect replaces affected turns from a bounded snapshot, never replays tool payloads. */
+  async since(thread: string, after: number): Promise<{ events: HistoryEvent[]; turns: string[]; snapshotSeq: number }> {
+    const snapshotSeq = this.latest(thread);
+    const turns = (this.db.prepare('SELECT DISTINCT turn_id FROM events WHERE thread_id=? AND seq>? AND seq<=? AND turn_id IS NOT NULL').all(thread, after, snapshotSeq) as { turn_id: string }[]).map(r => r.turn_id);
+    const events: HistoryEvent[] = [];
+    for (const turn of turns) {
+      const { start, end } = this.bounds(thread, turn);
+      const until = Math.min(end, snapshotSeq + 1);
+      await this.ensure(thread, start, until);
+      events.push(...this.turnView(thread, turn, start, until).filter(e => e.turnId === turn));
+    }
+    await this.ensure(thread, after + 1, snapshotSeq + 1);
+    events.push(...this.rows(thread, after + 1, snapshotSeq + 1).filter(e => e.turnId === null));
+    events.sort((a,b) => a.seq - b.seq);
+    return { events, turns, snapshotSeq };
+  }
+  async work(thread: string, turn: string, block: number, cursor = 0, expectedVersion?: number): Promise<{ events: HistoryEvent[]; version: number; nextCursor: number | null }> {
+    const { start, end } = this.bounds(thread, turn);
+    if (expectedVersion !== undefined && expectedVersion !== end - 1) throw new HttpError(409, 'work changed; reload before continuing');
+    await this.ensure(thread, start, end);
+    const rows = compactHistory(this.rows(thread, start, end));
+    const entries = partitionHistory(rows).blocks.get(block);
+    if (!entries) throw new HttpError(404, 'work block not found');
+    const list: HistoryEvent[] = [];
+    const tools = new Map<string, HistoryEvent>();
+    for (const e of entries) {
+      if (e.type === 'history.tool.start') { const entry = { ...e, data: { ...e.data } }; tools.set(String(e.data.id), entry); list.push(entry); }
+      else if (e.type.startsWith('history.tool.')) {
+        const entry = tools.get(String(e.data.id));
+        if (entry) { Object.assign(entry.data, e.data); if (e.type === 'history.tool.end') entry.data.endedAt = e.ts; }
+      } else list.push(e);
+    }
+    const next = cursor + 100;
+    return { events: [rows.find(e => e.type === 'turn.started')!, ...list.slice(cursor, next)], version: end - 1, nextCursor: next < list.length ? next : null };
+  }
+  async detail(thread: string, turn: string, id: number, offset = 0, expectedVersion?: number, path?: string): Promise<Record<string, unknown>> {
+    const { start, end } = this.bounds(thread, turn);
+    await this.ensure(thread, start, end);
+    const d = this.db.prepare('SELECT * FROM history_details WHERE thread_id=? AND turn_id=? AND id=?').get(thread, turn, id) as unknown as Detail | undefined;
+    if (!d) throw new HttpError(404, 'detail not found');
+    if (expectedVersion !== undefined && expectedVersion !== d.version) throw new HttpError(409, 'detail changed; reload before continuing');
+    const read = (seq: number | null) => seq === null ? {} : JSON.parse(String(this.db.prepare('SELECT data FROM events WHERE thread_id=? AND turn_id=? AND seq=?').get(thread, turn, seq)?.data ?? '{}'));
+    if (d.kind === 'thought') {
+      const rows = this.db.prepare("SELECT data FROM events WHERE thread_id=? AND turn_id=? AND seq>=? AND seq<=? AND type='reasoning.delta' ORDER BY seq").all(thread, turn, d.id, d.end_seq);
+      const text = rows.map(r => String(JSON.parse(String(r.data)).text ?? '')).join('');
+      const next = offset + 65536;
+      return { version: d.version, text: text.slice(offset, next), nextCursor: next < text.length ? next : null };
+    }
+    if (path !== undefined) {
+      const content = read(d.diff_seq).content;
+      return { version: d.version, content: Array.isArray(content) ? content.filter((p: any) => p?.type === 'diff' && p.path === path) : [], nextCursor: null };
+    }
+    const output = read(d.output_seq);
+    const text = toolText(output.output, output.content);
+    const next = offset + 65536;
+    return { version: d.version, input: offset ? undefined : read(d.input_seq).input, output: text.slice(offset, next), content: offset ? undefined : read(d.diff_seq).content, nextCursor: next < text.length ? next : null };
+  }
+}

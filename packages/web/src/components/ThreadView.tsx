@@ -1,3 +1,5 @@
+import type { Api } from '../api';
+import { HistoryClient, type HistoryDetail, type HistoryWork, type ResourceKind } from '../history';
 import { Children, createContext, Fragment, isValidElement, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -8,6 +10,9 @@ import { pictureUrl, svgPicture } from '../images';
 import { SentVideo } from './VideoPreview';
 import { IMAGE_FILE, linkTarget, nameAttachments, relativePath, shortenPaths } from '../paths';
 import {
+  buildTimeline,
+  diffsOf,
+  type DetailRef,
   clockLabel,
   compactionLabel,
   deliveredPreview,
@@ -40,6 +45,8 @@ import { ActivityIcon, IconAgents, IconCheck, IconChevron, IconClose, IconCompac
 import { t } from '../i18n';
 
 interface Props {
+  historyApi?: Api;
+  historyThreadId?: string;
   items: Item[];
   /** Every spelling of the thread's directory (as stored, and resolved), so paths can be shown relative to it. */
   roots: string[];
@@ -74,7 +81,8 @@ const RECENT_TURNS = 30;
 /** Scrolling up to within this distance of the top unfolds or fetches the earlier turns. */
 const NEAR_TOP_PX = 600;
 
-export function ThreadView({ items, roots, loadImage, loadFile, onOpenFile, onPreview, hasOlder, loadingOlder, onLoadOlder, onFork, forkAnyTurn, takeover }: Props) {
+export function ThreadView({ historyApi, historyThreadId, items, roots, loadImage, loadFile, onOpenFile, onPreview, hasOlder, loadingOlder, onLoadOlder, onFork, forkAnyTurn, takeover }: Props) {
+  const historyClient = useMemo(() => historyApi && historyThreadId ? new HistoryClient(historyApi, historyThreadId) : undefined, [historyApi, historyThreadId]);
   const [lightbox, setLightbox] = useState<{ url: string; name?: string } | null>(null);
   const show = useCallback((url: string, name?: string) => setLightbox({ url, name }), []);
   // A picture opened from a link in an answer is fetched for the occasion, and let go of when it is closed.
@@ -293,6 +301,7 @@ export function ThreadView({ items, roots, loadImage, loadFile, onOpenFile, onPr
 
   return (
     <div className="thread" ref={threadRef}>
+      <HistoryContext.Provider key={historyClient?.identity ?? historyThreadId} value={historyClient}>
       <Pictures.Provider value={pictures}>
         {/* Scrolling up loads these on its own; the buttons stay for keyboards and screen readers. */}
         {folded && (
@@ -315,9 +324,82 @@ export function ThreadView({ items, roots, loadImage, loadFile, onOpenFile, onPr
         )}
         {shown.map((g) => renderItems(g.items))}
       </Pictures.Provider>
+      </HistoryContext.Provider>
       {lightbox && <Lightbox url={lightbox.url} name={lightbox.name} onClose={closeLightbox} />}
     </div>
   );
+}
+
+const HistoryContext = createContext<HistoryClient | undefined>(undefined);
+
+/** Refresh open live details at most four times a second; closed details perform no I/O. */
+function useHistoryResource<T extends HistoryDetail | HistoryWork>(kind: ResourceKind, ref: DetailRef | undefined, enabled: boolean, path?: string) {
+  const client = useContext(HistoryContext);
+  const latest = useRef(ref); latest.current = ref;
+  const [state, setState] = useState<{ value?: T; loading: boolean; error: boolean }>({ loading: false, error: false });
+  const [attempt, setAttempt] = useState(0);
+  const continuation = useRef(false);
+  const mounted = useRef(false);
+  const generation = useRef(0);
+  useEffect(() => {
+    if (!enabled || !ref || !client) return;
+    let alive = true; mounted.current = true; generation.current++; continuation.current = false;
+    let busy = false;
+    let version = -1;
+    setState({ loading: true, error: false });
+    const update = () => {
+      const target = latest.current;
+      if (!alive || busy || continuation.current || !target || target.version === version) return;
+      busy = true; version = target.version;
+      setState(old => ({ ...old, loading: true, error: false }));
+      client.load<T>(kind, target, path).then(value => {
+        if (alive) setState({ value, loading: false, error: false });
+      }).catch(() => {
+        if (alive) setState(old => ({ ...old, loading: false, error: true }));
+      }).finally(() => { busy = false; });
+    };
+    update();
+    const timer = setInterval(update, 250);
+    return () => { alive = false; mounted.current = false; generation.current++; continuation.current = false; clearInterval(timer); };
+  }, [client, kind, ref?.turnId, ref?.id, enabled, attempt, path]);
+  const more = async () => {
+    if (!ref || !client || !state.value || state.value.nextCursor === null || state.loading || continuation.current) return;
+    const previous = state.value;
+    const target = ref;
+    const epoch = generation.current;
+    continuation.current = true;
+    setState(old => ({ ...old, loading: true, error: false }));
+    try {
+      const next = await client.load<T>(kind, { ...target, version: previous.version }, path, previous.nextCursor!);
+      if (epoch !== generation.current || !mounted.current || latest.current?.id !== target.id || latest.current?.turnId !== target.turnId || latest.current?.version !== target.version) return;
+      const value = ('events' in previous && 'events' in next
+        ? { ...next, events: [...previous.events, ...next.events.filter(e => e.type !== 'turn.started')] }
+        : { ...previous, ...next, input: (previous as HistoryDetail).input, content: (previous as HistoryDetail).content,
+          text: ((previous as HistoryDetail).text ?? '') + ((next as HistoryDetail).text ?? ''),
+          output: ((previous as HistoryDetail).output ?? '') + ((next as HistoryDetail).output ?? '') }) as T;
+      client.remember(kind, target, value, path);
+      setState({ value, loading: false, error: false });
+    } catch { if (mounted.current && epoch === generation.current) setState(old => ({ ...old, loading: false, error: true })); }
+    finally { if (epoch === generation.current) continuation.current = false; }
+  };
+  return { ...state, more, retry: () => { if (ref) client?.invalidate(kind, ref, path); setAttempt(n => n + 1); } };
+}
+
+function ResourceStatus({ resource }: { resource: { loading: boolean; error: boolean; retry: () => void } }) {
+  if (resource.error) return <div className="history-status" role="status"><span>{t('view.detailFailed')}</span><button className="text-btn" onClick={resource.retry}>{t('common.retry')}</button></div>;
+  if (resource.loading) return <div className="history-status" role="status">{t('common.loading')}</div>;
+  return null;
+}
+
+function ResourceMore({ resource }: { resource: { value?: { nextCursor: number | null }; loading: boolean; more: () => void } }) {
+  if (resource.value?.nextCursor == null) return null;
+  return <button className="text-btn history-more" disabled={resource.loading} onClick={resource.more}>{t('view.detailMore')}</button>;
+}
+
+function DeferredFileDiff({ detail, path }: { detail: DetailRef; path: string }) {
+  const resource = useHistoryResource<HistoryDetail>('file', detail, true, path);
+  const diffs = useMemo(() => diffsOf(resource.value?.content).filter(d => d.path === path), [resource.value, path]);
+  return <><ResourceStatus resource={resource} />{resource.value && <DiffView diffs={diffs} />}</>;
 }
 
 /** Copies on click and shows a tick for a moment, or says so when the browser refuses. */
@@ -787,8 +869,10 @@ function WorkGroup({ item, roots }: { item: Extract<Item, { kind: 'work' }>; roo
   useEffect(() => {
     if (item.done) setOpen(false);
   }, [item.done]);
-  const count = item.steps.length;
-  const sections = workSections(item.entries);
+  const resource = useHistoryResource<HistoryWork>('work', item.deferred, open);
+  const loaded = useMemo(() => resource.value ? buildTimeline(resource.value.events).items.find((i): i is Extract<Item, { kind: 'work' }> => i.kind === 'work') : undefined, [resource.value]);
+  const count = item.count ?? item.steps.length;
+  const sections = workSections(loaded?.entries ?? item.entries);
   return (
     <div className="row work">
       <button className="work-toggle" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
@@ -798,6 +882,7 @@ function WorkGroup({ item, roots }: { item: Extract<Item, { kind: 'work' }>; roo
       </button>
       {open && (
         <div className="work-body">
+          <ResourceStatus resource={resource} />
           {sections.map((section, i) =>
             section.kind === 'note' ? (
               <WorkNote key={section.key} text={section.text} />
@@ -811,6 +896,7 @@ function WorkGroup({ item, roots }: { item: Extract<Item, { kind: 'work' }>; roo
               <StepRun key={section.key} run={section} live={!item.done && i === sections.length - 1} roots={roots} />
             ),
           )}
+          <ResourceMore resource={resource} />
         </div>
       )}
     </div>
@@ -834,9 +920,11 @@ const WorkNote = memo(function WorkNote({ text }: { text: string }) {
  * A model can think for minutes before it acts, and that must not fill the screen.
  */
 const ThinkingBlock = memo(function ThinkingBlock({ thought, live }: { thought: Thought; live: boolean }) {
-  const paragraphs = useMemo(() => splitThinking(thought.text), [thought.text]);
   const [open, setOpen] = useState(false);
-  if (paragraphs.length === 0) return null;
+  const resource = useHistoryResource<HistoryDetail>('detail', thought.detail, open);
+  const text = resource.value?.text ?? thought.text;
+  const paragraphs = useMemo(() => splitThinking(text), [text]);
+  if (paragraphs.length === 0 && !thought.detail) return null;
 
   const secs = durationLabel(thought.startedAt, thought.endedAt);
 
@@ -848,11 +936,13 @@ const ThinkingBlock = memo(function ThinkingBlock({ thought, live }: { thought: 
       </button>
       {open ? (
         <div className="thinking-body">
+          <ResourceStatus resource={resource} />
           {paragraphs.map((p, i) => (
             <p key={i} className="thinking-para">
               {p}
             </p>
           ))}
+          <ResourceMore resource={resource} />
         </div>
       ) : (
         live && (
@@ -910,13 +1000,15 @@ function StepRun({ run, live, roots }: { run: Extract<WorkSection, { kind: 'run'
   );
 }
 
-function StepRow({ step, roots }: { step: Step; roots: string[] }) {
+function StepRow({ step: original, roots }: { step: Step; roots: string[] }) {
   const [open, setOpen] = useState(false);
+  const resource = useHistoryResource<HistoryDetail>('detail', original.detail, open);
+  const step = useMemo(() => resource.value ? { ...original, input: resource.value.input, output: resource.value.output, diffs: diffsOf(resource.value.content) } : original, [original, resource.value]);
   // An edit is best shown as its diff; the raw arguments would repeat the same text as JSON.
   const showInput = step.input !== undefined && step.diffs.length === 0 && JSON.stringify(step.input) !== '{}';
   const result = step.status === 'completed' ? t('view.succeeded') : step.status === 'failed' ? t('team.failed') : null;
   const hasContent = showInput || step.diffs.length > 0 || Boolean(step.output);
-  const hasDetail = hasContent || result !== null;
+  const hasDetail = Boolean(original.detail) || hasContent || result !== null;
   return (
     <div className={`step ${step.status}`}>
       <button className="step-head" onClick={() => hasDetail && setOpen((v) => !v)} disabled={!hasDetail} aria-expanded={open}>
@@ -927,10 +1019,12 @@ function StepRow({ step, roots }: { step: Step; roots: string[] }) {
       {open && (
         <div className="step-detail">
           <div className="step-detail-content">
+            <ResourceStatus resource={resource} />
             {showInput && <pre>{JSON.stringify(step.input, null, 2)}</pre>}
             {step.diffs.length > 0 && <DiffView diffs={step.diffs} />}
             {step.output && <pre>{step.output}</pre>}
-            {!hasContent && <div className="step-detail-empty">{t('view.noDetail')}</div>}
+            <ResourceMore resource={resource} />
+            {!hasContent && (!original.detail || resource.value) && !resource.loading && !resource.error && <div className="step-detail-empty">{t('view.noDetail')}</div>}
           </div>
           {result && <div className="step-result">{result}</div>}
         </div>
@@ -1008,7 +1102,7 @@ function ChangesCard({ item, roots, onPreview }: { item: Extract<Item, { kind: '
                   {t('files.preview')}
                 </button>
               )}
-              {open && <DiffView diffs={file.diffs} />}
+              {open && (file.details?.length ? file.details.map(ref => <DeferredFileDiff key={ref.id} detail={ref} path={file.path} />) : <DiffView diffs={file.diffs} />)}
             </div>
           );
         })}

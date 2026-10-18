@@ -8,6 +8,7 @@ import { Telemetry } from './telemetry.js';
 import { Activity } from './activity.js';
 import { askedText } from './util.js';
 import { referencesFile } from './artifacts.js';
+import { HistoryStore } from './history.js';
 
 export interface ThreadRecord {
   id: string;
@@ -289,6 +290,7 @@ export class Store {
   private readonly db: DatabaseSync;
   readonly telemetry: Telemetry;
   readonly activity: Activity;
+  readonly history: HistoryStore;
 
   constructor(dataDir: string) {
     mkdirSync(dataDir, { recursive: true });
@@ -442,6 +444,7 @@ export class Store {
     this.activity = new Activity(this.db);
     this.mcpEntries = new McpRegistry(this.db);
     this.extensions = new ExtensionStore(this.db);
+    this.history = new HistoryStore(this.db);
   }
 
   /** The MCP registry: business line and purpose notes, plus manually registered servers. */
@@ -552,6 +555,7 @@ export class Store {
   }
 
   close(): void {
+    this.history.close();
     this.db.close();
   }
 
@@ -818,31 +822,40 @@ export class Store {
   }
 
   appendEvent(threadId: string, turnId: string | null, type: EventType, data: Record<string, unknown>): StoredEvent {
-    const ts = new Date().toISOString();
-    const row = this.db
-      .prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM events WHERE thread_id = ?')
-      .get(threadId) as { next: number };
-    const seq = row.next;
-    this.db
-      .prepare('INSERT INTO events (thread_id, seq, turn_id, type, ts, data) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(threadId, seq, turnId, type, ts, JSON.stringify(data));
-    if (turnId && type === 'turn.started') {
-      this.turnStarts.set(turnId, seq);
-      const text = typeof data.displayText === 'string' ? data.displayText : data.text;
-      if (typeof text === 'string' && !data.handover && !data.coordination) this.saveText(threadId, turnId, 'user', ts, text);
-    } else if (turnId && (type === 'turn.done' || type === 'turn.error')) {
-      // Without the start (the daemon was restarted mid-turn) the whole thread is read for it.
-      this.indexText(threadId, turnId, (this.turnStarts.get(turnId) ?? 1) - 1);
-      this.turnStarts.delete(turnId);
+    // A savepoint also nests inside bulk import transactions. Publish only committed projections.
+    this.db.exec('SAVEPOINT history_event');
+    try {
+      const ts = new Date().toISOString();
+      const row = this.db
+        .prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM events WHERE thread_id = ?')
+        .get(threadId) as { next: number };
+      const seq = row.next;
+      this.db
+        .prepare('INSERT INTO events (thread_id, seq, turn_id, type, ts, data) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(threadId, seq, turnId, type, ts, JSON.stringify(data));
+      if (turnId && type === 'turn.started') {
+        this.turnStarts.set(turnId, seq);
+        const text = typeof data.displayText === 'string' ? data.displayText : data.text;
+        if (typeof text === 'string' && !data.handover && !data.coordination) this.saveText(threadId, turnId, 'user', ts, text);
+      } else if (turnId && (type === 'turn.done' || type === 'turn.error')) {
+        // Without the start (the daemon was restarted mid-turn) the whole thread is read for it.
+        this.indexText(threadId, turnId, (this.turnStarts.get(turnId) ?? 1) - 1);
+        this.turnStarts.delete(turnId);
+      }
+      // The sidebar's preview line is the newest ask, whatever wrote it — a live turn, an import, a
+      // sync from the terminal. Hub-injected handover turns are not the user asking.
+      if (type === 'turn.started' && typeof data.text === 'string' && data.text.trim() && !data.handover && !data.coordination) {
+        this.db.prepare('UPDATE threads SET preview = ? WHERE id = ?').run(askedText(typeof data.displayText === 'string' ? data.displayText : data.text).slice(0, 80), threadId);
+      }
+      const event = { threadId, seq, turnId, type, ts, data };
+      this.history.record(event);
+      this.telemetry.observe(event);
+      this.db.exec('RELEASE history_event');
+      return event;
+    } catch (error) {
+      this.db.exec('ROLLBACK TO history_event; RELEASE history_event');
+      throw error;
     }
-    // The sidebar's preview line is the newest ask, whatever wrote it — a live turn, an import, a
-    // sync from the terminal. Hub-injected handover turns are not the user asking.
-    if (type === 'turn.started' && typeof data.text === 'string' && data.text.trim() && !data.handover && !data.coordination) {
-      this.db.prepare('UPDATE threads SET preview = ? WHERE id = ?').run(askedText(typeof data.displayText === 'string' ? data.displayText : data.text).slice(0, 80), threadId);
-    }
-    const event = { threadId, seq, turnId, type, ts, data };
-    this.telemetry.observe(event);
-    return event;
   }
 
   /** Events after a sequence number, oldest first. A negative limit means all of them. */
