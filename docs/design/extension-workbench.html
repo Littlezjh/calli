@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Limi 扩展工作台 · 布局草图</title>
+  <link rel="stylesheet" href="../../packages/web/src/styles.css">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; height: auto; overflow: auto; color: var(--text); background: var(--bg); font-family: var(--font); }
+    button { font: inherit; cursor: pointer; color: inherit; border: 0; background: none; }
+    button:focus-visible, a:focus-visible { outline: 2px solid var(--positive); outline-offset: 3px; }
+    [hidden] { display: none !important; }
+    .sketch { min-height: 100vh; display: grid; grid-template-columns: 228px minmax(0, 1fr); }
+    .sketch-side { padding: 30px 18px; background: var(--sidebar); border-right: 1px solid var(--border); }
+    .sketch-brand { font-size: 24px; font-weight: 650; margin: 0 14px 36px; }
+    .sketch-nav { display: grid; gap: 6px; }
+    .sketch-nav > * { padding: 12px 14px; text-align: left; border-radius: var(--radius); font-size: 14px; }
+    .sketch-nav .selected { background: var(--surface); box-shadow: var(--shadow-card); font-weight: 600; }
+    .sketch-side-note { margin: 38px 14px 8px; font-size: 12px; color: var(--muted); }
+    .sketch-recent { padding: 10px 14px; font-size: 13px; color: var(--muted); line-height: 1.8; }
+    .sketch-main { min-width: 0; padding: 28px 32px 50px; }
+    .sketch-top { display: flex; gap: 12px; justify-content: space-between; align-items: center; font-size: 12px; color: var(--muted); }
+    .sketch-button { border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 8px 14px; background: var(--surface); font-size: 13px; white-space: nowrap; }
+    .sketch-heading { margin: 42px 0 26px; }
+    .sketch-heading h1 { font-size: 30px; letter-spacing: -.6px; font-weight: 600; margin: 0 0 10px; }
+    .sketch-heading p, .sketch-caption { font-size: 13px; line-height: 1.8; color: var(--muted); margin: 0; }
+    .sketch-board { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+    .sketch-lane h2 { font-size: 13px; font-weight: 600; margin: 0 0 15px; }
+    .sketch-count { color: var(--muted); margin-left: 7px; font-weight: 400; }
+    .sketch-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 18px; margin-bottom: 12px; min-height: 155px; }
+    .sketch-card h3 { margin: 12px 0 10px; font-size: 15px; font-weight: 600; line-height: 1.5; }
+    .sketch-source { color: var(--muted); font-size: 11px; }
+    .sketch-card p { margin: 9px 0; font-size: 12px; color: var(--muted); line-height: 1.65; }
+    .sketch-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--positive); }
+    .sketch-dot { width: 6px; height: 6px; border-radius: var(--radius-pill); background: currentColor; }
+    .sketch-wait { color: var(--warn); }
+    .sketch-track { height: 4px; margin: 13px 0; background: var(--border); border-radius: var(--radius-pill); overflow: hidden; }
+    .sketch-fill { width: 50%; height: 100%; background: var(--positive); }
+    .sketch-link { padding: 5px 0; font-size: 12px; text-decoration: underline; text-underline-offset: 4px; }
+    .sketch-caption { margin-top: 25px; }
+    .sketch-tabs { display: none; }
+    .sketch-thread { max-width: 760px; margin: 0 auto; }
+    .sketch-thread-header { padding: 26px 0; border-bottom: 1px solid var(--border); }
+    .sketch-thread-header h1 { margin: 15px 0 8px; font-size: 24px; font-weight: 600; }
+    .sketch-meta { color: var(--muted); font-size: 12px; }
+    .sketch-messages { padding: 36px 0 50px; line-height: 1.8; font-size: 14px; }
+    .sketch-user { padding: 14px 18px; border-radius: var(--radius-lg); background: var(--user-bg); width: fit-content; margin-left: auto; max-width: 85%; }
+    .sketch-response { margin-top: 30px; }
+    .sketch-event { margin: 15px 0; color: var(--muted); font-size: 12px; }
+    .sketch-summary { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 15px; border: 1px solid var(--border); border-radius: var(--radius); font-size: 12px; background: var(--surface-2); }
+    .sketch-detail { padding: 20px; border: 1px solid var(--border); border-radius: var(--radius); margin-top: 10px; background: var(--surface); font-size: 13px; line-height: 1.8; }
+    .sketch-detail h2 { font-size: 15px; margin: 0 0 8px; }
+    .sketch-detail ol { padding-left: 20px; }
+    .sketch-composer { margin-top: 12px; border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 22px; color: var(--muted); background: var(--surface); font-size: 14px; }
+    .sketch-foot { margin-top: 32px; font-size: 12px; color: var(--muted); line-height: 1.8; }
+    .sketch-foot a { color: inherit; }
+    @media (max-width: 1000px) and (min-width: 701px) { .sketch-board { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 700px) {
+      .sketch { grid-template-columns: minmax(0, 1fr); }
+      .sketch-side { padding: 14px 18px; border-right: 0; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 24px; }
+      .sketch-brand { margin: 0; font-size: 20px; }
+      .sketch-nav { display: flex; gap: 4px; }
+      .sketch-nav > * { padding: 8px 10px; }
+      .sketch-nav > span, .sketch-side-note, .sketch-recent { display: none; }
+      .sketch-main { padding: 20px 18px 40px; }
+      .sketch-heading { margin-top: 30px; }
+      .sketch-heading h1 { font-size: 26px; }
+      .sketch-tabs { display: flex; gap: 4px; padding-bottom: 20px; }
+      .sketch-tabs button { font-size: 12px; flex: 1; padding: 9px 0; border-radius: var(--radius-pill); }
+      .sketch-tabs [aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
+      .sketch-board { display: block; }
+      .sketch-lane { display: none; }
+      .sketch-lane.mobile-active { display: block; }
+      .sketch-lane h2 { display: none; }
+      .sketch-card { padding: 20px; }
+      .sketch-top { font-size: 11px; }
+      .sketch-messages { padding: 26px 0 30px; }
+    }
+  </style>
+</head>
+<body>
+<div class="sketch">
+  <aside class="sketch-side">
+    <div class="sketch-brand">Limi</div>
+    <nav class="sketch-nav" aria-label="工作视图">
+      <span>计划</span><span>定时任务</span>
+      <button id="board-nav" class="selected" aria-current="page">看板</button>
+    </nav>
+    <p class="sketch-side-note">最近的会话</p>
+    <button class="sketch-recent" data-open-thread>发布官网<br>Codex · 网站项目</button>
+  </aside>
+  <main class="sketch-main">
+    <div class="sketch-top"><span>布局草图 · 示例数据，未连接 agent</span><button class="sketch-button" id="theme">切换深色</button></div>
+    <section id="board-view">
+      <header class="sketch-heading"><h1>看板</h1><p>网站项目 · 当前机器 · 线程执行视角<br>先看哪里需要你，再看 agent 执行到哪一步。</p></header>
+      <div class="sketch-tabs" aria-label="按任务状态查看">
+        <button data-lane="0" aria-pressed="true">待处理 2</button><button data-lane="1" aria-pressed="false">运行中 1</button><button data-lane="2" aria-pressed="false">空闲 2</button>
+      </div>
+      <div class="sketch-board">
+        <section class="sketch-lane mobile-active" data-lane-panel="0"><h2>待处理<span class="sketch-count">2</span></h2>
+          <article class="sketch-card"><span class="sketch-source">Claude Code · 网站项目</span><h3>接入登录流程</h3><span class="sketch-badge sketch-wait"><span class="sketch-dot"></span>等待回答</span><p>需要你选择登录方式<br>关联计划：尚未标记完成</p></article>
+          <article class="sketch-card"><span class="sketch-source">pi · 网站项目</span><h3>检查桌面布局</h3><span class="sketch-badge sketch-wait"><span class="sketch-dot"></span>有新结果</span><p>本轮已结束 · 结果尚未查看<br>LoopX 报告：工作项待验收</p><p>2 分钟前更新</p></article>
+        </section>
+        <section class="sketch-lane" data-lane-panel="1"><h2>运行中<span class="sketch-count">1</span></h2>
+          <article class="sketch-card"><span class="sketch-source">Codex · 网站项目</span><h3>发布官网</h3><span class="sketch-badge"><span class="sketch-dot"></span>正在运行</span><p>LoopX · 工作项已完成 3 / 6<br>当前：验证移动端交互</p><div class="sketch-track"><div class="sketch-fill"></div></div><button class="sketch-link" data-open-thread>打开关联会话</button><p>来自 LoopX · 刚刚更新</p></article>
+        </section>
+        <section class="sketch-lane" data-lane-panel="2"><h2>空闲<span class="sketch-count">2</span></h2>
+          <article class="sketch-card"><span class="sketch-source">pi · 网站项目</span><h3>补充安装文档</h3><p>步骤进度：未报告<br>业务完成状态：未知</p></article>
+          <article class="sketch-card"><span class="sketch-source">Claude Code · 网站项目</span><h3>整理产品定位</h3><span class="sketch-badge">关联计划已完成</span><p>完成来源：用户在计划页勾选<br>线程当前空闲</p></article>
+        </section>
+      </div>
+      <p class="sketch-caption">首版卡片代表线程，列表示执行状态；任务完成单独标明来源。草图同时预览后续 LoopX 进度。</p>
+    </section>
+    <section id="thread-view" class="sketch-thread" hidden>
+      <header class="sketch-thread-header"><button class="sketch-link" id="back-board">返回看板</button><h1>发布官网</h1><span class="sketch-meta">Codex · 网站项目</span></header>
+      <div class="sketch-messages"><div class="sketch-user">继续验证手机上的体验流程，把结果整理好。</div><div class="sketch-response">桌面布局已检查完。我正在验证手机上的滚动、审批和返回流程。</div><div class="sketch-event">当前轮次的计划 · 已报告 2 / 5 步完成</div></div>
+      <div class="sketch-summary"><span>LoopX · 工作项 3 / 6 · 正在验证移动端</span><button class="sketch-link" id="detail-toggle" aria-expanded="false">展开详情</button></div>
+      <section class="sketch-detail" id="detail" hidden><h2>发布官网 · LoopX</h2><p>当前工作项：验证移动端交互。当前轮次的步骤进度来自 agent，工作项进度来自 LoopX。</p><ol><li>定位与文案：已完成</li><li>桌面布局：待验收</li><li>移动端交互：进行中</li></ol><p>其余工作项已折叠。这里只展示摘要，完整任务状态以 LoopX 为准。</p><button class="sketch-link" id="detail-board">在看板查看</button></section>
+      <div class="sketch-composer">补充要求…</div>
+      <p class="sketch-caption">会话保留一条摘要；任务详情按需展开。这里的输入框仅示意布局。</p>
+    </section>
+    <footer class="sketch-foot">草图展示位置与层次，数据和操作均为演示。<a href="../extension-workbench-design.md">阅读接入设计</a></footer>
+  </main>
+</div>
+<script>
+  const board = document.querySelector('#board-view');
+  const thread = document.querySelector('#thread-view');
+  const nav = document.querySelector('#board-nav');
+  function showThread(active) {
+    board.hidden = active; thread.hidden = !active;
+    nav.classList.toggle('selected', !active);
+    if (active) nav.removeAttribute('aria-current'); else nav.setAttribute('aria-current', 'page');
+    window.scrollTo(0, 0);
+  }
+  document.querySelectorAll('[data-open-thread]').forEach(button => button.addEventListener('click', () => showThread(true)));
+  ['#board-nav', '#back-board', '#detail-board'].forEach(selector => document.querySelector(selector).addEventListener('click', () => showThread(false)));
+  document.querySelector('#theme').addEventListener('click', event => {
+    const dark = document.documentElement.dataset.theme !== 'dark';
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    event.currentTarget.textContent = dark ? '切换浅色' : '切换深色';
+  });
+  document.querySelector('#detail-toggle').addEventListener('click', event => {
+    const detail = document.querySelector('#detail'); detail.hidden = !detail.hidden;
+    event.currentTarget.setAttribute('aria-expanded', String(!detail.hidden));
+    event.currentTarget.textContent = detail.hidden ? '展开详情' : '收起详情';
+  });
+  document.querySelectorAll('[data-lane]').forEach(button => button.addEventListener('click', () => {
+    document.querySelectorAll('[data-lane]').forEach(tab => tab.setAttribute('aria-pressed', String(tab === button)));
+    document.querySelectorAll('[data-lane-panel]').forEach(panel => panel.classList.toggle('mobile-active', panel.dataset.lanePanel === button.dataset.lane));
+  }));
+</script>
+</body>
+</html>

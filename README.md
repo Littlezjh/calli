@@ -30,7 +30,7 @@ Limi 不动 agent 本身的目录、配置和会话，装好即用。名字来�
 
 ![用量与诊断](docs/screenshots/usage-light.png)
 
-> 状态：可用，正在迭代。要做的事见 [docs/TODO.md](docs/TODO.md)，架构见 [docs/PLAN.md](docs/PLAN.md)。
+> 状态：可用，正在迭代。产品方向见 [愿景与设计思路](docs/VISION.md)，现有架构见 [PLAN](docs/PLAN.md)，进度见 [TODO](docs/TODO.md)，扩展方案见 [扩展设计](docs/extensions-design.md)。
 
 ## 已支持
 
@@ -69,7 +69,7 @@ daemon 在 `packages/daemon` 目录里运行，所以用 `RAH_ENV_FILE` 指向�
 
 官网：[maxliux5.github.io/limi](https://maxliux5.github.io/limi/)。
 
-仓库包含独立的中文产品官网，展示「简单管理你的所有 agent」的定位。官网内嵌 Limi 的真实界面，提供发起任务、处理审批、讨论方案三个引导场景。扩展机制作为规划中的产品方向介绍，首个待验证需求为 BotMux 飞书提醒，具体边界见 [扩展设计](docs/extensions-design.md)。
+仓库包含独立的中文产品官网，展示「简单管理你的所有 agent」的现有能力，以及「用一个简单的界面，把 agent 和它周边的工具串起来」的扩展方向。官网内嵌 Limi 的真实界面，提供发起任务、处理审批、讨论方案三个引导场景。技能和 MCP 已有管理页面；统一的扩展入口、BotMux 提醒和 LoopX 集成仍在规划与验证中，具体边界见 [扩展设计](docs/extensions-design.md)。
 
 ```bash
 npm run dev:site       # 开发官网，默认端口 5174

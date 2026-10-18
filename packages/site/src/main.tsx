@@ -120,7 +120,7 @@ function Home() {
       </section>
 
       <section className="site-principle site-wrap" aria-labelledby="principle-title">
-        <div className="site-principle-inner"><div><p className="site-eyebrow">我们想坚持的事</p><h2 id="principle-title">默认简单。<br /><span>按需扩展。</span></h2></div><div className="site-principle-copy"><p>把连接、对话和审批做好，让日常使用足够轻巧。通知和外部工具等新能力，逐步通过插件接入。</p><p className="site-roadmap"><span>规划中</span>我们正在探索通过 BotMux 发送飞书提醒：任务需要你审批、回答或处理失败时，及时找到你。接入方案仍在验证，功能尚未上线。</p></div></div>
+        <div className="site-principle-inner"><div><p className="site-eyebrow">我们想坚持的事</p><h2 id="principle-title">默认简单。<br /><span>按需扩展。</span></h2></div><div className="site-principle-copy"><p>用一个简单的界面，把 agent 和它周边的工具串起来。从已有的技能和 MCP 管理出发，让更多能力按需接入。</p><p className="site-roadmap"><span>规划中</span>统一的扩展入口、BotMux 飞书提醒、LoopX 进度与操作，让工具融入同一个工作台。接入方案仍在验证，功能尚未上线。</p></div></div>
       </section>
 
       <section className="site-install site-wrap" id="install" aria-labelledby="install-title">
