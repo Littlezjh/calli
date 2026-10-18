@@ -1379,6 +1379,7 @@ export const ja: Messages = {
   'extensions.installed': 'インストール済み',
   'extensions.disabled': '無効',
   'extensions.needsConfirm': '権限が変わりました',
+  'extensions.open': '開く',
   'extensions.install': 'インストール',
   'extensions.confirmAgain': '権限を確認',
   'extensions.enable': '有効にする',

@@ -1381,6 +1381,7 @@ export const en: Messages = {
   'extensions.installed': 'Installed',
   'extensions.disabled': 'Turned off',
   'extensions.needsConfirm': 'Permissions changed',
+  'extensions.open': 'Open',
   'extensions.install': 'Install',
   'extensions.confirmAgain': 'Review permissions',
   'extensions.enable': 'Turn on',

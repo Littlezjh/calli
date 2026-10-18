@@ -5,6 +5,7 @@ import type { Api, Thread } from '../api';
 import { locale, t, type MessageKey } from '../i18n';
 import { HostIcon } from '../extensions/ui';
 import { needsConfirm } from '../extensions/permissions';
+import { enabledViews, extensionHash } from '../extensions/routes';
 export { needsConfirm } from '../extensions/permissions';
 import { Dialog } from './Dialog';
 import { IconPuzzle, IconShield } from './icons';
@@ -19,6 +20,7 @@ interface Props {
   extensions: ExtensionState[] | null;
   /** One extension's new state, straight from the answer: the list shows it before the broadcast comes back. */
   onChange: (state: ExtensionState) => void;
+  onOpenView: (hash: string) => void;
   onError: (e: unknown) => void;
 }
 
@@ -48,7 +50,7 @@ function Permissions({ list }: { list: Permission[] }) {
  * Settings → Extensions: the Limi extensions this hub ships, what each may read, and installing or
  * removing them on the machine on screen. Daily work happens in the views they add, not here.
  */
-export function ExtensionsPage({ api, demo = false, extensions, threads = [], onReload, onChange, onError }: Props) {
+export function ExtensionsPage({ api, demo = false, extensions, threads = [], onReload, onChange, onOpenView, onError }: Props) {
   const [installing, setInstalling] = useState<ExtensionState | null>(null);
   const [removing, setRemoving] = useState<ExtensionState | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -89,6 +91,7 @@ export function ExtensionsPage({ api, demo = false, extensions, threads = [], on
             const m = s.manifest;
             const icon = m.contributes.views?.[0]?.icon;
             const confirm = needsConfirm(s);
+            const entry = !confirm ? enabledViews([s])[0] : undefined;
             return (
               <article key={m.id} className={`ext-card${s.installed ? ' installed' : ''}`} aria-busy={busy === m.id}>
                 <div className="ext-card-head">
@@ -105,6 +108,11 @@ export function ExtensionsPage({ api, demo = false, extensions, threads = [], on
                     </div>
                   </div>
                   <div className="ext-card-actions">
+                    {entry && (
+                      <button type="button" className="primary" disabled={busy !== null} onClick={() => onOpenView(extensionHash(entry))}>
+                        {t('extensions.open')}
+                      </button>
+                    )}
                     {!s.installed || confirm ? (
                       <button type="button" className="primary" disabled={busy !== null} onClick={() => {
                         if (s.source === 'external' && s.origin) void run(m.id, async () => { setPreview(await api.prepareExtension(s.origin!)); });

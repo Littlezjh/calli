@@ -24,9 +24,17 @@ after(async () => { await browser?.close(); await daemon?.stop(); if (directory)
 
 const changeExtension = (enabled) => api(daemon, '/api/extensions/memory', { method: 'PATCH', body: JSON.stringify({ enabled }) });
 
-async function openMemory(page) {
+const memoryCard = page => page.locator('.ext-card').filter({ has: page.getByRole('heading', { name: '记忆', exact: true }) });
+
+async function openMemory(page, screenshot) {
   await openUi(page, daemon);
-  await page.evaluate(() => { location.hash = '#/memory'; });
+  await page.evaluate(() => { location.hash = '#/extensions'; });
+  const open = memoryCard(page).getByRole('button', { name: '打开', exact: true });
+  await open.waitFor();
+  await open.scrollIntoViewIfNeeded();
+  if (screenshot) await page.screenshot({ path: screenshot });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'extension actions fit the viewport');
+  await open.click();
   await page.locator('.memory-page').waitFor();
   await page.locator('.memory-card').first().waitFor();
 }
@@ -41,12 +49,14 @@ test('memory is inactive until installed, then renders read-only in both themes 
   assert.equal(requests.length, 0, 'uninstalled extension does not read memory');
   await page.evaluate(() => { location.hash = '#/extensions'; });
   const card = page.locator('.ext-card').filter({ has: page.getByRole('heading', { name: '记忆', exact: true }) });
+  assert.equal(await card.getByRole('button', { name: '打开', exact: true }).count(), 0);
   await card.getByRole('button', { name: '安装', exact: true }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByText('已有记忆', { exact: true }).waitFor();
   await dialog.getByRole('button', { name: /安装/ }).click();
   await dialog.waitFor({ state: 'detached' });
-  await openMemory(page);
+  await card.getByRole('button', { name: '打开', exact: true }).click();
+  await page.locator('.memory-card').first().waitFor();
   assert.equal(await page.locator('.memory-card').count(), 3);
   assert.ok(await page.getByText('共用记忆', { exact: true }).isVisible());
   await page.close();
@@ -58,8 +68,8 @@ test('memory is inactive until installed, then renders read-only in both themes 
       const external = [], errors = [];
       page.on('request', request => { if (request.url().includes('example.invalid')) external.push(request.url()); });
       page.on('pageerror', error => errors.push(error.message));
-      await openMemory(page);
       const prefix = `${mobile ? 'phone' : 'desktop'}-${colorScheme}`;
+      await openMemory(page, join(shots, `${prefix}-entry.png`));
       await page.screenshot({ path: join(shots, `${prefix}-list.png`) });
       await page.locator('.memory-card').filter({ hasText: '工作方式与项目线索' }).click();
       await page.locator('.memory-document .md').waitFor();
@@ -100,6 +110,9 @@ test('refresh observes outside changes; disabling and uninstalling remove the vi
     await changeExtension(false);
     await page.locator('.memory-page').waitFor({ state: 'detached' });
     assert.equal((await api(daemon, '/api/extensions/memory/memory/sources')).status, 403);
+    await page.evaluate(() => { location.hash = '#/extensions'; });
+    await memoryCard(page).getByRole('button', { name: '启用', exact: true }).waitFor();
+    assert.equal(await memoryCard(page).getByRole('button', { name: '打开', exact: true }).count(), 0);
     await changeExtension(true);
     await openMemory(page);
     await api(daemon, '/api/extensions/memory', { method: 'DELETE' });

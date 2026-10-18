@@ -1381,6 +1381,7 @@ export const zh = {
   'extensions.installed': '已安装',
   'extensions.disabled': '已停用',
   'extensions.needsConfirm': '权限有变化',
+  'extensions.open': '打开',
   'extensions.install': '安装',
   'extensions.confirmAgain': '确认权限',
   'extensions.enable': '启用',

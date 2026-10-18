@@ -1752,6 +1752,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
               threads={threads}
               onReload={() => void reloadExtensions()}
               onChange={changeExtension}
+              onOpenView={openExtensionView}
               onError={handleError}
             />
           </div>
