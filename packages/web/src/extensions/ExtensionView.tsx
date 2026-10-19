@@ -15,6 +15,8 @@ interface Props {
   name: string;
   inputs: HostInputs;
   onOpenThread: (id: string) => void;
+  onOpenPlan: () => void;
+  onSetTodoDone: (id: string, done: boolean) => Promise<void>;
 }
 
 /** Keeps a view that throws from taking the page with it: it says so in its own place, the rest goes on. */
@@ -52,15 +54,17 @@ function Failed({ name, onRetry }: { name: string; onRetry: () => void }) {
 type Loaded = { id: string; module: WebExtensionModule } | { id: string; error: unknown };
 
 /** An extension's view in the main area: its code loaded on first use, handed a `WebHost`, behind a boundary. */
-export function ExtensionView({ api, extensionId, viewId, name, inputs, onOpenThread }: Props) {
+export function ExtensionView({ api, extensionId, viewId, name, inputs, onOpenThread, onOpenPlan, onSetTodoDone }: Props) {
   const narrow = useIsNarrow();
   const [attempt, setAttempt] = useState(0);
   const [failed, setFailed] = useState(false);
   const retry = () => { setFailed(false); setAttempt(n => n + 1); };
   const openThread = useRef(onOpenThread);
   openThread.current = onOpenThread;
+  const actions = useRef({ onOpenPlan, onSetTodoDone });
+  actions.current = { onOpenPlan, onSetTodoDone };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const live = useMemo(() => createWebHost(extensionId, inputs, { api, openThread: (id) => openThread.current(id), ui: hostUi, onError: () => setFailed(true) }), [api, extensionId, attempt, inputs.extension]);
+  const live = useMemo(() => createWebHost(extensionId, inputs, { api, openThread: (id) => openThread.current(id), openPlan: () => actions.current.onOpenPlan(), setTodoDone: (id, done) => actions.current.onSetTodoDone(id, done), ui: hostUi, onError: () => setFailed(true) }), [api, extensionId, attempt, inputs.extension]);
   useEffect(() => live.update(inputs), [live, inputs]);
   const host = useMemo(() => ({ ...live.host, narrow }), [live, narrow]);
 

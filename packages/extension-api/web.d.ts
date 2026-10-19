@@ -7,6 +7,7 @@ import type { ComponentType, ReactNode } from 'react';
 import type { ExtensionManifest, HostIconName } from './manifest.js';
 import type { WebHostMemory } from './memory.js';
 import type { ThreadSummary } from './summary.js';
+import type { TodoSummary } from './todos.js';
 
 export type Locale = 'zh' | 'en' | 'ja';
 
@@ -32,6 +33,14 @@ export interface WebHostThreads {
   snapshot(): ThreadSummary[];
   /** Called with the full new list whenever any summary changes. Returns an unsubscribe function. */
   subscribe(listener: (threads: ThreadSummary[]) => void): Unsubscribe;
+}
+
+export interface WebHostTodos {
+  /** Top-level plan items on the connected machine, in plan-page order. Empty without `worksource.read`. */
+  snapshot(): TodoSummary[];
+  subscribe(listener: (todos: TodoSummary[]) => void): Unsubscribe;
+  /** Ticks or unticks an item, as the plan page does. Call only from the person's own click. */
+  setDone(id: string, done: boolean): Promise<void>;
 }
 
 export interface WebHostConnection {
@@ -88,11 +97,14 @@ export interface WebHostUi {
 export interface WebHostNavigate {
   /** Leave the view and open the thread, as clicking it in the sidebar would. */
   openThread(threadId: string): void;
+  /** Leave the view and open the plan page, where items are written and linked to threads. */
+  openPlan(): void;
 }
 
 export interface WebHost {
   extensionId: string;
   threads: WebHostThreads;
+  todos: WebHostTodos;
   workSources: { snapshot(): WorkProjection[]; subscribe(listener: (items: WorkProjection[]) => void): Unsubscribe };
   memory: WebHostMemory;
   connection: WebHostConnection;

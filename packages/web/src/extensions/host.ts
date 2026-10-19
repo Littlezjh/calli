@@ -4,7 +4,7 @@
  * list, refreshed from /api/stream). Native memory is queried separately through a permissioned
  * facade; views never see the token or the raw Api.
  */
-import type { ExtensionState, ThreadSummary, WorkProjection } from '@rah/extension-api';
+import type { ExtensionState, ThreadSummary, TodoSummary, WorkProjection } from '@rah/extension-api';
 import type { AgentInfo as HostAgentInfo, ConnectionState, WebHost, WebHostStorage, WebHostUi } from '@rah/extension-api/web';
 import type { AgentInfo } from '../api';
 import type { Api } from '../api';
@@ -15,6 +15,8 @@ import { hasPermission } from './permissions';
 export interface HostInputs {
   extension: ExtensionState | null;
   threads: ThreadSummary[];
+  /** Top-level plan items; handed on only with `worksource.read`. */
+  todos?: TodoSummary[];
   workSources?: WorkProjection[];
   connection: ConnectionState;
   /** ISO time of the last thread list read from the daemon. */
@@ -54,7 +56,7 @@ export function extensionStorage(extensionId: string, store: Pick<Storage, 'getI
 export function createWebHost(
   extensionId: string,
   initial: HostInputs,
-  deps: { api?: Pick<Api, 'memorySources' | 'memoryList' | 'memoryRead'>; openThread: (id: string) => void; ui: (agents: () => AgentInfo[]) => WebHostUi; storage?: WebHostStorage; onError?: (error: unknown) => void },
+  deps: { api?: Pick<Api, 'memorySources' | 'memoryList' | 'memoryRead'>; openThread: (id: string) => void; openPlan?: () => void; setTodoDone?: (id: string, done: boolean) => Promise<void>; ui: (agents: () => AgentInfo[]) => WebHostUi; storage?: WebHostStorage; onError?: (error: unknown) => void },
 ): LiveHost {
   let inputs = initial;
   const allowed = (value: HostInputs) => value.extension?.manifest.id === extensionId && hasPermission(value.extension, 'events.summary');
@@ -68,6 +70,9 @@ export function createWebHost(
   }
   const workListeners = new Set<(items: WorkProjection[]) => void>();
   const workAllowed = (v: HostInputs) => v.extension?.manifest.id === extensionId && hasPermission(v.extension, 'worksource.read') ? v.workSources ?? [] : [];
+  const todosAllowed = (v: HostInputs) => v.extension?.manifest.id === extensionId && hasPermission(v.extension, 'worksource.read') ? v.todos ?? [] : [];
+  let todosKey = JSON.stringify(todosAllowed(initial));
+  const todoListeners = new Set<(todos: TodoSummary[]) => void>();
   const threadListeners = new Set<(threads: ThreadSummary[]) => void>();
   const connectionListeners = new Set<(state: ConnectionState) => void>();
   const ui = deps.ui(() => inputs.agents);
@@ -109,6 +114,17 @@ export function createWebHost(
         return () => void threadListeners.delete(listener);
       },
     },
+    todos: {
+      snapshot: () => todosAllowed(inputs),
+      subscribe(listener) {
+        todoListeners.add(listener);
+        return () => void todoListeners.delete(listener);
+      },
+      async setDone(id, done) {
+        if (!todosAllowed(inputs).some((todo) => todo.id === id) || !deps.setTodoDone) throw new Error('Plan permission required');
+        await deps.setTodoDone(id, done);
+      },
+    },
     workSources: { snapshot: () => workAllowed(inputs), subscribe(listener) { workListeners.add(listener); return () => void workListeners.delete(listener); } },
     connection: {
       state: () => inputs.connection,
@@ -119,7 +135,7 @@ export function createWebHost(
       },
     },
     agents: (): HostAgentInfo[] => inputs.agents.map((a) => ({ id: a.id, label: a.label, available: a.available })),
-    navigate: { openThread: (id) => deps.openThread(id) },
+    navigate: { openThread: (id) => deps.openThread(id), openPlan: () => deps.openPlan?.() },
     locale,
     storage: deps.storage ?? extensionStorage(extensionId),
     ui,
@@ -130,6 +146,11 @@ export function createWebHost(
     update(next) {
       const before = inputs;
       inputs = next;
+      const nextTodos = JSON.stringify(todosAllowed(next));
+      if (nextTodos !== todosKey) {
+        todosKey = nextTodos;
+        notify(todoListeners, todosAllowed(next));
+      }
       if (JSON.stringify(workAllowed(before)) !== JSON.stringify(workAllowed(next))) notify(workListeners, workAllowed(next));
       // The page re-reads the list on every event; listeners hear only when a summary changed.
       const key = JSON.stringify(allowed(next) ? next.threads : []);

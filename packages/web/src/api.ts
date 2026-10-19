@@ -1,4 +1,4 @@
-import type { ExtensionState, Permission, ExtensionPackagePreview, ExtensionConfiguration, ExtensionDetection, WorkProjection } from '@rah/extension-api';
+import type { ExtensionState, Permission, ExtensionPackagePreview, ExtensionConfiguration, ExtensionDetection, WorkProjection, TodoReport } from '@rah/extension-api';
 export type WorkMode = 'execute' | 'plan';
 export interface UserQuestion { id: string; question: string; header?: string; options: Array<{ value: string; label: string; description?: string }>; multiple?: boolean; freeText?: boolean; required?: boolean }
 export type UserInputAnswer = { answers: Record<string, string[]> } | { cancelled: true };
@@ -276,6 +276,8 @@ export interface Todo {
   doneAt: string | null;
   /** Threads linked to this plan, as full views so chips can show agent, title and state. */
   threads: Thread[];
+  /** What a linked thread's agent last reported about this item; cleared when ticked. */
+  report?: TodoReport | null;
 }
 
 /** An image ready to be sent with a message. */

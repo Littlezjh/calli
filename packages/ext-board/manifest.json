@@ -1,6 +1,6 @@
 {
   "id": "board",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "apiVersion": 1,
   "name": {
     "zh": "看板",
@@ -8,9 +8,9 @@
     "ja": "ボード"
   },
   "description": {
-    "zh": "按待处理、运行中和空闲查看线程，快速找到需要你关注的会话。",
-    "en": "See threads that need attention, are running, or are idle, and open the conversation.",
-    "ja": "対応が必要なスレッド、実行中、待機中のスレッドを一覧し、会話を開きます。"
+    "zh": "按未开始、进行中、等你、待验收和已完成排列计划项，由关联线程的状态和 agent 的报告推出，完成由你勾选。",
+    "en": "Lays out plan items as not started, in progress, needs you, to review and done, from their linked threads and what agents report. You tick them done.",
+    "ja": "計画項目を未着手・進行中・対応待ち・確認待ち・完了に並べます。関連スレッドの状態とエージェントの報告から判断し、完了はあなたがチェックします。"
   },
   "permissions": [
     "events.summary",

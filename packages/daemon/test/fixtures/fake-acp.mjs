@@ -282,6 +282,14 @@ rl.on('line', (line) => {
         update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '继续处理。' } });
         out({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } }); return;
       }
+      // A thread linked to a plan item is asked for a `[计划状态]` line; "report 待验收 …" writes one.
+      const planReport = /^report (进行中|待验收|需要你)\s*(.*)/.exec(text.split('\n')[0]);
+      if (planReport) {
+        const asked = text.includes('<limi-plan>');
+        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: asked ? `已处理。\n\n[计划状态] ${planReport[1]}：${planReport[2]}` : '已处理。' } });
+        out({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });
+        return;
+      }
       const collaboration = coordinationFixture(text);
       if (collaboration !== null) {
         update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: collaboration } });

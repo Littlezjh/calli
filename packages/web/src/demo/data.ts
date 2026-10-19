@@ -352,7 +352,9 @@ export function demoData(now = Date.now()): DemoData {
     todo({ id: 'demo-todo-scroll', text: '商品列表滚动跳动', parentId: 'demo-todo-release', position: 1, threads: byId('demo-scroll-fix') }),
     todo({ id: 'demo-todo-notes', text: '写发布说明', parentId: 'demo-todo-release', position: 2 }),
     todo({ id: 'demo-todo-routes', text: '路由迁移', position: 1, threads: byId('demo-routes') }),
-    todo({ id: 'demo-todo-tests', text: '补齐接口测试', position: 2, threads: byId('demo-tests') }),
+    todo({ id: 'demo-todo-tests', text: '补齐接口测试', position: 2, threads: byId('demo-tests'), report: { stage: 'review', note: '补了 12 个用例，本地全部通过', threadId: 'demo-tests', at: at(16) } }),
+    todo({ id: 'demo-todo-speed', text: '首页首屏加载提速', position: 3 }),
+    todo({ id: 'demo-todo-deps', text: '升级依赖', position: 4, done: true, doneAt: at(180), threads: byId('demo-dark-mode') }),
   ];
 
   const nextMonday = new Date(now);

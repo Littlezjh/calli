@@ -1,12 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { ExtensionManifest, ExtensionState, ThreadSummary } from '@rah/extension-api';
-import type { Thread } from '../src/api';
+import type { Thread, Todo } from '../src/api';
 import { DemoApi } from '../src/demo/DemoApi';
 import { demoData } from '../src/demo/data';
 import { BUILTIN_MANIFESTS } from '../src/extensions/catalog';
 import { createWebHost, extensionStorage, type HostInputs } from '../src/extensions/host';
-import { threadSummaries, threadSummary } from '../src/extensions/project';
+import { threadSummaries, threadSummary, todoSummaries } from '../src/extensions/project';
 import { enabledViews, extensionHash, looksLikeExtensionRoute, resolveExtensionRoute } from '../src/extensions/routes';
 
 const SECRET = 'SECRET what the user asked';
@@ -206,6 +206,50 @@ test('work projections update live and disappear immediately when content permis
   live.update({ ...initial, extension: { ...initial.extension!, granted: ['events.summary'] }, workSources: [projection] });
   assert.deepEqual(live.host.workSources.snapshot(), []);
   assert.deepEqual(received, [[projection], []]);
+});
+
+function todo(id: string, over: Partial<Todo> = {}): Todo {
+  return { id, text: id, done: false, parentId: null, position: 0, createdAt: '2026-01-01T00:00:00Z', doneAt: null, threads: [], ...over };
+}
+
+test('plan items fold their sub-items into a checklist and the threads working on open ones', () => {
+  const report = { stage: 'review' as const, note: 'ready', threadId: 'a', at: '2026-01-02T00:00:00Z' };
+  const list = todoSummaries([
+    todo('plan', { threads: [thread('a')], report }),
+    todo('open', { parentId: 'plan', threads: [thread('b'), thread('a')], report: { ...report, at: '2026-01-01T00:00:00Z' } }),
+    todo('ticked', { parentId: 'plan', done: true, threads: [thread('c')], report: { ...report, stage: 'blocked', at: '2026-01-03T00:00:00Z' } }),
+    todo('alone'),
+  ]);
+  assert.deepEqual(list.map((item) => item.id), ['plan', 'alone']);
+  assert.deepEqual(list[0].threadIds, ['a', 'b'], 'a ticked sub-item no longer holds the plan in progress');
+  assert.deepEqual(list[0].items, { done: 1, total: 2 });
+  assert.deepEqual(list[0].report, report, 'the newest report of the item and its open sub-items');
+  assert.equal(todoSummaries([todo('p'), todo('s', { parentId: 'p', report })])[0].report, report, 'a sub-item report counts for its plan');
+  assert.deepEqual([list[1].threadIds, list[1].items, list[1].report], [[], { done: 0, total: 0 }, null]);
+  assert.ok(!JSON.stringify(list).includes(SECRET), 'thread previews never travel with plan items');
+});
+
+test('plan items reach only views granted work content, and ticking checks the grant first', async () => {
+  const m = manifest('board'); m.permissions.push('worksource.read');
+  const items = todoSummaries([todo('plan')]);
+  const initial: HostInputs = { extension: state(m, true), threads: [], agents: [], connection: 'live', observedAt: null, todos: items };
+  const ticked: Array<[string, boolean]> = [];
+  const live = createWebHost('board', initial, { openThread: () => {}, ui: () => ({}) as never, setTodoDone: async (id, done) => void ticked.push([id, done]) });
+  const received: unknown[] = [];
+  live.host.todos.subscribe((next) => received.push(next));
+  assert.deepEqual(live.host.todos.snapshot(), items);
+  await live.host.todos.setDone('plan', true);
+  await assert.rejects(live.host.todos.setDone('missing', true));
+  live.update({ ...initial, todos: [...items] });
+  assert.deepEqual(received, [], 'an equal list is not news');
+  live.update({ ...initial, extension: { ...initial.extension!, granted: ['events.summary'] } });
+  assert.deepEqual(live.host.todos.snapshot(), []);
+  await assert.rejects(live.host.todos.setDone('plan', false));
+  assert.deepEqual(ticked, [['plan', true]]);
+  assert.deepEqual(received, [[]]);
+
+  const summaryOnly = createWebHost('probe', { ...initial, extension: state(manifest('probe'), true) }, { openThread: () => {}, ui: () => ({}) as never });
+  assert.deepEqual(summaryOnly.host.todos.snapshot(), []);
 });
 
 test('memory host never queries without installation and drops results after revocation', async () => {

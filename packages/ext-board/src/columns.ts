@@ -1,69 +1,128 @@
-import type { ThreadSummary } from '@rah/extension-api';
+import type { AttentionKind, ThreadSummary, TodoSummary } from '@rah/extension-api';
 import type { ConnectionState } from '@rah/extension-api/web';
 
 export function showStaleWarning(state: ConnectionState, observedAt: string | null): boolean {
   return state !== 'live' && observedAt !== null;
 }
 
-export const COLUMN_IDS = ['attention', 'running', 'idle'] as const;
+export const COLUMN_IDS = ['todo', 'doing', 'waiting', 'review', 'done'] as const;
 export type ColumnId = (typeof COLUMN_IDS)[number];
-export const IDLE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+/** Done items stay in view this long; older ones fold behind one row. */
+export const DONE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export interface BoardFilters {
   project: string[];
   agent: string[];
-  scheduled: boolean[];
+}
+
+/** Why a card sits in its column, so the card can say it in one line. */
+export type CardReason =
+  | { kind: 'unlinked' }
+  | { kind: 'running'; since: string | null }
+  | { kind: 'attention'; attention: Exclude<AttentionKind, 'unread'> }
+  | { kind: 'report' }
+  | { kind: 'idle'; unread: boolean }
+  | { kind: 'done' };
+
+export interface BoardCard {
+  todo: TodoSummary;
+  column: ColumnId;
+  reason: CardReason;
+  /** Linked threads the thread list carries. */
+  threads: ThreadSummary[];
+  /** The thread that put the card in its column, opened when the card is clicked. */
+  lead: ThreadSummary | null;
+  /** When the card last changed, for ordering. */
+  activeAt: number;
 }
 
 export interface BoardColumn {
   id: ColumnId;
-  threads: ThreadSummary[];
+  cards: BoardCard[];
   olderCount: number;
   total: number;
 }
 
 export function emptyFilters(): BoardFilters {
-  return { project: [], agent: [], scheduled: [] };
+  return { project: [], agent: [] };
 }
 
-export function columnFor(thread: ThreadSummary): ColumnId {
-  if (thread.attention !== null) return 'attention';
-  return thread.status === 'running' ? 'running' : 'idle';
-}
-
-export function matchesFilters(thread: ThreadSummary, filters: BoardFilters): boolean {
-  return (filters.project.length === 0 || filters.project.includes(thread.project))
-    && (filters.agent.length === 0 || filters.agent.includes(thread.agent))
-    && (filters.scheduled.length === 0 || filters.scheduled.includes(thread.scheduled));
-}
-
-function timestamp(iso: string): number {
-  const time = Date.parse(iso);
+function timestamp(iso: string | null | undefined): number {
+  const time = iso ? Date.parse(iso) : NaN;
   return Number.isFinite(time) ? time : 0;
 }
 
-/** The host owns attention; the board only groups its published judgement. */
+const WAIT_ORDER: Exclude<AttentionKind, 'unread'>[] = ['approval', 'question', 'plan', 'error'];
+const newest = (threads: ThreadSummary[]) => threads.reduce<ThreadSummary | null>(
+  (best, thread) => (!best || timestamp(thread.updatedAt) > timestamp(best.updatedAt) ? thread : best), null);
+
+/**
+ * Where a plan item goes, checked in order: ticked by the person; a linked thread waits for the
+ * person; one is running; nothing linked yet; otherwise the agent's latest report decides, and
+ * without one a finished thread waits to be checked. Agents can move a card between doing,
+ * waiting and review, never to done.
+ */
+export function cardFor(todo: TodoSummary, threadsById: ReadonlyMap<string, ThreadSummary>): BoardCard {
+  const threads = todo.threadIds.map((id) => threadsById.get(id)).filter((thread): thread is ThreadSummary => thread !== undefined);
+  const reported = todo.report ? threads.find((thread) => thread.id === todo.report?.threadId) ?? null : null;
+  const card = (column: ColumnId, reason: CardReason, lead: ThreadSummary | null): BoardCard => ({
+    todo, column, reason, threads, lead,
+    activeAt: column === 'done' ? timestamp(todo.doneAt)
+      : Math.max(timestamp(lead?.updatedAt), timestamp(todo.report?.at), timestamp(todo.createdAt)),
+  });
+  if (todo.done) return card('done', { kind: 'done' }, reported ?? newest(threads));
+  for (const kind of WAIT_ORDER) {
+    const waiting = threads.find((thread) => thread.attention?.kind === kind);
+    if (waiting) return card('waiting', { kind: 'attention', attention: kind }, waiting);
+  }
+  const running = threads.find((thread) => thread.status === 'running');
+  if (running) return card('doing', { kind: 'running', since: running.runningSince }, running);
+  if (todo.threadIds.length === 0) return card('todo', { kind: 'unlinked' }, null);
+  const lead = reported ?? newest(threads);
+  if (todo.report?.stage === 'blocked') return card('waiting', { kind: 'report' }, lead);
+  if (todo.report?.stage === 'doing') return card('doing', { kind: 'report' }, lead);
+  if (todo.report) return card('review', { kind: 'report' }, lead);
+  return card('review', { kind: 'idle', unread: threads.some((thread) => thread.unread) }, lead);
+}
+
+export function matchesFilters(card: BoardCard, filters: BoardFilters): boolean {
+  return (filters.project.length === 0 || card.threads.some((thread) => filters.project.includes(thread.project)))
+    && (filters.agent.length === 0 || card.threads.some((thread) => filters.agent.includes(thread.agent)));
+}
+
+/** The host owns attention and the plan; the board only places what they publish. */
 export function buildColumns(
+  todos: readonly TodoSummary[],
   threads: readonly ThreadSummary[],
   filters: BoardFilters,
   now: number,
   showOlder = false,
 ): BoardColumn[] {
-  const groups: Record<ColumnId, ThreadSummary[]> = { attention: [], running: [], idle: [] };
-  for (const thread of threads) {
-    if (!thread.archived && matchesFilters(thread, filters)) groups[columnFor(thread)].push(thread);
+  const byId = new Map(threads.map((thread) => [thread.id, thread]));
+  const groups: Record<ColumnId, BoardCard[]> = { todo: [], doing: [], waiting: [], review: [], done: [] };
+  for (const todo of todos) {
+    const card = cardFor(todo, byId);
+    if (matchesFilters(card, filters)) groups[card.column].push(card);
   }
   return COLUMN_IDS.map((id) => {
-    const sorted = groups[id].sort((a, b) => Number(b.pinned) - Number(a.pinned)
-      || timestamp(b.updatedAt) - timestamp(a.updatedAt) || a.id.localeCompare(b.id));
-    const isOlder = (thread: ThreadSummary) => id === 'idle' && timestamp(thread.updatedAt) < now - IDLE_WINDOW_MS;
+    // Not started keeps the plan page's order; the rest put what moved last first.
+    const sorted = id === 'todo' ? groups[id] : [...groups[id]].sort((a, b) => b.activeAt - a.activeAt || a.todo.id.localeCompare(b.todo.id));
+    const isOlder = (card: BoardCard) => id === 'done' && timestamp(card.todo.doneAt) < now - DONE_WINDOW_MS;
     return {
       id,
-      threads: showOlder ? sorted : sorted.filter((thread) => !isOlder(thread)),
+      cards: showOlder ? sorted : sorted.filter((card) => !isOlder(card)),
       olderCount: sorted.filter(isOlder).length,
       total: sorted.length,
     };
   });
+}
+
+/** On phones one column shows at a time: the first that asks something of the person. */
+export function firstColumn(columns: readonly BoardColumn[]): ColumnId {
+  for (const id of ['waiting', 'review', 'doing', 'todo'] as const) {
+    if (columns.find((column) => column.id === id)?.total) return id;
+  }
+  return 'waiting';
 }
 
 export function projectName(project: string): string {
@@ -78,12 +137,7 @@ export function parseFilters(value: string | null): BoardFilters {
     const object = parsed as Record<string, unknown>;
     const strings = (input: unknown) => Array.isArray(input)
       ? [...new Set(input.filter((item): item is string => typeof item === 'string'))] : [];
-    return {
-      project: strings(object.project),
-      agent: strings(object.agent),
-      scheduled: Array.isArray(object.scheduled)
-        ? [...new Set(object.scheduled.filter((item): item is boolean => typeof item === 'boolean'))] : [],
-    };
+    return { project: strings(object.project), agent: strings(object.agent) };
   } catch {
     return emptyFilters();
   }

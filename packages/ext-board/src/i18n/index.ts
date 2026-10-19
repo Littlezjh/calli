@@ -10,5 +10,5 @@ const locales: Record<Locale, Messages> = { zh, en, ja };
 export function t<K extends keyof Messages>(locale: Locale, key: K, ...args: Arguments<K>): string;
 export function t(locale: Locale, key: keyof Messages, ...args: unknown[]): string {
   const message = locales[locale][key];
-  return typeof message === 'function' ? message(args[0] as number) : message;
+  return typeof message === 'function' ? (message as (...values: unknown[]) => string)(...args) : message;
 }

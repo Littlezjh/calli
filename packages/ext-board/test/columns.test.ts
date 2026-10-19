@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import type { AttentionKind, ThreadSummary } from '@rah/extension-api';
-import { buildColumns, columnFor, emptyFilters, IDLE_WINDOW_MS, parseFilters, projectName, showStaleWarning } from '../src/columns';
+import type { AttentionKind, ThreadSummary, TodoSummary } from '@rah/extension-api';
+import { buildColumns, cardFor, DONE_WINDOW_MS, emptyFilters, firstColumn, parseFilters, projectName, showStaleWarning } from '../src/columns';
 import { t } from '../src/i18n';
 import manifest from '../manifest.json';
 
@@ -14,107 +14,122 @@ test('shows stale warning only when disconnected after a successful sync', () =>
     assert.equal(showStaleWarning(state, iso(now)), state !== 'live', `${state} after sync`);
   }
 });
+
 const thread = (id: string, patch: Partial<ThreadSummary> = {}): ThreadSummary => ({
   id, title: id, agent: 'agent-1', project: '/projects/one', status: 'idle', attention: null,
   runningSince: null, unread: false, pinned: false, archived: false, scheduled: false,
   worktree: false, handover: false, teamSize: 0, createdAt: iso(now), updatedAt: iso(now), ...patch,
 });
+const todo = (id: string, patch: Partial<TodoSummary> = {}): TodoSummary => ({
+  id, text: id, done: false, doneAt: null, createdAt: iso(now - 1000), threadIds: [],
+  items: { done: 0, total: 0 }, report: null, ...patch,
+});
+const place = (item: TodoSummary, threads: ThreadSummary[] = []) => cardFor(item, new Map(threads.map((x) => [x.id, x])));
 
-for (const kind of ['approval', 'question', 'plan', 'error', 'unread'] satisfies AttentionKind[]) {
-  test(`${kind} belongs to attention even while running`, () => {
-    const item = thread(kind, { attention: { kind }, status: 'running' });
-    assert.equal(columnFor(item), 'attention');
-    const columns = buildColumns([item], emptyFilters(), now);
-    assert.deepEqual(columns.map((column) => column.total), [1, 0, 0]);
+test('an item without linked threads has not started', () => {
+  const card = place(todo('a'));
+  assert.equal(card.column, 'todo');
+  assert.equal(card.lead, null);
+});
+
+for (const kind of ['approval', 'question', 'plan', 'error'] satisfies AttentionKind[]) {
+  test(`${kind} on a linked thread needs the person, even while another runs`, () => {
+    const card = place(todo('a', { threadIds: ['run', 'wait'] }), [thread('run', { status: 'running' }), thread('wait', { attention: { kind } })]);
+    assert.equal(card.column, 'waiting');
+    assert.deepEqual(card.reason, { kind: 'attention', attention: kind });
+    assert.equal(card.lead?.id, 'wait');
   });
 }
 
-test('running without attention belongs to running', () => {
-  assert.equal(columnFor(thread('running', { status: 'running' })), 'running');
+test('waits are ordered approval, question, plan, error', () => {
+  const threads = [thread('e', { attention: { kind: 'error' } }), thread('q', { attention: { kind: 'question' } })];
+  assert.equal(place(todo('a', { threadIds: ['e', 'q'] }), threads).lead?.id, 'q');
 });
 
-test('idle without attention belongs to idle', () => {
-  assert.equal(columnFor(thread('idle')), 'idle');
+test('a running linked thread is in progress, whatever the agent last reported', () => {
+  const card = place(todo('a', { threadIds: ['t'], report: { stage: 'review', note: '', threadId: 't', at: iso(now) } }),
+    [thread('t', { status: 'running', runningSince: iso(now - 60_000) })]);
+  assert.equal(card.column, 'doing');
+  assert.deepEqual(card.reason, { kind: 'running', since: iso(now - 60_000) });
 });
 
-test('does not infer attention from status or unread flags', () => {
-  assert.equal(columnFor(thread('error', { status: 'error' })), 'idle');
-  assert.equal(columnFor(thread('unread', { unread: true })), 'idle');
+test('a finished thread without a report waits to be checked, unread or not', () => {
+  assert.deepEqual(place(todo('a', { threadIds: ['t'] }), [thread('t')]).reason, { kind: 'idle', unread: false });
+  const unread = place(todo('a', { threadIds: ['t'] }), [thread('t', { unread: true, attention: { kind: 'unread' } })]);
+  assert.equal(unread.column, 'review');
+  assert.deepEqual(unread.reason, { kind: 'idle', unread: true });
 });
 
-test('sorts pinned first and then newest first without changing the input', () => {
-  const items = [
-    thread('older', { updatedAt: iso(now - 2000) }),
-    thread('newest'),
-    thread('pinned-old', { pinned: true, updatedAt: iso(now - 5000) }),
-    thread('pinned-new', { pinned: true, updatedAt: iso(now - 1000) }),
+test('the agent report moves an idle item between doing, waiting and review', () => {
+  const report = (stage: 'doing' | 'review' | 'blocked') => todo('a', { threadIds: ['t'], report: { stage, note: 'n', threadId: 't', at: iso(now) } });
+  assert.equal(place(report('doing'), [thread('t')]).column, 'doing');
+  assert.equal(place(report('blocked'), [thread('t')]).column, 'waiting');
+  assert.equal(place(report('review'), [thread('t')]).column, 'review');
+  assert.equal(place(report('review'), [thread('t')]).reason.kind, 'report');
+});
+
+test('only the person makes an item done, and it stays done whatever its threads do', () => {
+  const card = place(todo('a', { done: true, doneAt: iso(now), threadIds: ['t'] }), [thread('t', { attention: { kind: 'approval' } })]);
+  assert.equal(card.column, 'done');
+});
+
+test('threads missing from the list count as finished work', () => {
+  const card = place(todo('a', { threadIds: ['archived'] }));
+  assert.equal(card.column, 'review');
+  assert.equal(card.lead, null);
+});
+
+test('not started keeps plan order; the rest put the latest change first', () => {
+  const todos = [
+    todo('second', { createdAt: iso(now - 1) }),
+    todo('first', { createdAt: iso(now - 5) }),
+    todo('old', { threadIds: ['old'] }),
+    todo('new', { threadIds: ['new'] }),
   ];
-  const before = structuredClone(items);
-  const columns = buildColumns(items, emptyFilters(), now);
-  assert.deepEqual(columns[2].threads.map((item) => item.id), ['pinned-new', 'pinned-old', 'newest', 'older']);
-  assert.deepEqual(items, before);
+  const before = structuredClone(todos);
+  const columns = buildColumns(todos, [thread('old', { updatedAt: iso(now - 5000) }), thread('new')], emptyFilters(), now);
+  assert.deepEqual(columns[0].cards.map((card) => card.todo.id), ['second', 'first']);
+  assert.deepEqual(columns[3].cards.map((card) => card.todo.id), ['new', 'old']);
+  assert.deepEqual(todos, before);
 });
 
-test('folds only idle threads older than 30 days, including old pins', () => {
-  const older = iso(now - IDLE_WINDOW_MS - 1);
-  const items = [
-    thread('recent'),
-    thread('boundary', { updatedAt: iso(now - IDLE_WINDOW_MS) }),
-    thread('old', { updatedAt: older }),
-    thread('old-pin', { updatedAt: older, pinned: true }),
-    thread('old-attention', { updatedAt: older, attention: { kind: 'question' } }),
-    thread('old-running', { updatedAt: older, status: 'running' }),
+test('folds items done more than a day ago, keeping the column total', () => {
+  const todos = [
+    todo('recent', { done: true, doneAt: iso(now - 1000) }),
+    todo('boundary', { done: true, doneAt: iso(now - DONE_WINDOW_MS) }),
+    todo('old', { done: true, doneAt: iso(now - DONE_WINDOW_MS - 1) }),
   ];
-  const columns = buildColumns(items, emptyFilters(), now);
-  assert.deepEqual(columns.map((column) => column.total), [1, 1, 4]);
-  assert.deepEqual(columns.map((column) => column.olderCount), [0, 0, 2]);
-  assert.deepEqual(columns[2].threads.map((item) => item.id), ['recent', 'boundary']);
-  const expanded = buildColumns(items, emptyFilters(), now, true)[2];
-  assert.deepEqual(expanded.threads.map((item) => item.id), ['old-pin', 'recent', 'boundary', 'old']);
-  assert.equal(expanded.olderCount, 2);
+  const done = buildColumns(todos, [], emptyFilters(), now)[4];
+  assert.deepEqual(done.cards.map((card) => card.todo.id), ['recent', 'boundary']);
+  assert.deepEqual([done.total, done.olderCount], [3, 1]);
+  assert.equal(buildColumns(todos, [], emptyFilters(), now, true)[4].cards.length, 3);
 });
 
-test('an entirely folded idle column retains its total', () => {
-  const columns = buildColumns([thread('old', { updatedAt: iso(now - IDLE_WINDOW_MS - 1) })], emptyFilters(), now);
-  assert.equal(columns[2].threads.length, 0);
-  assert.equal(columns[2].total, 1);
-  assert.equal(columns[2].olderCount, 1);
-});
-
-test('combines project, instance and schedule filters with OR within each selection', () => {
-  const items = [
-    thread('match-one', { scheduled: true }),
-    thread('match-two', { project: '/projects/two', agent: 'agent-2', scheduled: true }),
-    thread('other-project', { project: '/projects/three', scheduled: true }),
-    thread('other-agent', { agent: 'agent-3', scheduled: true }),
-    thread('not-scheduled'),
+test('filters match any linked thread and hide unlinked items', () => {
+  const todos = [
+    todo('one', { threadIds: ['a'] }),
+    todo('two', { threadIds: ['b', 'c'] }),
+    todo('unlinked'),
   ];
-  const filters = { project: ['/projects/one', '/projects/two'], agent: ['agent-1', 'agent-2'], scheduled: [true] };
-  const ids = (scheduled: boolean[]) => buildColumns(items, { ...filters, scheduled }, now)[2].threads.map((item) => item.id);
-  assert.deepEqual(ids([true]), ['match-one', 'match-two']);
-  assert.deepEqual(ids([false]), ['not-scheduled']);
-  assert.deepEqual(ids([true, false]), ['match-one', 'match-two', 'not-scheduled']);
-  assert.deepEqual(ids([]), ids([true, false]));
-  assert.equal(buildColumns(items, emptyFilters(), now)[2].total, 5);
-  assert.ok(buildColumns(items, { ...filters, project: ['missing'] }, now).every((column) => column.total === 0));
+  const threads = [thread('a'), thread('b', { project: '/projects/two' }), thread('c', { agent: 'agent-2' })];
+  const ids = (filters: { project: string[]; agent: string[] }) => buildColumns(todos, threads, filters, now).flatMap((column) => column.cards.map((card) => card.todo.id));
+  assert.deepEqual(ids(emptyFilters()), ['unlinked', 'one', 'two']);
+  assert.deepEqual(ids({ project: ['/projects/two'], agent: [] }), ['two']);
+  assert.deepEqual(ids({ project: [], agent: ['agent-2'] }), ['two']);
+  assert.deepEqual(ids({ project: ['/projects/one'], agent: ['agent-2'] }), ['two']);
 });
 
-test('excludes archived threads and counts older threads after filtering', () => {
-  const items = [
-    thread('archived', { archived: true, attention: { kind: 'approval' } }),
-    thread('old', { updatedAt: iso(now - IDLE_WINDOW_MS - 1), scheduled: true }),
-    thread('old-excluded', { updatedAt: iso(now - IDLE_WINDOW_MS - 1) }),
-  ];
-  const columns = buildColumns(items, { ...emptyFilters(), scheduled: [true] }, now);
-  assert.deepEqual(columns.map((column) => column.total), [0, 0, 1]);
-  assert.equal(columns[2].olderCount, 1);
+test('phones open on the first column that asks something of the person', () => {
+  const columns = (todos: TodoSummary[], threads: ThreadSummary[] = []) => buildColumns(todos, threads, emptyFilters(), now);
+  assert.equal(firstColumn(columns([])), 'waiting');
+  assert.equal(firstColumn(columns([todo('a')])), 'todo');
+  assert.equal(firstColumn(columns([todo('a'), todo('b', { threadIds: ['t'] })], [thread('t')])), 'review');
+  assert.equal(firstColumn(columns([todo('b', { threadIds: ['t'] })], [thread('t', { attention: { kind: 'question' } })])), 'waiting');
 });
 
 test('invalid persisted filters fall back safely and mixed values are sanitized', () => {
   for (const input of [null, '', '{bad', 'null', '42']) assert.deepEqual(parseFilters(input), emptyFilters());
-  assert.deepEqual(parseFilters('{"project":["/a",1,"/a"],"agent":false,"scheduled":[true,"false",false,true]}'), {
-    project: ['/a'], agent: [], scheduled: [true, false],
-  });
+  assert.deepEqual(parseFilters('{"project":["/a",1,"/a"],"agent":false}'), { project: ['/a'], agent: [] });
 });
 
 test('project labels use the final directory segment', () => {
@@ -124,15 +139,14 @@ test('project labels use the final directory segment', () => {
   assert.equal(projectName(''), '');
 });
 
-test('translations preserve numeric messages and English plurals', () => {
+test('translations pass every argument and keep English plurals', () => {
   assert.equal(t('zh', 'runningMinutes', 0), '刚开始运行');
-  assert.equal(t('en', 'runningMinutes', 0), 'Just started');
-  assert.equal(t('ja', 'runningMinutes', 0), '開始したばかり');
-  assert.equal(t('zh', 'runningMinutes', 1), '已运行 1 分钟');
-  assert.equal(t('ja', 'runningMinutes', 1), '1 分間実行中');
   assert.equal(t('en', 'runningMinutes', 1), 'Running for 1 minute');
   assert.equal(t('en', 'runningMinutes', 2), 'Running for 2 minutes');
-  assert.equal(t('zh', 'team', 3), '协作 3 人');
+  assert.equal(t('zh', 'items', 2, 5), '子项完成 2/5');
+  assert.equal(t('en', 'items', 1, 1), '1 of 1 sub-item done');
+  assert.equal(t('en', 'items', 2, 5), '2 of 5 sub-items done');
+  assert.equal(t('en', 'older', 1), 'Show 1 earlier item');
   assert.equal(t('ja', 'title'), 'ボード');
 });
 

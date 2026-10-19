@@ -8,6 +8,7 @@ import { Telemetry } from './telemetry.js';
 import { Activity } from './activity.js';
 import { askedText } from './util.js';
 import { referencesFile } from './artifacts.js';
+import type { TodoReport } from './todo-report.js';
 import { HistoryStore } from './history.js';
 
 export interface ThreadRecord {
@@ -107,6 +108,8 @@ export interface TodoRecord {
   position: number;
   createdAt: string;
   doneAt: string | null;
+  /** What a linked thread's agent last said about the item at the end of a turn. */
+  report: TodoReport | null;
 }
 
 interface TodoRow {
@@ -117,6 +120,10 @@ interface TodoRow {
   position: number;
   created_at: string;
   done_at: string | null;
+  report_stage: string | null;
+  report_note: string | null;
+  report_thread: string | null;
+  report_at: string | null;
 }
 
 interface ScheduleRow {
@@ -188,6 +195,9 @@ const toTodo = (r: TodoRow): TodoRecord => ({
   position: r.position,
   createdAt: r.created_at,
   doneAt: r.done_at,
+  report: r.report_stage && r.report_thread && r.report_at
+    ? { stage: r.report_stage as TodoReport['stage'], note: r.report_note ?? '', threadId: r.report_thread, at: r.report_at }
+    : null,
 });
 
 interface ThreadRow {
@@ -386,6 +396,10 @@ export class Store {
         PRIMARY KEY (todo_id, thread_id)
       );
     `);
+    const todoCols = this.db.prepare('PRAGMA table_info(todos)').all() as Array<{ name: string }>;
+    if (!todoCols.some((c) => c.name === 'report_stage')) {
+      this.db.exec('ALTER TABLE todos ADD COLUMN report_stage TEXT; ALTER TABLE todos ADD COLUMN report_note TEXT; ALTER TABLE todos ADD COLUMN report_thread TEXT; ALTER TABLE todos ADD COLUMN report_at TEXT');
+    }
     // Scheduled tasks and their runs. Run history points at threads without a foreign key: a
     // thread can be deleted long after the run that made it, and the history stays.
     this.db.exec(`
@@ -780,7 +794,7 @@ export class Store {
     this.db
       .prepare('INSERT INTO todos (id, text, done, parent_id, position, created_at) VALUES (?, ?, 0, ?, ?, ?)')
       .run(id, text, parentId, row.next, now);
-    return { id, text, done: false, parentId, position: row.next, createdAt: now, doneAt: null };
+    return { id, text, done: false, parentId, position: row.next, createdAt: now, doneAt: null, report: null };
   }
 
   /** Text edits keep the item where it is; toggling done stamps `done_at` (or clears it). */
@@ -790,8 +804,25 @@ export class Store {
     const text = patch.text !== undefined ? patch.text : current.text;
     const done = patch.done !== undefined ? patch.done : current.done;
     const doneAt = patch.done === undefined ? current.doneAt : done ? new Date().toISOString() : null;
+    // Ticking or unticking is the person's word; whatever an agent said before no longer stands.
+    const report = patch.done === undefined || patch.done === current.done ? current.report : null;
     this.db.prepare('UPDATE todos SET text = ?, done = ?, done_at = ? WHERE id = ?').run(text, done ? 1 : 0, doneAt, id);
-    return { ...current, text, done, doneAt };
+    if (report !== current.report) this.setTodoReport(id, null);
+    return { ...current, text, done, doneAt, report };
+  }
+
+  /** Records, or with null clears, what an agent last said about an item. */
+  setTodoReport(id: string, report: TodoReport | null): void {
+    this.db
+      .prepare('UPDATE todos SET report_stage = ?, report_note = ?, report_thread = ?, report_at = ? WHERE id = ?')
+      .run(report?.stage ?? null, report?.note ?? null, report?.threadId ?? null, report?.at ?? null, id);
+  }
+
+  /** Items a thread is linked to, in plan order. */
+  threadTodos(threadId: string): TodoRecord[] {
+    return (this.db
+      .prepare('SELECT todos.* FROM todos JOIN todo_threads ON todo_threads.todo_id = todos.id WHERE todo_threads.thread_id = ? ORDER BY todos.position ASC, todos.created_at ASC')
+      .all(threadId) as unknown as TodoRow[]).map(toTodo);
   }
 
   deleteTodo(id: string): void {
@@ -878,6 +909,14 @@ export class Store {
       .prepare('SELECT * FROM events WHERE thread_id = ? AND seq > ? ORDER BY seq ASC LIMIT ?')
       .iterate(threadId, afterSeq, limit);
     for (const row of rows) yield toEvent(row as unknown as EventRow);
+  }
+
+  /** The events of one turn, oldest first. */
+  listTurnEvents(threadId: string, turnId: string): StoredEvent[] {
+    const rows = this.db
+      .prepare('SELECT * FROM events WHERE thread_id = ? AND turn_id = ? ORDER BY seq ASC')
+      .all(threadId, turnId) as unknown as EventRow[];
+    return rows.map(toEvent);
   }
 
   /** Every event of one type in a thread, oldest first. There are few of the types this is asked for. */
