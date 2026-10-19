@@ -4,14 +4,13 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildOnce, startDaemon, openUi, launchBrowser } from '../harness.mjs';
+import { startDaemon, openUi, launchBrowser } from '../harness.mjs';
 
 let daemon;
 let browser;
 let dir;
 
 before(async () => {
-  await buildOnce();
   dir = mkdtempSync(join(tmpdir(), 'rah-import-browser-'));
   const sessions = join(dir, 'sessions.json');
   writeFileSync(sessions, '[]');

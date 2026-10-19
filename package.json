@@ -15,8 +15,8 @@
     "preview:site": "npm run preview -w @rah/site",
     "test:site": "npm run build:site && node --test packages/site/e2e/*.spec.mjs",
     "build": "npm run build -w @rah/daemon && npm run build -w @rah/web && npm run build -w @rah/ext-loopx",
-    "test": "npm test -w @rah/daemon && npm test -w @rah/web && npm test -w @rah/ext-board && npm test -w @rah/site && npm test -w @rah/ext-loopx",
-    "test:e2e": "npm run build && cd packages/e2e && node --test test/*.spec.mjs",
+    "test": "npm test -w @rah/daemon && npm test -w @rah/web && npm test -w @rah/ext-board && npm test -w @rah/site && npm test -w @rah/ext-loopx && npm run test:runner -w @rah/e2e",
+    "test:e2e": "node packages/e2e/run.mjs",
     "setup": "node scripts/setup.mjs",
     "typecheck": "npm run typecheck -w @rah/daemon && npm run typecheck -w @rah/web && npm run typecheck -w @rah/ext-board && npm run typecheck -w @rah/site && npm run typecheck -w @rah/ext-loopx && npm run typecheck -w @rah/ext-memory",
     "check:publish": "node scripts/check-publish.mjs"

@@ -3,11 +3,10 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildOnce, startDaemon, openUi, api, launchBrowser, repoRoot } from '../harness.mjs';
+import { startDaemon, openUi, api, launchBrowser, repoRoot } from '../harness.mjs';
 
 let root, remoteHome, remote, hub, browser;
 before(async () => {
-  await buildOnce();
   root = mkdtempSync(join(tmpdir(), 'rah-e2e-projects-'));
   remoteHome = join(root, 'remote-home');
   const localHome = join(root, 'local-home');

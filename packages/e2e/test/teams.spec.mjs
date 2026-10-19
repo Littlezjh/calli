@@ -1,12 +1,11 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { buildOnce, startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
+import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
 
 let daemon, browser;
 const shots = '/tmp/limi-team-shots';
 before(async () => {
-  await buildOnce();
   daemon = await startDaemon();
   mkdirSync(shots, { recursive: true });
   writeFileSync(`${shots}/runtime.json`, JSON.stringify({ pid: daemon.pid, base: daemon.base, dataDir: daemon.dataDir }));

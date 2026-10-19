@@ -1,10 +1,10 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
-import { buildOnce, startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
+import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
 
 let daemon, browser;
-before(async () => { await buildOnce(); daemon = await startDaemon(); browser = await launchBrowser(); });
+before(async () => { daemon = await startDaemon(); browser = await launchBrowser(); });
 after(async () => { await browser?.close(); await daemon?.stop(); });
 const post = async (path, body) => {
   const response = await api(daemon, path, { method: 'POST', body: JSON.stringify(body) });

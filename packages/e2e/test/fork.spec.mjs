@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildOnce, startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
+import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
 
 let daemon;
 let browser;
@@ -15,7 +15,6 @@ const scriptDir = mkdtempSync(join(tmpdir(), 'rah-fork-'));
 const messagesFile = join(scriptDir, 'messages.json');
 
 before(async () => {
-  await buildOnce();
   daemon = await startDaemon({ FAKE_PI_MESSAGES_FILE: messagesFile });
   browser = await launchBrowser();
   const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });

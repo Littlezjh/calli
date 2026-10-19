@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildOnce, startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
+import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
 
 const SOCKET_IN_HOME = '.local/state/remote-agent-hub/daemon.sock';
 
@@ -17,7 +17,6 @@ let browser;
 let page;
 
 before(async () => {
-  await buildOnce();
   root = mkdtempSync(join(tmpdir(), 'rah-e2e-hosts-'));
   const nodeHome = join(root, 'devbox');
   mkdirSync(nodeHome);

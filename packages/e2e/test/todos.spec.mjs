@@ -2,14 +2,13 @@
 // to the threads that work on them.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildOnce, startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
+import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
 
 let daemon;
 let browser;
 let page;
 
 before(async () => {
-  await buildOnce();
   daemon = await startDaemon();
   browser = await launchBrowser();
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });

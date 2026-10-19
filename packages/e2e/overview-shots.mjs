@@ -1,13 +1,13 @@
+// Run npm run build from the repository root before capturing screenshots.
 // Captures the overview page for eyeballing: desktop and phone, light and dark, in demo mode.
 // Run: node overview-shots.mjs (writes PNGs into shots/)
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { buildOnce, startDaemon, launchBrowser } from './harness.mjs';
+import { startDaemon, launchBrowser } from './harness.mjs';
 
 const outDir = join(process.cwd(), 'shots');
 mkdirSync(outDir, { recursive: true });
 
-await buildOnce();
 // The daemon only serves the page; the demo workspace never calls it.
 const daemon = await startDaemon();
 const browser = await launchBrowser();

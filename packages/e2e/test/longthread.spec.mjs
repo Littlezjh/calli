@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildOnce, startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
+import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
 
 let daemon;
 let browser;
@@ -13,7 +13,6 @@ let page;
 let messagesFile;
 
 before(async () => {
-  await buildOnce();
   // The daemon's children read this file when asked for a session's messages.
   messagesFile = join(mkdtempSync(join(tmpdir(), 'rah-e2e-msgs-')), 'messages.json');
   daemon = await startDaemon({ FAKE_PI_MESSAGES_FILE: messagesFile });

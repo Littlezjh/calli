@@ -2,7 +2,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { buildOnce, startDaemon, openUi, api, launchBrowser, repoRoot } from '../harness.mjs';
+import { startDaemon, openUi, api, launchBrowser, repoRoot } from '../harness.mjs';
 
 let daemon, browser;
 const shots = process.env.RAH_E2E_SHOTS_DIR;
@@ -13,7 +13,6 @@ const cases = [
 ];
 
 before(async () => {
-  await buildOnce();
   daemon = await startDaemon({ RAH_AGENTS_JSON: JSON.stringify({ agents: [
     { id: 'claude', adapter: 'claude', command: [process.execPath, join(repoRoot, 'daemon/test/fixtures/fake-acp.mjs')] },
   ] }) });

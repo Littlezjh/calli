@@ -1,14 +1,14 @@
+// Run npm run build from the repository root before capturing screenshots.
 // Captures the new UI for eyeballing: desktop and phone, light and dark.
 // Run: node shots.mjs (writes PNGs into shots/)
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildOnce, startDaemon, openUi, api, launchBrowser } from './harness.mjs';
+import { startDaemon, openUi, api, launchBrowser } from './harness.mjs';
 
 const outDir = join(process.cwd(), 'shots');
 mkdirSync(outDir, { recursive: true });
 
-await buildOnce();
 const messagesFile = join(mkdtempSync(join(tmpdir(), 'rah-shots-')), 'messages.json');
 const daemon = await startDaemon({ FAKE_PI_MESSAGES_FILE: messagesFile, RAH_E2E_DISCOVER_AGY2: '1' }, { workdir: join(tmpdir(), 'limi-demo') });
 const browser = await launchBrowser();

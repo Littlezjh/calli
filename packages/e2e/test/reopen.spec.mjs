@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildOnce, startDaemon, openUi, launchBrowser, repoRoot } from '../harness.mjs';
+import { startDaemon, openUi, launchBrowser, repoRoot } from '../harness.mjs';
 
 let daemon;
 let browser;
@@ -19,7 +19,6 @@ const LONG_TURN = 21_000;
 const recent = [...Array.from({ length: 7 }, (_, i) => `middle-${i}`), 'latest'];
 
 before(async () => {
-  await buildOnce();
   dataDir = mkdtempSync(join(tmpdir(), 'rah-e2e-long-'));
   workdir = mkdtempSync(join(tmpdir(), 'rah-e2e-long-work-'));
   // The log is written directly: streaming this much through a fake agent would take minutes.

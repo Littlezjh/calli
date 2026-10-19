@@ -2,13 +2,12 @@
 // real shell on the host, survives its panel being closed and reopened, and ends cleanly.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildOnce, startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
+import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
 
 let daemon;
 let browser;
 
 before(async () => {
-  await buildOnce();
   // /bin/sh keeps the test off the user's rc files and shell prompt.
   daemon = await startDaemon({ RAH_TERM_SHELL: '/bin/sh' });
   browser = await launchBrowser();

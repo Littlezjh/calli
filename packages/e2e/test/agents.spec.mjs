@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildOnce, startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
+import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
 
 let daemon;
 let browser;
@@ -13,7 +13,6 @@ let page;
 let messagesFile;
 
 before(async () => {
-  await buildOnce();
   // Two configured instances (the built-ins plus a second pi account with its own environment)
   // and an extra `agy2` shim on PATH for discovery.
   daemon = await startDaemon({

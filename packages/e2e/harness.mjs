@@ -1,11 +1,11 @@
 /**
- * End-to-end harness: builds the web UI, starts the daemon against the fake agents from
+ * End-to-end harness: uses the prebuilt UI, starts the daemon against the fake agents from
  * packages/daemon/test/fixtures, and drives a real browser through playwright-core.
  *
  * The browsers come from wherever they are: the playwright cache, or a system Chrome.
  */
-import { execFileSync, spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
 import { dirname, join } from 'node:path';
@@ -17,20 +17,6 @@ export const repoRoot = join(here, '..');
 const fixtures = join(repoRoot, 'daemon', 'test', 'fixtures');
 
 export const TOKEN = 'e2e-token-0123456789abcdef';
-
-/** Builds both packages once for a whole test run. Slow, so callers cache the promise. */
-let buildPromise = null;
-export function buildOnce() {
-  buildPromise ??= new Promise((resolve, reject) => {
-    try {
-      execFileSync('npm', ['run', 'build'], { cwd: repoRoot, stdio: 'inherit' });
-      resolve();
-    } catch (err) {
-      reject(err);
-    }
-  });
-  return buildPromise;
-}
 
 /** A free TCP port, so parallel test files do not fight over one. */
 function freePort() {
@@ -56,6 +42,11 @@ function shim(dir, name, script) {
  * `env` is merged into the daemon's environment (extra RAH_* switches, fake-agent switches).
  */
 export async function startDaemon(env = {}, opts = {}) {
+  for (const artifact of ['daemon/dist/index.js', 'web/dist/index.html']) {
+    if (!existsSync(join(repoRoot, artifact))) {
+      throw new Error(`Missing ${artifact}. Run npm run test:e2e, or npm run build before running tests directly.`);
+    }
+  }
   const dataDir = mkdtempSync(join(tmpdir(), 'rah-e2e-data-'));
   // A fixed name reads better in screenshots than the random suffix mkdtemp adds.
   const workdir = opts.workdir ?? mkdtempSync(join(tmpdir(), 'limi-demo-'));

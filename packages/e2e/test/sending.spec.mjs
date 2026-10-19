@@ -4,13 +4,12 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { buildOnce, startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
+import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
 
 let daemon;
 let browser;
 
 before(async () => {
-  await buildOnce();
   daemon = await startDaemon();
   browser = await launchBrowser();
 });

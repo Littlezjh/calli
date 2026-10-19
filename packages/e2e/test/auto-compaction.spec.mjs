@@ -2,12 +2,11 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { buildOnce, startDaemon, openUi, api, launchBrowser, repoRoot } from '../harness.mjs';
+import { startDaemon, openUi, api, launchBrowser, repoRoot } from '../harness.mjs';
 
 let daemon, browser;
 const shots = process.env.RAH_E2E_SHOTS_DIR;
 before(async () => {
-  await buildOnce();
   const agents = ['codex', 'traex', 'claude', 'pi', 'zcode'].map(id => ({ id, adapter: id,
     command: [process.execPath, join(repoRoot, `daemon/test/fixtures/fake-${['claude', 'traex'].includes(id) ? 'acp' : id}.mjs`)],
     ...(id === 'traex' ? { env: { FAKE_ACP_FLAVOR: 'traex' } } : {}),

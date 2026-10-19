@@ -1,13 +1,12 @@
 // The language: the browser's own by default, or one picked from the settings menu and kept on the device.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildOnce, startDaemon, openUi, launchBrowser } from '../harness.mjs';
+import { startDaemon, openUi, launchBrowser } from '../harness.mjs';
 
 let daemon;
 let browser;
 
 before(async () => {
-  await buildOnce();
   daemon = await startDaemon();
   browser = await launchBrowser();
 });

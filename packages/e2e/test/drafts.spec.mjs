@@ -2,7 +2,7 @@
 // brings it back, and other threads start with their own.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildOnce, startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
+import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
 
 let daemon;
 let browser;
@@ -14,7 +14,6 @@ const startThread = async (text) => {
 };
 
 before(async () => {
-  await buildOnce();
   daemon = await startDaemon();
   browser = await launchBrowser();
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });

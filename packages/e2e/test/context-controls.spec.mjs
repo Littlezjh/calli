@@ -2,12 +2,11 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { buildOnce, startDaemon, openUi, api, launchBrowser, repoRoot } from '../harness.mjs';
+import { startDaemon, openUi, api, launchBrowser, repoRoot } from '../harness.mjs';
 
 let daemon;
 let browser;
 before(async () => {
-  await buildOnce();
   daemon = await startDaemon({
     FAKE_CODEX_WEEKLY_ONLY: '1', FAKE_CODEX_NO_EFFORT_MODEL: '1',
     RAH_AGENTS_JSON: JSON.stringify({ agents: ['claude', 'codex', 'pi'].map((id) => ({

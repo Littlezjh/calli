@@ -160,9 +160,21 @@ docs/             计划与界面说明
 ```bash
 npm test          # daemon 与 web 的全部单元测试和 API 测试
 npm run typecheck
+npm run test:e2e   # 统一构建一次，再运行浏览器 E2E（最多并行 2 个测试文件）
 ```
 
 测试不需要真实的模型账号：适配器测试使用 `packages/daemon/test/fixtures` 里的假 agent 进程。
+
+E2E 需要本机有 Playwright Chromium 或系统 Chrome。根目录的 `npm run test:e2e` 和 `npm test -w @rah/e2e` 共用入口，构建失败就停止；测试进程只消费构建产物，不再自行构建。`npm test` 也会验证这个入口的构建次数、执行顺序、并发上限和失败退出行为，不启动浏览器。
+
+只跑部分 E2E 时，文件路径相对于 `packages/e2e`，Node 测试参数放在文件路径前，带值参数使用 `--参数=值`：
+
+```bash
+npm run test:e2e -- test/smoke.spec.mjs test/appearance.spec.mjs
+npm test -w @rah/e2e -- --test-concurrency=1 test/smoke.spec.mjs
+```
+
+需要复用已构建产物时，先单独运行一次 `npm run build`，再用 `node --test --test-concurrency=2 packages/e2e/test/*.spec.mjs`。截图脚本 `packages/e2e/shots.mjs` 和 `packages/e2e/overview-shots.mjs` 同样需要先构建。直接运行测试或截图脚本不会触发隐式构建；产物缺失时会提示先构建。以上限制针对单次 E2E 命令，不要同时启动多条 E2E 命令。
 
 ## 安全
 

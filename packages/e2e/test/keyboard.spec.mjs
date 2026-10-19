@@ -4,14 +4,13 @@
 // reports, and the layout is checked against them.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildOnce, startDaemon, openUi, launchBrowser, api } from '../harness.mjs';
+import { startDaemon, openUi, launchBrowser, api } from '../harness.mjs';
 
 let daemon;
 let browser;
 let page;
 
 before(async () => {
-  await buildOnce();
   daemon = await startDaemon();
   browser = await launchBrowser();
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });

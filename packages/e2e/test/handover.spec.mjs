@@ -4,11 +4,10 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildOnce, startDaemon, openUi, api, launchBrowser, repoRoot } from '../harness.mjs';
+import { startDaemon, openUi, api, launchBrowser, repoRoot } from '../harness.mjs';
 
 let root, daemon, browser, thread, configDir;
 before(async () => {
-  await buildOnce();
   root = mkdtempSync(join(tmpdir(),'rah-handover-e2e-'));
   configDir = join(root,'claude-work');
   daemon = await startDaemon({ RAH_AGENTS_JSON: JSON.stringify({ agents: [{

@@ -3,7 +3,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
-import { buildOnce, startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
+import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
 
 let daemon, browser, deep, shelved;
 const post = async (path, body, method = 'POST') => {
@@ -21,7 +21,6 @@ const say = async (id, text) => {
 };
 
 before(async () => {
-  await buildOnce();
   daemon = await startDaemon();
   browser = await launchBrowser();
   deep = await post('/api/threads', { agent: 'claude', cwd: daemon.workdir, title: '长对话' });

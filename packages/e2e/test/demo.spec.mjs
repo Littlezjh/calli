@@ -3,7 +3,7 @@
 // a token before keeping it.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildOnce, startDaemon, launchBrowser } from '../harness.mjs';
+import { startDaemon, launchBrowser } from '../harness.mjs';
 
 let daemon;
 let browser;
@@ -11,7 +11,6 @@ let page;
 const apiCalls = [];
 
 before(async () => {
-  await buildOnce();
   daemon = await startDaemon();
   browser = await launchBrowser();
   const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });

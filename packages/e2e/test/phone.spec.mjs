@@ -3,7 +3,7 @@
 // no "more" button: a long press opens their menu.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildOnce, startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
+import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
 
 const WIDTH = 390;
 
@@ -13,7 +13,6 @@ let page;
 let cdp;
 
 before(async () => {
-  await buildOnce();
   daemon = await startDaemon();
   browser = await launchBrowser();
   const ctx = await browser.newContext({ viewport: { width: WIDTH, height: 844 }, hasTouch: true, isMobile: true });
