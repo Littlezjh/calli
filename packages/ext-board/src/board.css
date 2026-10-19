@@ -43,7 +43,7 @@
   padding: 8px;
 }
 .ext-board-clear:hover, .ext-board-older:hover { background: var(--hover); color: var(--text); }
-.ext-board-columns { display: grid; grid-template-columns: repeat(5, minmax(176px, 1fr)); align-items: start; gap: 12px; overflow-x: auto; margin: 0 -8px; padding: 0 8px 12px; }
+.ext-board-columns { display: grid; grid-template-columns: repeat(4, minmax(200px, 1fr)); align-items: start; gap: 12px; overflow-x: auto; margin: 0 -8px; padding: 0 8px 12px; }
 .ext-board-column { min-width: 0; }
 .ext-board-column[hidden] { display: none; }
 .ext-board-column-title { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; font-size: 13px; font-weight: 600; }
@@ -92,17 +92,13 @@
 .ext-board-check:hover { border-color: var(--muted); }
 .ext-board-check[aria-checked='true'] { border-color: var(--positive); background: var(--positive); color: var(--on-color); }
 .ext-board-check:disabled { opacity: 0.6; cursor: default; }
-.ext-board-marks { display: inline-flex; flex: 0 1 auto; align-items: center; gap: 4px; min-width: 0; overflow: hidden; white-space: nowrap; }
-.ext-board-mark { display: inline-flex; align-items: center; min-width: 0; }
-.ext-board-more { font-variant-numeric: tabular-nums; }
-.ext-board-items { display: inline-flex; flex-shrink: 0; margin-left: auto; color: var(--muted); align-items: center; gap: 3px; font-variant-numeric: tabular-nums; }
-.ext-board-plan { display: block; margin: 12px auto 0; padding: 8px 14px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface); color: var(--text); font: inherit; font-size: 13px; cursor: pointer; }
-.ext-board-plan:hover { background: var(--hover); }
+.ext-board-agent { flex: 0 0 auto; max-width: 60%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ext-board-badges { display: inline-flex; flex-shrink: 0; align-items: center; gap: 6px; margin-left: auto; color: var(--muted); }
+.ext-board-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 12px; }
 .ext-board-project { min-width: 0; flex: 0 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ext-board-reason { display: flex; align-items: center; gap: 7px; min-width: 0; font-size: 12px; line-height: 1.6; }
 .ext-board-dot { display: inline-block; flex-shrink: 0; width: 6px; height: 6px; border-radius: var(--radius-pill); background: currentColor; }
 .ext-board-tone-attention, .ext-board-tone-waiting { color: var(--warn); }
-.ext-board-tone-todo { color: var(--faint); }
 .ext-board-tone-doing { color: var(--positive); }
 .ext-board-tone-review { color: var(--text); }
 .ext-board-tone-done { color: var(--muted); }

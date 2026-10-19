@@ -75,9 +75,6 @@ test('install an independent LoopX package, configure and inspect shared work in
   const board = states.find(s => s.manifest.id === 'board');
   assert.ok(board);
   await api(daemon, '/api/extensions/board/install', { method: 'POST', body: JSON.stringify({ granted: board.manifest.permissions }) });
-  // Board cards are plan items; the one linked to the thread carries the thread's work.
-  const todo = await (await api(daemon, '/api/todos', { method: 'POST', body: JSON.stringify({ text: 'Plugin validation' }) })).json();
-  await api(daemon, `/api/todos/${todo.id}/threads`, { method: 'POST', body: JSON.stringify({ threadId: thread.id }) });
   await context.close();
   for (const mobile of [false, true]) for (const theme of ['light', 'dark']) {
     const ctx = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1400, height: 900 }, colorScheme: theme, isMobile: mobile, hasTouch: mobile });

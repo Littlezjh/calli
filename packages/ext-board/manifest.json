@@ -8,12 +8,13 @@
     "ja": "ボード"
   },
   "description": {
-    "zh": "按未开始、进行中、等你、待验收和已完成排列计划项，由关联线程的状态和 agent 的报告推出，完成由你勾选。",
-    "en": "Lays out plan items as not started, in progress, needs you, to review and done, from their linked threads and what agents report. You tick them done.",
-    "ja": "計画項目を未着手・進行中・対応待ち・確認待ち・完了に並べます。関連スレッドの状態とエージェントの報告から判断し、完了はあなたがチェックします。"
+    "zh": "按进行中、等你、待验收和已完成排列线程。agent 每轮结束会报告进度，完成由你勾选。",
+    "en": "Lays out threads as in progress, needs you, to review and done. Agents report progress at the end of each turn; you mark threads done.",
+    "ja": "スレッドを進行中・対応待ち・確認待ち・完了に並べます。エージェントは各ターンの終わりに進捗を報告し、完了はあなたがチェックします。"
   },
   "permissions": [
     "events.summary",
+    "progress.report",
     "worksource.read"
   ],
   "contributes": {

@@ -2,7 +2,7 @@ import { UserInputs } from './user-input.js';
 import type { SystemPrompt, WorkMode } from './adapters/types.js';
 import { diagnosticFailure } from './adapters/diagnostics.js';
 import { turnAnswer, type CoordinationManager } from './coordination.js';
-import { parseTodoReport, todoInstructions } from './todo-report.js';
+import { parseProgress, progressInstructions } from './progress-report.js';
 import { randomUUID } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, readSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
@@ -186,8 +186,10 @@ export class ThreadManager {
   private readonly running = new Map<string, { turnId: string; cancelRequested: boolean; since: string }>();
   readonly inputs = new UserInputs((thread, turn, type, data) => this.emitThreadEvent(thread, turn, type, data));
   private readonly changingModes = new Set<string>();
-  /** Turns that asked the agent for a `[计划状态]` line, read back when they end. */
+  /** Turns that asked the agent for a `[进度]` line, read back when they end. */
   private readonly reportTurns = new Set<string>();
+  /** Whether an enabled extension holds `progress.report`. Wired by the daemon's entry point. */
+  progressWanted: () => boolean = () => false;
   private readonly approvals = new Map<string, PendingApproval>();
   private readonly listeners = new Set<Listener>();
   /** Agent sessions being imported right now, so the same one is not imported twice in parallel. */
@@ -846,11 +848,8 @@ export class ThreadManager {
   }
 
   unlinkTodoThread(id: string, threadId: unknown): void {
-    const todo = this.store.getTodo(id);
-    if (!todo) throw new HttpError(404, 'todo not found');
-    const thread = this.threadId(threadId);
-    this.store.unlinkTodoThread(id, thread);
-    if (todo.report?.threadId === thread) this.store.setTodoReport(id, null);
+    if (!this.store.getTodo(id)) throw new HttpError(404, 'todo not found');
+    this.store.unlinkTodoThread(id, this.threadId(threadId));
     this.broadcastTodo();
   }
 
@@ -876,32 +875,6 @@ export class ThreadManager {
   }
 
   /** Plan-page changes are not thread events: they go to listeners only, without an event log. */
-  /** Open items a thread is linked to, as the agent is told them: a sub-item under its plan. */
-  private openTodoNames(threadId: string): string[] {
-    return this.store.threadTodos(threadId).filter((todo) => !todo.done).map((todo) => {
-      const parent = todo.parentId ? this.store.getTodo(todo.parentId) : null;
-      return parent ? `${parent.text} › ${todo.text}` : todo.text;
-    });
-  }
-
-  /**
-   * Reads the turn's `[计划状态]` line into the thread's open items. A turn that was asked and
-   * said nothing withdraws what this thread said before, so an old report never outlives the work.
-   */
-  private recordTodoReport(threadId: string, turnId: string): void {
-    const said = parseTodoReport(turnAnswer(this.store.listTurnEvents(threadId, turnId), turnId));
-    const at = new Date().toISOString();
-    let changed = false;
-    for (const todo of this.store.threadTodos(threadId)) {
-      if (todo.done) continue;
-      if (said) this.store.setTodoReport(todo.id, { ...said, threadId, at });
-      else if (todo.report?.threadId === threadId) this.store.setTodoReport(todo.id, null);
-      else continue;
-      changed = true;
-    }
-    if (changed) this.broadcastTodo();
-  }
-
   private broadcastTodo(): void {
     const ev: StoredEvent = { threadId: '', seq: 0, turnId: null, type: 'todo.updated', ts: new Date().toISOString(), data: {} };
     for (const l of this.listeners) l(ev);
@@ -926,10 +899,16 @@ export class ThreadManager {
       archived?: boolean;
       sectionId?: string | null;
       unread?: boolean;
+      done?: boolean;
     },
   ): Promise<ThreadView> {
     const thread = this.getThread(id);
     const patch: Record<string, unknown> = {};
+    if (updates.done !== undefined) {
+      if (typeof updates.done !== 'boolean') throw new HttpError(400, 'done must be true or false');
+      // The person's word; whatever the agent said before no longer stands.
+      this.store.setThreadProgress(id, { doneAt: updates.done ? (thread.doneAt ?? new Date().toISOString()) : null, report: null });
+    }
     if (updates.speed !== undefined) {
       patch.speed = updates.speed === null ? (thread.speed ? 'default' : null) : await this.validateSpeed(thread.agent, updates.model === undefined ? thread.model : updates.model, updates.speed);
     } else if (updates.model !== undefined && thread.speed) {
@@ -1467,9 +1446,9 @@ export class ThreadManager {
     // Slash commands have their own argument grammar; hidden instructions become unwanted arguments.
     const slashCommand = /^\/\S+/.test(rawText);
     const coordinated = slashCommand ? rawText : rawText ? (this.coordination?.instructions(threadId, rawText) ?? rawText) : '';
-    // Linked to open plan items: the agent is asked to say where they stand, read back at the end.
-    const planItems = slashCommand || !rawText ? [] : this.openTodoNames(threadId);
-    const text = todoInstructions(coordinated, planItems);
+    // With the board's consent, the agent is asked to say where the work stands; read back at the end.
+    const askProgress = !slashCommand && Boolean(rawText) && this.progressWanted();
+    const text = askProgress ? progressInstructions(coordinated) : coordinated;
     const rawImages = Array.isArray(input.images) ? input.images : [];
     const storedVideos = this.attachments.videos(threadId, input.videos);
     const videoIds = storedVideos.map(v => v.id);
@@ -1524,10 +1503,12 @@ export class ThreadManager {
     const promptText = text + this.attachments.videoNote(threadId, storedVideos);
 
     const turnId = delivery?.turnId ?? randomUUID();
-    if (planItems.length) this.reportTurns.add(turnId);
+    if (askProgress) this.reportTurns.add(turnId);
     try {
       this.store.transaction(() => {
         delivery?.claim();
+        // New work reopens a thread the person had marked done.
+        if (thread.doneAt && !slashCommand) this.store.setThreadProgress(threadId, { doneAt: null });
         this.running.set(threadId, { turnId, cancelRequested: false, since: new Date().toISOString() });
         this.store.updateThread(threadId, { status: 'running', workMode: thread.workMode ?? 'execute', hubTurnAt: new Date().toISOString() }, { touch: true });
         if (thread.title === 'New thread') {
@@ -1722,7 +1703,7 @@ export class ThreadManager {
         });
       } else {
         this.emitThreadEvent(thread.id, turnId, 'turn.done', { stopReason: result.stopReason });
-        if (result.stopReason !== 'cancelled' && this.reportTurns.has(turnId)) this.recordTodoReport(thread.id, turnId);
+        if (result.stopReason !== 'cancelled' && this.reportTurns.has(turnId)) this.recordProgress(thread.id, turnId);
       }
     } catch (err) {
       finalStatus = 'error';
@@ -1741,6 +1722,15 @@ export class ThreadManager {
         this.startNextQueued(thread.id);
       }
     }
+  }
+
+  /**
+   * Reads the turn's `[进度]` line. A turn that was asked and said nothing withdraws the last
+   * report, so an old one never outlives the work.
+   */
+  private recordProgress(threadId: string, turnId: string): void {
+    const said = parseProgress(turnAnswer(this.store.listTurnEvents(threadId, turnId), turnId));
+    this.store.setThreadProgress(threadId, { report: said ? { ...said, at: new Date().toISOString() } : null });
   }
 
   private async ensureSession(thread: ThreadRecord): Promise<AgentSession> {

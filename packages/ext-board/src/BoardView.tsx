@@ -4,8 +4,7 @@ import type { ExtensionViewProps, WebHost } from '@rah/extension-api/web';
 import { buildColumns, COLUMN_IDS, emptyFilters, firstColumn, parseFilters, projectName, showStaleWarning, type BoardCard, type BoardFilters, type ColumnId } from './columns';
 import { t } from './i18n';
 
-const FILTERS_KEY = 'filters.v2';
-const MAX_MARKS = 3;
+const FILTERS_KEY = 'filters.v1';
 
 function readFilters(host: WebHost): BoardFilters {
   try {
@@ -22,10 +21,10 @@ function toggle<T>(values: T[], value: T): T[] {
 /** Why the card is where it is, coloured only when it asks something of the person, and since when. */
 function reasonOf(card: BoardCard, host: WebHost, now: number): { text: string; tone: string; at: string | null } {
   const locale = host.locale();
-  const { reason, todo } = card;
-  const report = todo.report;
+  const { reason, thread } = card;
+  const report = thread.report;
   if (reason.kind === 'attention') {
-    return { text: t(locale, reason.attention), tone: reason.attention === 'error' ? 'error' : 'attention', at: card.lead?.updatedAt ?? null };
+    return { text: t(locale, reason.attention), tone: reason.attention === 'error' ? 'error' : 'attention', at: thread.updatedAt };
   }
   if (reason.kind === 'running') {
     const start = reason.since ? Date.parse(reason.since) : NaN;
@@ -36,51 +35,50 @@ function reasonOf(card: BoardCard, host: WebHost, now: number): { text: string; 
     const text = t(locale, report.stage === 'blocked' ? 'reportBlocked' : report.stage === 'doing' ? 'reportDoing' : 'reportReview');
     return { text, tone: report.stage === 'blocked' ? 'attention' : 'idle', at: report.at };
   }
-  if (reason.kind === 'idle') {
-    return { text: t(locale, reason.unread ? 'unread' : 'idle'), tone: reason.unread ? 'unread' : 'idle', at: card.lead?.updatedAt ?? null };
-  }
-  if (reason.kind === 'done') return { text: t(locale, 'finished'), tone: 'idle', at: todo.doneAt };
-  return { text: t(locale, 'unlinked'), tone: 'idle', at: todo.createdAt };
+  if (reason.kind === 'done') return { text: t(locale, 'finished'), tone: 'idle', at: thread.doneAt };
+  const unread = reason.kind === 'idle' && reason.unread;
+  return { text: t(locale, unread ? 'unread' : 'idle'), tone: unread ? 'unread' : 'idle', at: thread.updatedAt };
 }
 
-function TodoCard({ card, host, now, work }: { card: BoardCard; host: WebHost; now: number; work: WorkProjection[] }) {
+function ThreadCard({ card, host, now, work }: { card: BoardCard; host: WebHost; now: number; work: WorkProjection[] }) {
   const locale = host.locale();
   const { AgentMark, Icon, RelativeTime } = host.ui;
-  const { todo, lead } = card;
+  const { thread } = card;
   const reason = reasonOf(card, host, now);
-  const agentLabels = new Map(host.agents().map((agent) => [agent.id, agent.label]));
   const [saving, setSaving] = useState(false);
-  const agents = [...new Set(card.threads.map((thread) => thread.agent))];
-  const hidden = todo.threadIds.length - Math.min(card.threads.length, MAX_MARKS);
-  const note = card.reason.kind === 'report' ? todo.report?.note.trim() : '';
-  const project = lead ? projectName(lead.project) : '';
-  const open = () => (lead ? host.navigate.openThread(lead.id) : host.navigate.openPlan());
+  const done = thread.doneAt !== null;
+  const title = thread.title || t(locale, 'untitled');
+  const note = card.reason.kind === 'report' ? thread.report?.note.trim() : '';
+  const badges = [
+    ...(thread.scheduled ? [{ key: 'scheduled', text: t(locale, 'scheduled'), icon: 'clock' as const }] : []),
+    ...(thread.worktree ? [{ key: 'worktree', text: t(locale, 'worktree'), icon: 'worktree' as const }] : []),
+    ...(thread.handover ? [{ key: 'handover', text: t(locale, 'handover'), icon: 'fork' as const }] : []),
+    ...(thread.teamSize > 0 ? [{ key: 'team', text: t(locale, 'team', thread.teamSize), icon: 'team' as const }] : []),
+  ];
   const setDone = () => {
     if (saving) return;
     setSaving(true);
-    host.todos.setDone(todo.id, !todo.done).catch(() => undefined).finally(() => setSaving(false));
+    host.threads.setDone(thread.id, !done).catch(() => undefined).finally(() => setSaving(false));
   };
 
   return (
-    <article className={`ext-board-card-wrap${todo.done ? ' is-done' : ''}${work.length ? ' has-work' : ''}`}>
-      <button type="button" className="ext-board-card" onClick={open} title={lead ? lead.title : t(locale, 'openPlan')}>
-        <span className="ext-board-card-title">{todo.text}</span>
+    <article className={`ext-board-card-wrap${done ? ' is-done' : ''}${work.length ? ' has-work' : ''}`}>
+      <button type="button" className="ext-board-card" onClick={() => host.navigate.openThread(thread.id)}>
+        <span className="ext-board-card-title">{title}</span>
         {note && <span className="ext-board-note">{note}</span>}
         <span className={`ext-board-reason ext-board-tone-${reason.tone}`}>
           {reason.tone !== 'idle' && <span className="ext-board-dot" aria-hidden="true" />}
           <span className="ext-board-reason-text">{reason.text}</span>
-          {todo.items.total > 0 && <span className="ext-board-items" title={t(locale, 'items', todo.items.done, todo.items.total)} aria-label={t(locale, 'items', todo.items.done, todo.items.total)}>
-            <Icon name="check" size={12} />{todo.items.done}/{todo.items.total}
+          {(badges.length > 0 || thread.pinned) && <span className="ext-board-badges">
+            {thread.pinned && <span className="ext-board-badge" title={t(locale, 'pinned')} aria-label={t(locale, 'pinned')}><Icon name="pin" size={12} /></span>}
+            {badges.map((badge) => <span className="ext-board-badge" key={badge.key} title={badge.text} aria-label={badge.text}><Icon name={badge.icon} size={12} /></span>)}
           </span>}
         </span>
         <span className="ext-board-card-footer">
           <span className="ext-board-context">
-            {agents.length > 0 && <span className="ext-board-marks">
-              {agents.slice(0, MAX_MARKS).map((agent) => <span key={agent} className="ext-board-mark" title={agentLabels.get(agent) ?? agent}><AgentMark agentId={agent} size={14} label={agents.length === 1 && !project} /></span>)}
-              {hidden > 0 && <span className="ext-board-more" title={t(locale, 'moreThreads', hidden)} aria-label={t(locale, 'moreThreads', hidden)}>+{hidden}</span>}
-            </span>}
-            {agents.length > 0 && project && <span aria-hidden="true">·</span>}
-            {project && <span className="ext-board-project" title={lead?.project}>{project}</span>}
+            <span className="ext-board-project" title={thread.project}>{projectName(thread.project) || t(locale, 'noProject')}</span>
+            <span aria-hidden="true">·</span>
+            <span className="ext-board-agent"><AgentMark agentId={thread.agent} size={12} label /></span>
           </span>
           {reason.at && <span className="ext-board-time"><RelativeTime iso={reason.at} /></span>}
         </span>
@@ -89,28 +87,27 @@ function TodoCard({ card, host, now, work }: { card: BoardCard; host: WebHost; n
         type="button"
         className="ext-board-check"
         role="checkbox"
-        aria-checked={todo.done}
-        aria-label={`${t(locale, todo.done ? 'markUndone' : 'markDone')}: ${todo.text}`}
-        title={t(locale, todo.done ? 'markUndone' : 'markDone')}
+        aria-checked={done}
+        aria-label={`${t(locale, done ? 'markUndone' : 'markDone')}: ${title}`}
+        title={t(locale, done ? 'markUndone' : 'markDone')}
         disabled={saving}
         onClick={setDone}
-      >{todo.done && <Icon name="check" size={12} />}</button>
+      >{done && <Icon name="check" size={12} />}</button>
       {work.length > 0 && <host.ui.WorkSummary items={work} />}
     </article>
   );
 }
 
-/** Plan items placed by what their linked threads are doing; the person ticks them done. */
+/** Conversations placed by what they are doing and what their agents report; the person marks them done. */
 export function BoardView({ host }: ExtensionViewProps) {
   const locale = host.locale();
   const { Popover, PopoverOption, Icon, RelativeTime, EmptyState } = host.ui;
   const [work, setWork] = useState(() => host.workSources.snapshot());
-  const [todos, setTodos] = useState(() => host.todos.snapshot());
   const [threads, setThreads] = useState(() => host.threads.snapshot());
   const [connection, setConnection] = useState(() => ({ state: host.connection.state(), observedAt: host.connection.observedAt() }));
   const [now, setNow] = useState(Date.now);
   const [filters, setFilters] = useState(() => readFilters(host));
-  const [showOlder, setShowOlder] = useState(false);
+  const [expanded, setExpanded] = useState<ReadonlySet<ColumnId>>(new Set());
   const [selectedColumn, setSelectedColumn] = useState<ColumnId | null>(null);
   const viewId = useId();
 
@@ -120,16 +117,14 @@ export function BoardView({ host }: ExtensionViewProps) {
       setThreads(next);
       refreshConnection();
     });
-    const offTodos = host.todos.subscribe(setTodos);
     const offWork = host.workSources.subscribe(setWork);
     const offConnection = host.connection.subscribe(refreshConnection);
     // Subscribe first, then read the synchronous current snapshots to close the mount gap.
     setThreads(host.threads.snapshot());
-    setTodos(host.todos.snapshot());
     setWork(host.workSources.snapshot());
     refreshConnection();
-    return () => { offThreads(); offTodos(); offWork(); offConnection(); };
-  }, [host.threads, host.todos, host.workSources, host.connection]);
+    return () => { offThreads(); offWork(); offConnection(); };
+  }, [host.threads, host.workSources, host.connection]);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30_000);
@@ -145,23 +140,21 @@ export function BoardView({ host }: ExtensionViewProps) {
     }
   };
 
-  const columns = buildColumns(todos, threads, filters, now, showOlder);
+  const columns = buildColumns(threads, filters, now, expanded);
   const current = selectedColumn ?? firstColumn(columns);
   const empty = columns.every((column) => column.total === 0);
-  const hasFilters = filters.project.length + filters.agent.length > 0;
-  const linked = new Set(todos.flatMap((todo) => todo.threadIds));
-  const linkedThreads = threads.filter((thread) => linked.has(thread.id));
-  const projects = [...new Set([...linkedThreads.map((thread) => thread.project), ...filters.project])].sort();
+  const hasFilters = filters.project.length + filters.agent.length + filters.scheduled.length > 0;
+  const projects = [...new Set([...threads.map((thread) => thread.project), ...filters.project])].sort();
   const agentLabels = new Map(host.agents().map((agent) => [agent.id, agent.label]));
-  const agents = [...new Set([...linkedThreads.map((thread) => thread.agent), ...filters.agent])].sort();
+  const agents = [...new Set([...threads.map((thread) => thread.agent), ...filters.agent])].sort();
 
-  const filter = (
+  const filter = <T extends string | boolean,>(
     key: keyof BoardFilters,
     label: string,
-    selected: string[],
-    options: string[],
-    name: (value: string) => string,
-    select: (values: string[]) => void,
+    selected: T[],
+    options: T[],
+    name: (value: T) => string,
+    select: (values: T[]) => void,
   ) => <Popover
     key={key}
     label={label}
@@ -171,8 +164,8 @@ export function BoardView({ host }: ExtensionViewProps) {
   >
     {() => <>
       <PopoverOption selected={selected.length === 0} onSelect={() => select([])}>{t(locale, 'all')}</PopoverOption>
-      {options.map((option) => <PopoverOption key={option} selected={selected.includes(option)} onSelect={() => select(toggle(selected, option))}>
-        <span className="ext-board-option" title={option}>{name(option)}</span>
+      {options.map((option) => <PopoverOption key={String(option)} selected={selected.includes(option)} onSelect={() => select(toggle(selected, option))}>
+        <span className="ext-board-option" title={typeof option === 'string' ? option : undefined}>{name(option)}</span>
       </PopoverOption>)}
     </>}
   </Popover>;
@@ -201,9 +194,10 @@ export function BoardView({ host }: ExtensionViewProps) {
               : t(locale, 'neverSynced')}
           </span>}
         </div>
-        {(projects.length > 0 || agents.length > 0) && <div className="ext-board-filters">
+        {threads.length > 0 && <div className="ext-board-filters">
           {filter('project', t(locale, 'project'), filters.project, projects, (project) => projectName(project) || t(locale, 'noProject'), (project) => updateFilters({ ...filters, project }))}
           {filter('agent', t(locale, 'agent'), filters.agent, agents, (agent) => agentLabels.get(agent) ?? agent, (agent) => updateFilters({ ...filters, agent }))}
+          {filter('scheduled', t(locale, 'scheduledFilter'), filters.scheduled, [true, false], (scheduled) => t(locale, scheduled ? 'scheduled' : 'notScheduled'), (scheduled) => updateFilters({ ...filters, scheduled }))}
           {hasFilters && <button type="button" className="ext-board-clear" onClick={() => updateFilters(emptyFilters())}>{t(locale, 'clearFilters')}</button>}
         </div>}
       </header>
@@ -221,10 +215,7 @@ export function BoardView({ host }: ExtensionViewProps) {
           onKeyDown={(event) => moveTab(event, column.id)}
         >{t(locale, column.id)} <span className="ext-board-count">{column.total}</span></button>)}
       </div>}
-      {empty && <div className="ext-board-empty">
-        <EmptyState text={t(locale, hasFilters ? 'filteredEmpty' : 'empty')} />
-        {!hasFilters && <button type="button" className="ext-board-plan" onClick={() => host.navigate.openPlan()}>{t(locale, 'openPlan')}</button>}
-      </div>}
+      {empty && <div className="ext-board-empty"><EmptyState text={t(locale, hasFilters ? 'filteredEmpty' : 'empty')} /></div>}
       {!empty && <div className="ext-board-columns">
         {columns.map((column) => <section
           key={column.id}
@@ -240,20 +231,20 @@ export function BoardView({ host }: ExtensionViewProps) {
             {t(locale, column.id)}<span className="ext-board-count">{column.total}</span>
           </h2>}
           <div className="ext-board-cards">
-            {column.cards.map((card) => <TodoCard
-              key={card.todo.id}
+            {column.cards.map((card) => <ThreadCard
+              key={card.thread.id}
               card={card}
               host={host}
               now={now}
-              work={work.filter((item) => item.binding.threadIds.some((id) => card.todo.threadIds.includes(id)))}
+              work={work.filter((item) => item.binding.threadIds.includes(card.thread.id))}
             />)}
             {column.total === 0 && <p className="ext-board-column-empty">{t(locale, 'emptyColumn')}</p>}
             {column.olderCount > 0 && <button
               type="button"
               className="ext-board-older"
-              aria-expanded={showOlder}
-              onClick={() => setShowOlder((value) => !value)}
-            >{showOlder ? t(locale, 'hideOlder') : t(locale, 'older', column.olderCount)}</button>}
+              aria-expanded={expanded.has(column.id)}
+              onClick={() => setExpanded((value) => { const next = new Set(value); if (!next.delete(column.id)) next.add(column.id); return next; })}
+            >{expanded.has(column.id) ? t(locale, 'hideOlder') : t(locale, column.id === 'done' ? 'olderDone' : 'olderReview', column.olderCount)}</button>}
           </div>
         </section>)}
       </div>}

@@ -22,6 +22,23 @@ export interface Attention {
 
 export type ThreadStatus = 'idle' | 'running' | 'error';
 
+/**
+ * What the thread's agent said at the end of its last turn, in a `[进度]` line:
+ * - `doing`   — more work to do, e.g. waiting on CI.
+ * - `review`  — the agent thinks it is done and asks the person to check.
+ * - `blocked` — the agent cannot continue without the person.
+ * Agents never mark a thread done; only the person does.
+ */
+export type ProgressStage = 'doing' | 'review' | 'blocked';
+
+export interface ProgressReport {
+  stage: ProgressStage;
+  /** One line from the agent; may be empty. Content: handed on only with `progress.report`. */
+  note: string;
+  /** ISO time the turn ended. */
+  at: string;
+}
+
 export interface ThreadSummary {
   id: string;
   title: string;
@@ -48,6 +65,10 @@ export interface ThreadSummary {
   handover: boolean;
   /** Number of team members when this thread leads a team, else 0. */
   teamSize: number;
+  /** ISO time the person marked the thread done; cleared when they send it new work. */
+  doneAt: string | null;
+  /** The agent's latest progress line. Always null without `progress.report`. */
+  report: ProgressReport | null;
   createdAt: string;
   updatedAt: string;
 }

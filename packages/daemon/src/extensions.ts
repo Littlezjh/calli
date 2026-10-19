@@ -87,6 +87,7 @@ export const PERMISSIONS: ReadonlySet<Permission> = new Set<Permission>([
   'memory.read',
   'events.summary',
   'progress.read',
+  'progress.report',
   'worksource.read',
   'files.read',
   'commands.run',

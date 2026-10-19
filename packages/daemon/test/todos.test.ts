@@ -10,7 +10,6 @@ import { AttachmentStore } from '../src/attachments.js';
 import { createHttpServer } from '../src/http.js';
 import { Store } from '../src/store.js';
 import { ThreadManager } from '../src/threads.js';
-import { parseTodoReport, todoInstructions } from '../src/todo-report.js';
 
 // Plan-page CRUD over HTTP. Threads exist only as rows: linking never starts an agent, so a
 // stub adapter is enough.
@@ -36,27 +35,6 @@ const stubAdapter: AgentAdapter = {
   },
 } as unknown as AgentAdapter;
 
-// Answers each prompt with the next scripted reply, keeping what it was sent.
-const prompts: string[] = [];
-const replies: string[] = [];
-const echoAdapter: AgentAdapter = {
-  ...stubAdapter,
-  label: 'Echo',
-  resumeCommand: (id: string) => `echo resume ${id}`,
-  async start() {
-    return {
-      agentSessionId: 'echo-session',
-      async prompt(input: { text: string }, hooks: { emit(event: { type: string; data: Record<string, unknown> }): void }) {
-        prompts.push(input.text);
-        hooks.emit({ type: 'message.delta', data: { text: replies.shift() ?? 'ok' } });
-        return { stopReason: 'end_turn' };
-      },
-      async cancel() {},
-      async close() {},
-    };
-  },
-} as unknown as AgentAdapter;
-
 const TOKEN = 'test-token-0123456789';
 const auth = { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' };
 
@@ -77,14 +55,13 @@ interface TodoJson {
   parentId: string | null;
   position: number;
   threads: Array<{ id: string; title: string }>;
-  report: { stage: string; note: string; threadId: string; at: string } | null;
 }
 
 before(async () => {
   dataDir = mkdtempSync(join(tmpdir(), 'rah-todo-test-'));
   workroot = mkdtempSync(join(tmpdir(), 'rah-todo-work-'));
   store = new Store(dataDir);
-  manager = new ThreadManager(store, new Map([['pi', stubAdapter], ['echo', echoAdapter]]), [workroot], new AttachmentStore(dataDir));
+  manager = new ThreadManager(store, new Map([['pi', stubAdapter]]), [workroot], new AttachmentStore(dataDir));
   server = createHttpServer({ manager, token: TOKEN, webDir: null, version: 'test' });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
   const { port } = server.address() as AddressInfo;
@@ -210,79 +187,5 @@ test('todos: threads link and unlink, and vanish with the thread', async () => {
   assert.deepEqual(after.find((t) => t.id === todo.id)?.threads, []);
 
   await api(`/api/todos/${todo.id}`, { method: 'DELETE' });
-  rmSync(workdir, { recursive: true, force: true });
-});
-
-test('todo reports: the protocol line is read leniently and only its last say counts', () => {
-  assert.equal(parseTodoReport('done the work'), null);
-  assert.deepEqual(parseTodoReport('改好了。\n\n[计划状态] 待验收：等 CI'), { stage: 'review', note: '等 CI' });
-  assert.deepEqual(parseTodoReport('**[计划状态] 需要你 - 缺少密钥**'), { stage: 'blocked', note: '缺少密钥' });
-  assert.deepEqual(parseTodoReport('[计划状态] 需要你\n...\n[计划状态] 进行中: 还差测试'), { stage: 'doing', note: '还差测试' });
-  assert.equal(parseTodoReport('[计划状态] 已完成：全部做完'), null, 'agents cannot declare an item done');
-  assert.equal(parseTodoReport('引用 [计划状态] 待验收 的写法'), null, 'only a line of its own counts');
-  assert.equal(parseTodoReport(`[计划状态] 待验收：${'长'.repeat(300)}`)?.note.length, 200);
-  assert.equal(todoInstructions('hi', []), 'hi');
-  const once = todoInstructions('hi', ['重构']);
-  assert.ok(once.startsWith('hi\n\n<limi-plan>') && once.includes('「重构」'));
-  assert.equal(todoInstructions(once, ['重构']), once, 'never appended twice');
-});
-
-test('todo reports: linked threads are asked, answers move the item, ticking clears them', async () => {
-  const workdir = join(workroot, 'report');
-  mkdirSync(workdir, { recursive: true });
-  const create = async (title: string) => (await (await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'echo', cwd: workdir, title }) })).json()) as { id: string };
-  const thread = await create('报告');
-  const other = await create('其他');
-  const plan = (await (await api('/api/todos', { method: 'POST', body: JSON.stringify({ text: '支付重构' }) })).json()) as TodoJson;
-  const sub = (await (await api('/api/todos', { method: 'POST', body: JSON.stringify({ text: '补测试', parentId: plan.id }) })).json()) as TodoJson;
-  const read = async (id: string) => ((await (await api('/api/todos')).json()) as TodoJson[]).find((t) => t.id === id)!;
-  const turn = async (threadId: string, text: string, reply: string) => {
-    replies.push(reply);
-    const before = prompts.length;
-    const started = await api(`/api/threads/${threadId}/turns`, { method: 'POST', body: JSON.stringify({ text }) });
-    assert.equal(started.status, 202);
-    for (let i = 0; i < 200 && (prompts.length === before || store.getThread(threadId)?.status === 'running'); i++) await new Promise((r) => setTimeout(r, 10));
-    return prompts.at(-1)!;
-  };
-
-  // Not linked: the agent is told nothing, and its words change nothing.
-  assert.equal(await turn(thread.id, '你好', '[计划状态] 待验收'), '你好');
-
-  await api(`/api/todos/${plan.id}/threads`, { method: 'POST', body: JSON.stringify({ threadId: thread.id }) });
-  await api(`/api/todos/${sub.id}/threads`, { method: 'POST', body: JSON.stringify({ threadId: other.id }) });
-  const asked = await turn(thread.id, '开始', '做完了\n[计划状态] 待验收：请看 diff');
-  assert.ok(asked.startsWith('开始\n\n<limi-plan>') && asked.includes('「支付重构」'), 'a linked thread is asked');
-  const shown = store.getThread(thread.id)!;
-  assert.equal(shown.status, 'idle');
-  const started = store.listEventsOfType(thread.id, 'turn.started').at(-1)!;
-  assert.equal(started.data.displayText, '开始', 'the person sees what they wrote');
-  let item = await read(plan.id);
-  assert.deepEqual([item.report?.stage, item.report?.note, item.report?.threadId], ['review', '请看 diff', thread.id]);
-
-  // A sub-item is named under its plan; slash commands are left alone.
-  assert.ok((await turn(other.id, '继续', '[计划状态] 需要你：缺密钥')).includes('「支付重构 › 补测试」'));
-  assert.equal((await read(sub.id)).report?.stage, 'blocked');
-  assert.equal(await turn(thread.id, '/compact', 'compacted'), '/compact');
-  assert.equal((await read(plan.id)).report?.stage, 'review', 'a turn that was not asked does not withdraw');
-
-  // Asked and silent: what this thread said before is withdrawn.
-  await turn(thread.id, '再改一下', '改好了');
-  assert.equal((await read(plan.id)).report, null);
-
-  await turn(thread.id, '继续', '[计划状态] 进行中：等 CI');
-  assert.equal((await read(plan.id)).report?.stage, 'doing');
-  await api(`/api/todos/${plan.id}`, { method: 'PATCH', body: JSON.stringify({ done: true }) });
-  item = await read(plan.id);
-  assert.deepEqual([item.done, item.report], [true, null], 'ticking is the person\'s word');
-  // A done item is no longer worked on: not named, not reported into.
-  assert.equal(await turn(thread.id, '收尾', '[计划状态] 待验收'), '收尾');
-  assert.equal((await read(plan.id)).report, null);
-
-  // Unlinking withdraws the thread's report.
-  assert.equal((await read(sub.id)).report?.threadId, other.id);
-  await api(`/api/todos/${sub.id}/threads?threadId=${other.id}`, { method: 'DELETE' });
-  assert.equal((await read(sub.id)).report, null);
-
-  await api(`/api/todos/${plan.id}`, { method: 'DELETE' });
   rmSync(workdir, { recursive: true, force: true });
 });

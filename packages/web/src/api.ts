@@ -1,4 +1,4 @@
-import type { ExtensionState, Permission, ExtensionPackagePreview, ExtensionConfiguration, ExtensionDetection, WorkProjection, TodoReport } from '@rah/extension-api';
+import type { ExtensionState, Permission, ExtensionPackagePreview, ExtensionConfiguration, ExtensionDetection, WorkProjection, ProgressReport } from '@rah/extension-api';
 export type WorkMode = 'execute' | 'plan';
 export interface UserQuestion { id: string; question: string; header?: string; options: Array<{ value: string; label: string; description?: string }>; multiple?: boolean; freeText?: boolean; required?: boolean }
 export type UserInputAnswer = { answers: Record<string, string[]> } | { cancelled: true };
@@ -175,6 +175,10 @@ export interface Thread {
   preview: string | null;
   /** The scheduled task that started this thread, if any. Missing from older daemons. */
   schedule?: { id: string; name: string } | null;
+  /** When the person marked the thread done on the board. Missing from older daemons. */
+  doneAt?: string | null;
+  /** The agent's latest progress line, kept while the board holds `progress.report`. */
+  report?: ProgressReport | null;
   /** The terminal wrote to this session since the hub last did. */
   terminalActivity: boolean;
   /** The agent is waiting for the user to respond. */
@@ -276,8 +280,6 @@ export interface Todo {
   doneAt: string | null;
   /** Threads linked to this plan, as full views so chips can show agent, title and state. */
   threads: Thread[];
-  /** What a linked thread's agent last reported about this item; cleared when ticked. */
-  report?: TodoReport | null;
 }
 
 /** An image ready to be sent with a message. */
@@ -967,6 +969,7 @@ export class Api {
       /** null takes the thread out of its section. */
       sectionId?: string | null;
       unread?: boolean;
+      done?: boolean;
     },
   ): Promise<Thread> {
     return this.request('PATCH', `/api/threads/${threadId}`, updates);

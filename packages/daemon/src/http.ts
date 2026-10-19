@@ -661,6 +661,7 @@ export function createHttpServer(deps: HttpDeps): Server {
             archived: body.archived,
             sectionId: body.sectionId,
             unread: body.unread,
+            done: body.done,
           }),
         );
       }

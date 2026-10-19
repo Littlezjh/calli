@@ -1400,6 +1400,8 @@ export const zh = {
   'extensions.perm.events.summary.hint': '线程标题、项目、实例、运行和等待状态、时间。不含消息、工具调用和回答。',
   'extensions.perm.progress.read': '步骤进度',
   'extensions.perm.progress.read.hint': 'agent 报告的步骤计划，按线程授权。',
+  'extensions.perm.progress.report': '请 agent 报告进度',
+  'extensions.perm.progress.report.hint': '每条消息后附一段固定说明，请 agent 在回复末尾写一行进度（进行中、待验收或需要你）。这一行留在回复里，扩展能读到它的说明文字。停用或卸载后不再附加。',
   'extensions.perm.worksource.read': '工作数据源',
   'extensions.perm.worksource.read.hint': '指定来源的目标和工作项。',
   'extensions.perm.files.read': '读线程文件',

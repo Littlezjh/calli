@@ -72,6 +72,8 @@ async function main(): Promise<void> {
     turnStart: (threadId, turnId) => store.listEventsOfType(threadId, 'turn.started').find((e) => e.turnId === turnId),
   });
   extensions.start();
+  // The board's consent to ask agents for a progress line; checked per turn, so switching it off takes effect at once.
+  manager.progressWanted = () => extensions.list().some((s) => s.enabled && s.granted.includes('progress.report'));
   const terminals = new TerminalManager({ workdirs: () => dirs.all(), shell: config.termShell ?? undefined });
   // Other machines, each reached over SSH through its daemon's socket.
   const hosts = new HostRegistry({ file: join(config.dataDir, 'hosts.json'), ssh: config.sshCommand });

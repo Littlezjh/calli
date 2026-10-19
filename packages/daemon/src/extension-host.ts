@@ -82,6 +82,9 @@ export function threadSummary(view: ThreadView): ThreadSummary {
     worktree: Boolean(view.worktree),
     handover: Boolean(view.handover),
     teamSize: view.coordination && view.coordination.rootId === view.id ? view.coordination.children : 0,
+    doneAt: view.doneAt ?? null,
+    // The progress line is content; daemon-side extensions cannot hold `progress.report`.
+    report: null,
     createdAt: view.createdAt,
     updatedAt: view.updatedAt,
   };

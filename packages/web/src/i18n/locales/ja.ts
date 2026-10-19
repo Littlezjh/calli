@@ -1398,6 +1398,8 @@ export const ja: Messages = {
   'extensions.perm.events.summary.hint': 'タイトル、プロジェクト、インスタンス、実行・待機の状態、時刻。メッセージ、ツール呼び出し、回答は含みません。',
   'extensions.perm.progress.read': 'ステップの進捗',
   'extensions.perm.progress.read.hint': 'エージェントが報告するステップ計画。スレッドごとに許可します。',
+  'extensions.perm.progress.report': 'エージェントに進捗を報告してもらう',
+  'extensions.perm.progress.report.hint': '各メッセージに固定の依頼文を添え、返信の最後に進捗を 1 行（進行中・確認待ち・対応が必要）書いてもらいます。この行は返信に残り、拡張機能はその文面を読めます。無効化またはアンインストールすると添えません。',
   'extensions.perm.worksource.read': 'ワークソース',
   'extensions.perm.worksource.read.hint': '指定したソースの目標と作業項目。',
   'extensions.perm.files.read': 'スレッドのファイルを読む',

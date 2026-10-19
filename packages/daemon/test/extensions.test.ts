@@ -328,8 +328,11 @@ test('the summary of a thread is the sidebar\'s view of it', () => {
   assert.deepEqual(s, {
     id: 't2', title: 'Fix the build', agent: 'claude', project: '/work/app', status: 'error', attention: { kind: 'error' }, runningSince: null,
     unread: true, pinned: false, archived: true, scheduled: true, worktree: true, handover: true, teamSize: 3,
-    createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+    doneAt: null, report: null, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
   });
+  // The progress line is content: daemon-side extensions never get it, only the done mark.
+  const reported = threadSummary(view('r', { doneAt: '2026-01-03T00:00:00.000Z', report: { stage: 'review', note: 'secret', at: '2026-01-03T00:00:00.000Z' } }));
+  assert.deepEqual([reported.doneAt, reported.report], ['2026-01-03T00:00:00.000Z', null]);
   // A member counts no team of its own.
   assert.equal(threadSummary(view('m', { coordination: { rootId: 't2', children: 3, paused: false } })).teamSize, 0);
 });

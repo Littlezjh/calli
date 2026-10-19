@@ -65,7 +65,7 @@ import type { ExtensionNavEntry } from './components/Sidebar';
 import type { ExtensionState } from '@rah/extension-api';
 import type { ConnectionState } from '@rah/extension-api/web';
 import { ExtensionView } from './extensions/ExtensionView';
-import { threadSummaries, todoSummaries } from './extensions/project';
+import { threadSummaries } from './extensions/project';
 import { createThreadFeed } from './extensions/thread-feed';
 import { enabledViews, extensionHash, looksLikeExtensionRoute, resolveExtensionRoute } from './extensions/routes';
 import { AgentPicker, type DiscoveredAccount, type DiscoveredAgent, effortsForModel, imagesBlocked, imagesNote, modelName, speedsForModel, ModelPicker, PermissionPicker, UsageMeter, WorkspacePicker } from './components/Pickers';
@@ -433,8 +433,8 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const connectionShown: ConnectionState = api.demo || (host && !hostUp) ? 'offline' : connection;
   const workSources = useWorkSources(api, extensions, Boolean(selectedId) || onExt, onExt ? extOpen?.extensionId : undefined, selectedId ?? undefined);
   const extInputs = useMemo(
-    () => (onExt ? { workSources, threads: threadSummaries(threads, selectedId), todos: todoSummaries(todos), connection: connectionShown, observedAt: api.demo ? null : observedAt, agents, extension: extensions?.find(e => e.manifest.id === extOpen?.extensionId) ?? null } : null),
-    [workSources, onExt, threads, todos, selectedId, connectionShown, observedAt, agents, api.demo, extensions, extOpen?.extensionId],
+    () => (onExt ? { workSources, threads: threadSummaries(threads, selectedId), connection: connectionShown, observedAt: api.demo ? null : observedAt, agents, extension: extensions?.find(e => e.manifest.id === extOpen?.extensionId) ?? null } : null),
+    [workSources, onExt, threads, selectedId, connectionShown, observedAt, agents, api.demo, extensions, extOpen?.extensionId],
   );
 
   // An extension view that is not there (never installed, removed, switched off, or an address
@@ -599,10 +599,6 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     return () => { extensionRequest.current++; };
   }, [reloadExtensions]);
   const reloadTodos = useCallback(() => api?.todos().then(setTodos).catch(() => undefined), [api]);
-  // Extension views show plan items too, and the plan page is not open to reload them.
-  useEffect(() => {
-    if (onExt) void reloadTodos();
-  }, [onExt, todosKey, reloadTodos]);
   const reloadSchedules = useCallback(
     () => api?.schedules().then(setSchedules).catch(() => setSchedules([])),
     [api],
@@ -1190,16 +1186,13 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     setDrawer(false);
   };
 
-  // Ticked from an extension view: shown at once, then read back from the daemon.
-  const setTodoDone = async (id: string, done: boolean) => {
-    setTodos((list) => list.map((todo) => (todo.id === id ? { ...todo, done, doneAt: done ? new Date().toISOString() : null, report: done ? null : todo.report } : todo)));
+  // Marked from an extension view: the stream brings the change back to the list.
+  const setThreadDone = async (id: string, done: boolean) => {
     try {
-      await api.updateTodo(id, { done });
+      await api.updateThread(id, { done });
     } catch (e) {
       handleError(e);
       throw e;
-    } finally {
-      void reloadTodos();
     }
   };
 
@@ -1777,7 +1770,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           // An extension's view, behind a boundary of its own. Until the list is read, it is on its way.
           <div key={`ext:${extOpen ? `${extOpen.extensionId}/${extOpen.view.id}` : ''}`} className="scroller">
             {extOpen && extInputs ? (
-              <ExtensionView api={api} extensionId={extOpen.extensionId} viewId={extOpen.view.id} name={extName} inputs={extInputs} onOpenThread={pick} onOpenPlan={openTodos} onSetTodoDone={setTodoDone} />
+              <ExtensionView api={api} extensionId={extOpen.extensionId} viewId={extOpen.view.id} name={extName} inputs={extInputs} onOpenThread={pick} onSetThreadDone={setThreadDone} />
             ) : (
               <div className="loading-note">{t('common.loading')}</div>
             )}

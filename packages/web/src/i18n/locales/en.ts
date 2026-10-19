@@ -1400,6 +1400,8 @@ export const en: Messages = {
   'extensions.perm.events.summary.hint': 'Titles, projects, agents, running and waiting states, and times. No messages, tool calls or answers.',
   'extensions.perm.progress.read': 'Step progress',
   'extensions.perm.progress.read.hint': 'Step plans agents report, per thread.',
+  'extensions.perm.progress.report': 'Ask agents for progress',
+  'extensions.perm.progress.report.hint': 'A fixed note follows each message, asking the agent to end its reply with a progress line (in progress, to review or needs you). The line stays in the reply, and the extension can read its text. Stops when switched off or uninstalled.',
   'extensions.perm.worksource.read': 'Work sources',
   'extensions.perm.worksource.read.hint': 'Goals and work items from the sources you choose.',
   'extensions.perm.files.read': 'Read thread files',

@@ -8,7 +8,7 @@ import { Telemetry } from './telemetry.js';
 import { Activity } from './activity.js';
 import { askedText } from './util.js';
 import { referencesFile } from './artifacts.js';
-import type { TodoReport } from './todo-report.js';
+import type { ProgressReport } from './progress-report.js';
 import { HistoryStore } from './history.js';
 
 export interface ThreadRecord {
@@ -43,6 +43,10 @@ export interface ThreadRecord {
   preview: string | null;
   /** The schedule that started this thread, if any: what ran it, for the sidebar's badge. */
   schedule: { id: string; name: string } | null;
+  /** When the person marked the thread done. Cleared when they send it new work. */
+  doneAt: string | null;
+  /** The agent's `[进度]` line from its last turn that was asked for one. */
+  report: ProgressReport | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -108,8 +112,6 @@ export interface TodoRecord {
   position: number;
   createdAt: string;
   doneAt: string | null;
-  /** What a linked thread's agent last said about the item at the end of a turn. */
-  report: TodoReport | null;
 }
 
 interface TodoRow {
@@ -120,10 +122,6 @@ interface TodoRow {
   position: number;
   created_at: string;
   done_at: string | null;
-  report_stage: string | null;
-  report_note: string | null;
-  report_thread: string | null;
-  report_at: string | null;
 }
 
 interface ScheduleRow {
@@ -195,9 +193,6 @@ const toTodo = (r: TodoRow): TodoRecord => ({
   position: r.position,
   createdAt: r.created_at,
   doneAt: r.done_at,
-  report: r.report_stage && r.report_thread && r.report_at
-    ? { stage: r.report_stage as TodoReport['stage'], note: r.report_note ?? '', threadId: r.report_thread, at: r.report_at }
-    : null,
 });
 
 interface ThreadRow {
@@ -223,6 +218,8 @@ interface ThreadRow {
   external_at: string | null;
   preview: string | null;
   schedule: string | null;
+  done_at: string | null;
+  report: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -259,6 +256,8 @@ const toThread = (r: ThreadRow): ThreadRecord => ({
   externalAt: r.external_at,
   preview: r.preview,
   schedule: r.schedule ? (JSON.parse(r.schedule) as ThreadRecord['schedule']) : null,
+  doneAt: r.done_at ?? null,
+  report: r.report ? (JSON.parse(r.report) as ProgressReport) : null,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
 });
@@ -354,6 +353,9 @@ export class Store {
     if (!cols.some((c) => c.name === 'external_at')) this.db.exec('ALTER TABLE threads ADD COLUMN external_at TEXT');
     // Migration: the sidebar's preview line, the newest thing the user asked.
     if (!cols.some((c) => c.name === 'preview')) this.db.exec('ALTER TABLE threads ADD COLUMN preview TEXT');
+    // Migration: the board's done mark and the agent's progress line, as JSON.
+    if (!cols.some((c) => c.name === 'done_at')) this.db.exec('ALTER TABLE threads ADD COLUMN done_at TEXT');
+    if (!cols.some((c) => c.name === 'report')) this.db.exec('ALTER TABLE threads ADD COLUMN report TEXT');
     // Migration: forks.
     if (!cols.some((c) => c.name === 'handover')) this.db.exec('ALTER TABLE threads ADD COLUMN handover TEXT');
     if (!cols.some((c) => c.name === 'forked_from')) this.db.exec('ALTER TABLE threads ADD COLUMN forked_from TEXT');
@@ -396,10 +398,6 @@ export class Store {
         PRIMARY KEY (todo_id, thread_id)
       );
     `);
-    const todoCols = this.db.prepare('PRAGMA table_info(todos)').all() as Array<{ name: string }>;
-    if (!todoCols.some((c) => c.name === 'report_stage')) {
-      this.db.exec('ALTER TABLE todos ADD COLUMN report_stage TEXT; ALTER TABLE todos ADD COLUMN report_note TEXT; ALTER TABLE todos ADD COLUMN report_thread TEXT; ALTER TABLE todos ADD COLUMN report_at TEXT');
-    }
     // Scheduled tasks and their runs. Run history points at threads without a foreign key: a
     // thread can be deleted long after the run that made it, and the history stays.
     this.db.exec(`
@@ -586,6 +584,8 @@ export class Store {
     t: Omit<
       ThreadRecord,
       | 'status'
+      | 'doneAt'
+      | 'report'
       | 'createdAt'
       | 'updatedAt'
       | 'agentSessionId'
@@ -794,7 +794,7 @@ export class Store {
     this.db
       .prepare('INSERT INTO todos (id, text, done, parent_id, position, created_at) VALUES (?, ?, 0, ?, ?, ?)')
       .run(id, text, parentId, row.next, now);
-    return { id, text, done: false, parentId, position: row.next, createdAt: now, doneAt: null, report: null };
+    return { id, text, done: false, parentId, position: row.next, createdAt: now, doneAt: null };
   }
 
   /** Text edits keep the item where it is; toggling done stamps `done_at` (or clears it). */
@@ -804,25 +804,8 @@ export class Store {
     const text = patch.text !== undefined ? patch.text : current.text;
     const done = patch.done !== undefined ? patch.done : current.done;
     const doneAt = patch.done === undefined ? current.doneAt : done ? new Date().toISOString() : null;
-    // Ticking or unticking is the person's word; whatever an agent said before no longer stands.
-    const report = patch.done === undefined || patch.done === current.done ? current.report : null;
     this.db.prepare('UPDATE todos SET text = ?, done = ?, done_at = ? WHERE id = ?').run(text, done ? 1 : 0, doneAt, id);
-    if (report !== current.report) this.setTodoReport(id, null);
-    return { ...current, text, done, doneAt, report };
-  }
-
-  /** Records, or with null clears, what an agent last said about an item. */
-  setTodoReport(id: string, report: TodoReport | null): void {
-    this.db
-      .prepare('UPDATE todos SET report_stage = ?, report_note = ?, report_thread = ?, report_at = ? WHERE id = ?')
-      .run(report?.stage ?? null, report?.note ?? null, report?.threadId ?? null, report?.at ?? null, id);
-  }
-
-  /** Items a thread is linked to, in plan order. */
-  threadTodos(threadId: string): TodoRecord[] {
-    return (this.db
-      .prepare('SELECT todos.* FROM todos JOIN todo_threads ON todo_threads.todo_id = todos.id WHERE todo_threads.thread_id = ? ORDER BY todos.position ASC, todos.created_at ASC')
-      .all(threadId) as unknown as TodoRow[]).map(toTodo);
+    return { ...current, text, done, doneAt };
   }
 
   deleteTodo(id: string): void {
@@ -909,6 +892,12 @@ export class Store {
       .prepare('SELECT * FROM events WHERE thread_id = ? AND seq > ? ORDER BY seq ASC LIMIT ?')
       .iterate(threadId, afterSeq, limit);
     for (const row of rows) yield toEvent(row as unknown as EventRow);
+  }
+
+  /** The board's state of a thread; neither changes its place in "recent". */
+  setThreadProgress(id: string, patch: { doneAt?: string | null; report?: ProgressReport | null }): void {
+    if (patch.doneAt !== undefined) this.db.prepare('UPDATE threads SET done_at = ? WHERE id = ?').run(patch.doneAt, id);
+    if (patch.report !== undefined) this.db.prepare('UPDATE threads SET report = ? WHERE id = ?').run(patch.report ? JSON.stringify(patch.report) : null, id);
   }
 
   /** The events of one turn, oldest first. */

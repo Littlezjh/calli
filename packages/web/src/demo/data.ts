@@ -331,8 +331,8 @@ export function demoData(now = Date.now()): DemoData {
 
   const threads: Thread[] = [
     thread({ id: 'demo-scroll-fix', agent: 'claude', cwd: STOREFRONT, title: '修复商品列表滚动跳动', status: 'running', waiting: true, waitingReason: 'approval', preview: '商品列表往下滚的时候会跳一下', model: 'opus' }, 6),
-    thread({ id: 'demo-tests', agent: 'codex', cwd: NOTES_API, title: '补齐 /users 接口测试', unread: true, preview: '给 /users 接口补上缺的测试。' }, 16),
-    thread({ id: 'demo-dark-mode', agent: 'codex', cwd: STOREFRONT, title: '设置页加深色模式', preview: '设置页加一个深色模式开关', model: 'gpt-5.5', effort: 'high' }, 38),
+    thread({ id: 'demo-tests', agent: 'codex', cwd: NOTES_API, title: '补齐 /users 接口测试', unread: true, preview: '给 /users 接口补上缺的测试。', report: { stage: 'review', note: '补了 12 个用例，本地全部通过', at: at(16) } }, 16),
+    thread({ id: 'demo-dark-mode', agent: 'codex', cwd: STOREFRONT, title: '设置页加深色模式', preview: '设置页加一个深色模式开关', model: 'gpt-5.5', effort: 'high', doneAt: at(30) }, 38),
     thread({ id: 'demo-routes', agent: 'codex', cwd: NOTES_API, title: '迁移到新的路由写法', workMode: 'plan', preview: '想把接口迁到新的路由写法' }, 124),
     thread({ id: 'demo-weekly', agent: 'pi', cwd: NOTES_API, title: '上周周报', sectionId: 'demo-reports', permissionMode: 'full_access', preview: '整理上周的提交记录', schedule: { id: 'demo-schedule', name: '每周一周报' } }, 60 * 26 - 1),
   ];
@@ -352,9 +352,7 @@ export function demoData(now = Date.now()): DemoData {
     todo({ id: 'demo-todo-scroll', text: '商品列表滚动跳动', parentId: 'demo-todo-release', position: 1, threads: byId('demo-scroll-fix') }),
     todo({ id: 'demo-todo-notes', text: '写发布说明', parentId: 'demo-todo-release', position: 2 }),
     todo({ id: 'demo-todo-routes', text: '路由迁移', position: 1, threads: byId('demo-routes') }),
-    todo({ id: 'demo-todo-tests', text: '补齐接口测试', position: 2, threads: byId('demo-tests'), report: { stage: 'review', note: '补了 12 个用例，本地全部通过', threadId: 'demo-tests', at: at(16) } }),
-    todo({ id: 'demo-todo-speed', text: '首页首屏加载提速', position: 3 }),
-    todo({ id: 'demo-todo-deps', text: '升级依赖', position: 4, done: true, doneAt: at(180), threads: byId('demo-dark-mode') }),
+    todo({ id: 'demo-todo-tests', text: '补齐接口测试', position: 2, threads: byId('demo-tests') }),
   ];
 
   const nextMonday = new Date(now);

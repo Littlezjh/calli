@@ -1,6 +1,6 @@
 /** What extensions see of a thread. Pure, so it can be tested directly. */
-import type { ThreadSummary, TodoSummary } from '@rah/extension-api';
-import type { Thread, Todo } from '../api';
+import type { ThreadSummary } from '@rah/extension-api';
+import type { Thread } from '../api';
 import { projectDir, threadAttention } from '../sidebar';
 
 /**
@@ -24,6 +24,9 @@ export function threadSummary(t: Thread, selectedId: string | null): ThreadSumma
     worktree: Boolean(t.worktree),
     handover: Boolean(t.handover),
     teamSize: t.coordination && t.coordination.rootId === t.id ? t.coordination.children : 0,
+    doneAt: t.doneAt ?? null,
+    // Content: the host hands it on only to views holding `progress.report`.
+    report: t.report ?? null,
     createdAt: t.createdAt,
     updatedAt: t.updatedAt,
   };
@@ -35,31 +38,4 @@ export function threadSummaries(threads: Thread[], selectedId: string | null): T
   return threads
     .filter((t) => !t.archivedAt && (!t.coordination || t.coordination.rootId === t.id || !ids.has(t.coordination.rootId)))
     .map((t) => threadSummary(t, selectedId));
-}
-
-/**
- * Top-level plan items for views holding `worksource.read`, in plan-page order. Sub-items are
- * the item's checklist: they count towards `items`, and threads working on an open one, and what
- * their agents report, count for the item.
- */
-export function todoSummaries(todos: Todo[]): TodoSummary[] {
-  const children = new Map<string, Todo[]>();
-  for (const todo of todos) if (todo.parentId) children.set(todo.parentId, [...(children.get(todo.parentId) ?? []), todo]);
-  return todos.filter((todo) => !todo.parentId).map((todo) => {
-    const items = children.get(todo.id) ?? [];
-    const working = [todo, ...items.filter((item) => !item.done)];
-    const threadIds = [...new Set(working.flatMap((item) => item.threads.map((thread) => thread.id)))];
-    // The newest thing any agent said about the item or an open sub-item.
-    const report = working.map((item) => item.report).reduce<Todo['report']>((best, next) => (next && (!best || next.at > best.at) ? next : best), null) ?? null;
-    return {
-      id: todo.id,
-      text: todo.text,
-      done: todo.done,
-      doneAt: todo.doneAt,
-      createdAt: todo.createdAt,
-      threadIds,
-      items: { done: items.filter((item) => item.done).length, total: items.length },
-      report,
-    };
-  });
 }
