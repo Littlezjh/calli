@@ -404,8 +404,10 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
     const { answer, plan } = open;
     // A card that asked the user something ended the block above it, so a turn can hold several
     // work blocks. All of them are finished here; only the last can hand its closing remark over
-    // as the answer.
-    const works = items.filter((it): it is Work => it.kind === 'work' && it.turnId === open.turn);
+    // as the answer. Blocks with no turn at all came from events that arrived after their turn
+    // had already ended (two daemons once wrote overlapping): they are closed too, or they would
+    // read as working forever.
+    const works = items.filter((it): it is Work => it.kind === 'work' && (it.turnId === open.turn || (open.turn === null && it.turnId === '' && !it.done)));
     for (const work of works) {
       work.done = true;
       for (const entry of work.entries) {
@@ -432,6 +434,9 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
     open.work = null;
     open.answer = null;
     open.plan = null;
+    // Not the last turn's start: a block made by events that arrive later must not inherit it,
+    // or its timer would count from a turn that is already over.
+    open.startedAt = '';
   };
 
   for (const ev of events) {
@@ -452,8 +457,9 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
     switch (ev.type) {
       case 'turn.started': {
         // A turn that never got its ending (the daemon died under it) ends where the next begins,
-        // or it would read as working for the rest of the thread.
-        if (open.turn !== null) closeTurn();
+        // or it would read as working for the rest of the thread. So does a block left by events
+        // that arrived after their turn's ending with no turn open.
+        if (open.turn !== null || open.work !== null) closeTurn();
         open.turn = turn;
         open.startedAt = ev.ts;
         running = true;
@@ -527,6 +533,9 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
         block.count = ev.data.count;
         block.files = ev.data.files;
         block.liveEvents = [...(ev.data.liveEvents ?? [])];
+        // A deferred stretch that no turn ending ever closes — events that arrived after their
+        // turn's ending — still knows how long it ran; the placeholder carries its last timestamp.
+        if (typeof ev.data.endedAt === 'string') block.endedAt = ev.data.endedAt;
         break;
       }
 
@@ -589,7 +598,9 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
         let step: Step | undefined;
         for (let i = items.length - 1; i >= 0; i--) {
           const it = items[i];
-          if (it.kind !== 'work' || it.turnId !== turn) continue;
+          // A block with no turn came from events that arrived after their turn's ending; while no
+          // turn is open, such a turn's results still belong there.
+          if (it.kind !== 'work' || (it.turnId !== turn && !(open.turn === null && it.turnId === ''))) continue;
           step = it.steps.find((s) => s.id === String(ev.data.id));
           if (step) { work = it; break; }
         }

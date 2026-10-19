@@ -10,7 +10,7 @@ import { PiRpcAdapter } from '../src/adapters/pi.js';
 import type { AgentAdapter } from '../src/adapters/types.js';
 import { AttachmentStore } from '../src/attachments.js';
 import { SOCKET_IN_HOME } from '../src/config.js';
-import { createHttpServer, listenPrivate } from '../src/http.js';
+import { createHttpServer, listenPrivate, socketHeld } from '../src/http.js';
 import { HostRegistry, sshConfigHosts, sshFailure, type HostInfo } from '../src/hosts.js';
 import { Store } from '../src/store.js';
 import { ThreadManager } from '../src/threads.js';
@@ -136,6 +136,21 @@ test('what ssh says is sorted into the kind of failure the page explains', () =>
   assert.equal(sshFailure('ssh: connect to host x port 22: Connection timed out').code, 'unreachable');
   assert.equal(sshFailure('kex_exchange_identification: read: Connection reset by peer').code, 'ssh_failed');
   assert.equal(sshFailure('').error, 'ssh exited without saying why');
+});
+
+test('socketHeld tells a live daemon from a leftover socket file, so a second daemon can be turned away before it writes', async () => {
+  // A path that does not exist is nobody's.
+  assert.equal(await socketHeld(join(root, 'no-such.sock')), false);
+  // A plain file a crashed daemon left behind answers nobody.
+  const stale = join(root, 'stale.sock');
+  writeFileSync(stale, '');
+  assert.equal(await socketHeld(stale), false);
+  // A live listener is what a running hub marks itself with.
+  const live = createServer();
+  const livePath = join(root, 'live.sock');
+  await new Promise<void>((r) => live.listen(livePath, () => r()));
+  assert.equal(await socketHeld(livePath), true);
+  await new Promise((r) => live.close(r));
 });
 
 test("a daemon's socket is for its user alone, is left to a daemon that holds it, and replaces a leftover", async () => {

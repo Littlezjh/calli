@@ -3,7 +3,7 @@ import { loadConfig, loadDotEnv } from './config.js';
 import { ExtensionHost } from './extension-host.js';
 import { loadCatalog } from './extensions.js';
 import { loadSupportedExternalCatalog } from './external-extensions.js';
-import { createHttpServer, listenPrivate } from './http.js';
+import { createHttpServer, listenPrivate, socketHeld } from './http.js';
 import { HostRegistry } from './hosts.js';
 import { AgentRegistry, defaultInstances } from './agents.js';
 import { AttachmentStore } from './attachments.js';
@@ -47,6 +47,14 @@ async function main(): Promise<void> {
       .catch((err) => console.error(`[${a.id}] could not read the model list: ${err instanceof Error ? err.message : err}`));
   }
 
+  // A live hub is marked by its collaboration socket, the first thing it binds. Probing before
+  // anything is written keeps a second daemon from starting beside the first: recovery would end
+  // turns the first one is still streaming, and the log would hold events after their turn's
+  // ending. Seen once when two daemons overlapped; the view then showed a working box that never
+  // stopped counting.
+  const coordinationPath = join(config.dataDir, 'coordination', 'limi.sock');
+  if (await socketHeld(coordinationPath)) throw new Error('another daemon is already serving this data directory; not starting a second one');
+
   const store = new Store(config.dataDir);
   // Directories added from the page are kept next to the hub's data; threads in no project work in
   // a scratch area there too.
@@ -56,7 +64,6 @@ async function main(): Promise<void> {
   // Scheduled tasks tick on their own, on the machine where their threads live.
   const scheduler = new Scheduler(store, manager, adapters);
   scheduler.start();
-  const coordinationPath = join(config.dataDir, 'coordination', 'limi.sock');
   const coordination = new CoordinationManager(store, manager, coordinationPath);
   const collaborationServer = coordinationServer(coordination);
   if (!await listenPrivate(collaborationServer, coordinationPath)) throw new Error('Collaboration socket is already in use');

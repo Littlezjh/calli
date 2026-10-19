@@ -916,3 +916,59 @@ test('only the last work block hands its closing remark over as the answer', () 
   assert.ok(!tl.items.some(i => i.kind === 'assistant' && i.text === '第一段话'));
   assert.ok(tl.items.some(i => i.kind === 'assistant' && i.text === '最后一段话'));
 });
+
+test('events arriving after their turn ended close as their own stretch, never a box that keeps working', () => {
+  // Two daemons once overlapped on one data directory: the second wrote the turn's ending while
+  // the first kept streaming, so the log held tool events under a turn id that was already closed.
+  // The next turn must not merge into that leftover, or its timer counts from the old turn's start.
+  const events = [
+    ev('turn.started', { text: '旁路验证' }, 'A', '2026-10-16T09:22:49.000Z'),
+    ev('tool.start', { id: 'a1', kind: 'execute' }, 'A', '2026-10-16T09:23:00.000Z'),
+    ev('tool.end', { id: 'a1', status: 'completed' }, 'A', '2026-10-16T09:23:01.000Z'),
+    ev('turn.error', { message: 'The hub restarted while this turn was running.', code: 'interrupted' }, 'A', '2026-10-16T09:34:56.000Z'),
+    // The first daemon's last events: same turn, after its ending.
+    ev('tool.start', { id: 'a2', kind: 'execute' }, 'A', '2026-10-16T09:35:10.000Z'),
+    ev('tool.end', { id: 'a2', status: 'completed' }, 'A', '2026-10-16T09:35:36.000Z'),
+    // Three days later the user writes again.
+    ev('turn.started', { text: '报告一下进度' }, 'B', '2026-10-19T12:02:18.000Z'),
+    ev('tool.start', { id: 'b1', kind: 'execute' }, 'B', '2026-10-19T12:02:53.000Z'),
+    ev('tool.end', { id: 'b1', status: 'completed' }, 'B', '2026-10-19T12:02:54.000Z'),
+    ev('turn.done', { stopReason: 'end_turn' }, 'B', '2026-10-19T12:03:10.000Z'),
+  ];
+  const timeline = buildTimeline(events);
+  assert.equal(timeline.running, false);
+  const works = timeline.items.filter(i => i.kind === 'work');
+  assert.ok(works.length > 0);
+  assert.ok(works.every(w => w.kind === 'work' && w.done), 'nothing keeps ticking as if a turn were still running');
+  // The new turn's block measures from its own start, not from the ended turn three days back.
+  const turnB = works.find(w => w.kind === 'work' && w.turnId === 'B');
+  assert.ok(turnB);
+  assert.equal(turnB.startedAt, '2026-10-19T12:02:18.000Z');
+  assert.equal(turnB.endedAt, '2026-10-19T12:03:10.000Z');
+  // The late events read as their own finished stretch, not as work the old turn began.
+  const late = works.find(w => w.kind === 'work' && w.turnId === '');
+  assert.ok(late);
+  assert.equal(late.startedAt, '2026-10-16T09:35:10.000Z');
+  assert.equal(late.endedAt, '2026-10-16T09:35:36.000Z');
+});
+
+test('a deferred stretch that outlived its turn ending shows its own duration once loaded', () => {
+  // The history endpoint compresses runs of tool events into placeholders that expand on demand.
+  // One such stretch followed its turn's ending — two daemons once overlapped — so no turn.done
+  // will ever say how long it ran; the placeholder carries its last timestamp instead.
+  const events = [
+    ev('turn.started', { text: 'go' }, 'A', '2026-10-16T09:22:49.000Z'),
+    ev('history.work', { count: 1, version: 3, files: [], endedAt: '2026-10-16T09:23:40.000Z' }, 'A', '2026-10-16T09:23:00.000Z'),
+    ev('turn.error', { message: 'The hub restarted while this turn was running.', code: 'interrupted' }, 'A', '2026-10-16T09:34:56.000Z'),
+    ev('history.work', { count: 2, version: 9, files: [], endedAt: '2026-10-16T09:40:27.000Z' }, 'A', '2026-10-16T09:35:10.000Z'),
+    ev('turn.started', { text: '报告一下进度' }, 'B', '2026-10-19T12:02:18.000Z'),
+    ev('turn.done', { stopReason: 'end_turn' }, 'B', '2026-10-19T12:03:10.000Z'),
+  ];
+  const works = buildTimeline(events).items.filter(i => i.kind === 'work');
+  assert.ok(works.length === 2);
+  assert.ok(works.every(w => w.kind === 'work' && w.done));
+  const late = works.find(w => w.kind === 'work' && w.turnId === '');
+  assert.ok(late);
+  assert.equal(late.startedAt, '2026-10-16T09:35:10.000Z');
+  assert.equal(late.endedAt, '2026-10-16T09:40:27.000Z');
+});

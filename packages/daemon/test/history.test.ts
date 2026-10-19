@@ -303,3 +303,44 @@ test('cold summary and reconnect read no tool/thinking payload and write no proj
     for (const table of ['history_rows', 'history_details', 'history_turns', 'history_coverage']) assert.equal(db.prepare(`SELECT count(*) AS n FROM ${table}`).get()!.n, 0);
   } finally { f.close(); }
 });
+
+test('a work placeholder says how long its stretch ran, including events that arrived after their turn ended', async () => {
+  const f = fixture();
+  try {
+    const ts = (s: string) => `2026-10-16T${s}.000Z`;
+    const { partitionHistory } = await import('../src/history.js');
+    const ev = (seq: number, type: string, at: string, data: Record<string, unknown>, turnId = 'A') =>
+      ({ threadId: 'thread', seq, turnId, type, ts: ts(at), data });
+    const { summary } = partitionHistory([
+      ev(1, 'turn.started', '09:22:49', { text: 'go' }),
+      ev(2, 'history.tool.start', '09:23:00', { id: 'c1', kind: 'execute' }),
+      ev(3, 'history.tool.end', '09:23:40', { id: 'c1', status: 'completed' }),
+      // The daemon restarts under the turn; the ending is written, then more of the same turn arrives.
+      ev(4, 'turn.error', '09:34:56', { message: 'interrupted', code: 'interrupted' }),
+      ev(5, 'history.tool.start', '09:35:10', { id: 'c3', kind: 'execute' }),
+      ev(6, 'history.tool.end', '09:40:27', { id: 'c3', status: 'completed' }),
+    ]);
+    const blocks = summary.filter(e => e.type === 'history.work');
+    assert.equal(blocks.length, 2);
+    assert.equal(blocks[0].data.endedAt, ts('09:23:40'), 'a stretch ends where its last tool ended');
+    assert.equal(blocks[1].data.startedAt ?? blocks[1].ts, ts('09:35:10'), 'the placeholder itself starts the stretch');
+    assert.equal(blocks[1].data.endedAt, ts('09:40:27'), 'events past the turn ending still measure their stretch');
+  } finally { f.close(); }
+});
+
+test('the cold path also says how long each stretch ran, without waiting for projections', async () => {
+  const f = fixture();
+  try {
+    const a = 'turn';
+    f.add(a, 'turn.started', { text: 'go' });
+    f.add(a, 'tool.start', { id: 'c1', kind: 'execute', title: 'run' });
+    f.add(a, 'tool.update', { id: 'c1', output: 'working' });
+    f.add(a, 'tool.end', { id: 'c1', status: 'completed' });
+    f.add(a, 'turn.done', {});
+    const events = [...f.store.iterateEvents('thread', 0)];
+    const lastTool = events.filter(e => e.type === 'tool.end').at(-1)!;
+    const page = await f.store.history.page('thread');
+    const work = page.events.find(e => e.type === 'history.work')!;
+    assert.equal(work.data.endedAt, lastTool.ts, 'the placeholder ends where the call ended, not where it began');
+  } finally { f.close(); }
+});

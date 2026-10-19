@@ -1000,6 +1000,22 @@ function resolveAndValidate(allowedWorkdirs: string[], inputPath: string): strin
 }
 
 /**
+ * Whether a live listener answers on this unix socket. That is how a running hub is told apart
+ * from a leftover socket file, and how a second daemon is kept from starting beside the first.
+ */
+export function socketHeld(path: string): Promise<boolean> {
+  if (!existsSync(path)) return Promise.resolve(false);
+  return new Promise<boolean>((done) => {
+    const probe = connect(path);
+    probe.on('connect', () => {
+      probe.destroy();
+      done(true);
+    });
+    probe.on('error', () => done(false));
+  });
+}
+
+/**
  * Listens on a unix socket that only this user can open, for the server whose requests need no
  * token. A socket another live daemon holds is left to it, and false is returned; one nobody
  * answers on is a leftover and is replaced.
@@ -1007,14 +1023,7 @@ function resolveAndValidate(allowedWorkdirs: string[], inputPath: string): strin
 export async function listenPrivate(server: Server, path: string): Promise<boolean> {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   if (existsSync(path)) {
-    const held = await new Promise<boolean>((done) => {
-      const probe = connect(path);
-      probe.on('connect', () => {
-        probe.destroy();
-        done(true);
-      });
-      probe.on('error', () => done(false));
-    });
+    const held = await socketHeld(path);
     if (held) return false;
     rmSync(path, { force: true });
   }

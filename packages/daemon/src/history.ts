@@ -53,13 +53,16 @@ export function partitionHistory(events: HistoryEvent[]): { summary: HistoryEven
     if (ev.type === 'message.delta') { answer.push(ev); continue; }
     if (isWork(ev)) {
       if (!block) {
-        block = { ...ev, type: 'history.work', data: { count: 0, version: ev.seq, files: [] } };
+        block = { ...ev, type: 'history.work', data: { count: 0, version: ev.seq, files: [], endedAt: ev.ts } };
         blocks.set(block.seq, []); summary.push(block); lastNote = [];
       }
       const entries = blocks.get(block.seq)!;
       if (answer.length) { entries.push(...answer); lastNote = answer; answer = []; }
       entries.push(ev);
       block.data.version = Math.max(Number(block.data.version), Number(ev.data.version ?? ev.seq));
+      block.data.endedAt = ev.ts;
+      // A skeleton tool start may already know when its call finished; that is the better end.
+      if (typeof ev.data.endedAt === 'string') block.data.endedAt = ev.data.endedAt;
       if (ev.type === 'history.tool.start') {
         block.data.count = Number(block.data.count) + 1;
         tools.set(String(ev.data.id), { block, data: { ...ev.data } });
@@ -72,6 +75,7 @@ export function partitionHistory(events: HistoryEvent[]): { summary: HistoryEven
         blocks.get(tool.block.seq)!.push(ev);
         Object.assign(tool.data, ev.data);
         tool.block.data.version = ev.seq;
+        tool.block.data.endedAt = ev.ts;
       }
       continue;
     }
@@ -252,16 +256,22 @@ export class HistoryStore {
       SELECT * FROM ordered WHERE type NOT IN ('message.delta', 'reasoning.delta') OR previous IS NULL OR previous<>type
     ), spans AS (
       SELECT *, LEAD(seq, 1, ?) OVER (ORDER BY seq) AS until FROM edges
-    ) SELECT thread_id, turn_id, seq, type, ts, until FROM spans
-      WHERE type NOT IN ('tool.update', 'tool.end') ORDER BY seq`).all(thread, start, end, end) as unknown as (Omit<Row, 'data'> & { until: number })[];
+    ), bounded AS (
+      -- A tool call's last update or end is the row before the next non-tool span; its timestamp
+      -- is how long the call ran, which the skeleton otherwise cannot know.
+      SELECT s.*, e.ts AS end_ts FROM spans s LEFT JOIN events e
+        ON e.thread_id = s.thread_id
+       AND e.seq = COALESCE((SELECT MIN(x.seq) FROM edges x WHERE x.seq > s.seq AND x.type NOT IN ('tool.update', 'tool.end')), ?) - 1
+    ) SELECT thread_id, turn_id, seq, type, ts, until, end_ts FROM bounded
+      WHERE type NOT IN ('tool.update', 'tool.end') ORDER BY seq`).all(thread, start, end, end, end) as unknown as (Omit<Row, 'data'> & { until: number; end_ts?: string })[];
     const ranges = new Map(spans.map(s => [s.seq, s.until]));
     const read = this.db.prepare('SELECT data FROM events WHERE thread_id=? AND seq=?');
     const readApproval = this.db.prepare("SELECT json_remove(data, '$.toolCall') AS data FROM events WHERE thread_id=? AND seq=?");
     const skeleton = spans.map(row => {
       let type = row.type;
       let data: Record<string, any> = {};
-      if (type === 'tool.start') { type = 'history.tool.start'; data.id = String(row.seq); }
-      else if (type === 'reasoning.delta') { type = 'history.thought'; data.version = row.until - 1; }
+      if (type === 'tool.start') { type = 'history.tool.start'; data.id = String(row.seq); if (row.end_ts) data.endedAt = row.end_ts; }
+      else if (type === 'reasoning.delta') { type = 'history.thought'; data.version = row.until - 1; if (row.end_ts) data.endedAt = row.end_ts; }
       else if (type !== 'message.delta') {
         data = JSON.parse(String((type === 'approval.request' ? readApproval : read).get(thread, row.seq)!.data));
       }
