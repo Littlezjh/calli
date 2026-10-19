@@ -3,6 +3,7 @@ import type { WorkProjection } from '@rah/extension-api';
 import type { ExtensionViewProps, WebHost } from '@rah/extension-api/web';
 import { buildColumns, COLUMN_IDS, emptyFilters, firstColumn, parseFilters, projectName, showStaleWarning, type BoardCard, type BoardFilters, type ColumnId } from './columns';
 import { t } from './i18n';
+import { collectTags, parseTitleTags } from './tags';
 
 const FILTERS_KEY = 'filters.v1';
 
@@ -40,14 +41,16 @@ function reasonOf(card: BoardCard, host: WebHost, now: number): { text: string; 
   return { text: t(locale, unread ? 'unread' : 'idle'), tone: unread ? 'unread' : 'idle', at: thread.updatedAt };
 }
 
-function ThreadCard({ card, host, now, work }: { card: BoardCard; host: WebHost; now: number; work: WorkProjection[] }) {
+function ThreadCard({ card, host, now, work, tagLabels }: { card: BoardCard; host: WebHost; now: number; work: WorkProjection[]; tagLabels: Map<string, string> }) {
   const locale = host.locale();
   const { AgentMark, Icon, RelativeTime } = host.ui;
   const { thread } = card;
   const reason = reasonOf(card, host, now);
   const [saving, setSaving] = useState(false);
   const done = thread.doneAt !== null;
-  const title = thread.title || t(locale, 'untitled');
+  const parsed = parseTitleTags(thread.title);
+  const title = parsed.title || t(locale, 'untitled');
+  const tags = parsed.tags.map(tag => tagLabels.get(tag.toLowerCase()) ?? tag);
   const note = card.reason.kind === 'report' ? thread.report?.note.trim() : '';
   const badges = [
     ...(thread.scheduled ? [{ key: 'scheduled', text: t(locale, 'scheduled'), icon: 'clock' as const }] : []),
@@ -65,6 +68,10 @@ function ThreadCard({ card, host, now, work }: { card: BoardCard; host: WebHost;
     <article className={`ext-board-card-wrap${done ? ' is-done' : ''}${work.length ? ' has-work' : ''}`}>
       <button type="button" className="ext-board-card" onClick={() => host.navigate.openThread(thread.id)}>
         <span className="ext-board-card-title">{title}</span>
+        {tags.length > 0 && <span className="ext-board-tags">
+          {tags.slice(0, 2).map(tag => <span className="ext-board-tag" key={tag} title={tag}>{tag}</span>)}
+          {tags.length > 2 && <span className="ext-board-tag" title={tags.slice(2).join(', ')}>{t(locale, 'moreTags', tags.length - 2)}</span>}
+        </span>}
         {note && <span className="ext-board-note">{note}</span>}
         <span className={`ext-board-reason ext-board-tone-${reason.tone}`}>
           {reason.tone !== 'idle' && <span className="ext-board-dot" aria-hidden="true" />}
@@ -143,7 +150,10 @@ export function BoardView({ host }: ExtensionViewProps) {
   const columns = buildColumns(threads, filters, now, expanded);
   const current = selectedColumn ?? firstColumn(columns);
   const empty = columns.every((column) => column.total === 0);
-  const hasFilters = filters.project.length + filters.agent.length + filters.scheduled.length > 0;
+  const hasFilters = filters.tags.length + filters.project.length + filters.agent.length + filters.scheduled.length > 0;
+  const tags = collectTags(threads);
+  const tagLabels = new Map(tags.map(tag => [tag.key, tag.label]));
+  const tagCounts = new Map(tags.map(tag => [tag.key, tag.count]));
   const projects = [...new Set([...threads.map((thread) => thread.project), ...filters.project])].sort();
   const agentLabels = new Map(host.agents().map((agent) => [agent.id, agent.label]));
   const agents = [...new Set([...threads.map((thread) => thread.agent), ...filters.agent])].sort();
@@ -155,17 +165,20 @@ export function BoardView({ host }: ExtensionViewProps) {
     options: T[],
     name: (value: T) => string,
     select: (values: T[]) => void,
+    count?: (value: T) => number,
   ) => <Popover
     key={key}
+    placement="below"
+    align="end"
     label={label}
     triggerClassName={`ext-board-filter${selected.length ? ' ext-board-filter-active' : ''}`}
     triggerTitle={selected.length ? `${label} · ${t(locale, 'selected', selected.length)}` : label}
     trigger={<><span>{label}</span>{selected.length > 0 && <span className="ext-board-count">{selected.length}</span>}<Icon name="chevron" size={12} /></>}
   >
     {() => <>
-      <PopoverOption selected={selected.length === 0} onSelect={() => select([])}>{t(locale, 'all')}</PopoverOption>
-      {options.map((option) => <PopoverOption key={String(option)} selected={selected.includes(option)} onSelect={() => select(toggle(selected, option))}>
-        <span className="ext-board-option" title={typeof option === 'string' ? option : undefined}>{name(option)}</span>
+      <PopoverOption multiple selected={selected.length === 0} onSelect={() => select([])}>{t(locale, 'all')}</PopoverOption>
+      {options.map((option) => <PopoverOption multiple key={String(option)} selected={selected.includes(option)} onSelect={() => select(toggle(selected, option))}>
+        <span className="ext-board-option-row"><span className="ext-board-option" title={name(option)}>{name(option)}</span>{count && <span className="ext-board-option-count">{count(option)}</span>}</span>
       </PopoverOption>)}
     </>}
   </Popover>;
@@ -195,6 +208,7 @@ export function BoardView({ host }: ExtensionViewProps) {
           </span>}
         </div>
         {threads.length > 0 && <div className="ext-board-filters">
+          {tags.length > 0 && filter('tags', t(locale, 'tags'), filters.tags, [...new Set([...tags.map(tag => tag.key), ...filters.tags])], tag => tagLabels.get(tag) ?? tag, tags => updateFilters({ ...filters, tags }), tag => tagCounts.get(tag) ?? 0)}
           {filter('project', t(locale, 'project'), filters.project, projects, (project) => projectName(project) || t(locale, 'noProject'), (project) => updateFilters({ ...filters, project }))}
           {filter('agent', t(locale, 'agent'), filters.agent, agents, (agent) => agentLabels.get(agent) ?? agent, (agent) => updateFilters({ ...filters, agent }))}
           {filter('scheduled', t(locale, 'scheduledFilter'), filters.scheduled, [true, false], (scheduled) => t(locale, scheduled ? 'scheduled' : 'notScheduled'), (scheduled) => updateFilters({ ...filters, scheduled }))}
@@ -236,6 +250,7 @@ export function BoardView({ host }: ExtensionViewProps) {
               card={card}
               host={host}
               now={now}
+              tagLabels={tagLabels}
               work={work.filter((item) => item.binding.threadIds.includes(card.thread.id))}
             />)}
             {column.total === 0 && <p className="ext-board-column-empty">{t(locale, 'emptyColumn')}</p>}

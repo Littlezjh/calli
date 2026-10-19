@@ -777,15 +777,17 @@ export function Composer({
           {queued.length > 0 && (
             <div className="queue" aria-label={t('composer.queued')}>
               {queued.map((q) => (
-                <div key={q.id} className="queue-item">
-                  <span className="queue-badge">{t('composer.queue')}</span>
-                  <span className="queue-text">
-                    {q.text || (q.videos ? t('videos.video') : t('images.image'))}
+                <div key={q.id} className="queue-entry">
+                <div className="queue-item">
+                  <span className={`queue-badge${q.error ? ' failed' : ''}`}>{t(q.error ? 'composer.notSent' : 'composer.queue')}</span>
+                  <span className="queue-text" title={q.text}>
+                    {q.text || (q.targets?.length ? t('app.collab') : q.videos ? t('videos.video') : t('images.image'))}
                     {q.images > 0 && q.text && <span className="muted"> · {t('composer.images', q.images)}</span>}
                     {!!q.videos && <span className="muted"> · {t('composer.videos', q.videos!)}</span>}
                   </span>
-                  <button type="button" className="queue-now" title={t('composer.sendNowHint')} onClick={() => onSendQueuedNow(q.id)}>
-                    {t('composer.sendNow')}
+                  {!!q.targets?.length && <span className="queue-targets" title={t('composer.queueTargets', q.targets.join(', '))} aria-label={t('composer.queueTargets', q.targets.join(', '))}><span className="queue-target-names">@{q.targets.join(', ')}</span><span className="queue-target-count">{t('composer.queueTargetCount', q.targets.length)}</span></span>}
+                  <button type="button" className="queue-now" title={t(q.error ? 'common.retry' : 'composer.sendNowHint')} onClick={() => onSendQueuedNow(q.id)}>
+                    {t(q.error ? 'common.retry' : 'composer.sendNow')}
                   </button>
                   <button type="button" className="queue-remove" aria-label={t('composer.editQueued')} title={t('composer.edit')} onClick={() => void editQueued(q.id)}>
                     <IconEdit size={13} />
@@ -793,6 +795,8 @@ export function Composer({
                   <button type="button" className="queue-remove" aria-label={t('composer.cancelQueued')} onClick={() => onRemoveQueued(q.id)}>
                     <IconClose size={13} />
                   </button>
+                </div>
+                {q.error && <div className="queue-error" role="alert" title={t('composer.queueFailed', q.error)}><span className="queue-error-text">{t('composer.queueFailed', q.error)}</span></div>}
                 </div>
               ))}
             </div>

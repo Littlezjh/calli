@@ -21,6 +21,8 @@ export const en: typeof zh = {
   runningMinutes: (count: number) => count < 1 ? 'Just started' : `Running for ${count} ${count === 1 ? 'minute' : 'minutes'}`,
   markDone: 'Mark done',
   markUndone: 'Mark not done',
+  tags: 'Tags',
+  moreTags: (count: number) => `+${count}`,
   project: 'Project',
   agent: 'Instance',
   scheduledFilter: 'Schedule',

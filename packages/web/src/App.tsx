@@ -1119,14 +1119,15 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         setDraftWorktree(false);
       }
       // Bringing an agent in with @ is itself the request to collaborate; there is no switch to find first.
-      if ((draftCollaboration || mentions?.length) && !selected?.coordination) await api.configureCoordination(id, { directories: collaborationDirectories.length ? collaborationDirectories : undefined, defaults: startingDefaults, permission: memberPermission });
+      const collaboration = (draftCollaboration || mentions?.length) && !selected?.coordination
+        ? { directories: collaborationDirectories.length ? collaborationDirectories : undefined, defaults: startingDefaults, permission: memberPermission } : undefined;
       stickToBottom.current = true;
       // "queue" only matters while a turn is running: then the message waits instead of being refused.
       await api.startTurn(
         id,
         text,
         images.map(({ data, mimeType }) => ({ data, mimeType })),
-        { queue: true, mentions, videos: await Promise.all(videos.map(async video => (await api.uploadVideo(id!, video.file)).id)) },
+        { queue: true, mentions, collaboration, videos: await Promise.all(videos.map(async video => (await api.uploadVideo(id!, video.file)).id)) },
       );
       void refreshThreads();
     } catch (e) {
@@ -1503,7 +1504,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     );
   };
 
-  const collaborationOptions: AgentMention[] = (!draftTeam && !selected?.coordination?.team && (selected?.coordination ? selected.coordination.rootId === selected.id : activeCaps?.coordination && !(selected && running))) ? [
+  const collaborationOptions: AgentMention[] = (!draftTeam && !selected?.coordination?.team && (selected?.coordination ? selected.coordination.rootId === selected.id : activeCaps?.coordination)) ? [
             ...(coordination?.members.map(m => ({ id: m.id, label: m.name, kind: 'member' as const })) ?? []),
             ...agents.filter(a => a.available && a.capabilities.coordination && (!coordination || coordination.agents.includes(a.id))).map(a => ({ id: a.id, label: a.label, kind: 'agent' as const })),
           ] : [];
@@ -1512,16 +1513,16 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const collaborationControl = (select: (mention: AgentMention) => void, chosen: AgentMention[]) => (!draftTeam && !selected?.coordination?.team && (activeCaps?.coordination || selected?.coordination) && <CoordinationPopover label={t('app.collab')} panelClassName="coord-picker-panel" triggerClassName={`tool-btn coord-tool${selected?.coordination || draftCollaboration ? ' on' : ''}`} triggerLabel={t('app.collab')} triggerTitle={selected?.coordination || draftCollaboration ? t('app.collabOn') : t('app.collab')} trigger={<><IconAgents size={16} /><span>{t('app.collab')}</span></>}>
       {close => <CollaborationMenu options={collaborationOptions} selected={chosen} icon={collaborationIcon}
         onSelect={mention => { close(); select(mention); }}
-        unavailable={selected?.coordination && !leading ? t('app.collabBack') : running ? t('app.collabAfterTurn') : t('app.collabNone')}
+        unavailable={selected?.coordination && !leading ? t('app.collabBack') : t('app.collabNone')}
         settings={<div className="coord-setup">
         <p>{t('app.collabHint')}</p>
         {!selected?.coordination && <>
           <div className="coord-caption">{t('app.collabDirs')}</div>
           {[...new Set([activeCwd, ...workdirs].filter(Boolean))].map(dir => <button className="pop-item compact" role="menuitemcheckbox" aria-checked={(collaborationDirectories.length ? collaborationDirectories : [activeCwd]).includes(dir)} key={dir} onClick={() => setCollaborationDirectories(prev => { const current = prev.length ? prev : [activeCwd]; return current.includes(dir) ? current.filter(v => v !== dir) : [...current, dir]; })}>{(collaborationDirectories.length ? collaborationDirectories : [activeCwd]).includes(dir) ? `${t('app.chosen')} · ` : ''}{dir}</button>)}
-          <button className="pop-item compact" disabled={running} onClick={() => {
+          {!running && <button className="pop-item compact" onClick={() => {
             if (selected) void api.configureCoordination(selected.id, { directories: collaborationDirectories.length ? collaborationDirectories : [selected.cwd], defaults: startingDefaults, permission: memberPermission }).then(value => { setCoordination(value); void refreshThreads(); close(); }).catch(handleError);
             else { setDraftCollaboration(v => !v); close(); }
-          }}>{draftCollaboration ? t('app.collabOff') : running ? t('app.collabEnableAfter') : t('app.collabEnable')}</button>
+          }}>{draftCollaboration ? t('app.collabOff') : t('app.collabEnable')}</button>}
         </>}
         {(!selected?.coordination || leading) && teamAgents.length > 0 && <>
           <div className="coord-caption">{t('app.memberPermission')}</div>

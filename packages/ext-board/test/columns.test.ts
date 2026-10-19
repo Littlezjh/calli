@@ -92,7 +92,7 @@ test('combines project, instance and schedule filters and leaves archived thread
     thread('archived', { archived: true }),
   ];
   const ids = (filters: Parameters<typeof buildColumns>[1]) => buildColumns(items, filters, now)[2].cards.map((card) => card.thread.id).sort();
-  assert.deepEqual(ids({ project: ['/projects/one', '/projects/two'], agent: ['agent-1', 'agent-2'], scheduled: [true] }), ['match-one', 'match-two']);
+  assert.deepEqual(ids({ tags: [], project: ['/projects/one', '/projects/two'], agent: ['agent-1', 'agent-2'], scheduled: [true] }), ['match-one', 'match-two']);
   assert.deepEqual(ids({ ...emptyFilters(), scheduled: [false] }), ['not-scheduled']);
   assert.equal(buildColumns(items, emptyFilters(), now)[2].total, 4);
 });
@@ -108,7 +108,7 @@ test('phones open on the first column that asks something of the person', () => 
 test('invalid persisted filters fall back safely and mixed values are sanitized', () => {
   for (const input of [null, '', '{bad', 'null', '42']) assert.deepEqual(parseFilters(input), emptyFilters());
   assert.deepEqual(parseFilters('{"project":["/a",1,"/a"],"agent":false,"scheduled":[true,"false",false,true]}'), {
-    project: ['/a'], agent: [], scheduled: [true, false],
+    tags: [], project: ['/a'], agent: [], scheduled: [true, false],
   });
 });
 

@@ -1,7 +1,7 @@
 import { UserInputs } from './user-input.js';
 import type { SystemPrompt, WorkMode } from './adapters/types.js';
 import { diagnosticFailure } from './adapters/diagnostics.js';
-import { turnAnswer, type CoordinationManager } from './coordination.js';
+import { turnAnswer, type CoordinationManager, type CoordinationSetup } from './coordination.js';
 import { parseProgress, progressInstructions } from './progress-report.js';
 import { randomUUID } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, readSync, realpathSync, statSync } from 'node:fs';
@@ -75,7 +75,7 @@ export type ThreadView = Omit<ThreadRecord, 'worktree'> & {
   waiting: boolean;
   waitingReason: 'approval' | 'question' | 'plan' | null;
   /** Messages sent while a turn was running. They go out, in order, as turns finish. */
-  queued: Array<{ id: string; text: string; images: number; videos: number }>;
+  queued: Array<{ id: string; text: string; images: number; videos: number; targets?: string[]; error?: string }>;
   /** Turns the terminal added to this session since the hub last wrote to it. */
   terminalActivity: boolean;
   /** When the running turn started; null while nothing runs. */
@@ -83,6 +83,8 @@ export type ThreadView = Omit<ThreadRecord, 'worktree'> & {
 };
 
 interface QueuedTurn {
+  collaboration?: CoordinationSetup;
+  error?: string;
   workMode?: WorkMode;
   mentions?: unknown[];
   id: string;
@@ -185,6 +187,8 @@ export class ThreadManager {
   /** Turns in flight. `cancelRequested` covers cancels that arrive before the agent session exists. */
   private readonly running = new Map<string, { turnId: string; cancelRequested: boolean; since: string }>();
   readonly inputs = new UserInputs((thread, turn, type, data) => this.emitThreadEvent(thread, turn, type, data));
+  private readonly dispatchingQueues = new Set<string>();
+  private readonly startingTurns = new Map<string, Promise<unknown>>();
   private readonly changingModes = new Set<string>();
   /** Turns that asked the agent for a `[进度]` line, read back when they end. */
   private readonly reportTurns = new Set<string>();
@@ -627,7 +631,11 @@ export class ThreadManager {
     let waitingReason: ThreadView['waitingReason'] = this.inputs.waitingReason(thread.id);
     for (const p of this.approvals.values()) if (p.threadId === thread.id) { waitingReason = 'approval'; break; }
     const waiting = waitingReason !== null;
-    const queued = (this.queues.get(thread.id) ?? []).map((q) => ({ id: q.id, text: q.text, images: q.images.length, videos: q.videos.length }));
+    const queued = (this.queues.get(thread.id) ?? []).map((q) => ({ id: q.id, text: q.text, images: q.images.length, videos: q.videos.length,
+      ...(q.mentions?.length ? { targets: q.mentions.map(m => {
+        const value = m as { label?: unknown; id?: unknown };
+        return typeof value.label === 'string' ? value.label : String(value.id ?? '');
+      }) } : {}), ...(q.error ? { error: q.error } : {}) }));
     // The terminal wrote to this session after the hub last did: the UI asks before sending more.
     const terminalActivity = thread.externalAt !== null && (thread.hubTurnAt === null || thread.externalAt > thread.hubTurnAt);
     let worktree: ThreadView['worktree'] = null;
@@ -1431,10 +1439,29 @@ export class ThreadManager {
    * With `queue`, a message sent while a turn is running waits its turn instead of being refused:
    * it goes out when the running turn (and anything queued before it) has finished.
    */
-  async startTurn(
+  startTurn(
     threadId: string,
-    input: { workMode?: unknown; text?: unknown; images?: unknown; videos?: unknown; queue?: unknown; mentions?: unknown; handover?: unknown; scheduled?: unknown },
+    input: Parameters<ThreadManager['startTurnReady']>[1],
+    delivery?: Parameters<ThreadManager['startTurnReady']>[2],
+    fromQueue = false,
+  ): Promise<{ turnId: string } | { queued: true; id: string }> {
+    // Setup may await discovery or an idle runtime refresh. Keep competing sends in order.
+    const previous = this.startingTurns.get(threadId) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(() => this.startTurnReady(threadId, input, delivery, fromQueue));
+    this.startingTurns.set(threadId, next);
+    const clean = () => {
+      if (this.startingTurns.get(threadId) === next) this.startingTurns.delete(threadId);
+      this.startNextQueued(threadId);
+    };
+    void next.then(clean, clean);
+    return next;
+  }
+
+  private async startTurnReady(
+    threadId: string,
+    input: { workMode?: unknown; text?: unknown; images?: unknown; videos?: unknown; queue?: unknown; mentions?: unknown; collaboration?: CoordinationSetup; handover?: unknown; scheduled?: unknown },
     delivery?: { turnId: string; source: Record<string, unknown>; displayText: string; claim: () => void },
+    fromQueue = false,
   ): Promise<{ turnId: string } | { queued: true; id: string }> {
     const thread = this.getThread(threadId);
     if (this.changingModes.has(threadId)) throw new HttpError(409, '模式正在切换，请稍后发送');
@@ -1442,24 +1469,19 @@ export class ThreadManager {
     const originalText = typeof input.text === 'string' ? input.text.trim() : '';
     if (thread.workMode === 'plan' && /^\/goal(?:\s|$)/.test(originalText) && !['/goal', '/goal pause', '/goal clear'].includes(originalText)) throw new HttpError(409, '请切到执行模式后启动目标');
     const mentions = Array.isArray(input.mentions) && input.mentions.length ? input.mentions : undefined;
-    const rawText = this.coordination?.mentionText(threadId, originalText, mentions) ?? originalText;
-    // Slash commands have their own argument grammar; hidden instructions become unwanted arguments.
-    const slashCommand = /^\/\S+/.test(rawText);
-    const coordinated = slashCommand ? rawText : rawText ? (this.coordination?.instructions(threadId, rawText) ?? rawText) : '';
-    // With the board's consent, the agent is asked to say where the work stands; read back at the end.
-    const askProgress = !slashCommand && Boolean(rawText) && this.progressWanted();
-    const text = askProgress ? progressInstructions(coordinated) : coordinated;
+    if ((mentions || input.collaboration) && !this.coordination) throw new HttpError(400, '协作不可用');
+    let rawText = await this.coordination?.previewMentions(threadId, originalText, mentions, input.collaboration) ?? originalText;
     const rawImages = Array.isArray(input.images) ? input.images : [];
     const storedVideos = this.attachments.videos(threadId, input.videos);
     const videoIds = storedVideos.map(v => v.id);
     if (storedVideos.length && /^\/\S+/.test(rawText)) throw new HttpError(400, '视频请随普通消息发送，不能附在斜杠命令后');
-    if (!text && rawImages.length === 0 && !storedVideos.length) throw new HttpError(400, 'text is empty');
+    if (!rawText && rawImages.length === 0 && !storedVideos.length) throw new HttpError(400, 'text is empty');
     if (thread.archivedAt) throw new HttpError(409, 'this thread is archived; restore it first');
-    if (this.running.has(threadId)) {
+    if (this.running.has(threadId) || !fromQueue && this.queues.get(threadId)?.some(q => !q.error)) {
       const goalAction = originalText === '/goal' ? 'show' : originalText === '/goal pause' ? 'pause' : originalText === '/goal clear' ? 'clear' : null;
       const adapter = this.adapters.get(thread.agent);
       const session = this.sessions.get(threadId);
-      if (!delivery && goalAction && !rawImages.length && !mentions && adapter?.capabilities.goal?.controls.includes(goalAction)) {
+      if (this.running.has(threadId) && !delivery && goalAction && !rawImages.length && !mentions && adapter?.capabilities.goal?.controls.includes(goalAction)) {
         if (!session?.controlGoal) throw new HttpError(409, '智能体正在启动，请稍后重试目标操作。');
         // A control must not wait behind the work it is supposed to stop. It has its own
         // transcript entry, but does not claim or release the running turn's lock/hooks.
@@ -1484,11 +1506,23 @@ export class ThreadManager {
       const queue = this.queues.get(threadId) ?? [];
       if (queue.length >= MAX_QUEUED) throw new HttpError(409, `at most ${MAX_QUEUED} messages can wait in a thread`);
       this.attachments.check(rawImages); // a bad image is refused now, not when its turn comes
-      const queued: QueuedTurn = { workMode: thread.workMode ?? 'execute', id: randomUUID(), text: originalText, images: rawImages, videos: videoIds, ...(mentions ? { mentions } : {}) };
+      const queued: QueuedTurn = { workMode: thread.workMode ?? 'execute', id: randomUUID(), text: originalText, images: rawImages, videos: videoIds, ...(mentions ? { mentions } : {}), ...(input.collaboration ? { collaboration: input.collaboration } : {}) };
       this.queues.set(threadId, [...queue, queued]);
       this.emitThreadEvent(threadId, null, 'thread.updated', {});
       return { queued: true, id: queued.id };
     }
+
+    if ((mentions || input.collaboration) && !this.coordination?.metadata(threadId)) {
+      if (!this.coordination) throw new HttpError(400, '协作不可用');
+      await this.coordination.enable(threadId, input.collaboration);
+    }
+    rawText = this.coordination?.mentionText(threadId, originalText, mentions) ?? originalText;
+    // Slash commands have their own argument grammar; hidden instructions become unwanted arguments.
+    const slashCommand = /^\/\S+/.test(rawText);
+    const coordinated = slashCommand ? rawText : rawText ? (this.coordination?.instructions(threadId, rawText) ?? rawText) : '';
+    // With the board's consent, the agent is asked to say where the work stands; read back at the end.
+    const askProgress = !slashCommand && Boolean(rawText) && this.progressWanted();
+    const text = askProgress ? progressInstructions(coordinated) : coordinated;
 
     if (rawImages.length > 0) {
       const adapter = this.adapters.get(thread.agent);
@@ -1594,6 +1628,7 @@ export class ThreadManager {
     if (!taken) throw new HttpError(404, 'no such waiting message');
     const videos = this.attachments.videos(threadId, taken.videos);
     this.setQueue(threadId, queue.filter((q) => q.id !== queuedId));
+    this.startNextQueued(threadId);
     return { text: taken.text, images: taken.images, ...(videos.length ? { videos } : {}), ...(taken.mentions ? { mentions: taken.mentions } : {}) };
   }
 
@@ -1603,8 +1638,10 @@ export class ThreadManager {
     const queue = this.queues.get(threadId) ?? [];
     const chosen = queue.find((q) => q.id === queuedId);
     if (!chosen) throw new HttpError(404, 'no such waiting message');
+    delete chosen.error;
     this.setQueue(threadId, [chosen, ...queue.filter((q) => q !== chosen)]);
-    await this.cancelTurn(threadId, { keepQueue: true });
+    if (this.running.has(threadId)) await this.cancelTurn(threadId, { keepQueue: true });
+    else this.startNextQueued(threadId);
   }
 
   private setQueue(threadId: string, queue: QueuedTurn[]): void {
@@ -1615,16 +1652,23 @@ export class ThreadManager {
 
   /** Sends the next waiting message, if there is one. Called whenever a turn has finished. */
   private startNextQueued(threadId: string): void {
+    if (this.running.has(threadId) || this.startingTurns.has(threadId) || this.dispatchingQueues.has(threadId)) return;
     const queue = this.queues.get(threadId);
-    if (!queue?.length) return;
-    const [next, ...rest] = queue;
+    const next = queue?.find(q => !q.error);
+    if (!queue || !next) return;
+    const rest = queue.filter(q => q !== next);
+    this.dispatchingQueues.add(threadId);
     if (rest.length) this.queues.set(threadId, rest);
     else this.queues.delete(threadId);
-    this.startTurn(threadId, { workMode: next.workMode, text: next.text, images: next.images, videos: next.videos, mentions: next.mentions }).catch((err) => {
+    this.startTurn(threadId, { workMode: next.workMode, text: next.text, images: next.images, videos: next.videos, mentions: next.mentions, collaboration: next.collaboration }, undefined, true).catch((err) => {
       // The thread was archived or deleted in the meantime, or the message is no longer acceptable.
       console.error(`could not send a queued message: ${err instanceof Error ? err.message : err}`);
-      this.queues.delete(threadId);
-      if (this.store.getThread(threadId)) this.emitThreadEvent(threadId, null, 'thread.updated', {});
+      if (this.store.getThread(threadId)) this.setQueue(threadId, [
+        { ...next, error: err instanceof Error ? err.message : String(err) }, ...(this.queues.get(threadId) ?? []),
+      ]);
+    }).finally(() => {
+      this.dispatchingQueues.delete(threadId);
+      this.startNextQueued(threadId);
     });
   }
 

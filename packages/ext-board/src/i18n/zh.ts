@@ -17,6 +17,8 @@ export const zh = {
   runningMinutes: (count: number) => count < 1 ? '刚开始运行' : `已运行 ${count} 分钟`,
   markDone: '标记完成',
   markUndone: '标记为未完成',
+  tags: '标签',
+  moreTags: (count: number) => `+${count}`,
   project: '项目',
   agent: '实例',
   scheduledFilter: '是否定时',

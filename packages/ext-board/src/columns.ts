@@ -1,4 +1,5 @@
 import type { AttentionKind, ThreadSummary } from '@rah/extension-api';
+import { parseTitleTags, validTag } from './tags';
 import type { ConnectionState } from '@rah/extension-api/web';
 
 export function showStaleWarning(state: ConnectionState, observedAt: string | null): boolean {
@@ -13,6 +14,7 @@ export const REVIEW_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 export const DONE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export interface BoardFilters {
+  tags: string[];
   project: string[];
   agent: string[];
   scheduled: boolean[];
@@ -40,7 +42,7 @@ export interface BoardColumn {
 }
 
 export function emptyFilters(): BoardFilters {
-  return { project: [], agent: [], scheduled: [] };
+  return { tags: [], project: [], agent: [], scheduled: [] };
 }
 
 function timestamp(iso: string | null | undefined): number {
@@ -71,7 +73,8 @@ export function activeAt(card: BoardCard): number {
 }
 
 export function matchesFilters(thread: ThreadSummary, filters: BoardFilters): boolean {
-  return (filters.project.length === 0 || filters.project.includes(thread.project))
+  return (filters.tags.length === 0 || parseTitleTags(thread.title).tags.some(tag => filters.tags.some(value => value.toLowerCase() === tag.toLowerCase())))
+    && (filters.project.length === 0 || filters.project.includes(thread.project))
     && (filters.agent.length === 0 || filters.agent.includes(thread.agent))
     && (filters.scheduled.length === 0 || filters.scheduled.includes(thread.scheduled));
 }
@@ -125,6 +128,7 @@ export function parseFilters(value: string | null): BoardFilters {
     const strings = (input: unknown) => Array.isArray(input)
       ? [...new Set(input.filter((item): item is string => typeof item === 'string'))] : [];
     return {
+      tags: [...new Set(strings(object.tags).map(tag => tag.trim()).filter(validTag).map(tag => tag.toLowerCase()))],
       project: strings(object.project),
       agent: strings(object.agent),
       scheduled: Array.isArray(object.scheduled)

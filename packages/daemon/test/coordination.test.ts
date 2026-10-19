@@ -388,3 +388,128 @@ test('imported and terminal-synced member turns never deliver collaboration resu
     assert.equal(messages.length, before);
   } finally { await h.close(); }
 });
+
+test('running unconfigured threads queue collaboration without refreshing until earlier turns finish', async () => {
+  const h = await setup();
+  try {
+    await h.manager.startTurn(h.root.id, { text: 'slow' });
+    const mentions = [{ id: 'claude', label: 'Claude Code', kind: 'agent', task: '只给建议' }];
+    const earlier = await h.manager.startTurn(h.root.id, { text: 'slow earlier', queue: true });
+    assert.ok('queued' in earlier);
+    const response = await h.api(`/api/threads/${h.root.id}/turns`, { text: '一起分析', mentions, queue: true,
+      collaboration: { directories: [h.cwd, h.other], defaults: { claude: { model: null, effort: 'high' } }, permission: 'ask' } });
+    assert.equal(response.status, 202);
+    const queued = await response.json() as { id: string };
+    assert.equal(h.team.view(h.root.id), null);
+    assert.equal(h.manager.threadView(h.root.id).status, 'running');
+    assert.deepEqual(h.manager.threadView(h.root.id).queued[1].targets, ['Claude Code']);
+    await h.manager.cancelTurn(h.root.id, { keepQueue: true });
+    await wait(() => h.store.listEvents(h.root.id, 0, -1).some(e => e.type === 'turn.started' && e.data.text === 'slow earlier'));
+    assert.equal(h.team.view(h.root.id), null, 'an earlier queued turn must not gain collaboration');
+    await h.manager.cancelTurn(h.root.id, { keepQueue: true });
+    await wait(() => h.store.listEvents(h.root.id, 0, -1).some(e => e.type === 'turn.started' && String(e.data.text).includes('一起分析')));
+    await wait(() => h.manager.threadView(h.root.id).status !== 'running');
+    assert.deepEqual(h.team.view(h.root.id)!.directories, [h.cwd, h.other]);
+    assert.equal(h.team.view(h.root.id)!.permission, 'ask');
+    assert.equal(h.team.view(h.root.id)!.defaults.claude.effort, 'high');
+    assert.equal(h.manager.threadView(h.root.id).queued.some(q => q.id === queued.id), false);
+    const event = h.store.listEvents(h.root.id, 0, -1).find(e => e.type === 'turn.started' && String(e.data.text).includes('一起分析'))!;
+    assert.equal(String(event.data.text).split('[指定协作对象]').length - 1, 1);
+    assert.match(String(event.data.text), /只给建议/);
+    await h.manager.startTurn(h.root.id, { text: 'LIMI_ENV' });
+    await wait(() => h.store.listEvents(h.root.id, 0, -1).some(e => e.type === 'message.delta' && String(e.data.text).includes('limi-ready:true')));
+  } finally { await h.close(); }
+});
+
+test('unconfigured queued collaboration can be withdrawn with all targets and per-target tasks', async () => {
+  const h = await setup();
+  try {
+    await h.manager.startTurn(h.root.id, { text: 'slow' });
+    const mentions = [{ id: 'claude', kind: 'agent', label: 'Claude Code', task: 'review' }, { id: 'pi', kind: 'agent', task: 'test' }];
+    const response = await h.api(`/api/threads/${h.root.id}/turns`, { text: '', mentions, queue: true });
+    assert.equal(response.status, 202);
+    const queued = await response.json() as { id: string };
+    assert.deepEqual(h.manager.removeQueued(h.root.id, queued.id), { text: '', images: [], mentions });
+    assert.equal(h.team.view(h.root.id), null);
+    const invalid = await h.api(`/api/threads/${h.root.id}/turns`, { text: 'task', mentions: [{ kind: 'member', id: 'missing' }], queue: true });
+    assert.equal(invalid.status, 400);
+    assert.deepEqual(h.manager.threadView(h.root.id).queued, []);
+  } finally { await h.close(); }
+});
+
+test('failed collaboration does not block queued work or new messages while idle, and can be retried', async () => {
+  const h = await setup();
+  try {
+    await h.manager.startTurn(h.root.id, { text: 'slow' });
+    const mentions = [{ id: 'claude', kind: 'agent', label: 'Claude Code', task: 'review' }];
+    const queued = await h.manager.startTurn(h.root.id, { text: 'review this', mentions, queue: true });
+    assert.ok('id' in queued);
+    await h.manager.startTurn(h.root.id, { text: 'next message', queue: true });
+    const enable = h.team.enable.bind(h.team);
+    h.team.enable = async () => { throw new Error('setup unavailable'); };
+    await h.manager.cancelTurn(h.root.id, { keepQueue: true });
+    await wait(() => h.store.listEvents(h.root.id, 0, -1).some(e => e.type === 'turn.started' && e.data.text === 'next message'));
+    await wait(() => h.manager.threadView(h.root.id).status !== 'running');
+    const queue = h.manager.threadView(h.root.id).queued;
+    assert.equal(queue.length, 1);
+    assert.equal(queue[0].id, queued.id);
+    assert.equal(queue[0].text, 'review this');
+    assert.deepEqual(queue[0].targets, ['Claude Code']);
+    assert.match(queue[0].error!, /setup unavailable/);
+    const later = await h.manager.startTurn(h.root.id, { text: 'last message', queue: true });
+    assert.ok('turnId' in later, 'only failed items remain, so a new message starts immediately');
+    await wait(() => h.manager.threadView(h.root.id).status !== 'running');
+    assert.equal(h.manager.threadView(h.root.id).queued[0].id, queued.id, 'failed work stays until an explicit retry or withdrawal');
+    h.team.enable = enable;
+    await h.manager.sendQueuedNow(h.root.id, queued.id);
+    await wait(() => Boolean(h.team.view(h.root.id)));
+    await wait(() => h.manager.threadView(h.root.id).status !== 'running' && h.manager.threadView(h.root.id).queued.length === 0);
+    assert.ok(h.store.listEvents(h.root.id, 0, -1).some(e => e.type === 'turn.started' && String(e.data.text).startsWith('review this')));
+  } finally { await h.close(); }
+});
+
+test('withdrawing an idle failed item restores mentions and the remaining queued message starts', async () => {
+  const h = await setup();
+  let unsubscribe = () => {};
+  try {
+    await h.manager.startTurn(h.root.id, { text: 'slow' });
+    const mentions = [{ id: 'claude', kind: 'agent', label: 'Claude Code', task: 'review' }];
+    const queued = await h.manager.startTurn(h.root.id, { text: 'review this', mentions, queue: true });
+    assert.ok('id' in queued);
+    await h.manager.startTurn(h.root.id, { text: 'after withdrawal', queue: true });
+    h.team.enable = async () => { throw new Error('setup unavailable'); };
+    let taken: ReturnType<typeof h.manager.removeQueued> | undefined;
+    // Withdraw as soon as the idle failure is published, while the following message is still waiting.
+    unsubscribe = h.manager.subscribe(event => {
+      if (event.threadId !== h.root.id || event.type !== 'thread.updated' || taken) return;
+      const view = h.manager.threadView(h.root.id);
+      if (!view.queued.some(q => q.id === queued.id && q.error)) return;
+      assert.equal(view.status, 'idle');
+      assert.equal(view.queued.length, 2);
+      taken = h.manager.removeQueued(h.root.id, queued.id);
+    });
+    await h.manager.cancelTurn(h.root.id, { keepQueue: true });
+    await wait(() => h.store.listEvents(h.root.id, 0, -1).some(e => e.type === 'turn.started' && e.data.text === 'after withdrawal'));
+    assert.deepEqual(taken, { text: 'review this', images: [], mentions });
+    await wait(() => h.manager.threadView(h.root.id).status !== 'running');
+    assert.equal(h.manager.threadView(h.root.id).queued.length, 0);
+  } finally { unsubscribe(); await h.close(); }
+});
+
+test('natural completion enables queued collaboration without cancelling the active turn', async () => {
+  const h = await setup();
+  try {
+    const first = await h.manager.startTurn(h.root.id, { text: 'slowthink' });
+    assert.ok('turnId' in first);
+    const response = await h.api(`/api/threads/${h.root.id}/turns`, { text: 'after natural completion', queue: true,
+      mentions: [{ id: 'claude', kind: 'agent', task: 'review' }] });
+    assert.equal(response.status, 202);
+    assert.equal(h.team.view(h.root.id), null);
+    await wait(() => h.store.listEvents(h.root.id, 0, -1).some(e => e.type === 'turn.started' && String(e.data.text).startsWith('after natural completion')));
+    const events = h.store.listEvents(h.root.id, 0, -1);
+    const ended = events.find(e => e.type === 'turn.done' && e.turnId === first.turnId)!;
+    assert.ok(ended);
+    assert.notEqual(ended.data.stopReason, 'cancelled');
+    assert.ok(h.team.view(h.root.id));
+  } finally { await h.close(); }
+});

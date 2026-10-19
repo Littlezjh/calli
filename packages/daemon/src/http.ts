@@ -762,9 +762,9 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (method === 'POST' && sub === 'turns') {
         const body = await readJson(req, MAX_TURN_BODY);
         if (manager.coordination?.metadata(threadId)?.team && (typeof body.text !== 'string' || !body.text.trim() || body.text.length > 32000)) throw new HttpError(400, '团队任务需要 1～32000 字符');
-        manager.coordination?.mentionText(threadId, body.text, body.mentions);
+        await manager.coordination?.previewMentions(threadId, typeof body.text === 'string' ? body.text : '', body.mentions, body.collaboration);
         await manager.coordination?.userSpoke(threadId);
-        return sendJson(res, 202, await manager.startTurn(threadId, { text: body.text, images: body.images, videos: body.videos, queue: body.queue, mentions: body.mentions, workMode: body.workMode }));
+        return sendJson(res, 202, await manager.startTurn(threadId, { text: body.text, images: body.images, videos: body.videos, queue: body.queue, mentions: body.mentions, collaboration: body.collaboration, workMode: body.workMode }));
       }
 
       if (method === 'POST' && sub === 'videos' && !parts[4]) {

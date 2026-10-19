@@ -85,17 +85,17 @@ function RelativeTime({ iso }: { iso: string }) {
   );
 }
 
-function HostPopover({ label, trigger, triggerClassName, triggerTitle, align, children }: PopoverProps) {
+function HostPopover({ label, trigger, triggerClassName, triggerTitle, align, placement, children }: PopoverProps) {
   return (
-    <Popover label={label} trigger={trigger} triggerClassName={triggerClassName} triggerTitle={triggerTitle} align={align}>
+    <Popover label={label} trigger={trigger} triggerClassName={triggerClassName} triggerTitle={triggerTitle} align={align} placement={placement}>
       {children}
     </Popover>
   );
 }
 
-function PopoverOption({ selected, onSelect, children }: PopoverOptionProps) {
+function PopoverOption({ selected, onSelect, children, multiple }: PopoverOptionProps) {
   return (
-    <button type="button" role="menuitemradio" aria-checked={selected} className="pop-item compact" onClick={onSelect}>
+    <button type="button" role={multiple ? "menuitemcheckbox" : "menuitemradio"} aria-checked={selected} className="pop-item compact" onClick={onSelect}>
       <span className="pop-item-text">
         <span className="pop-item-label">{children}</span>
       </span>

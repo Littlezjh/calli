@@ -19,6 +19,8 @@ export const ja: typeof zh = {
   runningMinutes: (count: number) => count < 1 ? '開始したばかり' : `${count} 分間実行中`,
   markDone: '完了にする',
   markUndone: '未完了に戻す',
+  tags: 'タグ',
+  moreTags: (count: number) => `+${count}`,
   project: 'プロジェクト',
   agent: 'インスタンス',
   scheduledFilter: '定期実行',

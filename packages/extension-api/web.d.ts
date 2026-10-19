@@ -60,10 +60,13 @@ export interface PopoverProps {
   triggerClassName?: string;
   triggerTitle?: string;
   align?: 'start' | 'end';
+  /** Wide-screen placement; phones always use a bottom sheet. Defaults to above. */
+  placement?: 'above' | 'below';
   children: (close: () => void) => ReactNode;
 }
 
 export interface PopoverOptionProps {
+  multiple?: boolean;
   selected: boolean;
   onSelect: () => void;
   children: ReactNode;

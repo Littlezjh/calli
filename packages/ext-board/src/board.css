@@ -14,7 +14,7 @@
   letter-spacing: -0.01em;
 }
 .ext-board-stale { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border: 1px solid var(--border); border-radius: var(--radius-pill); color: var(--warn); font-size: 11px; line-height: 1.5; white-space: nowrap; }
-.ext-board-filters { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; margin-left: auto; }
+.ext-board-filters { display: flex; flex-wrap: nowrap; align-items: center; justify-content: flex-end; gap: 8px; margin-left: auto; }
 .ext-board-filter {
   display: inline-flex;
   align-items: center;
@@ -135,3 +135,13 @@
   .ext-board-card { transition: none; }
   .ext-board-reason.ext-board-tone-running .ext-board-dot { animation: none; }
 }
+
+.ext-board-filters > * { flex-shrink: 0; }
+.ext-board-filter, .ext-board-clear { white-space: nowrap; }
+.ext-board-option-row { display: flex; align-items: center; gap: 16px; }
+.ext-board-option { min-width: 0; }
+.ext-board-option-count { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ext-board-tags { display: flex; gap: 4px; min-width: 0; }
+.ext-board-tag { min-width: 0; max-width: 45%; padding: 1px 6px; border-radius: var(--radius-pill); background: var(--hover); color: var(--muted); font-size: 11px; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ext-board-narrow .ext-board-filters { overflow-x: auto; scrollbar-width: none; }
+.ext-board-narrow .ext-board-filters::-webkit-scrollbar { display: none; }

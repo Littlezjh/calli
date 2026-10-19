@@ -2012,6 +2012,19 @@ html.list-open body {
   right: 0;
 }
 
+/* Below menus escape scrollable toolbars and stay inside the viewport. */
+@media (min-width: 641px) {
+  .pop-panel.placement-below {
+    position: fixed;
+    top: var(--pop-top);
+    left: var(--pop-left);
+    right: auto;
+    bottom: auto;
+    max-height: min(420px, var(--pop-height));
+    overflow-y: auto;
+  }
+}
+
 .pop-title {
   padding: 8px 10px 4px;
   color: var(--muted);
@@ -6027,7 +6040,7 @@ input.picker-search {
 }
 
 .queue-text {
-  flex: 1;
+  flex: 1 1 18ch;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -9765,4 +9778,17 @@ button.trace-step-head:hover { background: var(--hover); }
   .team-fields { grid-template-columns: minmax(0, 1fr); gap: 14px; }
   .team-member-editor { padding: 16px; }
   .team-definition { align-items: flex-start; flex-direction: column; gap: 12px; }
+}
+
+.queue-targets { flex: 0 4 auto; min-width: 0; max-width: 25%; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.queue-error { padding: 4px 8px 8px; color: var(--danger); font-size: 12px; overflow-wrap: anywhere; }
+
+.queue-badge.failed { color: var(--danger); }
+.queue-target-count { display: none; }
+@media (max-width: 640px) {
+  .queue-item { gap: 4px; }
+  .queue-targets { flex: 0 0 auto; }
+  .queue-target-names { display: none; }
+  .queue-target-count { display: inline; }
+  .queue-error-text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.5; }
 }
