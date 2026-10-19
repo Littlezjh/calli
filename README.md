@@ -82,7 +82,7 @@ daemon 在 `packages/daemon` 目录里运行，所以用 `RAH_ENV_FILE` 指向�
 
 官网：[maxliux5.github.io/limi](https://maxliux5.github.io/limi/)。
 
-仓库包含独立的中文产品官网，展示「简单管理更多国内外 agent、按需安装插件、一起参与建设」的方向。官网保留真实界面的任务、审批和方案体验，介绍已可安装的线程看板、Memory 只读看板、LoopX 工作数据源，并提供插件贡献与需求反馈入口。技能和 MCP 通过各自的资源页管理；BotMux 提醒与通用任务控制仍在规划，具体状态见 [扩展设计](docs/extensions-design.md)。
+仓库包含独立的中文产品官网，展示「简单管理更多国内外 agent、按需安装插件、一起参与建设」的方向。官网优先展示 agent 协作、看板与记忆三个可操作例子：派发任务、查看成员与返回结果，勾选看板验收，以及搜索记忆、阅读原文；同时保留任务、审批和方案体验，介绍可安装的 LoopX 工作数据源，并提供插件贡献与需求反馈入口。技能和 MCP 通过各自的资源页管理；BotMux 提醒与通用任务控制仍在规划，具体状态见 [扩展设计](docs/extensions-design.md)。
 
 ```bash
 npm run dev:site       # 开发官网，默认端口 5174

@@ -57,6 +57,8 @@ for (const phone of [false, true]) for (const theme of ['light', 'dark']) {
   test(`homepage and live walkthrough: ${phone ? 'phone' : 'desktop'}, ${theme}`, async () => {
     const { page, context, demo, errors, calls, missing } = await open({ phone, theme });
     try {
+      await page.getByRole('button', { name: /发起一个任务/ }).click();
+      await page.locator('iframe.is-ready').waitFor();
       await demo.getByRole('button', { name: '发送示例任务' }).waitFor();
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
       const frame = page.frames().find(frame => frame.url().includes('/demo/'));
@@ -245,3 +247,61 @@ test('the site works under a static subdirectory and the demo can be opened on i
     } finally { await context.close(); }
   }
 });
+
+for (const phone of [false, true]) for (const theme of ['light', 'dark']) {
+  test(`collaboration, board and memory examples: ${phone ? 'phone' : 'desktop'}, ${theme}`, async () => {
+    const { page, context, demo, errors, calls, missing } = await open({ phone, theme });
+    const prefix = `${shots}/${phone ? 'phone' : 'desktop'}-${theme}`;
+    const example = name => page.locator('.site-demo-tabs').getByRole('button', { name, exact: false });
+    try {
+      await page.evaluate(() => localStorage.setItem('rah.ext.board.filters.v1', 'keep existing filters'));
+      await demo.getByRole('heading', { name: '分头做事，一起交付。', exact: true }).waitFor();
+      await page.locator('#collaboration').scrollIntoViewIfNeeded();
+      await page.getByRole('heading', { name: '让不同 agent，一起把事做好。', exact: true }).waitFor();
+      await page.screenshot({ path: `${prefix}-collaboration-feature.png` });
+      await page.getByRole('button', { name: '体验一次协作', exact: true }).click();
+      await page.locator('iframe.is-ready').waitFor();
+      await demo.getByRole('button', { name: '发送示例任务' }).click();
+      await demo.getByRole('button', { name: '查看智能体', exact: true }).first().click();
+      await demo.getByRole('region', { name: '智能体面板' }).waitFor();
+      assert.equal(await demo.locator('.agent-member').count(), 2);
+      await page.locator('#experience').scrollIntoViewIfNeeded();
+      await page.screenshot({ path: `${prefix}-collaboration.png` });
+      await demo.locator('.agent-member').filter({ hasText: 'Codex 实现' }).click();
+      await demo.locator('.agent-panel').getByText('实现设置页深色模式，覆盖跟随系统、手动切换与刷新后恢复。', { exact: true }).waitFor();
+      await demo.getByRole('button', { name: '关闭智能体面板' }).click();
+      await demo.getByRole('heading', { name: '协作结果', exact: true }).waitFor();
+      await demo.getByRole('button', { name: '重新体验', exact: true }).waitFor();
+      await page.screenshot({ path: `${prefix}-collaboration-result.png` });
+
+      await example('体验看板').click();
+      await page.locator('iframe.is-ready').waitFor();
+      await demo.getByRole('heading', { name: '看板', exact: true }).waitFor();
+      if (phone) await demo.getByRole('tab', { name: /待验收/ }).click();
+      const done = demo.getByRole('checkbox', { name: '标记完成: 修复购物车数量显示', exact: true });
+      await done.click();
+      if (phone) await demo.getByRole('tab', { name: /已完成/ }).click();
+      await demo.getByRole('checkbox', { name: '标记为未完成: 修复购物车数量显示', exact: true }).waitFor();
+      await page.locator('#experience').scrollIntoViewIfNeeded();
+      await page.screenshot({ path: `${prefix}-board.png` });
+      await demo.locator('.ext-board-card').filter({ hasText: '修复购物车数量显示' }).click();
+      await demo.getByText('示例测试通过，请检查手机布局后勾选完成。', { exact: true }).waitFor();
+
+      await example('探索记忆').click();
+      await page.locator('iframe.is-ready').waitFor();
+      await demo.getByRole('searchbox', { name: '搜索标题与摘要…' }).fill('偏好');
+      await demo.locator('.memory-card').filter({ hasText: '项目偏好' }).click();
+      await demo.getByRole('button', { name: '原文', exact: true }).click();
+      await demo.locator('.memory-original').getByText(/这是一条虚构记忆/).waitFor();
+      await page.locator('#experience').scrollIntoViewIfNeeded();
+      await page.screenshot({ path: `${prefix}-memory.png` });
+      const frame = page.frames().find(frame => frame.url().includes('/demo/'));
+      assert.equal(await frame.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+      assert.equal(await page.evaluate(() => localStorage.getItem('rah.ext.board.filters.v1')), 'keep existing filters');
+      assert.deepEqual(errors, []);
+      assert.deepEqual(calls, []);
+      assert.deepEqual(missing, []);
+    } finally { await context.close(); }
+  });
+}

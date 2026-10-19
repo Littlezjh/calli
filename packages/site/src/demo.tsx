@@ -3,10 +3,12 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from '../../web/src/App';
 import { Dialog } from '../../web/src/components/Dialog';
-import { IconArrowRight, IconCheck, IconRestore, IconSend, IconStop, IconFiles, IconShield, IconList } from '../../web/src/components/icons';
+import { IconArrowRight, IconCheck, IconRestore, IconSend, IconStop, IconFiles, IconShield, IconList, IconAgents } from '../../web/src/components/icons';
 import type { Theme } from '../../web/src/appearance';
 import { ShowcaseApi, type Progress } from './ShowcaseApi';
-import { SCENARIOS } from './scenarios';
+import { SCENARIOS, EXAMPLES, DEFAULT_EXAMPLE } from './scenarios';
+import { zh as copy } from '../../web/src/i18n/locales/site/zh';
+import { MEMBER_IDS } from './exampleData';
 import '../../web/src/styles.css';
 import './showcase.css';
 
@@ -22,13 +24,14 @@ function useProgress(api: ShowcaseApi, id: string | null): Progress {
   return useSyncExternalStore(api.subscribe, () => api.progress(id));
 }
 
-function Notice({ id, onInstall }: { id: string | null; onInstall: () => void }) {
+function Notice({ id, view, onInstall }: { id: string | null; view?: string; onInstall: () => void }) {
+  const example = EXAMPLES.find(s => view ? s.route === view : s.threadId === id);
   useEffect(() => {
-    const scene = SCENARIOS.find(s => s.threadId === id)?.id;
+    const scene = example?.id;
     if (scene) parentMessage({ type: 'limi:scene', scene });
-  }, [id]);
+  }, [example?.id]);
   return <div className="demo-bar showcase-notice" role="note">
-    <span><strong>引导体验</strong> · 本地模拟</span>
+    <span><strong>引导体验</strong> · 本地模拟{view && example && <span className="showcase-view-hint">{example.hint}</span>}</span>
     <button className="showcase-text-button" onClick={onInstall}>开始使用 <IconArrowRight size={14} /></button>
   </div>;
 }
@@ -46,6 +49,7 @@ function GuidedComposer({ api, id, onRestart }: { api: ShowcaseApi; id: string |
       else await api.cancel(scenario.threadId);
     } catch (error) { setError(error instanceof Error ? error.message : '暂时无法继续，请重新体验。'); }
   };
+  if (id && !scenario) return <div className="showcase-readonly-hint">{MEMBER_IDS.includes(id) ? copy.memberHint : copy.boardThreadHint}</div>;
   const done = progress === 'completed' || progress === 'stopped';
   return <div className="composer showcase-composer">
     <div className="showcase-guide">
@@ -67,10 +71,15 @@ function GuidedComposer({ api, id, onRestart }: { api: ShowcaseApi; id: string |
   </div>;
 }
 
+function createSession(threadId?: string) {
+  const example = threadId ? EXAMPLES.find(s => s.threadId === threadId)! : EXAMPLES.find(s => s.id === new URLSearchParams(location.search).get('scene')) ?? DEFAULT_EXAMPLE;
+  history.replaceState(null, '', location.pathname + location.search + example.route);
+  return { api: new ShowcaseApi(undefined, example.threadId), threadId: example.threadId as string | null };
+}
+
 function Walkthrough() {
   const [session, setSession] = useState(() => ({
-    api: new ShowcaseApi(), key: 0,
-    threadId: SCENARIOS.find(s => s.id === new URLSearchParams(location.search).get('scene'))?.threadId ?? SCENARIOS[0].threadId as string,
+    ...createSession(), key: 0,
   }));
   const [theme, setTheme] = useState<Theme>(() => document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
   const [installOpen, setInstallOpen] = useState(false);
@@ -89,7 +98,7 @@ function Walkthrough() {
   }, []);
   const restart = (threadId: string) => {
     session.api.dispose();
-    setSession({ api: new ShowcaseApi(), key: session.key + 1, threadId });
+    setSession({ ...createSession(threadId), key: session.key + 1 });
   };
   const install = () => {
     setInstallOpen(false);
@@ -99,12 +108,12 @@ function Walkthrough() {
   return <>
     <App key={session.key} token="" onToken={() => {}} showcase={{
       api: session.api, initialThreadId: session.threadId, theme,
-      notice: id => <Notice id={id} onInstall={() => setInstallOpen(true)} />,
+      notice: (id, view) => <Notice id={id} view={view} onInstall={() => setInstallOpen(true)} />,
       intro: id => <div className="showcase-intro">
-        <div className="showcase-intro-icon">{id === 'demo-scroll-fix' ? <IconShield size={28} /> : id === 'demo-routes' ? <IconList size={28} /> : <IconFiles size={28} />}</div>
-        <h2>{id === 'demo-scroll-fix' ? '需要你时，再接手。' : id === 'demo-routes' ? '先聊清楚，再开始。' : '把任务交出去，进展留在眼前。'}</h2>
+        <div className="showcase-intro-icon">{id === 'showcase-team' ? <IconAgents size={28} /> : id === 'demo-scroll-fix' ? <IconShield size={28} /> : id === 'demo-routes' ? <IconList size={28} /> : <IconFiles size={28} />}</div>
+        <h2>{id === 'showcase-team' ? copy.collaborationIntro : id === 'demo-scroll-fix' ? '需要你时，再接手。' : id === 'demo-routes' ? '先聊清楚，再开始。' : '把任务交出去，进展留在眼前。'}</h2>
         <p>{SCENARIOS.find(s => s.threadId === id)?.hint}</p>
-        <div className="showcase-intro-steps"><span>发送任务</span><IconArrowRight size={14} /><span>跟进过程</span><IconArrowRight size={14} /><span>{id === 'demo-scroll-fix' ? '处理审批' : id === 'demo-routes' ? '讨论方案' : '查看改动'}</span></div>
+        <div className="showcase-intro-steps"><span>{id === 'showcase-team' ? copy.collaborationStep1 : '发送任务'}</span><IconArrowRight size={14} /><span>{id === 'showcase-team' ? copy.collaborationStep2 : '跟进过程'}</span><IconArrowRight size={14} /><span>{id === 'showcase-team' ? copy.collaborationStep3 : id === 'demo-scroll-fix' ? '处理审批' : id === 'demo-routes' ? '讨论方案' : '查看改动'}</span></div>
       </div>,
       composer: id => <GuidedComposer api={session.api} id={id} onRestart={restart} />,
       onInstall: () => setInstallOpen(true),

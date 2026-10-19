@@ -1,8 +1,11 @@
-import { ApiError, type Thread, type UserInputAnswer } from '../../web/src/api';
+import { ApiError, type Coordination, type Thread, type UserInputAnswer } from '../../web/src/api';
+import type { ExtensionState } from '@rah/extension-api';
+import { BUILTIN_MANIFESTS } from '../../web/src/extensions/catalog';
 import { DemoApi, DemoError } from '../../web/src/demo/DemoApi';
 import { demoData, type DemoData } from '../../web/src/demo/data';
 import type { StoredEvent } from '../../web/src/timeline';
 import { SCENARIOS } from './scenarios';
+import { addExamples, memoryExamples, TEAM_ID, MEMBER_IDS, MEMBER_TASKS, MEMBER_RESULTS } from './exampleData';
 
 export type Progress = 'ready' | 'running' | 'approval' | 'question' | 'completed' | 'stopped';
 type Schedule = (run: () => void, delay: number) => () => void;
@@ -28,18 +31,22 @@ export class ShowcaseApi extends DemoApi {
   private readonly streams = new Map<string, Set<(event: StoredEvent) => void>>();
   private readonly closeStreams = new Set<() => void>();
   private disposed = false;
+  private readonly exampleTeam: Coordination;
+  private readonly memory = memoryExamples();
 
-  constructor(private readonly later: Schedule = schedule) {
+  constructor(private readonly later: Schedule = schedule, private readonly focusedThreadId?: string | null) {
     const fixture = demoData();
     super(() => Promise.resolve(fixture));
     this.fixture = fixture;
     fixture.threads = fixture.threads.filter(t => SCENARIOS.some(s => s.threadId === t.id));
+    this.exampleTeam = addExamples(fixture);
     fixture.sections = [];
     fixture.todos = [];
     fixture.schedules = [];
     fixture.activity = [];
     fixture.traces = {};
     for (const thread of fixture.threads) {
+      if (!SCENARIOS.some(s => s.threadId === thread.id)) continue;
       const source = fixture.events[thread.id];
       const steps: Step[] = [];
       for (const event of source) {
@@ -51,8 +58,18 @@ export class ShowcaseApi extends DemoApi {
       }
       this.runs.set(thread.id, { progress: 'ready', steps, turnId: `showcase-${thread.id}` });
       fixture.events[thread.id] = source.filter(e => e.type === 'thread.created');
-      Object.assign(thread, { status: 'idle', waiting: false, waitingReason: undefined, unread: false, sectionId: null, preview: '选择这个任务，开始体验' });
+      Object.assign(thread, { status: 'idle', waiting: false, waitingReason: undefined, unread: false, sectionId: null, doneAt: null, report: null, preview: '选择这个任务，开始体验' });
     }
+    this.runs.get(TEAM_ID)!.steps = [
+      { type: 'message.delta', data: { text: '我来拆解任务和验收。Codex 负责实现，pi 独立审查，结果会回到这个主会话。' } },
+      { type: 'showcase.delegate', data: {} },
+      { type: 'message.delta', data: { text: '\n\n已派给两位成员。点击右上角的智能体入口，可以查看各自的任务、过程和往来消息。' } },
+      { type: 'showcase.return', data: { index: 0 } },
+      { type: 'message.delta', data: { text: '\n\nCodex 已返回：主题切换与偏好保存已实现。pi 正在核对验收结果。' } },
+      { type: 'showcase.return', data: { index: 1 } },
+      { type: 'message.delta', data: { text: '\n\n## 协作结果\n\n- **Codex 实现**：补上主题切换、系统跟随与刷新后恢复。\n- **pi 审查**：检查状态保存、键盘操作和手机布局，示例审查未发现阻塞问题。\n- **主控汇总**：两位成员的结果已汇总，等你验收。\n\n这是一段本地模拟，没有启动真实 agent 或修改文件。' } },
+      { type: 'turn.done', data: { stopReason: 'end_turn' } },
+    ];
   }
 
   subscribe = (listener: () => void): (() => void) => {
@@ -75,14 +92,35 @@ export class ShowcaseApi extends DemoApi {
 
   private emit(id: string, step: Step): void {
     if (this.disposed) return;
+    if (step.type === 'showcase.delegate') {
+      this.mutableThread(TEAM_ID).coordination = { rootId: TEAM_ID, children: 2, paused: false };
+      this.exampleTeam.members.forEach((member, i) => {
+        Object.assign(member.thread!, { status: 'running', runningSince: new Date().toISOString() });
+        member.latest = { id: `sample-task-${i}`, from: TEAM_ID, to: member.id, text: MEMBER_TASKS[i], kind: 'message', state: 'running', result: '', createdAt: new Date().toISOString(), turnId: `showcase-${member.id}` };
+        this.exampleTeam.messages.push(member.latest);
+        this.emit(member.id, { type: 'turn.started', data: { text: MEMBER_TASKS[i] } });
+        this.emit(member.id, { type: 'message.delta', data: { text: i ? '正在独立检查主题保存、键盘选择和手机布局。' : '正在补充主题选择和本地偏好恢复。' } });
+      });
+      this.changed();
+      return;
+    }
+    if (step.type === 'showcase.return') {
+      const i = Number(step.data.index);
+      const member = this.exampleTeam.members[i];
+      Object.assign(member.latest!, { state: 'returned', result: MEMBER_RESULTS[i] });
+      this.emit(member.id, { type: 'message.delta', data: { text: `\n\n${MEMBER_RESULTS[i]}` } });
+      this.emit(member.id, { type: 'turn.done', data: { stopReason: 'end_turn' } });
+      return;
+    }
     const events = this.fixture.events[id];
-    const run = this.runs.get(id)!;
-    const event: StoredEvent = { ...structuredClone(step), threadId: id, turnId: run.turnId, seq: (events.at(-1)?.seq ?? 0) + 1, ts: new Date().toISOString() };
+    const run = this.runs.get(id);
+    const event: StoredEvent = { ...structuredClone(step), threadId: id, turnId: run?.turnId ?? `showcase-${id}`, seq: (events.at(-1)?.seq ?? 0) + 1, ts: new Date().toISOString() };
     events.push(event);
     for (const fn of this.streams.get(id) ?? []) fn(structuredClone(event));
     if (step.type === 'turn.done') {
-      run.progress = step.data.stopReason === 'cancelled' ? 'stopped' : 'completed';
-      Object.assign(this.mutableThread(id), { status: 'idle', waiting: false, waitingReason: undefined, unread: true });
+      if (run) run.progress = step.data.stopReason === 'cancelled' ? 'stopped' : 'completed';
+      Object.assign(this.mutableThread(id), { status: 'idle', waiting: false, waitingReason: undefined, unread: true, updatedAt: event.ts,
+        report: { stage: 'review', note: step.data.stopReason === 'cancelled' ? '示例已停止，可重新体验。' : '本轮已返回，请验收结果。', at: event.ts } });
     }
     this.changed();
   }
@@ -101,13 +139,39 @@ export class ShowcaseApi extends DemoApi {
       }
       this.emit(id, step);
       this.advance(id);
-    }, step.type === 'message.delta' ? 45 : 320);
+    }, step.type.startsWith('showcase.') ? 1400 : step.type === 'message.delta' ? 45 : 320);
   }
 
   protected override async send<T>(method: string, url: string, body?: unknown): Promise<T> {
     if (this.disposed) throw new DemoError(method !== 'GET');
     const parts = new URL(url, 'http://demo').pathname.split('/').filter(Boolean).slice(1);
     const payload = (body ?? {}) as Record<string, unknown>;
+    if (method === 'GET' && parts[0] === 'threads' && !parts[1] && this.focusedThreadId !== undefined) {
+      return structuredClone(this.fixture.threads.filter(t => ['showcase-progress', 'showcase-blocked', 'showcase-review', 'showcase-done'].includes(t.id)
+        || t.id === this.focusedThreadId || (this.focusedThreadId === TEAM_ID && MEMBER_IDS.includes(t.id)))) as T;
+    }
+    if (method === 'GET' && parts[0] === 'extensions' && !parts[1]) {
+      return BUILTIN_MANIFESTS.map(manifest => ({ manifest, source: 'builtin', installed: true, enabled: true, granted: [...manifest.permissions], installedAt: null, updatedAt: null } satisfies ExtensionState)) as T;
+    }
+    if (method === 'GET' && parts[0] === 'extensions' && parts[1] === 'memory' && parts[2] === 'memory') {
+      if (parts[3] === 'sources') return structuredClone(this.memory.sources) as T;
+      if (parts[3] !== 'sample-codex') throw new DemoError(false);
+      if (parts[4] === 'files') return structuredClone({ state: 'available', files: this.memory.files, partial: false, checkedAt: new Date().toISOString() }) as T;
+      if (parts[4] === 'document') {
+        const document = this.memory.documents.find(d => d.id === new URL(url, 'http://demo').searchParams.get('id'));
+        if (!document) throw new DemoError(false);
+        return structuredClone(document) as T;
+      }
+    }
+    if (method === 'GET' && parts[0] === 'threads' && parts[2] === 'coordination' && [TEAM_ID, ...MEMBER_IDS].includes(parts[1])) {
+      return structuredClone(this.mutableThread(TEAM_ID).coordination ? this.exampleTeam : null) as T;
+    }
+    if (method === 'PATCH' && parts[0] === 'threads' && parts.length === 2 && Object.keys(payload).join() === 'done' && typeof payload.done === 'boolean') {
+      const thread = this.mutableThread(parts[1]);
+      thread.doneAt = payload.done ? new Date().toISOString() : null;
+      this.changed();
+      return structuredClone(thread) as T;
+    }
     if (method === 'POST' && parts[0] === 'threads' && parts[2] === 'turns') {
       const id = parts[1];
       const scenario = SCENARIOS.find(s => s.threadId === id);
@@ -124,6 +188,12 @@ export class ShowcaseApi extends DemoApi {
       const run = this.runs.get(parts[1]);
       if (!run || !['running', 'approval', 'question'].includes(run.progress)) throw new DemoError(true);
       run.cancelTimer?.();
+      if (parts[1] === TEAM_ID) for (const member of this.exampleTeam.members) {
+        if (member.latest?.state === 'running') {
+          member.latest.state = 'stopped';
+          this.emit(member.id, { type: 'turn.done', data: { stopReason: 'cancelled' } });
+        }
+      }
       if (run.progress === 'approval') this.emit(parts[1], { type: 'approval.resolved', data: { approvalId: 'demo-approval', decision: { cancelled: true } } });
       if (run.progress === 'question') this.emit(parts[1], { type: 'input.resolved', data: { inputId: 'demo-question', answer: { cancelled: true } } });
       this.emit(parts[1], { type: 'turn.done', data: { stopReason: 'cancelled' } });

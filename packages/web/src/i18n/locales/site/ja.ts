@@ -1,6 +1,28 @@
 import type { SiteMessages } from './zh';
 
 export const ja: SiteMessages = {
+  collaboration: "エージェントの協働",
+  collaborationTitle: "異なるエージェントで、一緒に進める。",
+  collaborationDescription: "主担当がタスクを分解し、実装とレビューをメンバーに依頼。各メンバーの進捗と会話を確認し、戻ってきた結果を検収できます。",
+  collaborationTry: "協働を体験",
+  collaborationRoleLead: "計画と取りまとめ",
+  collaborationRoleBuild: "実装",
+  collaborationRoleReview: "独立したレビュー",
+  collaborationExampleNote: "これは分担の一例です。メンバーと役割は自分で選べます。",
+  collaborationPrompt: "ダークモードを追加してください。Codex が実装し、pi がレビューして、結果をまとめてください。",
+  collaborationHint: "送信後、右上のエージェントからメンバーとメッセージを確認できます。",
+  collaborationIntro: "分担して進め、結果を一つに。",
+  collaborationStep1: "依頼",
+  collaborationStep2: "進捗確認",
+  collaborationStep3: "結果の確認",
+  boardExample: "ボードを体験",
+  memoryExample: "メモリを探索",
+  boardHint: "カードから会話を開き、検収後に完了をチェック。変更するのはサンプルデータだけです。",
+  memoryHint: "「偏好」で検索し、メモリを開いてプレビューと原文を切り替えます。内容はすべて架空です。",
+  exampleOpen: "体験する",
+  memberHint: "協働メンバーのサンプル会話です。上部から主担当の会話に戻れます。",
+  boardThreadHint: "ボードのサンプル会話です。サイドバーのボードから戻れます。",
+
   skip: "製品デモへスキップ",
   nav: "メインナビゲーション",
   experience: "体験する",

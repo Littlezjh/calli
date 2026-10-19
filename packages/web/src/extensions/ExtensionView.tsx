@@ -4,7 +4,7 @@ import type { WebExtensionModule } from '@rah/extension-api/web';
 import { useIsNarrow } from '../hooks';
 import { t } from '../i18n';
 import { BUILTIN_MODULES } from './catalog';
-import { createWebHost, type HostInputs } from './host';
+import { createWebHost, extensionStorage, type HostInputs } from './host';
 import { hostUi } from './ui';
 
 interface Props {
@@ -63,7 +63,7 @@ export function ExtensionView({ api, extensionId, viewId, name, inputs, onOpenTh
   const setDone = useRef(onSetThreadDone);
   setDone.current = onSetThreadDone;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const live = useMemo(() => createWebHost(extensionId, inputs, { api, openThread: (id) => openThread.current(id), setThreadDone: (id, done) => setDone.current(id, done), ui: hostUi, onError: () => setFailed(true) }), [api, extensionId, attempt, inputs.extension]);
+  const live = useMemo(() => createWebHost(extensionId, inputs, { api, storage: api.demo ? extensionStorage(extensionId, null) : undefined, openThread: (id) => openThread.current(id), setThreadDone: (id, done) => setDone.current(id, done), ui: hostUi, onError: () => setFailed(true) }), [api, extensionId, attempt, inputs.extension]);
   useEffect(() => live.update(inputs), [live, inputs]);
   const host = useMemo(() => ({ ...live.host, narrow }), [live, narrow]);
 

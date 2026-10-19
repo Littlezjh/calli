@@ -156,3 +156,62 @@ test('only preset messages are accepted, instances are isolated, and the origina
     await assert.rejects(new DemoApi().startTurn(SCENARIOS[0].threadId, SCENARIOS[0].prompt), DemoError);
   } finally { api.dispose(); second.api.dispose(); }
 });
+
+test('collaboration delegates to two members, returns readable results and stops without late replies', async () => {
+  const { api, drain, tasks } = setup();
+  try {
+    const scene = SCENARIOS.find(s => s.id === 'collaboration')!;
+    await api.startTurn(scene.threadId, scene.prompt);
+    drain();
+    const team = await api.coordination(scene.threadId);
+    assert.equal(team?.members.length, 2);
+    assert.ok(team!.members.every(m => m.latest?.state === 'returned' && m.latest.result && m.thread?.status === 'idle'));
+    for (const member of team!.members) {
+      const timeline = buildTimeline(await api.eventsTail(member.id));
+      assert.equal(timeline.running, false);
+      assert.ok(timeline.items.some(i => i.kind === 'assistant'));
+    }
+    assert.match((await api.eventsTail(scene.threadId)).map(e => e.data.text ?? '').join(''), /协作结果/);
+    assert.equal(api.progress(scene.threadId), 'completed');
+    assert.equal(tasks.size, 0);
+  } finally { api.dispose(); }
+  const second = setup();
+  try {
+    const scene = SCENARIOS.find(s => s.id === 'collaboration')!;
+    await second.api.startTurn(scene.threadId, scene.prompt);
+    for (let i = 0; i < 2; i++) {
+      const next = second.tasks.values().next().value!;
+      second.tasks.delete(next); next();
+    }
+    assert.ok((await second.api.coordination(scene.threadId))?.members.every(m => m.thread?.status === 'running'));
+    await second.api.cancel(scene.threadId);
+    second.drain();
+    assert.ok((await second.api.coordination(scene.threadId))?.members.every(m => m.latest?.state === 'stopped' && m.thread?.status === 'idle'));
+    assert.equal(second.tasks.size, 0);
+  } finally { second.api.dispose(); }
+});
+
+test('board acceptance and memory reads use isolated sample data, without network calls', async () => {
+  const api = new ShowcaseApi();
+  const other = new ShowcaseApi();
+  const fetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error('No network allowed'); };
+  try {
+    assert.ok((await api.extensions()).filter(e => ['board', 'memory'].includes(e.manifest.id)).every(e => e.installed && e.enabled));
+    assert.equal((await api.thread('showcase-review')).doneAt, null);
+    await api.updateThread('showcase-review', { done: true });
+    assert.ok((await api.thread('showcase-review')).doneAt);
+    assert.equal((await other.thread('showcase-review')).doneAt, null);
+    await api.updateThread('showcase-review', { done: false });
+    assert.equal((await api.thread('showcase-review')).doneAt, null);
+    const [source] = await api.memorySources('memory');
+    const index = await api.memoryList('memory', source.id);
+    assert.equal(index.state, 'available');
+    assert.equal(index.files.length, 3);
+    const document = await api.memoryRead('memory', source.id, index.files[0].id);
+    assert.match(document.text, /虚构记忆/);
+    await assert.rejects(api.memoryRead('memory', source.id, '../private'), DemoError);
+    await assert.rejects(api.memoryList('memory', 'unknown'), DemoError);
+    assert.deepEqual(await new DemoApi().coordination('demo-dark-mode'), null);
+  } finally { globalThis.fetch = fetch; api.dispose(); other.dispose(); }
+});

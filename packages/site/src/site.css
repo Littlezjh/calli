@@ -41,8 +41,8 @@ html[data-page='site'], [data-page='site'] body { height: auto; min-height: 100%
 .site-experience { padding-top: 16px; }
 .site-demo-window { overflow: hidden; border: 1px solid var(--border-strong); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); }
 .site-demo-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 58px; padding: 10px 14px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
-.site-demo-tabs { display: flex; gap: 4px; }
-.site-demo-tabs > button { display: inline-flex; align-items: center; gap: 8px; min-height: 34px; padding: 0 12px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--muted); font-size: 12px; }
+.site-demo-tabs { display: flex; gap: 4px; min-width: 0; overflow-x: auto; scrollbar-width: thin; }
+.site-demo-tabs > button { flex: none; white-space: nowrap; display: inline-flex; align-items: center; gap: 8px; min-height: 34px; padding: 0 12px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--muted); font-size: 12px; }
 .site-demo-tabs > button:hover { color: var(--text); background: var(--hover); }
 .site-demo-tabs > button[aria-pressed='true'] { color: var(--text); background: var(--surface); border-color: var(--border); box-shadow: var(--shadow-card); }
 .site-step-number { font-family: var(--mono); color: var(--faint); font-size: 10px; }
@@ -59,7 +59,7 @@ html[data-page='site'], [data-page='site'] body { height: auto; min-height: 100%
 .site-demo-note > span:last-child { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
 .site-demo-note a { display: inline-flex; align-items: center; gap: 4px; color: var(--text); }
 .site-features { padding-top: 96px; padding-bottom: 88px; }
-.site-feature-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 40px; margin-top: 42px; }
+.site-feature-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 40px; margin-top: 42px; }
 .site-feature-icon { display: inline-flex; color: var(--text); margin-bottom: 20px; }
 .site-feature-grid h3 { font-size: 18px; font-weight: 550; margin-bottom: 12px; }
 .site-feature-grid article > p { color: var(--muted); font-size: 14px; line-height: 1.9; max-width: 32em; }
@@ -194,4 +194,22 @@ html[data-page='site'], [data-page='site'] body { height: auto; min-height: 100%
   .site-community h2 { font-size: 26px; }
   .site-community-copy > p { font-size: 13px; }
   .site-feature-grid article > .site-feature-footnote { margin-top: 14px; padding-top: 12px; font-size: 10px; }
+}
+
+.site-collaboration-flow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 28px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
+.site-collaboration-role { display: flex; align-items: center; gap: 14px; padding: 26px; }
+.site-collaboration-role + .site-collaboration-role { border-left: 1px solid var(--border); }
+.site-collaboration-role strong, .site-collaboration-role span { display: block; }
+.site-collaboration-role strong { font-size: 15px; font-weight: 550; }
+.site-collaboration-role span { color: var(--muted); font-size: 12px; margin-top: 6px; }
+.site-collaboration-actions { display: flex; align-items: center; gap: 20px; margin-top: 22px; }
+.site-collaboration-actions p { color: var(--muted); font-size: 12px; }
+.site-plugin-try { display: inline-flex; align-items: center; gap: 8px; align-self: flex-start; border: 0; padding: 0; background: transparent; color: var(--text); font-size: 13px; margin-top: 22px; }
+@media (max-width: 700px) {
+  .site-collaboration-role { flex-direction: column; align-items: flex-start; gap: 12px; padding: 18px 12px; }
+  .site-collaboration-role strong { font-size: 12px; }
+  .site-collaboration-role span { font-size: 10px; }
+  .site-collaboration-actions { align-items: flex-start; flex-direction: column; gap: 12px; }
+  .site-demo-tabs { justify-content: flex-start; }
+  .site-demo-tabs > button { padding: 0 12px; }
 }

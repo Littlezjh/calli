@@ -180,9 +180,9 @@ function MemberModel({ agent, models, value, permission, onNeed, onChange, onPer
 /** Presentation overrides for the standalone, local-only product walkthrough. */
 export interface Showcase {
   api: Api;
-  initialThreadId: string;
+  initialThreadId: string | null;
   theme: Theme;
-  notice: (threadId: string | null) => ReactNode;
+  notice: (threadId: string | null, view?: string) => ReactNode;
   intro: (threadId: string) => ReactNode;
   composer: (threadId: string | null) => ReactNode;
   onInstall: () => void;
@@ -1655,8 +1655,8 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           todosActive={onTodos}
           onOpenSchedules={showcase ? undefined : openSchedules}
           schedulesActive={onSchedules}
-          extensionNav={showcase ? undefined : extensionNav}
-          notice={demo && compact ? showcase ? showcase.notice(selectedId) : <DemoBar compact onConnect={askToConnect} /> : undefined}
+          extensionNav={extensionNav}
+          notice={demo && compact ? showcase ? showcase.notice(selectedId, extWant) : <DemoBar compact onConnect={askToConnect} /> : undefined}
         />
       </aside>
 
@@ -1734,7 +1734,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           )}
         </header>
 
-        {demo && (showcase ? showcase.notice(selectedId) : <DemoBar compact={compact} onConnect={askToConnect} />)}
+        {demo && (showcase ? showcase.notice(selectedId, extWant) : <DemoBar compact={compact} onConnect={askToConnect} />)}
 
         {selected && !onPage && hostUp && <HandoverTrail thread={selected} threads={threads} agentLabel={agentLabel} onSelect={pick} />}
 

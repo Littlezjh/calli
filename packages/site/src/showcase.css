@@ -1,6 +1,10 @@
 /* Let scrolling continue into the parent page at the conversation's edges. */
 html[data-page='showcase'], [data-page='showcase'] body, [data-page='showcase'] .scroller { overscroll-behavior: auto; }
 [data-page='showcase'] .scroller { min-height: 0; }
+/* The board already supplies its own gutters inside the embedded viewport. */
+@media (min-width: 641px) {
+  [data-page='showcase'] .scroller:has(.ext-board-page) { padding-inline: 0; }
+}
 .showcase-notice { gap: 12px; flex-shrink: 0; width: 100%; margin: 0; padding: 8px 16px; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; box-shadow: none; background: var(--bg); }
 .showcase-notice > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .showcase-notice strong { font-weight: 550; }
@@ -32,3 +36,6 @@ html[data-page='showcase'], [data-page='showcase'] body, [data-page='showcase'] 
   .showcase-guide { padding-bottom: 8px; font-size: 11px; }
   .showcase-composer-bar > span { max-width: 140px; }
 }
+
+.showcase-view-hint { display: block; white-space: normal; font-size: 11px; line-height: 1.6; margin-top: 4px; color: var(--muted); }
+.showcase-readonly-hint { padding: 14px 18px; font-size: 12px; color: var(--muted); line-height: 1.6; }

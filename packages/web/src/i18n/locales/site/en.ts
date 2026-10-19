@@ -1,6 +1,28 @@
 import type { SiteMessages } from './zh';
 
 export const en: SiteMessages = {
+  collaboration: "Agent collaboration",
+  collaborationTitle: "Let different agents work together.",
+  collaborationDescription: "The lead breaks down the task and delegates implementation and review. Follow each member, open their conversation, and check the results when they return.",
+  collaborationTry: "Try collaboration",
+  collaborationRoleLead: "Plan and summarize",
+  collaborationRoleBuild: "Implement",
+  collaborationRoleReview: "Review independently",
+  collaborationExampleNote: "One example team. You choose the members and roles.",
+  collaborationPrompt: "Add dark mode: ask Codex to implement it and pi to review it, then summarize the results for me.",
+  collaborationHint: "Send the task, then open Agents at the top right to see members and messages.",
+  collaborationIntro: "Delegate the work. Bring results together.",
+  collaborationStep1: "Delegate",
+  collaborationStep2: "Follow members",
+  collaborationStep3: "Review results",
+  boardExample: "Try the board",
+  memoryExample: "Explore memory",
+  boardHint: "Open a conversation from a card, or tick it done after review. Only sample data changes.",
+  memoryHint: "Search “偏好”, open a memory, then switch between preview and source. All content is fictional.",
+  exampleOpen: "Try this example",
+  memberHint: "This is a sample member conversation. Return to the lead using the top bar.",
+  boardThreadHint: "This sample conversation belongs to the board. Return using Board in the sidebar.",
+
   skip: "Skip to product demo",
   nav: "Main navigation",
   experience: "Try it",
