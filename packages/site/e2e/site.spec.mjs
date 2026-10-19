@@ -305,3 +305,62 @@ for (const phone of [false, true]) for (const theme of ['light', 'dark']) {
     } finally { await context.close(); }
   });
 }
+
+for (const phone of [false, true]) for (const theme of ['light', 'dark']) {
+  test(`memory example has one wheel scroll surface: ${phone ? 'phone' : 'desktop'}, ${theme}`, async () => {
+    const { page, context, demo, errors } = await open({ phone, theme });
+    try {
+      await page.addStyleTag({ content: 'html { scroll-behavior: auto !important; }' });
+      await page.locator('.site-demo-tabs').getByRole('button', { name: /探索记忆/ }).click();
+      await page.locator('iframe.is-ready').waitFor();
+      await demo.locator('.memory-card').first().waitFor();
+      const frame = page.frames().find(f => f.url().includes('/demo/'));
+      await page.evaluate(() => scrollBy(0, document.querySelector('iframe').getBoundingClientRect().top - 100));
+      const outerY = await page.evaluate(() => scrollY);
+      const scroll = frame.locator('.main .scroller');
+      const wheel = async (selector) => {
+        await scroll.evaluate(el => { el.scrollTop = 0; });
+        const bounds = await frame.locator(selector).boundingBox();
+        const viewport = await scroll.boundingBox();
+        const top = Math.max(bounds.y, viewport.y), bottom = Math.min(bounds.y + bounds.height, viewport.y + viewport.height);
+        assert.ok(bottom - top > 20, `${selector} must have a usable scroll area`);
+        const travel = await scroll.evaluate(el => el.scrollHeight - el.clientHeight);
+        if (travel <= 1) {
+          assert.ok(bounds.y + bounds.height <= viewport.y + viewport.height + 1, 'short content is fully visible without scrolling');
+          return;
+        }
+        await page.mouse.move(bounds.x + bounds.width / 2, (top + bottom) / 2);
+        await page.mouse.wheel(0, 140);
+        await frame.waitForFunction(distance => document.querySelector('.main .scroller').scrollTop > distance, Math.min(50, travel / 2));
+        assert.equal(await page.evaluate(() => scrollY), outerY, 'the memory content scrolls before the outer homepage');
+        await page.mouse.wheel(0, -140);
+        await frame.waitForFunction(() => document.querySelector('.main .scroller').scrollTop < 2);
+      };
+      await wheel('.memory-source-bar');
+      await wheel('.memory-list');
+      if (phone) await demo.locator('.memory-card').first().click();
+      await demo.locator('.memory-document .md').waitFor();
+      await wheel('.memory-document');
+      await demo.getByRole('button', { name: '原文', exact: true }).click();
+      await wheel('.memory-document');
+      const nested = await frame.locator('.memory-list, .memory-document').evaluateAll(elements => elements.filter(el => el.clientHeight > 0).map(el => el.scrollHeight > el.clientHeight + 1));
+      assert.deepEqual(nested.filter(Boolean), [], 'list and document must not hide content in nested scroll panes');
+      if (!phone) {
+        await demo.locator('.memory-card').last().click();
+        const title = demo.locator('.memory-document h2');
+        await title.filter({ hasText: '手机菜单检查记录' }).waitFor();
+        const heading = await title.boundingBox(), viewport = await scroll.boundingBox();
+        assert.ok(heading.y >= viewport.y - 1 && heading.y + heading.height <= viewport.y + viewport.height + 1, 'selecting a later card keeps its document visible');
+      }
+      await page.screenshot({ path: `${shots}/${phone ? 'phone' : 'desktop'}-${theme}-memory-wheel.png` });
+      // At the edge, a new wheel gesture can continue through the homepage.
+      await scroll.evaluate(el => { el.scrollTop = el.scrollHeight; });
+      const box = await scroll.boundingBox();
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.waitForTimeout(250);
+      await page.mouse.wheel(0, 300);
+      await page.waitForFunction(y => scrollY > y + 30, outerY);
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  });
+}

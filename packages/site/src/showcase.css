@@ -4,7 +4,15 @@ html[data-page='showcase'], [data-page='showcase'] body, [data-page='showcase'] 
 /* The board already supplies its own gutters inside the embedded viewport. */
 @media (min-width: 641px) {
   [data-page='showcase'] .scroller:has(.ext-board-page) { padding-inline: 0; }
+  /* Keep the selected document visible when reaching later cards in the list. */
+  [data-page='showcase'] .memory-detail { position: sticky; top: 0; align-self: start; }
 }
+/* A short embedded example needs one scroll surface, not two tiny nested panes. */
+[data-page='showcase'] .memory-page { height: auto; min-height: 100%; }
+[data-page='showcase'] .memory-layout { flex: none; }
+[data-page='showcase'] .memory-list { flex: none; }
+[data-page='showcase'] .memory-list,
+[data-page='showcase'] .memory-document { overflow-y: visible; }
 .showcase-notice { gap: 12px; flex-shrink: 0; width: 100%; margin: 0; padding: 8px 16px; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; box-shadow: none; background: var(--bg); }
 .showcase-notice > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .showcase-notice strong { font-weight: 550; }
