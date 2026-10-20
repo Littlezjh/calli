@@ -195,3 +195,39 @@ test('a turn that fails because the plan ran out is marked so another agent can 
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('merged-history HTTP reads omit handover text until explicitly expanded, and require authentication', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'rah-handover-history-'));
+  const store = new Store(root);
+  const registry = new AgentRegistry([{ id: 'pi', adapter: 'pi', command: [process.execPath, fixture] }], null);
+  const manager = new ThreadManager(store, registry.adapters, new Workdirs([root], null), new AttachmentStore(root));
+  const server = createHttpServer({ manager, token: 'history-token', webDir: null, version: 'test' });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const get = (path: string) => fetch(base + path, { headers: { Authorization: 'Bearer history-token' } });
+  try {
+    const make = (id: string, sourceId?: string) => store.createThread({ id, agent: 'pi', cwd: root, title: id, agentSessionId: null, permissionMode: 'default', model: null, effort: null,
+      handover: sourceId ? { sourceId, agent: 'pi', title: sourceId } : null });
+    make('source'); make('recipient', 'source');
+    store.appendEvent('source', 'last', 'turn.started', { text: 'continue' });
+    store.appendEvent('source', 'last', 'turn.error', { code: 'plan_exhausted', message: 'limit' });
+    store.appendEvent('recipient', 'opening', 'turn.started', { text: 'original', displayText: 'received handover' });
+    store.appendEvent('recipient', 'opening', 'message.delta', { text: 'answer' });
+    store.appendEvent('recipient', 'opening', 'turn.done', {});
+    const path = '/api/threads/recipient/history';
+    assert.equal((await fetch(base + path + '/handover')).status, 401);
+    const collapsed = await (await get(path + '?chain=1')).json() as {events: {data: Record<string, unknown>}[]};
+    assert.ok(!JSON.stringify(collapsed).includes('received handover'));
+    assert.ok(collapsed.events.some(event => event.data.handoverCollapsed === true));
+    const metadata = await (await get(path + '/handover')).json() as Record<string, unknown>;
+    assert.equal('text' in metadata, false); assert.equal(metadata.reason, 'plan_exhausted');
+    const expanded = await (await get(path + '/handover?text=1')).json() as { text: string };
+    assert.equal(expanded.text, 'received handover');
+    assert.ok((await (await get(path)).text()).includes('received handover'));
+    assert.equal((await get('/api/threads/source/history/handover')).status, 404);
+    assert.equal((await get('/api/threads/missing/history/handover')).status, 404);
+  } finally {
+    server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
+    await manager.shutdown(); store.close(); rmSync(root, { recursive: true, force: true });
+  }
+});

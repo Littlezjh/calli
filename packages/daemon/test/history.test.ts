@@ -346,3 +346,45 @@ test('the cold path also says how long each stretch ran, without waiting for pro
     assert.equal(work.data.endedAt, lastTool.ts, 'the placeholder ends where the call ended, not where it began');
   } finally { f.close(); }
 });
+
+test('merged history defers only the recipient opening prompt across cold/warm pages, work and reconnect', async () => {
+  const f = fixture();
+  try {
+    const recipient = f.store.createThread({ id: 'recipient', agent: 'pi', cwd: '/project', title: 'recipient', agentSessionId: null, permissionMode: 'default', model: null, effort: null,
+      handover: { sourceId: 'thread', agent: 'pi', title: 'source' } });
+    f.add('failed', 'turn.started', { text: 'first attempt' });
+    f.add('failed', 'turn.error', { code: 'plan_exhausted', message: 'limit' });
+    const prompt = 'LONG_HANDOVER_BODY'.repeat(5000);
+    const start = f.store.appendEvent(recipient.id, 'first', 'turn.started', { text: prompt });
+    f.store.appendEvent(recipient.id, 'first', 'tool.start', { id: 'tool', title: 'Read file', kind: 'read' });
+    f.store.appendEvent(recipient.id, 'first', 'tool.end', { id: 'tool', status: 'completed' });
+    f.store.appendEvent(recipient.id, 'first', 'message.delta', { text: 'recipient answer' });
+    f.store.appendEvent(recipient.id, 'first', 'turn.done', {});
+    f.store.appendEvent(recipient.id, 'second', 'turn.started', { text: 'ordinary follow-up' });
+    f.store.appendEvent(recipient.id, 'second', 'turn.done', {});
+    for (const warm of [false, true]) {
+      if (!warm) f.store.db.exec('DELETE FROM history_coverage');
+      const page = await f.store.history.page(recipient.id, undefined, 0, true);
+      assert.ok(!JSON.stringify(page).includes('LONG_HANDOVER_BODY'));
+      assert.deepEqual(page.events.find(e => e.type === 'turn.started')?.data, { text: '', handoverCollapsed: true });
+      assert.ok(JSON.stringify(page).includes('ordinary follow-up'));
+      assert.ok(JSON.stringify(page).includes('recipient answer'));
+      const work = page.events.find(e => e.type === 'history.work')!;
+      const details = await f.store.history.work(recipient.id, work.turnId!, work.seq, 0, undefined, true);
+      assert.ok(!JSON.stringify(details).includes('LONG_HANDOVER_BODY'));
+      assert.ok(!JSON.stringify(await f.store.history.since(recipient.id, 0, true)).includes('LONG_HANDOVER_BODY'));
+    }
+    assert.ok(JSON.stringify(await f.store.history.page(recipient.id)).includes(prompt));
+    assert.deepEqual(f.store.history.handoverEvent(start).data, { text: '', handoverCollapsed: true });
+    assert.equal(f.store.history.handoverInfo(recipient.id).reason, 'plan_exhausted');
+    assert.equal('text' in f.store.history.handoverInfo(recipient.id), false);
+    assert.equal(f.store.history.handoverInfo(recipient.id, true).text, prompt);
+    f.add('recovered', 'turn.started', { text: 'recovered' });
+    f.add('recovered', 'turn.done', {});
+    assert.equal(f.store.history.handoverInfo(recipient.id).reason, null, 'only the final source turn provides the reason');
+    assert.throws(() => f.store.history.handoverInfo('thread'), /no handover source/);
+    f.store.deleteThread('thread');
+    assert.equal(f.store.history.handoverInfo(recipient.id).source.sourceId, 'thread');
+    assert.equal(f.store.history.handoverInfo(recipient.id, true).text, prompt, 'deleted source keeps the received text');
+  } finally { f.close(); }
+});

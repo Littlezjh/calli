@@ -46,6 +46,11 @@ import { ActivityIcon, IconAgents, IconCheck, IconChevron, IconClose, IconCompac
 import { t } from '../i18n';
 
 interface Props {
+  beforeItems?: ReactNode;
+  chain?: boolean;
+  observeOlder?: boolean;
+  olderLabel?: string;
+  olderError?: string;
   historyApi?: Api;
   historyThreadId?: string;
   items: Item[];
@@ -83,15 +88,15 @@ const RECENT_TURNS = 30;
 /** Scrolling up to within this distance of the top unfolds or fetches the earlier turns. */
 const NEAR_TOP_PX = 600;
 
-export function ThreadView({ revealTurnId, historyApi, historyThreadId, items: originalItems, roots, loadImage, loadFile, onOpenFile, onPreview, hasOlder, loadingOlder, onLoadOlder, onFork, forkAnyTurn, takeover }: Props) {
+export function ThreadView({ chain = false, observeOlder = true, beforeItems, olderLabel, olderError, revealTurnId, historyApi, historyThreadId, items: originalItems, roots, loadImage, loadFile, onOpenFile, onPreview, hasOlder, loadingOlder, onLoadOlder, onFork, forkAnyTurn, takeover }: Props) {
   const [loadedFiles, setLoadedFiles] = useState<{ client?: HistoryClient; files: Map<string, WorkFiles> }>({ files: new Map() });
   const historyClient = useMemo(() => {
     if (!historyApi || !historyThreadId) return undefined;
     const client = new HistoryClient(historyApi, historyThreadId, (ref, work) => {
       if (work.files) setLoadedFiles(previous => ({ client, files: new Map(previous.client === client ? previous.files : []).set(`${ref.turnId}:e${ref.id}`, work.files!) }));
-    });
+    }, chain);
     return client;
-  }, [historyApi, historyThreadId]);
+  }, [historyApi, historyThreadId, chain]);
   const items = useMemo(() => loadedFiles.client === historyClient ? hydrateHistoryFiles(originalItems, loadedFiles.files) : originalItems, [originalItems, loadedFiles, historyClient]);
   const [lightbox, setLightbox] = useState<{ url: string; name?: string } | null>(null);
   const show = useCallback((url: string, name?: string) => setLightbox({ url, name }), []);
@@ -141,6 +146,7 @@ export function ThreadView({ revealTurnId, historyApi, historyThreadId, items: o
   };
   const reachTop = useRef(() => {});
   reachTop.current = () => {
+    if (!observeOlder || olderError) return;
     if (folded) expand();
     else if (hasOlder && !loadingOlder) onLoadOlder?.();
   };
@@ -155,30 +161,59 @@ export function ThreadView({ revealTurnId, historyApi, historyThreadId, items: o
     if (!scroller) return;
     let lastTop = scroller.scrollTop;
     let touchY = 0;
+    let upward = false;
+    // A prepend or collapsing a long handover can move the scrollbar too. Only user navigation
+    // may cross another segment; consume each gesture before inserting the next page.
+    const reach = () => {
+      if (chain && !upward) return;
+      upward = false;
+      reachTop.current();
+    };
     const onScroll = () => {
       const top = scroller.scrollTop;
-      if (top < lastTop && top < NEAR_TOP_PX) reachTop.current();
+      if (top < lastTop && top < NEAR_TOP_PX) reach();
       lastTop = top;
     };
-    // Already at the top (or too short to scroll) there is no scroll event; the gesture itself says "up".
+    const nestedScrollConsumesUp = (target: EventTarget | null) => {
+      if (!chain) return false;
+      for (let el = target instanceof Element ? target : null; el && el !== scroller; el = el.parentElement) {
+        if (el.scrollTop > 0 && el.scrollHeight > el.clientHeight) return true;
+      }
+      return false;
+    };
     const onWheel = (e: WheelEvent) => {
-      if (e.deltaY < 0 && scroller.scrollTop < NEAR_TOP_PX) reachTop.current();
+      if (e.deltaY >= 0 || nestedScrollConsumesUp(e.target)) return;
+      upward = true;
+      if (scroller.scrollTop < NEAR_TOP_PX) reach();
     };
     const onTouchStart = (e: TouchEvent) => void (touchY = e.touches[0]?.clientY ?? 0);
     const onTouchMove = (e: TouchEvent) => {
-      if ((e.touches[0]?.clientY ?? 0) > touchY + 10 && scroller.scrollTop < NEAR_TOP_PX) reachTop.current();
+      if ((e.touches[0]?.clientY ?? 0) <= touchY + 10 || nestedScrollConsumesUp(e.target)) return;
+      upward = true;
+      if (scroller.scrollTop < NEAR_TOP_PX) reach();
     };
+    const onKeyDown = (e: globalThis.KeyboardEvent) => {
+      if (['ArrowUp', 'PageUp', 'Home'].includes(e.key)) {
+        upward = true;
+        if (scroller.scrollTop < NEAR_TOP_PX) reach();
+      }
+    };
+    const onPointerDown = (e: PointerEvent) => { if (e.target === scroller) upward = true; };
     scroller.addEventListener('scroll', onScroll, { passive: true });
     scroller.addEventListener('wheel', onWheel, { passive: true });
     scroller.addEventListener('touchstart', onTouchStart, { passive: true });
     scroller.addEventListener('touchmove', onTouchMove, { passive: true });
+    scroller.addEventListener('keydown', onKeyDown);
+    scroller.addEventListener('pointerdown', onPointerDown);
     return () => {
       scroller.removeEventListener('scroll', onScroll);
       scroller.removeEventListener('wheel', onWheel);
       scroller.removeEventListener('touchstart', onTouchStart);
       scroller.removeEventListener('touchmove', onTouchMove);
+      scroller.removeEventListener('keydown', onKeyDown);
+      scroller.removeEventListener('pointerdown', onPointerDown);
     };
-  }, []);
+  }, [chain]);
   // A fork from the last answer copies the whole thread; it is offered while that answer is the
   // last thing in it. Where the agent can end a copy at an earlier turn, every answer offers one.
   // The mark a fork starts with is not part of the conversation: the answer above it is still the last.
@@ -189,6 +224,7 @@ export function ThreadView({ revealTurnId, historyApi, historyThreadId, items: o
     list.map((item) => {
       switch (item.kind) {
         case 'user': {
+          if (item.handoverCollapsed) return null;
           if (item.coordination) return <DeliveredNote key={item.key} turnId={item.turnId} note={item.coordination} text={item.text} />;
           // Notes (and the older single quote) ride in the message text; drawn apart here.
           const noted = splitNotes(item.text);
@@ -326,15 +362,17 @@ export function ThreadView({ revealTurnId, historyApi, historyThreadId, items: o
         )}
         {!folded && hasOlder && (
           <div className="row older-row">
+            {olderError && <span className="history-status" role="alert">{olderError}</span>}
             {loadingOlder ? (
               <span className="spinner" role="status" aria-label={t('view.loadingOlder')} />
             ) : (
               <button className="older-messages" onClick={onLoadOlder}>
-                {t('view.loadOlder')}
+                {olderError ? t('common.retry') : olderLabel ?? t('view.loadOlder')}
               </button>
             )}
           </div>
         )}
+        {beforeItems}
         {shown.map((g) => renderItems(g.items))}
       </Pictures.Provider>
       </HistoryContext.Provider>

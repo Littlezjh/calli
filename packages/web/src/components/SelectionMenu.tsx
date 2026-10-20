@@ -7,7 +7,7 @@ import { t } from '../i18n';
 interface Props {
   /** A passage noted for the next message, with what the user says about it (may be empty). */
   onNote: (quote: string, comment: string, range: Range) => void;
-  onSideAsk: (text: string) => void;
+  onSideAsk: (text: string, threadId?: string) => void;
 }
 
 /** Rough size of the menu, so it can be centred on the selection without waiting for layout. */
@@ -235,7 +235,9 @@ export function SelectionMenu({ onNote, onSideAsk }: Props) {
         className="selection-ask"
         {...act(() => {
           document.getSelection()?.removeAllRanges();
-          onSideAsk(textRef.current);
+          const node = rangeRef.current?.startContainer;
+          const element = node instanceof Element ? node : node?.parentElement;
+          onSideAsk(textRef.current, element?.closest<HTMLElement>('[data-history-thread]')?.dataset.historyThread);
         })}
       >
         <IconSideChat size={14} />

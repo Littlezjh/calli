@@ -36,13 +36,13 @@ export function mergeHistory(previous: StoredEvent[], updates: StoredEvent[]): S
   return out;
 }
 
-export async function historyPage(api: Api, id: string, before?: number, after?: number): Promise<HistoryPage> {
+export async function historyPage(api: Api, id: string, before?: number, after?: number, chain = false): Promise<HistoryPage> {
   if (api.demo) {
     const events = before ? await api.eventsBefore(id, before) : await api.eventsTail(id);
     const nextCursor = (events[0]?.seq ?? 0) > 1 ? events[0].seq : null;
     return { events, nextCursor, hasOlder: nextCursor !== null, snapshotSeq: events.at(-1)?.seq ?? 0 };
   }
-  return api.historyPage(id, before, after);
+  return api.historyPage(id, before, after, chain);
 }
 
 /** All conversation surfaces share snapshot/stream ordering and batched delivery. */
@@ -52,6 +52,7 @@ export async function watchHistory(api: Api, id: string, signal: AbortSignal, ca
   error: (error: unknown) => void;
   connection?: (connected: boolean) => void;
   minimumSeq?: number;
+  chain?: boolean;
 }) {
   let after = 0;
   let loaded = false;
@@ -66,12 +67,12 @@ export async function watchHistory(api: Api, id: string, signal: AbortSignal, ca
     while (!signal.aborted) {
       try {
         if (!loaded) {
-          const page = await historyPage(api, id, undefined, callbacks.minimumSeq);
+          const page = await historyPage(api, id, undefined, callbacks.minimumSeq, callbacks.chain);
           if (signal.aborted) return;
           after = page.snapshotSeq; callbacks.page(page); loaded = true;
         }
         callbacks.connection?.(true);
-        await api.stream(`/api/threads/${id}/stream?view=history&after=${after}`, (ev: StoredEvent) => {
+        await api.stream(`/api/threads/${id}/stream?view=history&after=${after}${callbacks.chain ? '&chain=1' : ''}`, (ev: StoredEvent) => {
           after = Math.max(after, ev.seq);
           buffer.push(ev);
           timer ??= setTimeout(flush, 40);
@@ -99,7 +100,7 @@ export class HistoryClient {
   private cache = new Map<string, { value: unknown; bytes: number }>();
   private pending = new Map<string, Promise<any>>();
   private bytes = 0;
-  constructor(readonly api: Api, readonly threadId: string, private onWork?: (ref: DetailRef, value: HistoryWork) => void) {}
+  constructor(readonly api: Api, readonly threadId: string, private onWork?: (ref: DetailRef, value: HistoryWork) => void, readonly chain = false) {}
   private key(kind: ResourceKind, ref: DetailRef, path?: string, cursor?: number) { return JSON.stringify([kind, ref.turnId, ref.id, ref.version, path, cursor]); }
   invalidate(kind: ResourceKind, ref: DetailRef, path?: string) {
     const key = this.key(kind, ref, path);
@@ -123,7 +124,7 @@ export class HistoryClient {
     if (hit) { this.cache.delete(key); this.cache.set(key, hit); return Promise.resolve(hit.value as T); }
     const existing = this.pending.get(key);
     if (existing) return existing;
-    const request = (kind === 'work' ? this.api.historyWork(this.threadId, ref, cursor) : this.api.historyDetail(this.threadId, ref, cursor, kind === 'file' ? path : undefined))
+    const request = (kind === 'work' ? this.api.historyWork(this.threadId, ref, cursor, this.chain) : this.api.historyDetail(this.threadId, ref, cursor, kind === 'file' ? path : undefined))
       .then(value => {
         this.remember(kind, ref, value, path, cursor);
         if (kind === 'work') this.onWork?.(ref, value as HistoryWork);

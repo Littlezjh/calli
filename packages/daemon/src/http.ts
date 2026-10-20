@@ -732,14 +732,15 @@ export function createHttpServer(deps: HttpDeps): Server {
           return n;
         };
         if (!parts[4] && url.searchParams.get('head') === '1') return sendJson(res, 200, { snapshotSeq: history.latest(threadId) });
-        if (!parts[4]) return sendJson(res, 200, await history.page(threadId, positive(url.searchParams.get('before'), true), positive(url.searchParams.get('after'), true)));
+        if (!parts[4]) return sendJson(res, 200, await history.page(threadId, positive(url.searchParams.get('before'), true), positive(url.searchParams.get('after'), true), url.searchParams.get('chain') === '1'));
+        if (parts[4] === 'handover') return sendJson(res, 200, history.handoverInfo(threadId, url.searchParams.get('text') === '1'));
         const turn = url.searchParams.get('turn');
         if (!turn) throw new HttpError(400, 'turn is required');
         const id = positive(url.searchParams.get('id'))!;
         const cursor = positive(url.searchParams.get('cursor'), true);
         const version = positive(url.searchParams.get('version'), true);
         if (cursor !== undefined && version === undefined) throw new HttpError(400, 'version is required to continue');
-        if (parts[4] === 'work') return sendJson(res, 200, await history.work(threadId, turn, id, cursor, version));
+        if (parts[4] === 'work') return sendJson(res, 200, await history.work(threadId, turn, id, cursor, version, url.searchParams.get('chain') === '1'));
         if (parts[4] === 'detail') return sendJson(res, 200, await history.detail(threadId, turn, id, cursor, version, url.searchParams.get('path') ?? undefined));
         throw new HttpError(404, 'history resource not found');
       }
@@ -776,15 +777,15 @@ export function createHttpServer(deps: HttpDeps): Server {
           const off = manager.subscribe(ev => {
             if (ev.threadId !== threadId) return;
             if (buffer) buffer.push(ev);
-            else writeEvent(res, ev);
+            else writeEvent(res, url.searchParams.get('chain') === '1' ? history.handoverEvent(ev) : ev);
           });
           res.once('close', off);
           try {
-            const backlog = await history.since(threadId, after);
+            const backlog = await history.since(threadId, after, url.searchParams.get('chain') === '1');
             if (res.destroyed) return off();
             openSse(res);
             writeEvent(res, { threadId, turnId: null, type: 'history.reset', seq: backlog.snapshotSeq, ts: new Date().toISOString(), data: backlog });
-            for (const ev of buffer) if (ev.seq > backlog.snapshotSeq) writeEvent(res, ev);
+            for (const ev of buffer) if (ev.seq > backlog.snapshotSeq) writeEvent(res, url.searchParams.get('chain') === '1' ? history.handoverEvent(ev) : ev);
             buffer = null;
             return finishStream(req, res, off);
           } catch (err) { off(); throw err; }

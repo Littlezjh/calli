@@ -73,7 +73,9 @@ import { enabledViews, extensionHash, looksLikeExtensionRoute, resolveExtensionR
 import { AgentPicker, type DiscoveredAccount, type DiscoveredAgent, effortsForModel, imagesBlocked, imagesNote, modelName, speedsForModel, ModelPicker, PermissionPicker, UsageMeter, WorkspacePicker } from './components/Pickers';
 import { Sidebar, SIDEBAR_SHORTCUT } from './components/Sidebar';
 import { forkBlocked, useThreadActions } from './components/ThreadActions';
-import { ThreadView } from './components/ThreadView';
+import { MergedHistory } from './components/MergedHistory';
+import { HandoverComposer } from './components/HandoverComposer';
+import { latestHandoverThread } from './handover';
 import { TurnRuler } from './components/TurnRuler';
 import { NewProjectDialog, ProjectPicker, RootsDialog } from './components/Projects';
 import { NoteMarks, type NoteMark } from './components/NoteMarks';
@@ -275,6 +277,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   /** The same, for the open scheduled-task page. */
   const [schedulesKey, setSchedulesKey] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(showcase?.initialThreadId ?? null);
+  const [singleSegmentId, setSingleSegmentId] = useState<string | null>(null);
   const [coordination, setCoordination] = useState<Coordination | null>(null);
   const memberDefaultsKey = hostId ? `${MEMBER_DEFAULTS_KEY}:${hostId}` : MEMBER_DEFAULTS_KEY;
   const [memberDefaults, setMemberDefaults] = useState(() => savedMemberDefaults(memberDefaultsKey));
@@ -363,6 +366,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const [loadingOlder, setLoadingOlder] = useState(false);
   // The first page of the open thread is still on its way from the daemon.
   const [eventsLoading, setEventsLoading] = useState(false);
+  const [historyReady, setHistoryReady] = useState(false);
   // Text handed back to the composer: messages that were waiting when the user pressed stop.
   const [restore, setRestore] = useState<{ text: string; nonce: number; mentions?: AgentMention[] } | null>(null);
   // Text quoted out of a message by selecting it.
@@ -379,7 +383,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     }));
   }, []);
   // The passage a side chat was opened for, if one is open.
-  const [sideAsk, setSideAsk] = useState<{ text: string; nonce: number } | null>(null);
+  const [sideAsk, setSideAsk] = useState<{ text: string; nonce: number; source?: Thread } | null>(null);
   // A message waiting for the user to confirm sending into a session the terminal also used.
   const [pendingSend, setPendingSend] = useState<{ text: string; images: PreparedImage[]; videos?: PreparedVideo[]; mentions?: AgentMention[]; resolve: () => void; reject: (e: unknown) => void } | null>(null);
   const [pageHidden, setPageHidden] = useState(() => document.hidden);
@@ -401,6 +405,9 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     return null;
   }, [timeline.items]);
   const selected = threads.find((t) => t.id === selectedId) ?? null;
+  const latestSegment = selected ? latestHandoverThread(selected, threads) : null;
+  const viewingEarlier = Boolean(selected && latestSegment && latestSegment.id !== selected.id);
+  const mergedHandover = !api.demo && singleSegmentId !== selectedId && Boolean(selected?.handover || viewingEarlier);
   useEffect(() => {
     let cancelled = false;
     if (!api || !selected?.coordination) { setCoordination(null); return; }
@@ -735,14 +742,15 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const historyCursor = useRef<number | null>(null);
   const olderRequest = useRef<object | null>(null);
   useEffect(() => {
-    setEvents([]); setHistoryTurnIds([]); setHasOlder(false); setLoadingOlder(false);
+    setEvents([]); setHistoryTurnIds([]); setHasOlder(false); setLoadingOlder(false); setHistoryReady(false);
     setEventsLoading(Boolean(api && selectedId)); historyCursor.current = null; olderRequest.current = null;
     if (!api || !selectedId) return;
     const ctrl = new AbortController();
     stickToBottom.current = true; setAtBottom(true);
     void watchHistory(api, selectedId, ctrl.signal, {
+      chain: mergedHandover,
       page: page => {
-        setEvents(page.events); setHistoryTurnIds(page.turnIds ?? []); setEventsLoading(false);
+        setEvents(page.events); setHistoryTurnIds(page.turnIds ?? []); setEventsLoading(false); setHistoryReady(true);
         historyCursor.current = page.nextCursor; setHasOlder(page.hasOlder);
       },
       events: batch => setEvents(previous => mergeHistory(previous, batch)),
@@ -750,7 +758,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     });
     return () => ctrl.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, selectedId]);
+  }, [api, selectedId, mergedHandover]);
 
   /** Prepends the page of turns before the loaded ones, keeping the scroll position on the same content. */
   const loadOlder = async () => {
@@ -760,7 +768,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     const request = {}; olderRequest.current = request;
     setLoadingOlder(true);
     try {
-      const page = await historyPage(api, id, first);
+      const page = await historyPage(api, id, first, undefined, mergedHandover);
       const older = page.events;
       // The answer is for the thread that asked; another one may be open by now.
       if (shownThread.current !== id || olderRequest.current !== request) return;
@@ -790,7 +798,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   // scroller is watched too: a phone keyboard shrinks it and would hide the newest lines.
   useEffect(() => {
     const el = scrollerRef.current;
-    const content = el?.querySelector('.thread');
+    const content = el?.querySelector('.merged-history, .thread');
     if (!el || !content) return;
     const ro = new ResizeObserver(() => {
       if (stickToBottom.current) el.scrollTop = el.scrollHeight;
@@ -801,7 +809,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     ro.observe(content);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [selectedId]);
+  }, [selectedId, mergedHandover]);
 
   // A phone keyboard does not resize the page: it covers the bottom of it, and the browser pans
   // what is left (the visual viewport) over the page to keep the focused field in sight. So the
@@ -897,7 +905,8 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const [jump, setJump] = useState<{ threadId: string; turnId: string } | null>(null);
   useEffect(() => {
     if (!jump || jump.threadId !== selectedId || eventsLoading) return;
-    const row = scrollerRef.current?.querySelector<HTMLElement>(`[data-turn="${CSS.escape(jump.turnId)}"]`);
+    const scope = scrollerRef.current?.querySelector(`[data-history-thread="${CSS.escape(jump.threadId)}"]`) ?? scrollerRef.current;
+    const row = scope?.querySelector<HTMLElement>(`[data-turn="${CSS.escape(jump.turnId)}"]`);
     if (row) {
       stickToBottom.current = false;
       setAtBottom(false);
@@ -995,9 +1004,10 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   );
 
   // The file panel: what it shows, for the thread on screen. Switching threads closes it.
+  const [filesThreadId, setFilesThreadId] = useState<string | null>(null);
   const [files, setFiles] = useState<FilesTarget | null>(null);
   const filesSeq = useRef(0);
-  useEffect(() => setFiles(null), [selectedId]);
+  useEffect(() => { setFiles(null); setFilesThreadId(null); }, [selectedId]);
   // A page the agent wrote, rendered in a sandboxed iframe.
   const [preview, setPreview] = useState<{ threadId: string; path: string } | null>(null);
   const openFileLink = useCallback(
@@ -1006,6 +1016,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       const ref = fileRef(raw);
       // Asked first, so a file the thread cannot show falls back to copying its path.
       const file = await api.threadText(selectedId, ref.path);
+      setFilesThreadId(selectedId);
       setAgentsOpen(false);
       setFiles({ path: file.path, line: ref.line, file, seq: ++filesSeq.current });
     },
@@ -1061,6 +1072,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const openThread = (thread: Thread, draft?: string) => {
     if (draft !== undefined) prefillComposerDraft(hostId ? `host:${hostId}:${thread.id}` : thread.id, draft);
     setThreads((prev) => [thread, ...prev.filter((t) => t.id !== thread.id)]);
+    setSingleSegmentId(null);
     setSelectedId(thread.id);
     setView('thread');
     setDrawer(false);
@@ -1202,6 +1214,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   };
 
   const pick = (id: string) => {
+    setSingleSegmentId(null);
     setSelectedId(id);
     setDrawer(false);
   };
@@ -1728,7 +1741,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
                 aria-label={t('files.files')}
                 aria-pressed={Boolean(files)}
                 title={t('files.files')}
-                onClick={() => { setAgentsOpen(false); setFiles(files ? null : { path: null, seq: ++filesSeq.current }); }}
+                onClick={() => { setAgentsOpen(false); setFilesThreadId(selected?.id ?? null); setFiles(files ? null : { path: null, seq: ++filesSeq.current }); }}
               >
                 <IconFiles />
               </button>
@@ -1756,7 +1769,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
 
         {demo && (showcase ? showcase.notice(selectedId, extWant) : <DemoBar compact={compact} onConnect={askToConnect} />)}
 
-        {selected && !onPage && hostUp && <HandoverTrail thread={selected} threads={threads} agentLabel={agentLabel} onSelect={pick} />}
+        {selected && !onPage && hostUp && <HandoverTrail merged={mergedHandover} onToggle={() => setSingleSegmentId(mergedHandover ? selected.id : null)} thread={selected} threads={threads} agentLabel={agentLabel} onSelect={pick} />}
 
         {error && (
           <div className="banner" role="alert">
@@ -1842,11 +1855,23 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           </div>
         ) : (
         <div key="thread" className="scroller" ref={scrollerRef} onScroll={onScroll} {...gestureProps}>
-          {selected && <TurnRuler key={selected.id} scrollerRef={scrollerRef} previews={turnPreviewMap} turnIds={rulerTurnIds} onJump={turnId => setJump({ threadId: selected.id, turnId })} />}
+          {selected && <TurnRuler key={selected.id} threadId={selected.id} scrollerRef={scrollerRef} previews={turnPreviewMap} turnIds={rulerTurnIds} onJump={turnId => setJump({ threadId: selected.id, turnId })} />}
           {selected && eventsLoading && <div className="loading-note">{t('common.loading')}</div>}
           {showcase && selected && !eventsLoading && !timeline.items.length && showcase.intro(selected.id)}
           {selected ? (
-            <ThreadView
+            <MergedHistory
+              key={`${selected.id}:${mergedHandover}`}
+              api={api} thread={selected} merged={mergedHandover} ready={historyReady} agentLabel={agentLabel}
+              onBrowseOlder={() => { stickToBottom.current = false; setAtBottom(false); }}
+              canFork={thread => ({ enabled: Boolean(thread.agentSessionId && capsOf(thread.agent)?.fork), any: Boolean(capsOf(thread.agent)?.forkAt) })}
+              onSegmentFork={(thread, turn) => threadActions.forkAt(thread, turn)}
+              onSegmentFile={async (thread, raw) => {
+                const ref = fileRef(raw);
+                const file = await api.threadText(thread.id, ref.path);
+                setAgentsOpen(false); setFilesThreadId(thread.id);
+                setFiles({ path: file.path, line: ref.line, file, seq: ++filesSeq.current });
+              }}
+              onSegmentPreview={(thread, path) => setPreview({ threadId: thread.id, path })}
               historyApi={api ?? undefined}
               historyThreadId={selected.id}
               items={timeline.items}
@@ -1913,7 +1938,12 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         {showcase ? showcase.composer(selectedId) : <>
         {selected?.coordination?.team && selected.coordination.rootId === selected.id && ['awaiting_confirm', 'needs_attention'].includes(selected.coordination.team.status) && <div className="team-task-notice">{selected.coordination.team.status === 'needs_attention' && <span>{selected.coordination.team.error}</span>}{selected.coordination.team.status === 'awaiting_confirm' && <button className="ghost" onClick={() => void api.configureCoordination(selected.id, { action: 'confirm' }).then(value => { setCoordination(value); void refreshThreads(); }).catch(handleError)}>{t('teams.confirm')}</button>}</div>}
         {!selected && draftTeam && <div className="team-text-only">{t('teams.attachments')}</div>}
-        <Composer
+        {viewingEarlier && latestSegment ? <HandoverComposer
+          key={latestSegment.id} api={api} thread={latestSegment} label={agentLabel(latestSegment.agent)} hostId={hostId}
+          attachBlocked={capsOf(latestSegment.agent)?.images ? null : t('app.noImages', agentLabel(latestSegment.agent))}
+          onLatest={() => pick(latestSegment.id)} onRefresh={() => { void refreshThreads(); }} onError={handleError}
+          note={noteSignal} onNotesChange={onNotesChange}
+        /> : <Composer
           draftKey={hostId ? `host:${hostId}:${selectedId ?? (draftTeam ? `new:team:${draftTeam}` : 'new')}` : selectedId ?? (draftTeam ? `new:team:${draftTeam}` : 'new')}
           running={running}
           disabled={modeBusy || (!selected && !draftCwd)}
@@ -1957,10 +1987,10 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           note={noteSignal}
           onNotesChange={onNotesChange}
           lastSent={selected ? lastSent : null}
-        />
+        />}
         </>}
         {/* Guided demos replace the composer, but use the same approval and question sheets. */}
-        {waitingOn && selected && (!showcase || waitingOn.target.kind !== 'hub-plan') && (
+        {!viewingEarlier && waitingOn && selected && (!showcase || waitingOn.target.kind !== 'hub-plan') && (
           <ActionSheet
             key={waitingOn.target.item.key}
             target={waitingOn.target}
@@ -1993,7 +2023,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         return a ? <MemberModel agent={a} models={modelsByAgent[a.id] ?? []} value={{ model: thread.model ?? null, effort: thread.effort ?? null }} onNeed={needModels} onChange={({ model, effort }) => { void api.updateThread(thread.id, { model, effort }).then(() => refreshThreads()).catch(handleError); }}
           permission={a.capabilities.permissionModes.length ? thread.permissionMode : undefined} onPermission={(permissionMode) => { void api.updateThread(thread.id, { permissionMode }).then(() => refreshThreads()).catch(handleError); }} /> : null;
       }} leadAgent={threads.find((t) => t.id === coordination.rootId)?.agent} phone={compact} onClose={() => setAgentsOpen(false)} onOpen={thread => { openThread(thread); setAgentsOpen(false); }} onAdjust={name => { setAgentsOpen(false); setSelectedId(coordination.rootId); setRestore({ text: t('app.adjustTask', name), nonce: Date.now() }); }} onRefresh={() => { void refreshThreads(); }} onError={handleError} />}
-      {files && selected && api && <FilesPanel api={api} threadId={selected.id} target={files} phone={compact} onClose={() => setFiles(null)} />}
+      {files && selected && api && <FilesPanel api={api} threadId={filesThreadId ?? selected.id} target={files} phone={compact} onClose={() => setFiles(null)} />}
       {preview && api && (
         <PreviewPanel api={api} threadId={preview.threadId} path={preview.path} onClose={() => setPreview(null)} onError={handleError} />
       )}
@@ -2210,16 +2240,16 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       {sideAsk && (
         <SideChat
           api={api}
-          agent={activeAgent}
-          agentLabel={agentLabel(activeAgent)}
-          cwd={activeCwd}
-          permissionMode={permission}
-          model={model}
-          effort={effort}
+          agent={sideAsk.source?.agent ?? activeAgent}
+          agentLabel={agentLabel(sideAsk.source?.agent ?? activeAgent)}
+          cwd={sideAsk.source?.cwd ?? activeCwd}
+          permissionMode={sideAsk.source?.permissionMode ?? permission}
+          model={sideAsk.source ? sideAsk.source.model : model}
+          effort={sideAsk.source ? sideAsk.source.effort : effort}
           quoteText={sideAsk.text}
-          sourceTitle={selected?.title ?? null}
-          forkSourceId={selected && activeCaps?.fork && !forkBlocked(selected) ? selected.id : null}
-          attachBlocked={attachBlocked}
+          sourceTitle={(sideAsk.source ?? selected)?.title ?? null}
+          forkSourceId={sideAsk.source ? (capsOf(sideAsk.source.agent)?.fork && !forkBlocked(sideAsk.source) ? sideAsk.source.id : null) : selected && activeCaps?.fork && !forkBlocked(selected) ? selected.id : null}
+          attachBlocked={sideAsk.source ? (capsOf(sideAsk.source.agent)?.images ? null : t('app.noImages', agentLabel(sideAsk.source.agent))) : attachBlocked}
           onClose={() => setSideAsk(null)}
           onError={handleError}
           onThreadCreated={(t) => setThreads((prev) => [t, ...prev.filter((x) => x.id !== t.id)])}
@@ -2234,7 +2264,10 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           noteRanges.current.set(id, range);
           setNoteSignal({ id, quote, comment, nonce: Date.now() });
         }}
-        onSideAsk={(text) => setSideAsk({ text, nonce: Date.now() })}
+        onSideAsk={(text, threadId) => {
+          if (threadId && threadId !== selectedId) void api.thread(threadId).then(source => setSideAsk({ text, nonce: Date.now(), source })).catch(handleError);
+          else setSideAsk({ text, nonce: Date.now() });
+        }}
       />
     </div>
   );

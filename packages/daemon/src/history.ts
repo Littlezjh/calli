@@ -211,8 +211,8 @@ export class HistoryStore {
   latest(thread: string): number {
     return Number((this.db.prepare('SELECT COALESCE(MAX(seq),0) AS n FROM events WHERE thread_id=?').get(thread) as any).n);
   }
-  private rows(thread: string, start: number, end: number): HistoryEvent[] {
-    return (this.db.prepare('SELECT * FROM history_rows WHERE thread_id=? AND seq>=? AND seq<? ORDER BY seq').all(thread, start, end) as unknown as Row[]).map(eventOf);
+  private rows(thread: string, start: number, end: number, hiddenStart = 0): HistoryEvent[] {
+    return (this.db.prepare('SELECT thread_id, turn_id, seq, type, ts, CASE WHEN seq=? AND type=\'turn.started\' THEN \'{"text":"","handoverCollapsed":true}\' ELSE data END AS data FROM history_rows WHERE thread_id=? AND seq>=? AND seq<? ORDER BY seq').all(hiddenStart, thread, start, end) as unknown as Row[]).map(eventOf);
   }
   private bounds(thread: string, turn: string): { start: number; end: number } {
     const row = this.db.prepare("SELECT seq FROM events WHERE thread_id=? AND turn_id=? AND type='turn.started' ORDER BY seq LIMIT 1").get(thread, turn) as { seq: number } | undefined;
@@ -249,7 +249,7 @@ export class HistoryStore {
     return promise;
   }
   /** Read only event envelopes to locate answers. Never parse tool payloads or build projections. */
-  private directSummary(thread: string, start: number, end: number): HistoryEvent[] {
+  private directSummary(thread: string, start: number, end: number, hiddenStart = 0): HistoryEvent[] {
     // Collapse text/thinking runs before returning metadata to JS. The window reads no data column.
     const spans = this.db.prepare(`WITH ordered AS (
       SELECT thread_id, turn_id, seq, type, ts, LAG(type) OVER (ORDER BY seq) AS previous
@@ -274,6 +274,7 @@ export class HistoryStore {
       let data: Record<string, any> = {};
       if (type === 'tool.start') { type = 'history.tool.start'; data.id = String(row.seq); if (row.end_ts) data.endedAt = row.end_ts; }
       else if (type === 'reasoning.delta') { type = 'history.thought'; data.version = row.until - 1; if (row.end_ts) data.endedAt = row.end_ts; }
+      else if (type === 'turn.started' && row.seq === hiddenStart) data = { text: '', handoverCollapsed: true };
       else if (type !== 'message.delta') {
         data = JSON.parse(String((type === 'approval.request' ? readApproval : read).get(thread, row.seq)!.data));
       }
@@ -296,11 +297,11 @@ export class HistoryStore {
     }
     return out;
   }
-  private turnView(thread: string, turn: string | null, start: number, end: number): HistoryEvent[] {
+  private turnView(thread: string, turn: string | null, start: number, end: number, hiddenStart = 0): HistoryEvent[] {
     // Existing projections are optional. Missing ones must never delay the first response.
     const covered = this.db.prepare('SELECT 1 FROM history_coverage WHERE thread_id=? AND start_seq<=? AND end_seq>=?').get(thread, start, end - 1);
-    if (!covered) return this.directSummary(thread, start, end);
-    const rows = compactHistory(this.rows(thread, start, end));
+    if (!covered) return this.directSummary(thread, start, end, hiddenStart);
+    const rows = compactHistory(this.rows(thread, start, end, hiddenStart));
     const done = rows.some(e => e.type === 'turn.done' || e.type === 'turn.error');
     if (!done) {
       const resolved = new Set(rows.filter(e => e.type === 'approval.resolved').map(e => e.data.approvalId));
@@ -313,7 +314,8 @@ export class HistoryStore {
     for (const e of view) if (e.type === 'history.work') e.data.version = end - 1;
     return view;
   }
-  async page(thread: string, before?: number, after = 0): Promise<HistoryPage> {
+  async page(thread: string, before?: number, after = 0, chain = false): Promise<HistoryPage> {
+    const hiddenStart = chain ? this.handoverStart(thread) : 0;
     const snapshotSeq = this.latest(thread);
     const end = Math.min(before ?? snapshotSeq + 1, snapshotSeq + 1);
     // Voice-only conversations have no task turns. Each committed utterance is also a page
@@ -332,10 +334,10 @@ export class HistoryStore {
     // A usage reading can precede all eight visible turns; paging must not erase the meter.
     const usage = this.db.prepare("SELECT * FROM events WHERE thread_id=? AND type='usage.updated' AND seq<? ORDER BY seq DESC LIMIT 1").get(thread, start) as unknown as Row | undefined;
     if (usage && !after) events.push(eventOf(usage));
-    if (!selected.length) events.push(...this.directSummary(thread, start, end));
+    if (!selected.length) events.push(...this.directSummary(thread, start, end, hiddenStart));
     else {
-      events.push(...this.directSummary(thread, start, selected[0].seq));
-      selected.forEach((s, i) => events.push(...this.turnView(thread, s.turn_id, s.seq, selected[i + 1]?.seq ?? end)));
+      events.push(...this.directSummary(thread, start, selected[0].seq, hiddenStart));
+      selected.forEach((s, i) => events.push(...this.turnView(thread, s.turn_id, s.seq, selected[i + 1]?.seq ?? end, hiddenStart)));
     }
     // Read only the indexed turn boundaries, never the message/tool payloads. Paging keeps
     // the initial index; live turn.started events extend it in the client.
@@ -343,6 +345,31 @@ export class HistoryStore {
       .all(thread, snapshotSeq) as { turn_id: string }[]).map(row => row.turn_id) : undefined;
     return { events, snapshotSeq, nextCursor: hasOlder ? start : null, hasOlder, turnIds };
   }
+  private handoverStart(thread: string): number {
+    return Number(this.db.prepare(`SELECT e.seq FROM events e JOIN threads t ON t.id=e.thread_id
+      WHERE e.thread_id=? AND t.handover IS NOT NULL AND e.type='turn.started' ORDER BY e.seq LIMIT 1`).get(thread)?.seq ?? 0);
+  }
+
+  /** The merged view never receives the first handover prompt until its separator is opened. */
+  handoverEvent(event: HistoryEvent): HistoryEvent {
+    return event.type === 'turn.started' && event.seq === this.handoverStart(event.threadId)
+      ? { ...event, data: { text: '', handoverCollapsed: true } } : event;
+  }
+
+  handoverInfo(thread: string, full = false) {
+    const link = this.db.prepare('SELECT handover FROM threads WHERE id=?').get(thread)?.handover;
+    if (!link) throw new HttpError(404, 'no handover source');
+    const source = JSON.parse(String(link)) as { sourceId: string; agent: string; title: string };
+    const first = this.handoverStart(thread);
+    const row = this.db.prepare(`SELECT turn_id, ${full ? "COALESCE(json_extract(data, '$.displayText'), json_extract(data, '$.text'))" : 'NULL'} AS text
+      FROM events WHERE thread_id=? AND seq=?`).get(thread, first);
+    const error = this.db.prepare(`SELECT json_extract(data, '$.code') AS code FROM events WHERE thread_id=? AND type='turn.error'
+      AND turn_id=(SELECT turn_id FROM events WHERE thread_id=? AND type='turn.started' ORDER BY seq DESC LIMIT 1) ORDER BY seq DESC LIMIT 1`)
+      .get(source.sourceId, source.sourceId);
+    return { source, turnId: row?.turn_id ?? null, reason: typeof error?.code === 'string' ? error.code : null,
+      ...(full ? { text: typeof row?.text === 'string' ? row.text : '' } : {}) };
+  }
+
   /** Merge only answer text, without loading tool payloads or building write-side projections. */
   private handoverAnswer(thread: string, turn: string, snapshotSeq: number): string {
     const rows = this.db.prepare(`SELECT type, json_extract(data, '$.text') AS text,
@@ -413,25 +440,26 @@ export class HistoryStore {
       nextOffset: next < answer.length ? next : null };
   }
   /** Reconnect replaces affected turns from a bounded snapshot, never replays tool payloads. */
-  async since(thread: string, after: number): Promise<{ events: HistoryEvent[]; turns: string[]; snapshotSeq: number }> {
+  async since(thread: string, after: number, chain = false): Promise<{ events: HistoryEvent[]; turns: string[]; snapshotSeq: number }> {
     const snapshotSeq = this.latest(thread);
+    const hiddenStart = chain ? this.handoverStart(thread) : 0;
     const turns = (this.db.prepare('SELECT DISTINCT turn_id FROM events WHERE thread_id=? AND seq>? AND seq<=? AND turn_id IS NOT NULL').all(thread, after, snapshotSeq) as { turn_id: string }[]).map(r => r.turn_id);
     const events: HistoryEvent[] = [];
     for (const turn of turns) {
       const { start, end } = this.bounds(thread, turn);
       const until = Math.min(end, snapshotSeq + 1);
-      events.push(...this.turnView(thread, turn, start, until).filter(e => e.turnId === turn));
+      events.push(...this.turnView(thread, turn, start, until, hiddenStart).filter(e => e.turnId === turn));
     }
     const global = this.db.prepare('SELECT * FROM events WHERE thread_id=? AND seq>? AND seq<=? AND turn_id IS NULL ORDER BY seq').all(thread, after, snapshotSeq) as unknown as Row[];
     events.push(...global.map(eventOf));
     events.sort((a,b) => a.seq - b.seq);
     return { events, turns, snapshotSeq };
   }
-  async work(thread: string, turn: string, block: number, cursor = 0, expectedVersion?: number): Promise<{ events: HistoryEvent[]; files: unknown[]; version: number; nextCursor: number | null }> {
+  async work(thread: string, turn: string, block: number, cursor = 0, expectedVersion?: number, chain = false): Promise<{ events: HistoryEvent[]; files: unknown[]; version: number; nextCursor: number | null }> {
     const { start, end } = this.bounds(thread, turn);
     if (expectedVersion !== undefined && expectedVersion !== end - 1) throw new HttpError(409, 'work changed; reload before continuing');
     await this.ensure(thread, start, end);
-    const rows = compactHistory(this.rows(thread, start, end));
+    const rows = compactHistory(this.rows(thread, start, end, chain ? this.handoverStart(thread) : 0));
     const partition = partitionHistory(rows);
     const entries = partition.blocks.get(block);
     if (!entries) throw new HttpError(404, 'work block not found');
