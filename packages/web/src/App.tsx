@@ -61,6 +61,8 @@ import { SchedulesPage } from './components/SchedulesPage';
 import { TodosPage } from './components/TodosPage';
 import { ActivityPage } from './components/ActivityPage';
 import { ExtensionsPage } from './components/ExtensionsPage';
+import { VoiceBar } from './components/VoiceBar';
+import { useVoiceSession } from './voice-session';
 import type { ExtensionNavEntry } from './components/Sidebar';
 import type { ExtensionState } from '@rah/extension-api';
 import type { ConnectionState } from '@rah/extension-api/web';
@@ -78,7 +80,7 @@ import { NoteMarks, type NoteMark } from './components/NoteMarks';
 import { Toast, type ToastState } from './components/Toast';
 import { ConnectDialog, DemoBar } from './components/ConnectDialog';
 import { DemoApi, DemoError } from './demo/DemoApi';
-import { IconCheck, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconMore, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconLanguage } from './components/icons';
+import { IconCheck, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconMore, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconLanguage, IconMic, IconMicOff } from './components/icons';
 import { chooseLocale, locale, LOCALES, localeChoice, t } from './i18n';
 
 const sleep = (ms: number, signal: AbortSignal) =>
@@ -442,6 +444,19 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   useEffect(() => {
     if (view === 'ext' && !selectedId && extensions && !(extTarget && resolveExtensionRoute(extTarget, extensions))) setView('thread');
   }, [view, selectedId, extensions, extTarget]);
+
+  const voice = useVoiceSession(api, selectedId, hostId);
+  const voiceExt = extensions?.find((e) => e.manifest.id === 'voice');
+  const voiceExtInstalled = Boolean(voiceExt?.source === 'builtin' && voiceExt.installed && voiceExt.enabled
+    && voiceExt.granted.includes('voice.control') && voiceExt.manifest.contributes.composerActions?.some(action => action.id === 'voice')
+    && (!voiceExt.requirements || voiceExt.requirements.state === 'satisfied'));
+  useEffect(() => {
+    if (!voiceExtInstalled && voice.state.active) {
+      void voice.stop();
+    }
+  }, [voiceExtInstalled, voice.state.active, voice]);
+  const canVoice = Boolean(voiceExtInstalled && selected && !selected.archivedAt
+    && agents.find(agent => agent.id === selected.agent)?.capabilities.realtimeVoice);
 
   // The address follows what the main area shows. Replaced, not pushed: going between the pages and
   // threads is not a trail for the back button to walk.
@@ -1883,6 +1898,12 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
 
         {!onPage && !(host && !hostUp) && (
         <div className="composer-slot">
+        <VoiceBar
+          session={voice.state}
+          onMuteToggle={voice.toggleMute}
+          onStop={voice.stop}
+          onDismissError={voice.dismissError}
+        />
         {selectedId && <WorkSummary items={workSources} />}
         {showcase ? showcase.composer(selectedId) : <>
         {selected?.coordination?.team && selected.coordination.rootId === selected.id && ['awaiting_confirm', 'needs_attention'].includes(selected.coordination.team.status) && <div className="team-task-notice">{selected.coordination.team.status === 'needs_attention' && <span>{selected.coordination.team.error}</span>}{selected.coordination.team.status === 'awaiting_confirm' && <button className="ghost" onClick={() => void api.configureCoordination(selected.id, { action: 'confirm' }).then(value => { setCoordination(value); void refreshThreads(); }).catch(handleError)}>{t('teams.confirm')}</button>}</div>}
@@ -1903,6 +1924,17 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           planMode={!draftTeam && activeCaps?.workModes?.includes('plan') ? { active: workMode === 'plan', disabled: running || modeBusy, onChange: active => void changeWorkMode(active ? 'plan' : 'execute') } : undefined}
           left={draftTeam ? undefined : left}
           right={draftTeam ? undefined : right}
+          composerActions={canVoice && (
+            <button
+              type="button"
+              className={`tool-btn composer-voice${voice.state.active ? ' active' : ''}`}
+              onClick={voice.state.active ? () => void voice.stop() : () => void voice.start()}
+              title={voice.state.active ? t('voice.end') : t('voice.start')}
+              aria-label={voice.state.active ? t('voice.end') : t('voice.start')}
+            >
+              {voice.state.active && voice.state.isMuted ? <IconMicOff size={16} /> : <IconMic size={16} />}
+            </button>
+          )}
           commands={commandsByKey[commandsKey] ?? []}
           goal={activeCaps?.goal}
           actions={hubActions}

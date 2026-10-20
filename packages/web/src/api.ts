@@ -376,6 +376,8 @@ export interface AgentInfo {
     /** Can read plan usage outside a session, for the quota panel. */
     quota: boolean;
     compact?: boolean;
+    /** Native realtime two-way voice capability. */
+    realtimeVoice?: boolean;
     goal?: { controls: Array<'show' | 'pause' | 'clear'>; actions?: Array<'set' | 'show' | 'pause' | 'resume' | 'clear'> };
     fork: boolean;
     /** A fork can end at an earlier turn instead of taking the whole thread. Missing from daemons that predate it. */
@@ -569,6 +571,44 @@ export function saveToken(token: string): void {
 }
 
 export class AuthError extends Error {}
+
+export interface VoiceProvider {
+  login?: 'ready' | 'required';
+  id: string;
+  available: boolean;
+  supported: boolean;
+  reason?: string;
+}
+
+export interface VoiceSnapshot {
+  id: string;
+  hostId: string;
+  providerId: string;
+  threadId: string;
+  state: 'connecting' | 'connected' | 'stopping' | 'closed' | 'failed';
+  startAccepted: boolean;
+  upstreamStarted: boolean;
+  mediaConnected: boolean;
+  reason?: 'ended' | 'expired' | 'startup_timeout' | 'revoked' | 'provider_error' | 'provider_closed' | 'shutdown';
+}
+
+export type VoiceEvent =
+  | { type: 'state'; session: VoiceSnapshot }
+  | { type: 'sdp'; sdp: string }
+  | { type: 'transcript'; itemId: string; text: string; final: boolean };
+
+/**
+ * Random UUID per browser tab session, sent in X-RAH-Voice-Owner header.
+ * Generated in memory; never saved to storage and never exposed to extensions.
+ */
+const TAB_VOICE_OWNER =
+  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `tab-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+export function getTabVoiceOwner(): string {
+  return TAB_VOICE_OWNER;
+}
 
 /** The server pings every 15 seconds; a stream silent for this long is dead, not quiet. */
 const STREAM_IDLE_MS = 40_000;
@@ -1302,6 +1342,90 @@ export class Api {
     } finally {
       clearTimeout(idle);
       if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisible);
+    }
+  }
+
+  // ---------------------------------------------------------------- Realtime Voice
+
+  private voiceHeaders(extra: Record<string, string> = {}): Record<string, string> {
+    return this.headers({ 'X-RAH-Voice-Owner': TAB_VOICE_OWNER, ...extra });
+  }
+
+  protected async sendVoice<T>(method: string, url: string, body?: unknown): Promise<T> {
+    const res = await fetch(url, {
+      method,
+      headers: this.voiceHeaders(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    if (res.status === 401) throw new AuthError('unauthorized');
+    if (res.status === 204) return undefined as T;
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new ApiError((json as { error?: string }).error ?? `HTTP ${res.status}`, json as Record<string, unknown>, res.status);
+    return json as T;
+  }
+
+  /** Lists available native realtime voice providers on the machine. */
+  voiceProviders(): Promise<{ providers: VoiceProvider[] }> {
+    return this.sendVoice('GET', this.url('/api/voice/providers'));
+  }
+
+  /** Starts a realtime voice session with SDP offer and tab owner header. */
+  startVoiceSession(threadId: string, offer: string, extensionId = 'voice'): Promise<VoiceSnapshot> {
+    return this.sendVoice('POST', this.url('/api/voice'), { extensionId, threadId, offer });
+  }
+
+  /** Sends a voice session heartbeat (sent every 10 seconds). */
+  voiceHeartbeat(sessionId: string): Promise<VoiceSnapshot> {
+    return this.sendVoice('POST', this.url(`/api/voice/${encodeURIComponent(sessionId)}/heartbeat`));
+  }
+
+  /** Notifies the daemon that the WebRTC peer connection has connected. */
+  voiceConnected(sessionId: string): Promise<VoiceSnapshot> {
+    return this.sendVoice('POST', this.url(`/api/voice/${encodeURIComponent(sessionId)}/connected`));
+  }
+
+  /** Stops and releases a realtime voice session. */
+  stopVoiceSession(sessionId: string): Promise<void> {
+    return this.sendVoice('DELETE', this.url(`/api/voice/${encodeURIComponent(sessionId)}`));
+  }
+
+  /**
+   * Opens an SSE stream for voice session events using fetch so the Authorization
+   * and X-RAH-Voice-Owner headers are passed.
+   */
+  async streamVoiceEvents(sessionId: string, onEvent: (ev: VoiceEvent) => void, signal: AbortSignal): Promise<void> {
+    const res = await fetch(this.url(`/api/voice/${encodeURIComponent(sessionId)}/events`), {
+      headers: this.voiceHeaders({ Accept: 'text/event-stream' }),
+      signal,
+    });
+    if (res.status === 401) throw new AuthError('unauthorized');
+    if (!res.ok || !res.body) throw new Error(`voice stream failed: HTTP ${res.status}`);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) return;
+        buf += decoder.decode(value, { stream: true });
+        let idx: number;
+        while ((idx = buf.indexOf('\n\n')) >= 0) {
+          const block = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          const data = block
+            .split('\n')
+            .filter((l) => l.startsWith('data: '))
+            .map((l) => l.slice(6))
+            .join('\n');
+          if (data) {
+            try {
+              onEvent(JSON.parse(data) as VoiceEvent);
+            } catch {}
+          }
+        }
+      }
+    } finally {
+      void reader.cancel().catch(() => undefined);
     }
   }
 }

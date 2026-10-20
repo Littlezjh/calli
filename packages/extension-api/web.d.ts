@@ -95,6 +95,18 @@ export interface WebHostNavigate {
   openThread(threadId: string): void;
 }
 
+export interface WebHostRealtimeSession {
+  readonly id: string;
+  readonly threadId: string;
+  readonly status: 'connecting' | 'connected' | 'closed' | 'error';
+  readonly isMuted: boolean;
+}
+
+export interface WebHostRealtime {
+  activeSession(): WebHostRealtimeSession | null;
+  subscribe(listener: (session: WebHostRealtimeSession | null) => void): Unsubscribe;
+}
+
 export interface WebHost {
   extensionId: string;
   threads: WebHostThreads;
@@ -108,6 +120,8 @@ export interface WebHost {
   ui: WebHostUi;
   /** True on screens ≤ 640px wide; updates on resize through a re-render. */
   narrow: boolean;
+  /** Controlled realtime voice status and subscription; does not expose SDP, raw RPC, or tokens. */
+  realtime?: WebHostRealtime;
 }
 
 export interface ExtensionViewProps {
@@ -117,6 +131,6 @@ export interface ExtensionViewProps {
 /** What a built-in extension's web entry exports as default. */
 export interface WebExtensionModule {
   manifest: ExtensionManifest;
-  /** Keyed by `ViewContribution.id`. */
-  views: Record<string, ComponentType<ExtensionViewProps>>;
+  /** Keyed by `ViewContribution.id`. Optional for extensions without view contributions. */
+  views?: Record<string, ComponentType<ExtensionViewProps>>;
 }

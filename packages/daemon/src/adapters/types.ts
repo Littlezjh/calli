@@ -2,6 +2,7 @@ import type { MemoryDocument, MemoryIndex } from '@rah/extension-api';
 import type { ImageInput } from '../attachments.js';
 import type { EmittedEvent } from '../events.js';
 import type { GoalControl } from './native-goal.js';
+import type { VoiceTransport } from '../voice-sessions.js';
 
 /** What the user sent in one turn. `text` may be empty when there are images. */
 export interface TurnInput {
@@ -45,6 +46,18 @@ export interface ApprovalRequest {
 
 export type ApprovalDecision = { optionId: string } | { cancelled: true };
 
+/**
+ * Session-level callbacks for turns the agent starts by itself, such as a voice conversation
+ * dispatching work. They live for the whole session: a prompted turn finishing never clears them,
+ * and they never claim the prompted-turn queue.
+ */
+export interface SessionHooks {
+  /** The agent began a turn nobody prompted. Returns the hooks that turn runs with. */
+  turnStarted(nativeTurnId: string): TurnHooks;
+  /** That turn ended, in the adapter's own stop-reason vocabulary. */
+  turnFinished(nativeTurnId: string, result: { stopReason: string; error?: string }): void;
+}
+
 /** Callbacks an adapter uses while a turn is running. */
 export interface TurnHooks {
   emit(event: EmittedEvent): void;
@@ -79,6 +92,13 @@ export interface AgentSession {
   prompt(input: TurnInput, hooks: TurnHooks): Promise<TurnResult>;
   /** Native controls that can run without queueing behind the current goal. */
   controlGoal?(action: GoalControl): Promise<string>;
+  /** Hooks for agent-initiated turns (voice). Set once per session; present only where the adapter implements them. */
+  setSessionHooks?(hooks: SessionHooks): void;
+  /**
+   * A one-use native voice channel on this session's own connection. Null when the session's
+   * process is gone: the caller refuses instead of respawning it silently.
+   */
+  voiceTransport?(): VoiceTransport | null;
   cancel(): Promise<void>;
   close(): Promise<void>;
 }
@@ -278,10 +298,18 @@ export interface AgentAdapter {
     forkInto: boolean;
     /** Whether the whole prompt the model runs with can be read from the agent's session file. */
     systemPrompt?: boolean;
+    /**
+     * Whether the adapter implements native realtime voice sessions on a live session
+     * (`voiceTransport`). This says the code exists; login and protocol support are probed live
+     * per install (`realtimeSupport`) and per session start, never assumed from the name.
+     */
+    realtimeVoice?: boolean;
   };
   memoryReader?(): MemoryReader;
   /** Whether the agent can be started on this host. */
   available(): Promise<boolean>;
+  /** Read-only protocol probe; account authorization is checked again when voice starts. */
+  realtimeSupport?(): Promise<{ supported: boolean; reason?: string; login?: 'ready' | 'required' }>;
   /** Models the user can pick from. May start a short-lived process to ask the agent. */
   models(refresh?: boolean): Promise<ModelOption[]>;
   /** Read-only runtime identity; no prompt, login or config write. */

@@ -1,3 +1,8 @@
+import {
+  ExtensionDependencyResolver,
+  type CapabilitySnapshotResolver,
+  type ProviderCapabilitySnapshot,
+} from './extension-dependencies.js';
 import { ExternalExtensions } from './external-extensions.js';
 import type { AgentAdapter, MemoryReader } from './adapters/types.js';
 import type { MemorySource } from '@rah/extension-api';
@@ -47,6 +52,7 @@ export interface ExtensionHostOptions {
   queueLimit?: number;
   externalDir?: string;
   externalCatalog?: { manifest: ExtensionManifest; origin: string }[];
+  capabilityResolver?: CapabilitySnapshotResolver;
 }
 
 /** Hooks every running extension gets, declared or not: they are about the extension and its delivery. */
@@ -90,7 +96,6 @@ export function threadSummary(view: ThreadView): ThreadSummary {
   };
 }
 
-
 interface Subscriber {
   id: string;
   impl: DaemonExtension;
@@ -116,6 +121,7 @@ export class ExtensionHost {
   private readonly implementations = new Map<string, DaemonExtension>();
   private readonly subscribers = new Map<string, Subscriber>();
   private readonly listeners = new Set<() => void>();
+  private readonly dependencyResolver: ExtensionDependencyResolver;
   /** The last summary each thread was announced with, to say which fields changed. */
   private readonly announced = new Map<string, ThreadSummary>();
   private readonly openTurns = new Map<string, { origin: TurnSummary['origin']; startedAt: string }>();
@@ -132,6 +138,7 @@ export class ExtensionHost {
     this.externalCatalog = opts.externalDir ? opts.externalCatalog ?? [] : [];
     this.turnStart = opts.turnStart;
     this.queueLimit = Math.max(2, opts.queueLimit ?? DEFAULT_QUEUE_LIMIT);
+    this.dependencyResolver = new ExtensionDependencyResolver(opts.capabilityResolver);
   }
 
   /** Starts listening, wakes the enabled extensions and tells them the machine is ready. Once, after restart recovery. */
@@ -181,6 +188,10 @@ export class ExtensionHost {
     const manifest = this.manifest(id);
     const grant = exactGrant(manifest, granted);
     if (!grant) throw new HttpError(400, '授予的权限须与扩展声明的权限完全一致');
+    const req = this.dependencyResolver.resolve(manifest);
+    if (req.state !== 'satisfied') {
+      throw new HttpError(400, `扩展缺少依赖能力 (${req.state}): ${req.reason ?? req.missing?.join(', ')}`);
+    }
     const record = this.store.install(id, manifest.version, grant);
     this.bumpMemoryAccess(id);
     this.sync(id);
@@ -203,12 +214,60 @@ export class ExtensionHost {
     const record = this.store.get(id);
     if (!record) throw new HttpError(409, '扩展尚未安装');
     if (enabled && !exactGrant(manifest, record.granted)) throw new HttpError(409, '扩展需要的权限有变化，请重新安装以确认');
+    if (enabled) {
+      const req = this.dependencyResolver.resolve(manifest);
+      if (req.state !== 'satisfied') {
+        throw new HttpError(409, `扩展缺少依赖能力，无法启用 (${req.state}): ${req.reason ?? req.missing?.join(', ')}`);
+      }
+    }
     const updated = this.store.setEnabled(id, enabled)!;
     this.bumpMemoryAccess(id);
     if (enabled) this.sync(id);
     else this.deactivate(id, 'disabled');
     this.changed();
     return this.state(manifest, updated);
+  }
+
+  /**
+   * Injects or updates verified provider capabilities and reconciles all installed extensions.
+   * If snapshot is null, clears verified capabilities back to unknown.
+   */
+  reconcile(snapshot?: readonly ProviderCapabilitySnapshot[] | null): void {
+    if (snapshot !== undefined) {
+      this.dependencyResolver.setSnapshot(snapshot);
+    }
+    this.reconcileExtensions();
+  }
+
+  /** Discards a manual override and re-evaluates the live resolver (unknown if none is configured). */
+  refresh(): void {
+    this.dependencyResolver.setSnapshot(undefined);
+    this.reconcileExtensions();
+  }
+
+  private reconcileExtensions(): void {
+    for (const manifest of this.catalog) {
+      this.sync(manifest.id);
+    }
+    this.changed();
+  }
+
+  /**
+   * Runtime guard ensuring an extension is installed, enabled, permissions granted,
+   * and its required agent capabilities are currently satisfied.
+   */
+  assertUsable(extensionId: string): { manifest: ExtensionManifest; providerId?: string } {
+    const manifest = this.manifest(extensionId);
+    const record = this.store.get(extensionId);
+    if (!record) throw new HttpError(404, `扩展 ${extensionId} 尚未安装`);
+    if (!record.enabled || !exactGrant(manifest, record.granted)) {
+      throw new HttpError(403, `扩展 ${extensionId} 未启用或权限不符`);
+    }
+    const req = this.dependencyResolver.resolve(manifest);
+    if (req.state !== 'satisfied') {
+      throw new HttpError(403, `扩展 ${extensionId} 依赖不满足 (${req.state}): ${req.reason ?? req.missing?.join(', ')}`);
+    }
+    return { manifest, providerId: req.providerId };
   }
 
   // ---------------------------------------------------------------- host API (v1)
@@ -292,15 +351,20 @@ export class ExtensionHost {
   }
 
   private state(manifest: ExtensionManifest, record: ExtensionRecord | null): ExtensionState {
+    const req = this.dependencyResolver.resolve(manifest);
+    const installed = record !== null;
+    const grantedOk = record !== null && Boolean(exactGrant(manifest, record.granted));
     return {
       manifest,
       source: 'builtin',
-      installed: record !== null,
+      installed,
       // A grant made for an older version that asked for less does not switch the new one on.
-      enabled: record !== null && record.enabled && Boolean(exactGrant(manifest, record.granted)),
+      // Requirements must also be satisfied for the extension to be effectively enabled.
+      enabled: installed && record.enabled && grantedOk && req.state === 'satisfied',
       granted: record?.granted ?? [],
       installedAt: record?.installedAt ?? null,
       updatedAt: record?.updatedAt ?? null,
+      requirements: req,
     };
   }
 

@@ -23,7 +23,8 @@
     "react-dom": "^18.3.1",
     "react-markdown": "^9.0.1",
     "remark-gfm": "^4.0.0",
-    "@rah/ext-memory": "*"
+    "@rah/ext-memory": "*",
+    "@rah/ext-voice": "*"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",

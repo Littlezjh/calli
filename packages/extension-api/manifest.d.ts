@@ -29,7 +29,15 @@ export type HostIconName =
   | 'cube'
   | 'globe'
   | 'server'
-  | 'bolt';
+  | 'bolt'
+  | 'mic';
+
+/** A composer action button contributed by an extension. */
+export interface ComposerActionContribution {
+  id: string;
+  title: LocalizedText;
+  icon: HostIconName;
+}
 
 /** A main-area page contributed by an extension. */
 export interface ViewContribution {
@@ -49,6 +57,7 @@ export interface ViewContribution {
 export interface Contributions {
   views?: ViewContribution[];
   workSource?: boolean;
+  composerActions?: ComposerActionContribution[];
 }
 
 /** Built-in views ship with Limi; optional work sources are installed separately. */
@@ -71,6 +80,23 @@ export interface ExtensionCommand {
   effect: 'read' | 'runtime';
   timeoutMs?: number;
 }
+
+/** Known agent capabilities an extension may declare in `requires.agentCapabilities`. */
+export type KnownAgentCapability = 'realtimeVoice';
+
+export interface ExtensionRequirements {
+  agentCapabilities?: KnownAgentCapability[];
+}
+
+export type RequirementResolutionState = 'satisfied' | 'missing' | 'unknown' | 'error';
+
+export interface ExtensionRequirementStatus {
+  state: RequirementResolutionState;
+  missing?: string[];
+  reason?: string;
+  providerId?: string;
+}
+
 export interface ExtensionManifest {
   /** Lowercase letters, digits and `-`. Stable across versions. */
   id: string;
@@ -82,6 +108,7 @@ export interface ExtensionManifest {
   /** Everything the extension may use. Shown at install; new permissions on upgrade need a new confirmation. */
   permissions: Permission[];
   contributes: Contributions;
+  requires?: ExtensionRequirements;
   /** Notifications the extension wants. It receives nothing it did not declare. Empty for view-only extensions. */
   subscribes?: NotificationHook[];
   /** Requests the extension answers. External work sources implement the supported subset. */
@@ -103,6 +130,8 @@ export interface ExtensionState {
   granted: Permission[];
   installedAt: string | null;
   updatedAt: string | null;
+  /** Machine-level requirement resolution status. */
+  requirements?: ExtensionRequirementStatus;
   origin?: string;
   digest?: string;
   previousVersion?: string;

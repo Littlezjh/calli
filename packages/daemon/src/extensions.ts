@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { DatabaseSync } from 'node:sqlite';
 import type { ExtensionManifest, Permission } from '@rah/extension-api';
+import { checkExtensionRequirements } from './extension-dependencies.js';
 
 /**
  * Limi extensions on this machine: which ones ship with Limi (the catalog), and which of them the
@@ -95,6 +96,7 @@ export const PERMISSIONS: ReadonlySet<Permission> = new Set<Permission>([
   'transcript.read',
   'toolresult.read',
   'task.control',
+  'voice.control',
 ]);
 
 /** Routes the hub's own pages use; an extension's alias may not take one. */
@@ -105,7 +107,7 @@ const ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
  * The manifests of the extensions that ship with Limi, by package directory under packages/.
  * Resolved from this file, so the source run (src/) and the build (dist/) find the same files.
  */
-const BUILTIN_PACKAGES = ['ext-board', 'ext-memory'];
+const BUILTIN_PACKAGES = ['ext-board', 'ext-memory', 'ext-voice'];
 
 export function builtinManifestPaths(): string[] {
   return BUILTIN_PACKAGES.map((dir) => fileURLToPath(new URL(`../../${dir}/manifest.json`, import.meta.url)));
@@ -155,7 +157,19 @@ export function checkManifest(value: unknown): ExtensionManifest {
       throw new Error(`view ${v.id}: route ${String(v.route)} is not allowed`);
     }
   }
+  if (m.contributes.composerActions !== undefined) {
+    if (!Array.isArray(m.contributes.composerActions)) throw new Error('composerActions must be a list');
+    const seenActions = new Set<string>();
+    for (const a of m.contributes.composerActions) {
+      if (!a || typeof a.id !== 'string' || !ID.test(a.id) || seenActions.has(a.id)) throw new Error('composerAction id missing or repeated');
+      seenActions.add(a.id);
+      if (!isText(a.title) || typeof a.icon !== 'string') throw new Error(`composerAction ${a.id}: title and icon needed`);
+    }
+  }
   if (m.subscribes !== undefined && !Array.isArray(m.subscribes)) throw new Error('subscribes must be a list');
+  if (m.requires !== undefined) {
+    checkExtensionRequirements(m.requires);
+  }
   return m as ExtensionManifest;
 }
 
@@ -166,3 +180,5 @@ export function exactGrant(manifest: ExtensionManifest, granted: unknown): Permi
   if (given.size !== granted.length || given.size !== manifest.permissions.length) return null;
   return manifest.permissions.every((p) => given.has(p)) ? [...manifest.permissions] : null;
 }
+
+export * from './extension-dependencies.js';

@@ -89,9 +89,10 @@ export function ExtensionsPage({ api, demo = false, extensions, threads = [], on
         <div className="ext-cards">
           {extensions.map((s) => {
             const m = s.manifest;
-            const icon = m.contributes.views?.[0]?.icon;
+            const icon = m.contributes.views?.[0]?.icon ?? m.contributes.composerActions?.[0]?.icon;
             const confirm = needsConfirm(s);
             const entry = !confirm ? enabledViews([s])[0] : undefined;
+            const reqBlocked = s.requirements !== undefined && s.requirements.state !== 'satisfied';
             return (
               <article key={m.id} className={`ext-card${s.installed ? ' installed' : ''}`} aria-busy={busy === m.id}>
                 <div className="ext-card-head">
@@ -105,6 +106,11 @@ export function ExtensionsPage({ api, demo = false, extensions, threads = [], on
                       <span>{t(s.preset ? 'work.supported' : s.source === 'external' ? 'work.external' : 'extensions.builtin')}</span>
                       {!s.installed && s.preset && <span>{t('work.notInstalled')}</span>}
                       {s.installed && <span className={`ext-card-state${s.enabled ? ' on' : ''}`}>{confirm ? t('extensions.needsConfirm') : s.enabled ? t('extensions.installed') : t('extensions.disabled')}</span>}
+                      {reqBlocked && (
+                        <span className="ext-req-tag warning" title={s.requirements?.reason ?? t('extensions.notSatisfied')}>
+                          {t('extensions.requirementMissing', s.requirements?.reason ?? s.requirements?.state ?? '')}
+                        </span>
+                      )}
                     </div>
                   </div>
                   <div className="ext-card-actions">
@@ -114,14 +120,26 @@ export function ExtensionsPage({ api, demo = false, extensions, threads = [], on
                       </button>
                     )}
                     {!s.installed || confirm ? (
-                      <button type="button" className="primary" disabled={busy !== null} onClick={() => {
-                        if (s.source === 'external' && s.origin) void run(m.id, async () => { setPreview(await api.prepareExtension(s.origin!)); });
-                        else setInstalling(s);
-                      }}>
+                      <button
+                        type="button"
+                        className="primary"
+                        disabled={busy !== null || reqBlocked}
+                        title={reqBlocked ? (s.requirements?.reason ?? t('extensions.notSatisfied')) : undefined}
+                        onClick={() => {
+                          if (s.source === 'external' && s.origin) void run(m.id, async () => { setPreview(await api.prepareExtension(s.origin!)); });
+                          else setInstalling(s);
+                        }}
+                      >
                         {confirm ? t('extensions.confirmAgain') : t('extensions.install')}
                       </button>
                     ) : (
-                      <button type="button" className="ghost" disabled={busy !== null} onClick={() => void run(m.id, () => api.setExtensionEnabled(m.id, !s.enabled))}>
+                      <button
+                        type="button"
+                        className="ghost"
+                        disabled={busy !== null || (!s.enabled && reqBlocked)}
+                        title={!s.enabled && reqBlocked ? (s.requirements?.reason ?? t('extensions.cannotEnable')) : undefined}
+                        onClick={() => void run(m.id, () => api.setExtensionEnabled(m.id, !s.enabled))}
+                      >
                         {s.enabled ? t('extensions.disable') : t('extensions.enable')}
                       </button>
                     )}

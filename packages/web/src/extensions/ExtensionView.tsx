@@ -96,7 +96,7 @@ export function ExtensionView({ api, extensionId, viewId, name, inputs, onOpenTh
 
   if (failed) return <Failed name={name} onRetry={retry} />;
   if (!loaded || loaded.id !== extensionId) return <div className="loading-note">{t('common.loading')}</div>;
-  const View = 'module' in loaded ? loaded.module.views[viewId] : undefined;
+  const View = 'module' in loaded ? loaded.module.views?.[viewId] : undefined;
   if (!View) {
     if ('error' in loaded) console.error(`[extension ${extensionId}]`, loaded.error);
     return <Failed name={name} onRetry={retry} />;

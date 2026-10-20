@@ -18,7 +18,7 @@
     "test": "npm test -w @rah/daemon && npm test -w @rah/web && npm test -w @rah/ext-board && npm test -w @rah/site && npm test -w @rah/ext-loopx && npm run test:runner -w @rah/e2e",
     "test:e2e": "node packages/e2e/run.mjs",
     "setup": "node scripts/setup.mjs",
-    "typecheck": "npm run typecheck -w @rah/daemon && npm run typecheck -w @rah/web && npm run typecheck -w @rah/ext-board && npm run typecheck -w @rah/site && npm run typecheck -w @rah/ext-loopx && npm run typecheck -w @rah/ext-memory",
+    "typecheck": "npm run typecheck -w @rah/daemon && npm run typecheck -w @rah/web && npm run typecheck -w @rah/ext-board && npm run typecheck -w @rah/site && npm run typecheck -w @rah/ext-loopx && npm run typecheck -w @rah/ext-memory && npm run typecheck -w @rah/ext-voice",
     "check:publish": "node scripts/check-publish.mjs"
   },
   "devDependencies": {

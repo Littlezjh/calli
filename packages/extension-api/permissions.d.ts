@@ -17,6 +17,8 @@
  * - `transcript.read`  — user messages and replies of linked threads, never reasoning. (planned)
  * - `toolresult.read`  — tool results and command output of linked threads. (planned)
  * - `task.control`     — send visible messages to threads the user authorised. (planned)
+ * - `voice.control`    — own a bounded voice session on a selected thread. No approval answers.
+ *                        Runtime guard implemented; browser API not yet exposed.
  *
  * Not grantable at all: answering approvals, writing agent directories or config,
  * reading the hub token, the raw Api, writing prompts or rewriting messages (`progress.report` only
@@ -33,4 +35,5 @@ export type Permission =
   | 'notify'
   | 'transcript.read'
   | 'toolresult.read'
-  | 'task.control';
+  | 'task.control'
+  | 'voice.control';

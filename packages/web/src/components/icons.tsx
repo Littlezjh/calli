@@ -69,6 +69,23 @@ export const IconStop = (p: { size?: number }) => (
     <rect x="7" y="7" width="10" height="10" rx="2" />
   </Svg>
 );
+export const IconMic = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+    <path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3M8 22h8" />
+  </Svg>
+);
+export const IconMicOff = (p: { size?: number }) => (
+  <Svg {...p}>
+    <line x1="2" y1="2" x2="22" y2="22" />
+    <path d="M18.89 13.23A7.12 7.12 0 0 0 19 12v-2" />
+    <path d="M5 10v2a7 7 0 0 0 12 5" />
+    <path d="M15 9.34V5a3 3 0 0 0-5.68-1.33" />
+    <path d="M9 9v3a3 3 0 0 0 5.12 2.12" />
+    <line x1="12" y1="19" x2="12" y2="22" />
+    <line x1="8" y1="22" x2="16" y2="22" />
+  </Svg>
+);
 export const IconChevron = (p: { size?: number; open?: boolean }) => (
   <Svg {...p}>
     <path d={p.open ? 'M6 9l6 6 6-6' : 'M9 6l6 6-6 6'} />

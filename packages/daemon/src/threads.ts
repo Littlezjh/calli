@@ -1,3 +1,4 @@
+import type { VoiceTransport } from './voice-sessions.js';
 import { UserInputs } from './user-input.js';
 import type { SystemPrompt, WorkMode } from './adapters/types.js';
 import { diagnosticFailure } from './adapters/diagnostics.js';
@@ -183,6 +184,10 @@ export class ThreadManager {
   notifyCoordination(id: string): void {
     if (this.store.getThread(id)) this.emitThreadEvent(id, null, 'thread.updated', {});
   }
+  private readonly sessionAdapters = new Map<string, AgentAdapter>();
+  private readonly sessionStarts = new Map<string, Promise<AgentSession>>();
+  private readonly nativeIdle = new Map<string, Set<() => void>>();
+  private readonly nativeTurns = new Map<string, Map<string, string>>();
   private readonly sessions = new Map<string, AgentSession>();
   /** Turns in flight. `cancelRequested` covers cancels that arrive before the agent session exists. */
   private readonly running = new Map<string, { turnId: string; cancelRequested: boolean; since: string }>();
@@ -1721,6 +1726,7 @@ export class ThreadManager {
     while (this.running.size > 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 25));
     for (const [, s] of this.sessions) await s.close().catch(() => undefined);
     this.sessions.clear();
+    this.sessionAdapters.clear();
   }
 
   private async runTurn(thread: ThreadRecord, turnId: string, input: TurnInput): Promise<void> {
@@ -1728,14 +1734,20 @@ export class ThreadManager {
     // A finished turn is something new to look at. A turn the user stopped is not.
     let unread = true;
     try {
+      const hooks = this.hooksFor(thread.id, turnId);
       const session = await this.ensureSession(thread);
+      if (this.nativeTurns.get(thread.id)?.size) await new Promise<void>(resolve => {
+        const waiters = this.nativeIdle.get(thread.id) ?? new Set<() => void>();
+        waiters.add(resolve);
+        this.nativeIdle.set(thread.id, waiters);
+      });
       if (this.running.get(thread.id)?.cancelRequested) {
         // Cancelled while the agent was starting: never send the prompt.
         unread = false;
         this.emitThreadEvent(thread.id, turnId, 'turn.done', { stopReason: 'cancelled' });
         return;
       }
-      const result = await session.prompt(input, this.hooksFor(thread.id, turnId));
+      const result = await session.prompt(input, hooks);
       if (result.stopReason === 'cancelled') unread = false;
       if (result.stopReason === 'error') {
         finalStatus = 'error';
@@ -1757,8 +1769,13 @@ export class ThreadManager {
       await this.dropSession(thread.id);
     } finally {
       this.reportTurns.delete(turnId);
-      this.inputs.cancel(thread.id, undefined, true);
-      this.running.delete(thread.id);
+      if (!this.nativeTurns.get(thread.id)?.size) this.inputs.cancel(thread.id, undefined, true);
+      if (this.running.get(thread.id)?.turnId === turnId) this.running.delete(thread.id);
+      const nativeTurn = this.nativeTurns.get(thread.id)?.values().next().value;
+      if (nativeTurn && !this.running.has(thread.id)) {
+        this.running.set(thread.id, { turnId: nativeTurn, cancelRequested: false, since: new Date().toISOString() });
+        finalStatus = 'running';
+      }
       // The thread may have been deleted while its last turn was winding down.
       if (this.store.getThread(thread.id)) {
         this.store.updateThread(thread.id, { status: finalStatus, ...(unread ? { unread: true } : {}) }, { touch: true });
@@ -1777,7 +1794,54 @@ export class ThreadManager {
     this.store.setThreadProgress(threadId, { report: said ? { ...said, at: new Date().toISOString() } : null });
   }
 
+  voiceProvider(threadId: string): { providerId: string } {
+    const thread = this.getThread(threadId);
+    if (thread.archivedAt || !this.adapters.get(thread.agent)?.capabilities.realtimeVoice
+      || this.sessions.has(threadId) && this.sessionAdapters.get(threadId) !== this.adapters.get(thread.agent) && this.running.has(threadId)) {
+      throw new HttpError(409, 'voice_provider_unavailable');
+    }
+    return { providerId: thread.agent };
+  }
+
+  /** Deferred initialization lets the lease own cancellation before any process is started. */
+  voiceTransport(threadId: string): VoiceTransport {
+    const provider = this.voiceProvider(threadId).providerId;
+    const adapter = this.adapters.get(provider);
+    let ended = false;
+    let started = false;
+    let transport: VoiceTransport | undefined;
+    return {
+      start: async (offer, emit) => {
+        if (ended || started) throw new Error('voice_session_ended');
+        started = true;
+        if (this.sessions.has(threadId) && this.sessionAdapters.get(threadId) !== adapter) {
+          if (this.running.has(threadId)) throw new Error('voice_provider_changed');
+          await this.dropSession(threadId);
+        }
+        const session = await this.ensureSession(this.getThread(threadId));
+        if (ended) throw new Error('voice_session_ended');
+        if (this.voiceProvider(threadId).providerId !== provider || this.adapters.get(provider) !== adapter) {
+          throw new Error('voice_provider_changed');
+        }
+        transport = session.voiceTransport?.() ?? undefined;
+        if (!transport) throw new Error('voice_session_unavailable');
+        return transport.start(offer, emit);
+      },
+      stop: async () => { ended = true; await transport?.stop(); },
+      dispose: () => { ended = true; transport?.dispose(); },
+    };
+  }
+
   private async ensureSession(thread: ThreadRecord): Promise<AgentSession> {
+    const pending = this.sessionStarts.get(thread.id);
+    if (pending) return pending;
+    const task = this.createSession(thread);
+    this.sessionStarts.set(thread.id, task);
+    try { return await task; }
+    finally { if (this.sessionStarts.get(thread.id) === task) this.sessionStarts.delete(thread.id); }
+  }
+
+  private async createSession(thread: ThreadRecord): Promise<AgentSession> {
     const existing = this.sessions.get(thread.id);
     if (existing) {
       if (existing.setWorkMode) await existing.setWorkMode(thread.workMode ?? 'execute');
@@ -1805,7 +1869,46 @@ export class ThreadManager {
       model: thread.model ?? undefined,
       effort: (thread.effort ?? undefined) as EffortLevel | undefined,
     });
+    session.setSessionHooks?.({
+      turnStarted: nativeId => {
+        const turnId = randomUUID();
+        const turns = this.nativeTurns.get(thread.id) ?? new Map<string, string>();
+        turns.set(nativeId, turnId);
+        this.nativeTurns.set(thread.id, turns);
+        // The native engine serializes turns. Keep its work visible and block queued prompts.
+        if (!this.running.has(thread.id)) this.running.set(thread.id, {
+          turnId, cancelRequested: false, since: new Date().toISOString(),
+        });
+        this.store.updateThread(thread.id, { status: 'running', hubTurnAt: new Date().toISOString() }, { touch: true });
+        this.emitThreadEvent(thread.id, turnId, 'turn.started', { text: '', source: 'voice', nativeTurnId: nativeId });
+        return this.hooksFor(thread.id, turnId);
+      },
+      turnFinished: (nativeId, result) => {
+        const turns = this.nativeTurns.get(thread.id);
+        const turnId = turns?.get(nativeId);
+        if (!turnId) return;
+        turns!.delete(nativeId);
+        if (!turns!.size) {
+          this.nativeTurns.delete(thread.id);
+          const waiters = this.nativeIdle.get(thread.id);
+          this.nativeIdle.delete(thread.id);
+          for (const resolve of waiters ?? []) resolve();
+        }
+        if (!this.store.getThread(thread.id)) return;
+        this.emitThreadEvent(thread.id, turnId, result.stopReason === 'error' ? 'turn.error' : 'turn.done',
+          result.stopReason === 'error' ? { message: result.error ?? 'agent error' } : { stopReason: result.stopReason });
+        if (this.running.get(thread.id)?.turnId === turnId) {
+          this.running.delete(thread.id);
+          this.inputs.cancel(thread.id, undefined, true);
+          for (const [id, approval] of this.approvals) if (approval.threadId === thread.id) this.resolveApproval(id, { cancelled: true });
+          this.store.updateThread(thread.id, { status: result.stopReason === 'error' ? 'error' : 'idle', unread: result.stopReason !== 'cancelled' }, { touch: true });
+          this.emitThreadEvent(thread.id, null, 'thread.updated', {});
+          this.startNextQueued(thread.id);
+        }
+      },
+    });
     this.sessions.set(thread.id, session);
+    this.sessionAdapters.set(thread.id, adapter);
     if (session.agentSessionId !== thread.agentSessionId) {
       this.store.updateThread(thread.id, { agentSessionId: session.agentSessionId });
     }
@@ -1813,8 +1916,11 @@ export class ThreadManager {
   }
 
   private async dropSession(threadId: string): Promise<void> {
+    const pending = this.sessionStarts.get(threadId);
+    if (pending) await pending.catch(() => undefined);
     const s = this.sessions.get(threadId);
     this.sessions.delete(threadId);
+    this.sessionAdapters.delete(threadId);
     if (s) await s.close().catch(() => undefined);
   }
 

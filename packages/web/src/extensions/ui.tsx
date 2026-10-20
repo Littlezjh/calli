@@ -25,6 +25,7 @@ import {
   IconGauge,
   IconGlobe,
   IconList,
+  IconMic,
   IconPin,
   IconServer,
   IconSparkle,
@@ -58,6 +59,7 @@ const ICONS: Record<HostIconKey, (p: { size?: number }) => JSX.Element> = {
   check: IconCheck,
   chevron: (props) => <IconChevron {...props} open />,
   close: IconClose,
+  mic: IconMic,
 };
 
 /** An icon an extension names. One the host does not know is drawn as a plain cube. */

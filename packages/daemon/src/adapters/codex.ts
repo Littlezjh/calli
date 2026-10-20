@@ -1,3 +1,6 @@
+import { CodexVoiceTransport, peerTransport } from './codex-realtime.js';
+import type { VoiceTransport } from '../voice-sessions.js';
+import type { SessionHooks } from './types.js';
 import { nativeQuestions } from './questions.js';
 import type { WorkMode } from './types.js';
 import { CodexUsage } from './usage.js';
@@ -419,6 +422,39 @@ async function readSkills(peer: JsonRpcPeer, cwd: string): Promise<CodexSkill[]>
 class CodexSession implements AgentSession {
   private readonly accounting = new CodexUsage();
   private hooks: TurnHooks | null = null;
+  private sessionHooks?: SessionHooks;
+  private voice?: CodexVoiceTransport;
+  private voiceReusable = true;
+  private voiceStarted = false;
+
+  setSessionHooks(hooks: SessionHooks): void { this.sessionHooks = hooks; }
+
+  voiceTransport(): VoiceTransport | null {
+    if (this.peer.isClosed || !this.voiceReusable) return null;
+    this.voiceReusable = false;
+    this.voiceStarted = false;
+    const transport = new CodexVoiceTransport(this.agentSessionId, peerTransport(this.peer), { closeTimeoutMs: 2000 });
+    this.voice = transport;
+    return {
+      start: async (offer, emit) => {
+        this.voiceStarted = true;
+        try { await transport.start(offer, emit); }
+        catch (error) {
+          // Authentication failed before realtime/start; logging in can safely retry here.
+          if (error instanceof Error && error.message === 'chatgpt_login_required') this.voiceReusable = true;
+          throw error;
+        }
+      },
+      stop: () => transport.stop(),
+      dispose: () => {
+        transport.dispose();
+        if (this.voice === transport) {
+          this.voice = undefined;
+          if (!this.voiceStarted) this.voiceReusable = true;
+        }
+      },
+    };
+  }
   private turn: { id: string; resolve(r: TurnResult): void; error?: string; compact?: boolean; goal?: boolean; goalTurns?: number; cancelRequested?: boolean } | null = null;
   private goal: any = null;
   private goalSubmission: Promise<unknown> | null = null;
@@ -446,6 +482,13 @@ class CodexSession implements AgentSession {
   /** Called by the peer for every notification. Ignores anything about another thread. */
   onNotification(method: string, params: any): void {
     if (params?.threadId !== undefined && params.threadId !== this.agentSessionId) return;
+    if (method.startsWith('thread/realtime/')) {
+      // Only a positively observed native close permits reusing this notification source.
+      if (method === 'thread/realtime/closed' && this.voice) this.voiceReusable = true;
+      this.voice?.handleNotification(method, params);
+      return;
+    }
+    if (this.turn?.id && params?.turnId && params.turnId !== this.turn.id) return;
     if (this.turn?.compact && this.turn.id && params?.turnId && params.turnId !== this.turn.id) return;
     if (params?.item?.type === 'contextCompaction' && this.turn?.id && params.turnId && params.turnId !== this.turn.id) return;
     switch (method) {
@@ -456,6 +499,11 @@ class CodexSession implements AgentSession {
         this.emit({ type: 'plan.delta', data: { id: params.itemId, text: params.delta } });
         break;
       case 'turn/started':
+        if (!this.turn && !this.hooks && this.sessionHooks && params?.turn?.id) {
+          const id = String(params.turn.id);
+          this.hooks = this.sessionHooks.turnStarted(id);
+          this.turn = { id, resolve: result => this.sessionHooks?.turnFinished(id, result) };
+        }
         if ((this.turn?.compact || this.turn?.goal) && !this.turn.id && params?.turn?.id) {
           if (this.turn.goal && (this.turn.goalTurns ?? 0) > 0) this.emit({ type: 'message.delta', data: { text: '\n\n' } });
           this.turn.goalTurns = (this.turn.goalTurns ?? 0) + 1;
@@ -557,6 +605,8 @@ class CodexSession implements AgentSession {
 
   /** Called by the peer when Codex asks something. Approvals go to the user; the rest is refused. */
   async onRequest(method: string, params: any, requestId?: string | number): Promise<unknown> {
+    if (params?.threadId && params.threadId !== this.agentSessionId) return undefined;
+    if (params?.turnId && this.turn?.id && params.turnId !== this.turn.id) return undefined;
     if (method === 'item/tool/requestUserInput') {
       const questions = nativeQuestions(params?.questions);
       const answer = questions.length && this.hooks?.requestInput
@@ -826,11 +876,14 @@ class CodexSession implements AgentSession {
   }
 
   async close(): Promise<void> {
+    this.voice?.handleClosed();
+    this.onClosed();
     this.peer.close();
   }
 
   /** The peer is gone: a running turn can only end as an error now. */
   onClosed(): void {
+    this.voice?.handleClosed();
     if (this.turn) {
       this.turn.error ??= `${this.name} app-server exited`;
       this.finishTurn('error');
@@ -845,6 +898,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
   readonly icon = CODEX_ICON;
   readonly capabilities = {
     memory: true,
+    realtimeVoice: true,
     workModes: ['execute', 'plan'] as const,
     speed: true,
     goal: { controls: ['show', 'pause', 'clear'] as const, actions: ['set', 'show', 'pause', 'resume', 'clear'] as const },
@@ -876,6 +930,20 @@ export class CodexAppServerAdapter implements AgentAdapter {
     /** Name in errors; TRAE CLI reuses this adapter with its own binary. */
     private readonly name = 'codex',
   ) {}
+
+  async realtimeSupport(): Promise<{ supported: boolean; login?: 'ready' | 'required' }> {
+    return this.withServer(async peer => {
+      try {
+        const result = await peer.request('thread/realtime/listVoices', {});
+        if (!result || typeof result.voices !== 'object' || result.voices === null) return { supported: false };
+        const account = await peer.request('account/read', { refreshToken: false });
+        return { supported: true, login: account?.account?.type === 'chatgpt' ? 'ready' : 'required' };
+      } catch (error) {
+        if (error instanceof RpcError && error.code === -32601) return { supported: false };
+        throw new Error('voice_probe_failed');
+      }
+    }, tmpdir(), 8000);
+  }
 
   diagnose() { return cliDiagnostic(this.command, this.env, 'app-server'); }
 
@@ -1145,7 +1213,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const run = async () => {
-        await peer.request('initialize', { clientInfo: { name: 'remote-agent-hub', title: 'Limi', version: '0.1.0' } });
+        await peer.request('initialize', { clientInfo: { name: 'remote-agent-hub', title: 'Limi', version: '0.1.0' }, capabilities: { experimentalApi: true } });
         peer.notify('initialized', {});
         return job(peer);
       };

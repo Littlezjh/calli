@@ -18,6 +18,7 @@ import type { ThreadManager } from './threads.js';
 import { isWithinWorkdirs } from './workdirs.js';
 import { listProjectDirectories } from './project-directories.js';
 import { MAX_VIDEO_BYTES } from './videos.js';
+import type { VoiceService } from './voice-service.js';
 
 export interface HttpDeps {
   manager: ThreadManager;
@@ -31,6 +32,8 @@ export interface HttpDeps {
   scheduler?: Scheduler;
   /** Limi extensions on this machine. Optional so tests can run without them. */
   extensions?: ExtensionHost;
+  /** Host-owned native voice; absent on deployments that do not provide it. */
+  voice?: VoiceService;
   /**
    * Requests need no token: the server listens on a socket only this user can open, and a hub
    * reaches it over SSH. Such a server shows this machine only, never the machines added to it.
@@ -137,10 +140,10 @@ async function readJson(req: IncomingMessage, limit = MAX_BODY): Promise<any> {
   }
 }
 
-function openSse(res: ServerResponse): void {
+function openSse(res: ServerResponse, privateStream = false): void {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
-    'Cache-Control': 'no-cache',
+    'Cache-Control': privateStream ? 'no-store' : 'no-cache',
     Connection: 'keep-alive',
     'X-Accel-Buffering': 'no',
   });
@@ -180,7 +183,7 @@ function serveStatic(res: ServerResponse, webDir: string, urlPath: string): void
 }
 
 export function createHttpServer(deps: HttpDeps): Server {
-  const { manager, registry, terminals, hosts, scheduler, extensions, trusted, token, webDir, version } = deps;
+  const { manager, registry, terminals, hosts, scheduler, extensions, voice, trusted, token, webDir, version } = deps;
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? '/', 'http://localhost');
@@ -229,6 +232,52 @@ export function createHttpServer(deps: HttpDeps): Server {
         const rest = path.slice(`/api/hosts/${parts[2]}/proxy/`.length);
         return hosts.proxy(decodeURIComponent(parts[2]), `/api/${rest}${url.search}`, req, res);
       }
+    }
+
+    if (parts[1] === 'voice') {
+      if (!voice) throw new HttpError(501, 'voice_unavailable');
+      if (method === 'GET' && parts[2] === 'providers' && !parts[3]) {
+        return sendJson(res, 200, { providers: await voice.refresh() });
+      }
+      // Separate browser ownership from the shared Hub bearer. Never accept it from a URL or body.
+      const ownerId = req.headers['x-rah-voice-owner'];
+      if (typeof ownerId !== 'string' || !/^[a-zA-Z0-9_-]{20,128}$/.test(ownerId)) {
+        throw new HttpError(400, 'voice_owner_required');
+      }
+      if (method === 'POST' && !parts[2]) return sendJson(res, 201, await voice.open(ownerId, await readJson(req, 128 * 1024)));
+      const access = { id: parts[2] ?? '', extensionId: 'voice', ownerId };
+      if (method === 'DELETE' && parts[2] && !parts[3]) {
+        await voice.sessions.stop(access);
+        res.writeHead(204).end();
+        return;
+      }
+      if (method === 'POST' && parts[2] && !parts[4]) {
+        if (parts[3] === 'heartbeat') return sendJson(res, 200, voice.sessions.heartbeat(access));
+        if (parts[3] === 'connected') return sendJson(res, 200, voice.sessions.mediaConnected(access));
+      }
+      if (method === 'GET' && parts[2] && parts[3] === 'events' && !parts[4]) {
+        voice.sessions.get(access); // Reject another browser before opening any response stream.
+        openSse(res, true);
+        let off = () => {};
+        let closed = false;
+        const close = () => {
+          if (closed) return;
+          closed = true;
+          off();
+          void voice.sessions.stop(access);
+        };
+        res.once('close', close);
+        off = voice.sessions.subscribe(access, event => {
+          if (closed) return;
+          // A stalled browser cannot accumulate unbounded transcript or SDP buffers.
+          if (res.writableLength > 128 * 1024) { close(); res.destroy(); return; }
+          res.write(`data: ${JSON.stringify(event)}\n\n`);
+          if (event.type === 'state' && (event.session.state === 'closed' || event.session.state === 'failed')) res.end();
+        });
+        if (closed) off();
+        return;
+      }
+      throw new HttpError(404, 'voice_route_not_found');
     }
 
     if (method === 'GET' && path === '/api/usage') {
@@ -354,6 +403,7 @@ export function createHttpServer(deps: HttpDeps): Server {
     // Limi extensions: the built-in catalog and what is installed on this machine.
     if (parts[1] === 'extensions') {
       if (!extensions) throw new HttpError(501, '此 daemon 未启用扩展');
+      if (method === 'GET' && !parts[2]) await voice?.refresh();
       const external = extensions.external;
       if (parts[2] === 'prepare' && method === 'POST') {
         if (!external) throw new HttpError(501, 'external_extensions_unavailable');
@@ -383,10 +433,16 @@ export function createHttpServer(deps: HttpDeps): Server {
       }
       // POST /api/extensions/:id/install { granted }: exactly the permissions the manifest asks for
       if (method === 'POST' && parts[2] && parts[3] === 'install' && !parts[4]) {
+        if (extensions.list().find(e => e.manifest.id === parts[2])?.manifest.requires?.agentCapabilities?.includes('realtimeVoice')) await voice?.refresh(true);
         return sendJson(res, 200, extensions.install(parts[2], (await readJson(req))?.granted));
       }
       // PATCH /api/extensions/:id { enabled }
-      if (method === 'PATCH' && parts[2] && !parts[3]) return sendJson(res, 200, extensions.setEnabled(parts[2], (await readJson(req))?.enabled));
+      if (method === 'PATCH' && parts[2] && !parts[3]) {
+        const body = await readJson(req);
+        // Disabling must revoke immediately, even while a provider probe is stalled.
+        if (body?.enabled === true && extensions.list().find(e => e.manifest.id === parts[2])?.manifest.requires?.agentCapabilities?.includes('realtimeVoice')) await voice?.refresh(true);
+        return sendJson(res, 200, extensions.setEnabled(parts[2], body?.enabled));
+      }
       // DELETE /api/extensions/:id
       if (method === 'DELETE' && parts[2] && !parts[3]) {
         extensions.uninstall(parts[2]);

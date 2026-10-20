@@ -25,6 +25,7 @@ let threadId = process.env.FAKE_CODEX_THREAD ?? 'codex-thread-1';
 let nextTurnSeq = 1;
 let billedTokens = 900000;
 let nextServerRequestId = 1000;
+let voiceAfterPrompt = Boolean(process.env.FAKE_CODEX_VOICE_AFTER_PROMPT);
 let activeTurn = null; // { id }
 // Settings as the adapter sets them: thread/start takes kebab-case sandbox, turn/start camelCase.
 let currentWorkMode = 'default';
@@ -328,6 +329,36 @@ rl.on('line', (line) => {
   }
 
   switch (msg.method) {
+    case 'account/read':
+      return out({ id: msg.id, result: { account: { type: process.env.FAKE_CODEX_VOICE_API_KEY ? 'apiKey' : 'chatgpt' } } });
+    case 'thread/realtime/listVoices':
+      return out(process.env.FAKE_CODEX_NO_VOICE
+        ? { id: msg.id, error: { code: -32601, message: 'unsupported' } }
+        : { id: msg.id, result: { voices: { v1: [], v2: [] } } });
+    case 'thread/realtime/start': {
+      out({ id: msg.id, result: {} });
+      notify('thread/realtime/started', {});
+      notify('thread/realtime/sdp', { sdp: 'fixture-answer' });
+      notify('thread/realtime/transcript/delta', { role: 'user', delta: 'temporary caption' });
+      if (process.env.FAKE_CODEX_VOICE_TASK && !activeTurn) {
+        const id = `voice-${nextTurnSeq++}`;
+        activeTurn = id;
+        notify('turn/started', { turn: { id, status: 'inProgress' } });
+        setTimeout(() => {
+          if (activeTurn !== id) return;
+          runTurn(process.env.FAKE_CODEX_VOICE_TASK, id, () => {
+            activeTurn = null;
+            finishTurn(id, 'completed');
+          });
+        }, 30);
+      }
+      return;
+    }
+    case 'thread/realtime/stop':
+      out({ id: msg.id, result: {} });
+      if (!process.env.FAKE_CODEX_VOICE_NO_CLOSE) notify('thread/realtime/closed', {});
+      return;
+
     case 'thread/settings/update':
       applyTurnOverrides(msg.params);
       return out({ jsonrpc: '2.0', id: msg.id, result: {} });
@@ -422,6 +453,13 @@ rl.on('line', (line) => {
       if (skills.length) say(`skills:${skills.map((s) => `${s.name}@${s.path}`).join(',')};`);
       setTimeout(() => runTurn(text, turnId, () => {
         activeTurn = null; finishTurn(turnId, 'completed');
+        if (voiceAfterPrompt) {
+          voiceAfterPrompt = false;
+          const id = `voice-${nextTurnSeq++}`;
+          activeTurn = id;
+          notify('turn/started', { turn: { id, status: 'inProgress' } });
+          runTurn('approve', id, () => { activeTurn = null; finishTurn(id, 'completed'); });
+        }
         if (goal?.status === 'active') setTimeout(() => runGoal(goalGeneration), 15);
       }), Number(process.env.FAKE_CODEX_TURN_DELAY ?? 15));
       return;

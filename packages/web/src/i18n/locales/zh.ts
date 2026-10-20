@@ -1418,6 +1418,8 @@ export const zh = {
   'extensions.perm.toolresult.read.hint': '关联线程里工具的结果和命令输出。',
   'extensions.perm.task.control': '给线程发消息',
   'extensions.perm.task.control.hint': '在你授权的线程里发可见的消息。',
+  'extensions.perm.voice.control': '使用实时语音',
+  'extensions.perm.voice.control.hint': '在你选择的线程开启和结束语音会话，不代替你批准操作。',
 
   // Odds and ends
   'api.noVideos': '当前服务尚不支持视频，请更新服务后重试',
@@ -1463,6 +1465,32 @@ export const zh = {
   "work.readFailed": "读取失败。",
   "work.openSource": "打开完整界面",
   'work.threadCount': (n: number) => `已选 ${n} 个线程`,
+
+  // Realtime Voice
+  'voice.title': '实时语音',
+  'voice.start': '开启实时语音',
+  'voice.connecting': '正在连接语音…',
+  'voice.connected': '语音已连通',
+  'voice.live': '实时语音中',
+  'voice.muted': '已静音',
+  'voice.mute': '静音',
+  'voice.unmute': '取消静音',
+  'voice.end': '结束语音',
+  'voice.listening': '正在聆听…',
+  'voice.speaking': '正在回复…',
+  'voice.error': '语音连接出错',
+  'voice.permissionDenied': '麦克风权限被拒绝，请在浏览器地址栏允许麦克风访问。',
+  'voice.insecureContext': '麦克风需要在安全上下文（HTTPS 或 localhost）下访问。',
+  'voice.notSupported': '当前浏览器不支持 WebRTC 或麦克风采集。',
+  'voice.chatgptLoginRequired': '需要有效的 ChatGPT 账号登录，请在原生客户端完成登录。',
+  'voice.iceTimeout': 'WebRTC 网络连接握手超时，请检查网络。',
+  'voice.playbackBlocked': '浏览器阻止了音频自动播放，请点击页面继续。',
+  'voice.connectionFailed': '语音网络连接已断开。',
+  'voice.requirementMissing': '当前机器未检测到可用的原生语音提供方（如 Codex）。',
+  'voice.dismiss': '关闭提示',
+  'extensions.requirementMissing': (reason: string) => `依赖未满足：${reason}`,
+  'extensions.notSatisfied': '缺少必要依赖，暂时无法安装',
+  'extensions.cannotEnable': '缺少必要依赖，暂时无法启用',
 };
 
 export type Messages = typeof zh;

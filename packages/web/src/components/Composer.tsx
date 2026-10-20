@@ -132,6 +132,8 @@ interface Props {
   left: ReactNode;
   /** Controls at the right of the bottom bar, before the send button. */
   right: ReactNode;
+  /** Host-owned extension actions stay reachable when the phone composer is collapsed. */
+  composerActions?: ReactNode;
   /** The agent's own slash commands. */
   commands: SlashCommand[];
   goal?: GoalCapability;
@@ -190,6 +192,7 @@ export function Composer({
   planMode,
   left,
   right,
+  composerActions,
   commands,
   goal,
   actions,
@@ -965,6 +968,7 @@ export function Composer({
             </>}
             <div className="spacer" />
             {!collapsed && right}
+            {composerActions}
             {running && (
               <button className="send-btn stop" onClick={onStop} aria-label={t('composer.stop')} title={t('composer.stopTurn')}>
                 <IconStop size={16} />

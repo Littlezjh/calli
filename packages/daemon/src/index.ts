@@ -12,6 +12,7 @@ import { Store } from './store.js';
 import { TerminalManager } from './terminals.js';
 import { ThreadManager } from './threads.js';
 import { Workdirs } from './workdirs.js';
+import { VoiceService } from './voice-service.js';
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -79,6 +80,8 @@ async function main(): Promise<void> {
     turnStart: (threadId, turnId) => store.listEventsOfType(threadId, 'turn.started').find((e) => e.turnId === turnId),
   });
   extensions.start();
+  const voice = new VoiceService({ adapters, extensions, manager });
+  voice.start();
   // The board's consent to ask agents for a progress line; checked per turn, so switching it off takes effect at once.
   manager.progressWanted = () => extensions.list().some((s) => s.enabled && s.granted.includes('progress.report'));
   const terminals = new TerminalManager({ workdirs: () => dirs.all(), shell: config.termShell ?? undefined });
@@ -88,7 +91,7 @@ async function main(): Promise<void> {
   // Previews are served on a port of their own: the iframe needs an origin separate from the app
   // (see preview.ts). One port past the app's is the default; RAH_PREVIEW_PORT picks another.
   const previewPort = Number(process.env.RAH_PREVIEW_PORT) || config.port + 1;
-  const server = createHttpServer({ manager, registry, terminals, hosts, scheduler, extensions, token: config.token, webDir: config.webDir, version: VERSION, previewPort });
+  const server = createHttpServer({ manager, registry, terminals, hosts, scheduler, extensions, voice, token: config.token, webDir: config.webDir, version: VERSION, previewPort });
   // Same requests, other origin: preview frames load from here so their pages cannot reach the
   // app, while their own CSS and scripts load same-origin. Without the port, previews say so.
   const preview = createHttpServer({ manager, registry, terminals, hosts, scheduler, extensions, token: config.token, webDir: null, version: VERSION, previewPort });
@@ -97,7 +100,7 @@ async function main(): Promise<void> {
   });
   preview.listen(previewPort, config.host, () => console.log(`previews on http://${config.host}:${previewPort}`));
   // The same API on a socket only this user can open: how a hub on another machine reaches this one.
-  const local = config.socket ? createHttpServer({ manager, registry, terminals, scheduler, extensions, trusted: true, token: config.token, webDir: null, version: VERSION }) : null;
+  const local = config.socket ? createHttpServer({ manager, registry, terminals, scheduler, extensions, voice, trusted: true, token: config.token, webDir: null, version: VERSION }) : null;
   let ownsSocket = false;
   if (local && config.socket) {
     listenPrivate(local, config.socket)
@@ -125,6 +128,7 @@ async function main(): Promise<void> {
     // that looks does not take a stopped daemon for a running one.
     if (ownsSocket && config.socket) rmSync(config.socket, { force: true });
     hosts.dispose();
+    await voice.dispose();
     extensions.dispose();
     coordination.dispose();
     collaborationServer.close();
