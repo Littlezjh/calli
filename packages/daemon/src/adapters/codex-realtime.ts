@@ -81,11 +81,17 @@ export interface RealtimeState {
 /**
  * Session events for the host, structurally compatible with the coordinator's `VoiceSignal`
  * (voice-sessions.ts); the `error` variant additionally carries the classification for logs.
+ *
+ * Canonical v3 timeline items retain their own `itemId` and verified user/assistant role.
+ * Deltas append; a final carries the complete text, including an authoritative empty string.
+ * Flat transcripts have no identity and are deliberately ignored. Promoted task work and raw
+ * `item/added` payloads also never become chat captions.
  */
+export type RealtimeTranscriptRole = 'user' | 'assistant';
 export type RealtimeSignal =
   | { type: 'started' }
   | { type: 'sdp'; sdp: string }
-  | { type: 'transcript'; itemId: string; text: string; final: boolean }
+  | { type: 'transcript'; itemId: string; text: string; final: boolean; role?: RealtimeTranscriptRole }
   | { type: 'error'; reason: RealtimeFailure }
   | { type: 'closed' };
 
@@ -157,9 +163,14 @@ export const REALTIME_PROFILE = { version: 'v3', outputModality: 'audio', transp
 const REALTIME_NOTIFICATIONS = new Set([
   'thread/realtime/started', 'thread/realtime/sdp', 'thread/realtime/error', 'thread/realtime/closed',
   'thread/realtime/transcript/delta', 'thread/realtime/transcript/done',
-  'thread/realtime/item/transcript/delta', 'thread/realtime/item/completed',
+  'thread/realtime/item/started', 'thread/realtime/item/transcript/delta', 'thread/realtime/item/completed',
 ]);
 const LIVE_PHASES: RealtimePhase[] = ['starting', 'signaling', 'active'];
+
+/** The two roles a transcript may carry. Everything else is not a verified chat caption. */
+function transcriptRole(value: unknown): RealtimeTranscriptRole | null {
+  return value === 'user' || value === 'assistant' ? value : null;
+}
 const ESTABLISHING_PHASES: RealtimePhase[] = ['starting', 'signaling'];
 const BUSY_PHASES: RealtimePhase[] = ['starting', 'signaling', 'active', 'stopping'];
 
@@ -171,6 +182,8 @@ export class CodexRealtime {
   private ended = false;
   /** True once this session's start RPC was written; earlier same-thread events are stale. */
   private startSent = false;
+  /** Roles of live canonical v3 transcript items; deltas carry only their item id. */
+  private readonly itemRoles = new Map<string, RealtimeTranscriptRole>();
   private resolveActive: ((state: RealtimeState) => void) | null = null;
   private rejectActive: ((error: RealtimeError) => void) | null = null;
   private establishTimer: ReturnType<typeof setTimeout> | null = null;
@@ -211,6 +224,7 @@ export class CodexRealtime {
     this.attemptNonce = attempt;
     this.startSent = false;
     this.stoppingTask = null;
+    this.itemRoles.clear();
     // The waiters exist before the first state emission: a subscriber may stop synchronously
     // from `onState`, which must settle this start instead of leaving it pending forever.
     const outcome = new Promise<RealtimeState>((resolve, reject) => {
@@ -320,24 +334,36 @@ export class CodexRealtime {
         }
         break;
       case 'thread/realtime/transcript/delta':
-        this.transcript(params, false);
-        break;
       case 'thread/realtime/transcript/done':
-        this.transcript(params, true);
+        // This profile is fixed to v3: use its canonical typed timeline exclusively. The flat
+        // stream has no item id, so neither role, arrival order nor matching text can safely
+        // associate it with a typed utterance. Mixing them can duplicate or overwrite speech.
         break;
+      case 'thread/realtime/item/started':
+      case 'thread/realtime/item/completed': {
+        // Timeline items are typed: only a transcriptSegment is a chat caption. Promoted task
+        // work (bemItemPromoted), session bookkeeping and raw `item/added` payloads are not.
+        if (!LIVE_PHASES.includes(phase)) break;
+        const item = params.item as { type?: unknown; id?: unknown; role?: unknown; text?: unknown } | undefined;
+        const final = method === 'thread/realtime/item/completed';
+        if (item?.type !== 'transcriptSegment') break;
+        const role = transcriptRole(item.role);
+        if (!role || typeof item.id !== 'string' || !item.id || typeof item.text !== 'string') break;
+        const itemId = item.id;
+        if (itemId.length > 256) break;
+        if (final) this.itemRoles.delete(itemId);
+        else this.remember(this.itemRoles, itemId, role);
+        if (!final && !item.text) break; // an empty start only says the item exists
+        // An empty completed text is authoritative: it clears what the draft showed.
+        this.signal({ type: 'transcript', itemId, text: item.text, final, role });
+        break;
+      }
       case 'thread/realtime/item/transcript/delta': {
         if (!LIVE_PHASES.includes(phase)) break;
         const itemId = params.itemId;
         if (typeof itemId !== 'string' || !itemId || typeof params.delta !== 'string' || !params.delta) break;
-        this.signal({ type: 'transcript', itemId, text: params.delta, final: false });
-        break;
-      }
-      case 'thread/realtime/item/completed': {
-        if (!LIVE_PHASES.includes(phase)) break;
-        const item = params.item as { type?: unknown; id?: unknown; text?: unknown } | undefined;
-        if (item?.type !== 'transcriptSegment' || typeof item.id !== 'string' || !item.id) break;
-        if (typeof item.text !== 'string' || !item.text) break;
-        this.signal({ type: 'transcript', itemId: item.id, text: item.text, final: true });
+        const role = this.itemRoles.get(itemId);
+        if (role) this.signal({ type: 'transcript', itemId, text: params.delta, final: false, role });
         break;
       }
     }
@@ -349,15 +375,6 @@ export class CodexRealtime {
     const failure = this.snapshot.error ?? 'process_closed';
     this.signal({ type: 'error', reason: failure });
     this.settle('failed', failure);
-  }
-
-  private transcript(params: Record<string, unknown>, final: boolean): void {
-    if (!LIVE_PHASES.includes(this.snapshot.phase)) return;
-    const role = params.role;
-    const text = final ? params.text : params.delta;
-    if (typeof role !== 'string' || !role || typeof text !== 'string' || !text) return;
-    // The flat transcript stream has no item id; a stable per-role key lets consumers merge parts.
-    this.signal({ type: 'transcript', itemId: `transcript:${role}`, text, final });
   }
 
   private maybeActive(): void {
@@ -405,6 +422,7 @@ export class CodexRealtime {
   }
 
   private settle(phase: 'closed' | 'failed', reason?: RealtimeFailure): void {
+    this.itemRoles.clear();
     this.clearTimers();
     this.ended = true;
     const waiter = this.closeWaiter;
@@ -433,6 +451,13 @@ export class CodexRealtime {
       timer = setTimeout(() => reject(new RealtimeError('timeout')), this.options.requestTimeoutMs);
     });
     return Promise.race([this.transport.request(method, params), bounded]).finally(() => clearTimeout(timer));
+  }
+
+  /** Inserts into a bounded map, evicting the oldest entry so a long session cannot grow it. */
+  private remember<K, V>(map: Map<K, V>, key: K, value: V): void {
+    map.delete(key);
+    map.set(key, value);
+    while (map.size > 256) map.delete(map.keys().next().value!);
   }
 
   private update(patch: Partial<RealtimeState>): void {

@@ -9,6 +9,10 @@ export type EventType =
   | 'turn.done'
   | 'turn.error'
   | 'message.delta'
+  /** Authoritative item text correcting its already-streamed tail. */
+  | 'message.replace'
+  /** Final or interrupted voice text. Streaming speech deltas use the private voice channel. */
+  | 'voice.message'
   | 'reasoning.delta'
   | 'tool.start'
   | 'tool.update'
@@ -43,6 +47,13 @@ export interface StoredEvent {
 export interface EmittedEvent {
   type: EventType;
   data: Record<string, unknown>;
+}
+
+/** Replace only the exact streamed tail identified by an authoritative completion. */
+export function replaceMessageTail(text: string, data: Record<string, unknown>): string {
+  return typeof data.previous === 'string' && data.previous.length > 0
+    && typeof data.text === 'string' && text.endsWith(data.previous)
+    ? text.slice(0, -data.previous.length) + data.text : text;
 }
 
 /**

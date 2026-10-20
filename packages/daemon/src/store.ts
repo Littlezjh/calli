@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import type { EventType, StoredEvent } from './events.js';
+import { replaceMessageTail, type EventType, type StoredEvent } from './events.js';
 import { McpRegistry } from './mcp.js';
 import { ExtensionStore } from './extensions.js';
 import { Telemetry } from './telemetry.js';
@@ -329,6 +329,8 @@ export class Store {
         PRIMARY KEY (thread_id, seq)
       );
       CREATE INDEX IF NOT EXISTS idx_events_turn_starts ON events(thread_id, seq) WHERE type = 'turn.started';
+      CREATE INDEX IF NOT EXISTS idx_events_conversation_starts ON events(thread_id, seq) WHERE type IN ('turn.started', 'voice.message');
+      CREATE INDEX IF NOT EXISTS idx_events_turn_lifecycle ON events(thread_id, seq) WHERE type IN ('turn.started', 'turn.done', 'turn.error');
       CREATE INDEX IF NOT EXISTS idx_events_tool_starts ON events(ts) WHERE type = 'tool.start';
     `);
     // Migration: add pinned column if it doesn't exist
@@ -490,7 +492,7 @@ export class Store {
   indexText(threadId?: string, turnId?: string, afterSeq = 0): void {
     const rows = this.db
       .prepare(`SELECT thread_id, turn_id, type, ts, data FROM events
-        WHERE type IN ('turn.started', 'message.delta') AND turn_id IS NOT NULL AND seq > ?
+        WHERE type IN ('turn.started', 'message.delta', 'message.replace') AND turn_id IS NOT NULL AND seq > ?
         ${threadId ? 'AND thread_id = ?' : ''} ${turnId ? 'AND turn_id = ?' : ''} ORDER BY thread_id, seq`)
       .iterate(...[afterSeq, ...(threadId ? [threadId] : []), ...(turnId ? [turnId] : [])]) as Iterable<{ thread_id: string; turn_id: string; type: string; ts: string; data: string }>;
     const said = new Map<string, { threadId: string; turnId: string; ts: string; text: string }>();
@@ -505,7 +507,8 @@ export class Store {
         continue;
       }
       const answer = said.get(row.turn_id) ?? { threadId: row.thread_id, turnId: row.turn_id, ts: row.ts, text: '' };
-      answer.text += typeof data.text === 'string' ? data.text : '';
+      answer.text = row.type === 'message.replace' ? replaceMessageTail(answer.text, data)
+        : answer.text + (typeof data.text === 'string' ? data.text : '');
       said.set(row.turn_id, answer);
     }
     flush();

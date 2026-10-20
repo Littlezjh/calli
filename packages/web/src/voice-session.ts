@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo } from 'react';
 import { Api, type VoiceSnapshot, type VoiceEvent } from './api';
 import { VoiceMediaController, type VoiceMediaOptions, type VoiceMediaSnapshot, VoiceMediaException } from './voice-media';
 import { t } from './i18n';
+import type { VoiceTranscript } from './voice-timeline';
 
 export interface VoiceSessionState {
   readonly active: boolean;
@@ -12,6 +13,8 @@ export interface VoiceSessionState {
   readonly transcript: string;
   readonly transcriptFinal: boolean;
   readonly error: string | null;
+  readonly messages: readonly VoiceTranscript[];
+  readonly messagesThreadId: string | null;
 }
 
 export type VoiceSessionListener = (state: VoiceSessionState) => void;
@@ -37,6 +40,8 @@ export class VoiceSessionController {
     transcript: '',
     transcriptFinal: false,
     error: null,
+    messages: [],
+    messagesThreadId: null,
   };
 
   private mediaController: VoiceMediaController | null = null;
@@ -165,6 +170,8 @@ export class VoiceSessionController {
       transcript: '',
       transcriptFinal: false,
       error: null,
+      messages: this._state.messagesThreadId === threadId ? this._state.messages : [],
+      messagesThreadId: threadId,
     });
 
     // 1. Prepare media synchronously in user gesture callstack
@@ -251,6 +258,24 @@ export class VoiceSessionController {
             }
           });
         } else if (event.type === 'transcript') {
+          if (event.role === 'user' || event.role === 'assistant') {
+            const messages = [...this._state.messages];
+            const index = messages.findIndex(m => m.itemId === event.itemId);
+            const previous = messages[index];
+            if (!previous || previous.role === event.role && (!previous.final || event.final)) {
+              const message: VoiceTranscript = {
+                itemId: event.itemId, role: event.role,
+                text: (event.final ? event.text : (previous?.text ?? '') + event.text).slice(0, 32768),
+                final: event.final, streaming: !event.final,
+                at: previous?.at ?? event.at ?? new Date().toISOString(),
+                afterSeq: previous?.afterSeq ?? event.afterSeq ?? 0,
+                order: previous?.order ?? event.order ?? messages.length,
+              };
+              if (index < 0) messages.push(message);
+              else messages[index] = message;
+              this.updateState({ messages: messages.slice(-256) });
+            }
+          }
           if (event.itemId !== this.currentItemId || this._state.transcriptFinal && !event.final) {
             this.currentItemId = event.itemId;
             this.currentTranscript = event.text;
@@ -365,6 +390,7 @@ export class VoiceSessionController {
       transcript: '',
       transcriptFinal: false,
       error: errorToKeep,
+      messages: this._state.messages.map(m => ({ ...m, streaming: false })),
     });
 
     if (sessionId) {
@@ -395,10 +421,10 @@ export function useVoiceSession(
   dismissError: () => void;
 } {
   const controller = useMemo(() => new VoiceSessionController({ api }), [api, host]);
-  const [sessionState, setSessionState] = useState(controller.state);
+  const [observed, setObserved] = useState({ controller, state: controller.state });
 
   useEffect(() => {
-    const unsubscribe = controller.subscribe(setSessionState);
+    const unsubscribe = controller.subscribe(state => setObserved({ controller, state }));
     return () => { unsubscribe(); void controller.stop(); };
   }, [controller]);
 
@@ -415,7 +441,7 @@ export function useVoiceSession(
   }, [controller]);
 
   return {
-    state: sessionState,
+    state: observed.controller === controller ? observed.state : controller.state,
     start: () => threadId ? controller.start(threadId) : Promise.resolve(),
     stop: () => controller.stop(),
     setMuted: muted => controller.setMuted(muted),

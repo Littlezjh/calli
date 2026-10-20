@@ -595,7 +595,8 @@ export interface VoiceSnapshot {
 export type VoiceEvent =
   | { type: 'state'; session: VoiceSnapshot }
   | { type: 'sdp'; sdp: string }
-  | { type: 'transcript'; itemId: string; text: string; final: boolean };
+  | { type: 'transcript'; itemId: string; text: string; final: boolean;
+      role?: 'user' | 'assistant'; at?: string; afterSeq?: number; order?: number };
 
 /**
  * Random UUID per browser tab session, sent in X-RAH-Voice-Owner header.

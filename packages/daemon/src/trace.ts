@@ -1,5 +1,5 @@
 import { mcpCallOf } from './activity.js';
-import { coalesceToolEvents, compactDeltas, type StoredEvent } from './events.js';
+import { coalesceToolEvents, compactDeltas, replaceMessageTail, type StoredEvent } from './events.js';
 
 /**
  * One turn read back as a trace: what the user sent, what the model thought and said, each tool
@@ -110,6 +110,11 @@ export function buildTrace(events: StoredEvent[]): { steps: TraceStep[]; totals:
           setText(step, stringOf(data.text));
           steps.push(step);
         }
+        break;
+      }
+      case 'message.replace': {
+        const last = [...steps].reverse().find(step => step.kind === 'assistant');
+        if (last && !last.cut) setText(last, replaceMessageTail(last.text ?? '', data));
         break;
       }
       case 'tool.start':

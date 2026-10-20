@@ -33,7 +33,8 @@ export interface VoiceSnapshot {
 export type VoiceSignal =
   | { type: 'started' }
   | { type: 'sdp'; sdp: string }
-  | { type: 'transcript'; itemId: string; text: string; final: boolean }
+  | { type: 'transcript'; itemId: string; text: string; final: boolean;
+      role?: 'user' | 'assistant'; at?: string; afterSeq?: number; order?: number }
   | { type: 'error' }
   | { type: 'closed' };
 
@@ -234,7 +235,12 @@ export class VoiceSessions {
           || typeof event.text !== 'string' || event.text.length > MAX_TEXT || typeof event.final !== 'boolean') {
           void this.end(s, 'provider_error'); return;
         }
-        this.publish(s, { type: 'transcript', itemId: event.itemId, text: event.text, final: event.final });
+        this.publish(s, { type: 'transcript', itemId: event.itemId, text: event.text, final: event.final,
+          ...(event.role === 'user' || event.role === 'assistant' ? { role: event.role } : {}),
+          ...(typeof event.at === 'string' ? { at: event.at } : {}),
+          ...(Number.isSafeInteger(event.afterSeq) && event.afterSeq! >= 0 ? { afterSeq: event.afterSeq } : {}),
+          ...(Number.isSafeInteger(event.order) && event.order! >= 0 ? { order: event.order } : {}),
+        });
         break;
       case 'error': void this.end(s, 'provider_error'); break;
       case 'closed': void this.end(s, 'provider_closed'); break;

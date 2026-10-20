@@ -100,42 +100,57 @@ test('start attaches state before the RPC, and only started-plus-SDP means activ
   assert.ok(!JSON.stringify(h.states).includes('SECRET')); // no SDP, session id or credentials in state
 });
 
-test('transcript streams forward as signals with stable item ids', async () => {
+test('canonical transcripts keep roles and separate repeated utterances, without exposing internal items', async () => {
   const h = setup();
   await reachActive(h);
-  h.notify('thread/realtime/transcript/delta', { role: 'assistant', delta: '你' });
-  h.notify('thread/realtime/item/transcript/delta', { itemId: 'item-1', delta: '好' });
-  h.notify('thread/realtime/transcript/done', { role: 'assistant', text: '你好' });
-  h.notify('thread/realtime/item/completed', { item: { type: 'transcriptSegment', id: 'item-1', text: '你好', role: 'assistant' } });
-  h.notify('thread/realtime/item/completed', { item: { type: 'realtimeSessionStarted' } }); // not a transcript
-  h.notify('thread/realtime/transcript/delta', { role: 'user', delta: '' }); // empty text is dropped
-  assert.deepEqual(h.signals.filter(s => s.type === 'transcript'), [
-    { type: 'transcript', itemId: 'transcript:assistant', text: '你', final: false },
-    { type: 'transcript', itemId: 'item-1', text: '好', final: false },
-    { type: 'transcript', itemId: 'transcript:assistant', text: '你好', final: true },
-    { type: 'transcript', itemId: 'item-1', text: '你好', final: true },
+  for (const [id, role, text] of [['u1', 'user', 'Hello'], ['a1', 'assistant', 'Hi'], ['u2', 'user', 'Hello']]) {
+    h.notify('thread/realtime/item/started', { item: { type: 'transcriptSegment', id, role, text: '' } });
+    h.notify('thread/realtime/item/transcript/delta', { itemId: id, delta: text });
+    h.notify('thread/realtime/item/completed', { item: { type: 'transcriptSegment', id, role, text: `${text}!` } });
+  }
+  h.notify('thread/realtime/item/completed', { item: { type: 'bemItemPromoted', id: 'bem', item_id: 'exec', turn_id: 'task' } });
+  h.notify('thread/realtime/item/started', { item: { type: 'transcriptSegment', id: 'system', role: 'system', text: 'SECRET_PROMPT' } });
+  h.notify('thread/realtime/item/transcript/delta', { itemId: 'orphan', delta: 'SECRET_ORPHAN' });
+  h.notify('thread/realtime/item/added', { item: { type: 'unknown', text: 'SECRET_RAW' } });
+  const captions = h.signals.filter(s => s.type === 'transcript');
+  assert.deepEqual(captions.map(s => [s.itemId, s.role, s.text, s.final]), [
+    ['u1', 'user', 'Hello', false], ['u1', 'user', 'Hello!', true],
+    ['a1', 'assistant', 'Hi', false], ['a1', 'assistant', 'Hi!', true],
+    ['u2', 'user', 'Hello', false], ['u2', 'user', 'Hello!', true],
+  ]);
+  assert.ok(!JSON.stringify(captions).includes('SECRET'));
+});
+
+test('flat notifications before and after canonical items cannot alias or overwrite another utterance', async () => {
+  const h = setup();
+  await reachActive(h);
+  for (const text of ['first flat utterance', 'second flat utterance']) {
+    h.notify('thread/realtime/transcript/delta', { role: 'user', delta: text });
+    h.notify('thread/realtime/transcript/done', { role: 'user', text });
+  }
+  for (const id of ['first', 'second']) {
+    h.notify('thread/realtime/item/started', { item: { type: 'transcriptSegment', id, role: 'user', text: '' } });
+    h.notify('thread/realtime/item/transcript/delta', { itemId: id, delta: 'draft' });
+    h.notify('thread/realtime/transcript/done', { role: 'user', text: 'unidentifiable mirror' });
+    h.notify('thread/realtime/item/completed', { item: { type: 'transcriptSegment', id, role: 'user', text: id } });
+  }
+  assert.deepEqual(h.signals.filter(s => s.type === 'transcript').map(s => [s.itemId, s.text]), [
+    ['first', 'draft'], ['first', 'first'], ['second', 'draft'], ['second', 'second'],
   ]);
 });
 
-test('a whole session speaks exactly three RPCs: no turn cancel, no re-prompting, no passthrough', async () => {
+test('duplicate canonical completions keep identity and an empty final clears the draft', async () => {
   const h = setup();
-  const started = h.start();
-  await flush();
-  h.notify('thread/realtime/started', { version: 'v3' });
-  h.notify('thread/realtime/sdp', { sdp: 'ANSWER' });
-  await started;
-  // Chat continues while background work runs: transcripts stream, and none of it becomes an RPC.
-  for (let i = 0; i < 5; i++) {
-    h.notify('thread/realtime/transcript/delta', { role: 'user', delta: `第${i}句` });
-    h.notify('thread/realtime/item/completed', { item: { type: 'transcriptSegment', id: `item-${i}`, text: `第${i}句`, role: 'user' } });
-  }
-  assert.equal(h.signals.filter(s => s.type === 'transcript').length, 10);
-  const stopping = h.rt.stop();
-  h.notify('thread/realtime/closed');
-  await stopping;
-  await flush();
-  assert.deepEqual(h.transport.calls.map(c => c.method), ['account/read', 'thread/realtime/start', 'thread/realtime/stop']);
-  assert.ok(!h.transport.calls.some(c => /^(turn|thread\/turn|item|thread\/realtime\/append)/.test(c.method)));
+  await reachActive(h);
+  const item = { type: 'transcriptSegment', id: 'one', role: 'assistant', text: '' };
+  h.notify('thread/realtime/item/started', { item });
+  h.notify('thread/realtime/item/transcript/delta', { itemId: item.id, delta: 'draft' });
+  h.notify('thread/realtime/item/completed', { item: { ...item, text: '**Final**' } });
+  h.notify('thread/realtime/item/completed', { item: { ...item, text: '**Final**' } });
+  h.notify('thread/realtime/item/completed', { item });
+  assert.deepEqual(h.signals.filter(s => s.type === 'transcript').map(s => [s.itemId, s.text, s.final]), [
+    ['one', 'draft', false], ['one', '**Final**', true], ['one', '**Final**', true], ['one', '', true],
+  ]);
 });
 
 test('a second start while a session lives is refused without new RPCs', async () => {
@@ -455,17 +470,21 @@ test('voice transport adapter resolves at the acknowledgement and streams signal
   assert.equal(vt.state.phase, 'signaling');
   vt.handleNotification('thread/realtime/started', { threadId: THREAD, version: 'v3' });
   vt.handleNotification('thread/realtime/sdp', { threadId: THREAD, sdp: 'ANSWER' });
-  vt.handleNotification('thread/realtime/transcript/delta', { threadId: THREAD, role: 'user', delta: '嗯' });
+  vt.handleNotification('thread/realtime/item/started', { threadId: THREAD,
+    item: { type: 'transcriptSegment', id: 'spoken', role: 'user', text: '' } });
+  vt.handleNotification('thread/realtime/item/transcript/delta', { threadId: THREAD, itemId: 'spoken', delta: '嗯' });
   const stopping = vt.stop();
   vt.handleNotification('thread/realtime/closed', { threadId: THREAD });
   await stopping;
   assert.deepEqual(signals, [
     { type: 'started' },
     { type: 'sdp', sdp: 'ANSWER' },
-    { type: 'transcript', itemId: 'transcript:user', text: '嗯', final: false },
+    { type: 'transcript', itemId: 'spoken', text: '嗯', final: false, role: 'user' },
     { type: 'closed' },
   ]);
   assert.equal(vt.state.phase, 'closed');
+  assert.deepEqual(transport.calls.map(call => call.method),
+    ['account/read', 'thread/realtime/start', 'thread/realtime/stop']);
   vt.dispose();
   await assert.rejects(vt.start('AGAIN', () => {}), reason('session_ended'));
 });
@@ -567,16 +586,16 @@ test('fixture: a full session over a real peer, from start to stop', async () =>
     // The transcript burst streams right behind the answer; read it before stopping, since
     // anything from a stopping session onward is late by definition.
     await wait(30);
-    assert.equal(cap.signals.filter(s => s.type === 'transcript').length, 4);
+    assert.equal(cap.signals.filter(s => s.type === 'transcript').length, 10);
     assert.equal((await rt.stop()).phase, 'closed');
     assert.equal(rt.state.error, null);
   });
   assert.ok(!JSON.stringify(cap.states).includes('SECRET'));
-  assert.deepEqual(cap.signals.filter(s => s.type === 'transcript'), [
-    { type: 'transcript', itemId: 'transcript:assistant', text: '你', final: false },
-    { type: 'transcript', itemId: 'item-1', text: '好', final: false },
-    { type: 'transcript', itemId: 'transcript:assistant', text: '你好', final: true },
-    { type: 'transcript', itemId: 'item-1', text: '你好', final: true },
+  assert.deepEqual(cap.signals.filter(s => s.type === 'transcript').map(s => [s.itemId, s.role, s.text, s.final]), [
+    ['a1', 'assistant', '你', false], ['a1', 'assistant', '你好。', true],
+    ['u1', 'user', '跑', false], ['u1', 'user', '下测试', false], ['u1', 'user', '跑一下测试', true],
+    ['a2', 'assistant', '好的', false], ['a2', 'assistant', '好的，马上。', true],
+    ['item-1', 'user', '顺便', false], ['item-1', 'user', '看下日志', false], ['item-1', 'user', '顺便看下日志', true],
   ]);
   const methods = messages.filter(m => m.method).map(m => m.method);
   assert.ok(methods.indexOf('account/read') < methods.indexOf('thread/realtime/start'));
@@ -584,6 +603,24 @@ test('fixture: a full session over a real peer, from start to stop', async () =>
   const start = messages.find(m => m.method === 'thread/realtime/start');
   assert.deepEqual(start.params, {
     threadId: THREAD, version: 'v3', outputModality: 'audio', transport: { type: 'webrtc', sdp: 'FIXTURE_OFFER' },
+  });
+});
+
+test('fixture: mixed flat and typed channels render one item per utterance', async () => {
+  const cap = capture();
+  await withFixture('mixed', (t, h, o) => buildController(t, h, o), cap.handlers, async rt => {
+    const active = await rt.start({ sdpOffer: 'FIXTURE_OFFER' });
+    assert.equal(active.phase, 'active');
+    await wait(50); // the tail of the burst may still be in the pipe when start resolves
+    assert.deepEqual(cap.signals.filter(s => s.type === 'transcript'), [
+      { type: 'transcript', itemId: 'seg-1', text: '帮我整理', final: false, role: 'user' },
+      { type: 'transcript', itemId: 'seg-1', text: '帮我整理新闻', final: true, role: 'user' },
+      { type: 'transcript', itemId: 'seg-2', text: '好的', final: false, role: 'assistant' },
+      { type: 'transcript', itemId: 'seg-2', text: '好的，整理好了。', final: true, role: 'assistant' },
+    ]);
+    const stopping = rt.stop();
+    // Nothing further arrives, but the stop must still settle on its close timeout.
+    assert.equal((await stopping).phase, 'closed');
   });
 });
 
@@ -649,14 +686,15 @@ test('fixture: the voice transport adapter drives a session over a real peer', a
   await withFixture('ok', (t, h, o) => new CodexVoiceTransport(THREAD, t, o), cap.handlers, async vt => {
     const signals: RealtimeSignal[] = [];
     const start = vt.start('FIXTURE_OFFER', signal => signals.push(signal));
-    await start; // acknowledged, not yet established
-    assert.equal(vt.state.phase, 'signaling');
+    await start; // resolves at the acknowledgement; establishment may legitimately be done already
+    assert.ok(vt.state.phase === 'signaling' || vt.state.phase === 'active',
+      `phase after the acknowledgement must be signaling or active, got ${vt.state.phase}`);
     await wait(50); // started, sdp and transcripts stream in
-    assert.equal(vt.state.phase, 'active');
+    assert.equal(vt.state.phase, 'active'); // connected still means acknowledgement plus started plus SDP
     const stopping = vt.stop(); // the fixture acknowledges and closes
     await stopping;
     vt.handleNotification('thread/realtime/closed', { threadId: THREAD }); // already settled: dropped
     assert.equal(vt.state.phase, 'closed');
-    assert.deepEqual(signals.map(s => s.type), ['started', 'sdp', 'transcript', 'transcript', 'transcript', 'transcript', 'closed']);
+    assert.deepEqual(signals.map(s => s.type), ['started', 'sdp', ...Array.from({ length: 10 }, () => 'transcript'), 'closed']);
   });
 });

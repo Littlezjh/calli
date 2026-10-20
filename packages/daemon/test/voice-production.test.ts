@@ -10,6 +10,7 @@ import { Store } from '../src/store.js';
 import { ThreadManager } from '../src/threads.js';
 import type { StoredEvent } from '../src/events.js';
 import type { VoiceSignal } from '../src/voice-sessions.js';
+import { turnAnswer } from '../src/coordination.js';
 
 async function until(check: () => boolean) {
   const end = Date.now() + 5000;
@@ -66,9 +67,62 @@ test('native voice work retains approvals, survives voice stop, and drains queue
   assert.equal(events.filter(e => e.type === 'turn.started').length, 2);
   assert.equal(methods().filter(m => m === 'turn/start').length, 1);
   assert.ok(signals.some(s => s.type === 'transcript'));
-  assert.ok(!JSON.stringify(events).includes('temporary caption'));
+  const retained = events.find(e => e.type === 'voice.message');
+  assert.equal(retained?.data.text, 'temporary caption');
+  assert.equal(retained?.data.final, false, 'stopping retains an unfinished utterance without inventing a final');
   assert.ok(events.filter(e => e.turnId === native.turnId && e.type === 'message.delta').map(e => e.data.text).join('').includes('approved'));
   assert.equal(manager.getThread(thread.id).status, 'idle');
+});
+
+test('typed speech retains separate speakers and canonical corrections across history reload', async t => {
+  const { manager, thread, events, store, methods } = await setup(t, { FAKE_CODEX_VOICE_CONVERSATION: '1' });
+  const voice = manager.voiceTransport(thread.id);
+  const signals: VoiceSignal[] = [];
+  await voice.start('fixture-offer', s => signals.push(s));
+  await until(() => events.filter(e => e.type === 'voice.message').length === 4);
+  await voice.stop(); voice.dispose();
+  const messages = events.filter(e => e.type === 'voice.message');
+  assert.equal(new Set(messages.map(e => e.data.itemId)).size, 4);
+  assert.equal(messages.find(e => e.data.text === '帮我整理最新的科技新闻。')?.data.role, 'user');
+  assert.equal(messages.filter(e => e.data.role === 'assistant').length, 2);
+  assert.ok(signals.some(s => s.type === 'transcript' && s.role === 'user' && !s.final && s.text === '帮我整理最新的新闻。'));
+  assert.equal(events.filter(e => e.type === 'turn.started').length, 0);
+  const history = await store.history.page(thread.id);
+  assert.equal(history.events.filter(e => e.type === 'voice.message').length, 4);
+  assert.ok(!methods().includes('turn/start'));
+});
+
+test('revocation guards transcript persistence before a late canonical item reaches history', async t => {
+  const { manager, thread, events } = await setup(t, { FAKE_CODEX_VOICE_CONVERSATION: '1' });
+  let allowed = true;
+  const voice = manager.voiceTransport(thread.id, () => { if (!allowed) throw new Error('revoked'); });
+  const signals: VoiceSignal[] = [];
+  await voice.start('fixture-offer', s => signals.push(s));
+  await until(() => events.filter(e => e.type === 'voice.message').length === 3);
+  allowed = false;
+  await until(() => signals.some(s => s.type === 'error'));
+  await voice.stop(); voice.dispose();
+  assert.ok(!events.some(e => e.type === 'voice.message' && e.data.text === '帮我整理最新的科技新闻。'));
+  const draft = events.find(e => e.type === 'voice.message' && e.data.text === '帮我整理最新的新闻。');
+  assert.equal(draft?.data.final, false, 'only speech received before revocation is retained');
+});
+
+for (const task of ['voice-final-news', 'completed-only']) test(`native authoritative answers are retained once: ${task}`, async t => {
+  const { manager, thread, events, store } = await setup(t, { FAKE_CODEX_VOICE_TASK: task });
+  const voice = manager.voiceTransport(thread.id);
+  await voice.start('fixture-offer', () => {});
+  await until(() => events.some(e => e.type === 'turn.done'));
+  const turnId = events.find(e => e.type === 'turn.started')!.turnId;
+  const answer = turnAnswer(events, turnId);
+  assert.ok(answer.startsWith('## 科技新闻'));
+  assert.ok(!answer.includes('newz'));
+  assert.equal(answer.split('## 科技新闻').length, 2);
+  const history = await store.history.page(thread.id);
+  assert.equal(turnAnswer(history.events as StoredEvent[], turnId), answer);
+  assert.equal(store.searchText('newz').length, 0);
+  assert.ok(store.searchText('测试新闻标题').some(hit => hit.threadId === thread.id));
+  assert.equal(events.filter(e => e.type === 'message.replace').length, task === 'completed-only' ? 0 : 1);
+  await voice.stop(); voice.dispose();
 });
 
 test('opening and closing voice during an existing task preserves its process and cancellation ownership', async t => {

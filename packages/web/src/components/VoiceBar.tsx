@@ -27,8 +27,6 @@ export function VoiceBar({ session, onMuteToggle, onStop, onDismissError }: Prop
     statusLabel = session.isMuted ? t('voice.muted') : t('voice.live');
   }
 
-  const transcript = session.transcript || (isConnected ? t('voice.listening') : '');
-
   return (
     <div
       className={`voice-bar${isError ? ' error' : ''}${isConnected ? ' connected' : ''}`}
@@ -44,14 +42,6 @@ export function VoiceBar({ session, onMuteToggle, onStop, onDismissError }: Prop
           {statusLabel}
         </span>
       </div>
-
-      {!isError && (
-        <div className="voice-bar-center" title={transcript}>
-          <span className={`voice-transcript${session.transcript ? ' text-active' : ''}`}>
-            {transcript}
-          </span>
-        </div>
-      )}
 
       <div className="voice-bar-right">
         {session.active && (

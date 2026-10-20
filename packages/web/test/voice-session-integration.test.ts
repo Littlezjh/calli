@@ -97,6 +97,25 @@ test('transcript deltas append within an item, final replaces, and a new item st
   assert.equal(h.controller.state.transcript, 'Next');
 });
 
+test('role-bearing speech is independent per item and remains readable after stop', async t => {
+  const h = harness(t);
+  await h.controller.start('thread');
+  const { emit } = h.streams.get('session')!;
+  emit({ type: 'transcript', itemId: 'u1', role: 'user', text: 'Find ', final: false, afterSeq: 4 });
+  emit({ type: 'transcript', itemId: 'a1', role: 'assistant', text: 'Looking', final: false, afterSeq: 4 });
+  emit({ type: 'transcript', itemId: 'u1', role: 'user', text: 'newz', final: false, afterSeq: 5 });
+  emit({ type: 'transcript', itemId: 'u1', role: 'user', text: 'Find news', final: true, afterSeq: 5 });
+  assert.deepEqual(h.controller.state.messages.map(m => [m.role, m.text]), [['user', 'Find news'], ['assistant', 'Looking']]);
+  assert.equal(h.controller.state.messages[0].afterSeq, 4);
+  await h.controller.stop();
+  assert.equal(h.controller.state.messages.length, 2);
+  assert.ok(h.controller.state.messages.every(m => !m.streaming));
+  assert.equal(h.controller.state.messagesThreadId, 'thread');
+  await h.controller.start('other-thread');
+  assert.deepEqual(h.controller.state.messages, []);
+  assert.equal(h.controller.state.messagesThreadId, 'other-thread');
+});
+
 test('transport errors are classified for display and leave no active media', async t => {
   const h = harness(t);
   h.api.startVoiceSession = async () => { throw new Error('SECRET_TOKEN private native path'); };

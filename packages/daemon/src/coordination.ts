@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:http';
 import type { Store } from './store.js';
 import type { ThreadManager } from './threads.js';
-import type { StoredEvent } from './events.js';
+import { replaceMessageTail, type StoredEvent } from './events.js';
 import { HttpError } from './errors.js';
 import { turnOutcome } from './lifecycle.js';
 import { TeamsManager, parseTeamMentions, type TeamDefinition, type TeamSource, type TeamTask } from './teams.js';
@@ -29,6 +29,7 @@ export function turnAnswer(events: StoredEvent[], turnId: string | null): string
   for (const e of events) {
     if (e.turnId !== turnId) continue;
     if (e.type === 'message.delta') { const text = String(e.data.text ?? ''); all += text; last += text; }
+    else if (e.type === 'message.replace') { all = replaceMessageTail(all, e.data); last = replaceMessageTail(last, e.data); }
     else if (e.type === 'tool.start' || e.type === 'reasoning.delta' || e.type === 'approval.request') last = '';
   }
   return (last.trim() ? last : all).trim().slice(-16000);

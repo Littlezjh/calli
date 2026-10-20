@@ -50,7 +50,7 @@ export function partitionHistory(events: HistoryEvent[]): { summary: HistoryEven
   };
   for (const ev of events) {
     if (ev.type === 'turn.started') { finish(); tools.clear(); plans.clear(); summary.push(ev); continue; }
-    if (ev.type === 'message.delta') { answer.push(ev); continue; }
+    if (ev.type === 'message.delta' || ev.type === 'message.replace') { answer.push(ev); continue; }
     if (isWork(ev)) {
       if (!block) {
         block = { ...ev, type: 'history.work', data: { count: 0, version: ev.seq, files: [], endedAt: ev.ts } };
@@ -294,7 +294,7 @@ export class HistoryStore {
     }
     return out;
   }
-  private turnView(thread: string, turn: string, start: number, end: number): HistoryEvent[] {
+  private turnView(thread: string, turn: string | null, start: number, end: number): HistoryEvent[] {
     // Existing projections are optional. Missing ones must never delay the first response.
     const covered = this.db.prepare('SELECT 1 FROM history_coverage WHERE thread_id=? AND start_seq<=? AND end_seq>=?').get(thread, start, end - 1);
     if (!covered) return this.directSummary(thread, start, end);
@@ -314,7 +314,15 @@ export class HistoryStore {
   async page(thread: string, before?: number, after = 0): Promise<HistoryPage> {
     const snapshotSeq = this.latest(thread);
     const end = Math.min(before ?? snapshotSeq + 1, snapshotSeq + 1);
-    const starts = this.db.prepare("SELECT seq, turn_id FROM events WHERE thread_id=? AND type='turn.started' AND seq<? AND seq>? ORDER BY seq DESC LIMIT 9").all(thread, end, after) as { seq: number; turn_id: string }[];
+    // Voice-only conversations have no task turns. Each committed utterance is also a page
+    // boundary, so opening a long call does not eagerly load its entire transcript.
+    const starts = this.db.prepare(`SELECT e.seq, e.turn_id FROM events e
+      WHERE e.thread_id=? AND e.seq<? AND e.seq>? AND e.type IN ('turn.started', 'voice.message') AND (
+        e.type='turn.started' OR e.type='voice.message' AND COALESCE((
+          SELECT b.type FROM events b WHERE b.thread_id=e.thread_id AND b.seq<e.seq
+          AND b.type IN ('turn.started', 'turn.done', 'turn.error') ORDER BY b.seq DESC LIMIT 1
+        ), '')<>'turn.started')
+      ORDER BY e.seq DESC LIMIT 9`).all(thread, end, after) as { seq: number; turn_id: string | null }[];
     const selected = starts.slice(0, 8).reverse();
     const hasOlder = starts.length > 8;
     const start = hasOlder ? selected[0].seq : after + 1;

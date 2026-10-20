@@ -6,6 +6,7 @@ import { diffStats } from './diff';
 import { IMAGE_FILE } from './paths';
 import type { VideoRef } from './api';
 import { formatDate, formatList, t } from './i18n';
+import { withVoiceItems, type VoiceTranscript } from './voice-timeline';
 
 export interface StoredEvent {
   threadId: string;
@@ -349,7 +350,7 @@ function applyToolData(step: Step, data: Record<string, any>): void {
   if (text) step.output = text;
 }
 
-export function buildTimeline(events: StoredEvent[]): Timeline {
+export function buildTimeline(events: StoredEvent[], speech: readonly VoiceTranscript[] = []): Timeline {
   const items: Item[] = [];
   // Finished turns, with the time each ended. Turns the hub only copied in (imported history,
   // turns synced from the terminal) ended at some earlier time it never saw: those have none.
@@ -450,7 +451,7 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
         (item.liveEvents ??= []).push(ev);
       }
     } else if (open.work?.deferred && ev.seq > open.work.deferred.version
-      && ['tool.start', 'reasoning.delta', 'message.delta', 'context.compaction', 'turn.done', 'turn.error'].includes(ev.type)) {
+      && ['tool.start', 'reasoning.delta', 'message.delta', 'message.replace', 'context.compaction', 'turn.done', 'turn.error'].includes(ev.type)) {
       (open.work.liveEvents ??= []).push(ev);
     }
 
@@ -488,6 +489,23 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
         }
         open.answer.text += String(ev.data.text ?? '');
         break;
+
+      case 'message.replace': {
+        const { previous, text } = ev.data;
+        if (typeof previous !== 'string' || !previous || typeof text !== 'string') break;
+        const replace = (target: { text: string }) => {
+          if (!target.text.endsWith(previous)) return false;
+          target.text = target.text.slice(0, -previous.length) + text;
+          return true;
+        };
+        if (open.answer?.turnId === turn && replace(open.answer)) break;
+        for (const item of [...items].reverse()) {
+          if (item.turnId !== turn || item.kind !== 'work') continue;
+          const note = [...item.entries].reverse().find(entry => entry.kind === 'note' && entry.text.endsWith(previous));
+          if (note?.kind === 'note') { replace(note); break; }
+        }
+        break;
+      }
 
       case 'plan.updated': {
         const entries: PlanEntry[] = (Array.isArray(ev.data.entries) ? ev.data.entries : [])
@@ -706,7 +724,7 @@ export function buildTimeline(events: StoredEvent[]): Timeline {
 
   const withSummaries = addTurnSummaries(items, finished, stopped);
   const awaitingApproval = running && items.some((it) => (it.kind === 'approval' && it.decision === null) || (it.kind === 'input' && it.answer === null));
-  return { items: withSummaries, lastSeq, running, awaitingApproval, usage };
+  return { items: withVoiceItems(withSummaries, events, speech), lastSeq, running, awaitingApproval, usage };
 }
 
 const compactTokens = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n));

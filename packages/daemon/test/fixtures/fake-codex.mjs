@@ -150,6 +150,20 @@ const runTurn = (text, turnId, done) => {
   notify('item/started', { item: userItem, turnId });
   notify('item/completed', { item: userItem, turnId });
 
+  if (text === 'voice-final-news' || text === 'completed-only') {
+    const search = { type: 'webSearch', id: 'voice-search', query: 'latest technology news' };
+    notify('item/started', { turnId, item: search });
+    notify('item/completed', { turnId, item: { ...search, status: 'completed' } });
+    const item = { type: 'agentMessage', id: 'news-answer', text: '', phase: 'final_answer' };
+    notify('item/started', { turnId, item });
+    if (text !== 'completed-only') notify('item/agentMessage/delta', { turnId, itemId: item.id, delta: 'Here are the newz' });
+    const final = { ...item, text: '## 科技新闻\n\n**测试新闻标题**\n\n这是排版后的最终回答。\n\n[来源](https://example.com/news)' };
+    notify('item/completed', { turnId, item: final });
+    notify('item/completed', { turnId, item: final });
+    done();
+    return;
+  }
+
   if (text.startsWith('auto-compact')) {
     const tool = (id) => {
       const item = { type: 'commandExecution', id, command: 'pwd', status: 'completed', exitCode: 0 };
@@ -339,8 +353,33 @@ rl.on('line', (line) => {
       out({ id: msg.id, result: {} });
       notify('thread/realtime/started', {});
       notify('thread/realtime/sdp', { sdp: 'fixture-answer' });
-      notify('thread/realtime/transcript/delta', { role: 'user', delta: 'temporary caption' });
-      if (process.env.FAKE_CODEX_VOICE_TASK && !activeTurn) {
+      if (process.env.FAKE_CODEX_VOICE_CONVERSATION) {
+        const transcript = (id, role, text, final = true) => {
+          // A legacy stream without identity must not create a second conversation entry.
+          notify('thread/realtime/transcript/delta', { role, delta: text });
+          notify('thread/realtime/transcript/done', { role, text });
+          const item = { type: 'transcriptSegment', id, realtimeSessionId: 'fixture-voice', role, text: '' };
+          notify('thread/realtime/item/started', { item });
+          notify('thread/realtime/item/transcript/delta', { itemId: id, delta: text });
+          if (final) notify('thread/realtime/item/completed', { item: { ...item, text } });
+        };
+        // Delay past the HTTP response so product tests observe drafts over the live SSE.
+        setTimeout(() => {
+          transcript('speech-user-one', 'user', '你能听到我说话吗？');
+          transcript('speech-assistant-one', 'assistant', '能，我在听，你说。');
+          transcript('speech-user-two', 'user', '帮我整理最新的新闻。', false);
+          setTimeout(() => notify('thread/realtime/item/completed', {
+            item: { type: 'transcriptSegment', id: 'speech-user-two', realtimeSessionId: 'fixture-voice',
+              role: 'user', text: '帮我整理最新的科技新闻。' },
+          }), Number(process.env.FAKE_CODEX_VOICE_TRANSCRIPT_DELAY ?? 250));
+          transcript('speech-assistant-two', 'assistant', '好，我来查看主要新闻。');
+        }, 80);
+      } else {
+        notify('thread/realtime/item/started', { item: { type: 'transcriptSegment', id: 'caption', realtimeSessionId: 'fixture-voice', role: 'user', text: '' } });
+        notify('thread/realtime/item/transcript/delta', { itemId: 'caption', delta: 'temporary caption' });
+      }
+      const startVoiceTask = () => {
+        if (!process.env.FAKE_CODEX_VOICE_TASK || activeTurn) return;
         const id = `voice-${nextTurnSeq++}`;
         activeTurn = id;
         notify('turn/started', { turn: { id, status: 'inProgress' } });
@@ -351,7 +390,9 @@ rl.on('line', (line) => {
             finishTurn(id, 'completed');
           });
         }, 30);
-      }
+      };
+      if (process.env.FAKE_CODEX_VOICE_CONVERSATION) setTimeout(startVoiceTask, Number(process.env.FAKE_CODEX_VOICE_TRANSCRIPT_DELAY ?? 250) + 250);
+      else startVoiceTask();
       return;
     }
     case 'thread/realtime/stop':

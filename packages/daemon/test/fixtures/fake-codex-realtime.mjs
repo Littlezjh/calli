@@ -63,11 +63,41 @@ lines.on('line', line => {
       }
       if (scenario !== 'no-started') rt('thread/realtime/started', { realtimeSessionId: 'SECRET_SESSION_ID', version: 'v3' });
       if (scenario !== 'no-sdp') rt('thread/realtime/sdp', { sdp: 'v=0\r\nSECRET_SDP_ANSWER' });
+      if (scenario === 'mixed') {
+        // Both channels may arrive in either order. The v3 typed timeline alone owns identity.
+        rt('thread/realtime/transcript/delta', { role: 'user', delta: '帮我' });
+        rt('thread/realtime/item/started', { item: { type: 'transcriptSegment', id: 'seg-1', realtimeSessionId: 'SECRET_SESSION_ID', role: 'user', text: '' } });
+        rt('thread/realtime/item/transcript/delta', { itemId: 'seg-1', delta: '帮我整理' });
+        rt('thread/realtime/transcript/delta', { role: 'user', delta: 'mirror noise' });
+        rt('thread/realtime/item/completed', { item: { type: 'transcriptSegment', id: 'seg-1', realtimeSessionId: 'SECRET_SESSION_ID', role: 'user', text: '帮我整理新闻' } });
+        rt('thread/realtime/transcript/done', { role: 'user', text: '帮我整理新闻' });
+        rt('thread/realtime/item/started', { item: { type: 'transcriptSegment', id: 'seg-2', realtimeSessionId: 'SECRET_SESSION_ID', role: 'assistant', text: '' } });
+        rt('thread/realtime/transcript/delta', { role: 'assistant', delta: 'mirror of the answer' });
+        rt('thread/realtime/item/transcript/delta', { itemId: 'seg-2', delta: '好的' });
+        rt('thread/realtime/item/completed', { item: { type: 'transcriptSegment', id: 'seg-2', realtimeSessionId: 'SECRET_SESSION_ID', role: 'assistant', text: '好的，整理好了。' } });
+        rt('thread/realtime/transcript/done', { role: 'assistant', text: '好的，整理好了。' });
+      }
       if (scenario === 'ok') {
-        rt('thread/realtime/transcript/delta', { role: 'assistant', delta: '你' });
-        rt('thread/realtime/item/transcript/delta', { itemId: 'item-1', delta: '好' });
-        rt('thread/realtime/transcript/done', { role: 'assistant', text: '你好' });
-        rt('thread/realtime/item/completed', { item: { type: 'transcriptSegment', id: 'item-1', text: '你好', role: 'assistant' } });
+        const transcript = (id, role, deltas, text) => {
+          const item = { type: 'transcriptSegment', id, realtimeSessionId: 'SECRET_SESSION_ID', role, text: '' };
+          rt('thread/realtime/item/started', { item });
+          for (const delta of deltas) rt('thread/realtime/item/transcript/delta', { itemId: id, delta });
+          rt('thread/realtime/item/completed', { item: { ...item, text } });
+        };
+        transcript('a1', 'assistant', ['你'], '你好。');
+        transcript('u1', 'user', ['跑', '下测试'], '跑一下测试');
+        transcript('a2', 'assistant', ['好的'], '好的，马上。');
+        // Timeline items: identity and role ride on started/completed; deltas carry only itemId.
+        rt('thread/realtime/item/started', { item: { type: 'transcriptSegment', id: 'item-1', realtimeSessionId: 'SECRET_SESSION_ID', role: 'user', text: '' } });
+        rt('thread/realtime/item/transcript/delta', { itemId: 'item-1', delta: '顺便' });
+        rt('thread/realtime/item/transcript/delta', { itemId: 'item-1', delta: '看下日志' });
+        rt('thread/realtime/item/completed', { item: { type: 'transcriptSegment', id: 'item-1', realtimeSessionId: 'SECRET_SESSION_ID', role: 'user', text: '顺便看下日志' } });
+        // Not chat captions: promoted task work, a raw added item, and unverified or invalid fields.
+        rt('thread/realtime/item/completed', { item: { type: 'bemItemPromoted', id: 'bem-1', realtimeSessionId: 'SECRET_SESSION_ID', item_id: 'exec-9', turn_id: 'turn-3', presentation: { type: 'wholeItem' } } });
+        rt('thread/realtime/item/added', { item: { type: 'mystery', anything: true } });
+        rt('thread/realtime/transcript/delta', { role: 'system', delta: 'internal prompt' });
+        rt('thread/realtime/transcript/done', { role: 'user', text: '' });
+        rt('thread/realtime/item/started', { item: { type: 'transcriptSegment', id: 7, realtimeSessionId: 'SECRET_SESSION_ID', role: 'user', text: 'bad id' } });
       }
       break;
     }

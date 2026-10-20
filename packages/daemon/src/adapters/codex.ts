@@ -460,6 +460,7 @@ class CodexSession implements AgentSession {
   private goalSubmission: Promise<unknown> | null = null;
   /** Command output streamed so far, so each update carries the whole text like other agents do. */
   private readonly outputSoFar = new Map<string, string>();
+  private readonly messageSoFar = new Map<string, string>();
   /** File changes by item id, for approval cards that need to show the patch. */
   private readonly fileChanges = new Map<string, any[]>();
   /** Settings sent with turn/start, or persisted before runtime-owned goal turns. */
@@ -521,6 +522,9 @@ class CodexSession implements AgentSession {
         this.finishGoalIfIdle();
         break;
       case 'item/started': {
+        if (params?.item?.type === 'agentMessage' && typeof params.item.id === 'string') {
+          this.messageSoFar.set(params.item.id, '');
+        }
         if (this.turn?.compact && params?.item?.type === 'contextCompaction') break;
         if (params?.item?.type === 'fileChange') this.fileChanges.set(params.item.id, params.item.changes ?? []);
         if (params?.item?.type === 'plan') break; // Proposed plan text arrives separately from progress steps.
@@ -529,6 +533,19 @@ class CodexSession implements AgentSession {
         break;
       }
       case 'item/completed': {
+        if (params?.item?.type === 'agentMessage' && typeof params.item.text === 'string'
+          && typeof params.item.id === 'string') {
+          const id = params.item.id;
+          const previous = this.messageSoFar.get(id) ?? '';
+          const text = params.item.text;
+          if (text !== previous) {
+            this.emit(previous
+              ? { type: 'message.replace', data: { id, previous, text } }
+              : { type: 'message.delta', data: { id, text } });
+          }
+          this.messageSoFar.set(id, text);
+          break;
+        }
         if (params?.item?.type === 'plan') {
           this.emit({ type: 'plan.completed', data: { id: params.item.id, text: params.item.text ?? '' } });
           break;
@@ -543,7 +560,13 @@ class CodexSession implements AgentSession {
         break;
       }
       case 'item/agentMessage/delta':
-        if (params?.delta) this.emit({ type: 'message.delta', data: { text: String(params.delta) } });
+        if (params?.delta) {
+          const text = String(params.delta);
+          if (typeof params.itemId === 'string') {
+            this.messageSoFar.set(params.itemId, (this.messageSoFar.get(params.itemId) ?? '') + text);
+          }
+          this.emit({ type: 'message.delta', data: { text } });
+        }
         break;
       case 'item/reasoning/summaryTextDelta':
       case 'item/reasoning/textDelta':
@@ -592,6 +615,7 @@ class CodexSession implements AgentSession {
         if (turn.goal && params.turn.status === 'completed') {
           turn.id = '';
           this.outputSoFar.clear();
+          this.messageSoFar.clear();
           this.finishGoalIfIdle();
           break;
         }
@@ -644,6 +668,7 @@ class CodexSession implements AgentSession {
     this.turn = null;
     this.hooks = null;
     this.outputSoFar.clear();
+    this.messageSoFar.clear();
     turn.resolve({ stopReason, ...(stopReason === 'error' && turn.error ? { error: turn.error } : {}) });
   }
 

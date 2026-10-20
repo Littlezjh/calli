@@ -11,7 +11,7 @@ export interface VoiceProviderAdapter {
 
 export interface VoiceThreads {
   voiceProvider(threadId: string): { providerId: string };
-  voiceTransport(threadId: string): VoiceTransport;
+  voiceTransport(threadId: string, authorize?: () => void): VoiceTransport;
 }
 
 export interface VoiceProvider {
@@ -51,7 +51,9 @@ export class VoiceService {
           throw new HttpError(409, 'voice_provider_unavailable');
         }
       },
-      create: binding => options.manager.voiceTransport(binding.threadId),
+      create: binding => options.manager.voiceTransport(binding.threadId, () => {
+        options.extensions.assertUsable(binding.extensionId);
+      }),
     });
     this.sessions = this.runtime.sessions;
   }

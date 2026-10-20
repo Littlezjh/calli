@@ -385,13 +385,16 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const baseTitle = useRef(document.title);
   const seenThreads = useRef<Thread[] | null>(null);
 
-  const timeline = useMemo(() => buildTimeline(events), [events]);
+  const voice = useVoiceSession(api, selectedId, hostId);
+  const timeline = useMemo(() => buildTimeline(events,
+    voice.state.messagesThreadId === selectedId ? voice.state.messages : []),
+  [events, selectedId, voice.state.messages, voice.state.messagesThreadId]);
   const turnPreviewMap = useMemo(() => turnPreviews(timeline.items), [timeline.items]);
   // What the user last sent here, for a box that was reloaded mid-send to learn that its message arrived.
   const lastSent = useMemo(() => {
     for (let i = timeline.items.length - 1; i >= 0; i--) {
       const item = timeline.items[i];
-      if (item.kind === 'user' && !item.coordination) return { turnId: item.turnId, text: item.text };
+      if (item.kind === 'user' && !item.coordination && !item.key.startsWith('voice:')) return { turnId: item.turnId, text: item.text };
     }
     return null;
   }, [timeline.items]);
@@ -445,7 +448,6 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     if (view === 'ext' && !selectedId && extensions && !(extTarget && resolveExtensionRoute(extTarget, extensions))) setView('thread');
   }, [view, selectedId, extensions, extTarget]);
 
-  const voice = useVoiceSession(api, selectedId, hostId);
   const voiceExt = extensions?.find((e) => e.manifest.id === 'voice');
   const voiceExtInstalled = Boolean(voiceExt?.source === 'builtin' && voiceExt.installed && voiceExt.enabled
     && voiceExt.granted.includes('voice.control') && voiceExt.manifest.contributes.composerActions?.some(action => action.id === 'voice')

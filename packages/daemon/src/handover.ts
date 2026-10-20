@@ -1,4 +1,4 @@
-import type { StoredEvent } from './events.js';
+import { replaceMessageTail, type StoredEvent } from './events.js';
 
 /** Authoritative session coordinates, prepended regardless of how the progress summary was written. */
 export function handoverContext(info: {
@@ -80,10 +80,9 @@ function changedFiles(events: StoredEvent[]): string[] {
 
 /** The assistant text of a stretch of events, joined from its fragments. */
 export function turnMessage(events: StoredEvent[]): string {
-  return events
-    .filter((e) => e.type === 'message.delta' && typeof e.data.text === 'string')
-    .map((e) => e.data.text)
-    .join('');
+  return events.reduce((text, event) => event.type === 'message.replace'
+    ? replaceMessageTail(text, event.data)
+    : event.type === 'message.delta' && typeof event.data.text === 'string' ? text + event.data.text : text, '');
 }
 
 const trunc = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n)}…` : s);

@@ -1,6 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { startDaemon, openUi, api, launchBrowser, repoRoot } from '../harness.mjs';
 
@@ -46,14 +46,14 @@ async function mediaFixture(context) {
   });
 }
 
-async function threadPage(context, title, agent = 'voice-provider') {
-  const response = await api(daemon, '/api/threads', { method: 'POST', body: JSON.stringify({
-    agent, cwd: daemon.workdir, title,
+async function threadPage(context, title, agent = 'voice-provider', server = daemon) {
+  const response = await api(server, '/api/threads', { method: 'POST', body: JSON.stringify({
+    agent, cwd: server.workdir, title,
   }) });
   assert.equal(response.status, 201);
   const thread = await response.json();
   const page = await context.newPage();
-  await openUi(page, daemon);
+  await openUi(page, server);
   if (page.viewportSize().width < 600) await page.locator('.menu-btn').click();
   await page.locator('.thread-title', { hasText: title }).first().click();
   if (page.viewportSize().width < 600) await page.waitForFunction(() => document.querySelector('.main').getBoundingClientRect().left < 1);
@@ -110,6 +110,73 @@ test('voice is opt-in; stopping voice preserves native approval and work on desk
       await page.getByText(/approved:accept/, { exact: false }).first().waitFor();
     } finally { await context.close(); }
   }
+});
+
+test('speech streams in the conversation and final Markdown survives ending and reloading', { timeout: 120_000 }, async () => {
+  const server = await startDaemon({
+    RAH_AGENTS_JSON: JSON.stringify({ agents: [{
+      id: 'voice-provider', adapter: 'codex',
+      command: [process.execPath, join(repoRoot, 'daemon/test/fixtures/fake-codex.mjs')],
+    }] }),
+    FAKE_CODEX_VOICE_TASK: 'voice-final-news', FAKE_CODEX_VOICE_CONVERSATION: '1',
+    FAKE_CODEX_VOICE_TRANSCRIPT_DELAY: '1200',
+  });
+  try {
+    assert.equal((await api(server, '/api/extensions/voice/install', {
+      method: 'POST', body: JSON.stringify({ granted: ['voice.control'] }),
+    })).status, 200);
+    for (const mobile of [false, true]) for (const colorScheme of ['light', 'dark']) {
+      const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1400, height: 900 },
+        isMobile: mobile, hasTouch: mobile, colorScheme });
+      try {
+        await mediaFixture(context);
+        const { page, thread } = await threadPage(context, `语音正文 ${mobile} ${colorScheme}`, 'voice-provider', server);
+        await page.getByRole('button', { name: '开启实时语音', exact: true }).click();
+        await page.locator('.row.user .bubble').filter({ hasText: '帮我整理最新的新闻。' }).waitFor();
+        await page.getByText('能，我在听，你说。', { exact: true }).waitFor();
+        await page.locator('.row.user .bubble').filter({ hasText: '帮我整理最新的科技新闻。' }).waitFor();
+        assert.equal(await page.getByText('帮我整理最新的新闻。', { exact: true }).count(), 0);
+        await page.getByRole('heading', { name: '科技新闻', exact: true }).waitFor();
+        assert.equal(await page.locator('strong').filter({ hasText: '测试新闻标题' }).count(), 1);
+        assert.equal(await page.getByRole('link', { name: '来源', exact: true }).getAttribute('href'), 'https://example.com/news');
+        assert.equal(await page.getByText('Here are the newz', { exact: true }).count(), 0);
+        assert.equal(await page.getByText('你能听到我说话吗？', { exact: true }).count(), 1);
+        if (process.env.RAH_E2E_SHOTS_DIR) {
+          await page.screenshot({ path: join(process.env.RAH_E2E_SHOTS_DIR, `voice-conversation-live-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
+        }
+        await page.locator('.voice-bar').getByRole('button', { name: '结束语音', exact: true }).click();
+        await page.waitForFunction(() => window.voiceTracks.every(t => t.readyState === 'ended'));
+        await page.getByRole('heading', { name: '科技新闻', exact: true }).waitFor();
+        await page.reload();
+        // Reload intentionally opens the new-thread view; reopen the original conversation.
+        if (mobile) await page.locator('.menu-btn').click();
+        await page.locator('.thread-title', { hasText: `语音正文 ${mobile} ${colorScheme}` }).first().click();
+        if (mobile) await page.waitForFunction(() => {
+          const main = document.querySelector('.main');
+          return main && Math.abs(main.getBoundingClientRect().left) < 1;
+        });
+        try { await page.getByRole('heading', { name: '科技新闻', exact: true }).waitFor({ timeout: 10_000 }); }
+        catch (error) {
+          if (process.env.RAH_E2E_SHOTS_DIR) {
+            await page.screenshot({ path: join(process.env.RAH_E2E_SHOTS_DIR, 'voice-reload-failure.png') });
+            writeFileSync(join(process.env.RAH_E2E_SHOTS_DIR, 'voice-reload-failure.json'), JSON.stringify({
+              history: await (await api(server, `/api/threads/${thread.id}/history`)).json(),
+              text: await page.locator('body').innerText(), url: page.url(),
+            }, null, 2));
+          }
+          throw error;
+        }
+        assert.equal(await page.getByText('你能听到我说话吗？', { exact: true }).count(), 1);
+        assert.equal(await page.getByText('能，我在听，你说。', { exact: true }).count(), 1);
+        assert.equal(await page.getByText('帮我整理最新的科技新闻。', { exact: true }).count(), 1);
+        assert.equal(await page.locator('.voice-bar').count(), 0);
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+        if (process.env.RAH_E2E_SHOTS_DIR) {
+          await page.screenshot({ path: join(process.env.RAH_E2E_SHOTS_DIR, `voice-conversation-ended-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
+        }
+      } finally { await context.close(); }
+    }
+  } finally { await server.stop(); }
 });
 
 

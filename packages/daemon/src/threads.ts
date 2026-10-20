@@ -1,4 +1,5 @@
 import type { VoiceTransport } from './voice-sessions.js';
+import { VoiceConversation } from './voice-conversation.js';
 import { UserInputs } from './user-input.js';
 import type { SystemPrompt, WorkMode } from './adapters/types.js';
 import { diagnosticFailure } from './adapters/diagnostics.js';
@@ -1804,12 +1805,18 @@ export class ThreadManager {
   }
 
   /** Deferred initialization lets the lease own cancellation before any process is started. */
-  voiceTransport(threadId: string): VoiceTransport {
+  voiceTransport(threadId: string, authorize: () => void = () => {}): VoiceTransport {
     const provider = this.voiceProvider(threadId).providerId;
     const adapter = this.adapters.get(provider);
     let ended = false;
     let started = false;
     let transport: VoiceTransport | undefined;
+    const conversation = new VoiceConversation(
+      () => this.store.history.latest(threadId),
+      message => {
+        if (this.store.getThread(threadId)) this.emitThreadEvent(threadId, null, 'voice.message', { ...message });
+      },
+    );
     return {
       start: async (offer, emit) => {
         if (ended || started) throw new Error('voice_session_ended');
@@ -1825,10 +1832,25 @@ export class ThreadManager {
         }
         transport = session.voiceTransport?.() ?? undefined;
         if (!transport) throw new Error('voice_session_unavailable');
-        return transport.start(offer, emit);
+        return transport.start(offer, signal => {
+          if (ended) return;
+          // Persistence must obey the same current grant/account checks as the private SSE,
+          // before any final transcript can reach the ordinary conversation history.
+          try {
+            authorize();
+            if (this.voiceProvider(threadId).providerId !== provider || this.adapters.get(provider) !== adapter) {
+              throw new Error('voice_provider_changed');
+            }
+          } catch { emit({ type: 'error' }); return; }
+          emit(conversation.accept(signal));
+        });
       },
-      stop: async () => { ended = true; await transport?.stop(); },
-      dispose: () => { ended = true; transport?.dispose(); },
+      stop: async () => {
+        ended = true;
+        conversation.close();
+        await transport?.stop();
+      },
+      dispose: () => { ended = true; conversation.close(); transport?.dispose(); },
     };
   }
 

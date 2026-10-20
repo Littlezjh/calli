@@ -9809,7 +9809,7 @@ button.trace-step-head:hover { background: var(--hover); }
   box-shadow: var(--shadow-card);
 }
 .voice-bar.connected {
-  border-color: color-mix(in srgb, var(--positive) 35%, var(--border));
+  border-color: var(--border);
 }
 .voice-bar.error {
   border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
