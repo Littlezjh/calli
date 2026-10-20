@@ -98,7 +98,8 @@ test('a turn stopped by a plan that ran out offers another agent, which takes ov
       if (phone || theme === 'light') { await context.close(); continue; }
       await go.click();
       await page.locator('.topbar-title').filter({ hasText: '（接手）' }).waitFor();
-      await page.locator('.bubble').filter({ hasText: '来源机器' }).first().waitFor();
+      await page.locator('.handover-divider').click();
+      await page.locator('.handover-summary').filter({ hasText: '来源机器' }).waitFor();
       assert.deepEqual(errors, []);
       await context.close();
     }

@@ -9963,3 +9963,14 @@ button.trace-step-head:hover { background: var(--hover); }
 }
 .composer-slot:has(.action-sheet) .voice-bar { order: 2; margin-bottom: calc(14px + var(--safe-bottom)); }
 .composer-slot:has(.voice-bar):has(.action-sheet) .composer { display: none; }
+
+/* Handover segments keep their own history clients inside one continuous document. */
+.merged-history { max-width: var(--content-w); margin: 0 auto; }
+.history-segment + .history-segment { margin-top: 16px; }
+.handover-divider { border: 0; background: none; font-family: inherit; text-align: left; cursor: pointer; width: 100%; }
+.handover-divider:hover { color: var(--text); }
+.handover-divider[aria-expanded="true"] > svg:last-child { transform: rotate(90deg); }
+.handover-boundary .handover-summary { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); font-size: 13px; line-height: 1.65; padding: 12px 0 12px 24px; border-left: 1px solid var(--border); }
+.chain-beginning { color: var(--muted); font-size: 12px; text-align: center; padding: 8px 0; }
+.handover-readonly { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; max-width: var(--content-w); margin: 0 auto; padding: 8px 16px; color: var(--muted); font-size: 12px; }
+.handover-mode { border-bottom: 1px solid var(--border); margin-bottom: 4px; }

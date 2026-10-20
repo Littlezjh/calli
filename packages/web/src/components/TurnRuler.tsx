@@ -3,6 +3,7 @@ import type { TurnPreview } from '../timeline';
 import { t } from '../i18n';
 
 interface Props {
+  threadId?: string;
   /** The scroll container holding the thread. A ref, because it mounts with the app. */
   scrollerRef: RefObject<HTMLDivElement | null>;
   /** Preview text per turn id, from the timeline. */
@@ -33,7 +34,7 @@ interface Tick {
  * the lightweight full turn index, including turns whose bodies have not loaded yet.
  * Desktop only; CSS hides it on narrow screens.
  */
-export function TurnRuler({ scrollerRef, previews, turnIds, onJump }: Props) {
+export function TurnRuler({ threadId, scrollerRef, previews, turnIds, onJump }: Props) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [ticks, setTicks] = useState<Tick[]>([]);
   // The scroll handler reads the latest ticks without re-subscribing on every measure.
@@ -77,6 +78,8 @@ export function TurnRuler({ scrollerRef, previews, turnIds, onJump }: Props) {
         let current = -1;
         let last = -1;
         for (const row of scroller.querySelectorAll<HTMLElement>('[data-turn]')) {
+          const owner = row.closest<HTMLElement>('[data-history-thread]')?.dataset.historyThread;
+          if (owner && threadId && owner !== threadId) continue;
           const top = row.getBoundingClientRect().top - scrollerTop + scroller.scrollTop;
           const index = turnIds.indexOf(row.dataset.turn ?? '');
           if (top <= scroller.scrollTop + 80) current = index;
@@ -98,7 +101,7 @@ export function TurnRuler({ scrollerRef, previews, turnIds, onJump }: Props) {
       scroller.removeEventListener('scroll', onScroll);
       cancelAnimationFrame(raf);
     };
-  }, [scrollerRef, ticks.length, turnIds]);
+  }, [threadId, scrollerRef, ticks.length, turnIds]);
 
   const jump = (tick: Tick) => onJump(tick.turnId);
 

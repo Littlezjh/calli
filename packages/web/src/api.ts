@@ -808,19 +808,24 @@ export class Api {
     return this.request('GET', `/api/threads/${id}/events?after=${after}`);
   }
 
-  historyPage(id: string, before?: number, after?: number): Promise<HistoryPage> {
+  historyPage(id: string, before?: number, after?: number, chain = false): Promise<HistoryPage> {
     const params = new URLSearchParams();
     if (before) params.set('before', String(before));
     if (after) params.set('after', String(after));
+    if (chain) params.set('chain', '1');
     return this.request('GET', `/api/threads/${id}/history${params.size ? `?${params}` : ''}`);
+  }
+
+  historyHandover(id: string, full = false): Promise<{ source: { sourceId: string; agent: string; title: string }; turnId: string | null; reason: string | null; text?: string }> {
+    return this.request('GET', `/api/threads/${id}/history/handover${full ? '?text=1' : ''}`);
   }
 
   historyPosition(id: string): Promise<{ snapshotSeq: number }> {
     return this.request('GET', `/api/threads/${id}/history?head=1`);
   }
 
-  historyWork(id: string, ref: DetailRef, cursor?: number): Promise<HistoryWork> {
-    return this.request('GET', `/api/threads/${id}/history/work?turn=${encodeURIComponent(ref.turnId)}&id=${ref.id}${cursor ? `&cursor=${cursor}&version=${ref.version}` : ''}`);
+  historyWork(id: string, ref: DetailRef, cursor?: number, chain = false): Promise<HistoryWork> {
+    return this.request('GET', `/api/threads/${id}/history/work?${chain ? 'chain=1&' : ''}turn=${encodeURIComponent(ref.turnId)}&id=${ref.id}${cursor ? `&cursor=${cursor}&version=${ref.version}` : ''}`);
   }
 
   historyDetail(id: string, ref: DetailRef, cursor?: number, path?: string): Promise<HistoryDetail> {

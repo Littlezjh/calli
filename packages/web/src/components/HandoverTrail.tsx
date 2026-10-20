@@ -4,7 +4,8 @@ import { handoverGroups } from '../sidebar';
 import { Popover } from './Popover';
 import { formatDateTime, t } from '../i18n';
 
-export function HandoverTrail({ thread, threads, agentLabel, onSelect }: {
+export function HandoverTrail({ thread, threads, agentLabel, onSelect, merged, onToggle }: {
+  merged: boolean; onToggle: () => void;
   thread: Thread; threads: Thread[]; agentLabel: (id: string) => string; onSelect: (id: string) => void;
 }) {
   const members = handoverGroups(threads).find((g) => g.members.some((t) => t.id === thread.id))?.members ?? [thread];
@@ -16,6 +17,7 @@ export function HandoverTrail({ thread, threads, agentLabel, onSelect }: {
     <Popover label={t('handover.trail.title')} triggerClassName="handover-link" panelClassName="handover-panel" trigger={<>{label} · {t('handover.trail.title')}</>}>
       {(close) => <>
         <div className="handover-panel-title">{t('handover.trail.title')}</div>
+        <button role="menuitem" className="handover-entry handover-mode" onClick={() => { close(); onToggle(); }}>{t(merged ? 'handover.chain.single' : 'handover.chain.merged')}</button>
         {members.map((m) => <button key={m.id} role="menuitem" className={`handover-entry${m.id === thread.id ? ' current' : ''}`} onClick={() => { close(); onSelect(m.id); }}>
           <span>{agentLabel(m.agent)} · {m.handover ? t('handover.trail.successor') : t('handover.trail.original')}{m.id === thread.id ? ` · ${t('handover.trail.current')}` : ''}</span>
           <small>{m.title}</small>
