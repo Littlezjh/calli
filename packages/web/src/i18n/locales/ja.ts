@@ -264,6 +264,8 @@ export const ja: Messages = {
   'video.loading': '動画を読み込み中…',
   'video.loadFailed': '読み込みに失敗しました。クリックで再試行',
 
+  'ruler.unloaded': '未読み込みです。クリックして表示',
+
   // Turn ruler
   'ruler.jump': (n: number) => `${n} 番目のターンへ移動`,
   'ruler.image': '（画像）',

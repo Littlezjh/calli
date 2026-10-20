@@ -283,6 +283,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const [agentsOpen, setAgentsOpen] = useState(false);
   const [draftCollaboration, setDraftCollaboration] = useState(false);
   const [collaborationDirectories, setCollaborationDirectories] = useState<string[]>([]);
+  const [historyTurnIds, setHistoryTurnIds] = useState<string[]>([]);
   const [events, setEvents] = useState<StoredEvent[]>([]);
   const [draftAgent, setDraftAgent] = useState('');
   const [draftCwd, setDraftCwd] = useState('');
@@ -390,6 +391,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     voice.state.messagesThreadId === selectedId ? voice.state.messages : []),
   [events, selectedId, voice.state.messages, voice.state.messagesThreadId]);
   const turnPreviewMap = useMemo(() => turnPreviews(timeline.items), [timeline.items]);
+  const rulerTurnIds = useMemo(() => [...new Set([...historyTurnIds, ...turnPreviewMap.keys()])], [historyTurnIds, turnPreviewMap]);
   // What the user last sent here, for a box that was reloaded mid-send to learn that its message arrived.
   const lastSent = useMemo(() => {
     for (let i = timeline.items.length - 1; i >= 0; i--) {
@@ -733,14 +735,14 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const historyCursor = useRef<number | null>(null);
   const olderRequest = useRef<object | null>(null);
   useEffect(() => {
-    setEvents([]); setHasOlder(false); setLoadingOlder(false);
+    setEvents([]); setHistoryTurnIds([]); setHasOlder(false); setLoadingOlder(false);
     setEventsLoading(Boolean(api && selectedId)); historyCursor.current = null; olderRequest.current = null;
     if (!api || !selectedId) return;
     const ctrl = new AbortController();
     stickToBottom.current = true; setAtBottom(true);
     void watchHistory(api, selectedId, ctrl.signal, {
       page: page => {
-        setEvents(page.events); setEventsLoading(false);
+        setEvents(page.events); setHistoryTurnIds(page.turnIds ?? []); setEventsLoading(false);
         historyCursor.current = page.nextCursor; setHasOlder(page.hasOlder);
       },
       events: batch => setEvents(previous => mergeHistory(previous, batch)),
@@ -768,10 +770,10 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       setEvents((prev) => mergeHistory(older, prev));
       // New content lands above the viewport; stay on the same row while it inserts.
       requestAnimationFrame(() => {
-        if (el && !stickToBottom.current) el.scrollTop = el.scrollHeight - fromBottom;
+        if (el && !stickToBottom.current && !jump) el.scrollTop = el.scrollHeight - fromBottom;
       });
     } catch (e) {
-      if (olderRequest.current === request) handleError(e);
+      if (olderRequest.current === request) { setJump(null); handleError(e); }
     } finally {
       if (olderRequest.current === request) { olderRequest.current = null; setLoadingOlder(false); }
     }
@@ -1840,7 +1842,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           </div>
         ) : (
         <div key="thread" className="scroller" ref={scrollerRef} onScroll={onScroll} {...gestureProps}>
-          {selected && <TurnRuler scrollerRef={scrollerRef} previews={turnPreviewMap} />}
+          {selected && <TurnRuler key={selected.id} scrollerRef={scrollerRef} previews={turnPreviewMap} turnIds={rulerTurnIds} onJump={turnId => setJump({ threadId: selected.id, turnId })} />}
           {selected && eventsLoading && <div className="loading-note">{t('common.loading')}</div>}
           {showcase && selected && !eventsLoading && !timeline.items.length && showcase.intro(selected.id)}
           {selected ? (
@@ -1848,6 +1850,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
               historyApi={api ?? undefined}
               historyThreadId={selected.id}
               items={timeline.items}
+              revealTurnId={jump?.threadId === selected.id ? jump.turnId : undefined}
               roots={threadRoots}
               loadImage={loadImage}
               loadFile={loadFile}

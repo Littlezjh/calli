@@ -61,6 +61,7 @@ interface Props {
   onPreview?: (path: string) => void;
   /** The thread's log continues below what is in memory: one more history page can be fetched. */
   hasOlder?: boolean;
+  revealTurnId?: string;
   loadingOlder?: boolean;
   onLoadOlder?: () => void;
   /** Copies the thread as it stands and opens the copy. Missing when the agent cannot fork, or there is no session yet. */
@@ -82,7 +83,7 @@ const RECENT_TURNS = 30;
 /** Scrolling up to within this distance of the top unfolds or fetches the earlier turns. */
 const NEAR_TOP_PX = 600;
 
-export function ThreadView({ historyApi, historyThreadId, items: originalItems, roots, loadImage, loadFile, onOpenFile, onPreview, hasOlder, loadingOlder, onLoadOlder, onFork, forkAnyTurn, takeover }: Props) {
+export function ThreadView({ revealTurnId, historyApi, historyThreadId, items: originalItems, roots, loadImage, loadFile, onOpenFile, onPreview, hasOlder, loadingOlder, onLoadOlder, onFork, forkAnyTurn, takeover }: Props) {
   const [loadedFiles, setLoadedFiles] = useState<{ client?: HistoryClient; files: Map<string, WorkFiles> }>({ files: new Map() });
   const historyClient = useMemo(() => {
     if (!historyApi || !historyThreadId) return undefined;
@@ -120,7 +121,10 @@ export function ThreadView({ historyApi, historyThreadId, items: originalItems, 
   const threadKey = items[0]?.key ?? '';
   const [expandedFor, setExpandedFor] = useState<{ key: string; value: boolean }>({ key: '', value: false });
   const expanded = expandedFor.key === threadKey && expandedFor.value;
-  const folded = !expanded && groups.length > RECENT_TURNS;
+  useLayoutEffect(() => {
+    if (revealTurnId) setExpandedFor({ key: threadKey, value: true });
+  }, [revealTurnId, threadKey]);
+  const folded = !expanded && !revealTurnId && groups.length > RECENT_TURNS;
   const shown = folded ? groups.slice(groups.length - RECENT_TURNS) : groups;
   const hiddenCount = folded ? groups.length - shown.length : 0;
   const hiddenMessages = folded ? groups.slice(0, -RECENT_TURNS).reduce((n, g) => n + g.items.length, 0) : 0;

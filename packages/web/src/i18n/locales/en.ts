@@ -266,6 +266,8 @@ export const en: Messages = {
   'video.loading': 'Loading video…',
   'video.loadFailed': 'Failed to load; click to retry',
 
+  'ruler.unloaded': 'Not loaded yet. Click to view.',
+
   // Turn ruler
   'ruler.jump': (n: number) => `Jump to turn ${n}`,
   'ruler.image': '(image)',

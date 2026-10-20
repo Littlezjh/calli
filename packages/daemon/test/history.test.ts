@@ -32,6 +32,7 @@ test('eight turns of answers exclude tools and intermediate text; work and detai
     const page = await f.store.history.page('thread');
     assert.equal(page.events.filter(e => e.type === 'turn.started').length, 8);
     assert.equal(page.hasOlder, true);
+    assert.deepEqual(page.turnIds, Array.from({ length: 12 }, (_, i) => `t${i}`));
     const json = JSON.stringify(page);
     for (const text of ['SUPER_LARGE_RESULT', 'secret argument', 'private thinking', 'intermediate note']) assert.ok(!json.includes(text), text);
     const work = page.events.find(e => e.type === 'history.work')!;
@@ -48,6 +49,7 @@ test('eight turns of answers exclude tools and intermediate text; work and detai
     const older = await f.store.history.page('thread', page.nextCursor!);
     assert.equal(older.events.filter(e => e.type === 'turn.started').length, 4);
     assert.equal(older.hasOlder, false);
+    assert.equal(older.turnIds, undefined);
     assert.equal(older.nextCursor, null);
     assert.equal(page.snapshotSeq, f.store.history.latest('thread'));
   } finally { f.close(); }

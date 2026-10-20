@@ -7,6 +7,8 @@ interface Props {
   scrollerRef: RefObject<HTMLDivElement | null>;
   /** Preview text per turn id, from the timeline. */
   previews: Map<string, TurnPreview>;
+  turnIds: string[];
+  onJump: (turnId: string) => void;
 }
 
 /** Fewer turns than this and the ruler is not worth its space. */
@@ -21,19 +23,17 @@ const ACTIVE_W = 14;
 
 interface Tick {
   turnId: string;
-  /** Index among the rendered turn rows; differs from the tick's own index once ticks are sampled. */
+  /** Index in the complete conversation; differs from the tick index when sampled. */
   row: number;
-  /** The scroll offset clicking this tick jumps to. */
-  top: number;
 }
 
 /**
  * The ruler along the thread's left edge: one tick per turn, the current turn longer. Hovering
  * enlarges the neighbours and shows what that turn was about; clicking jumps there. The ticks read
- * the rendered rows, so turns folded away by the "N earlier messages" collapse have no tick until expanded.
+ * the lightweight full turn index, including turns whose bodies have not loaded yet.
  * Desktop only; CSS hides it on narrow screens.
  */
-export function TurnRuler({ scrollerRef, previews }: Props) {
+export function TurnRuler({ scrollerRef, previews, turnIds, onJump }: Props) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [ticks, setTicks] = useState<Tick[]>([]);
   // The scroll handler reads the latest ticks without re-subscribing on every measure.
@@ -45,12 +45,7 @@ export function TurnRuler({ scrollerRef, previews }: Props) {
   const measure = () => {
     const scroller = scrollerRef.current;
     if (!scroller) return;
-    const scrollerTop = scroller.getBoundingClientRect().top;
-    const out: Tick[] = [];
-    for (const row of scroller.querySelectorAll<HTMLElement>('[data-turn]')) {
-      const top = row.getBoundingClientRect().top - scrollerTop + scroller.scrollTop;
-      out.push({ turnId: row.dataset.turn ?? '', row: out.length, top });
-    }
+    const out: Tick[] = turnIds.map((turnId, row) => ({ turnId, row }));
     const h = rootRef.current?.clientHeight ?? 0;
     if (h > 0) setHeight(h);
     // Sample down to what fits at the minimum pitch, always keeping the last (current) turn.
@@ -69,7 +64,7 @@ export function TurnRuler({ scrollerRef, previews }: Props) {
     return () => clearInterval(timer);
     // previews changes whenever the timeline is rebuilt, which covers new turns.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [previews, scrollerRef]);
+  }, [previews, scrollerRef, turnIds]);
 
   useEffect(() => {
     const scroller = scrollerRef.current;
@@ -80,14 +75,15 @@ export function TurnRuler({ scrollerRef, previews }: Props) {
       raf = requestAnimationFrame(() => {
         const scrollerTop = scroller.getBoundingClientRect().top;
         let current = -1;
-        let i = 0;
+        let last = -1;
         for (const row of scroller.querySelectorAll<HTMLElement>('[data-turn]')) {
           const top = row.getBoundingClientRect().top - scrollerTop + scroller.scrollTop;
-          if (top <= scroller.scrollTop + 80) current = i;
-          i++;
+          const index = turnIds.indexOf(row.dataset.turn ?? '');
+          if (top <= scroller.scrollTop + 80) current = index;
+          last = index;
         }
         // At the bottom the last turn is the one being read, however short it is.
-        if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4) current = i - 1;
+        if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4) current = last;
         // With sampled ticks, the current turn is marked by the last tick at or before it.
         let idx = -1;
         ticksRef.current.forEach((t, k) => {
@@ -102,12 +98,9 @@ export function TurnRuler({ scrollerRef, previews }: Props) {
       scroller.removeEventListener('scroll', onScroll);
       cancelAnimationFrame(raf);
     };
-  }, [scrollerRef, ticks.length]);
+  }, [scrollerRef, ticks.length, turnIds]);
 
-  const jump = (tick: Tick) => {
-    const scroller = scrollerRef.current;
-    scroller?.scrollTo({ top: Math.max(0, tick.top - 90), behavior: 'smooth' });
-  };
+  const jump = (tick: Tick) => onJump(tick.turnId);
 
   const previewOf = useMemo(() => (idx: number): TurnPreview | null => previews.get(ticks[idx]?.turnId ?? '') ?? null, [previews, ticks]);
 
@@ -131,15 +124,22 @@ export function TurnRuler({ scrollerRef, previews }: Props) {
           key={tick.turnId || i}
           className={`tick${i === activeIdx ? ' active' : ''}${i === hoverIdx ? ' hover' : ''}`}
           style={{ top: centerOf(i) - pitch / 2, height: pitch, ['--w' as string]: `${widthOf(i)}px` }}
-          aria-label={t('ruler.jump', i + 1)}
+          aria-label={t('ruler.jump', tick.row + 1)}
           onClick={() => jump(tick)}
           onMouseEnter={() => setHoverIdx(i)}
+          onFocus={() => setHoverIdx(i)}
+          onBlur={() => setHoverIdx(-1)}
         />
       ))}
-      {hoverIdx >= 0 && previewOf(hoverIdx) && (
+      {hoverIdx >= 0 && ticks[hoverIdx] && (
         <div className="ruler-pop" style={{ top: centerOf(hoverIdx) }}>
-          <div className="ruler-pop-q">{previewOf(hoverIdx)!.question.slice(0, 90) || t('ruler.image')}</div>
-          {previewOf(hoverIdx)!.answer && <div className="ruler-pop-a">{previewOf(hoverIdx)!.answer.slice(0, 110)}</div>}
+          {previewOf(hoverIdx) ? <>
+            <div className="ruler-pop-q">{previewOf(hoverIdx)!.question.slice(0, 90) || t('ruler.image')}</div>
+            {previewOf(hoverIdx)!.answer && <div className="ruler-pop-a">{previewOf(hoverIdx)!.answer.slice(0, 110)}</div>}
+          </> : <div className="ruler-unloaded">
+            <span>{t('ruler.unloaded')}</span>
+            <i /><i /><i />
+          </div>}
         </div>
       )}
     </div>

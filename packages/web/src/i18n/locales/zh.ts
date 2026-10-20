@@ -266,6 +266,8 @@ export const zh = {
   'video.loading': '加载视频…',
   'video.loadFailed': '加载失败，点击重试',
 
+  'ruler.unloaded': '尚未加载，点击查看',
+
   // Turn ruler
   'ruler.jump': (n: number) => `跳到第 ${n} 轮`,
   'ruler.image': '（图片）',

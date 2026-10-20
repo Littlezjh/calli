@@ -11,6 +11,7 @@ export interface HistoryPage {
   snapshotSeq: number;
   nextCursor: number | null;
   hasOlder: boolean;
+  turnIds?: string[];
 }
 interface Row { thread_id: string; turn_id: string | null; seq: number; type: string; ts: string; data: string }
 interface Detail {
@@ -335,7 +336,11 @@ export class HistoryStore {
       events.push(...this.directSummary(thread, start, selected[0].seq));
       selected.forEach((s, i) => events.push(...this.turnView(thread, s.turn_id, s.seq, selected[i + 1]?.seq ?? end)));
     }
-    return { events, snapshotSeq, nextCursor: hasOlder ? start : null, hasOlder };
+    // Read only the indexed turn boundaries, never the message/tool payloads. Paging keeps
+    // the initial index; live turn.started events extend it in the client.
+    const turnIds = before === undefined ? (this.db.prepare("SELECT turn_id FROM events WHERE thread_id=? AND type='turn.started' AND seq<=? ORDER BY seq")
+      .all(thread, snapshotSeq) as { turn_id: string }[]).map(row => row.turn_id) : undefined;
+    return { events, snapshotSeq, nextCursor: hasOlder ? start : null, hasOlder, turnIds };
   }
   /** Reconnect replaces affected turns from a bounded snapshot, never replays tool payloads. */
   async since(thread: string, after: number): Promise<{ events: HistoryEvent[]; turns: string[]; snapshotSeq: number }> {
