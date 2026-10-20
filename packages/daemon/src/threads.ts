@@ -25,7 +25,7 @@ import {
   type TurnInput,
 } from './adapters/types.js';
 import { findFiles, listDir, readText, type Listing, type TextFile } from './browse.js';
-import { temporaryFile } from './artifacts.js';
+import { referencedFile } from './artifacts.js';
 import { MAX_IMAGES, sniffImageType, sniffSvg, type AttachmentStore, type StoredAttachment, type StoredVideo } from './attachments.js';
 import { HttpError } from './errors.js';
 import { handoverContext, handoverPrompt, synthesizeHandover, turnMessage } from './handover.js';
@@ -701,7 +701,10 @@ export class ThreadManager {
     const { real } = this.resolveReadableFile(threadId, rawPath, notFound);
 
     const stat = statSync(real);
-    if (!stat.isFile() || stat.size === 0 || stat.size > MAX_SERVED_IMAGE_BYTES) throw notFound;
+    if (!stat.isFile()) throw notFound;
+    // There, but not something to show as a picture: the page says so instead of "not found".
+    const notImage = new HttpError(415, 'not an image this hub shows');
+    if (stat.size === 0 || stat.size > MAX_SERVED_IMAGE_BYTES) throw notImage;
     let head = Buffer.alloc(SNIFF_BYTES);
     const fd = openSync(real, 'r');
     try {
@@ -710,7 +713,7 @@ export class ThreadManager {
       closeSync(fd);
     }
     const mimeType = sniffImageType(head) ?? (sniffSvg(head) && stat.size <= MAX_SERVED_SVG_BYTES ? 'image/svg+xml' : null);
-    if (!mimeType) throw notFound;
+    if (!mimeType) throw notImage;
     return { path: real, mimeType, size: stat.size };
   }
 
@@ -745,7 +748,11 @@ export class ThreadManager {
     return { root, path: real, ...readText(real) };
   }
 
-  /** Temporary files explicitly referenced by this thread's answers are readable individually. */
+  /**
+   * Beyond the thread's directory, any file this thread's completed answers name by absolute path
+   * is readable on its own. A file that is not there is 404; one that is but was never named, 403,
+   * so the page can tell a missing file from one it may not show.
+   */
   private resolveReadableFile(threadId: string, rawPath: string, notFound: HttpError): { real: string; root: string } {
     try {
       return this.resolveInThread(threadId, rawPath, notFound);
@@ -757,10 +764,10 @@ export class ThreadManager {
       given = given.slice(7);
       try { given = decodeURIComponent(given); } catch { /* A literal percent sign. */ }
     }
-    if (!isAbsolute(given)) throw notFound;
-    const path = resolve(given);
-    const real = temporaryFile(path);
-    if (!real || !this.store.referencesFile(threadId, path)) throw notFound;
+    const path = resolve(this.getThread(threadId).cwd, given);
+    const real = referencedFile(path);
+    if (!real) throw notFound;
+    if (!isAbsolute(given) || !this.store.referencesFile(threadId, path)) throw new HttpError(403, 'no answer in this thread names this file');
     // Keep the browser rooted in the project; the grant is only for this file, not its folder.
     return { real, root: this.threadView(threadId).cwdReal };
   }

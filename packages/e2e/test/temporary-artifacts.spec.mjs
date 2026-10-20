@@ -2,10 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
 
-test('temporary images and reports open from answers on desktop and phone, light and dark', async () => {
+test('temporary images, reports and files elsewhere open from answers on desktop and phone, light and dark', async () => {
   const artifacts = mkdtempSync(join(tmpdir(), 'rah-preview-artifacts-'));
   let daemon, browser;
   try {
@@ -13,11 +14,13 @@ test('temporary images and reports open from answers on desktop and phone, light
     browser = await launchBrowser();
     const picture = join(artifacts, '截图 (1).svg');
     const report = join(artifacts, 'report.md');
+    // A file outside both the thread and the temp folders, as an answer about a sibling worktree names one.
+    const elsewhere = join(dirname(fileURLToPath(import.meta.url)), '..', 'harness.mjs');
     writeFileSync(picture, '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 300"><rect width="640" height="300" rx="16" fill="#25322f"/><text x="30" y="48" fill="#dae6dc" font-size="24">TPM</text><path d="M30 240 L110 210 L190 225 L270 100 L350 160 L430 70 L510 115 L610 45" stroke="#b2cf80" stroke-width="5" fill="none"/><script>window.artifactScriptRan = true</script></svg>');
     writeFileSync(report, '# 临时报告\n\n这份报告可以直接在当前线程中阅读。\n');
     const post = (path, body) => api(daemon, path, { method: 'POST', body: JSON.stringify(body) });
     const thread = await (await post('/api/threads', { agent: 'pi', cwd: daemon.workdir })).json();
-    await post(`/api/threads/${thread.id}/turns`, { text: `临时产物预览\n\n[查看截图](<${picture}>)\n\n[阅读报告](${report})\n\n[已清理的截图](${artifacts}/removed.png)` });
+    await post(`/api/threads/${thread.id}/turns`, { text: `临时产物预览\n\n[查看截图](<${picture}>)\n\n[阅读报告](${report})\n\n[已清理的截图](${artifacts}/removed.png)\n\n[别处的脚本](${elsewhere})\n\n[已删除的报告](${artifacts}/removed.md)` });
     const deadline = Date.now() + 10_000;
     while ((await (await api(daemon, `/api/threads/${thread.id}`)).json()).status === 'running') {
       assert.ok(Date.now() < deadline, 'fake agent finished');
@@ -56,8 +59,16 @@ test('temporary images and reports open from answers on desktop and phone, light
         await panel.getByRole('button', { name: mobile ? '关闭' : '关闭文件', exact: true }).click();
         await panel.waitFor({ state: 'detached' });
         await page.locator('.markdown a', { hasText: '已清理的截图' }).click();
-        await page.locator('.file-link-note').filter({ hasText: '无法预览' }).waitFor();
+        await page.locator('.file-link-note').filter({ hasText: '文件不存在' }).waitFor();
         await shot('temporary-missing');
+        await page.locator('.markdown a', { hasText: '已删除的报告' }).click();
+        await page.locator('.file-link-note').filter({ hasText: '文件不存在' }).waitFor();
+        await shot('missing-report');
+        await page.locator('.markdown a', { hasText: '别处的脚本' }).click();
+        await panel.getByText('export async function startDaemon', { exact: false }).first().waitFor();
+        await shot('elsewhere-file');
+        await panel.getByRole('button', { name: mobile ? '关闭' : '关闭文件', exact: true }).click();
+        await panel.waitFor({ state: 'detached' });
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
         await page.reload();
         if (mobile) await page.locator('.menu-btn').click();

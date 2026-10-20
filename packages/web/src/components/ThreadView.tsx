@@ -1,5 +1,5 @@
 import { hydrateHistoryFiles } from '../timeline';
-import type { Api } from '../api';
+import { ApiError, type Api } from '../api';
 import { hydrateWork, HistoryClient, type HistoryDetail, type HistoryWork, type ResourceKind, type WorkFiles } from '../history';
 import { Children, createContext, Fragment, isValidElement, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import Markdown from 'react-markdown';
@@ -568,7 +568,11 @@ function MarkdownLink({ href, title, children }: { href?: string; title?: string
   const { path } = target;
   const picture = pictures !== null && IMAGE_FILE.test(path);
   const copy = async () => setNote((await copyText(path)) ? t('view.pathCopied') : t('view.copyFailedSelect'));
-  const failed = async () => setNote((await copyText(path)) ? t('view.noPreviewCopied') : t('view.noPreview'));
+  const failed = async (error: unknown) => {
+    const copied = await copyText(path);
+    if (error instanceof ApiError && error.status === 404) setNote(copied ? t('view.missingCopied') : t('view.missing'));
+    else setNote(copied ? t('view.noPreviewCopied') : t('view.noPreview'));
+  };
   const act = () => {
     // The path is copied in the click itself where it can be: a browser may refuse once a fetch has come between.
     if (picture) pictures.openFile(path).catch(failed);

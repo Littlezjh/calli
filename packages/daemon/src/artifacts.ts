@@ -52,3 +52,37 @@ export function temporaryFile(path: string): string | null {
   }
   return null;
 }
+
+function underTemporaryRoot(candidate: string): boolean {
+  for (const root of new Set([tmpdir(), '/tmp', '/var/tmp'])) {
+    let base: string;
+    try {
+      base = realpathSync(root);
+    } catch {
+      continue;
+    }
+    if (base === sep) continue;
+    for (const spelling of new Set([normalize(root), base])) {
+      const rel = relative(spelling, candidate);
+      if (rel && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * The regular file an answer's absolute path names, wherever it is. Symlinks are followed (a home
+ * directory is often one), except beneath a shared temp root, where another user could plant a
+ * link to a private file: there the stricter rule of temporaryFile applies.
+ */
+export function referencedFile(path: string): string | null {
+  if (!isAbsolute(path) || path.startsWith('//')) return null;
+  const candidate = normalize(path);
+  if (underTemporaryRoot(candidate)) return temporaryFile(candidate);
+  try {
+    const real = realpathSync(candidate);
+    return statSync(real).isFile() ? real : null;
+  } catch {
+    return null;
+  }
+}

@@ -958,7 +958,7 @@ export class Api {
   async threadFile(threadId: string, path: string): Promise<Blob> {
     const res = await fetch(this.url(`/api/threads/${threadId}/files?path=${encodeURIComponent(path)}`), { headers: this.headers() });
     if (res.status === 401) throw new AuthError('unauthorized');
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) throw new ApiError(`HTTP ${res.status}`, {}, res.status);
     return res.blob();
   }
 

@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { referencesFile } from '../src/artifacts.js';
+import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { referencedFile, referencesFile } from '../src/artifacts.js';
 
 test('artifact references match whole paths, including encoded links, spaces and source lines', () => {
   const path = '/tmp/report/截图 (1).png';
@@ -26,4 +29,20 @@ test('mentions do not grant path prefixes, web URLs, relative paths or double-de
     '[file](file://remote/tmp/report/chart.png)',
     '[file](/tmp/report/%2563hart.png)',
   ]) assert.equal(referencesFile(text, '/tmp/report/chart.png'), false, text);
+});
+
+test('a named file resolves anywhere, but links beneath a temp folder are refused', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rah-referenced-'));
+  try {
+    const file = join(dir, 'notes.txt');
+    writeFileSync(file, 'notes');
+    symlinkSync(file, join(dir, 'link.txt'));
+    assert.equal(referencedFile(file), realpathSync(file));
+    assert.equal(referencedFile('/etc/passwd'), realpathSync('/etc/passwd'));
+    for (const path of [join(dir, 'link.txt'), join(dir, 'gone.txt'), dir, '/etc', 'notes.txt', '//host/notes.txt']) {
+      assert.equal(referencedFile(path), null, path);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

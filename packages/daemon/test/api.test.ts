@@ -1780,16 +1780,16 @@ test('files: an image in the thread directory is served; anything else, or anywh
   assert.equal(drawing.headers.get('content-type'), 'image/svg+xml');
   assert.match(drawing.headers.get('content-security-policy') ?? '', /^sandbox;/);
   assert.equal(await drawing.text(), svg);
-  assert.equal((await get('out/page.svg')).status, 404, 'named like an SVG, but a web page');
+  assert.equal((await get('out/page.svg')).status, 415, 'named like an SVG, but a web page');
   // What an agent draws cannot be sent to one as a picture: models take bitmaps.
   const asAttachment = await post(`/api/threads/${thread.id}/turns`, { text: 'look', images: [{ data: Buffer.from(svg).toString('base64') }] });
   assert.equal(asAttachment.status, 400);
 
-  assert.equal((await get('out/notes.txt')).status, 404, 'not an image');
-  assert.equal((await get('out/fake.png')).status, 404, 'the bytes decide, not the name');
+  assert.equal((await get('out/notes.txt')).status, 415, 'not an image');
+  assert.equal((await get('out/fake.png')).status, 415, 'the bytes decide, not the name');
   assert.equal((await get('out/missing.png')).status, 404);
   assert.equal((await get('out')).status, 404, 'a directory');
-  assert.equal((await get(join(dataDir, 'outside.png'))).status, 404, 'outside the thread directory');
+  assert.equal((await get(join(dataDir, 'outside.png'))).status, 403, 'outside the thread directory');
   assert.equal((await get('../' + 'outside.png')).status, 404);
   assert.equal((await get('out/link.png')).status, 404, 'a link that leads outside');
   assert.equal((await get()).status, 400);
@@ -1798,7 +1798,7 @@ test('files: an image in the thread directory is served; anything else, or anywh
   assert.equal((await api('/api/threads/nope/files?path=out/chart.png')).status, 404);
 });
 
-test('files: only temporary files explicitly referenced in this thread’s completed answers can be read', async () => {
+test('files: files outside the thread are readable once this thread’s completed answers name them', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'rah-artifacts-'));
   const thread = await newThread({ agent: 'claude' });
   const other = await newThread({ agent: 'pi' });
@@ -1820,12 +1820,12 @@ test('files: only temporary files explicitly referenced in this thread’s compl
     symlinkSync(path, join(dir, 'redirect.png'));
     symlinkSync(dir, join(dir, 'redirect-dir'));
     symlinkSync('/etc/passwd', join(dir, 'outside.txt'));
-    assert.equal((await get(thread.id, 'files', path)).status, 404);
+    assert.equal((await get(thread.id, 'files', path)).status, 403);
     store.appendEvent(thread.id, 'user-only', 'turn.started', { text: `[截图](<${path}>)` });
     store.appendEvent(thread.id, 'user-only', 'turn.done', {});
-    assert.equal((await get(thread.id, 'files', path)).status, 404, 'a user prompt alone is not an artifact');
+    assert.equal((await get(thread.id, 'files', path)).status, 403, 'a user prompt alone is not an artifact');
     answer(other.id, 'other', `[截图](<${path}>)`);
-    assert.equal((await get(thread.id, 'files', path)).status, 404, 'another thread cannot grant access');
+    assert.equal((await get(thread.id, 'files', path)).status, 403, 'another thread cannot grant access');
     answer(thread.id, 'output', `[截图](<${path}>)\n[报告](file://${notes}#L2)\n目录：${dir}\n[重定向](${dir}/redirect.png)\n[目录链接](${dir}/redirect-dir/截图%20(1).png)\n[外部](${dir}/outside.txt)\n[外部](/etc/passwd)`);
     for (const file of [path, `file://${encodeURI(path)}`]) {
       const response = await get(thread.id, 'files', file);
@@ -1836,14 +1836,17 @@ test('files: only temporary files explicitly referenced in this thread’s compl
     const text = await get(thread.id, 'text', notes);
     assert.equal(text.status, 200);
     assert.equal((await text.json()).text, '# Report\nTemporary artifact\n');
-    assert.equal((await get(thread.id, 'files', notes)).status, 404, 'image bytes are still checked');
-    for (const file of [join(dir, 'neighbour.png'), join(dir, 'redirect.png'), join(dir, 'redirect-dir', '截图 (1).png'), dir]) {
+    assert.equal((await get(thread.id, 'files', notes)).status, 415, 'image bytes are still checked');
+    assert.equal((await get(thread.id, 'files', join(dir, 'neighbour.png'))).status, 403, 'a neighbour is not granted');
+    // Links beneath a shared temp folder are refused, even ones the answer names.
+    for (const file of [join(dir, 'redirect.png'), join(dir, 'redirect-dir', '截图 (1).png'), dir]) {
       assert.equal((await get(thread.id, 'files', file)).status, 404, file);
     }
-    for (const file of [join(dir, 'outside.txt'), '/etc/passwd', dir]) assert.equal((await get(thread.id, 'text', file)).status, 404);
+    for (const file of [join(dir, 'outside.txt'), dir]) assert.equal((await get(thread.id, 'text', file)).status, 404);
+    assert.equal((await get(thread.id, 'text', '/etc/passwd')).status, 200, 'a named file is readable wherever it is');
     assert.equal((await get(thread.id, 'tree', dir)).status, 404, 'a file grant never opens the folder');
     assert.equal((await get(thread.id, 'preview-link', notes)).status, 404, 'no directory grant for HTML subresources');
-    assert.equal((await get(other.id, 'text', notes)).status, 404);
+    assert.equal((await get(other.id, 'text', notes)).status, 403);
     assert.equal((await api(`/api/threads/${thread.id}/files?path=${encodeURIComponent(path)}`, {}, false)).status, 401);
     // Authorization survives reopening the database; existing answers need no migration or rewrite.
     const reopened = new Store(dataDir);
@@ -1864,18 +1867,18 @@ test("files: an agent's own folder for the session is served too, and only that 
 
   const thread = await newThread({ agent: 'agy' });
   const mine = join(brain, 'abcdef12-0001', 'made.png');
-  assert.equal((await api(`/api/threads/${thread.id}/files?path=${encodeURIComponent(mine)}`)).status, 404, 'no session yet');
+  assert.equal((await api(`/api/threads/${thread.id}/files?path=${encodeURIComponent(mine)}`)).status, 403, 'no session yet');
   store.updateThread(thread.id, { agentSessionId: 'abcdef12-0001' });
   const res = await api(`/api/threads/${thread.id}/files?path=${encodeURIComponent(mine)}`);
   assert.equal(res.status, 200);
   await res.arrayBuffer();
   const other = join(brain, 'abcdef12-0002', 'other.png');
-  assert.equal((await api(`/api/threads/${thread.id}/files?path=${encodeURIComponent(other)}`)).status, 404);
+  assert.equal((await api(`/api/threads/${thread.id}/files?path=${encodeURIComponent(other)}`)).status, 403);
 
   // A claude thread has no such folder, whatever its session is called.
   const claude = await newThread({ agent: 'claude' });
   store.updateThread(claude.id, { agentSessionId: 'abcdef12-0001' });
-  assert.equal((await api(`/api/threads/${claude.id}/files?path=${encodeURIComponent(mine)}`)).status, 404);
+  assert.equal((await api(`/api/threads/${claude.id}/files?path=${encodeURIComponent(mine)}`)).status, 403);
 });
 
 test('browse: folders and text files in the thread directory can be read, and nothing outside it', async () => {
@@ -1934,7 +1937,7 @@ test('browse: folders and text files in the thread directory can be read, and no
     assert.deepEqual(await find(''), []);
 
     assert.equal((await text('leak.txt')).status, 404, 'a link that leads outside');
-    assert.equal((await text(join(dataDir, 'secret.txt'))).status, 404);
+    assert.equal((await text(join(dataDir, 'secret.txt'))).status, 403);
     assert.equal((await text('../browse-test/../../' + 'x')).status, 404);
     assert.equal((await text('src')).status, 404, 'a folder is not a file');
     assert.equal((await text('')).status, 400);
