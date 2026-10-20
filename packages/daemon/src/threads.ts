@@ -1594,6 +1594,16 @@ export class ThreadManager {
     return started;
   }
 
+  /** Session coordinates without reading history or starting an agent. */
+  async handoverLocation(threadId: string) {
+    const thread = this.getThread(threadId);
+    const adapter = this.adapters.get(thread.agent);
+    const location = await adapter?.sessionLocation?.(thread.agentSessionId, thread.cwd);
+    return { threadId, agent: thread.agent, agentLabel: adapter?.label ?? thread.agent,
+      adapter: adapter?.id ?? null, sessionId: thread.agentSessionId, cwd: thread.cwd,
+      sessionPath: location?.sessionPath ?? null, title: thread.title, status: thread.status };
+  }
+
   /**
    * The handover summary: what the agent wrote in its handover turn, or — when the turn failed or
    * none was run — one the hub synthesizes from the event log, which holds the whole process.
@@ -1610,6 +1620,7 @@ export class ThreadManager {
     const checkout = await findCheckout(thread.cwd);
     const context = handoverContext({
       threadId,
+      title: thread.title,
       agentId: thread.agent,
       agentLabel: adapter?.label ?? thread.agent,
       adapter: adapter?.id ?? '未知',

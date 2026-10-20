@@ -10,7 +10,7 @@ import { deliveredPreview } from '../timeline';
 import { HostSwitcher } from './Hosts';
 import type { HostIconName } from '@rah/extension-api';
 import { HostIcon } from '../extensions/ui';
-import { AgentMark, IconBell, IconChevron, IconClock, IconClose, IconEdit, IconFolder, IconFork, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconWorktree, IconSidebar } from './icons';
+import { AgentMark, IconBell, IconChevron, IconClock, IconClose, IconEdit, IconFolder, IconFork, IconHandover, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconWorktree, IconSidebar } from './icons';
 import { t } from '../i18n';
 
 export { folderName } from '../paths';
@@ -158,9 +158,13 @@ export function Sidebar({
   const agentById = new Map(agents.map((a) => [a.id, a]));
   const tagged = taggedAgents(agents);
 
-  const row = (thread: Thread, title = thread.title, preview = thread.preview) => {
+  /** `chain`: the handover chain this row stands for, newest first, as `handoverGroups` gives it. */
+  const row = (thread: Thread, title = thread.title, preview = thread.preview, chain?: Thread[]) => {
     const mark = threadMark(thread, thread.id === selectedId);
     const agent = agentById.get(thread.agent);
+    // The agents the task passed through, first to last, and the one it came from.
+    const passed = chain ? [...chain].reverse().map((m) => agentById.get(m.agent)?.label ?? m.agent).join(' → ') : null;
+    const from = chain ? agentById.get(chain.find((m) => m.id === thread.handover?.sourceId)?.agent ?? thread.handover?.agent ?? '') : undefined;
     // Filed by project, the list is for scanning: a title per row, as in Codex. The latest ask
     // shows where it helps finding something, by activity and in a search. A thread that needs a
     // hand says so in every view.
@@ -194,6 +198,11 @@ export function Sidebar({
             </span>
           )
         )}
+        {passed && (
+          <span className="thread-fork" role="img" aria-label={t('sidebar.handover', passed)} title={t('sidebar.handover', passed)}>
+            <IconHandover size={13} />
+          </span>
+        )}
         <span className="thread-text">
           <span className="thread-head">
             <span className="thread-title">{title}</span>
@@ -205,7 +214,13 @@ export function Sidebar({
           {detail && <span className="thread-preview">{detail}</span>}
         </span>
         <span className="thread-meta">
-          {agent?.icon ? (
+          {/* A handover chain: the agent now on it in front, the one before it tucked behind. */}
+          {agent?.icon && from?.icon ? (
+            <span className="agent-stack" role="img" aria-label={agent.label} title={passed ?? undefined}>
+              <AgentMark path={from.icon} size={compact ? 12 : 11} />
+              <AgentMark path={agent.icon} size={compact ? 14 : 12} />
+            </span>
+          ) : agent?.icon ? (
             <span className="agent-mark" role="img" aria-label={agent.label} title={agent.label}>
               <AgentMark path={agent.icon} size={compact ? 13 : 12} />
             </span>
@@ -276,7 +291,7 @@ export function Sidebar({
     const current = members.some((thread) => thread.id === selectedId);
     // Like Orca's agents under a task: one card, the latest conversation on top, the chain folded below it.
     return <div key={key} className={`handover-group${expanded ? ' open' : ''}${current ? ' selected' : ''}`}>
-      {row(latest, latest.title.replace(/(?:（接手）)+$/, ''))}
+      {row(latest, latest.title.replace(/(?:（接手）)+$/, ''), latest.preview, members)}
       <button className="handover-toggle" aria-label={expanded ? t('sidebar.collapseHandover', latest.title) : t('sidebar.expandHandover', latest.title)} aria-expanded={expanded} onClick={() => setExpandedHandovers((old) => {
         const next = new Set(old);
         if (next.has(storageKey)) next.delete(storageKey); else next.add(storageKey);
@@ -286,7 +301,7 @@ export function Sidebar({
         {!expanded && marks.length > 0 && <span className="handover-marks">{marks.map((mark) => <span key={mark} className={`dot ${mark}`} role="img" aria-label={t('sidebar.otherHandover', MARK_LABELS[mark!])} title={t('sidebar.otherHandover', MARK_LABELS[mark!])} />)}</span>}
         <IconChevron size={13} open={expanded} />
       </button>
-      {expanded && <div className="handover-members">{members.map((thread) => {
+      {expanded && <div className="handover-members handover-chain">{members.map((thread) => {
         const agent = agentById.get(thread.agent);
         const mark = threadMark(thread, thread.id === selectedId);
         return <button

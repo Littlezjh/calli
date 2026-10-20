@@ -221,6 +221,12 @@ export const IconFork = (p: { size?: number }) => (
     <path d="M7 7.5v9M17 10.5c0 3-3.5 3.5-10 4" />
   </Svg>
 );
+/** A task passed from one agent to the next. */
+export const IconHandover = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M4 8.5h14M14.5 5 18 8.5 14.5 12M20 15.5H6M9.5 12 6 15.5 9.5 19" />
+  </Svg>
+);
 export const IconImport = (p: { size?: number }) => (
   <Svg {...p}>
     <path d="M12 4v10M8 10.5l4 4 4-4M5 15v3.5A1.5 1.5 0 006.5 20h11a1.5 1.5 0 001.5-1.5V15" />

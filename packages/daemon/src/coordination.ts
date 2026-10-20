@@ -10,6 +10,7 @@ import { HttpError } from './errors.js';
 import { turnOutcome } from './lifecycle.js';
 import { TeamsManager, parseTeamMentions, type TeamDefinition, type TeamSource, type TeamTask } from './teams.js';
 import { isWithinWorkdirs } from './workdirs.js';
+import { HandoverReader } from './handover-reader.js';
 
 export interface CoordinationSetup { directories?: string[]; agents?: string[]; defaults?: unknown; permission?: unknown }
 
@@ -50,6 +51,7 @@ const memberPermission = (v: unknown): string | undefined => {
 /** A small durable mailbox. All mutations are serialized; turns still belong to ThreadManager. */
 export class CoordinationManager {
   readonly definitions: TeamsManager;
+  readonly handovers: HandoverReader;
   private teams = new Map<string, Team>();
   private credentials = new Map<string, string>();
   private chain: Promise<unknown> = Promise.resolve();
@@ -59,6 +61,7 @@ export class CoordinationManager {
   private unsubscribe: () => void;
 
   constructor(private store: Store, private manager: ThreadManager, private socket: string) {
+    this.handovers = new HandoverReader(store, manager, socket);
     this.definitions = new TeamsManager(store, manager, this);
     const recover: StoredEvent[] = [];
     for (const row of store.coordinationRecords()) {
@@ -253,10 +256,11 @@ export class CoordinationManager {
   }
 
   environment(id: string): Record<string, string> | undefined {
-    if (!this.team(id) || this.team(id)?.team) return undefined;
+    const handover = this.handovers.environment(id);
+    if (!this.team(id) || this.team(id)?.team) return handover;
     let secret = this.credentials.get(id);
     if (!secret) { secret = randomUUID(); this.credentials.set(id, secret); }
-    return { LIMI_SOCKET: this.socket, LIMI_KEY: secret,
+    return { ...handover, LIMI_SOCKET: this.socket, LIMI_KEY: secret,
       LIMI_BIN_DIR: resolve(dirname(fileURLToPath(import.meta.url)), '../bin') };
   }
 
@@ -650,12 +654,13 @@ export class CoordinationManager {
 export function coordinationServer(manager: CoordinationManager) {
   return createServer(async (req, res) => {
     try {
-      if (req.method !== 'POST' || req.url !== '/command') throw new HttpError(404, 'not found');
-      const id = manager.caller((req.headers.authorization ?? '').replace(/^Bearer /, ''));
+      if (req.method !== 'POST' || !['/command', '/handover'].includes(req.url ?? '')) throw new HttpError(404, 'not found');
+      const key = (req.headers.authorization ?? '').replace(/^Bearer /, '');
+      const id = req.url === '/command' ? manager.caller(key) : null;
       const chunks: Buffer[] = []; let size = 0;
       for await (const chunk of req) { size += chunk.length; if (size > 128000) throw new HttpError(413, 'message too large'); chunks.push(chunk); }
       const data = JSON.parse(Buffer.concat(chunks).toString());
-      const value = await manager.command(id, data);
+      const value = id === null ? await manager.handovers.command(key, data) : await manager.command(id, data);
       res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(value));
     } catch (err) {
       res.writeHead(err instanceof HttpError ? err.status : 400, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));

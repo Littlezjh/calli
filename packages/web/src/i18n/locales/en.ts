@@ -922,6 +922,7 @@ export const en: Messages = {
   'sidebar.otherHandover': (state: string) => `Other handover sessions: ${state}`,
   'sidebar.successor': 'Successor',
   'sidebar.original': 'Original',
+  'sidebar.handover': (agents: string) => `Handed over: ${agents}`,
   'sidebar.noMatch': 'No thread title or directory matches.',
   'sidebar.emptyPhone': 'No threads yet. Tap “New thread” to start one.',
   'sidebar.empty': 'No threads yet. Type a first message on the right to create one.',

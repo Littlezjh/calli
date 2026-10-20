@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { StoredEvent } from './events.js';
-import { compactDeltas, toolText } from './events.js';
+import { compactDeltas, replaceMessageTail, toolText } from './events.js';
+import { turnOutcome } from './lifecycle.js';
 import { HttpError } from './errors.js';
 import { diffStats } from './history-diff.js';
 
@@ -341,6 +342,75 @@ export class HistoryStore {
     const turnIds = before === undefined ? (this.db.prepare("SELECT turn_id FROM events WHERE thread_id=? AND type='turn.started' AND seq<=? ORDER BY seq")
       .all(thread, snapshotSeq) as { turn_id: string }[]).map(row => row.turn_id) : undefined;
     return { events, snapshotSeq, nextCursor: hasOlder ? start : null, hasOlder, turnIds };
+  }
+  /** Merge only answer text, without loading tool payloads or building write-side projections. */
+  private handoverAnswer(thread: string, turn: string, snapshotSeq: number): string {
+    const rows = this.db.prepare(`SELECT type, json_extract(data, '$.text') AS text,
+      json_extract(data, '$.previous') AS previous FROM events
+      WHERE thread_id=? AND turn_id=? AND seq<=? AND type IN ('message.delta', 'message.replace') ORDER BY seq`)
+      .iterate(thread, turn, snapshotSeq);
+    let answer = '';
+    for (const row of rows) {
+      if (row.type === 'message.replace') answer = replaceMessageTail(answer, row);
+      else if (typeof row.text === 'string') answer += row.text;
+    }
+    return answer;
+  }
+
+  /** Complete rounds are page boundaries; only unusually long answers need a separate text read. */
+  handoverPage(thread: string, before?: number, count = 10) {
+    const snapshotSeq = this.latest(thread);
+    const starts = this.db.prepare(`SELECT thread_id, turn_id, seq, type, ts,
+      json_object('text', COALESCE(json_extract(data, '$.displayText'), json_extract(data, '$.text')),
+        'handover', json_extract(data, '$.handover')) AS data
+      FROM events WHERE thread_id=? AND seq<? AND type='turn.started' AND turn_id IS NOT NULL
+      ORDER BY seq DESC LIMIT ?`).all(thread, Math.min(before ?? snapshotSeq + 1, snapshotSeq + 1), count + 1) as unknown as Row[];
+    const hasOlder = starts.length > count;
+    const selected = starts.slice(0, count).reverse();
+    const turns = selected.map(row => {
+      const start = eventOf(row);
+      const turnId = row.turn_id!;
+      const answer = Array.from(this.handoverAnswer(thread, turnId, snapshotSeq));
+      const tools = new Map<string, { id: string; name: string | null; kind: string | null; title: string | null; status: string | null }>();
+      const updates = this.db.prepare(`SELECT json_extract(data, '$.id') AS id,
+        substr(COALESCE(json_extract(data, '$.tool'), json_extract(data, '$.name')), 1, 240) AS name,
+        substr(json_extract(data, '$.kind'), 1, 240) AS kind, substr(json_extract(data, '$.title'), 1, 240) AS title,
+        substr(json_extract(data, '$.status'), 1, 240) AS status
+        FROM events WHERE thread_id=? AND turn_id=? AND seq<=? AND type IN ('tool.start', 'tool.update', 'tool.end') ORDER BY seq`)
+        .iterate(thread, turnId, snapshotSeq);
+      for (const update of updates) {
+        const id = String(update.id);
+        const tool = tools.get(id) ?? { id, name: null, kind: null, title: null, status: null };
+        for (const field of ['name', 'kind', 'title', 'status'] as const) if (typeof update[field] === 'string') tool[field] = update[field];
+        tools.set(id, tool);
+      }
+      const ended = this.db.prepare(`SELECT thread_id, turn_id, seq, type, ts,
+        json_object('stopReason', json_extract(data, '$.stopReason'), 'message', COALESCE(json_extract(data, '$.message'), json_extract(data, '$.error')),
+          'code', json_extract(data, '$.code')) AS data
+        FROM events WHERE thread_id=? AND turn_id=? AND seq<=? AND type IN ('turn.done', 'turn.error') ORDER BY seq DESC LIMIT 1`)
+        .get(thread, turnId, snapshotSeq) as unknown as Row | undefined;
+      const outcome = ended ? turnOutcome(eventOf(ended) as StoredEvent) : null;
+      return { turnId, startSeq: row.seq, startedAt: row.ts, question: String(start.data.text ?? ''), handover: start.data.handover ?? null,
+        answer: { text: answer.slice(0, 4000).join(''), length: answer.length, truncated: answer.length > 4000,
+          fullText: answer.length > 4000 ? { turnId, offset: 0, snapshotSeq } : null },
+        tools: [...tools.values()].slice(-30), toolCount: tools.size, toolsOmitted: Math.max(0, tools.size - 30),
+        status: outcome?.outcome ?? 'unfinished', endedAt: ended?.ts ?? null,
+        error: outcome?.message ? { message: outcome.message, code: outcome.code } : null };
+    });
+    return { turns, snapshotSeq, nextCursor: hasOlder ? selected[0].seq : null, hasOlder };
+  }
+
+  /** Unicode character offsets and a fixed snapshot let callers reconstruct even a live answer. */
+  handoverText(thread: string, turn: string, offset = 0, snapshot?: number) {
+    const snapshotSeq = snapshot ?? this.latest(thread);
+    if (snapshotSeq > this.latest(thread)) throw new HttpError(400, 'snapshot is newer than this history');
+    const { start } = this.bounds(thread, turn);
+    if (start > snapshotSeq) throw new HttpError(404, 'turn not found in snapshot');
+    const answer = Array.from(this.handoverAnswer(thread, turn, snapshotSeq));
+    if (offset > answer.length) throw new HttpError(400, 'offset exceeds answer length');
+    const next = offset + 16000;
+    return { turnId: turn, snapshotSeq, text: answer.slice(offset, next).join(''), offset, length: answer.length,
+      nextOffset: next < answer.length ? next : null };
   }
   /** Reconnect replaces affected turns from a bounded snapshot, never replays tool payloads. */
   async since(thread: string, after: number): Promise<{ events: HistoryEvent[]; turns: string[]; snapshotSeq: number }> {

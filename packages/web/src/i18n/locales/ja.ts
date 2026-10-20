@@ -920,6 +920,7 @@ export const ja: Messages = {
   'sidebar.otherHandover': (state: string) => `他の引き継ぎセッション：${state}`,
   'sidebar.successor': '引き継ぎ先',
   'sidebar.original': '元',
+  'sidebar.handover': (agents: string) => `引き継ぎ：${agents}`,
   'sidebar.noMatch': 'タイトルまたはディレクトリが一致するスレッドはありません。',
   'sidebar.emptyPhone': 'スレッドはまだありません。「新しいスレッド」をタップして始めましょう。',
   'sidebar.empty': 'スレッドはまだありません。右側で最初のメッセージを入力すると作成されます。',

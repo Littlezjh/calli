@@ -14,6 +14,10 @@ test('handover groups and bidirectional navigation on desktop and phone in both 
     };
     const original = await post('/api/threads', { agent: 'pi', cwd: hub.workdir, title: '增加技能管理功能' });
     const next = await post(`/api/threads/${original.id}/handover-thread`, { agent: 'claude' });
+    const last = await post(`/api/threads/${next.id}/handover-thread`, { agent: 'agy' });
+    const agents = await (await api(hub, '/api/agents')).json();
+    const label = (id) => agents.find((a) => a.id === id)?.label ?? id;
+    const passed = ['pi', 'claude', 'agy'].map(label).join(' → ');
     browser = await launchBrowser();
     mkdirSync('/tmp/rah-handover-shots', { recursive: true });
     for (const phone of [false, true]) for (const theme of ['light', 'dark']) {
@@ -27,13 +31,25 @@ test('handover groups and bidirectional navigation on desktop and phone in both 
       await page.locator('.handover-group').waitFor();
       assert.equal(await page.locator('.handover-group').count(), 1);
       assert.equal(await page.locator('.handover-group .thread-item').count(), 1);
+      // The row says it is a handover and which agents it passed through, the latest in front.
+      assert.equal(await page.locator('.handover-group .thread-item .thread-fork').getAttribute('aria-label'), `交接：${passed}`);
+      const stack = page.locator('.handover-group .thread-item .agent-stack');
+      assert.equal(await stack.getAttribute('title'), passed);
+      assert.equal(await stack.getAttribute('aria-label'), label('agy'));
+      assert.equal(await stack.locator('svg').count(), 2);
       await page.locator('.handover-toggle').click();
-      assert.equal(await page.locator('.handover-member').count(), 2);
+      assert.equal(await page.locator('.handover-chain .handover-member').count(), 3);
+      const offsets = await page.locator('.handover-chain .handover-member').evaluateAll(rows => rows.map(row => {
+        const dot = row.querySelector('.dot').getBoundingClientRect();
+        const line = getComputedStyle(row, '::before');
+        return Math.abs(row.getBoundingClientRect().left + parseFloat(line.left) + parseFloat(line.width) / 2 - (dot.left + dot.width / 2));
+      }));
+      assert.ok(offsets.every(offset => offset <= 0.5), `chain line crosses dot centers: ${offsets}`);
       await page.locator('.handover-member .handover-member-time').first().waitFor();
       await page.waitForTimeout(250);
       await page.screenshot({ path: `/tmp/rah-handover-shots/${phone ? 'phone' : 'desktop'}-${theme}-sidebar.png` });
       await page.locator('.handover-group > .thread-row .thread-item').click();
-      await page.getByRole('button', { name: '接手自 pi · 交接记录', exact: true }).waitFor();
+      await page.getByRole('button', { name: `接手自 ${label('claude')} · 交接记录`, exact: true }).waitFor();
       await page.locator('.handover-link').click();
       await page.getByRole('menu', { name: '交接记录' }).waitFor();
       await page.waitForTimeout(250);
@@ -41,10 +57,11 @@ test('handover groups and bidirectional navigation on desktop and phone in both 
       await page.locator('.handover-entry').filter({ hasText: '原始会话' }).click();
       await page.getByRole('button', { name: /已交接给.*交接记录/ }).waitFor();
       await page.locator('.handover-link').click();
-      await page.locator('.handover-entry').filter({ hasText: '接手会话' }).click();
-      await page.getByRole('button', { name: '接手自 pi · 交接记录', exact: true }).waitFor();
+      await page.locator('.handover-entry').filter({ hasText: '接手会话' }).first().click();
+      await page.getByRole('button', { name: /接手自 .* · 交接记录/ }).waitFor();
       assert.deepEqual(errors, []);
       assert.ok(next.handover.sourceId === original.id);
+      assert.ok(last.handover.sourceId === next.id);
       await context.close();
     }
   } finally {

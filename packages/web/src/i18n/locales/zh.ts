@@ -922,6 +922,7 @@ export const zh = {
   'sidebar.otherHandover': (state: string) => `其他交接会话：${state}`,
   'sidebar.successor': '接手',
   'sidebar.original': '原始',
+  'sidebar.handover': (agents: string) => `交接：${agents}`,
   'sidebar.noMatch': '没有标题或目录匹配的线程。',
   'sidebar.emptyPhone': '还没有线程。点“新线程”开始第一个。',
   'sidebar.empty': '还没有线程。在右边输入第一条消息就会创建。',

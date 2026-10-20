@@ -6,6 +6,19 @@ if (!args.length || args.includes('--help')) {
   console.log(`limi agents | status | result ID | stop NAME
 limi spawn --agent ID --name NAME [--cwd DIR] [--model ID] [--effort LEVEL] --message-file FILE --request-id KEY
 limi send NAME --message-file FILE --request-id KEY
+limi handover
+limi history THREAD_ID [--before TURN_CURSOR] [--turns N]
+limi history THREAD_ID --turn TURN_ID [--offset N --snapshot SEQ]
+History options:
+  --before TURN_CURSOR  Read older rounds using nextCursor; null means the beginning.
+  --turns N             Complete rounds per page, default 10, maximum 50.
+  --turn TURN_ID        Read one answer in full, in 16000-Unicode-character chunks.
+  --offset N            Start at this Unicode character offset (default 0); continue with nextOffset.
+  --snapshot SEQ        Keep snapshotSeq fixed across chunks; required when --offset is positive.
+Pages preview up to 4000 answer characters and the latest 30 tools per round; length/truncated and toolCount/toolsOmitted describe omissions.
+Run answer.fullText.command to read a truncated answer, then each response's command to continue; null means the end.
+Do not combine --turn with --before or --turns. If limi is not on PATH, use "$LIMI_BIN_DIR/limi".
+Handover commands are read-only and use LIMI_HANDOVER_SOCKET / LIMI_HANDOVER_KEY; collaboration is not required.
 limi team ls
 limi team run NAME|ID [--cwd DIR] --task-file FILE|-
 Team commands use LIMI_URL (or local RAH_PORT), LIMI_TOKEN (or RAH_TOKEN).
@@ -47,16 +60,21 @@ try {
   const [op, ...rest] = args;
   const input = { op };
   if (rest[0] && !rest[0].startsWith('--')) input.target = rest.shift();
-  const names = { '--agent': 'agent', '--name': 'name', '--cwd': 'cwd', '--model': 'model', '--effort': 'effort', '--request-id': 'requestId', '--message-file': 'file' };
+  const readonly = op === 'handover' || op === 'history';
+  const names = readonly ? { '--before': 'before', '--turns': 'turns', '--turn': 'turn', '--offset': 'offset', '--snapshot': 'snapshot' } : { '--agent': 'agent', '--name': 'name', '--cwd': 'cwd', '--model': 'model', '--effort': 'effort', '--request-id': 'requestId', '--message-file': 'file' };
   while (rest.length) {
     const flag = rest.shift(); const key = names[flag]; const value = rest.shift();
     if (!key || value === undefined) throw new Error(`Invalid argument: ${flag}`);
     input[key] = value;
   }
   if (input.file) { input.text = readFileSync(input.file === '-' ? 0 : input.file, 'utf8'); delete input.file; }
-  if (!process.env.LIMI_SOCKET || !process.env.LIMI_KEY) throw new Error('Enable collaboration in limi before running this command.');
+  if (op === 'handover' && Object.keys(input).length > 1) throw new Error('Use limi handover without arguments.');
+  if (op === 'history' && !input.target) throw new Error('Give a thread ID from limi handover.');
+  const socket = readonly ? process.env.LIMI_HANDOVER_SOCKET : process.env.LIMI_SOCKET;
+  const key = readonly ? process.env.LIMI_HANDOVER_KEY : process.env.LIMI_KEY;
+  if (!socket || !key) throw new Error(readonly ? 'Run this command in a handover recipient session.' : 'Enable collaboration in limi before running this command.');
   const payload = JSON.stringify(input);
-  const req = request({ socketPath: process.env.LIMI_SOCKET, path: '/command', method: 'POST', headers: { Authorization: `Bearer ${process.env.LIMI_KEY}`, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } }, res => {
+  const req = request({ socketPath: socket, path: readonly ? '/handover' : '/command', method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } }, res => {
     let text = ''; res.setEncoding('utf8'); res.on('data', chunk => { text += chunk; });
     res.on('end', () => { console.log(text); if (res.statusCode >= 400) process.exitCode = 1; });
   });

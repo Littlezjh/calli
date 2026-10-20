@@ -38,6 +38,10 @@ export function coordinationFixture(text) {
   }
   if (body.endsWith('LIMI_REPORT')) return '文档审查完成。\n\n已检查接口约定、目录分工和异常处理。建议补充重启后的恢复步骤，测试覆盖其余预期行为。';
   if (body === 'LIMI_ENV') return `limi-ready:${Boolean(process.env.LIMI_SOCKET && process.env.LIMI_KEY)};cwd:${process.cwd()}`;
+  if (body === 'LIMI_HANDOVER_ENV') {
+    const ready = Boolean(process.env.LIMI_HANDOVER_SOCKET && process.env.LIMI_HANDOVER_KEY);
+    return `handover-ready:${ready};collaboration:${Boolean(process.env.LIMI_SOCKET && process.env.LIMI_KEY)};${ready ? execFileSync('limi', ['handover'], { encoding: 'utf8' }).trim() : ''}`;
+  }
   const command = /LIMI_COMMAND:([A-Za-z0-9+/=]+)/.exec(body);
   if (command && !body.startsWith('[协作消息')) {
     const { args, text: message = '' } = JSON.parse(Buffer.from(command[1], 'base64').toString());

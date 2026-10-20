@@ -3,6 +3,7 @@ import { replaceMessageTail, type StoredEvent } from './events.js';
 /** Authoritative session coordinates, prepended regardless of how the progress summary was written. */
 export function handoverContext(info: {
   threadId: string;
+  title?: string;
   agentId: string;
   agentLabel: string;
   adapter: string;
@@ -28,7 +29,12 @@ export function handoverContext(info: {
     `- Session ID：${info.sessionId ?? '尚未创建（还没有 agent 会话）'}`,
     `- Session 文件地址：${info.sessionPath ?? (info.sessionId ? '未找到实际会话文件；请使用上面的实例与 Session ID 定位' : '尚未创建')}`,
     `- Hub 线程 ID：${info.threadId}`, '',
-    '## 接手要求', '',
+    '## 只读查阅来源历史', '',
+    '以下命令只在 hub 里新建的接手会话中可用。',
+    `- 来源 Session ID：${info.sessionId ?? '尚未创建'}；来源简介：${info.title ?? '未命名任务'}（进度见交接摘要）。`,
+    '- `limi handover`：查看本线程及逐级来源的会话信息。',
+    `- \`limi history ${info.threadId}\`：查看历史；翻页和全文续读按返回的 nextCursor 和 command 继续，参数见 \`limi --help\`。`,
+    '', '## 接手要求', '',
     '请直接接着完成任务，将命令执行和文件操作的工作目录设为上面的 cwd。原线程使用 worktree 时，沿用同一个 worktree、当前分支及未提交改动，不要切回主仓库或另建 worktree。',
     '使用你自己的 agent 会话继续工作；上面的原 agent 实例、配置目录和 Session ID 用于只读查阅原始历史。不要要求用户重新配置工作目录或手动新开会话。',
     '多个同类 agent 使用各自的配置/数据目录，读取历史时请按实例和 Session ID 定位。',

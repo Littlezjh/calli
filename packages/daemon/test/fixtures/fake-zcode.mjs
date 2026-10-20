@@ -6,6 +6,7 @@ import { createInterface } from 'node:readline';
 import { appendFileSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
+import { coordinationFixture } from './coordination.mjs';
 const output = (value) => process.stdout.write(JSON.stringify(value) + '\n');
 const reply = (id, result) => output({ id, result });
 const error = (id, message) => output({ id, error: { code: -32602, message } });
@@ -156,6 +157,10 @@ async function handle(message) {
         done('success', `answer:${JSON.stringify(answer)};mode:${mode}`); return;
       }
       if (p.content === 'plan-draft') { done('success', `mode:${mode}`); return; }
+      if (p.content?.startsWith('LIMI_')) {
+        const answer = coordinationFixture(p.content);
+        if (answer !== null) { done('success', answer); return; }
+      }
       if (p.content === 'crash') return process.exit(7);
       if (p.content === 'slow') return;
       if (p.content === 'fail') { emit('turn.failed', { error: { message: '模型请求失败' } }); turn = null; return; }
