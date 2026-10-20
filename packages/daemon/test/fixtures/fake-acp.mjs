@@ -174,6 +174,10 @@ rl.on('line', (line) => {
         replay({ sessionUpdate: 'tool_call', toolCallId: 'h1', title: 'Edit notes.md', kind: 'edit', status: 'pending' });
         replay({ sessionUpdate: 'tool_call_update', toolCallId: 'h1', status: 'completed', rawOutput: 'ok', content: [{ type: 'diff', path: 'notes.md', oldText: 'a', newText: 'b' }] });
         replay({ sessionUpdate: 'agent_message_chunk', messageId: 'm1b', content: { type: 'text', text: 'first answer' } });
+        // Claude writes a stop into the session as a user message of its own, right before the next one.
+        if (String(msg.params.sessionId).includes('interrupted')) {
+          replay({ sessionUpdate: 'user_message_chunk', messageId: 'u1x', content: { type: 'text', text: '[Request interrupted by user]' } });
+        }
         replay({ sessionUpdate: 'user_message_chunk', messageId: 'u2', content: { type: 'text', text: 'second question' } });
         replay({ sessionUpdate: 'user_message_chunk', messageId: 'u2', content: { type: 'image', mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==' } });
         replay({ sessionUpdate: 'agent_message_chunk', messageId: 'm2', content: { type: 'text', text: 'second answer' } });

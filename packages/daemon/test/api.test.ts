@@ -1216,6 +1216,11 @@ test('fork at a turn: the copy ends where that turn ended, on the hub and on the
   assert.equal(claudeCopy.agentSessionId, 'hist-forkat-fork-at-m1b');
   assert.deepEqual((await turnsOf(claudeCopy.id)).map((e) => e.data.text), ['first question']);
 
+  // Claude noted a stop as a user message of its own; it is no turn, and the turns after it still line up.
+  store.updateThread(claude.id, { agentSessionId: 'hist-interrupted' });
+  const afterStop = (await (await forkAt(claude.id, claudeFirst.turnId!)).json()) as Record<string, any>;
+  assert.equal(afterStop.agentSessionId, 'hist-interrupted-fork-at-m1b');
+
   const agents = (await (await api('/api/agents')).json()) as Array<{ id: string; capabilities: { forkAt: boolean } }>;
   assert.deepEqual(agents.map((a) => [a.id, a.capabilities.forkAt]).sort(), [['agy', false], ['claude', true], ['pi', true]]);
 });

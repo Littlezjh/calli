@@ -33,6 +33,9 @@ const CLAUDE_MODE_IDS: Record<PermissionMode, readonly string[]> = {
   full_access: ['bypassPermissions'],
 };
 
+/** What Claude writes into its session as a user message when the user stops it. */
+const CLAUDE_INTERRUPT_NOTE = /^\[Request interrupted by user( for tool use)?\]$/;
+
 /** Effort levels Claude accepts through the `effort` config option. */
 const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 
@@ -125,6 +128,14 @@ export class ClaudeAcpAdapter extends AcpAdapter {
 
   protected forkPointMeta(forkRef: string): Record<string, unknown> {
     return airForkPoint(forkRef);
+  }
+
+  /**
+   * Claude records a stop as a user message of its own. Read as one, it would join the message
+   * sent next into a turn the hub never had, and every turn after it would no longer line up.
+   */
+  protected override isAgentNote(text: string): boolean {
+    return CLAUDE_INTERRUPT_NOTE.test(text);
   }
 
   protected readonly modeIds = CLAUDE_MODE_IDS;

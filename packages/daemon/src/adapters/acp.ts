@@ -134,11 +134,16 @@ export function airForkPoint(messageId: string): Record<string, unknown> {
 /**
  * Groups the updates an agent replays when a session is loaded into past turns.
  * A user message starts a turn; everything until the next user message belongs to it.
+ *
+ * `isAgentNote` picks out user messages the agent wrote itself, such as a note that the user
+ * stopped it. Such a note was not said by the user, so it is no turn; it ends the turn it stands
+ * in, and the user message after it starts a new one even when nothing was answered in between.
  */
-export function turnsFromAcpReplay(updates: any[]): HistoryTurn[] {
+export function turnsFromAcpReplay(updates: any[], isAgentNote: (text: string) => boolean = () => false): HistoryTurn[] {
   const turns: HistoryTurn[] = [];
   let current: HistoryTurn | null = null;
   let lastUserMessageId: unknown;
+  let ended = false;
   for (const update of updates) {
     // What the agent said or thought carries the id of the message it is part of. The last one
     // in a turn is where a copy that ends with this turn stops.
@@ -146,16 +151,21 @@ export function turnsFromAcpReplay(updates: any[]): HistoryTurn[] {
       if (typeof update.messageId === 'string' && update.messageId) current.forkRef = update.messageId;
     }
     if (update?.sessionUpdate === 'user_message_chunk') {
+      const content = update.content;
+      if (content?.type === 'text' && isAgentNote(String(content.text ?? '').trim())) {
+        ended = true;
+        continue;
+      }
       // Chunks of one message arrive one after another, before anything from the agent.
-      const continues = current !== null && current.events.length === 0;
+      const continues = current !== null && current.events.length === 0 && !ended;
       if (!continues || !current) {
         current = { text: '', images: [], events: [] };
         turns.push(current);
+        ended = false;
       } else if (update.messageId !== lastUserMessageId && current.text) {
         current.text += '\n\n';
       }
       lastUserMessageId = update.messageId;
-      const content = update.content;
       if (content?.type === 'text') current.text += String(content.text ?? '');
       else if (content?.type === 'image' && typeof content.data === 'string') {
         current.images.push({ data: content.data, mimeType: String(content.mimeType ?? 'image/png') });
@@ -539,8 +549,13 @@ export abstract class AcpAdapter implements AgentAdapter {
   async loadHistory(agentSessionId: string, cwd: string): Promise<HistoryTurn[]> {
     return this.withAgent(cwd, async (peer, updates) => {
       await peer.request('session/load', { sessionId: agentSessionId, cwd, mcpServers: [] });
-      return turnsFromAcpReplay(updates);
+      return turnsFromAcpReplay(updates, (text) => this.isAgentNote(text));
     });
+  }
+
+  /** Whether a replayed user message is one the agent wrote itself. See turnsFromAcpReplay. */
+  protected isAgentNote(_text: string): boolean {
+    return false;
   }
 
   /**

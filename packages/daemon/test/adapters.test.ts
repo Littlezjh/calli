@@ -382,6 +382,28 @@ test('turnsFromAcpReplay keeps two user messages in a row as one turn with both 
   assert.equal(turns[0].text, 'one\n\ntwo');
 });
 
+test('turnsFromAcpReplay leaves out notes the agent wrote as user messages, and starts a new turn after one', () => {
+  const user = (text: string, messageId: string) => ({ sessionUpdate: 'user_message_chunk', messageId, content: { type: 'text', text } });
+  const answer = (text: string) => ({ sessionUpdate: 'agent_message_chunk', messageId: `m-${text}`, content: { type: 'text', text } });
+  const note = (text: string) => /^\[Request interrupted by user( for tool use)?\]$/.test(text);
+  const turns = turnsFromAcpReplay([
+    user('look at this', 'a'),
+    answer('looking'),
+    user('[Request interrupted by user for tool use]', 'n1'),
+    user('go on', 'b'),
+    answer('went on'),
+    // Stopped before any answer: the message is kept, the next one is a turn of its own.
+    user('never answered', 'c'),
+    user('[Request interrupted by user]', 'n2'),
+    user('ask again', 'd'),
+    answer('done'),
+  ], note);
+  assert.deepEqual(turns.map((t) => t.text), ['look at this', 'go on', 'never answered', 'ask again']);
+  assert.equal(turns[0].forkRef, 'm-looking');
+  // Without the predicate the note is an ordinary user message.
+  assert.deepEqual(turnsFromAcpReplay([user('[Request interrupted by user]', 'n'), user('go on', 'b')]).map((t) => t.text), ['[Request interrupted by user]\n\ngo on']);
+});
+
 test('turnsFromPiMessages maps user, assistant and tool result messages to turns', () => {
   const turns = turnsFromPiMessages([
     { role: 'system', content: '' },
