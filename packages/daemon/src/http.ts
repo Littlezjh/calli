@@ -280,10 +280,11 @@ export function createHttpServer(deps: HttpDeps): Server {
       throw new HttpError(404, 'voice_route_not_found');
     }
 
-    if (method === 'GET' && path === '/api/usage') {
+    if (method === 'GET' && (path === '/api/usage' || path === '/api/usage/costs')) {
       const hours = Number(url.searchParams.get('hours') ?? 24);
       if (![1, 24, 168].includes(hours)) throw new HttpError(400, '统计范围须为 1、24 或 168 小时');
-      return sendJson(res, 200, manager.usageReport(hours, url.searchParams.get('agent') ?? ''));
+      const agent = url.searchParams.get('agent') ?? '';
+      return sendJson(res, 200, path === '/api/usage/costs' ? manager.usageCosts(hours, agent) : manager.usageReport(hours, agent));
     }
     // The daily digest of what was asked and what was called. `days` clamps to 1..90.
     if (method === 'GET' && path === '/api/activity') {

@@ -59,7 +59,9 @@ test('authenticated diagnostics explain unavailable, empty, login and version er
   const get = (path: string) => fetch(base + path, { headers: { Authorization: `Bearer ${token}` } });
   try {
     assert.equal((await fetch(base + '/api/usage')).status, 401);
+    assert.equal((await fetch(base + '/api/usage/costs')).status, 401);
     assert.equal((await get('/api/usage?hours=2')).status, 400);
+    assert.equal((await get('/api/usage/costs?hours=2')).status, 400);
     assert.equal((await get('/api/agents/nope/diagnostics')).status, 404);
     for (const [id, state] of [['codex', 'ready'], ['empty', 'empty'], ['missing', 'missing'], ['login', 'authentication'], ['old', 'unsupported']]) {
       const response = await get(`/api/agents/${id}/diagnostics`);
@@ -82,5 +84,10 @@ test('authenticated diagnostics explain unavailable, empty, login and version er
     assert.equal(report.totals.total, 170);
     assert.equal(report.tpm, 170);
     assert.equal(report.rows[0].title, 'ledger');
+    assert.equal(report.costSummary.unpricedSamples, 1);
+    assert.equal(report.costSummary.groups, undefined);
+    const costs = await (await get('/api/usage/costs?agent=codex')).json() as any;
+    assert.equal(costs.groups[0].reason, 'missing_model');
+    assert.equal((await (await get('/api/usage/costs?agent=not-selected')).json() as any).groups.length, 0);
   } finally { server.close(); await manager.shutdown(); store.close(); rmSync(dir, { recursive: true, force: true }); }
 });

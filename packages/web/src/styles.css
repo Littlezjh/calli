@@ -8408,7 +8408,21 @@ button.coord-row-name { cursor: pointer; }
 .obs-token-unit { display: inline-block; white-space: nowrap; }
 .obs-primary { background: var(--positive-bg); border-color: var(--positive-bg); }
 .obs-primary strong { color: var(--positive); }
-.obs-metric .obs-cost { font-size: 17px; }
+.obs-metric .obs-cost { font-size: 15px; display: flex; flex-direction: column; gap: 2px; }
+.obs-cost-notes { display: flex; flex-direction: column; gap: 4px; }
+.obs-cost-link { align-self: flex-start; padding: 0; font-size: 12px; }
+.obs-cost-dialog { width: min(680px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+.obs-cost-dialog:focus { outline: none; }
+.obs-cost-dialog .panel-head { flex-shrink: 0; padding-bottom: 12px; }
+.obs-cost-body { padding: 0 22px 22px; overflow: auto; overscroll-behavior: contain; }
+.obs-cost-breakdown { display: flex; flex-wrap: wrap; gap: 16px 32px; margin: 20px 0; }
+.obs-cost-breakdown > div { display: flex; flex-direction: column; gap: 6px; }
+.obs-cost-breakdown span, .obs-price-heading > span, .obs-price-rates dt { color: var(--muted); font-size: 12px; }
+.obs-price-group { padding: 20px 0; border-top: 1px solid var(--border); }
+.obs-price-heading { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; overflow-wrap: anywhere; }
+.obs-price-amount { font-variant-numeric: tabular-nums; font-size: 18px; }
+.obs-price-rates { display: flex; flex-wrap: wrap; gap: 12px 24px; margin: 12px 0 0; }
+.obs-price-rates dd { margin: 4px 0 0; font-size: 13px; font-variant-numeric: tabular-nums; }
 .obs-chart { margin-top: 12px; padding: 18px 18px 10px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-lg); }
 .obs-chart-head { display: flex; align-items: baseline; justify-content: space-between; gap: 6px 12px; flex-wrap: wrap; margin-bottom: 10px; color: var(--muted); font-size: 12px; }
 .obs-chart-head strong { color: var(--text); font-size: 13px; font-weight: 550; }

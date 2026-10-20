@@ -2,7 +2,7 @@ import type { ExtensionState, Permission, ExtensionPackagePreview, ExtensionConf
 export type WorkMode = 'execute' | 'plan';
 export interface UserQuestion { id: string; question: string; header?: string; options: Array<{ value: string; label: string; description?: string }>; multiple?: boolean; freeText?: boolean; required?: boolean }
 export type UserInputAnswer = { answers: Record<string, string[]> } | { cancelled: true };
-import type { UsageReport, AgentDiagnostic } from './observability';
+import type { UsageReport, AgentDiagnostic, CostReport } from './observability';
 import type { StoredEvent } from './timeline';
 import type { DetailRef } from './timeline';
 import type { HistoryPage, HistoryDetail, HistoryWork } from './history';
@@ -1107,6 +1107,9 @@ export class Api {
   /** Plan usage of an agent instance, read outside any session. `refresh` asks again now. */
   usageReport(hours = 24, agent = ''): Promise<UsageReport> {
     return this.request('GET', `/api/usage?hours=${hours}&agent=${encodeURIComponent(agent)}`);
+  }
+  usageCosts(hours = 24, agent = ''): Promise<CostReport> {
+    return this.request('GET', `/api/usage/costs?hours=${hours}&agent=${encodeURIComponent(agent)}`);
   }
 
   agentDiagnostic(agent: string, refresh = false): Promise<AgentDiagnostic> {

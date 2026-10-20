@@ -5,6 +5,7 @@ import { compactLabel, durationLabel, numberLabel, type AgentDiagnostic, type Us
 import { PanelDialog } from './Dialog';
 import { Popover } from './Popover';
 import { TpmChart } from './TpmChart';
+import { UsageCost } from './UsageCost';
 import { IconCheck, IconCopy, IconRefresh, IconChevron } from './icons';
 import { formatDateTime, t } from '../i18n';
 
@@ -78,7 +79,8 @@ function UsageView({ api, agents }: { api: Api; agents: AgentInfo[] }) {
         <div className="obs-metric"><span>{t('obs.totalTokens')}</span><Count values={[report.totals.total]} /><small>{t('obs.samples', report.measuredSamples)}</small></div>
         <div className="obs-metric"><span>{t('obs.inputOutput')}</span><Count values={[report.totals.input, report.totals.output]} /><small>{t('obs.inputIncludesCache')}</small></div>
         <div className="obs-metric"><span>{t('obs.cacheReadWrite')}</span><Count values={[report.totals.cacheRead, report.totals.cacheWrite]} /><small>{t('obs.unknownExcluded')}</small></div>
-        <div className="obs-metric"><span>{t('obs.reportedCost')}</span><strong className="obs-cost">{Object.entries(report.costs).map(([currency, v]) => cost({ currency, ...v })).join(' · ') || t('common.unknown')}</strong><small>{t('obs.costOnly')}</small></div>
+        {report.costSummary ? <UsageCost summary={report.costSummary} api={api} hours={Number(hours)} agent={agent} />
+          : <div className="obs-metric"><span>{t('obs.reportedCost')}</span><strong className="obs-cost">{Object.entries(report.costs).map(([currency, v]) => cost({ currency, ...v })).join(' · ') || t('common.unknown')}</strong><small>{t('obs.costOnly')}</small></div>}
         <div className="obs-metric"><span>{t('obs.turnsErrors')}</span><strong>{report.turns} / {report.errors}</strong><small>{t('obs.turnHint')}</small></div>
       </div>
       {report.series && <TpmChart series={report.series} agents={agents} metric={metric} empty={metric === 'output' ? !report.outputMeasuredSamples : !report.measuredSamples} />}

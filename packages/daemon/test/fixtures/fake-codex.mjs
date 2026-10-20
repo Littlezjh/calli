@@ -96,6 +96,8 @@ const MODELS = [
     supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'high' }],
   },
   { id: 'gpt-hidden', model: 'gpt-hidden', displayName: 'Hidden', hidden: true, inputModalities: ['text'], supportedReasoningEfforts: [] },
+  ...(process.env.FAKE_CODEX_PRICE_MODELS ? ['gpt-6-astra', 'openrouter-3o', 'openrouter-4o', 'Doubao-Seed-Evolving', 'seed-evol', 'unlisted-model']
+    .map(model => ({ id: model, model, displayName: model, inputModalities: ['text'], supportedReasoningEfforts: [] })) : []),
 ];
 
 // Every conversation the fake has on record, two per page so the adapter's paging is exercised.

@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { StoredEvent } from './events.js';
+import { summarizeCosts } from './pricing.js';
 
 /** Never infer billable tokens from context size, character counts, or a historical replay. */
 export interface UsageSample {
@@ -93,15 +94,41 @@ export class Telemetry {
     }
   }
 
+  private samples(since: string, until: string, agent: string) {
+    const rows = this.db.prepare(`SELECT s.*,t.agent,t.configured_model,
+      EXISTS(SELECT 1 FROM telemetry_samples c WHERE c.thread_id=s.thread_id AND c.turn_id=s.turn_id
+        AND json_extract(c.data,'$.scope')='turn' AND json_extract(c.data,'$.cost.amount') IS NOT NULL) AS turn_cost
+      FROM telemetry_samples s JOIN telemetry_turns t USING(thread_id,turn_id)
+      WHERE s.ts>=? AND s.ts<=? AND (?='' OR t.agent=?) ORDER BY s.ts DESC`).all(since, until, agent, agent) as any[];
+    return rows.map(row => ({ ...row, sample: JSON.parse(row.data) as UsageSample }));
+  }
+
+  private unmeasuredTurns(since: string, until: string, agent: string): number {
+    return (this.db.prepare(`SELECT COUNT(*) AS n FROM telemetry_turns t
+      WHERE started_at>=? AND started_at<=? AND (?='' OR agent=?) AND NOT EXISTS(
+        SELECT 1 FROM telemetry_samples s WHERE s.thread_id=t.thread_id AND s.turn_id=t.turn_id
+        AND s.ts>=? AND s.ts<=? AND (json_extract(s.data,'$.total') IS NOT NULL
+          OR json_extract(s.data,'$.input') IS NOT NULL OR json_extract(s.data,'$.output') IS NOT NULL
+          OR json_extract(s.data,'$.cost.amount') IS NOT NULL))`).get(since, until, agent, agent, since, until) as { n: number }).n;
+  }
+
+  costReport(hours = 24, agent = '', now = Date.now()) {
+    const since = new Date(now - hours * 3600000).toISOString(), until = new Date(now).toISOString();
+    return summarizeCosts(this.samples(since, until, agent).map(row => ({
+      sample: row.sample, configuredModel: row.configured_model, at: row.ts, turnCost: !!row.turn_cost,
+    })), this.unmeasuredTurns(since, until, agent), now, true);
+  }
+
   read(hours = 24, agent = '', now = Date.now()) {
     const since = new Date(now - hours * 3600000).toISOString();
     const until = new Date(now).toISOString();
     const turns = this.db.prepare(`SELECT t.*,h.title FROM telemetry_turns t JOIN threads h ON h.id=t.thread_id
       WHERE t.started_at>=? AND t.started_at<=? AND (?='' OR t.agent=?) ORDER BY t.started_at DESC LIMIT 100`)
       .all(since, until, agent, agent) as any[];
-    const samples = this.db.prepare(`SELECT s.*,t.agent FROM telemetry_samples s JOIN telemetry_turns t USING(thread_id,turn_id)
-      WHERE s.ts>=? AND s.ts<=? AND (?='' OR t.agent=?) ORDER BY s.ts DESC`)
-      .all(since, until, agent, agent) as any[];
+    const samples = this.samples(since, until, agent);
+    const costSummary = summarizeCosts(samples.map(row => ({
+      sample: row.sample, configuredModel: row.configured_model, at: row.ts, turnCost: !!row.turn_cost,
+    })), this.unmeasuredTurns(since, until, agent), now);
     const totals: Record<string, number | null> = { input: null, output: null, total: null, cacheRead: null, cacheWrite: null, reasoning: null };
     const costs: Record<string, { amount: number; estimated: boolean }> = {};
     let tpm = 0, outputTpm = 0, measured = 0, outputMeasured = 0, estimated = false;
@@ -130,7 +157,7 @@ export class Telemetry {
       }
     };
     for (const row of samples) {
-      const sample = JSON.parse(row.data) as UsageSample;
+      const sample = row.sample;
       byTurn.get(turnKey(row.thread_id, row.turn_id))?.push({ ...sample, observedAt: row.ts });
       for (const key of Object.keys(totals)) {
         const value = sample[key as keyof UsageSample];
@@ -182,7 +209,7 @@ export class Telemetry {
     const points = buckets.map((tokens, i) => ({ at: new Date(first + i * step).toISOString(), tpm: Math.round(tokens / minutes[i]), outputTpm: outputMeasured ? Math.round(outputBuckets[i] / minutes[i]) : null }));
     // The same buckets per instance, only for instances that reported usage in the range.
     const agents = [...byAgent].map(([id, tokens]) => ({ agent: id, tpm: tokens.hasTotal ? tokens.total.map((t, i) => Math.round(t / minutes[i])) : null, outputTpm: tokens.hasOutput ? tokens.output.map((t, i) => Math.round(t / minutes[i])) : null }));
-    return { checkedAt: until, hours, totals, costs, tpm: measured ? Math.round(tpm) : null, outputTpm: outputMeasured ? Math.round(outputTpm) : null, measuredSamples: measured, outputMeasuredSamples: outputMeasured,
+    return { checkedAt: until, hours, totals, costs, costSummary, tpm: measured ? Math.round(tpm) : null, outputTpm: outputMeasured ? Math.round(outputTpm) : null, measuredSamples: measured, outputMeasuredSamples: outputMeasured,
       sampleCount: samples.length, turns: counts.turns, errors: counts.errors ?? 0, series: { stepMinutes: step / 60000, points, agents, estimated }, rows };
   }
 }

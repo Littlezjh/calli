@@ -10,12 +10,26 @@ export interface UsageSample {
 export interface UsageReport {
   checkedAt: string; hours: number; totals: Record<string, number | null>;
   costs: Record<string, { amount: number; estimated: boolean }>;
+  costSummary?: CostSummary;
   outputTpm?: number | null; outputMeasuredSamples?: number; tpm: number | null; measuredSamples: number; sampleCount: number; turns: number; errors: number;
   /** Missing from daemons that predate the TPM chart. */
   series?: UsageSeries;
   rows: Array<{ threadId: string; turnId: string; title: string; agent: string; configuredModel: string | null;
     linkedAccount: string | null; startedAt: string; finishedAt: string | null; firstOutputMs: number | null;
     status: string; error: string | null; samples: UsageSample[] }>;
+}
+export interface CostRange { amount: number; maxAmount: number }
+export type CostReason = 'missing_model' | 'unknown_price' | 'missing_tokens' | 'invalid_usage';
+export type CostAssumption = 'configured_model' | 'cache_split' | 'cache_ttl' | 'context_tier' | 'model_alias' | 'time_tier' | 'family_fallback';
+export interface PriceRates { input: number; output: number; cacheRead: number; cacheWrite?: number; cacheWriteMax?: number }
+export interface CostSummary {
+  totals: Record<string, CostRange>; reported: Record<string, CostRange>; estimated: Record<string, CostRange>;
+  estimatedSamples: number; familySamples: number; reportedSamples: number; unpricedSamples: number; unmeasuredTurns: number;
+  priceCheckedAt: string; stale: boolean;
+}
+export interface CostReport extends CostSummary {
+  groups: Array<CostRange & { model: string | null; alias?: string; reason?: CostReason; samples: number; currency?: string; assumptions: CostAssumption[];
+    price?: { model: string; currency: string; source: string; rates: PriceRates; peakRates?: PriceRates; longContext?: { above: number; rates: PriceRates } } }>;
 }
 /** Average TPM per clock-aligned bucket, oldest first; `agents` holds the same buckets per instance that reported usage. */
 export interface UsageSeries { stepMinutes: number; estimated?: boolean; points: Array<{ at: string; tpm: number; outputTpm?: number | null }>; agents?: Array<{ agent: string; tpm: number[] | null; outputTpm?: number[] | null }> }
