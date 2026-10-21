@@ -292,7 +292,15 @@ const runTurn = (text, turnId, done) => {
     notify('item/reasoning/summaryTextDelta', { turnId, itemId: id, summaryIndex: 0, delta: 'thinking ' });
     notify('item/reasoning/summaryTextDelta', { turnId, itemId: id, summaryIndex: 0, delta: 'hard' });
   }
-  if (text.includes('plan')) {
+  if (text.includes('longplan')) {
+    notify('turn/plan/updated', { turnId, plan: [
+      { step: 'Confirm the query entry point, the production filters and the current skill names', status: 'completed' },
+      { step: 'Pull every root request of the day with its model, skill, subagent and MCP spans', status: 'inProgress' },
+      { step: 'Deduplicate by parent span and total tokens, turns and time per skill', status: 'pending' },
+      { step: 'Sample the P50, P95 and P99 traces to check parallel runs, retries and recovery', status: 'pending' },
+      { step: 'Summarise the ranking, the data limits and what to optimise first', status: 'pending' },
+    ] });
+  } else if (text.includes('plan')) {
     notify('turn/plan/updated', { turnId, plan: [{ step: 'Read the code', status: 'completed' }, { step: 'Write the fix', status: 'inProgress' }] });
   }
   if (text.includes('model?')) {

@@ -2151,6 +2151,12 @@ test('agents: instances beyond the built-ins are listed, and PATH discovery offe
   });
   assert.match(said, /\[pi2\] there hello/);
 
+  // Supported agents: returns all built-in adapters with labels and install guides
+  const supported = (await (await regApi('/api/agents/supported')).json()) as Array<{ adapter: string; label: string; installGuide?: string }>;
+  assert.ok(supported.length >= 6);
+  assert.ok(supported.some((s) => s.adapter === 'claude' && s.label === 'Claude Code' && s.installGuide));
+  assert.ok(supported.some((s) => s.adapter === 'pi' && s.installGuide));
+
   // PATH discovery: an agy2 shim is offered; a lookalike is not.
   const bin = join(dataDir, 'discover-bin');
   mkdirSync(bin);
@@ -2160,10 +2166,12 @@ test('agents: instances beyond the built-ins are listed, and PATH discovery offe
   const oldPath = process.env.PATH;
   process.env.PATH = `${bin}:${oldPath}`;
   try {
-    const found = (await (await regApi('/api/agents/discover')).json()) as Array<{ id: string; adapter: string; command: string }>;
+    const found = (await (await regApi('/api/agents/discover')).json()) as Array<{ id: string; adapter: string; command: string; label?: string; icon?: string }>;
     const ours = found.filter((f) => f.command.startsWith(bin));
     assert.deepEqual(ours.map((f) => f.id), ['agy2']);
     assert.equal(ours[0].adapter, 'agy');
+    assert.equal(ours[0].label, 'Antigravity');
+    assert.ok(ours[0].icon);
   } finally {
     process.env.PATH = oldPath;
   }

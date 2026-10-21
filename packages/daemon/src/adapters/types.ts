@@ -267,6 +267,8 @@ export interface AgentAdapter {
   readonly label: string;
   /** The agent's mark: the path of a 24×24 drawing, filled with the even-odd rule. See icons.ts. */
   readonly icon?: string;
+  /** Command or guide to install this agent when it is not yet on PATH. */
+  readonly installGuide?: string;
   readonly capabilities: {
     /** The adapter can inspect existing generated memory; this does not imply generation is enabled. */
     memory?: boolean;

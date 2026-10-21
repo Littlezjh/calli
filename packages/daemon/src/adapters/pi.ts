@@ -679,10 +679,18 @@ interface Cached<T> {
   value: Promise<T>;
 }
 
+export const PI_METADATA = {
+  adapter: 'pi' as const,
+  label: 'pi',
+  icon: PI_ICON,
+  installGuide: 'npm install -g @mariozechner/pi-coding-agent',
+};
+
 export class PiRpcAdapter implements AgentAdapter {
   readonly id = 'pi';
-  readonly label = 'pi';
-  readonly icon = PI_ICON;
+  readonly label = PI_METADATA.label;
+  readonly icon = PI_METADATA.icon;
+  readonly installGuide = PI_METADATA.installGuide;
   // pi has no approval flow, so there is nothing to choose.
   readonly capabilities = {
     workModes: ['execute', 'plan'] as const,

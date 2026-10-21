@@ -93,3 +93,52 @@ export function timeTicks(series: UsageSeries, fit: number): { every: number; in
   }
   return { every: 0, indexes: [] };
 }
+
+/** Tokens per local day over the last year; only days with a turn are listed. */
+export interface DailyUsage {
+  checkedAt: string;
+  /** The first day anything was recorded; before it a day is unknown, not empty. */
+  since: string | null;
+  days: Array<{ date: string; total: number | null; output: number | null; turns: number }>;
+}
+
+/** One day of the heatmap. `level` is null when the day is unknown: not recorded yet, or turns with no report. */
+export interface HeatCell { date: string; value: number | null; turns: number; level: 0 | 1 | 2 | 3 | 4 | null; recorded: boolean }
+export interface HeatGrid { columns: HeatCell[][]; months: Array<{ column: number; date: Date }>; total: number; activeDays: number }
+
+const dayKey = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+/**
+ * The last `weeks` weeks as columns of Monday-to-Sunday days, ending today. Shades are quartiles of
+ * the year's non-zero days, so a narrow screen showing fewer weeks shades a day the same way.
+ */
+export function heatGrid(daily: DailyUsage, metric: 'total' | 'output', weeks: number, today: Date): HeatGrid {
+  const byDate = new Map(daily.days.map(d => [d.date, d]));
+  const values = daily.days.map(d => d[metric]).filter((v): v is number => v != null && v > 0).sort((a, b) => a - b);
+  const quartile = (q: number) => values[Math.floor((values.length - 1) * q)];
+  const cuts = values.length ? [quartile(0.25), quartile(0.5), quartile(0.75)] : [];
+  // The busiest day is always the deepest shade, however few days there are.
+  const level = (v: number): HeatCell['level'] => v <= 0 ? 0 : v >= values[values.length - 1] ? 4 : v <= cuts[0] ? 1 : v <= cuts[1] ? 2 : v <= cuts[2] ? 3 : 4;
+  const end = dayKey(today);
+  const start = new Date(today.getFullYear(), today.getMonth(), today.getDate() - ((today.getDay() + 6) % 7) - (weeks - 1) * 7);
+  const columns: HeatCell[][] = [];
+  const months: HeatGrid['months'] = [];
+  let total = 0, activeDays = 0;
+  for (let c = 0; c < weeks; c++) {
+    const column: HeatCell[] = [];
+    for (let r = 0; r < 7; r++) {
+      const date = new Date(start.getFullYear(), start.getMonth(), start.getDate() + c * 7 + r);
+      const key = dayKey(date);
+      if (key > end) break;
+      const day = byDate.get(key);
+      const recorded = daily.since != null && key >= daily.since;
+      const value = !recorded ? null : day ? day[metric] : 0;
+      if (value) { total += value; activeDays++; }
+      column.push({ date: key, value, turns: day?.turns ?? 0, level: value == null ? null : level(value), recorded });
+      // A month is named over the first column that holds its 1st day.
+      if (date.getDate() === 1) months.push({ column: c, date });
+    }
+    columns.push(column);
+  }
+  return { columns, months, total, activeDays };
+}

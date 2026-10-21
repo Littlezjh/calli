@@ -2,7 +2,7 @@ import type { ExtensionState, Permission, ExtensionPackagePreview, ExtensionConf
 export type WorkMode = 'execute' | 'plan';
 export interface UserQuestion { id: string; question: string; header?: string; options: Array<{ value: string; label: string; description?: string }>; multiple?: boolean; freeText?: boolean; required?: boolean }
 export type UserInputAnswer = { answers: Record<string, string[]> } | { cancelled: true };
-import type { UsageReport, AgentDiagnostic, CostReport } from './observability';
+import type { UsageReport, AgentDiagnostic, CostReport, DailyUsage } from './observability';
 import type { StoredEvent } from './timeline';
 import type { DetailRef } from './timeline';
 import type { HistoryPage, HistoryDetail, HistoryWork } from './history';
@@ -1110,8 +1110,13 @@ export class Api {
   }
 
   /** CLIs on PATH that look like another copy of a known agent, offered for adding. */
-  discoverAgents(): Promise<Array<{ id: string; adapter: string; command: string }>> {
+  discoverAgents(): Promise<Array<{ id: string; adapter: string; command: string; label?: string; icon?: string }>> {
     return this.request('GET', '/api/agents/discover');
+  }
+
+  /** Agent adapters supported by the hub, including install instructions for missing ones. */
+  supportedAgents(): Promise<Array<{ adapter: string; label: string; icon?: string; installGuide?: string }>> {
+    return this.request('GET', '/api/agents/supported');
   }
 
   /** Accounts of multi-account agents already signed in on this host, ready to link in one click. */
@@ -1135,6 +1140,11 @@ export class Api {
   }
   usageCosts(hours = 24, agent = ''): Promise<CostReport> {
     return this.request('GET', `/api/usage/costs?hours=${hours}&agent=${encodeURIComponent(agent)}`);
+  }
+  /** Tokens per local day over the last year, for the activity heatmap. */
+  usageDaily(agent = ''): Promise<DailyUsage> {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return this.request('GET', `/api/usage/daily?agent=${encodeURIComponent(agent)}&tz=${encodeURIComponent(tz)}`);
   }
 
   agentDiagnostic(agent: string, refresh = false): Promise<AgentDiagnostic> {

@@ -220,3 +220,30 @@ test('account discovery skips accounts an instance already links, and ids keep c
     else process.env.HOME = oldHome;
   }
 });
+
+test('supported lists all built-in adapters with labels and install guides', () => {
+  const registry = new AgentRegistry(defaults, null);
+  const supported = registry.supported();
+  assert.equal(supported.length, 6);
+  const adapters = supported.map((s) => s.adapter);
+  assert.deepEqual(adapters, ['claude', 'codex', 'pi', 'agy', 'traex', 'zcode']);
+  for (const item of supported) {
+    assert.ok(item.label, `adapter ${item.adapter} has a label`);
+    assert.ok(item.icon, `adapter ${item.adapter} has an icon`);
+  }
+  assert.equal(supported.find((s) => s.adapter === 'claude')?.installGuide, 'npm install -g @anthropic-ai/claude-code');
+  assert.equal(supported.find((s) => s.adapter === 'codex')?.installGuide, 'npm install -g @openai/codex');
+  assert.equal(supported.find((s) => s.adapter === 'pi')?.installGuide, 'npm install -g @mariozechner/pi-coding-agent');
+  assert.equal(supported.find((s) => s.adapter === 'agy')?.installGuide, undefined);
+  assert.equal(supported.find((s) => s.adapter === 'traex')?.installGuide, undefined);
+  assert.equal(supported.find((s) => s.adapter === 'zcode')?.installGuide, undefined);
+});
+
+test('AgentRegistry.fromEnv supports an explicitly empty agents array', () => {
+  const registry = AgentRegistry.fromEnv({
+    dataDir: dir,
+    env: { RAH_AGENTS_JSON: JSON.stringify({ agents: [] }) },
+    defaults,
+  });
+  assert.deepEqual(registry.list(), []);
+});

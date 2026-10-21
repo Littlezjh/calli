@@ -82,10 +82,16 @@ export function mapZcodeEvent(event: any): EmittedEvent | null {
   return null;
 }
 
+export const ZCODE_METADATA = {
+  adapter: 'zcode' as const,
+  label: 'ZCode',
+  icon: ZCODE_ICON,
+};
+
 export class ZcodeAdapter implements AgentAdapter {
   readonly id = 'zcode';
-  readonly label = 'ZCode';
-  readonly icon = ZCODE_ICON;
+  readonly label = ZCODE_METADATA.label;
+  readonly icon = ZCODE_METADATA.icon;
   readonly capabilities = {
     workModes: ['execute', 'plan'] as const,
     goal: { controls: ['pause'] as const, actions: ['set', 'show', 'pause', 'resume', 'clear'] as const },

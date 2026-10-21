@@ -130,6 +130,7 @@ export function route(data: DemoData, method: string, url: string, body?: unknow
       return data.agents;
     case 'agents/discover':
     case 'agents/accounts/discover':
+    case 'agents/supported':
     case 'hosts':
       return [];
     case 'config':

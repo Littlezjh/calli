@@ -136,3 +136,45 @@ test('estimated timing spreads measured tokens across buckets and the rolling mi
     assert.equal(report.rows[0].samples.length, 1);
   } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('daily token activity groups by local day, keeps unmeasured days unknown and filters instances', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rah-telemetry-daily-'));
+  const store = new Store(dir);
+  const now = Date.now();
+  const localDay = (ms: number) => { const d = new Date(ms); return new Date(ms - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
+  const create = (id: string, agent: string) => store.createThread({ id, agent, cwd: dir, title: id, permissionMode: 'ask', model: null, effort: null });
+  const emit = (threadId: string, turnId: string, type: EventType, data: Record<string, unknown>, at: number) => store.telemetry.observe({ threadId, turnId, type, data, seq: 1, ts: new Date(at).toISOString() });
+  try {
+    create('a', 'pi'); create('b', 'codex');
+    const today = now - 1000, before = now - 3 * 86400000, old = now - 400 * 86400000;
+    emit('a', 'old', 'turn.started', {}, old);
+    emit('a', 'old', 'usage.sample', { id: 'o', scope: 'request', total: 999 }, old);
+    emit('a', 'one', 'turn.started', {}, before);
+    emit('a', 'one', 'usage.sample', { id: 'x', scope: 'request', total: 100, output: 20 }, before);
+    emit('a', 'one', 'usage.sample', { id: 'y', scope: 'request', total: 50 }, before);
+    emit('b', 'two', 'turn.started', {}, today);
+    emit('b', 'two', 'usage.sample', { id: 'z', scope: 'request', total: 7 }, today);
+    emit('a', 'three', 'turn.started', {}, today);
+    const report = store.telemetry.daily('', undefined, now);
+    assert.equal(report.since, localDay(old), 'recording began with the first turn, even outside the year');
+    assert.deepEqual(report.days, [
+      { date: localDay(before), total: 150, output: 20, turns: 1 },
+      { date: localDay(today), total: 7, output: null, turns: 2 },
+    ]);
+    const pi = store.telemetry.daily('pi', undefined, now);
+    assert.deepEqual(pi.days.find(d => d.date === localDay(today)), { date: localDay(today), total: null, output: null, turns: 1 }, 'a turn without a report is unknown, not zero');
+    assert.equal(store.telemetry.daily('nobody', undefined, now).since, null);
+    // The viewer's zone names the day: 20:00 UTC is already tomorrow in Shanghai, still today in New York.
+    create('c', 'zone');
+    const evening = Date.UTC(2026, 9, 20, 20), at = evening + 86400000 * 2;
+    emit('c', 'late', 'turn.started', {}, evening);
+    emit('c', 'late', 'usage.sample', { id: 'l', scope: 'request', total: 9 }, evening);
+    assert.deepEqual(store.telemetry.daily('zone', 'Asia/Shanghai', at).days.map(d => d.date), ['2026-10-21']);
+    assert.deepEqual(store.telemetry.daily('zone', 'America/New_York', at).days.map(d => d.date), ['2026-10-20']);
+    assert.equal(store.telemetry.daily('zone', 'Asia/Kolkata', at).since, '2026-10-21', 'half-hour zones land on the right side of midnight');
+    assert.throws(() => store.telemetry.daily('zone', 'Mars/Olympus', at), RangeError);
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

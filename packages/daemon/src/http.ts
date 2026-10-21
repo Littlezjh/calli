@@ -290,6 +290,12 @@ export function createHttpServer(deps: HttpDeps): Server {
       throw new HttpError(404, 'voice_route_not_found');
     }
 
+    // `tz` is the viewer's IANA zone, so a day starts at their midnight rather than the host's.
+    if (method === 'GET' && path === '/api/usage/daily') {
+      const tz = url.searchParams.get('tz') || undefined;
+      try { if (tz) new Intl.DateTimeFormat('en-CA', { timeZone: tz }); } catch { throw new HttpError(400, '时区无效'); }
+      return sendJson(res, 200, manager.usageDaily(url.searchParams.get('agent') ?? '', tz));
+    }
     if (method === 'GET' && (path === '/api/usage' || path === '/api/usage/costs')) {
       const hours = Number(url.searchParams.get('hours') ?? 24);
       if (![1, 24, 168].includes(hours)) throw new HttpError(400, '统计范围须为 1、24 或 168 小时');
@@ -308,6 +314,12 @@ export function createHttpServer(deps: HttpDeps): Server {
 
     // GET /api/agents
     if (method === 'GET' && path === '/api/agents') return sendJson(res, 200, await manager.listAgents());
+
+    // GET /api/agents/supported: all agent types supported by the hub
+    if (method === 'GET' && path === '/api/agents/supported') {
+      if (!registry) throw new HttpError(404, 'this daemon has no agent registry');
+      return sendJson(res, 200, registry.supported());
+    }
 
     // GET /api/agents/discover: CLIs on PATH that look like another copy of a known agent
     if (method === 'GET' && path === '/api/agents/discover') {

@@ -4,6 +4,7 @@ import { copyText } from '../clipboard';
 import { compactLabel, durationLabel, numberLabel, type AgentDiagnostic, type UsageReport, type UsageSample } from '../observability';
 import { PanelDialog } from './Dialog';
 import { Popover } from './Popover';
+import { TokenHeatmap } from './TokenHeatmap';
 import { TpmChart } from './TpmChart';
 import { UsageCost } from './UsageCost';
 import { IconCheck, IconCopy, IconRefresh, IconChevron } from './icons';
@@ -84,6 +85,7 @@ function UsageView({ api, agents }: { api: Api; agents: AgentInfo[] }) {
         <div className="obs-metric"><span>{t('obs.turnsErrors')}</span><strong>{report.turns} / {report.errors}</strong><small>{t('obs.turnHint')}</small></div>
       </div>
       {report.series && <TpmChart series={report.series} agents={agents} metric={metric} empty={metric === 'output' ? !report.outputMeasuredSamples : !report.measuredSamples} />}
+      <TokenHeatmap api={api} agent={agent} metric={metric} refresh={refresh} />
       <p className="obs-note">{t('obs.note')}</p>
       <div className="obs-list-title"><h3>{t('obs.recent')}</h3><span>{t('quota.updatedAt', time(report.checkedAt))} · {t('obs.max100')}</span></div>
       {!report.rows.length && <p className="panel-empty">{t('obs.noRows')}</p>}

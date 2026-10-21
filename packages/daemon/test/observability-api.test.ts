@@ -60,6 +60,7 @@ test('authenticated diagnostics explain unavailable, empty, login and version er
   try {
     assert.equal((await fetch(base + '/api/usage')).status, 401);
     assert.equal((await fetch(base + '/api/usage/costs')).status, 401);
+    assert.equal((await fetch(base + '/api/usage/daily')).status, 401);
     assert.equal((await get('/api/usage?hours=2')).status, 400);
     assert.equal((await get('/api/usage/costs?hours=2')).status, 400);
     assert.equal((await get('/api/agents/nope/diagnostics')).status, 404);
@@ -89,5 +90,12 @@ test('authenticated diagnostics explain unavailable, empty, login and version er
     const costs = await (await get('/api/usage/costs?agent=codex')).json() as any;
     assert.equal(costs.groups[0].reason, 'missing_model');
     assert.equal((await (await get('/api/usage/costs?agent=not-selected')).json() as any).groups.length, 0);
+    const daily = await (await get('/api/usage/daily?agent=codex')).json() as any;
+    assert.equal(daily.days.length, 1);
+    assert.equal(daily.days[0].total, 170);
+    assert.equal(daily.since, daily.days[0].date);
+    assert.deepEqual((await (await get('/api/usage/daily?agent=not-selected')).json() as any).days, []);
+    assert.equal((await get('/api/usage/daily?tz=Mars%2FOlympus')).status, 400);
+    assert.equal((await (await get('/api/usage/daily?agent=codex&tz=UTC')).json() as any).days[0].total, 170);
   } finally { server.close(); await manager.shutdown(); store.close(); rmSync(dir, { recursive: true, force: true }); }
 });

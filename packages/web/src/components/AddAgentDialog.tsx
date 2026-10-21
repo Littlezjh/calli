@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
+import type { AgentInfo, Api } from '../api';
 import type { DiscoveredAgent } from './Pickers';
+import { OnboardingDialog } from './OnboardingDialog';
 import { IconClose, IconPlus, IconSparkle } from './icons';
 import { t } from '../i18n';
 
@@ -10,12 +12,15 @@ import { t } from '../i18n';
  */
 
 interface Props {
-  found: DiscoveredAgent[];
-  onAdd: (found: DiscoveredAgent) => Promise<void>;
+  found?: DiscoveredAgent[];
+  onAdd?: (found: DiscoveredAgent) => Promise<void>;
   onClose: () => void;
+  api?: Api;
+  agents?: AgentInfo[];
+  onConnected?: (newAgents: AgentInfo[]) => void;
 }
 
-export function AddAgentDialog({ found, onAdd, onClose }: Props) {
+export function AddAgentDialog({ found = [], onAdd, onClose, api, agents, onConnected }: Props) {
   const [adding, setAdding] = useState<string | null>(null);
   const [added, setAdded] = useState<string[]>([]);
 
@@ -26,6 +31,19 @@ export function AddAgentDialog({ found, onAdd, onClose }: Props) {
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  if (api && agents && onConnected) {
+    return (
+      <OnboardingDialog
+        api={api}
+        agents={agents}
+        initialStep="results"
+        onConnected={onConnected}
+        onClose={onClose}
+        onLater={onClose}
+      />
+    );
+  }
 
   const rows = found.filter((d) => !added.includes(d.id));
 
@@ -50,6 +68,7 @@ export function AddAgentDialog({ found, onAdd, onClose }: Props) {
               className="handover-target"
               disabled={adding !== null}
               onClick={async () => {
+                if (!onAdd) return;
                 setAdding(d.id);
                 try {
                   await onAdd(d);

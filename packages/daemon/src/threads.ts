@@ -545,6 +545,7 @@ export class ThreadManager {
 
   usageReport(hours: number, agent: string) { return this.store.telemetry.read(hours, agent); }
   usageCosts(hours: number, agent: string) { return this.store.telemetry.costReport(hours, agent); }
+  usageDaily(agent: string, timeZone?: string) { return this.store.telemetry.daily(agent, timeZone); }
 
   activityReport(days: number, agent: string) { return this.store.activity.read(days, agent); }
 

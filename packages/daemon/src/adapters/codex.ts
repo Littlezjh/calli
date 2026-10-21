@@ -953,12 +953,20 @@ class CodexSession implements AgentSession {
   }
 }
 
+export const CODEX_METADATA = {
+  adapter: 'codex' as const,
+  label: 'Codex',
+  icon: CODEX_ICON,
+  installGuide: 'npm install -g @openai/codex',
+};
+
 /** How long a model probe is reused, so several threads opening at once start one process. */
 export class CodexAppServerAdapter implements AgentAdapter {
   readonly borrowedTools = [codexSearchTool, codexReadTool, codexComputerTool];
   readonly id = 'codex';
-  readonly label = 'Codex';
-  readonly icon = CODEX_ICON;
+  readonly label = CODEX_METADATA.label;
+  readonly icon = CODEX_METADATA.icon;
+  readonly installGuide = CODEX_METADATA.installGuide;
   readonly capabilities = {
     memory: true,
     realtimeVoice: true,

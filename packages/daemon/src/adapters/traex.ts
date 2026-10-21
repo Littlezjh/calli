@@ -70,10 +70,16 @@ export function parseTraexModelStatus(stdout: string): TraexModelStatus[] {
   });
 }
 
+export const TRAEX_METADATA = {
+  adapter: 'traex' as const,
+  label: 'TRAE CLI',
+  icon: TRAE_ICON,
+};
+
 export class TraexAcpAdapter extends AcpAdapter {
   readonly id = 'traex';
-  readonly label = 'TRAE CLI';
-  readonly icon = TRAE_ICON;
+  readonly label = TRAEX_METADATA.label;
+  readonly icon = TRAEX_METADATA.icon;
   readonly capabilities = {
     workModes: ['execute', 'plan'] as const,
     speed: true,

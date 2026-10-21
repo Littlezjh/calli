@@ -310,6 +310,21 @@ export const zh = {
   'addAgent.message': '在这台主机上发现的其他 agent 命令。添加后作为新 agent 使用，会出现在 agent 选择器里。',
   'addAgent.none': '没有新的可添加项。',
 
+  // Onboarding & agent discovery
+  'onboard.askTitle': '发现 coding agent',
+  'onboard.askMessage': '是否自动发现本机的 coding agent？检测已安装的 CLI 和已登录账号，一键接入 hub。',
+  'onboard.discover': '自动发现',
+  'onboard.later': '稍后',
+  'onboard.resultTitle': '接入 coding agent',
+  'onboard.resultMessage': '勾选需要接入的 agent，未安装的请先在终端安装。',
+  'onboard.installedGroup': '本机已安装',
+  'onboard.uninstalledGroup': '支持但未安装',
+  'onboard.noneInstalled': '未检测到已安装的 coding agent',
+  'onboard.notInstalled': '未安装',
+  'onboard.connectN': (n: number) => `连接 ${n} 个`,
+  'onboard.connecting': '正在连接…',
+  'onboard.scanning': '正在扫描本机的 coding agent…',
+
   // Videos in the conversation
   'video.cannotPlay': '浏览器无法播放这个编码，可以下载原视频',
   'video.original': '原视频',
@@ -425,6 +440,15 @@ export const zh = {
   'composer.appendOne': '追加一条…',
 
   // Token usage chart
+  'heatmap.title': (output: boolean): string => output ? '输出 Token 活动' : 'Token 活动',
+  'heatmap.daily': '按天',
+  'heatmap.summary': (total: string, days: number) => `合计 ${total} · ${days} 天有用量`,
+  'heatmap.aria': (summary: string) => `每天的 token 用量，${summary}。用方向键逐天查看`,
+  'heatmap.value': (tokens: string, turns: number) => `${tokens} token · ${turns} 轮`,
+  'heatmap.zero': '没有用量',
+  'heatmap.unmeasured': (turns: number) => `${turns} 轮，未报告用量`,
+  'heatmap.notRecorded': '还没开始记录',
+  'heatmap.month': (d: Date) => `${d.getMonth() + 1}月`,
   'chart.label': 'TPM 走势',
   'chart.outputTpm': '输出 TPM',
   'chart.trend': (metric: string) => `${metric} 走势`,
@@ -1191,6 +1215,7 @@ export const zh = {
   'view.fromSchedule': '这轮是定时任务发的',
   'view.scheduled': '定时',
   'view.plan': '计划',
+  'view.planProgress': (done: number, total: number) => `计划 ${done}/${total}`,
   'view.proposal': '方案',
   'view.planning': '正在整理计划',
   'view.copyAnswer': '复制回答',
