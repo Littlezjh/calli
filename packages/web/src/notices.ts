@@ -47,7 +47,9 @@ export function attentionCount(threads: Thread[], viewingId: string | null): num
 
 /** The browser tab title: the count goes first so it survives a narrow tab. */
 export function pageTitle(base: string, count: number): string {
-  return count > 0 ? `(${count}) ${base}` : base;
+  // The app can remount and read back a title that already carries a count; drop it so counts never stack.
+  const plain = base.replace(/^(\(\d+\) )+/, '');
+  return count > 0 ? `(${count}) ${plain}` : plain;
 }
 
 export type ThreadMark = 'waiting' | 'running' | 'error' | 'unread' | null;
