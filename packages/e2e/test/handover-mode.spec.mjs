@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { startDaemon, openUi, api, launchBrowser, repoRoot } from '../harness.mjs';
 
 let hub, browser, dir;
-const shots = join(repoRoot, 'e2e', 'shots', 'handover-mode');
+const shots = join(repoRoot, 'e2e', 'shots', 'handover-mode2');
 const request = async (path, method = 'GET', body) => {
   const response = await api(hub, path, { method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const value = await response.json(); assert.ok(response.ok, JSON.stringify(value)); return value;
@@ -56,7 +56,7 @@ before(async () => {
 after(async () => { await browser?.close(); await hub?.stop(); rmSync(dir, { recursive: true, force: true }); });
 
 for (const mobile of [false, true]) for (const theme of ['light', 'dark']) {
-  test(`branch and continue preserve composer ownership: ${mobile ? 'phone' : 'desktop'} ${theme}`, async () => {
+  test(`manual conversations remain independent in grouped cards, automatic handovers merge: ${mobile ? 'phone' : 'desktop'} ${theme}`, async () => {
     const name = `${mobile ? 'phone' : 'desktop'}-${theme}`;
     const source = await create(`并行任务 ${name}`); await send(source.id, 'slow original task');
     const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 960 }, isMobile: mobile, hasTouch: mobile, colorScheme: theme });
@@ -65,17 +65,22 @@ for (const mobile of [false, true]) for (const theme of ['light', 'dark']) {
     try {
       await openUi(page, hub); await select(page, source.title, mobile);
       const modal = await dialog(page);
-      assert.equal(await modal.locator('.handover-mode-choice button').innerText(), '新开会话');
+      assert.equal(await modal.locator('.handover-mode-choice').count(), 0);
       await page.screenshot({ path: join(shots, `running-dialog-${name}.png`), animations: 'disabled' });
       const branch = await handover(page, modal);
       assert.equal(branch.handover.mode, 'branch');
       assert.equal((await request(`/api/threads/${source.id}`)).status, 'running');
       assert.equal(await page.locator('.handover-readonly, .merged-history').count(), 0);
       await sidebar(page, mobile);
-      for (const title of [source.title, branch.title]) assert.equal(await page.locator('.sidebar .thread-title').filter({ hasText: new RegExp(`^${title}$`) }).count(), 1);
-      assert.equal(await page.locator('.sidebar .thread-item').filter({ hasText: branch.title }).locator('.thread-fork').count(), 1);
-      await page.screenshot({ path: join(shots, `branch-sidebar-${name}.png`), animations: 'disabled' });
-      await select(page, branch.title, mobile);
+      const card = page.locator('.handover-group').filter({ has: page.locator('.thread-title', { hasText: source.title }) });
+      assert.equal(await card.count(), 1);
+      assert.equal(await card.locator('.thread-item').count(), 1);
+      assert.equal(await card.locator('.agent-stack svg').count(), 2);
+      assert.equal(await page.locator('.sidebar .thread-fork').count(), 0);
+      await card.locator('.handover-toggle').click();
+      assert.equal(await card.locator('.handover-member').count(), 2);
+      await page.screenshot({ path: join(shots, `manual-sidebar-${name}.png`), animations: 'disabled' });
+      await select(page, source.title, mobile);
       await uiSend(page, branch.id, '独立处理新任务');
       await request(`/api/threads/${source.id}/cancel`, 'POST'); await idle(source.id);
       await origin(page);
@@ -86,20 +91,28 @@ for (const mobile of [false, true]) for (const theme of ['light', 'dark']) {
       await page.getByRole('menuitem').filter({ hasText: '接手会话' }).click();
       await uiSend(page, branch.id, '新会话再次独立工作');
       await page.locator('.handover-trail button').click();
-      await page.getByRole('menuitem').filter({ hasText: '分出去' }).waitFor();
+      await page.getByRole('menuitem').filter({ hasText: '手动交接' }).waitFor();
       assert.equal(await page.locator('.handover-mode').count(), 0);
-      await page.screenshot({ path: join(shots, `branch-history-${name}.png`), animations: 'disabled' });
+      await page.screenshot({ path: join(shots, `manual-history-${name}.png`), animations: 'disabled' });
       await page.keyboard.press('Escape');
 
-      const relay = await create(`接力任务 ${name}`); await send(relay.id, '准备交接的任务'); await idle(relay.id);
-      await select(page, relay.title, mobile);
+      const stoppedSource = await create(`已停手动任务 ${name}`); await send(stoppedSource.id, '已结束的任务'); await idle(stoppedSource.id);
+      await select(page, stoppedSource.title, mobile);
       const stopped = await dialog(page);
-      assert.equal(await stopped.locator('.handover-mode-choice button').innerText(), '接力');
-      await stopped.locator('.handover-mode-choice button').click();
-      await page.getByRole('menuitemradio', { name: '新开会话', exact: true }).waitFor();
-      await page.getByRole('menuitemradio', { name: '接力', exact: true }).click();
-      const continued = await handover(page, stopped);
-      assert.equal(continued.handover.mode, 'continue');
+      assert.equal(await stopped.locator('.handover-mode-choice').count(), 0);
+      const stoppedBranch = await handover(page, stopped);
+      assert.equal(stoppedBranch.handover.mode, 'branch');
+      assert.equal(await page.locator('.handover-readonly, .merged-history').count(), 0);
+      await uiSend(page, stoppedBranch.id, '手动新会话独立处理');
+      await origin(page);
+      await uiSend(page, stoppedSource.id, '已停原会话仍可独立发送');
+      assert.ok(!(await request(`/api/threads/${stoppedBranch.id}/events`)).some(e => e.type === 'turn.started' && e.data.text === '已停原会话仍可独立发送'));
+      await page.screenshot({ path: join(shots, `idle-manual-${name}.png`), animations: 'disabled' });
+
+      const relay = await create(`自动接力任务 ${name}`); await send(relay.id, '准备自动接力的任务'); await idle(relay.id);
+      // The automatic scheduler and exhausted-card entry point both explicitly request continue.
+      const continued = await request(`/api/threads/${relay.id}/handover-thread`, 'POST', { agent: 'next', mode: 'continue' });
+      await select(page, relay.title, mobile);
       await page.locator('.merged-history').waitFor();
       await uiSend(page, continued.id, '接手继续处理');
       await origin(page);
@@ -107,6 +120,9 @@ for (const mobile of [false, true]) for (const theme of ['light', 'dark']) {
       await uiSend(page, continued.id, '从前段输入也发给接手方');
       await origin(page);
       await page.locator('.handover-readonly').waitFor();
+      await page.locator('.handover-trail button').click();
+      await page.locator('.handover-entry small').filter({ hasText: /^自动接力 ·/ }).waitFor();
+      await page.keyboard.press('Escape');
       await page.screenshot({ path: join(shots, `continue-source-${name}.png`), animations: 'disabled' });
       // External/source-side activity changes only this relation; the open page responds live.
       await send(relay.id, '原会话重新开启一轮'); await idle(relay.id);
@@ -120,20 +136,3 @@ for (const mobile of [false, true]) for (const theme of ['light', 'dark']) {
     } finally { await context.close(); }
   });
 }
-
-test('explicit continue stops a running source before creating its replacement', async () => {
-  const source = await create('停止原轮后接力'); await send(source.id, 'slow original turn');
-  const context = await browser.newContext({ viewport: { width: 1440, height: 960 } });
-  const page = await context.newPage();
-  try {
-    await openUi(page, hub); await select(page, source.title, false);
-    const modal = await dialog(page);
-    await modal.locator('.handover-mode-choice button').click();
-    await page.getByRole('menuitemradio', { name: '停下原会话，接着做', exact: true }).click();
-    const next = await handover(page, modal);
-    assert.equal(next.handover.mode, 'continue');
-    assert.equal((await request(`/api/threads/${source.id}`)).status, 'idle');
-    assert.ok((await request(`/api/threads/${source.id}/events`)).some(e => e.type === 'turn.done' && e.data.stopReason === 'cancelled'));
-    await page.locator('.merged-history').waitFor();
-  } finally { await context.close(); }
-});

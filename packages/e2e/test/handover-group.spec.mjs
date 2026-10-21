@@ -31,8 +31,9 @@ test('handover groups and bidirectional navigation on desktop and phone in both 
       await page.locator('.handover-group').waitFor();
       assert.equal(await page.locator('.handover-group').count(), 1);
       assert.equal(await page.locator('.handover-group .thread-item').count(), 1);
-      // The row says it is a handover and which agents it passed through, the latest in front.
-      assert.equal(await page.locator('.handover-group .thread-item .thread-fork').getAttribute('aria-label'), `交接：${passed}`);
+      // Only the stacked agent marks remain; relationship details live in the hover hint.
+      assert.equal(await page.locator('.sidebar .thread-fork').count(), 0);
+      assert.match(await page.locator('.handover-group .thread-item').getAttribute('title'), /交接：/);
       const stack = page.locator('.handover-group .thread-item .agent-stack');
       assert.equal(await stack.getAttribute('title'), passed);
       assert.equal(await stack.getAttribute('aria-label'), label('agy'));

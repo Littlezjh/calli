@@ -10,7 +10,7 @@ import { deliveredPreview } from '../timeline';
 import { HostSwitcher } from './Hosts';
 import type { HostIconName } from '@rah/extension-api';
 import { HostIcon } from '../extensions/ui';
-import { AgentMark, IconBell, IconChevron, IconClock, IconClose, IconEdit, IconFolder, IconFork, IconHandover, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconWorktree, IconSidebar } from './icons';
+import { AgentMark, IconBell, IconChevron, IconClock, IconClose, IconEdit, IconFolder, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconSidebar } from './icons';
 import { t } from '../i18n';
 
 export { folderName } from '../paths';
@@ -164,6 +164,7 @@ export function Sidebar({
     const agent = agentById.get(thread.agent);
     // The agents the task passed through, first to last, and the one it came from.
     const passed = chain ? [...chain].reverse().map((m) => agentById.get(m.agent)?.label ?? m.agent).join(' → ') : thread.handover ? `${agentById.get(thread.handover.agent)?.label ?? thread.handover.agent} → ${agent?.label ?? thread.agent}` : null;
+    const hint = [agent && tagged.has(agent.id) ? agent.label : null, thread.worktree ? t('sidebar.inWorktree', thread.worktree.branch) : null, thread.forkedFrom ? t('sidebar.fork') : null, passed ? t('sidebar.handover', passed) : null, thread.schedule ? t('sidebar.scheduleRun', thread.schedule.name) : null].filter(Boolean).join(' · ');
     const from = chain ? agentById.get(chain.find((m) => m.id === thread.handover?.sourceId)?.agent ?? thread.handover?.agent ?? '') : undefined;
     // Filed by project, the list is for scanning: a title per row, as in Codex. The latest ask
     // shows where it helps finding something, by activity and in a search. A thread that needs a
@@ -182,27 +183,7 @@ export function Sidebar({
     >
       {/* Two accounts of one agent share a mark; which one runs the thread shows on hover and in the
           open thread's top bar, not as text on every row. */}
-      <button className="thread-item" onClick={() => onSelect(thread.id)} title={agent && tagged.has(agent.id) ? agent.label : undefined}>
-        {thread.worktree ? (
-          <span className="thread-fork" role="img" aria-label={t('sidebar.worktree', thread.worktree.branch)} title={t('sidebar.inWorktree', thread.worktree.branch)}>
-            <IconWorktree size={13} />
-          </span>
-        ) : thread.forkedFrom ? (
-          <span className="thread-fork" role="img" aria-label={t('sidebar.fork')}>
-            <IconFork size={13} />
-          </span>
-        ) : (
-          thread.schedule && (
-            <span className="thread-fork" role="img" aria-label={t('sidebar.schedule', thread.schedule.name)} title={t('sidebar.scheduleRun', thread.schedule.name)}>
-              <IconClock size={13} />
-            </span>
-          )
-        )}
-        {passed && (
-          <span className="thread-fork" role="img" aria-label={t('sidebar.handover', passed)} title={t('sidebar.handover', passed)}>
-            <IconHandover size={13} />
-          </span>
-        )}
+      <button className="thread-item" onClick={() => onSelect(thread.id)} title={hint || undefined}>
         <span className="thread-text">
           <span className="thread-head">
             <span className="thread-title">{title}</span>

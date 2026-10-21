@@ -15,8 +15,8 @@ test('three handover segments load on upward navigation, keep their action targe
       assert.equal(response.status, 201); return response.json();
     };
     const a = await post('/api/threads', { agent: 'pi', cwd: hub.workdir, title: '交接链连续对话' });
-    const b = await post(`/api/threads/${a.id}/handover-thread`, { agent: 'claude' });
-    const c = await post(`/api/threads/${b.id}/handover-thread`, { agent: 'agy' });
+    const b = await post(`/api/threads/${a.id}/handover-thread`, { agent: 'claude', mode: 'continue' });
+    const c = await post(`/api/threads/${b.id}/handover-thread`, { agent: 'agy', mode: 'continue' });
     const forked = await post('/api/threads', { agent: 'pi', cwd: hub.workdir, title: '分叉目标' });
     const db = new DatabaseSync(join(hub.dataDir, 'hub.db'));
     const insert = db.prepare('INSERT INTO events VALUES (?, ?, ?, ?, ?, ?)');

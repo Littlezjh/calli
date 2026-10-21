@@ -72,6 +72,7 @@ test('a selection in the answer becomes a quote in the composer and in the sent 
 });
 
 test('asking in the side chat opens a thread of its own', async () => {
+  const originalAnswer = await page.locator('.main .thread .markdown').first().innerText();
   await selectStartOfAnswer(7);
   await page.locator('.selection-menu').waitFor({ timeout: 5_000 });
   await page.locator('.selection-menu button', { hasText: '在侧边栏提问' }).click();
@@ -100,10 +101,11 @@ test('asking in the side chat opens a thread of its own', async () => {
   );
   const titles = await page.locator('.sidebar .thread-row .thread-title').allInnerTexts();
   assert.match(titles.join('\n'), /^追问：hi ther$/m);
-  assert.ok((await page.locator('.sidebar .thread-row .thread-fork').count()) >= 1, 'the side chat is marked as a fork');
+  assert.equal(await page.locator('.sidebar .thread-fork').count(), 0);
+  assert.match(await page.locator('.sidebar .thread-item').filter({ hasText: '追问：hi ther' }).getAttribute('title'), /分叉/);
 
   // The conversation it came from is untouched underneath.
-  assert.equal(await page.locator('.main .thread .markdown').first().innerText(), 'hi there quoteselect');
+  assert.equal(await page.locator('.main .thread .markdown').first().innerText(), originalAnswer);
 
   await page.keyboard.press('Escape');
   await page.waitForTimeout(200);

@@ -60,7 +60,8 @@ export interface ForkOptions {
 }
 
 /** A thread as the API returns it: the stored record plus values worked out from it. */
-export type ThreadView = Omit<ThreadRecord, 'worktree'> & {
+export type ThreadView = Omit<ThreadRecord, 'worktree' | 'handover'> & {
+  handover?: (NonNullable<ThreadRecord['handover']> & { automatic: boolean }) | null;
   autoHandover?: AutoHandoverView;
   /** `doing`, on a member: its latest task while it works, the opening of its answer once it has returned. */
   coordination?: { retired?: boolean; rootId: string; children: number; paused: boolean; doing?: string; team?: { name: string; status: import('./teams.js').TaskStatus; role: string; error?: string } };
@@ -663,7 +664,7 @@ export class ThreadManager {
     }
     const scratch = this.dirs.scratchRoot !== null && isWithinWorkdirs(thread.cwd, [this.dirs.scratchRoot]);
     const runningSince = this.running.get(thread.id)?.since ?? null;
-    return { ...thread, handover: thread.handover ? { ...thread.handover, mode: this.store.handoverMode(thread)! } : null, autoHandover: this.autoHandover.view(thread.id), worktree, resumeCommand, cwdReal, waiting, waitingReason, queued, terminalActivity, scratch, runningSince, coordination: this.coordination?.metadata(thread.id) };
+    return { ...thread, handover: thread.handover ? { ...thread.handover, mode: this.store.handoverMode(thread)!, automatic: thread.handover.mode === 'continue' } : null, autoHandover: this.autoHandover.view(thread.id), worktree, resumeCommand, cwdReal, waiting, waitingReason, queued, terminalActivity, scratch, runningSince, coordination: this.coordination?.metadata(thread.id) };
   }
 
   /**
@@ -1385,16 +1386,7 @@ export class ThreadManager {
   async createHandoverThread(threadId: string, agent: string, model?: string, mode?: unknown): Promise<ThreadView> {
     const source = this.getThread(threadId);
     if (mode !== undefined && mode !== 'continue' && mode !== 'branch') throw new HttpError(400, 'invalid handover mode');
-    const selected = mode ?? (this.running.has(threadId) || source.status === 'running' ? 'branch' : 'continue');
-    // Validate the destination before interrupting any work.
-    if (!this.adapters.has(agent)) throw new HttpError(400, `unknown agent: ${agent}`);
-    if (model) await this.validateModel(agent, model);
-    if (selected === 'continue' && this.running.has(threadId)) {
-      await this.stopTurn(threadId);
-      const deadline = Date.now() + 5000;
-      while (this.running.has(threadId) && Date.now() < deadline) await new Promise(r => setTimeout(r, 20));
-      if (this.running.has(threadId)) throw new HttpError(409, 'source is still running; handover was not created');
-    }
+    const selected = mode ?? 'branch';
     return this.createThread({
       agent,
       cwd: source.cwd,
