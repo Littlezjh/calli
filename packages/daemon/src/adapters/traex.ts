@@ -96,6 +96,7 @@ export class TraexAcpAdapter extends AcpAdapter {
     history: true,
     fork: true,
     forkAt: true,
+    editMessage: true,
     multiAccount: false,
     forkInto: true,
     quota: true,
@@ -105,6 +106,14 @@ export class TraexAcpAdapter extends AcpAdapter {
 
   protected forkPointMeta(forkRef: string): Record<string, unknown> {
     return airForkPoint(forkRef);
+  }
+
+  /**
+   * Editing goes through the app-server, which can fork before a turn; ACP's fork point only names
+   * a message to keep, so it cannot express a first turn's empty prefix.
+   */
+  forkBeforeSession(agentSessionId: string, cwd: string, forkBeforeRef: string): Promise<string> {
+    return this.execution.forkBeforeSession(agentSessionId, cwd, forkBeforeRef);
   }
 
   /** Plain CLI used for app-server, model metadata and session deletion. */

@@ -228,6 +228,12 @@ export interface HistoryTurn {
    * may leave it off the last turn, whose copy is the whole conversation anyway.
    */
   forkRef?: string;
+  /**
+   * What copying a conversation needs to stop *before* this turn: the new session holds what came
+   * before it and none of it. Only where the agent can name that boundary (a user message it can
+   * fork from, or a turn it can fork before); first turns have no earlier turn to borrow from.
+   */
+  forkBeforeRef?: string;
 }
 
 /** An account of an adapter that is already signed in on this host, ready to become an instance. */
@@ -307,6 +313,11 @@ export interface AgentAdapter {
     fork: boolean;
     /** Whether that copy can stop at an earlier turn instead of taking everything. Needs fork and history. */
     forkAt: boolean;
+    /**
+     * Whether an earlier user message can be edited and sent again, by copying the conversation up
+     * to just before it. Needs forkAt; a turn whose boundary the agent cannot name is refused then.
+     */
+    editMessage?: boolean;
     /** Whether more accounts of this agent can be linked, each as its own instance with its own login. */
     multiAccount: boolean;
     /** Whether that copy can go on in another directory, a new worktree of the same repository. Needs fork. */
@@ -398,6 +409,12 @@ export interface AgentAdapter {
    * capabilities.forkInto), the copy is one that can be started there instead of in `cwd`.
    */
   forkSession?(agentSessionId: string, cwd: string, forkRef?: string, intoCwd?: string): Promise<string>;
+  /**
+   * Copies a conversation up to, but not including, the turn `forkBeforeRef` names, and returns the
+   * id of the copy. With capabilities.editMessage, for turns the previous turn's forkRef cannot
+   * express — the first turn above all.
+   */
+  forkBeforeSession?(agentSessionId: string, cwd: string, forkBeforeRef: string): Promise<string>;
   start(opts: StartOptions): Promise<AgentSession>;
 }
 

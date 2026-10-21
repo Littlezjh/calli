@@ -90,6 +90,14 @@ export class AttachmentStore {
     return { id, ...await storeVideo(join(dir, id), source, name) };
   }
 
+  /** One stored image by id, for reusing it in an edited message. */
+  image(threadId: string, id: string): { stored: StoredAttachment; image: ImageInput } | null {
+    const found = this.find(threadId, id);
+    if (!found || VIDEO_EXTENSIONS[found.mimeType]) return null;
+    const bytes = readFileSync(found.path);
+    return { stored: { id, mimeType: found.mimeType, size: bytes.length }, image: { data: bytes.toString('base64'), mimeType: found.mimeType, path: found.path } };
+  }
+
   /** Only ids uploaded to this thread can be sent, never a client-supplied local path. */
   videos(threadId: string, raw: unknown): StoredVideo[] {
     if (raw === undefined) return [];
@@ -106,8 +114,7 @@ export class AttachmentStore {
     });
   }
 
-  videoNote(threadId: string, videos: StoredVideo[]): string {
-    if (!videos.length) return '';
+  videoNote(threadId: string, videos: StoredVideo[]): string {    if (!videos.length) return '';
     return `\n\nThe user attached ${videos.length} video file(s). Use your available tools to inspect the original files; if you cannot inspect them, say so rather than guessing their contents.\n${videos.map(v => `- ${JSON.stringify(v.name)}: ${this.find(threadId, v.id)!.path}`).join('\n')}`;
   }
 

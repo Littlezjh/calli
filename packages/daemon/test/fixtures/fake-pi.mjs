@@ -23,6 +23,8 @@ if (!args.includes('--mode') || args[args.indexOf('--mode') + 1] !== 'rpc') {
   process.exit(2);
 }
 const ephemeral = args.includes('--no-session');
+if (ephemeral && process.env.FAKE_PI_FORBID_PROBE) throw new Error('unexpected model probe');
+if (process.env.FAKE_PI_START_DELAY_MS) await new Promise(r => setTimeout(r, Number(process.env.FAKE_PI_START_DELAY_MS)));
 const sessionIdx = args.indexOf('--session');
 let sessionId = sessionIdx >= 0 ? args[sessionIdx + 1] : 'pi-session-1';
 // pi keeps sessions by directory. `--fork <id>` copies one into the directory pi is started in;
@@ -56,6 +58,9 @@ const MODELS = [
   { id: 'plain', provider: 'fake', name: 'Plain', reasoning: false, input: ['text'] },
   { id: 'loose', provider: 'fake', name: 'Loose', reasoning: true, input: ['text'] },
 ];
+let currentModel = MODELS[0];
+let stateReads = 0;
+let pendingFirstOutput = null;
 
 const HIST_MESSAGES = [
   { role: 'system', content: '' },
@@ -77,10 +82,22 @@ const userText = (m) => (typeof m.content === 'string' ? m.content : (m.content 
 
 /**
  * What a session holds. Tests can script what the "terminal" did to one: a JSON file of messages
- * per session id. Sessions named hist… hold a canned two-turn conversation. A session made by
- * `fork` holds what its source did before the message it was forked from.
+ * per session id. A session named there outright uses that script, which is how a copy's own
+ * history is scripted after it was made. Otherwise a session made by `fork` holds what its source
+ * did before the message it was forked from. Sessions named hist… hold a canned conversation.
  */
 function messagesOf(id) {
+  const scripted = () => {
+    if (!process.env.FAKE_PI_MESSAGES_FILE) return null;
+    try {
+      const all = JSON.parse(readFileSync(process.env.FAKE_PI_MESSAGES_FILE, 'utf8'));
+      return Array.isArray(all[id]) ? all[id] : null;
+    } catch {
+      return null;
+    }
+  };
+  const own = scripted();
+  if (own) return own;
   const forked = /^(.*)-fork-e(\d+)$/.exec(String(id));
   if (forked) {
     const source = messagesOf(forked[1]);
@@ -91,14 +108,6 @@ function messagesOf(id) {
   // A copy made into another directory holds what its source holds.
   const moved = /^(.*)-in-[^-]+$/.exec(String(id));
   if (moved) return messagesOf(moved[1]);
-  if (process.env.FAKE_PI_MESSAGES_FILE) {
-    try {
-      const scripted = JSON.parse(readFileSync(process.env.FAKE_PI_MESSAGES_FILE, 'utf8'));
-      if (Array.isArray(scripted[id])) return scripted[id];
-    } catch {
-      // fall through to the canned answer
-    }
-  }
   return String(id).startsWith('hist') ? HIST_MESSAGES : [];
 }
 
@@ -151,6 +160,8 @@ rl.on('line', (line) => {
         ],
       });
     case 'set_model':
+      currentModel = MODELS.find(m => m.provider === cmd.provider && m.id === cmd.modelId) ?? currentModel;
+      return reply(currentModel);
     case 'set_thinking_level':
       return reply({});
     case 'get_messages':
@@ -198,7 +209,10 @@ rl.on('line', (line) => {
       sessionId = `${sessionId}-clone`;
       return reply({ cancelled: false });
     case 'get_state':
-      return reply({ sessionId, isStreaming: running, model: MODELS[0] });
+      if (++stateReads > 1 && process.env.FAKE_PI_IMAGE_CHECK_DELAY_MS) {
+        return setTimeout(() => reply({ sessionId, isStreaming: running, model: currentModel }), Number(process.env.FAKE_PI_IMAGE_CHECK_DELAY_MS));
+      }
+      return reply({ sessionId, isStreaming: running, model: currentModel });
     case 'prompt': {
       if (running) return reply(null, false, 'already streaming');
       if (cmd.message.startsWith('auto-compact')) {
@@ -247,6 +261,22 @@ rl.on('line', (line) => {
       running = true;
       reply({ disposition: 'started' });
       out({ type: 'agent_start' });
+      if (cmd.message.includes('wait-first')) {
+        out({ type: 'message_start', message: { role: 'assistant', timestamp: Date.now() } });
+        pendingFirstOutput = setTimeout(() => {
+          pendingFirstOutput = null;
+          if (!running) return;
+          if (cmd.message.includes('wait-first-fail')) {
+            out({ type: 'message_end', message: { role: 'assistant', stopReason: 'error', errorMessage: 'provider unavailable' } });
+          } else {
+            out({ type: 'message_update', assistantMessageEvent: { type: 'thinking_delta', delta: 'Checking the request.' } });
+            out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'Response received.' } });
+          }
+          running = false;
+          out({ type: 'agent_settled', aborted: false });
+        }, Number(process.env.FAKE_PI_FIRST_OUTPUT_DELAY_MS ?? 3000));
+        return;
+      }
       if (cmd.message.includes('inspect-work-mode')) {
         out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: JSON.stringify({ message: cmd.message, images: cmd.images ?? [] }) } });
         running = false;
@@ -330,6 +360,25 @@ rl.on('line', (line) => {
         }, 6000);
         return;
       }
+      // "longrun" makes a turn with more work entries than one work page holds (100) and stays
+      // up for a while: opening it mid-run must page through the running work by itself, and a
+      // finished reopen keeps the manual Load more. A word after every call keeps each step its
+      // own row instead of folding the finished run into one summary line.
+      if (cmd.message.includes('longrun')) {
+        setTimeout(() => {
+          for (let i = 1; i <= 140; i++) {
+            out({ type: 'tool_execution_start', toolCallId: 'L' + i, toolName: 'bash', args: { command: 'scan-' + i } });
+            out({ type: 'tool_execution_end', toolCallId: 'L' + i, toolName: 'bash', result: { content: [{ type: 'text', text: 'ok ' + i }] }, isError: false });
+            out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: `part ${i} ` } });
+          }
+        }, 300);
+        setTimeout(() => {
+          out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'long run done' } });
+          running = false;
+          out({ type: 'agent_settled', aborted: false });
+        }, 12000);
+        return;
+      }
       // A scripted turn plays out its blocks in order: thinking, tool calls with results, text.
       const script = scriptedTurn(sessionId, cmd.message);
       if (script) {
@@ -366,6 +415,7 @@ rl.on('line', (line) => {
       return out({ type: 'agent_settled', aborted: false });
     }
     case 'abort':
+      if (pendingFirstOutput) { clearTimeout(pendingFirstOutput); pendingFirstOutput = null; }
       if (pendingTeamReview) { pendingTeamReview(); pendingTeamReview = null; }
       if (pendingCompact) { const cancelCompact = pendingCompact; pendingCompact = null; cancelCompact(); }
       reply({});
@@ -378,12 +428,3 @@ rl.on('line', (line) => {
       return reply(null, false, `unknown command ${cmd.type}`);
   }
 });
-      if (cmd.message.includes('retry')) {
-        // pi's own retry: a failed call, then one that succeeds.
-        out({ type: 'message_end', message: { role: 'assistant', stopReason: 'error', errorMessage: 'Request timed out.' } });
-        out({ type: 'auto_retry_start', attempt: 1, maxAttempts: 3, delayMs: 0, errorMessage: 'Request timed out.' });
-        out({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop' } });
-        out({ type: 'auto_retry_end', success: true, attempt: 1 });
-        running = false;
-        return out({ type: 'agent_settled', aborted: false });
-      }

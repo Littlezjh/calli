@@ -328,8 +328,8 @@ export function codexApprovalDecision(decision: ApprovalDecision, params: any): 
 export function turnsFromCodexHistory(turns: any[]): HistoryTurn[] {
   const out: HistoryTurn[] = [];
   for (const turn of turns ?? []) {
-    // Codex forks "through" a turn it is given the id of.
-    const current: HistoryTurn = { text: '', images: [], events: [], ...(typeof turn?.id === 'string' && turn.id ? { forkRef: turn.id } : {}) };
+    // Codex forks "through" a turn it is given the id of, and before a turn it is given instead.
+    const current: HistoryTurn = { text: '', images: [], events: [], ...(typeof turn?.id === 'string' && turn.id ? { forkRef: turn.id, forkBeforeRef: turn.id } : {}) };
     for (const item of turn?.items ?? []) {
       if (item?.type === 'userMessage') {
         current.text = (item.content ?? [])
@@ -1003,6 +1003,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
     history: true,
     fork: true,
     forkAt: true,
+    editMessage: true,
     multiAccount: false,
     // A thread is resumed with the directory to work in, whatever directory it was made in.
     forkInto: true,
@@ -1219,6 +1220,21 @@ export class CodexAppServerAdapter implements AgentAdapter {
         ...(forkRef ? { lastTurnId: forkRef } : {}),
         // Where the copy will work, so its own record says so too. Resuming passes it again.
         ...(intoCwd ? { cwd: intoCwd } : {}),
+        ephemeral: false,
+        excludeTurns: true,
+      });
+      const id = res?.thread?.id;
+      if (!id) throw new Error('Codex did not return a thread id for the fork');
+      return String(id);
+    });
+  }
+
+  /** A copy that stops before one turn, excluding it and everything after it. */
+  async forkBeforeSession(agentSessionId: string, _cwd: string, forkBeforeRef: string): Promise<string> {
+    return this.withServer(async (peer) => {
+      const res = await peer.request('thread/fork', {
+        threadId: agentSessionId,
+        beforeTurnId: forkBeforeRef,
         ephemeral: false,
         excludeTurns: true,
       });

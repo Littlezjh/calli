@@ -1961,7 +1961,7 @@ test('commands: agy lists and answers its own commands; the answer is a normal t
   await post(`/api/threads/${thread.id}/turns`, { text: '/usage' });
   await untilIdle(thread.id);
   const log = await events(thread.id);
-  assert.deepEqual(log.filter((e) => e.type.startsWith('turn.')).map((e) => e.type), ['turn.started', 'turn.done']);
+  assert.deepEqual(log.filter((e) => e.type.startsWith('turn.')).map((e) => e.type), ['turn.started', 'turn.phase', 'turn.phase', 'turn.done']);
   assert.match(log.find((e) => e.type === 'message.delta')!.data.text, /\|Fast models\|Weekly Limit Remaining\|97%\|/);
 });
 
@@ -2531,4 +2531,100 @@ test('GET /api/search finds what was said in any thread, and needs the token', a
   assert.deepEqual(await (await api('/api/search?q=x')).json(), []);
   assert.deepEqual(await (await api('/api/search')).json(), []);
   assert.equal((await api('/api/search?q=anything', {}, false)).status, 401);
+});
+
+test('edit a message: the current history starts there, the old turns are hidden, one thread stays', async () => {
+  const messagesFile = join(dataDir, 'pi-edit-messages.json');
+  process.env.FAKE_PI_MESSAGES_FILE = messagesFile;
+  try {
+    const thread = await newThread({ agent: 'pi' });
+    const ask = async (text: string) => {
+      await api(`/api/threads/${thread.id}/turns`, { method: 'POST', body: JSON.stringify({ text }) });
+      await waitFor(async () => {
+        const t = (await (await api(`/api/threads/${thread.id}`)).json()) as { status: string };
+        return t.status === 'idle' ? t : null;
+      });
+    };
+    await ask('one');
+    await ask('two');
+    await ask('three');
+    const view = (await (await api(`/api/threads/${thread.id}`)).json()) as Record<string, any>;
+    const starts = store.listEventsOfType(thread.id, 'turn.started');
+    assert.equal(starts.length, 3);
+    // What the agent's own session holds, as it was sent.
+    writeFileSync(messagesFile, JSON.stringify({
+      [view.agentSessionId]: starts.flatMap((ev) => [
+        { role: 'user', content: ev.data.text },
+        { role: 'assistant', content: [{ type: 'text', text: `answer ${ev.data.text}` }] },
+      ]),
+    }));
+
+    const revision = (await (await api(`/api/threads/${thread.id}/history?head=1`)).json()).snapshotSeq as number;
+    const res = await api(`/api/threads/${thread.id}/turns/${starts[1].turnId}/edit`, {
+      method: 'POST',
+      body: JSON.stringify({ text: 'two, clearer', images: [], revision, requestId: 'edit-request-1' }),
+    });
+    assert.equal(res.status, 202);
+    const body = (await res.json()) as { turnId: string };
+    await waitFor(async () => {
+      const t = (await (await api(`/api/threads/${thread.id}`)).json()) as { status: string };
+      return t.status === 'idle' ? t : null;
+    });
+
+    // One thread, same id; the agent continues the copy made just before the edited turn.
+    const list = (await (await api('/api/threads')).json()) as Array<Record<string, any>>;
+    assert.equal(list.filter((t) => t.id === thread.id).length, 1);
+    assert.equal(list.length, (await (await api('/api/threads')).json() as any[]).length);
+    const after = (await (await api(`/api/threads/${thread.id}`)).json()) as Record<string, any>;
+    assert.equal(after.id, thread.id);
+    assert.notEqual(after.agentSessionId, view.agentSessionId);
+    assert.match(after.agentSessionId, /-fork-e2$/);
+
+    // The current history is the first turn and the edited one; the third is gone from it.
+    const current = store.listEventsOfType(thread.id, 'turn.started');
+    assert.deepEqual(current.map((e) => e.data.displayText ?? e.data.text), ['one', 'two, clearer']);
+    assert.deepEqual(current.map((e) => e.turnId), [starts[0].turnId, body.turnId]);
+    assert.equal(store.listEventsOfType(thread.id, 'turn.started').some((e) => e.turnId === starts[2].turnId), false);
+    // Search does not keep the old turns either.
+    assert.deepEqual((await (await api('/api/search?q=three')).json() as any[]).filter((h) => h.threadId === thread.id), []);
+
+    // Retrying the same request does not make a second conversation or a second turn.
+    const again = await api(`/api/threads/${thread.id}/turns/${starts[1].turnId}/edit`, {
+      method: 'POST',
+      body: JSON.stringify({ text: 'two, clearer', images: [], revision, requestId: 'edit-request-1' }),
+    });
+    assert.equal(again.status, 202);
+    assert.equal(((await again.json()) as { turnId: string }).turnId, body.turnId);
+    assert.equal(store.listEventsOfType(thread.id, 'turn.started').length, 2);
+  } finally {
+    delete process.env.FAKE_PI_MESSAGES_FILE;
+  }
+});
+
+test('edit refuses a stale page, a running turn, and an agent with no way to copy a prefix', async () => {
+  const thread = await newThread({ agent: 'pi' });
+  await api(`/api/threads/${thread.id}/turns`, { method: 'POST', body: JSON.stringify({ text: 'hello' }) });
+  await waitFor(async () => {
+    const t = (await (await api(`/api/threads/${thread.id}`)).json()) as { status: string };
+    return t.status === 'idle' ? t : null;
+  });
+  const [first] = store.listEventsOfType(thread.id, 'turn.started');
+  const revision = (await (await api(`/api/threads/${thread.id}/history?head=1`)).json()).snapshotSeq as number;
+  const edit = (body: Record<string, unknown>) =>
+    api(`/api/threads/${thread.id}/turns/${first.turnId}/edit`, { method: 'POST', body: JSON.stringify({ text: 'x', images: [], revision, requestId: 'edit-request-2', ...body }) });
+
+  assert.equal((await edit({ revision: revision + 1 })).status, 409, 'a page that read another history');
+  assert.equal((await edit({ requestId: 'short' })).status, 400);
+  assert.equal((await api(`/api/threads/${thread.id}/turns/no-such-turn/edit`, { method: 'POST', body: JSON.stringify({ text: 'x', images: [], revision, requestId: 'edit-request-3' }) })).status, 404);
+
+  // An agent that cannot copy a conversation before a turn says so instead of copying everything.
+  const agy = await newThread({ agent: 'agy' });
+  await api(`/api/threads/${agy.id}/turns`, { method: 'POST', body: JSON.stringify({ text: 'hello' }) });
+  const [agyFirst] = store.listEventsOfType(agy.id, 'turn.started');
+  const refused = await api(`/api/threads/${agy.id}/turns/${agyFirst.turnId}/edit`, {
+    method: 'POST',
+    body: JSON.stringify({ text: 'x', images: [], revision: 1, requestId: 'edit-request-4' }),
+  });
+  assert.equal(refused.status, 400);
+  assert.match(((await refused.json()) as { error: string }).error, /cannot edit/);
 });

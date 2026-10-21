@@ -336,6 +336,10 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const [collaborationDirectories, setCollaborationDirectories] = useState<string[]>([]);
   const [historyTurnIds, setHistoryTurnIds] = useState<string[]>([]);
   const [events, setEvents] = useState<StoredEvent[]>([]);
+  /** The history revision the view holds; an edit names it so a stale page is refused. */
+  const [historyRevision, setHistoryRevision] = useState(0);
+  /** Bumped when an edit replaced the conversation, so the page is read again from its start. */
+  const [historyEpoch, setHistoryEpoch] = useState(0);
   const [draftAgent, setDraftAgent] = useState('');
   const [draftCwd, setDraftCwd] = useState('');
   // A new thread may start in a git worktree of its directory; offered only when the directory is in a repository.
@@ -425,7 +429,11 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   // Text handed back to the composer: messages that were waiting when the user pressed stop.
   const [restore, setRestore] = useState<{ text: string; nonce: number; mentions?: AgentMention[] } | null>(null);
   // Text quoted out of a message by selecting it.
-  const [noteSignal, setNoteSignal] = useState<(DraftNote & { nonce: number }) | null>(null);
+  const composerDraftKey = hostId ? `host:${hostId}:${selectedId ?? (draftTeam ? `new:team:${draftTeam}` : 'new')}` : selectedId ?? (draftTeam ? `new:team:${draftTeam}` : 'new');
+  const [noteSignal, setNoteSignal] = useState<{ draftKey: string; note: DraftNote & { nonce: number } } | null>(null);
+  const consumeNote = useCallback((id: string) => {
+    setNoteSignal((current) => current?.note.id === id ? null : current);
+  }, []);
   // Where each noted passage stands in the conversation, for as long as its note waits in the box.
   const noteRanges = useRef(new Map<string, Range>());
   const [noteMarks, setNoteMarks] = useState<NoteMark[]>([]);
@@ -814,14 +822,25 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       chain: mergedHandover,
       page: page => {
         setEvents(page.events); setHistoryTurnIds(page.turnIds ?? []); setEventsLoading(false); setHistoryReady(true);
+        setHistoryRevision(page.snapshotSeq);
         historyCursor.current = page.nextCursor; setHasOlder(page.hasOlder);
       },
-      events: batch => setEvents(previous => mergeHistory(previous, batch)),
+      events: batch => {
+        // An edit replaced the conversation behind this page: read the current one from the start.
+        if (batch.some((ev) => ev.type === 'thread.historyChanged')) {
+          stickToBottom.current = true;
+          setHistoryEpoch((n) => n + 1);
+          return;
+        }
+        // Everything the page has seen is part of the history it may edit against.
+        setHistoryRevision((revision) => batch.reduce((latest, ev) => Math.max(latest, ev.seq), revision));
+        setEvents(previous => mergeHistory(previous, batch));
+      },
       error: error => { setEventsLoading(false); handleError(error); },
     });
     return () => ctrl.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, selectedId, mergedHandover]);
+  }, [api, selectedId, mergedHandover, historyEpoch]);
 
   /** Prepends the page of turns before the loaded ones, keeping the scroll position on the same content. */
   const loadOlder = async () => {
@@ -1551,7 +1570,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   // strip is only for choosing them, before the thread exists.
   const header = selected ? null : (
     <>
-      <AgentPicker agents={agents} teams={teamDefinitions} value={draftTeam ? `team:${draftTeam}` : draftAgent} onChange={value => { const id = teamRecipient(value); setDraftTeam(id); if (id) { setDraftScratch(false); setDraftWorktree(false); setDraftCollaboration(false); } else pickAgent(value); }} accounts={accounts} onAddAccount={addAccount} />
+      <AgentPicker api={api} agents={agents} teams={teamDefinitions} value={draftTeam ? `team:${draftTeam}` : draftAgent} onChange={value => { const id = teamRecipient(value); setDraftTeam(id); if (id) { setDraftScratch(false); setDraftWorktree(false); setDraftCollaboration(false); } else pickAgent(value); }} accounts={accounts} onAddAccount={addAccount} />
       <ProjectPicker
         projects={projectOptions}
         machineLabel={host?.label ?? (hostId ? t('app.remoteMachine') : t('hosts.local'))}
@@ -1675,6 +1694,9 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const teamWaiting = Boolean(coordination?.members.some((m) => m.thread?.waiting));
   const teamRunning = coordination?.members.filter((m) => m.thread?.status === 'running').length ?? 0;
   const teamShown = Boolean(selected?.coordination && (selected.coordination.rootId !== selected.id || selected.coordination.children > 0) && !onPage && hostUp);
+  // A member's own thread: it was sent from the lead's, which is where its way back goes.
+  const atMember = Boolean(teamShown && selected!.coordination!.rootId !== selected!.id);
+  const leadTitle = atMember ? threads.find((v) => v.id === selected!.coordination!.rootId)?.title ?? '' : '';
   const teamNote = teamWaiting ? t('app.teamWaiting') : teamRunning ? t('team.running', teamRunning) : selected?.coordination?.paused ? t('team.paused') : '';
 
   // Older daemons advertise /compact before they expose the dedicated capability.
@@ -1706,6 +1728,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       }}
       onEffort={(v) => (selected ? updateSelected({ effort: v }) : setDraftEffort(v))}
       />
+
     </>
   );
 
@@ -1788,9 +1811,16 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
 
       <main className="main" ref={mainRef}>
         <header className="topbar">
-          <button className="icon-btn menu-btn" aria-label={t('app.openList')} aria-expanded={listOpen} onClick={() => setDrawer((v) => !v)}>
-            {compact ? <IconBack size={22} /> : <IconMenu />}
-          </button>
+          {/* In a member's thread the way back is to the thread that sent it, not to the list. */}
+          {compact && atMember ? (
+            <button className="icon-btn menu-btn" aria-label={t('app.backToLead')} onClick={() => pick(selected!.coordination!.rootId)}>
+              <IconBack size={22} />
+            </button>
+          ) : (
+            <button className="icon-btn menu-btn" aria-label={t('app.openList')} aria-expanded={listOpen} onClick={() => setDrawer((v) => !v)}>
+              {compact ? <IconBack size={22} /> : <IconMenu />}
+            </button>
+          )}
           {/* With the list put away, the way back and a new thread move up here. */}
           {sidebarHidden && !compact && (
             <div className="topbar-lead">
@@ -1807,7 +1837,12 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
             <div className="topbar-title">{host && !hostUp ? host.label : viewTitle ?? (selected ? selected.title : t('sidebar.newThread'))}</div>
             {selected?.coordination?.team && <div className={`team-task-status${['awaiting_confirm', 'needs_attention'].includes(selected.coordination.team.status) ? ' attention' : ''}`}><span className="team-task-name">{selected.coordination.team.name}</span><span> · {t(`teams.${selected.coordination.team.status}`)}</span></div>}
             {!selected && host && hostUp && <div className="topbar-sub">{host.label}</div>}
-            {selected && !selected.coordination?.team && (
+            {atMember && (
+              <button className="topbar-sub topbar-lead-link" title={t('app.backToLead')} onClick={() => pick(selected!.coordination!.rootId)}>
+                {agentLabel(selected!.agent)} · {t('app.leadThread', leadTitle)}
+              </button>
+            )}
+            {selected && !selected.coordination?.team && !atMember && (
               <div className="topbar-sub" title={selected.cwd}>
                 {agentLabel(selected.agent)} ·{' '}
                 {selected.scratch ? t('projects.none') : selected.worktree ? `${folderName(selected.worktree.of)} · ${selected.worktree.branch}` : folderName(selected.cwd)}
@@ -1817,17 +1852,15 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           </div>
           {selected && (
             <div className="topbar-actions">
-              {teamShown && selected.coordination!.rootId !== selected.id && (
-                <button className="coord-status" onClick={() => pick(selected.coordination!.rootId)}>
-                  <IconBack size={14} /><span>{t('app.backToLead')}</span>
+              {/* The team, as one more icon: how many with a badge, orange when one of them needs you. */}
+              {teamShown && !atMember && !(roomy && !agentsOpen && !files && coordination) && (
+                <button className={`icon-btn topbar-agents${teamWaiting ? ' attention' : ''}${agentsOpen ? ' on' : ''}`} aria-label={t('team.view')} aria-pressed={agentsOpen} title={teamNote || t('sidebar.agents', selected.coordination!.children)} onClick={() => { setAgentsStart(null); setAgentsOpen((v) => !v); setFiles(null); }}>
+                  <IconAgents />
+                  <span className="topbar-badge">{selected.coordination!.children}</span>
                 </button>
               )}
-              {teamShown && selected.coordination!.rootId === selected.id && !(roomy && !agentsOpen && !files && coordination) && (
-                <button className={`coord-status${teamWaiting ? ' attention' : ''}`} aria-label={t('team.view')} aria-pressed={agentsOpen} title={t('sidebar.agents', selected.coordination!.children)} onClick={() => { setAgentsStart(null); setAgentsOpen((v) => !v); setFiles(null); }}>
-                  <IconAgents size={15} />
-                  <span>{selected.coordination!.children}</span>
-                  {teamNote && <span className="coord-status-note">{teamNote}</span>}
-                </button>
+              {teamShown && !atMember && teamNote && !compact && !(roomy && !agentsOpen && !files && coordination) && (
+                <span className={`topbar-team-note${teamWaiting ? ' attention' : ''}`}>{teamNote}</span>
               )}
               <button
                 className={`icon-btn topbar-files${files ? ' on' : ''}`}
@@ -1988,6 +2021,15 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
                   : undefined
               }
               forkAnyTurn={Boolean(activeCaps?.forkAt)}
+              revision={historyRevision}
+              onEdit={
+                selected.agentSessionId && activeCaps?.editMessage && !mergedHandover
+                  ? async (turnId, edit) => {
+                      stickToBottom.current = true;
+                      await api.editTurn(selected.id, turnId, edit);
+                    }
+                  : undefined
+              }
               takeover={successor ? {
                 label: successor.label,
                 busy: takingOver,
@@ -2036,9 +2078,9 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           key={latestSegment.id} api={api} thread={latestSegment} label={agentLabel(latestSegment.agent)} hostId={hostId}
           attachBlocked={capsOf(latestSegment.agent)?.images ? null : t('app.noImages', agentLabel(latestSegment.agent))}
           onLatest={() => pick(latestSegment.id)} onRefresh={() => { void refreshThreads(); }} onError={handleError}
-          note={noteSignal} onNotesChange={onNotesChange}
+          note={noteSignal?.draftKey === composerDraftKey ? noteSignal.note : null} onNotesChange={onNotesChange}
         /> : <Composer
-          draftKey={hostId ? `host:${hostId}:${selectedId ?? (draftTeam ? `new:team:${draftTeam}` : 'new')}` : selectedId ?? (draftTeam ? `new:team:${draftTeam}` : 'new')}
+          draftKey={composerDraftKey}
           running={running}
           disabled={modeBusy || (!selected && !draftCwd)}
           placeholder={demo ? t('app.placeholder.demo') : workMode === 'plan' && !running ? t('composerMenu.planOn') : selected ? (running ? t('sideChat.queuePlaceholder') : t('app.placeholder.continue')) : draftScratch ? t('app.placeholder.scratch') : t('app.placeholder.startIn', folderName(draftCwd))}
@@ -2078,7 +2120,8 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           onEditQueued={editQueued}
           onSendQueuedNow={sendQueuedNow}
           restore={restore}
-          note={noteSignal}
+          note={noteSignal?.draftKey === composerDraftKey ? noteSignal.note : null}
+          onNoteConsumed={consumeNote}
           onNotesChange={onNotesChange}
           lastSent={selected ? lastSent : null}
         />}
@@ -2372,7 +2415,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         onNote={(quote, comment, range) => {
           const id = `note-${Date.now()}`;
           noteRanges.current.set(id, range);
-          setNoteSignal({ id, quote, comment, nonce: Date.now() });
+          setNoteSignal({ draftKey: composerDraftKey, note: { id, quote, comment, nonce: Date.now() } });
         }}
         onSideAsk={(text, threadId) => {
           if (threadId && threadId !== selectedId) void api.thread(threadId).then(source => setSideAsk({ text, nonce: Date.now(), source })).catch(handleError);

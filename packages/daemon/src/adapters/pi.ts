@@ -144,6 +144,8 @@ export function summarisePiSession(headText: string, updatedAt: string | null): 
  * stood when a turn ended is a fork from the next turn's message, and the last turn has no such
  * point (its copy is a clone). `forkMessages` is what `get_fork_messages` lists, in order; a turn
  * is matched to its message by text, so a message pi lists that is not a turn here is passed over.
+ * Each turn also gets the message that starts it (`forkBeforeRef`): forking from that message copies
+ * what came before it, which is what editing it needs.
  */
 export function withPiForkRefs(turns: HistoryTurn[], forkMessages: any[]): HistoryTurn[] {
   const entryOf: Array<string | undefined> = [];
@@ -158,7 +160,11 @@ export function withPiForkRefs(turns: HistoryTurn[], forkMessages: any[]): Histo
       entryOf.push(undefined);
     }
   }
-  return turns.map((turn, i) => (entryOf[i + 1] ? { ...turn, forkRef: entryOf[i + 1] } : turn));
+  return turns.map((turn, i) => ({
+    ...turn,
+    ...(entryOf[i + 1] ? { forkRef: entryOf[i + 1] } : {}),
+    ...(entryOf[i] ? { forkBeforeRef: entryOf[i] } : {}),
+  }));
 }
 
 /** Turns the messages pi returns for a session into past turns. A user message starts a turn. */
@@ -356,17 +362,13 @@ class PiSession implements AgentSession {
   agentSessionId = '';
   private workMode: WorkMode = 'execute';
   private clearPlanInstruction = false;
-  /** The session's model as `provider/id`, so a message knows whether the model can see its pictures. */
-  model: string | null = null;
-  /** Whether a model takes images natively; set by the adapter. */
-  seesImages: (model: string | null) => Promise<boolean> = async () => true;
   private nextId = 1;
   private usageId = 0;
   private requestStarted: number | null = null;
   private firstTokenMs: number | undefined;
   private readonly pending = new Map<string, { resolve(v: any): void; reject(e: Error): void }>();
   private hooks: TurnHooks | null = null;
-  private turn: { resolve(r: TurnResult): void; error?: string; plan?: PlanReply } | null = null;
+  private turn: { resolve(r: TurnResult): void; error?: string; plan?: PlanReply; submitted?: boolean } | null = null;
   private buffer = '';
   private exited = false;
   private compactionSequence = 0;
@@ -420,7 +422,6 @@ class PiSession implements AgentSession {
       session.workMode = opts.workMode ?? 'execute';
       // A resumed conversation may still contain a previous planning instruction.
       session.clearPlanInstruction = !!opts.resumeId && session.workMode === 'execute';
-      session.model = state?.model ? `${state.model.provider}/${state.model.id}` : null;
       if (opts.model) await session.setModel(opts.model);
       if (opts.effort) await session.setEffort(opts.effort);
       return session;
@@ -492,6 +493,7 @@ class PiSession implements AgentSession {
     }
 
     if (record.type === 'message_start' && record.message?.role === 'assistant') {
+      this.hooks?.emit({ type: 'turn.phase', data: { phase: 'model_request' } });
       this.requestStarted = typeof record.message.timestamp === 'number' && record.message.timestamp > 0 && record.message.timestamp <= Date.now() ? record.message.timestamp : null;
       this.firstTokenMs = undefined;
     }
@@ -506,9 +508,8 @@ class PiSession implements AgentSession {
       this.firstTokenMs = undefined;
     }
 
-    if (record.type === 'message_end' && record.message?.role === 'assistant' && this.turn) {
-      // pi retries a failed model call on its own; only the last call's outcome is the turn's.
-      this.turn.error = record.message.stopReason === 'error' ? record.message.errorMessage ?? 'model error' : undefined;
+    if (record.type === 'message_end' && record.message?.role === 'assistant' && record.message?.stopReason === 'error') {
+      if (this.turn) this.turn.error = record.message.errorMessage ?? 'model error';
     }
 
     if (record.type === 'agent_settled') {
@@ -610,11 +611,20 @@ class PiSession implements AgentSession {
     const result = new Promise<TurnResult>((resolve) => {
       resolveTurn = resolve;
     });
-    this.turn = { resolve: resolveTurn };
+    const turn: NonNullable<PiSession['turn']> = { resolve: resolveTurn };
+    this.turn = turn;
     try {
       // A model that cannot see would have the pictures dropped. It gets their paths instead, for its
       // describe_image tool; the hub only lets such a message through when that tool is installed.
-      const native = input.images.length === 0 || (await this.seesImages(this.model));
+      let native = true;
+      if (input.images.length) {
+        hooks.emit({ type: 'turn.phase', data: { phase: 'image_check' } });
+        // Ask the live session, avoiding a second process and its extension/MCP startup.
+        const state = await Promise.race([this.request('get_state', {}), result.then(() => null)]);
+        if (this.turn !== turn) return result;
+        native = !Array.isArray(state?.model?.input) || state.model.input.includes('image');
+        hooks.emit({ type: 'turn.phase', data: { phase: 'image_ready', native } });
+      }
       let message = native ? input.text : input.text + imagePathNote(input.images);
       // Keep extension commands and prompt templates at the start of the message.
       // This is a conversational instruction, not a tool permission boundary.
@@ -627,6 +637,8 @@ class PiSession implements AgentSession {
           message = '[Hub work mode: execute]\n已结束计划模式，按用户当前要求执行；此前只讨论、不实施的限制已解除。\n\n' + message;
         }
       }
+      turn.submitted = true;
+      hooks.emit({ type: 'turn.phase', data: { phase: 'prompt_sent' } });
       await this.request('prompt', {
         message,
         ...(native && input.images.length
@@ -636,8 +648,10 @@ class PiSession implements AgentSession {
       if (!input.text.trimStart().startsWith('/')) this.clearPlanInstruction = false;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (this.turn) this.turn.error = msg;
-      this.finishTurn('error');
+      if (this.turn === turn) {
+        turn.error = msg;
+        this.finishTurn('error');
+      }
     }
     return result;
   }
@@ -647,7 +661,6 @@ class PiSession implements AgentSession {
     const slash = model.indexOf('/');
     if (slash < 0) throw new Error(`pi model must be provider/id, got: ${model}`);
     await this.request('set_model', { provider: model.slice(0, slash), modelId: model.slice(slash + 1) });
-    this.model = model;
     return true;
   }
 
@@ -664,6 +677,7 @@ class PiSession implements AgentSession {
 
   async cancel(): Promise<void> {
     if (!this.turn && !this.compacting) return;
+    if (this.turn && !this.turn.submitted) { this.finishTurn('cancelled'); return; }
     if (this.compacting) this.compactCancelRequested = true;
     await this.request('abort', {}).catch(() => undefined);
   }
@@ -708,6 +722,7 @@ export class PiRpcAdapter implements AgentAdapter {
     history: true,
     fork: true,
     forkAt: true,
+    editMessage: true,
     multiAccount: false,
     // `--fork` copies a session into the directory pi is started in.
     forkInto: true,
@@ -959,13 +974,15 @@ export class PiRpcAdapter implements AgentAdapter {
     }
   }
 
+  /**
+   * A copy that stops before one user message, for editing it. pi's own `fork` is exactly that, so
+   * there is nothing more to it than naming the message the turn starts with.
+   */
+  forkBeforeSession(agentSessionId: string, cwd: string, forkBeforeRef: string): Promise<string> {
+    return this.forkSession(agentSessionId, cwd, forkBeforeRef);
+  }
+
   async start(opts: StartOptions): Promise<AgentSession> {
-    const session = await PiSession.open(this.command, opts, 'pi', this.env);
-    session.seesImages = async (model) => {
-      const options = await this.models().catch(() => [] as ModelOption[]);
-      const option = options.find((m) => m.id === model) ?? options.find((m) => m.isDefault);
-      return option?.images !== false;
-    };
-    return session;
+    return PiSession.open(this.command, opts, 'pi', this.env);
   }
 }

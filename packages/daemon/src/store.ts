@@ -12,6 +12,7 @@ import { referencesFile } from './artifacts.js';
 import type { ProgressReport } from './progress-report.js';
 import { HistoryStore } from './history.js';
 import { ToolJobs } from './tool-jobs.js';
+import { MessageEdits } from './message-edits.js';
 
 export interface ThreadRecord {
   id: string;
@@ -303,6 +304,8 @@ export class Store {
   readonly activity: Activity;
   readonly history: HistoryStore;
   readonly toolJobs: ToolJobs;
+  /** The event that records an edit and hides what came before it in the current conversation. */
+  readonly messageEdits: MessageEdits;
 
   constructor(dataDir: string) {
     mkdirSync(dataDir, { recursive: true });
@@ -464,6 +467,7 @@ export class Store {
     this.extensions = new ExtensionStore(this.db);
     this.history = new HistoryStore(this.db);
     this.toolJobs = new ToolJobs(this.db);
+    this.messageEdits = new MessageEdits(this.db);
   }
 
   /** The MCP registry: business line and purpose notes, plus manually registered servers. */
@@ -666,7 +670,7 @@ export class Store {
     const row = this.db
       .prepare('SELECT * FROM threads WHERE agent = ? AND agent_session_id = ? LIMIT 1')
       .get(agent, agentSessionId) as ThreadRow | undefined;
-    return row ? toThread(row) : null;
+    return row ? toThread(row) : this.getThread(this.messageEdits.owner(agent, agentSessionId) ?? '');
   }
 
   /** Copies a thread's whole event log to another thread, keeping order and timestamps. */
@@ -872,12 +876,13 @@ export class Store {
     try {
       const ts = new Date().toISOString();
       const row = this.db
-        .prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM events WHERE thread_id = ?')
-        .get(threadId) as { next: number };
+        .prepare('SELECT MAX(COALESCE((SELECT MAX(seq) FROM events WHERE thread_id=?),0), COALESCE((SELECT last_seq FROM event_sequences WHERE thread_id=?),0)) + 1 AS next')
+        .get(threadId, threadId) as { next: number };
       const seq = row.next;
       this.db
         .prepare('INSERT INTO events (thread_id, seq, turn_id, type, ts, data) VALUES (?, ?, ?, ?, ?, ?)')
         .run(threadId, seq, turnId, type, ts, JSON.stringify(data));
+      this.db.prepare('INSERT INTO event_sequences VALUES (?, ?) ON CONFLICT(thread_id) DO UPDATE SET last_seq=excluded.last_seq').run(threadId, seq);
       if (turnId && type === 'turn.started') {
         this.turnStarts.set(turnId, seq);
         const text = typeof data.displayText === 'string' ? data.displayText : data.text;

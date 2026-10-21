@@ -37,6 +37,7 @@ import { coalesceToolEvents, compactDeltas, type EmittedEvent, type EventType, t
 import type { SearchHit, SectionRecord, Store, ThreadRecord, ThreadWorktree, TodoRecord } from './store.js';
 import { buildTrace, type TurnTrace } from './trace.js';
 import { askedText } from './util.js';
+import { MessageEdits } from './message-edits.js';
 import { addWorktree, countChanges, findCheckout, initRepository, removeWorktree, samePath, worktreeLeftovers, type Checkout, type Worktree } from './worktrees.js';
 
 /** Why a copy cannot get a worktree of its own, said to whoever asked for one anyway. */
@@ -1459,6 +1460,133 @@ export class ThreadManager {
   }
 
   /**
+   * Edits an earlier user message and sends it again from that point, in this same thread.
+   *
+   * The agent's conversation up to just before that turn is copied into a new native session and
+   * this thread continues there. The turns from the edited one on are kept out of the current
+   * conversation and preserved in the hidden edit records, so the thread still reads as one
+   * conversation and nothing is lost for recovery. Files are not rewound.
+   */
+  async editTurn(
+    threadId: string,
+    turnId: string,
+    input: { text?: unknown; images?: unknown; videos?: unknown; revision?: unknown; requestId?: unknown },
+  ): Promise<{ turnId: string; revision: number }> {
+    const thread = this.getThread(threadId);
+    const adapter = this.adapters.get(thread.agent);
+    if (!adapter?.capabilities.editMessage || !adapter.capabilities.forkAt || !adapter.loadHistory) {
+      throw new HttpError(400, `${thread.agent} cannot edit a message that was already sent`);
+    }
+    if (!adapter.forkSession && !adapter.forkBeforeSession) throw new HttpError(400, `${thread.agent} cannot copy a conversation`);
+    if (!thread.agentSessionId) throw new HttpError(400, 'there is nothing to edit yet; send a message first');
+    if (thread.archivedAt) throw new HttpError(409, 'this thread is archived; restore it first');
+    if (this.running.has(threadId) || this.startingTurns.has(threadId) || this.autoHandover.held(threadId)) {
+      throw new HttpError(409, 'wait for the current work in this thread to finish before editing a message');
+    }
+    if ((this.queues.get(threadId) ?? []).some(q => !q.error)) throw new HttpError(409, 'send or take back the waiting messages first');
+    const requestId = typeof input.requestId === 'string' ? input.requestId : '';
+    if (!/^[A-Za-z0-9._-]{8,80}$/.test(requestId)) throw new HttpError(400, 'invalid edit request id');
+    const revision = Number(input.revision);
+    if (!Number.isSafeInteger(revision) || revision < 1) throw new HttpError(400, 'invalid history revision');
+    const text = typeof input.text === 'string' ? input.text.trim() : '';
+    const imageIds = Array.isArray(input.images) ? input.images : [];
+    const videoIds = Array.isArray(input.videos) ? input.videos : [];
+    if (!text && imageIds.length === 0 && videoIds.length === 0) throw new HttpError(400, 'text is empty');
+    const fingerprint = MessageEdits.fingerprint({ turnId, text, images: imageIds, videos: videoIds, revision });
+
+    // A retry of an edit that already went through answers with the turn it sent: the turn it
+    // replaced is gone from the current history by now, so this is checked before looking for it.
+    const previous = this.store.messageEdits.get(threadId, requestId);
+    if (previous && previous.fingerprint !== fingerprint) throw new HttpError(409, 'this edit request id was used for different content');
+    if (previous?.state === 'committed' && previous.newTurnId) {
+      return { turnId: previous.newTurnId, revision: this.store.history.latest(threadId) };
+    }
+
+    const starts = this.store.listEventsOfType(threadId, 'turn.started');
+    const hubIndex = starts.findIndex((ev) => ev.turnId === turnId);
+    if (hubIndex < 0) throw new HttpError(404, 'no such turn in this thread');
+    const target = starts[hubIndex];
+    const targetData = target.data as Record<string, unknown>;
+    if (targetData.fromTerminal || targetData.imported || targetData.handover || targetData.coordination
+      || targetData.control || targetData.scheduled) {
+      throw new HttpError(409, 'this message was not sent from the hub, so it cannot be edited here');
+    }
+
+    if (!previous) {
+      this.store.messageEdits.reserve({ threadId, requestId, turnId, revision, fingerprint, sourceSession: thread.agentSessionId });
+    }
+
+    // A revision that predates an edit means the page is looking at a conversation that has since
+    // been replaced. Turns finishing after it are fine: they are part of the history the page saw
+    // the start of, and the turn being edited is still the one it named.
+    const replacedAfter = this.store.listEventsOfType(threadId, 'thread.historyChanged').some((ev) => ev.seq > revision);
+    if (replacedAfter && previous?.state !== 'ready') throw new HttpError(409, 'this conversation changed; reload it before editing', { code: 'history_changed' });
+
+    let branchSession = previous?.state === 'ready' ? previous.branchSession : null;
+    if (!branchSession) {
+      const [agentTurns, hubTexts] = await Promise.all([
+        adapter.loadHistory(thread.agentSessionId, thread.cwd),
+        Promise.resolve(starts.map((ev) => turnKey(String(ev.data.text ?? '')))),
+      ]);
+      const matched = matchTurns(agentTurns.map((t) => turnKey(t.text)), hubTexts, ThreadManager.SYNC_SKIP_TOLERANCE);
+      const agentIndex = matched?.hubToAgent[hubIndex] ?? -1;
+      if (agentIndex < 0) throw new HttpError(409, `this turn is not in ${thread.agent}'s own history, so it cannot be edited`);
+      const at = agentTurns[agentIndex];
+      try {
+        if (at.forkBeforeRef && adapter.forkBeforeSession) {
+          branchSession = await adapter.forkBeforeSession(thread.agentSessionId, thread.cwd, at.forkBeforeRef);
+        } else if (agentIndex > 0 && agentTurns[agentIndex - 1].forkRef && adapter.forkSession) {
+          branchSession = await adapter.forkSession(thread.agentSessionId, thread.cwd, agentTurns[agentIndex - 1].forkRef);
+        } else {
+          throw new HttpError(409, `${thread.agent} cannot copy a conversation up to just before this message`);
+        }
+      } catch (err) {
+        this.store.messageEdits.failed(threadId, requestId);
+        if (err instanceof HttpError) throw err;
+        throw new HttpError(502, `could not copy the ${thread.agent} conversation: ${err instanceof Error ? err.message : err}`);
+      }
+      this.store.messageEdits.ready(threadId, requestId, branchSession);
+    }
+
+    const newTurnId = randomUUID();
+    await this.dropSession(threadId);
+    this.store.transaction(() => {
+      this.store.messageEdits.archive(threadId, requestId, starts[hubIndex].seq);
+      this.store.updateThread(threadId, { agentSessionId: branchSession, status: 'idle' }, { touch: true });
+      this.store.messageEdits.commit(threadId, requestId, newTurnId);
+    });
+    this.emitThreadEvent(threadId, null, 'thread.historyChanged', { requestId, turnId: newTurnId });
+
+    const images = imageIds.map((id) => {
+      const found = typeof id === 'string' ? this.attachments.image(threadId, id) : null;
+      if (!found) throw new HttpError(404, 'an image of this message is no longer available');
+      return found;
+    });
+    const videos = this.attachments.videos(threadId, videoIds);
+    try {
+      await this.startTurn(
+        threadId,
+        {
+          text,
+          images: images.map((it) => ({ data: it.image.data, mimeType: it.image.mimeType })),
+          videos: videos.map((v) => v.id),
+          workMode: typeof targetData.workMode === 'string' ? targetData.workMode : undefined,
+        },
+        undefined,
+        false,
+        newTurnId,
+      );
+    } catch (err) {
+      this.emitThreadEvent(threadId, newTurnId, 'turn.error', {
+        message: `the edited message was kept, but sending it failed: ${err instanceof Error ? err.message : err}`,
+        code: 'edit_send_failed',
+      });
+      throw err;
+    }
+    return { turnId: newTurnId, revision: this.store.history.latest(threadId) };
+  }
+
+  /**
    * Starts a turn in the background and returns its id right away.
    * A turn needs text, images, or both. Images are checked and stored before anything else changes.
    *
@@ -1470,10 +1598,12 @@ export class ThreadManager {
     input: Parameters<ThreadManager['startTurnReady']>[1],
     delivery?: Parameters<ThreadManager['startTurnReady']>[2],
     fromQueue = false,
+    /** Sends this exact turn id, reserved by an edit; the edit's steps all use it. */
+    reservedTurnId?: string,
   ): Promise<{ turnId: string } | { queued: true; id: string }> {
     // Setup may await discovery or an idle runtime refresh. Keep competing sends in order.
     const previous = this.startingTurns.get(threadId) ?? Promise.resolve();
-    const next = previous.catch(() => undefined).then(() => this.startTurnReady(threadId, input, delivery, fromQueue));
+    const next = previous.catch(() => undefined).then(() => this.startTurnReady(threadId, input, delivery, fromQueue, reservedTurnId));
     this.startingTurns.set(threadId, next);
     const clean = () => {
       if (this.startingTurns.get(threadId) === next) this.startingTurns.delete(threadId);
@@ -1488,6 +1618,7 @@ export class ThreadManager {
     input: { workMode?: unknown; text?: unknown; images?: unknown; videos?: unknown; queue?: unknown; mentions?: unknown; collaboration?: CoordinationSetup; handoverFrom?: string; autoContinuation?: boolean; handover?: unknown; scheduled?: unknown },
     delivery?: { turnId: string; source: Record<string, unknown>; displayText: string; claim: () => void },
     fromQueue = false,
+    reservedTurnId?: string,
   ): Promise<{ turnId: string } | { queued: true; id: string }> {
     const thread = this.getThread(threadId);
     if (this.changingModes.has(threadId)) throw new HttpError(409, '模式正在切换，请稍后发送');
@@ -1563,7 +1694,7 @@ export class ThreadManager {
     const { stored, images } = this.attachments.save(threadId, rawImages);
     const promptText = text + this.attachments.videoNote(threadId, storedVideos);
 
-    const turnId = delivery?.turnId ?? randomUUID();
+    const turnId = delivery?.turnId ?? reservedTurnId ?? randomUUID();
     if (askProgress) this.reportTurns.add(turnId);
     try {
       this.store.transaction(() => {
@@ -1862,7 +1993,9 @@ export class ThreadManager {
     let unread = true;
     try {
       const hooks = this.hooksFor(thread.id, turnId);
+      hooks.emit({ type: 'turn.phase', data: { phase: 'session_start', reused: this.sessions.has(thread.id) } });
       const session = await this.ensureSession(thread);
+      hooks.emit({ type: 'turn.phase', data: { phase: 'session_ready' } });
       if (this.nativeTurns.get(thread.id)?.size) await new Promise<void>(resolve => {
         const waiters = this.nativeIdle.get(thread.id) ?? new Set<() => void>();
         waiters.add(resolve);
@@ -2078,8 +2211,15 @@ export class ThreadManager {
   }
 
   private hooksFor(threadId: string, turnId: string): TurnHooks {
+    const started = performance.now();
+    let previousPhase = started;
     return {
       emit: (ev: EmittedEvent) => {
+        if (ev.type === 'turn.phase') {
+          const now = performance.now();
+          ev = { ...ev, data: { ...ev.data, elapsedMs: now - started, sincePreviousPhaseMs: now - previousPhase } };
+          previousPhase = now;
+        }
         this.emitThreadEvent(threadId, turnId, ev.type, ev.data);
         // A finished plan ends plan mode: what is said next, a go-ahead or a change to the plan, is
         // a normal turn. The session takes the mode back on before that turn (ensureSession).

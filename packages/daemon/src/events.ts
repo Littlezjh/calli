@@ -7,7 +7,11 @@ export type EventType =
   | 'handover.model'
   | 'thread.created'
   | 'thread.updated'
+  /** Current conversation changed; clients reload history without rewinding the SSE cursor. */
+  | 'thread.historyChanged'
   | 'turn.started'
+  /** Request milestones, with elapsedMs and sincePreviousPhaseMs assigned by the hub. */
+  | 'turn.phase'
   | 'turn.done'
   | 'turn.error'
   | 'message.delta'

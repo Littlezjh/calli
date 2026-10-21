@@ -130,6 +130,7 @@ export class ClaudeAcpAdapter extends AcpAdapter {
     compact: true,
     fork: true,
     forkAt: true,
+    editMessage: true,
     multiAccount: true,
     // Claude Code finds a conversation from any worktree of its repository, so the copy loads there.
     forkInto: true,

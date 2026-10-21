@@ -855,6 +855,14 @@ export function createHttpServer(deps: HttpDeps): Server {
         );
       }
 
+      // POST /api/threads/:id/turns/:turnId/edit: edit an earlier message and send it again from there.
+      if (method === 'POST' && sub === 'turns' && parts[4] && parts[5] === 'edit' && !parts[6]) {
+        const body = await readJson(req, MAX_TURN_BODY);
+        return sendJson(res, 202, await manager.editTurn(threadId, parts[4], {
+          text: body.text, images: body.images, videos: body.videos, revision: body.revision, requestId: body.requestId,
+        }));
+      }
+
       if (method === 'POST' && sub === 'turns') {
         const body = await readJson(req, MAX_TURN_BODY);
         if (manager.coordination?.metadata(threadId)?.team && (typeof body.text !== 'string' || !body.text.trim() || body.text.length > 32000)) throw new HttpError(400, '团队任务需要 1～32000 字符');

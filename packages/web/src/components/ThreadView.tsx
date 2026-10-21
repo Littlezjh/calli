@@ -43,7 +43,7 @@ import {
 } from '../timeline';
 import { Lightbox } from './Lightbox';
 import { PlanCopyButton, PlanDownloadButton, PlanReader } from './PlanReader';
-import { ActivityIcon, IconAgents, IconCheck, IconChevron, IconClose, IconCompact, IconCopy, IconFile, IconFork, IconHand, IconHandover, IconList, IconQuote, IconWorktree } from './icons';
+import { ActivityIcon, IconAgents, IconCheck, IconChevron, IconClose, IconCompact, IconCopy, IconEdit, IconFile, IconFork, IconHand, IconHandover, IconList, IconQuote, IconWorktree } from './icons';
 import { t } from '../i18n';
 
 interface Props {
@@ -79,6 +79,14 @@ interface Props {
   takeover?: { label: string; go: () => void; choose: () => void; busy?: boolean } | null;
   /** The agent can end a copy at any finished turn, so every answer gets the button, not only the last. */
   forkAnyTurn?: boolean;
+  /**
+   * Edits one of the user's own earlier messages and sends it again from there. `revision` is the
+   * history the page read; the daemon refuses when it has moved since. Missing where the agent
+   * cannot copy a conversation up to just before a message.
+   */
+  onEdit?: (turnId: string, edit: { text: string; images: string[]; revision: number; requestId: string }) => Promise<void>;
+  /** The history this view was built from; an edit is sent against it. */
+  revision?: number;
 }
 
 /** Lines of one diff shown before the rest is folded away. */
@@ -89,7 +97,7 @@ const RECENT_TURNS = 30;
 /** Scrolling up to within this distance of the top unfolds or fetches the earlier turns. */
 const NEAR_TOP_PX = 600;
 
-export function ThreadView({ chain = false, observeOlder = true, beforeItems, olderLabel, olderError, revealTurnId, historyApi, historyThreadId, items: originalItems, roots, loadImage, loadFile, onOpenFile, onPreview, hasOlder, loadingOlder, onLoadOlder, onFork, forkAnyTurn, takeover }: Props) {
+export function ThreadView({ chain = false, observeOlder = true, beforeItems, olderLabel, olderError, revealTurnId, historyApi, historyThreadId, items: originalItems, roots, loadImage, loadFile, onOpenFile, onPreview, hasOlder, loadingOlder, onLoadOlder, onFork, forkAnyTurn, onEdit, revision = 0, takeover }: Props) {
   const [loadedFiles, setLoadedFiles] = useState<{ client?: HistoryClient; files: Map<string, WorkFiles> }>({ files: new Map() });
   const historyClient = useMemo(() => {
     if (!historyApi || !historyThreadId) return undefined;
@@ -262,6 +270,14 @@ export function ThreadView({ chain = false, observeOlder = true, beforeItems, ol
                   {item.scheduled && <span className="term-chip" title={t('view.fromSchedule')}>{t('view.scheduled')}</span>}
                 </div>
               )}
+              {onEdit && !item.fromTerminal && !item.scheduled && !item.coordination && (
+                <EditMessage
+                  text={item.text}
+                  imageIds={item.images.map((img) => img.id)}
+                  revision={revision}
+                  onSend={(edit) => onEdit(item.turnId, edit)}
+                />
+              )}
             </div>
           );
         }
@@ -288,6 +304,8 @@ export function ThreadView({ chain = false, observeOlder = true, beforeItems, ol
           return <PlanCard key={item.key} item={item} />;
         case 'work':
           return <WorkGroup key={item.key} item={item} roots={roots} />;
+        case 'waiting':
+          return <TurnWaiting key={item.key} item={item} />;
         case 'approval':
           return <TraceLine key={item.key} mark={approvalTrace(item, roots)} />;
         case 'changes':
@@ -456,7 +474,10 @@ function useHistoryResource<T extends HistoryDetail | HistoryWork>(kind: Resourc
     setState(old => ({ ...old, loading: true, error: false }));
     try {
       const next = await client.load<T>(kind, { ...target, version: previous.version }, path, previous.nextCursor!);
-      if (epoch !== generation.current || !mounted.current || latest.current?.id !== target.id || latest.current?.turnId !== target.turnId || latest.current?.version !== target.version) return;
+      // A work page the server answered after the turn advanced still merges: the entry list only
+      // grows, so the window is unchanged, and `next` carries the server's current version. Only a
+      // different block or an unmounted resource discards the fetch.
+      if (epoch !== generation.current || !mounted.current || latest.current?.id !== target.id || latest.current?.turnId !== target.turnId) return;
       const value = ('events' in previous && 'events' in next
         ? { ...next, events: [...previous.events, ...next.events.filter(e => e.type !== 'turn.started')] }
         : { ...previous, ...next, input: (previous as HistoryDetail).input, content: (previous as HistoryDetail).content,
@@ -488,8 +509,94 @@ function DeferredFileDiff({ detail, path }: { detail: DetailRef; path: string })
 }
 
 /** Copies on click and shows a tick for a moment, or says so when the browser refuses. */
-function CopyButton({ text, label }: { text: string; label: string }) {
-  const [state, setState] = useState<'idle' | 'done' | 'failed'>('idle');
+/**
+ * The pencil by a user message, and the box it opens in place of the bubble. Sending copies the
+ * conversation up to just before this message and asks again from there; the page then reloads
+ * the current conversation. Nothing changes until the user sends.
+ */
+function EditMessage({ text, imageIds, revision, onSend }: { text: string; imageIds: string[]; revision: number; onSend: (edit: { text: string; images: string[]; revision: number; requestId: string }) => Promise<void> }) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(text);
+  const [kept, setKept] = useState(imageIds);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const area = useRef<HTMLTextAreaElement | null>(null);
+  const start = () => {
+    setDraft(text);
+    setKept(imageIds);
+    setError('');
+    setOpen(true);
+    requestAnimationFrame(() => {
+      const el = area.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+      el.style.height = `${el.scrollHeight}px`;
+    });
+  };
+  const send = async () => {
+    if (busy || !draft.trim()) return;
+    setBusy(true);
+    setError('');
+    try {
+      await onSend({ text: draft, images: kept, revision, requestId: editRequestId() });
+      setOpen(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!open) return (
+    <button type="button" className="quiet-btn message-edit-btn" aria-label={t('view.editMessage')} title={t('view.editMessage')} onClick={start}>
+      <IconEdit size={14} />
+    </button>
+  );
+  return (
+    <div className="message-edit">
+      <textarea
+        ref={area}
+        value={draft}
+        aria-label={t('view.editMessage')}
+        onChange={(e) => {
+          setDraft(e.target.value);
+          e.target.style.height = 'auto';
+          e.target.style.height = `${e.target.scrollHeight}px`;
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') { e.preventDefault(); setOpen(false); }
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); }
+        }}
+      />
+      {kept.length > 0 && (
+        <div className="message-edit-images">
+          {kept.map((id) => (
+            <button key={id} type="button" className="message-edit-image" title={t('view.removeImage')} aria-label={t('view.removeImage')} onClick={() => setKept((list) => list.filter((it) => it !== id))}>
+              <IconClose size={12} />
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="message-edit-hint">{t('view.editHint')}</div>
+      {error && <div className="message-edit-error" role="alert">{error}</div>}
+      <div className="message-edit-actions">
+        <button type="button" className="ghost" onClick={() => setOpen(false)} disabled={busy}>{t('common.cancel')}</button>
+        <button type="button" className="primary" onClick={() => void send()} disabled={busy || !draft.trim()}>
+          {busy ? t('view.editing') : t('view.editSend')}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+let editRequestSeq = 0;
+/** One id per send, so a retry of the same edit cannot create a second conversation. */
+function editRequestId(): string {
+  return `edit-${Date.now().toString(36)}-${(++editRequestSeq).toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** The history the page last read; an edit sent against a stale one is refused by the daemon. */
+function CopyButton({ text, label }: { text: string; label: string }) {  const [state, setState] = useState<'idle' | 'done' | 'failed'>('idle');
   useEffect(() => {
     if (state === 'idle') return;
     const timer = setTimeout(() => setState('idle'), 1600);
@@ -975,6 +1082,20 @@ function SentImage({ image, load, onOpen }: { image: ImageRef; load: (id: string
   );
 }
 
+function TurnWaiting({ item }: { item: Extract<Item, { kind: 'waiting' }> }) {
+  const [now, setNow] = useState(() => new Date().toISOString());
+  useEffect(() => {
+    const tick = () => setNow(new Date().toISOString());
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    document.addEventListener('visibilitychange', tick);
+    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', tick); };
+  }, [item.startedAt]);
+  return <div className="row turn-waiting" role="status">
+    <span className="work-toggle"><span className="work-label">{t(item.phase === 'preparing' ? 'view.preparing' : 'view.waitingResponse')} · {durationLabel(item.startedAt, now)}</span></span>
+  </div>;
+}
+
 /** Only this small label ticks; the Markdown and tool output do not rerender every second. */
 function WorkLabel({ item }: { item: Extract<Item, { kind: 'work' }> }) {
   const [now, setNow] = useState(() => new Date().toISOString());
@@ -1008,6 +1129,17 @@ function WorkGroup({ item, roots }: { item: Extract<Item, { kind: 'work' }>; roo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const resource = useHistoryResource<HistoryWork>('work', item.deferred, open);
+  // While the turn runs, continuation pages follow on their own — what is going on now is what
+  // the thread was opened to see. Finished turns keep the manual button: old work loads on demand.
+  const running = !item.done;
+  useEffect(() => {
+    if (!running || !open) return;
+    if (resource.value?.nextCursor == null || resource.loading || resource.error) return;
+    const frame = requestAnimationFrame(() => void resource.more());
+    return () => cancelAnimationFrame(frame);
+    // more() is re-created each render; the resource state is what paces the calls.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running, open, resource.value?.nextCursor, resource.loading, resource.error]);
   const loaded = useMemo(() => resource.value ? buildTimeline(hydrateWork(resource.value.events, item.liveEvents ?? [], resource.value.version)).items.find((i): i is Extract<Item, { kind: 'work' }> => i.kind === 'work') : undefined, [resource.value, item.liveEvents]);
   const count = item.count ?? item.steps.length;
   const sections = workSections(loaded?.entries ?? item.entries);
@@ -1034,7 +1166,7 @@ function WorkGroup({ item, roots }: { item: Extract<Item, { kind: 'work' }>; roo
               <StepRun key={section.key} run={section} live={!item.done && i === sections.length - 1} roots={roots} />
             ),
           )}
-          <ResourceMore resource={resource} />
+          {!running && <ResourceMore resource={resource} />}
         </div>
       )}
     </div>
@@ -1217,17 +1349,19 @@ export function DiffView({ diffs }: { diffs: FileDiff[] }) {
 /** Files an answer can render: pages and drawings. */
 const PREVIEW_FILE = /\.(html?|svg)$/i;
 
-/** What a finished turn changed: a list of files, each opening to its diff. */
+/** A collapsed change summary; files and their diffs are mounted only when opened. */
 function ChangesCard({ item, roots, onPreview }: { item: Extract<Item, { kind: 'changes' }>; roots: string[]; onPreview?: (path: string) => void }) {
+  const [expanded, setExpanded] = useState(false);
   const [openPath, setOpenPath] = useState<string | null>(null);
   return (
     <div className="row">
       <div className="changes">
-        <div className="changes-head">
+        <button type="button" className="changes-head" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>
+          <span className="changes-chevron"><IconChevron size={13} open={expanded} /></span>
           <span>{t('markdown.changed', item.files.length)}</span>
           <Stats added={item.added} removed={item.removed} />
-        </div>
-        {item.files.map((file: FileChange) => {
+        </button>
+        {expanded && item.files.map((file: FileChange) => {
           const open = openPath === file.path;
           return (
             <div key={file.path} className="changes-file">

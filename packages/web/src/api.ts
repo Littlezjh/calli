@@ -392,6 +392,8 @@ export interface AgentInfo {
     fork: boolean;
     /** A fork can end at an earlier turn instead of taking the whole thread. Missing from daemons that predate it. */
     forkAt?: boolean;
+    /** An earlier user message can be edited and sent again from there. Missing from older daemons. */
+    editMessage?: boolean;
     /** A fork can run in a git worktree of its own. Missing from daemons that predate it. */
     forkInto?: boolean;
     /** The whole prompt of a conversation can be read from the agent's session file. Missing from daemons that predate it. */
@@ -939,6 +941,18 @@ export class Api {
       ...(opts.videos?.length ? { videos: opts.videos } : {}),
       ...(opts.workMode ? { workMode: opts.workMode } : {}),
     });
+  }
+
+  /**
+   * Edits an earlier message of the user's and sends it again from there. The page reloads the
+   * conversation the daemon keeps; the old turns stay out of it.
+   */
+  editTurn(
+    threadId: string,
+    turnId: string,
+    input: { text: string; images: string[]; revision: number; requestId: string },
+  ): Promise<{ turnId: string; revision: number }> {
+    return this.request('POST', `/api/threads/${threadId}/turns/${turnId}/edit`, input);
   }
 
   /** Takes a waiting message out of the queue; it comes back whole, so it can be edited. */
