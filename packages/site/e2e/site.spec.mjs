@@ -364,3 +364,71 @@ for (const phone of [false, true]) for (const theme of ['light', 'dark']) {
     } finally { await context.close(); }
   });
 }
+
+for (const phone of [false, true]) for (const theme of ['light', 'dark']) {
+  test(`automatic handover, cancellation and model switch: ${phone ? 'phone' : 'desktop'}, ${theme}`, async () => {
+    const { page, context, demo, errors, calls, missing } = await open({ phone, theme });
+    const prefix = `${shots}/${phone ? 'phone' : 'desktop'}-${theme}-handover`;
+    try {
+      await page.addStyleTag({ content: 'html { scroll-behavior: auto !important; }' });
+      await page.locator('#handover').scrollIntoViewIfNeeded();
+      await page.getByRole('heading', { name: '自动交接，像自动压缩一样自然。', exact: true }).waitFor();
+      await page.screenshot({ path: `${prefix}-feature.png` });
+      await page.getByRole('button', { name: '体验自动交接', exact: true }).click();
+      await page.locator('iframe.is-ready').waitFor();
+      await demo.getByRole('button', { name: '开始接力', exact: true }).click();
+      await demo.getByRole('button', { name: /正在为交接整理摘要/ }).waitFor();
+      const summary = demo.getByRole('button', { name: '交接摘要 · 交给 Claude Code 2', exact: true });
+      await summary.waitFor();
+      assert.equal(await summary.getAttribute('aria-expanded'), 'false');
+      await demo.getByText('即将交接给 Claude Code 2 · 5 秒', { exact: true }).waitFor();
+      await page.evaluate(() => scrollBy(0, document.querySelector('.site-demo-window').getBoundingClientRect().top - 85));
+      await page.screenshot({ path: `${prefix}-countdown.png` });
+      await demo.getByText('接手自 Claude Code · 额度快用完', { exact: true }).waitFor();
+      await demo.getByText(/我已通过 limi handover 读到交接摘要/).waitFor();
+      await demo.locator('.showcase-handover-chain').click();
+      assert.equal(await demo.locator('.handover-chain .handover-member').count(), 2);
+      assert.equal(await demo.locator('.showcase-handover-marks svg').count(), 2);
+      await demo.locator('.showcase-handover .scroller').evaluate(el => { el.scrollTop = el.scrollHeight; });
+      const reply = await demo.getByText(/我已通过 limi handover 读到交接摘要/).boundingBox();
+      const scroller = await demo.locator('.showcase-handover .scroller').boundingBox();
+      assert.ok(reply.y >= scroller.y && reply.y + reply.height <= scroller.y + scroller.height + 1, 'successor reply stays visible with the chain expanded');
+      await page.screenshot({ path: `${prefix}-result.png` });
+      await summary.click();
+      await demo.getByText(/这是虚构的演示摘要/).waitFor();
+      await summary.click();
+      await demo.getByRole('button', { name: '重新体验', exact: true }).click();
+      await demo.getByRole('button', { name: '开始接力', exact: true }).click();
+      await demo.getByText('即将交接给 Claude Code 2 · 5 秒', { exact: true }).waitFor();
+      await demo.getByRole('button', { name: '取消这次交接', exact: true }).click();
+      await demo.locator('.showcase-handover-status').waitFor();
+      await page.waitForTimeout(5100);
+      assert.equal(await demo.locator('.handover-boundary').count(), 0);
+      assert.equal(await demo.locator('.showcase-handover-marks svg').count(), 1);
+      await demo.getByRole('button', { name: '换用 Sonnet 模型', exact: true }).click();
+      await demo.getByRole('button', { name: '开始接力', exact: true }).click();
+      await demo.getByText(/即将交接给 Claude Code · Sonnet/).waitFor();
+      await demo.getByText('已在原会话换用 Sonnet，继续检查手机布局。', { exact: true }).waitFor();
+      assert.equal(await demo.locator('.handover-summary-turn').count(), 0);
+      assert.equal(await demo.locator('.handover-boundary').count(), 0);
+      await page.screenshot({ path: `${prefix}-model.png` });
+      const frame = page.frames().find(f => f.url().includes('/demo/'));
+      assert.equal(await frame.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+      assert.equal(await frame.locator('html').getAttribute('data-theme'), theme);
+      assert.deepEqual(errors, []); assert.deepEqual(calls, []); assert.deepEqual(missing, []);
+    } finally { await context.close(); }
+  });
+}
+
+test('handover standalone supports a nested static site and keyboard summary access', async () => {
+  const { page, context, errors, calls } = await open({ path: '/nested/demo/?scene=handover&theme=dark' });
+  try {
+    await page.getByRole('button', { name: '开始接力', exact: true }).click();
+    const summary = page.getByRole('button', { name: '交接摘要 · 交给 Claude Code 2', exact: true });
+    await summary.waitFor(); await summary.focus(); await page.keyboard.press('Enter');
+    await page.getByText(/这是虚构的演示摘要/).waitFor();
+    await page.getByRole('button', { name: '取消这次交接', exact: true }).click();
+    assert.deepEqual(errors, []); assert.deepEqual(calls, []);
+  } finally { await context.close(); }
+});

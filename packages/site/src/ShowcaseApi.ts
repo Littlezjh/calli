@@ -5,7 +5,8 @@ import { DemoApi, DemoError } from '../../web/src/demo/DemoApi';
 import { demoData, type DemoData } from '../../web/src/demo/data';
 import type { StoredEvent } from '../../web/src/timeline';
 import { SCENARIOS } from './scenarios';
-import { addExamples, memoryExamples, TEAM_ID, MEMBER_IDS, MEMBER_TASKS, MEMBER_RESULTS } from './exampleData';
+import { zh as siteCopy } from '../../web/src/i18n/locales/site/zh';
+import { handoverExample, addExamples, memoryExamples, TEAM_ID, MEMBER_IDS, MEMBER_TASKS, MEMBER_RESULTS } from './exampleData';
 
 export type Progress = 'ready' | 'running' | 'approval' | 'question' | 'completed' | 'stopped';
 type Schedule = (run: () => void, delay: number) => () => void;
@@ -279,4 +280,97 @@ export class ShowcaseApi extends DemoApi {
     this.broadcasts.clear();
     this.streams.clear();
   }
+}
+
+export type HandoverBranch = 'account' | 'model';
+export type HandoverPhase = 'ready' | 'finishing' | 'preparing' | 'countdown' | 'completed' | 'cancelled';
+export interface HandoverSnapshot {
+  branch: HandoverBranch;
+  phase: HandoverPhase;
+  source: Thread;
+  current: Thread;
+  sourceEvents: StoredEvent[];
+  nextEvents: StoredEvent[];
+}
+
+/** A bounded local playback: no daemon, model calls or visitor account data. */
+export class HandoverShowcaseApi extends DemoApi {
+  private readonly listeners = new Set<() => void>();
+  private cancelTimer?: () => void;
+  private disposed = false;
+  private value: HandoverSnapshot;
+  private summaryReady = false;
+  private readonly example = handoverExample();
+  constructor(private readonly later: Schedule = schedule) {
+    super();
+    this.value = this.initial('account');
+  }
+  private initial(branch: HandoverBranch): HandoverSnapshot {
+    const source = structuredClone(this.example.source);
+    source.title = siteCopy.handoverThread;
+    return { branch, phase: 'ready', source, current: source, sourceEvents: [], nextEvents: [] };
+  }
+  snapshot = (): HandoverSnapshot => this.value;
+  subscribe = (fn: () => void): (() => void) => { this.listeners.add(fn); return () => { this.listeners.delete(fn); }; };
+  private update(patch: Partial<HandoverSnapshot>) {
+    if (this.disposed) return;
+    this.value = { ...this.value, ...patch };
+    for (const fn of this.listeners) fn();
+  }
+  reset(branch: HandoverBranch = this.value.branch) {
+    this.cancelTimer?.();
+    this.summaryReady = false;
+    this.update(this.initial(branch));
+  }
+  private event(type: string, data: StoredEvent['data'], turnId: string, next = false) {
+    const key = next ? 'nextEvents' : 'sourceEvents';
+    const events = this.value[key];
+    this.update({ [key]: [...events, { type, data, turnId, seq: events.length + 1, ts: new Date().toISOString(), threadId: next ? this.value.current.id : this.value.source.id }] });
+  }
+  private after(delay: number, fn: () => void) {
+    this.cancelTimer = this.later(() => { this.cancelTimer = undefined; if (!this.disposed) fn(); }, delay);
+  }
+  start() {
+    if (this.disposed || this.value.phase !== 'ready') return;
+    this.update({ phase: 'finishing' });
+    this.event('turn.started', { text: siteCopy.handoverTask }, 'sample-work');
+    this.after(900, () => {
+      this.event('message.delta', { text: siteCopy.handoverFirstReply }, 'sample-work');
+      this.event('turn.done', { stopReason: 'end_turn' }, 'sample-work');
+      if (this.value.branch === 'model') { this.countdown(); return; }
+      this.update({ phase: 'preparing', current: { ...this.value.source, autoHandover: { ...this.value.source.autoHandover!, state: 'preparing' } } });
+      this.event('history.handover', { target: 'Claude Code 2', done: false, version: 1 }, 'sample-summary');
+      this.after(1600, () => {
+        this.event('history.handover', { target: 'Claude Code 2', done: true, version: 2 }, 'sample-summary');
+        this.countdown();
+      });
+    });
+  }
+  private countdown() {
+    this.summaryReady = this.value.branch === 'account';
+    this.update({ phase: 'countdown', current: { ...this.value.source, autoHandover: {
+      ...this.value.source.autoHandover!, state: 'countdown', reason: 'near', deadline: new Date(Date.now() + 5000).toISOString(),
+      target: this.value.branch === 'model' ? { agent: 'claude', model: 'Sonnet' } : { agent: 'sample-claude-2' },
+    } } });
+    this.after(5000, () => {
+      const model = this.value.branch === 'model';
+      this.update({ phase: 'completed', current: { ...(model ? this.value.source : this.example.successor), title: siteCopy.handoverThread, model: model ? 'Sonnet' : 'Opus', autoHandover: { enabled: true, source: 'thread', override: true } } });
+      if (model) this.event('handover.model', { model: 'Sonnet', previous: 'Opus', reason: 'near' }, 'sample-continue', true);
+      this.event('turn.started', { text: '', handoverCollapsed: true }, 'sample-continue', true);
+      this.event('message.delta', { text: model ? siteCopy.handoverModelReply : siteCopy.handoverNextReply }, 'sample-continue', true);
+      this.event('turn.done', { stopReason: 'end_turn' }, 'sample-continue', true);
+    });
+  }
+  override async cancelAutoHandover(id: string) {
+    if (id !== this.value.current.id || !['preparing', 'countdown'].includes(this.value.phase)) throw new DemoError(true);
+    this.cancelTimer?.();
+    if (this.value.phase === 'preparing') this.event('history.handover', { target: 'Claude Code 2', done: true, version: 2 }, 'sample-summary');
+    this.update({ phase: 'cancelled', current: this.value.source });
+    return this.value.current.autoHandover!;
+  }
+  override async historySummary(id: string, turn: string) {
+    if (id !== this.value.source.id || turn !== 'sample-summary' || !this.value.sourceEvents.some(e => e.type === 'history.handover')) throw new DemoError(false);
+    return { prompt: siteCopy.handoverSummaryPrompt, text: this.summaryReady ? siteCopy.handoverSummaryText : '', snapshotSeq: this.value.sourceEvents.length, nextOffset: null };
+  }
+  dispose() { this.disposed = true; this.cancelTimer?.(); this.listeners.clear(); }
 }

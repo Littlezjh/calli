@@ -8,6 +8,7 @@ import type { Theme } from '../../web/src/appearance';
 import { ShowcaseApi, type Progress } from './ShowcaseApi';
 import { SCENARIOS, EXAMPLES, DEFAULT_EXAMPLE } from './scenarios';
 import { zh as copy } from '../../web/src/i18n/locales/site/zh';
+import { HandoverDemo } from './HandoverDemo';
 import { MEMBER_IDS } from './exampleData';
 import '../../web/src/styles.css';
 import './showcase.css';
@@ -106,7 +107,7 @@ function Walkthrough() {
     else parentMessage({ type: 'limi:install' });
   };
   return <>
-    <App key={session.key} token="" onToken={() => {}} showcase={{
+    {new URLSearchParams(location.search).get('scene') === 'handover' ? <HandoverDemo theme={theme} onInstall={() => setInstallOpen(true)} /> : <App key={session.key} token="" onToken={() => {}} showcase={{
       api: session.api, initialThreadId: session.threadId, theme,
       notice: (id, view) => <Notice id={id} view={view} onInstall={() => setInstallOpen(true)} />,
       intro: id => <div className="showcase-intro">
@@ -117,7 +118,7 @@ function Walkthrough() {
       </div>,
       composer: id => <GuidedComposer api={session.api} id={id} onRestart={restart} />,
       onInstall: () => setInstallOpen(true),
-    }} />
+    }} />}
     {installOpen && <Dialog title="把 Limi 用在自己的项目里" message="这里是预置任务的引导体验。安装 Limi 后，就能连接你自己的 agent、发送任务和管理会话。" confirmLabel="查看安装步骤" onConfirm={install} onCancel={() => setInstallOpen(false)} />}
   </>;
 }
