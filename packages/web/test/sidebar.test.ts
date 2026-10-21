@@ -219,8 +219,10 @@ test('the sidebar dot, the activity order and threadAttention agree', () => {
 });
 
 
-test('branch handovers remain separate sidebar rows', () => {
+test('manual and legacy handovers group in the sidebar just like automatic handovers', () => {
   const a = thread('source');
   const b = thread('branch', { handover: { sourceId: a.id, title: a.title, agent: a.agent, mode: 'branch' } });
-  assert.equal(handoverGroups([a, b]).length, 2);
+  assert.equal(handoverGroups([a, b]).length, 1);
+  delete b.handover!.mode;
+  assert.equal(handoverGroups([a, b]).length, 1);
 });

@@ -2,7 +2,6 @@ import { AutoHandoverChoice } from './AutoHandover';
 import { useEffect, useRef, useState } from 'react';
 import { copyText } from '../clipboard';
 import type { AgentInfo, Api, Thread } from '../api';
-import { Popover } from './Popover';
 import { AgentPicker } from './Pickers';
 import { IconCheck, IconCopy, IconEdit } from './icons';
 import { t } from '../i18n';
@@ -36,8 +35,6 @@ export function HandoverDialog({ api, thread, agents, onOpen, onClose }: Props) 
     void api.autoHandover(thread.id).then(v => { if (active && v.targets[0]) { setTarget(v.targets[0].agent); setTargetModel(v.targets[0].model); } }).catch(() => undefined);
     return () => { active = false; };
   }, [api, thread.id]);
-  const [mode, setMode] = useState<'continue' | 'branch'>(thread.status === 'running' ? 'branch' : 'continue');
-  const modeLabel = (value: 'continue' | 'branch') => t(value === 'branch' ? 'handover.mode.new' : thread.status === 'running' ? 'handover.mode.stop' : 'handover.mode.continue');
   const [creating, setCreating] = useState(false);
   const creatingRef = useRef(false);
 
@@ -81,7 +78,7 @@ export function HandoverDialog({ api, thread, agents, onOpen, onClose }: Props) 
     setCreating(true);
     setError('');
     try {
-      const successor = await api.createHandoverThread(thread.id, target, targetModel, mode);
+      const successor = await api.createHandoverThread(thread.id, target, targetModel, 'branch');
       onOpen(successor, summary);
       onClose();
     } catch (e) {
@@ -97,12 +94,6 @@ export function HandoverDialog({ api, thread, agents, onOpen, onClose }: Props) 
       <div className="dialog handover" role="dialog" aria-modal="true" aria-labelledby="handover-title" onClick={(e) => e.stopPropagation()}>
         <h2 id="handover-title" className="dialog-title">{t('handover.title')}</h2>
         <p className="dialog-message">{t('handover.message')}</p>
-        <div className="handover-successor handover-mode-choice">
-          <span>{t('handover.mode.title')}</span>
-          <Popover label={t('handover.mode.title')} triggerClassName="context-btn" trigger={modeLabel(mode)} disabled={creating}>
-            {close => <div role="menu">{(['branch', 'continue'] as const).map(value => <button type="button" className="pop-item compact" role="menuitemradio" aria-checked={mode === value} key={value} onClick={() => { setMode(value); close(); }}>{modeLabel(value)}</button>)}</div>}
-          </Popover>
-        </div>
         <AutoHandoverChoice api={api} thread={thread} />
         <div className="handover-successor">
           <span>{t('handover.successor')}</span>

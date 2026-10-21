@@ -810,14 +810,6 @@ html.list-open body {
   background: var(--hover);
 }
 
-/* After the title, so every title starts at the same edge. */
-.thread-fork {
-  order: 1;
-  display: inline-flex;
-  flex-shrink: 0;
-  color: var(--faint);
-}
-
 .thread-meta {
   order: 2;
 }
@@ -965,8 +957,7 @@ html.list-open body {
 }
 
 /* The marks sit on the title's line, not halfway down a three-line row. */
-.thread-groups.activity .thread-meta,
-.thread-groups.activity .thread-fork {
+.thread-groups.activity .thread-meta {
   height: 18px;
 }
 
@@ -974,8 +965,7 @@ html.list-open body {
   margin-top: 10px;
 }
 
-.compact .thread-groups.activity .thread-meta,
-.compact .thread-groups.activity .thread-fork {
+.compact .thread-groups.activity .thread-meta {
   height: 20px;
 }
 

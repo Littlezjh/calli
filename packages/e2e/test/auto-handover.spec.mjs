@@ -74,6 +74,10 @@ test('near quota refreshes at turn end, writes summary, counts down, then hands 
     await marker.getByRole('button').first().click();
     const next = await wait(async () => (await request('/api/threads')).find(t => t.handover?.sourceId === source.id));
     await idle(next.id);
+    assert.equal(next.handover.mode, 'continue');
+    await page.locator('.merged-history').waitFor();
+    await page.locator('.handover-readonly').waitFor();
+    assert.equal(await page.locator('.sidebar .thread-fork').count(), 0);
     const starts = (await request(`/api/threads/${next.id}/events`)).filter(e => e.type === 'turn.started');
     assert.match(starts[0].data.text, /请写一份交接摘要/); assert.equal(starts[1].data.text, 'next queued step');
     await page.locator('.handover-trail button').click();
