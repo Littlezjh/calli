@@ -127,6 +127,7 @@ export interface TeamDefinition {
   budget?: { maxDeliveries?: number }; createdAt?: string; updatedAt?: string;
 }
 export interface Coordination {
+  autoHandover?: boolean;
   team?: { taskId: string; status: TeamStatus; entry: string; snapshot: { name: string }; error?: string };
   rootId: string; paused: boolean; directories: string[]; agents: string[];
   /** By instance id. Absent from older daemons. */
@@ -141,9 +142,17 @@ export interface CoordinationMessage {
   /** For a result: the message it answers. Absent from older daemons. */
   replyTo?: string | null;
 }
+export interface HandoverTarget { agent: string; model?: string }
+export interface HandoverSettings { enabled: boolean; threshold: number; orders: Record<string, HandoverTarget[]> }
+export interface AutoHandoverView {
+  enabled: boolean; source: 'thread' | 'collaboration' | 'global'; override: boolean | null;
+  state?: 'checking' | 'preparing' | 'countdown' | 'stopped' | 'failed';
+  target?: HandoverTarget; deadline?: string; reason?: 'near' | 'exhausted'; error?: string;
+}
 export interface Thread {
+  autoHandover?: AutoHandoverView;
   /** `doing`, on a member: its latest task while it works, the opening of its answer once it has returned. */
-  coordination?: { rootId: string; children: number; paused: boolean; doing?: string; team?: { name: string; status: TeamStatus; role: string; error?: string } };
+  coordination?: { retired?: boolean; rootId: string; children: number; paused: boolean; doing?: string; team?: { name: string; status: TeamStatus; role: string; error?: string } };
   id: string;
   agent: string;
   cwd: string;
@@ -1070,8 +1079,15 @@ export class Api {
   }
 
   /** Creates an empty successor in the same directory and worktree, without starting an agent turn. */
-  createHandoverThread(threadId: string, agent: string): Promise<Thread> {
-    return this.request('POST', `/api/threads/${threadId}/handover-thread`, { agent });
+  handoverSettings(): Promise<HandoverSettings> { return this.request('GET', '/api/handover-settings'); }
+  saveHandoverSettings(value: HandoverSettings): Promise<HandoverSettings> { return this.request('PUT', '/api/handover-settings', value); }
+  autoHandover(id: string): Promise<AutoHandoverView & { targets: HandoverTarget[] }> { return this.request('GET', `/api/threads/${id}/auto-handover`); }
+  setAutoHandover(id: string, enabled: boolean | null): Promise<AutoHandoverView> { return this.request('PATCH', `/api/threads/${id}/auto-handover`, { enabled }); }
+  cancelAutoHandover(id: string): Promise<AutoHandoverView> { return this.request('DELETE', `/api/threads/${id}/auto-handover`); }
+  setCollaborationHandover(id: string, enabled: boolean): Promise<Coordination> { return this.request('PATCH', `/api/threads/${id}/collaboration-handover`, { enabled }); }
+
+  createHandoverThread(threadId: string, agent: string, model?: string): Promise<Thread> {
+    return this.request('POST', `/api/threads/${threadId}/handover-thread`, { agent, model });
   }
 
   /** Asks the thread's agent to write a handover summary for another agent, in its own session. */

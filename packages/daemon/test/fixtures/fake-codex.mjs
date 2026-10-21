@@ -492,6 +492,7 @@ rl.on('line', (line) => {
       out({ jsonrpc: '2.0', id: msg.id, result: { turn: { id: turnId, items: [], itemsView: 'notLoaded', status: 'inProgress', error: null } } });
       activeTurn = turnId;
       notify('turn/started', { turn: { id: turnId, items: [], itemsView: 'notLoaded', status: 'inProgress', error: null } });
+      if (text === 'quota-exhausted') { activeTurn = null; finishTurn(turnId, 'failed', { message: "You've hit your usage limit for this model. Switch to another model now, or try again later." }); break; }
       if (images.length) say(`images:${images.map((i) => i.path).join(',')}`);
       if (skills.length) say(`skills:${skills.map((s) => `${s.name}@${s.path}`).join(',')};`);
       setTimeout(() => runTurn(text, turnId, () => {

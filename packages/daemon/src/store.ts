@@ -307,6 +307,7 @@ export class Store {
     this.db.exec('PRAGMA journal_mode = WAL;');
     this.db.exec('PRAGMA foreign_keys = ON;');
     this.db.exec(`
+      CREATE TABLE IF NOT EXISTS hub_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS threads (
         id TEXT PRIMARY KEY,
         agent TEXT NOT NULL,
@@ -569,10 +570,20 @@ export class Store {
   }
   deleteTeam(id: string): void { this.db.prepare('DELETE FROM teams WHERE id = ?').run(id); }
 
+  hubSetting<T>(key: string, fallback: T): T {
+    const row = this.db.prepare('SELECT value FROM hub_settings WHERE key = ?').get(key) as { value: string } | undefined;
+    return row ? JSON.parse(row.value) as T : fallback;
+  }
+  saveHubSetting(key: string, value: unknown): void {
+    this.db.prepare('INSERT INTO hub_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, JSON.stringify(value));
+  }
+
   coordinationRecords(): Array<{ id: string; data: string }> {
     this.db.exec('CREATE TABLE IF NOT EXISTS coordination (id TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE, data TEXT NOT NULL)');
     return this.db.prepare('SELECT id, data FROM coordination').all() as Array<{ id: string; data: string }>;
   }
+
+  deleteCoordination(id: string): void { this.db.prepare('DELETE FROM coordination WHERE id = ?').run(id); }
 
   saveCoordination(id: string, data: string): void {
     this.db.prepare('INSERT INTO coordination (id, data) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data').run(id, data);

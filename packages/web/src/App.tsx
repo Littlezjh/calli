@@ -1,3 +1,4 @@
+import { AutoHandoverNotice, HandoverSettingsDialog } from './components/AutoHandover';
 import { useWorkSources, WorkSummary } from './extensions/work';
 import { historyPage, mergeHistory, watchHistory } from './history';
 import type { WorkMode } from './api';
@@ -353,6 +354,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const [termOpen, setTermOpen] = useState(false);
   /** The agent whose plan usage the quota panel shows. */
   /** The quota dashboard, over every agent that can report usage. */
+  const [handoverSettingsOpen, setHandoverSettingsOpen] = useState(false);
   const [quotaOpen, setQuotaOpen] = useState(false);
   const [observability, setObservability] = useState<'usage' | 'diagnostics' | null>(null);
   /** Other agent CLIs found on this host, added from the settings menu — not the picker. */
@@ -556,7 +558,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const teamMembers = useMemo(() => {
     const byLead = new Map<string, Thread[]>();
     for (const t of threads) {
-      if (t.coordination && t.coordination.rootId !== t.id) byLead.set(t.coordination.rootId, [...(byLead.get(t.coordination.rootId) ?? []), t]);
+      if (t.coordination && !t.coordination.retired && t.coordination.rootId !== t.id) byLead.set(t.coordination.rootId, [...(byLead.get(t.coordination.rootId) ?? []), t]);
     }
     return byLead;
   }, [threads]);
@@ -1856,6 +1858,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         ) : (
         <div key="thread" className="scroller" ref={scrollerRef} onScroll={onScroll} {...gestureProps}>
           {selected && <TurnRuler key={selected.id} threadId={selected.id} scrollerRef={scrollerRef} previews={turnPreviewMap} turnIds={rulerTurnIds} onJump={turnId => setJump({ threadId: selected.id, turnId })} />}
+          {selected && <AutoHandoverNotice api={api} thread={selected} agents={agents} />}
           {selected && eventsLoading && <div className="loading-note">{t('common.loading')}</div>}
           {showcase && selected && !eventsLoading && !timeline.items.length && showcase.intro(selected.id)}
           {selected ? (
@@ -2062,6 +2065,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         />
       )}
       {observability && api && <ObservabilityPanel key={hostId ?? 'local'} api={api} agents={agents} initial={observability} focusAgent={activeAgent} onResult={result => { if (result.state === 'ready' || result.state === 'empty') setModelsByAgent(previous => ({ ...previous, [result.agent]: result.models })); }} onClose={() => setObservability(null)} />}
+      {handoverSettingsOpen && api && <HandoverSettingsDialog api={api} agents={agents} onClose={() => setHandoverSettingsOpen(false)} />}
       {quotaOpen && api && <QuotaBoard api={api} agents={agents} current={onPage ? undefined : activeAgent} onClose={() => setQuotaOpen(false)} onError={handleError} />}
       {addAgentOpen && (
         <AddAgentDialog
@@ -2125,6 +2129,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
                   'separator' as const,
                 ]
               : []),
+            ...(!api.demo ? [{ id: 'auto-handover', label: t('auto.title'), icon: IconAgents, onSelect: () => { setHandoverSettingsOpen(true); setDrawer(false); } }] : []),
             {
               id: 'appearance',
               label: t('appearance.title'),

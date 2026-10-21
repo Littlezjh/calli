@@ -38,7 +38,7 @@ export function turnAnswer(events: StoredEvent[], turnId: string | null): string
 
 /** The model and thinking effort members of one instance start with; null leaves the agent's own. */
 type MemberDefault = { model: string | null; effort: string | null; /** Set where this instance's members differ from the team's level. */ permission?: string };
-type Team = { team?: TeamTask; retiredMembers?: Member[]; rootId: string; paused: boolean; directories: string[]; agents: string[]; members: Member[]; deliveries: Delivery[]; defaults?: Record<string, MemberDefault>;
+type Team = { autoHandover?: boolean; team?: TeamTask; retiredMembers?: Member[]; rootId: string; paused: boolean; directories: string[]; agents: string[]; members: Member[]; deliveries: Delivery[]; defaults?: Record<string, MemberDefault>;
   /** How much members may do without asking. Unset means full access: nobody watches a member's thread to approve. */
   permission?: string };
 const MEMBER_PERMISSIONS = ['ask', 'auto_edit', 'full_access'];
@@ -58,6 +58,7 @@ export class CoordinationManager {
   private scheduled = false;
   private stopping = new Set<string>();
   private closed = false;
+  private handoverEndings = new Map<string, StoredEvent>();
   private unsubscribe: () => void;
 
   constructor(private store: Store, private manager: ThreadManager, private socket: string) {
@@ -142,23 +143,73 @@ export class CoordinationManager {
   metadata(id: string) {
     const t = this.team(id);
     if (!t) return undefined;
+    const retired = t.retiredMembers?.some(m => m.id === id) ? { retired: true } : {};
     const team = t.team ? { team: { name: t.team.snapshot.name, status: t.team.status, role: this.name(t, id), error: t.team.error } } : {};
     if (id === t.rootId) return { rootId: t.rootId, children: t.members.length, paused: t.paused, ...team };
     // What a member is about, for its line under the lead in the sidebar.
     const latest = [...t.deliveries].reverse().find(d => d.to === id);
     const settled = latest && latest.state !== 'queued' && latest.state !== 'running';
     const doing = (settled && latest.result ? latest.result : latest?.text ?? '').split(/<limi-(?:coordination|team)>/)[0].trim().slice(0, 200);
-    return { rootId: t.rootId, children: t.members.length, paused: t.paused, ...team, ...(doing ? { doing } : {}) };
+    return { rootId: t.rootId, children: t.members.length, paused: t.paused, ...team, ...retired, ...(doing ? { doing } : {}) };
   }
   view(id: string) {
     const t = this.team(id);
     if (!t) return null;
     return {
-      team: t.team ? { ...t.team, snapshot: { ...t.team.snapshot, members: t.team.snapshot.members.map(({ name, agent }) => ({ name, agent })) } } : undefined, rootId: t.rootId, paused: t.paused, directories: t.directories, agents: t.agents, defaults: t.defaults ?? {}, permission: t.permission ?? 'full_access',
+      team: t.team ? { ...t.team, snapshot: { ...t.team.snapshot, members: t.team.snapshot.members.map(({ name, agent }) => ({ name, agent })) } } : undefined, rootId: t.rootId, autoHandover: t.autoHandover ?? true, paused: t.paused, directories: t.directories, agents: t.agents, defaults: t.defaults ?? {}, permission: t.permission ?? 'full_access',
       members: t.members.map(m => ({ ...m, thread: this.store.getThread(m.id) ? this.manager.threadView(m.id) : null,
         latest: [...t.deliveries].reverse().find(d => d.to === m.id) ?? null })),
       messages: t.deliveries.slice(-100).map(d => ({ ...d, replyTo: this.answered(t, d)?.id ?? null })),
     };
+  }
+
+  autoHandover(id: string): boolean | undefined {
+    const t = this.team(id);
+    return t && t.rootId !== id && t.members.some(m => m.id === id) ? !t.paused && (t.autoHandover ?? true) : undefined;
+  }
+  setAutoHandover(id: string, enabled: unknown) {
+    const t = this.team(id);
+    if (!t || t.rootId !== id || typeof enabled !== 'boolean') throw new HttpError(400, 'invalid collaboration handover setting');
+    t.autoHandover = enabled;
+    if (!enabled) for (const m of t.members) if (this.manager.autoHandover.view(m.id).source !== 'thread') this.manager.autoHandover.cancel(m.id);
+    this.changed(t);
+    return this.view(id);
+  }
+  handoverSettled(id: string, transferred: boolean): void {
+    const end = this.handoverEndings.get(id);
+    this.handoverEndings.delete(id);
+    if (end && !transferred) void this.serial(() => this.finished(end)).catch(() => undefined);
+    this.schedule();
+  }
+  retryHandoverTurn(id: string, previous: string, turnId: string): void {
+    const t = this.team(id);
+    const job = t?.deliveries.find(d => d.to === id && d.turnId === previous && d.state === 'running');
+    if (t && job) { job.turnId = turnId; this.save(t); }
+  }
+  /** Called synchronously in the successor turn's store transaction, before its runtime starts. */
+  replaceHandoverMember(source: string, target: string, turnId: string): void {
+    const t = this.team(source);
+    const member = t?.members.find(m => m.id === source);
+    if (!t || !member && t.rootId !== source) return;
+    const name = this.name(t, source);
+    const before = this.store.getThread(source)!;
+    const after = this.store.getThread(target)!;
+    t.retiredMembers = [...(t.retiredMembers ?? []), { id: source, name }];
+    if (member) member.id = target;
+    else {
+      this.teams.delete(source); this.store.deleteCoordination(source);
+      t.rootId = target; this.teams.set(target, t);
+    }
+    this.credentials.delete(source);
+    if (!t.agents.includes(after.agent)) t.agents.push(after.agent);
+    for (const d of t.deliveries) {
+      if (d.from === source && (d.state === 'queued' || d.state === 'running')) d.from = target;
+      if (d.to !== source || d.state !== 'queued' && d.state !== 'running') continue;
+      d.to = target;
+      if (d.state === 'running') d.turnId = turnId;
+    }
+    if (member) this.enqueue(t, target, t.rootId, `成员 ${member.name} 已从 ${before.agent} 交接给 ${after.agent}`, 'result', `handover:${source}:${target}`);
+    this.changed(t);
   }
 
   /** What the user chose for members of each instance. Values are checked when a member is made. */
@@ -257,7 +308,7 @@ export class CoordinationManager {
 
   environment(id: string): Record<string, string> | undefined {
     const handover = this.handovers.environment(id);
-    if (!this.team(id) || this.team(id)?.team) return handover;
+    if (!this.team(id) || this.team(id)?.team || this.team(id)?.retiredMembers?.some(m => m.id === id)) return handover;
     let secret = this.credentials.get(id);
     if (!secret) { secret = randomUUID(); this.credentials.set(id, secret); }
     return { ...handover, LIMI_SOCKET: this.socket, LIMI_KEY: secret,
@@ -266,7 +317,7 @@ export class CoordinationManager {
 
   instructions(id: string, text: string): string {
     const t = this.team(id);
-    if (!t || text.includes('<limi-coordination>') || text.includes('<limi-team>')) return text;
+    if (!t || t.retiredMembers?.some(m => m.id === id) || text.includes('<limi-coordination>') || text.includes('<limi-team>')) return text;
     if (t.team) {
       const name = this.name(t, id);
       const role = t.team.snapshot.members.find(m => m.name === name);
@@ -318,6 +369,7 @@ export class CoordinationManager {
     return this.serial(async () => {
       const t = this.team(caller);
       if (!t) throw new HttpError(404, '尚未启用协作');
+      if (t.retiredMembers?.some(m => m.id === caller)) throw new HttpError(409, '成员已交接，请使用接手会话');
       const op = input.op;
       if (t.team && (op === 'spawn' || op === 'send')) throw new HttpError(409, '团队任务使用 @ 通信');
       if (op === 'agents') return (await this.manager.listAgents()).filter(a => t.agents.includes(a.id));
@@ -408,8 +460,11 @@ export class CoordinationManager {
   private async finished(ev: StoredEvent): Promise<void> {
     const end = turnOutcome(ev);
     if (!end || end.imported || end.fromTerminal) return;
+    const start = this.store.listTurnEvents(ev.threadId, ev.turnId!).find(e => e.type === 'turn.started');
+    if (start?.data.handover) return;
+    if (this.manager.autoHandover.held(ev.threadId)) { this.handoverEndings.set(ev.threadId, ev); return; }
     const t = this.team(ev.threadId);
-    if (!t || !ev.turnId || (t.team && (this.closed || t.retiredMembers?.some(m => m.id === ev.threadId)))) return;
+    if (!t || !ev.turnId || (this.closed || t.retiredMembers?.some(m => m.id === ev.threadId))) return;
     const job = t.deliveries.find(d => d.to === ev.threadId && d.turnId === ev.turnId);
     const result = turnAnswer(this.store.listEvents(ev.threadId, 0, -1), ev.turnId);
     const outcome = end.outcome;
@@ -466,7 +521,7 @@ export class CoordinationManager {
         const target = this.store.getThread(d.to);
         if (!target || target.archivedAt) continue;
         const view = this.manager.threadView(d.to);
-        if (view.status === 'running' || view.queued.length) continue;
+        if (this.manager.autoHandover.queuePaused(d.to) || view.status === 'running' || view.queued.length) continue;
         if (d.to !== t.rootId && t.members.filter(m => this.store.getThread(m.id)?.status === 'running').length >= 3) continue;
         const turnId = randomUUID();
         try {

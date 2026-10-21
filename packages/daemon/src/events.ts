@@ -3,6 +3,8 @@
  * so the web UI only has to understand one stream.
  */
 export type EventType =
+  | 'handover.updated'
+  | 'handover.model'
   | 'thread.created'
   | 'thread.updated'
   | 'turn.started'

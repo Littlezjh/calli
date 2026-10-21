@@ -328,6 +328,11 @@ export function createHttpServer(deps: HttpDeps): Server {
       return sendJson(res, 200, manager.search(url.searchParams.get('q')));
     }
 
+    if (parts.join('/') === 'api/handover-settings') {
+      if (method === 'GET') return sendJson(res, 200, manager.autoHandover.settings());
+      if (method === 'PUT') return sendJson(res, 200, manager.autoHandover.configure(await readJson(req)));
+    }
+
     // GET /api/agents/:id/quota: plan usage, read outside any session and cached briefly.
     // ?refresh=1 skips the cache: the dashboard's refresh button means "ask again now".
     if (method === 'GET' && parts[0] === 'api' && parts[1] === 'agents' && parts[2] && parts[3] === 'quota') {
@@ -799,9 +804,19 @@ export function createHttpServer(deps: HttpDeps): Server {
         return finishStream(req, res, off);
       }
 
+      if (sub === 'auto-handover') {
+        manager.getThread(threadId);
+        if (method === 'GET') return sendJson(res, 200, { ...manager.autoHandover.view(threadId), targets: await manager.autoHandover.targets(threadId) });
+        if (method === 'PATCH') return sendJson(res, 200, manager.autoHandover.setOverride(threadId, (await readJson(req)).enabled));
+        if (method === 'DELETE') { manager.autoHandover.cancel(threadId); return sendJson(res, 200, manager.autoHandover.view(threadId)); }
+      }
+      if (sub === 'collaboration-handover' && method === 'PATCH') {
+        return sendJson(res, 200, manager.coordination?.setAutoHandover(threadId, (await readJson(req)).enabled));
+      }
+
       if (method === 'POST' && sub === 'handover-thread') {
         const body = await readJson(req);
-        return sendJson(res, 201, await manager.createHandoverThread(threadId, body.agent));
+        return sendJson(res, 201, await manager.createHandoverThread(threadId, body.agent, body.model));
       }
 
       if (method === 'POST' && sub === 'handover') {

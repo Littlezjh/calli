@@ -129,6 +129,7 @@ export function deliveredPreview(text: string): string {
 }
 
 export type Item =
+  | { kind: 'model-switch'; key: string; turnId: string; model: string; previous: string; reason: string }
   | { kind: 'proposal'; key: string; turnId: string; id: string; text: string; done: boolean }
   /**
    * A question or plan approval the agent asked. `ended` on a cancelled answer means the turn ran
@@ -444,6 +445,7 @@ export function buildTimeline(events: StoredEvent[], speech: readonly VoiceTrans
     lastSeq = Math.max(lastSeq, ev.seq);
     const key = `e${ev.seq}`;
     const turn = ev.turnId ?? '';
+    if (ev.type === 'handover.model') { items.push({ kind: 'model-switch', key, turnId: turn, model: String(ev.data.model ?? ''), previous: String(ev.data.previous ?? ''), reason: String(ev.data.reason ?? 'near') }); continue; }
     // Keep complete events received after a historical snapshot. They also hydrate deferred
     // entries when expanded, including updates for tools whose starts predate this connection.
     if (ev.type === 'tool.update' || ev.type === 'tool.end') {

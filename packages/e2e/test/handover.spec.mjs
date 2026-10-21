@@ -86,8 +86,7 @@ for (const mobile of [false,true]) {
       const dialog=page.getByRole('dialog',{name:'交接',exact:true});
       await dialog.locator('.handover-summary').waitFor();
       const summary=await dialog.locator('.handover-summary').innerText();
-      await dialog.getByRole('button',{name:'Claude 工作号',exact:true}).click();
-      await page.getByRole('menuitemradio',{name:'Claude 个人号',exact:true}).click();
+      await dialog.getByRole('button',{name:'Claude 个人号',exact:true}).waitFor();
       if(!mobile) {
         await page.route('**/handover-thread',route=>route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'暂时不可用，请重试'})}),{times:1});
         await dialog.getByRole('button',{name:'新建接手对话'}).click();
@@ -109,16 +108,17 @@ for (const mobile of [false,true]) {
       assert.equal(readFileSync(join(successor.cwd,'pending.txt'),'utf8'),'preserve uncommitted work');
       const edited=summary+'\n\n补充：先运行测试。';await box.fill(edited);
       if(process.env.RAH_SCREENSHOTS==='1')await page.screenshot({path:join(repoRoot,'e2e','shots',`handover-${mobile?'phone-light':'desktop-dark'}-draft.png`),animations:'disabled'});
-      // A switch flushes edits; returning and reloading keeps both drafts under their own threads.
-      if(mobile)await page.locator('.menu-btn').click();
-      await page.locator('.sidebar .thread-item').filter({has:page.locator('.thread-title',{hasText:new RegExp('^'+source.title+'$')})}).click();
-      assert.equal(await box.inputValue(),'原线程未发送的草稿');
-      if(mobile)await page.locator('.menu-btn').click();
-      await page.locator('.sidebar .thread-item',{hasText:source.title+'（接手）'}).click();
+      // Earlier segments retain their stored draft; the chain composer always belongs to the successor.
+      await page.locator('.handover-trail button').click();
+      await page.getByRole('menuitem').filter({hasText:'Claude 工作号'}).click();
+      await page.locator('.handover-readonly').waitFor();
+      assert.equal(await box.inputValue(),edited);
+      assert.equal(await page.evaluate(id=>JSON.parse(localStorage.getItem('rah.drafts'))[id].text,source.id),'原线程未发送的草稿');
+      await page.locator('.handover-readonly button').click();
       assert.equal(await box.inputValue(),edited);
       await page.reload();await box.waitFor();
       if(mobile)await page.locator('.menu-btn').click();
-      await page.locator('.sidebar .thread-item',{hasText:source.title+'（接手）'}).click();
+      await page.locator('.sidebar .thread-item',{hasText:source.title}).click();
       await page.locator('.topbar-title',{hasText:source.title+'（接手）'}).waitFor();
       assert.equal(await box.inputValue(),edited);
       assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('rah.drafts')).new.text),'普通新线程的草稿');

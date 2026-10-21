@@ -110,6 +110,7 @@ export class ClaudeAcpAdapter extends AcpAdapter {
     goal: { controls: ['clear'] as const, actions: ['set', 'show', 'clear'] as const },
     coordination: true,
     resume: true,
+    modelSwitch: true,
     approvals: true,
     permissionModes: ['ask', 'auto_edit', 'full_access'] as const,
     effortLevels: CLAUDE_EFFORTS,

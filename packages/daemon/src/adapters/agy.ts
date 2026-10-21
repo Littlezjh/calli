@@ -458,6 +458,7 @@ export class AgyAdapter implements AgentAdapter {
     workModes: ['execute', 'plan'] as const,
     coordination: true,
     resume: true,
+    modelSwitch: true,
     approvals: false,
     permissionModes: ['auto_edit', 'full_access'] as const,
     // It cannot ask, so at the lower level every command is refused and the turn stops; new threads
@@ -488,10 +489,21 @@ export class AgyAdapter implements AgentAdapter {
     return commandExists(this.command[0]);
   }
 
+  // Literal hard-quota message shipped in the CLI; do not classify HTTP 429 or disk quota errors.
+  planExhausted(message: string): boolean { return /You have exhausted your quota on this model\./i.test(message); }
+
   /** `agy -p /usage` is tab-separated: model group, window, REMAINING percent, reset ISO time. */
   async fetchQuota(): Promise<PlanQuota> {
     const stdout = await this.runPrint(process.cwd(), '/usage');
-    return { windows: parseAgyUsage(stdout), checkedAt: new Date().toISOString() };
+    const models = await this.models().catch(() => []);
+    const windows = parseAgyUsage(stdout).map(window => {
+      const family = /^(Gemini|Claude)(?: Models)?$/i.exec(window.scope ?? '')?.[1]?.toLowerCase();
+      const families = family ? [family] : /^Claude and GPT models$/i.test(window.scope ?? '') ? ['claude', 'gpt'] : [];
+      const modelIds = models.filter(model => families.length ? families.some(f => model.id.toLowerCase().startsWith(f + '-') || model.label.toLowerCase().startsWith(f + ' '))
+        : model.id === window.scope || model.label === window.scope).map(model => model.id);
+      return { ...window, ...(modelIds.length ? { modelIds } : {}) };
+    });
+    return { windows, checkedAt: new Date().toISOString() };
   }
 
   async models(refresh = false): Promise<ModelOption[]> {

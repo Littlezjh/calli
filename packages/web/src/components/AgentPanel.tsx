@@ -5,7 +5,7 @@ import type { AgentInfo, Api, Coordination, Thread } from '../api';
 import { buildTalks } from '../coordination';
 import { buildTimeline, clockLabel, deliveredPreview, type StoredEvent } from '../timeline';
 import { Prose, ThreadView } from './ThreadView';
-import { AgentMark, IconAgents, IconChevron, IconClose } from './icons';
+import { AgentMark, IconAgents, IconHandover, IconChevron, IconClose } from './icons';
 import { t } from '../i18n';
 
 /** The width the user dragged the panel to, on a wide screen. Unset, the panel keeps its own. */
@@ -42,7 +42,7 @@ export function TeamCard({ team, agents, onOpen }: { team: Coordination; agents:
       return <button type="button" className="team-card-row" key={m.id} title={doing} onClick={() => onOpen(m.id)}>
         <span className="team-card-mark">{icon ? <AgentMark path={icon} size={14} /> : <IconAgents size={14} />}</span>
         <span className="team-card-text">
-          <span className="team-card-line"><strong>{m.name}</strong><span className={`team-card-state ${state}`}>{memberStatus(m)}</span></span>
+          <span className="team-card-line"><strong>{m.name}{m.thread?.handover && <span className="auto-member-mark" role="img" aria-label={t('auto.transferred')} title={t('auto.transferred')}><IconHandover size={13} /></span>}</strong><span className={`team-card-state ${state}`}>{memberStatus(m)}</span></span>
           {doing && <span className="team-card-doing">{doing}</span>}
         </span>
       </button>;
@@ -194,6 +194,7 @@ export function AgentPanel({ api, team, agents, leadAgent, memberModel, start, p
       {thread && memberModel?.(thread)}
       <button className="icon-btn" aria-label={t('team.close')} onClick={onClose}><IconClose /></button>
     </header>
+    {!memberId && <div className="auto-setting-line"><span>{t('auto.members')}</span><button aria-label={t('auto.members')} className="auto-toggle" role="switch" aria-checked={team.autoHandover !== false} onClick={() => { void api.setCollaborationHandover(team.rootId, team.autoHandover === false).then(onRefresh).catch(onError); }}>{t(team.autoHandover !== false ? 'auto.on' : 'auto.off')}</button></div>}
     {thread && <div className="agent-panel-location" title={thread.cwd}>{memberStatus(member!)} · {thread.cwd}</div>}
     {!connected && <div className="agent-panel-notice">{t('team.reconnecting')}</div>}
     <div className="agent-panel-body" ref={body} onScroll={() => {
@@ -224,7 +225,7 @@ export function AgentPanel({ api, team, agents, leadAgent, memberModel, start, p
       </div> : !memberId ? <>
         {!team.members.length && <div className="agent-panel-empty"><IconAgents size={32} /><strong>{t('team.emptyTitle')}</strong><p>{t('team.emptyHint1')}<br />{t('team.emptyHint2')}</p></div>}
         {team.members.map(m => <button className="agent-member" key={m.id} onClick={() => setMemberId(m.id)}>
-          <div className="agent-member-line"><strong>{m.name}</strong><span className={m.thread?.waiting ? 'coord-attention' : ''}>{memberStatus(m)}</span></div>
+          <div className="agent-member-line"><strong>{m.name}{m.thread?.handover && <span className="auto-member-mark" role="img" aria-label={t('auto.transferred')} title={t('auto.transferred')}><IconHandover size={13} /></span>}</strong><span className={m.thread?.waiting ? 'coord-attention' : ''}>{memberStatus(m)}</span></div>
           <div className="coord-caption">{m.thread?.agent} · {m.thread?.cwd.split('/').slice(-2).join('/')}</div>
           <p>{m.latest?.result?.split(/<limi-(?:coordination|team)>/)[0].slice(-160) || m.latest?.text.slice(0, 160) || t('team.waitingTask')}</p>
           {m.thread?.unread && <span className="coord-unread">{t('team.newOutput')}</span>}

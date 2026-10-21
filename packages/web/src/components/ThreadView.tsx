@@ -223,6 +223,7 @@ export function ThreadView({ chain = false, observeOlder = true, beforeItems, ol
   const renderItems = (list: Item[]) =>
     list.map((item) => {
       switch (item.kind) {
+        case 'model-switch': return <div key={item.key} className="context-compaction handover-divider">{t('auto.switched', item.model, item.previous, t(item.reason === 'exhausted' ? 'auto.exhausted' : 'auto.near'))}</div>;
         case 'user': {
           if (item.handoverCollapsed) return null;
           if (item.coordination) return <DeliveredNote key={item.key} turnId={item.turnId} note={item.coordination} text={item.text} />;

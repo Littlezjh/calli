@@ -929,6 +929,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
     goal: { controls: ['show', 'pause', 'clear'] as const, actions: ['set', 'show', 'pause', 'resume', 'clear'] as const },
     coordination: true,
     resume: true,
+    modelSwitch: true,
     approvals: true,
     permissionModes: ['ask', 'auto_edit', 'full_access'] as const,
     // The widest set; each model says which of these it really takes.
