@@ -46,6 +46,7 @@ import { FilesPanel, type FilesTarget } from './components/FilesPanel';
 import { PreviewPanel } from './components/PreviewPanel';
 import { fileRef } from './files';
 import { AddAgentDialog } from './components/AddAgentDialog';
+import { OnboardingDialog } from './components/OnboardingDialog';
 import { ObservabilityPanel } from './components/ObservabilityPanel';
 import { QuotaBoard } from './components/QuotaBoard';
 import { SelectionMenu } from './components/SelectionMenu';
@@ -359,6 +360,8 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const [observability, setObservability] = useState<'usage' | 'diagnostics' | null>(null);
   /** Other agent CLIs found on this host, added from the settings menu — not the picker. */
   const [addAgentOpen, setAddAgentOpen] = useState(false);
+  const [onboardOpen, setOnboardOpen] = useState(false);
+  const [onboardStep, setOnboardStep] = useState<'ask' | 'results'>('ask');
   // Counters that open the composer's pickers from elsewhere (the slash menu).
   const [permissionSignal, setPermissionSignal] = useState(0);
   const [modelSignal, setModelSignal] = useState(0);
@@ -657,6 +660,14 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         const first = a.find((x) => x.available);
         setDraftAgent(first?.id ?? '');
         if (first) setDraftPermission(startingPermission(first.capabilities));
+        if (!demo) {
+          const dismissed = localStorage.getItem('rah_onboard_dismissed') === '1';
+          const needsOnboard = a.length === 0 || a.filter((x) => x.available).length === 0;
+          if (!dismissed && needsOnboard) {
+            setOnboardStep('ask');
+            setOnboardOpen(true);
+          }
+        }
         // Cheap enough to do once: PATH scan for other copies of known CLIs.
         api
           .discoverAgents()
@@ -1407,6 +1418,26 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     setAccounts(rest);
   };
 
+  const handleOnboardConnected = (freshList: AgentInfo[]) => {
+    setAgents(freshList);
+    const first = freshList.find((x) => x.available);
+    if (first && (!draftAgent || !freshList.some((x) => x.id === draftAgent))) {
+      setDraftAgent(first.id);
+      setDraftPermission(startingPermission(first.capabilities));
+    }
+    if (api) {
+      api.discoverAgents().then(setDiscovered).catch(() => undefined);
+      api.discoverAccounts().then(setAccounts).catch(() => undefined);
+    }
+    localStorage.setItem('rah_onboard_dismissed', '1');
+    setOnboardOpen(false);
+  };
+
+  const handleOnboardLater = () => {
+    localStorage.setItem('rah_onboard_dismissed', '1');
+    setOnboardOpen(false);
+  };
+
   // What the slash menu offers besides the agent's own commands. The keywords include the names
   // these have in the agents' terminals (/clear, /resume, /export, /status), so habits still work.
   const hubActions: HubAction[] = [
@@ -2067,8 +2098,21 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       {observability && api && <ObservabilityPanel key={hostId ?? 'local'} api={api} agents={agents} initial={observability} focusAgent={activeAgent} onResult={result => { if (result.state === 'ready' || result.state === 'empty') setModelsByAgent(previous => ({ ...previous, [result.agent]: result.models })); }} onClose={() => setObservability(null)} />}
       {handoverSettingsOpen && api && <HandoverSettingsDialog api={api} agents={agents} onClose={() => setHandoverSettingsOpen(false)} />}
       {quotaOpen && api && <QuotaBoard api={api} agents={agents} current={onPage ? undefined : activeAgent} onClose={() => setQuotaOpen(false)} onError={handleError} />}
+      {onboardOpen && (
+        <OnboardingDialog
+          api={api}
+          agents={agents}
+          initialStep={onboardStep}
+          onConnected={handleOnboardConnected}
+          onClose={() => setOnboardOpen(false)}
+          onLater={handleOnboardLater}
+        />
+      )}
       {addAgentOpen && (
         <AddAgentDialog
+          api={api}
+          agents={agents}
+          onConnected={handleOnboardConnected}
           found={discovered}
           onAdd={addDiscoveredAgent}
           onClose={() => {
@@ -2172,14 +2216,15 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
                   },
                 ]
               : []),
-            ...(discovered.length > 0
+            ...(!demo
               ? [
                   {
                     id: 'add-agent',
                     label: t('addAgent.title'),
                     icon: IconPlus,
                     onSelect: () => {
-                      setAddAgentOpen(true);
+                      setOnboardStep('results');
+                      setOnboardOpen(true);
                       setDrawer(false);
                     },
                   },

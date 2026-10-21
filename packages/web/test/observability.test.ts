@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bucketLabel, compactLabel, niceTicks, numberLabel, stepLabel, timeTicks, type UsageSeries } from '../src/observability.js';
+import { bucketLabel, compactLabel, heatGrid, niceTicks, numberLabel, stepLabel, timeTicks, type DailyUsage, type UsageSeries } from '../src/observability.js';
 
 test('compactLabel shortens token counts to three significant digits', () => {
   assert.deepEqual([0, 170, 999, 48318, 906470, 999950, 1028871, 12917704, 2.5e9].map(compactLabel),
@@ -61,4 +61,35 @@ test('chart keeps every instance selectable, distinguishes repeated colours and 
   assert.equal(chartLines({ ...data, agents: [data.agents![4]] }, agents)[1].color, lines[5].color);
   assert.equal(chartLines({ ...data, agents: undefined }, agents).length, 1);
   assert.equal(chartLines({ ...data, agents: [{ agent: 'a0', tpm: [10] }] }, agents, 'output').length, 1);
+});
+
+test('the heatmap lays weeks out Monday first up to today, and keeps unknown days apart from empty ones', () => {
+  // Wednesday 2026-10-21: the last column runs Monday to Wednesday.
+  const today = new Date(2026, 9, 21, 15);
+  const daily: DailyUsage = { checkedAt: '', since: '2026-10-06', days: [
+    { date: '2026-10-06', total: 10, output: 1, turns: 1 },
+    { date: '2026-10-13', total: 40, output: null, turns: 2 },
+    { date: '2026-10-19', total: null, output: null, turns: 3 },
+    { date: '2026-10-21', total: 1000, output: 5, turns: 4 },
+  ] };
+  const grid = heatGrid(daily, 'total', 3, today);
+  assert.deepEqual(grid.columns.map(c => c.length), [7, 7, 3]);
+  assert.equal(grid.columns[0][0].date, '2026-10-05');
+  assert.equal(grid.columns[2][2].date, '2026-10-21');
+  const at = (date: string) => grid.columns.flat().find(c => c.date === date)!;
+  assert.equal(at('2026-10-05').level, null, 'before recording began the day is unknown');
+  assert.equal(at('2026-10-05').recorded, false);
+  assert.equal(at('2026-10-07').level, 0, 'a recorded day with no turns is empty');
+  assert.equal(at('2026-10-19').level, null, 'turns that reported nothing stay unknown');
+  assert.equal(at('2026-10-19').turns, 3);
+  assert.equal(at('2026-10-21').level, 4);
+  assert.ok(at('2026-10-06').level! < at('2026-10-21').level!);
+  assert.equal(grid.total, 1050);
+  assert.equal(grid.activeDays, 3);
+  assert.equal(heatGrid(daily, 'output', 3, today).columns.flat().find(c => c.date === '2026-10-13')!.level, null, 'output follows its own reports');
+  assert.equal(heatGrid({ ...daily, since: null }, 'total', 3, today).activeDays, 0);
+  const year = heatGrid(daily, 'total', 53, today);
+  assert.equal(year.columns.length, 53);
+  assert.ok(year.months.length >= 11);
+  assert.ok(year.months.every(m => m.date.getDate() === 1 && year.columns[m.column].some(c => c.date.endsWith('-01') && Number(c.date.slice(5, 7)) === m.date.getMonth() + 1)));
 });

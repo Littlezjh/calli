@@ -308,6 +308,21 @@ export const ja: Messages = {
   'addAgent.message': 'このホストで見つかった他のエージェントコマンドです。追加すると新しいエージェントとして使え、エージェントの選択肢に表示されます。',
   'addAgent.none': '追加できる新しい項目はありません。',
 
+  // Onboarding & agent discovery
+  'onboard.askTitle': 'Coding Agent の検出',
+  'onboard.askMessage': 'このホストの Coding Agent を自動検出しますか？インストール済みの CLI やログイン中のアカウントを検出し、ワンクリックで接続します。',
+  'onboard.discover': '自動検出',
+  'onboard.later': '後で',
+  'onboard.resultTitle': 'Coding Agent を接続',
+  'onboard.resultMessage': '接続する Agent を選択してください。未インストールのものは先に端末でインストールしてください。',
+  'onboard.installedGroup': 'このホストにインストール済み',
+  'onboard.uninstalledGroup': 'サポート対象（未インストール）',
+  'onboard.noneInstalled': 'インストール済みの Coding Agent が見つかりませんでした',
+  'onboard.notInstalled': '未インストール',
+  'onboard.connectN': (n: number) => `${n}件を接続`,
+  'onboard.connecting': '接続中…',
+  'onboard.scanning': 'このホストの Coding Agent をスキャン中…',
+
   // Videos in the conversation
   'video.cannotPlay': 'ブラウザはこのエンコードを再生できません。元の動画をダウンロードしてください',
   'video.original': '元の動画',
@@ -423,6 +438,15 @@ export const ja: Messages = {
   'composer.appendOne': '追記する…',
 
   // Token usage chart
+  'heatmap.title': (output: boolean) => output ? '出力トークンのアクティビティ' : 'トークンのアクティビティ',
+  'heatmap.daily': '日別',
+  'heatmap.summary': (total: string, days: number) => `合計 ${total} · 利用 ${days} 日`,
+  'heatmap.aria': (summary: string) => `日ごとのトークン使用量、${summary}。矢印キーで 1 日ずつ確認できます`,
+  'heatmap.value': (tokens: string, turns: number) => `${tokens} トークン · ${turns} ターン`,
+  'heatmap.zero': '使用なし',
+  'heatmap.unmeasured': (turns: number) => `${turns} ターン、使用量の報告なし`,
+  'heatmap.notRecorded': 'まだ記録していません',
+  'heatmap.month': (d: Date) => `${d.getMonth() + 1}月`,
   'chart.label': 'TPM の推移',
   'chart.outputTpm': '出力 TPM',
   'chart.trend': (metric: string) => `${metric} の推移`,
@@ -1189,6 +1213,7 @@ export const ja: Messages = {
   'view.fromSchedule': 'このターンは定期タスクから送信されました',
   'view.scheduled': '定期',
   'view.plan': 'プラン',
+  'view.planProgress': (done: number, total: number) => `プラン ${done}/${total}`,
   'view.proposal': '提案',
   'view.planning': 'プランを作成中',
   'view.copyAnswer': '回答をコピー',

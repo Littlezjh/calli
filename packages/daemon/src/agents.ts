@@ -2,12 +2,12 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { delimiter } from 'node:path';
-import { AgyAdapter } from './adapters/agy.js';
-import { ClaudeAcpAdapter } from './adapters/claude.js';
-import { ZcodeAdapter } from './adapters/zcode.js';
-import { CodexAppServerAdapter } from './adapters/codex.js';
-import { PiRpcAdapter } from './adapters/pi.js';
-import { TraexAcpAdapter } from './adapters/traex.js';
+import { AgyAdapter, AGY_METADATA } from './adapters/agy.js';
+import { ClaudeAcpAdapter, CLAUDE_METADATA } from './adapters/claude.js';
+import { ZcodeAdapter, ZCODE_METADATA } from './adapters/zcode.js';
+import { CodexAppServerAdapter, CODEX_METADATA } from './adapters/codex.js';
+import { PiRpcAdapter, PI_METADATA } from './adapters/pi.js';
+import { TraexAcpAdapter, TRAEX_METADATA } from './adapters/traex.js';
 import type { AgentAdapter, DiscoveredAccount } from './adapters/types.js';
 import { HttpError } from './errors.js';
 
@@ -95,6 +95,22 @@ export function defaultInstances(opts: {
   ];
 }
 
+export interface SupportedAgent {
+  adapter: AgentInstance['adapter'];
+  label: string;
+  icon?: string;
+  installGuide?: string;
+}
+
+export const SUPPORTED_AGENTS: SupportedAgent[] = [
+  CLAUDE_METADATA,
+  CODEX_METADATA,
+  PI_METADATA,
+  AGY_METADATA,
+  TRAEX_METADATA,
+  ZCODE_METADATA,
+];
+
 /** An executable on PATH that looks like another copy of a known agent CLI. */
 export interface DiscoveredAgent {
   /** The proposed instance id: the executable's basename. */
@@ -102,6 +118,8 @@ export interface DiscoveredAgent {
   adapter: AgentInstance['adapter'];
   /** The absolute path found on PATH. */
   command: string;
+  label?: string;
+  icon?: string;
 }
 
 /** A signed-in account of a multi-account agent, shaped so the UI can link it in one click. */
@@ -170,7 +188,7 @@ export class AgentRegistry {
     if (source) {
       try {
         const parsed = JSON.parse(source) as InstanceFile;
-        if (Array.isArray(parsed.agents) && parsed.agents.length > 0) instances = parsed.agents;
+        if (Array.isArray(parsed.agents)) instances = parsed.agents;
       } catch {
         // A broken file is reported, not fatal: the defaults keep the hub usable.
         console.warn('warning: agents.json is not valid JSON; using the built-in agents');
@@ -181,6 +199,10 @@ export class AgentRegistry {
 
   list(): AgentInstance[] {
     return [...this.instances.values()];
+  }
+
+  supported(): SupportedAgent[] {
+    return [...SUPPORTED_AGENTS];
   }
 
   /**
@@ -313,7 +335,14 @@ export class AgentRegistry {
         } catch {
           continue;
         }
-        found.set(name, { id: name, adapter, command: full });
+        const meta = SUPPORTED_AGENTS.find((s) => s.adapter === adapter);
+        found.set(name, {
+          id: name,
+          adapter,
+          command: full,
+          ...(meta?.label ? { label: meta.label } : {}),
+          ...(meta?.icon ? { icon: meta.icon } : {}),
+        });
       }
     }
     return [...found.values()].sort((a, b) => a.id.localeCompare(b.id));

@@ -452,12 +452,18 @@ class AgySession implements AgentSession {
   }
 }
 
+export const AGY_METADATA = {
+  adapter: 'agy' as const,
+  label: 'Antigravity',
+  icon: ANTIGRAVITY_ICON,
+};
+
 /** Adapter for the Antigravity CLI. `command` is the argv prefix, normally just the executable. */
 export class AgyAdapter implements AgentAdapter {
   readonly borrowedTools = [agyImageTool, agySearchTool, agyBrowserTool];
   readonly id = 'agy';
-  readonly label = 'Antigravity';
-  readonly icon = ANTIGRAVITY_ICON;
+  readonly label = AGY_METADATA.label;
+  readonly icon = AGY_METADATA.icon;
   readonly capabilities = {
     workModes: ['execute', 'plan'] as const,
     coordination: true,

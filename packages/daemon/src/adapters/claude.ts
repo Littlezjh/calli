@@ -97,13 +97,21 @@ export function parseClaudeUsage(text: string, now = new Date()): QuotaWindow[] 
   return out;
 }
 
+export const CLAUDE_METADATA = {
+  adapter: 'claude' as const,
+  label: 'Claude Code',
+  icon: CLAUDE_ICON,
+  installGuide: 'npm install -g @anthropic-ai/claude-code',
+};
+
 export class ClaudeAcpAdapter extends AcpAdapter {
   protected override liveUsage(id: string, cwd: string, emit: (sample: UsageSample) => void) {
     return claudeLiveUsage(id, cwd, this.env, emit);
   }
   readonly id = 'claude';
-  readonly label = 'Claude Code';
-  readonly icon = CLAUDE_ICON;
+  readonly label = CLAUDE_METADATA.label;
+  readonly icon = CLAUDE_METADATA.icon;
+  readonly installGuide = CLAUDE_METADATA.installGuide;
   readonly capabilities = {
     workModes: ['execute', 'plan'] as const,
     speed: true,

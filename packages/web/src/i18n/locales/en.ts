@@ -310,6 +310,21 @@ export const en: Messages = {
   'addAgent.message': 'Other agent commands found on this host. Once added, each works as a new agent and shows up in the agent picker.',
   'addAgent.none': 'Nothing new to add.',
 
+  // Onboarding & agent discovery
+  'onboard.askTitle': 'Discover Coding Agents',
+  'onboard.askMessage': 'Would you like to automatically discover coding agents on this host? Discovers installed CLIs and signed-in accounts to link in one click.',
+  'onboard.discover': 'Auto Discover',
+  'onboard.later': 'Later',
+  'onboard.resultTitle': 'Connect Coding Agents',
+  'onboard.resultMessage': 'Select the agents to connect. For uninstalled ones, install them in your terminal first.',
+  'onboard.installedGroup': 'Installed on this host',
+  'onboard.uninstalledGroup': 'Supported but not installed',
+  'onboard.noneInstalled': 'No installed coding agents detected',
+  'onboard.notInstalled': 'Not installed',
+  'onboard.connectN': (n: number) => n === 1 ? 'Connect 1 agent' : `Connect ${n} agents`,
+  'onboard.connecting': 'Connecting…',
+  'onboard.scanning': 'Scanning for coding agents on this host…',
+
   // Videos in the conversation
   'video.cannotPlay': 'The browser cannot play this encoding; download the original video instead',
   'video.original': 'Original video',
@@ -425,6 +440,15 @@ export const en: Messages = {
   'composer.appendOne': 'Add a message…',
 
   // Token usage chart
+  'heatmap.title': (output: boolean) => output ? 'Output token activity' : 'Token activity',
+  'heatmap.daily': 'Daily',
+  'heatmap.summary': (total: string, days: number) => `${total} total · ${days} active ${days === 1 ? 'day' : 'days'}`,
+  'heatmap.aria': (summary: string) => `Tokens per day, ${summary}. Use the arrow keys to go day by day`,
+  'heatmap.value': (tokens: string, turns: number) => `${tokens} tokens · ${turns} ${turns === 1 ? 'turn' : 'turns'}`,
+  'heatmap.zero': 'No usage',
+  'heatmap.unmeasured': (turns: number) => `${turns} ${turns === 1 ? 'turn' : 'turns'}, no usage reported`,
+  'heatmap.notRecorded': 'Not recorded yet',
+  'heatmap.month': (d: Date) => d.toLocaleDateString('en-US', { month: 'short' }),
   'chart.label': 'TPM trend',
   'chart.outputTpm': 'Output TPM',
   'chart.trend': (metric: string) => `${metric} trend`,
@@ -1191,6 +1215,7 @@ export const en: Messages = {
   'view.fromSchedule': 'This turn was sent by a scheduled task',
   'view.scheduled': 'Scheduled',
   'view.plan': 'Plan',
+  'view.planProgress': (done: number, total: number) => `Plan ${done}/${total}`,
   'view.proposal': 'Proposal',
   'view.planning': 'Drafting the plan',
   'view.copyAnswer': 'Copy answer',

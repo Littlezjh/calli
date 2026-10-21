@@ -36,6 +36,7 @@ import {
   type ImageRef,
   type Item,
   type Note,
+  type PlanEntry,
   type Step,
   type Thought,
   type WorkSection,
@@ -892,22 +893,43 @@ function TraceLine({ mark }: { mark: Trace }) {
   );
 }
 
-/** The agent's own task list for the turn: what is done, what it is on, what is left. */
-function PlanCard({ item }: { item: Extract<Item, { kind: 'plan' }> }) {
-  const completed = item.entries.filter((e) => e.status === 'completed').length;
+/** How much of a plan is done, as a ring filling clockwise from the top. */
+function PlanRing({ done }: { done: number }) {
+  const filled = Math.max(0, Math.min(1, done)) * 100;
   return (
-    <div className="row">
-      <div className="plan">
-        <div className="plan-head">
-          <span>{t('view.plan')}</span>
-          <span className="muted">
-            {completed}/{item.entries.length}
-          </span>
-        </div>
+    <svg className="plan-ring" width={14} height={14} viewBox="0 0 16 16" aria-hidden="true">
+      <circle className="plan-ring-track" cx="8" cy="8" r="6" fill="none" strokeWidth={2.4} />
+      {filled > 0 && (
+        <circle className="plan-ring-fill" cx="8" cy="8" r="6" fill="none" strokeWidth={2.4} strokeLinecap={filled < 100 ? 'round' : 'butt'}
+          pathLength={100} strokeDasharray={`${filled} 100`} transform="rotate(-90 8 8)" />
+      )}
+    </svg>
+  );
+}
+
+/**
+ * The agent's own task list for the turn, folded to one quiet line: how far along it is and the
+ * step it is on. The whole list opens below it, in the same muted register as the work it steers.
+ */
+function PlanCard({ item }: { item: Extract<Item, { kind: 'plan' }> }) {
+  const [open, setOpen] = useState(false);
+  const total = item.entries.length;
+  const completed = item.entries.filter((e) => e.status === 'completed').length;
+  // Once the turn is over nothing is "in progress" any more; what was not finished is simply not done.
+  const stateOf = (entry: PlanEntry) => (entry.status === 'completed' ? 'completed' : entry.status === 'in_progress' && !item.done ? 'active' : 'pending');
+  const current = item.done ? undefined : item.entries.find((e) => stateOf(e) === 'active');
+  return (
+    <div className="row plan">
+      <button type="button" className="plan-toggle" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+        <PlanRing done={total ? completed / total : 0} />
+        <span className="plan-count">{t('view.planProgress', completed, total)}</span>
+        {current && <span className="plan-current">· {current.content}</span>}
+        <IconChevron size={14} open={open} />
+      </button>
+      {open && (
         <ol className="plan-list">
           {item.entries.map((entry, i) => {
-            // Once the turn is over nothing is "in progress" any more; what was not finished is simply not done.
-            const state = entry.status === 'completed' ? 'completed' : entry.status === 'in_progress' && !item.done ? 'active' : 'pending';
+            const state = stateOf(entry);
             return (
               <li key={i} className={`plan-entry ${state}`}>
                 <span className="plan-mark" aria-hidden="true">
@@ -919,7 +941,7 @@ function PlanCard({ item }: { item: Extract<Item, { kind: 'plan' }> }) {
             );
           })}
         </ol>
-      </div>
+      )}
     </div>
   );
 }

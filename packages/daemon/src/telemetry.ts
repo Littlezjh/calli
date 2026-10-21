@@ -51,6 +51,9 @@ export function cleanSample(data: Record<string, unknown>): UsageSample | null {
 /** Chart buckets per range: about 60-170 points, so a day reads as a trend rather than per-minute spikes. */
 const STEP_MINUTES: Record<number, number> = { 1: 1, 24: 10, 168: 60 };
 
+/** How far back the daily heatmap reaches: a year, plus the week it starts in. */
+const DAILY_DAYS = 371;
+
 export class Telemetry {
   constructor(private readonly db: DatabaseSync) {
     db.exec(`
@@ -117,6 +120,42 @@ export class Telemetry {
     return summarizeCosts(this.samples(since, until, agent).map(row => ({
       sample: row.sample, configuredModel: row.configured_model, at: row.ts, turnCost: !!row.turn_cost,
     })), this.unmeasuredTurns(since, until, agent), now, true);
+  }
+
+  /**
+   * Tokens per calendar day over the last year, for the activity heatmap, in the viewer's time
+   * zone: the host may well keep UTC while its user is a day boundary away. Only days with a turn
+   * are listed; a day whose turns reported no tokens keeps them unknown (null), not zero.
+   * `since` is the first day anything was recorded at all: before it the days are unknown too.
+   */
+  daily(agent = '', timeZone?: string, now = Date.now()) {
+    const from = new Date(now - DAILY_DAYS * 86400000).toISOString(), until = new Date(now).toISOString();
+    // en-CA writes dates as YYYY-MM-DD. Throws a RangeError on a zone it does not know.
+    const format = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
+    // SQLite only knows UTC and the host's zone, so it sums ten-minute slices and the day is named
+    // here: fine enough for the zones that sit half or three quarters of an hour off.
+    const dayOf = (slice: string) => format.format(new Date(`${slice}0:00Z`));
+    const days = new Map<string, { date: string; total: number | null; output: number | null; turns: number }>();
+    const day = (date: string) => {
+      let entry = days.get(date);
+      if (!entry) days.set(date, entry = { date, total: null, output: null, turns: 0 });
+      return entry;
+    };
+    const add = (a: number | null, b: number | null) => b == null ? a : (a ?? 0) + b;
+    const turns = this.db.prepare(`SELECT substr(started_at,1,15) AS slice,COUNT(*) AS turns FROM telemetry_turns
+      WHERE started_at>=? AND started_at<=? AND (?='' OR agent=?) GROUP BY slice`).all(from, until, agent, agent) as Array<{ slice: string; turns: number }>;
+    for (const row of turns) day(dayOf(row.slice)).turns += row.turns;
+    const tokens = this.db.prepare(`SELECT substr(s.ts,1,15) AS slice,
+        SUM(json_extract(s.data,'$.total')) AS total,SUM(json_extract(s.data,'$.output')) AS output
+      FROM telemetry_samples s JOIN telemetry_turns t USING(thread_id,turn_id)
+      WHERE s.ts>=? AND s.ts<=? AND (?='' OR t.agent=?) GROUP BY slice`).all(from, until, agent, agent) as Array<{ slice: string; total: number | null; output: number | null }>;
+    for (const row of tokens) {
+      const entry = day(dayOf(row.slice));
+      entry.total = add(entry.total, row.total);
+      entry.output = add(entry.output, row.output);
+    }
+    const first = this.db.prepare(`SELECT MIN(started_at) AS at FROM telemetry_turns WHERE (?='' OR agent=?)`).get(agent, agent) as { at: string | null };
+    return { checkedAt: until, since: first.at ? format.format(new Date(first.at)) : null, days: [...days.values()].sort((a, b) => a.date.localeCompare(b.date)) };
   }
 
   read(hours = 24, agent = '', now = Date.now()) {
