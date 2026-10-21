@@ -829,6 +829,10 @@ export class Api {
     return this.request('GET', `/api/threads/${id}/history/handover${full ? '?text=1' : ''}`);
   }
 
+  historySummary(id: string, turn: string, cursor?: number, version?: number): Promise<{ prompt: string; text: string; snapshotSeq: number; nextOffset: number | null }> {
+    return this.request('GET', `/api/threads/${id}/history/summary?turn=${encodeURIComponent(turn)}${cursor ? `&cursor=${cursor}&version=${version}` : ''}`);
+  }
+
   historyPosition(id: string): Promise<{ snapshotSeq: number }> {
     return this.request('GET', `/api/threads/${id}/history?head=1`);
   }

@@ -1,6 +1,13 @@
 import type { Messages } from './zh';
 
 export const ja: Messages = {
+  'auto.drag': 'ドラッグして並べ替え',
+  'auto.targetActions': (target: string) => `${target} を調整`,
+  'auto.summaryRunning': (target: string) => `引き継ぎ要約を作成中 · ${target} へ`,
+  'auto.summaryDone': (target: string) => `引き継ぎ要約 · ${target} へ`,
+  'auto.summaryPrompt': '引き継ぎプロンプト',
+  'auto.summaryAnswer': '引き継ぎ要約',
+  'auto.summaryEmpty': '要約はまだありません',
   "auto.title": "自動引き継ぎ",
   "auto.global": "全体で有効にする",
   "auto.threshold": "使用率のしきい値（%）",

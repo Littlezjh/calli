@@ -972,3 +972,22 @@ test('a deferred stretch that outlived its turn ending shows its own duration on
   assert.equal(late.startedAt, '2026-10-16T09:35:10.000Z');
   assert.equal(late.endedAt, '2026-10-16T09:40:27.000Z');
 });
+
+test('handover summary activity stays one separate turn across live updates', () => {
+  const events = [ev('turn.started', { text: 'task' }, 'task'), ev('message.delta', { text: 'answer' }, 'task'), ev('turn.done', {}, 'task'),
+    ev('history.handover', { target: 'Agent 2', done: false, version: 4 }, 'summary'),
+    ev('history.handover', { target: 'Agent 2', done: true, version: 7 }, 'summary')];
+  const { items, running } = buildTimeline(events);
+  const markers = items.filter(i => i.kind === 'handover-summary');
+  assert.equal(markers.length, 1); assert.equal(markers[0].done, true); assert.equal(running, false);
+  assert.equal(items.filter(i => i.kind === 'user').length, 1);
+  assert.deepEqual(groupByTurn(items).map(g => g.turnId), ['task', 'summary']);
+});
+
+
+test('a failed summary stops its preparing label and keeps the error visible', () => {
+  const { items, running } = buildTimeline([ev('history.handover', { target: 'Agent 2', done: false, version: 1 }), ev('turn.error', { message: 'summary failed' })]);
+  assert.equal(items.find(i => i.kind === 'handover-summary')?.done, true);
+  assert.equal(items.find(i => i.kind === 'error')?.message, 'summary failed');
+  assert.equal(running, false);
+});

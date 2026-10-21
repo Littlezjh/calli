@@ -4,7 +4,7 @@ import { t } from '../i18n';
 import { Dialog } from './Dialog';
 import { Popover } from './Popover';
 import { AgentPicker } from './Pickers';
-import { IconChevron } from './icons';
+import { AgentMark, IconChevron, IconGrip, IconMore } from './icons';
 
 export function AutoHandoverChoice({ api, thread }: { api: Api; thread: Thread }) {
   const [value, setValue] = useState<AutoHandoverView | undefined>(thread.autoHandover);
@@ -96,12 +96,17 @@ export function HandoverSettingsDialog({ api, agents, onClose }: { api: Api; age
             <strong>{agent.label}</strong><span>{order ? order.map(label).join(' → ') || t('auto.noTargets') : t('auto.defaultOrder')}</span><IconChevron size={14} open={opened === agent.id} />
           </button>
           {opened === agent.id && <div className="auto-order-edit">
-            <ol aria-label={t('auto.order')}>{order?.map((target, i) => <li key={`${target.agent}:${target.model}`} draggable onDragStart={() => setDragged(i)} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); if (dragged !== null) move(agent.id, dragged, i); setDragged(null); }}>
-              <span>{label(target)}</span><div className="auto-order-actions">
-                <button className="ghost" disabled={!i} aria-label={t('auto.up')} onClick={() => move(agent.id, i, i - 1)}>{t('auto.up')}</button>
-                <button className="ghost" disabled={i === order.length - 1} aria-label={t('auto.down')} onClick={() => move(agent.id, i, i + 1)}>{t('auto.down')}</button>
-                <button className="ghost" aria-label={t('auto.remove')} onClick={() => setOrder(agent.id, order.filter((_, n) => n !== i))}>{t('auto.remove')}</button>
-              </div>
+            <ol aria-label={t('auto.order')}>{order?.map((target, i) => <li key={`${target.agent}:${target.model}`} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); if (dragged !== null) move(agent.id, dragged, i); setDragged(null); }}>
+              <span className="auto-order-grip" draggable onDragStart={() => setDragged(i)} onDragEnd={() => setDragged(null)} title={t('auto.drag')}><IconGrip size={16} /></span>
+              {agents.find(a => a.id === target.agent)?.icon && <AgentMark path={agents.find(a => a.id === target.agent)!.icon!} size={16} />}
+              <span className="auto-order-name">{label(target)}</span>
+              <Popover triggerClassName="icon-btn auto-order-more" panelClassName="auto-order-menu" label={t('auto.targetActions', label(target))} triggerLabel={t('auto.targetActions', label(target))} trigger={<IconMore size={16} />} align="end" placement="below">
+                {close => <div role="menu">
+                  <button className="pop-item compact" role="menuitem" disabled={!i} onClick={() => { move(agent.id, i, i - 1); close(); }}>{t('auto.up')}</button>
+                  <button className="pop-item compact" role="menuitem" disabled={i === order.length - 1} onClick={() => { move(agent.id, i, i + 1); close(); }}>{t('auto.down')}</button>
+                  <button className="pop-item compact" role="menuitem" onClick={() => { setOrder(agent.id, order.filter((_, n) => n !== i)); close(); }}>{t('auto.remove')}</button>
+                </div>}
+              </Popover>
             </li>)}</ol>
             <AddTarget api={api} agents={agents} add={target => { if (!order?.some(t => t.agent === target.agent && t.model === target.model)) setOrder(agent.id, [...(order ?? []), target]); }} />
             {order && <button className="text-btn" onClick={() => { const orders = { ...value.orders }; delete orders[agent.id]; setValue({ ...value, orders }); }}>{t('auto.reset')}</button>}

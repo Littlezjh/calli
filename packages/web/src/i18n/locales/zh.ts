@@ -3,6 +3,13 @@
  * a key added here has to be added to them too. Messages with values are functions.
  */
 export const zh = {
+  'auto.drag': '拖动调整顺序',
+  'auto.targetActions': (target: string) => `调整 ${target}`,
+  'auto.summaryRunning': (target: string) => `正在为交接整理摘要 · 交给 ${target}`,
+  'auto.summaryDone': (target: string) => `交接摘要 · 交给 ${target}`,
+  'auto.summaryPrompt': '交接提示词',
+  'auto.summaryAnswer': '交接摘要',
+  'auto.summaryEmpty': '尚未生成摘要',
   "auto.title": "自动交接",
   "auto.global": "全局自动交接",
   "auto.threshold": "已用额度阈值（%）",

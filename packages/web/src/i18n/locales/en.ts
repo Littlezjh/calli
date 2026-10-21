@@ -3,6 +3,13 @@ import type { Messages } from './zh';
 const plural = (n: number, one: string, other: string) => `${n} ${n === 1 ? one : other}`;
 
 export const en: Messages = {
+  'auto.drag': 'Drag to reorder',
+  'auto.targetActions': (target: string) => `Adjust ${target}`,
+  'auto.summaryRunning': (target: string) => `Preparing handover summary · For ${target}`,
+  'auto.summaryDone': (target: string) => `Handover summary · For ${target}`,
+  'auto.summaryPrompt': 'Handover prompt',
+  'auto.summaryAnswer': 'Handover summary',
+  'auto.summaryEmpty': 'No summary yet',
   "auto.title": "Automatic handover",
   "auto.global": "Enable globally",
   "auto.threshold": "Used quota threshold (%)",

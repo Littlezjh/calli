@@ -48,15 +48,23 @@ Claude/Codex 原有匹配保留。不把普通 429、磁盘 quota exceeded 或�
 
 ## 改动范围
 
-- 调度与持久化：`daemon/src/auto-handover.ts`、`threads.ts`、`coordination.ts`、`store.ts`、`http.ts`、`events.ts`。
+- 调度与持久化：`daemon/src/auto-handover.ts`、`threads.ts`、`coordination.ts`、`store.ts`、`http.ts`、`events.ts`、`history.ts`。
 - 适配器：`daemon/src/adapters/types.ts`、`agy.ts`、`traex.ts`；`claude.ts`、`codex.ts`、`pi.ts`、`zcode.ts` 声明保持会话的模型切换能力。
 - 页面：`web/src/components/AutoHandover.tsx`、`HandoverDialog.tsx`、`AgentPanel.tsx`、`ThreadView.tsx`；`App.tsx`、`api.ts`、`timeline.ts`、`styles.css`；`i18n/locales/zh.ts`、`en.ts`、`ja.ts`。
-- 测试：`daemon/test/auto-handover.test.ts`、`fixtures/fake-agy.mjs`、`fixtures/fake-codex.mjs`；`e2e/test/auto-handover.spec.mjs`、`handover.spec.mjs`。原手动交接测试同步到第二阶段的合并会话输入框行为，并检查新的默认接手选择。
+- 测试：`daemon/test/auto-handover.test.ts`、`history.test.ts`、`handover-api.test.ts`；`web/test/timeline.test.ts`；`fixtures/fake-agy.mjs`、`fixtures/fake-codex.mjs`；`e2e/test/auto-handover.spec.mjs`、`handover.spec.mjs`。原手动交接测试同步到第二阶段的合并会话输入框行为，并检查新的默认接手选择。
 - 文档：`docs/TODO.md`、`docs/PLAN.md`、本文。上述包路径均位于 `packages/`。
 
 ## 本次验收结果
 
-- `npm run typecheck && npm test && npm run build` 通过：937 项测试通过，其中新增自动交接 daemon 测试 18 项。
+- `npm run typecheck && npm test && npm run build` 通过：940 项测试中 939 项通过，1 项真实 zcode 测试按默认条件跳过，其中新增自动交接 daemon 测试 18 项。
 - 自动交接 E2E 8 项、手动交接 E2E 6 项通过；合并交接历史、普通懒加载历史、导入历史和重开会话合计另外 12 项通过。此前普通历史的偶发失败本次未复现。
 - 初次回归发现的关闭时异步额度检查、手动摘要接口同实例校验、成员旧会话重复计数、手机实例名称隐藏问题已修复；旧手动交接测试更新为第二阶段的合并会话输入框语义。
 - 仅在独立 worktree 分支验证，不重启现有 hub、不推送。测试 daemon 由测试 harness 保存 PID 并清理。
+
+## 界面复验调整
+
+接手目标行改成无边框的拖动手柄与更多菜单。桌面拖动手柄排序；手机、键盘通过更多菜单上移、下移或移除，实例名称保持可区分。
+
+hub 发起的摘要轮次在合并视图和单段视图中统一显示为可展开的交接分隔行。历史快照、重连和实时流只传摘要状态，展开时通过 `GET /api/threads/:id/history/summary?turn=…` 读取提示词和摘要；摘要超过 16000 字符时继续分页。错误和待决定事项保持直接可见。接口补充鉴权、参数和读取测试，历史投影及时间线补充折叠测试。
+
+重拍 `countdown-desktop-light.png`（含倒计时与取消按钮）、`model-phone-dark.png`（等待侧栏收起及正文归位），新增 `lead-notification-desktop-dark.png`（主控收到成员交接通知）。设置弹窗与会话设置的桌面/手机亮暗截图一并更新。

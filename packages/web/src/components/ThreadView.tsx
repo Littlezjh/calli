@@ -42,7 +42,7 @@ import {
 } from '../timeline';
 import { Lightbox } from './Lightbox';
 import { PlanCopyButton, PlanDownloadButton, PlanReader } from './PlanReader';
-import { ActivityIcon, IconAgents, IconCheck, IconChevron, IconClose, IconCompact, IconCopy, IconFile, IconFork, IconHand, IconList, IconQuote, IconWorktree } from './icons';
+import { ActivityIcon, IconAgents, IconCheck, IconChevron, IconClose, IconCompact, IconCopy, IconFile, IconFork, IconHand, IconHandover, IconList, IconQuote, IconWorktree } from './icons';
 import { t } from '../i18n';
 
 interface Props {
@@ -223,6 +223,7 @@ export function ThreadView({ chain = false, observeOlder = true, beforeItems, ol
   const renderItems = (list: Item[]) =>
     list.map((item) => {
       switch (item.kind) {
+        case 'handover-summary': return <HandoverSummary key={item.key} item={item} />;
         case 'model-switch': return <div key={item.key} className="context-compaction handover-divider">{t('auto.switched', item.model, item.previous, t(item.reason === 'exhausted' ? 'auto.exhausted' : 'auto.near'))}</div>;
         case 'user': {
           if (item.handoverCollapsed) return null;
@@ -383,6 +384,37 @@ export function ThreadView({ chain = false, observeOlder = true, beforeItems, ol
 }
 
 const HistoryContext = createContext<HistoryClient | undefined>(undefined);
+
+function HandoverSummary({ item }: { item: Extract<Item, { kind: 'handover-summary' }> }) {
+  const client = useContext(HistoryContext);
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState<Awaited<ReturnType<Api['historySummary']>> | null>(null);
+  const [error, setError] = useState('');
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    if (!open || !client) return;
+    let alive = true;
+    setError('');
+    const timer = setTimeout(() => {
+      void client.api.historySummary(client.threadId, item.turnId).then(v => { if (alive) setValue(v); }).catch(e => { if (alive) setError(String(e)); });
+    }, 100);
+    return () => { alive = false; clearTimeout(timer); };
+  }, [open, client, item.turnId, item.version, retry]);
+  return <div className="handover-summary-turn" data-turn={item.turnId}>
+    <button className="context-compaction handover-divider" aria-expanded={open} onClick={() => setOpen(!open)}>
+      <IconHandover size={16} /><span>{t(item.done ? 'auto.summaryDone' : 'auto.summaryRunning', item.target)}</span><IconChevron size={14} />
+    </button>
+    {open && <div className="handover-summary-details">
+      {error ? <p role="alert">{error} <button className="text-btn" onClick={() => setRetry(v => v + 1)}>{t('common.retry')}</button></p> : !value ? <p role="status">{t('common.loading')}</p> : <>
+        <small>{t('auto.summaryPrompt')}</small><pre>{value.prompt}</pre>
+        <small>{t('auto.summaryAnswer')}</small><pre>{value.text || t('auto.summaryEmpty')}</pre>
+        {value.nextOffset !== null && <button className="text-btn" onClick={() => {
+          void client?.api.historySummary(client.threadId, item.turnId, value.nextOffset!, value.snapshotSeq).then(v => setValue({ ...v, text: value.text + v.text })).catch(e => setError(String(e)));
+        }}>{t('view.loadOlder')}</button>}
+      </>}
+    </div>}
+  </div>;
+}
 
 /** Refresh open live details at most four times a second; closed details perform no I/O. */
 function useHistoryResource<T extends HistoryDetail | HistoryWork>(kind: ResourceKind, ref: DetailRef | undefined, enabled: boolean, path?: string) {

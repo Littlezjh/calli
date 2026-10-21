@@ -1577,7 +1577,7 @@ export class ThreadManager {
           ...(promptText !== rawText ? { displayText: delivery?.displayText ?? rawText.split('\n\n[指定协作对象]')[0] } : {}),
           ...(stored.length ? { images: stored } : {}),
           ...(storedVideos.length ? { videos: storedVideos } : {}),
-          ...(typeof input.handover === 'string' && input.handover ? { handover: input.handover } : {}),
+          ...(typeof input.handover === 'string' && input.handover ? { handover: input.handover, handoverLabel: this.adapters.get(input.handover)?.label ?? input.handover } : {}),
           ...(input.scheduled === true ? { scheduled: true } : {}),
         });
       });

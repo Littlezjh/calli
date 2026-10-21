@@ -741,6 +741,7 @@ export function createHttpServer(deps: HttpDeps): Server {
         if (parts[4] === 'handover') return sendJson(res, 200, history.handoverInfo(threadId, url.searchParams.get('text') === '1'));
         const turn = url.searchParams.get('turn');
         if (!turn) throw new HttpError(400, 'turn is required');
+        if (parts[4] === 'summary') return sendJson(res, 200, history.summaryText(threadId, turn, positive(url.searchParams.get('cursor'), true), positive(url.searchParams.get('version'), true)));
         const id = positive(url.searchParams.get('id'))!;
         const cursor = positive(url.searchParams.get('cursor'), true);
         const version = positive(url.searchParams.get('version'), true);
@@ -782,7 +783,7 @@ export function createHttpServer(deps: HttpDeps): Server {
           const off = manager.subscribe(ev => {
             if (ev.threadId !== threadId) return;
             if (buffer) buffer.push(ev);
-            else writeEvent(res, url.searchParams.get('chain') === '1' ? history.handoverEvent(ev) : ev);
+            else writeEvent(res, url.searchParams.get('chain') === '1' ? history.handoverEvent(history.summaryEvent(ev)) : history.summaryEvent(ev));
           });
           res.once('close', off);
           try {
@@ -790,7 +791,7 @@ export function createHttpServer(deps: HttpDeps): Server {
             if (res.destroyed) return off();
             openSse(res);
             writeEvent(res, { threadId, turnId: null, type: 'history.reset', seq: backlog.snapshotSeq, ts: new Date().toISOString(), data: backlog });
-            for (const ev of buffer) if (ev.seq > backlog.snapshotSeq) writeEvent(res, url.searchParams.get('chain') === '1' ? history.handoverEvent(ev) : ev);
+            for (const ev of buffer) if (ev.seq > backlog.snapshotSeq) writeEvent(res, url.searchParams.get('chain') === '1' ? history.handoverEvent(history.summaryEvent(ev)) : history.summaryEvent(ev));
             buffer = null;
             return finishStream(req, res, off);
           } catch (err) { off(); throw err; }

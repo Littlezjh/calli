@@ -9986,19 +9986,22 @@ button.trace-step-head:hover { background: var(--hover); }
 .auto-order-head strong { flex-shrink: 0; }
 .auto-order-head span { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; font-size: 12px; }
 .auto-order-edit { padding: 0 0 16px; }
-.auto-order-edit ol { margin: 0 0 12px; padding-left: 24px; }
-.auto-order-edit li { padding: 8px 0; color: var(--muted); }
-.auto-order-edit li > span { color: var(--text); overflow-wrap: anywhere; }
-.auto-order-actions { display: inline-flex; gap: 4px; margin-left: 8px; }
-.auto-order-actions button { font-size: 12px; padding: 4px 6px; }
+.auto-order-edit ol { margin: 0 0 12px; padding: 0; list-style: none; }
+.auto-order-edit li { display: flex; align-items: center; gap: 8px; padding: 4px 0; color: var(--muted); }
+.auto-order-name { flex: 1; min-width: 0; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.auto-order-grip { display: flex; padding: 8px 4px; cursor: grab; }
+.auto-order-grip:active { cursor: grabbing; }
+.auto-order-menu { z-index: 71; }
+.auto-order-more { width: 32px; height: 32px; border: 0; color: var(--muted); background: none; }
+.handover-summary-details { padding: 8px 16px; border-left: 1px solid var(--border); }
+.handover-summary-details pre { white-space: pre-wrap; overflow-wrap: anywhere; font-family: inherit; font-size: 13px; color: var(--muted); }
 .auto-add { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
-.auto-notice { display: flex; align-items: center; justify-content: space-between; gap: 16px; max-width: 800px; margin: 12px auto; padding: 12px 20px; background: var(--surface-2); border: 1px solid var(--border); font-size: 13px; }
+.auto-notice { position: sticky; top: 8px; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 16px; max-width: 800px; margin: 12px auto; padding: 12px 20px; background: var(--surface-2); border: 1px solid var(--border); font-size: 13px; }
 .auto-notice small { display: block; color: var(--muted); }
 .auto-notice button { flex-shrink: 0; }
 .auto-member-mark { color: var(--muted); font-size: 11px; margin-left: 6px; }
 @media (max-width: 600px) {
   .auto-order-head { gap: 8px; }
-  .auto-order-actions { display: flex; margin: 6px 0 0; }
   .auto-notice { margin: 8px 12px; padding: 10px 12px; align-items: flex-start; }
 }
 

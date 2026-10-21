@@ -23,6 +23,7 @@ const configure = (targets, enabled = true) => request('/api/handover-settings',
 const select = async (page, title, mobile = false) => {
   if (mobile) await page.locator('.menu-btn').click();
   await page.locator('.sidebar .thread-item').filter({ has: page.locator('.thread-title', { hasText: new RegExp(`^${title}$`) }) }).click();
+  if (mobile) await page.waitForFunction(() => getComputedStyle(document.querySelector('.sidebar')).visibility === 'hidden' && Math.abs(document.querySelector('.main').getBoundingClientRect().x) < 1, null, { timeout: 5000 });
 };
 const shots = join(repoRoot, 'e2e', 'shots', 'auto-handover');
 before(async () => {
@@ -49,11 +50,41 @@ test('near quota refreshes at turn end, writes summary, counts down, then hands 
     const events = await request(`/api/threads/${source.id}/events`);
     assert.ok(events.some(e => e.type === 'turn.started' && e.data.handover));
     assert.equal(events.filter(e => e.type === 'turn.started').length, 2);
-    await page.screenshot({ path: join(shots, 'countdown-desktop-light.png') });
+    const marker = page.locator('.handover-summary-turn');
+    await marker.getByRole('button', { name: '交接摘要 · 交给 Agent 2', exact: true }).waitFor();
+    assert.equal(await marker.locator('.handover-summary-details').count(), 0);
+    assert.equal(await page.locator('.row.user').filter({ hasText: '请写一份交接摘要' }).count(), 0);
+    await page.locator('.auto-notice').scrollIntoViewIfNeeded();
+    await page.locator('.auto-notice').getByRole('button', { name: '取消这次交接' }).waitFor();
+    await page.screenshot({ path: join(shots, 'countdown-desktop-light.png'), animations: 'disabled' });
+    // Lazy history has neither prompt nor answer, in both merged and single-segment views.
+    const summaryTurn = events.find(e => e.type === 'turn.started' && e.data.handover).turnId;
+    for (const suffix of ['', '?chain=1']) {
+      const history = await request(`/api/threads/${source.id}/history${suffix}`);
+      const summary = history.events.filter(e => e.turnId === summaryTurn);
+      assert.equal(summary.length, 1); assert.equal(summary[0].type, 'history.handover');
+      assert.ok(!JSON.stringify(summary).includes('请写一份交接摘要'));
+    }
+    let detailRequests = 0;
+    page.on('request', req => { if (req.url().includes('/history/summary?')) detailRequests++; });
+    assert.equal(detailRequests, 0);
+    await marker.getByRole('button').click();
+    await marker.locator('pre').first().filter({ hasText: '请写一份交接摘要' }).waitFor();
+    assert.equal(detailRequests, 1);
+    await marker.getByRole('button').first().click();
     const next = await wait(async () => (await request('/api/threads')).find(t => t.handover?.sourceId === source.id));
     await idle(next.id);
     const starts = (await request(`/api/threads/${next.id}/events`)).filter(e => e.type === 'turn.started');
     assert.match(starts[0].data.text, /请写一份交接摘要/); assert.equal(starts[1].data.text, 'next queued step');
+    await page.locator('.handover-trail button').click();
+    await page.getByRole('menuitem', { name: '只看这一段', exact: true }).click();
+    const singleMarker = page.locator('.handover-summary-turn');
+    await singleMarker.getByRole('button', { name: '交接摘要 · 交给 Agent 2', exact: true }).waitFor();
+    assert.equal(await singleMarker.locator('.handover-summary-details').count(), 0);
+    assert.equal(await page.locator('.row.user').filter({ hasText: '请写一份交接摘要' }).count(), 0);
+    await singleMarker.getByRole('button').click();
+    await singleMarker.locator('pre').first().filter({ hasText: '请写一份交接摘要' }).waitFor();
+
   } finally { await context.close(); }
 });
 
@@ -72,7 +103,8 @@ test('same-instance switch continues the same native conversation and shows a du
   try {
     await openUi(page, daemon); await select(page, source.title, true);
     await page.locator('.handover-divider').filter({ hasText: '换用 claude-sonnet' }).waitFor();
-    await page.screenshot({ path: join(shots, 'model-phone-dark.png') });
+    await page.locator('.handover-divider').filter({ hasText: '换用 claude-sonnet' }).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(shots, 'model-phone-dark.png'), animations: 'disabled' });
     await page.reload(); await select(page, source.title, true);
     await page.locator('.handover-divider').filter({ hasText: '换用 claude-sonnet' }).waitFor();
   } finally { await context.close(); }
@@ -114,9 +146,20 @@ for (const mobile of [false, true]) for (const theme of ['light', 'dark']) {
       const dialog = page.getByRole('dialog', { name: '自动交接', exact: true });
       await dialog.locator('.auto-order-head').filter({ hasText: 'Agent 1' }).click();
       await dialog.getByRole('button', { name: '添加接手目标' }).waitFor();
-      if (mobile) await dialog.getByRole('button', { name: '下移', exact: true }).first().click();
-      else await dialog.locator('li').first().dragTo(dialog.locator('li').nth(1));
+      if (mobile) {
+        await dialog.locator('li').first().getByRole('button', { name: /^调整/ }).click();
+        await page.getByRole('menuitem', { name: '下移', exact: true }).waitFor();
+        if (theme === 'light') await page.screenshot({ path: join(shots, 'settings-phone-light-actions.png'), animations: 'disabled' });
+        await page.getByRole('menuitem', { name: '下移', exact: true }).click();
+      } else await dialog.locator('li').first().locator('.auto-order-grip').dragTo(dialog.locator('li').nth(1));
       assert.match(await dialog.locator('li').first().innerText(), /claude-sonnet/);
+      if (!mobile) {
+        await dialog.locator('li').first().getByRole('button', { name: /^调整/ }).click();
+        const remove = page.getByRole('menuitem', { name: '移除', exact: true });
+        await remove.click({ trial: true });
+        await page.keyboard.press('Escape');
+        await remove.waitFor({ state: 'detached' });
+      }
       const box = await dialog.boundingBox(), viewport = page.viewportSize();
       assert.ok(box.x >= 0 && box.y >= 0 && box.x + box.width <= viewport.width + 1 && box.y + box.height <= viewport.height + 1);
       assert.ok(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth + 1));
@@ -167,6 +210,11 @@ test('collaboration default and overrides; lead CLI sends to the replacement mem
   const page = await context.newPage();
   try {
     await openUi(page, daemon); await select(page, root.title);
+    const notification = page.locator('.delivered').filter({ hasText: '成员 worker 已从 agy 交接给 agy2' }).first();
+    await notification.waitFor(); await notification.scrollIntoViewIfNeeded();
+    await notification.getByRole('button').click();
+    await notification.locator('.delivered-body').waitFor();
+    await page.screenshot({ path: join(shots, 'lead-notification-desktop-dark.png'), animations: 'disabled' });
     await page.getByRole('button', { name: '查看智能体', exact: true }).click();
     const panel = page.getByRole('region', { name: '智能体面板' });
     await panel.locator('.auto-member-mark').waitFor();
