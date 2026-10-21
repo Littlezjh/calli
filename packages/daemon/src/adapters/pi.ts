@@ -749,39 +749,45 @@ export class PiRpcAdapter implements AgentAdapter {
     if (refresh) this.modelCache = null;
     return this.cached(
       this.modelCache,
-      () =>
-        PiSession.probe(
+      async () => {
+        // `pi mcp list` connects every MCP server and can take as long as the probe deadline,
+        // so it runs alongside the probe instead of inside it.
+        const mcpToolsPending = this.mcpTools();
+        const { list, current, vision } = await PiSession.probe(
           this.command,
           process.cwd(),
           'pi',
           this.env,
           async (s) => {
-          const [list, state, commands] = await Promise.all([
-            s.request('get_available_models', {}),
-            s.request('get_state', {}),
-            s.request('get_commands', {}).catch(() => null),
-          ]);
-          const current = state?.model ? `${state.model.provider}/${state.model.id}` : null;
-          const vision = (commands?.commands ?? []).some(
-            (c: any) => String(c.name).replace(/^\//, '') === PI_VISION_EXTENSION_COMMAND && c.source === 'extension',
-          );
-          // The vision MCP is the fallback: describe_image goes through pi's own login, so prefer it.
-          const mcpTools = await this.mcpTools();
-          const visionMcp = !vision && mcpTools.some((t) => t.startsWith(`mcp__${PI_VISION_MCP_SERVER}__`));
-          return (list?.models ?? []).map((m: any): ModelOption => {
-            const id = `${m.provider}/${m.id}`;
-            const images = Array.isArray(m.input) ? m.input.includes('image') : undefined;
-            return {
-              id,
-              label: m.name ?? m.id,
-              description: m.provider,
-              efforts: piEfforts(m),
-              images,
-              ...(images === false && (vision || visionMcp) ? { imagesVia: vision ? PI_VISION_TOOL : PI_MCP_VISION_TOOL } : {}),
-              ...(id === current ? { isDefault: true } : {}),
-            };
-          });
-        }),
+            const [list, state, commands] = await Promise.all([
+              s.request('get_available_models', {}),
+              s.request('get_state', {}),
+              s.request('get_commands', {}).catch(() => null),
+            ]);
+            const current = state?.model ? `${state.model.provider}/${state.model.id}` : null;
+            const vision = (commands?.commands ?? []).some(
+              (c: any) => String(c.name).replace(/^\//, '') === PI_VISION_EXTENSION_COMMAND && c.source === 'extension',
+            );
+            return { list, current, vision };
+          },
+        );
+        // The vision MCP is the fallback: describe_image goes through pi's own login, so prefer it.
+        const mcpTools = vision ? [] : await mcpToolsPending;
+        const visionMcp = !vision && mcpTools.some((t) => t.startsWith(`mcp__${PI_VISION_MCP_SERVER}__`));
+        return (list?.models ?? []).map((m: any): ModelOption => {
+          const id = `${m.provider}/${m.id}`;
+          const images = Array.isArray(m.input) ? m.input.includes('image') : undefined;
+          return {
+            id,
+            label: m.name ?? m.id,
+            description: m.provider,
+            efforts: piEfforts(m),
+            images,
+            ...(images === false && (vision || visionMcp) ? { imagesVia: vision ? PI_VISION_TOOL : PI_MCP_VISION_TOOL } : {}),
+            ...(id === current ? { isDefault: true } : {}),
+          };
+        });
+      },
       (c) => {
         this.modelCache = c;
       },

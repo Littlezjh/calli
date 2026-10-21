@@ -391,7 +391,11 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const [settingsAt, setSettingsAt] = useState<{ x: number; y: number } | null>(null);
   const [appearance, setAppearance, theme] = useAppearance(showcase ? 'limi.showcase.appearance' : undefined, showcase ? { mode: showcase.theme, palette: 'paper' } : undefined);
   const [appearanceOpen, setAppearanceOpen] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // An error belongs to the thread (or new-thread page) it happened in, so other threads stay clean.
+  // The closure keeps the thread that was open when the failing request started.
+  const [errorState, setErrorState] = useState<{ text: string; thread: string | null } | null>(null);
+  const setError = (text: string | null) => setErrorState(text ? { text, thread: selectedId } : null);
+  const error = errorState && errorState.thread === selectedId ? errorState.text : null;
   const [toast, setToast] = useState<ToastState | null>(null);
   const [showDirPicker, setShowDirPicker] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
