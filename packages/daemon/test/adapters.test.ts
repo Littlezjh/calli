@@ -186,6 +186,16 @@ test('PiRpcAdapter: model error ends the turn as error', async () => {
 });
 
 test('PiRpcAdapter: abort ends a slow turn as cancelled', async () => {
+test('PiRpcAdapter: a model error that pi retried successfully does not fail the turn', async () => {
+  const adapter = new PiRpcAdapter([process.execPath, fakePi]);
+  const session = await adapter.start({ cwd: here });
+  const { hooks } = collectingHooks();
+  const result = await session.prompt(turn('please retry'), hooks);
+  assert.equal(result.stopReason, 'end_turn');
+  assert.equal(result.error, undefined);
+  await session.close();
+});
+
   const adapter = new PiRpcAdapter([process.execPath, fakePi]);
   const session = await adapter.start({ cwd: here });
   const { hooks } = collectingHooks();

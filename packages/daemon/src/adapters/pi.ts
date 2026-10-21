@@ -506,8 +506,9 @@ class PiSession implements AgentSession {
       this.firstTokenMs = undefined;
     }
 
-    if (record.type === 'message_end' && record.message?.role === 'assistant' && record.message?.stopReason === 'error') {
-      if (this.turn) this.turn.error = record.message.errorMessage ?? 'model error';
+    if (record.type === 'message_end' && record.message?.role === 'assistant' && this.turn) {
+      // pi retries a failed model call on its own; only the last call's outcome is the turn's.
+      this.turn.error = record.message.stopReason === 'error' ? record.message.errorMessage ?? 'model error' : undefined;
     }
 
     if (record.type === 'agent_settled') {

@@ -378,3 +378,12 @@ rl.on('line', (line) => {
       return reply(null, false, `unknown command ${cmd.type}`);
   }
 });
+      if (cmd.message.includes('retry')) {
+        // pi's own retry: a failed call, then one that succeeds.
+        out({ type: 'message_end', message: { role: 'assistant', stopReason: 'error', errorMessage: 'Request timed out.' } });
+        out({ type: 'auto_retry_start', attempt: 1, maxAttempts: 3, delayMs: 0, errorMessage: 'Request timed out.' });
+        out({ type: 'message_end', message: { role: 'assistant', stopReason: 'stop' } });
+        out({ type: 'auto_retry_end', success: true, attempt: 1 });
+        running = false;
+        return out({ type: 'agent_settled', aborted: false });
+      }
