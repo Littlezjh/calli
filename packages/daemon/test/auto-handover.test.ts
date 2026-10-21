@@ -83,7 +83,7 @@ test('fresh near-quota -> agent summary -> countdown -> successor; queued work f
     assert.ok(events.find(e => e.type === 'turn.started' && e.data.handover));
     await h.done();
     const next = h.manager.listThreads().find(t => t.handover?.sourceId === h.thread.id)!;
-    assert.ok(next); await h.done(next.id);
+    assert.ok(next); assert.equal(next.handover?.mode, 'continue'); await h.done(next.id);
     assert.equal(next.agent, 'agy2'); assert.equal(next.model, 'gemini-pro');
     const starts = h.store.listEvents(next.id, 0, -1).filter(e => e.type === 'turn.started');
     assert.match(String(starts[0].data.text), /请写一份交接摘要/);

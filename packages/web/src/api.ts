@@ -169,7 +169,7 @@ export interface Thread {
   sectionId: string | null;
   /** The thread this one was forked from, if it is a fork. */
   forkedFrom: string | null;
-  handover?: { sourceId: string; title: string; agent: string } | null;
+  handover?: { sourceId: string; title: string; agent: string; mode?: 'continue' | 'branch' } | null;
   /**
    * The git worktree the thread runs in, when a fork was given one. `of` is the directory it would
    * be in otherwise, which is the project it is listed under; `ofReal` is that with symlinks
@@ -1090,8 +1090,8 @@ export class Api {
   cancelAutoHandover(id: string): Promise<AutoHandoverView> { return this.request('DELETE', `/api/threads/${id}/auto-handover`); }
   setCollaborationHandover(id: string, enabled: boolean): Promise<Coordination> { return this.request('PATCH', `/api/threads/${id}/collaboration-handover`, { enabled }); }
 
-  createHandoverThread(threadId: string, agent: string, model?: string): Promise<Thread> {
-    return this.request('POST', `/api/threads/${threadId}/handover-thread`, { agent, model });
+  createHandoverThread(threadId: string, agent: string, model?: string, mode?: 'continue' | 'branch'): Promise<Thread> {
+    return this.request('POST', `/api/threads/${threadId}/handover-thread`, { agent, model, mode });
   }
 
   /** Asks the thread's agent to write a handover summary for another agent, in its own session. */

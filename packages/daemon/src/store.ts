@@ -1,3 +1,4 @@
+import { effectiveHandoverMode, type HandoverLink } from './handover-mode.js';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -31,7 +32,7 @@ export interface ThreadRecord {
   sectionId: string | null;
   /** The thread this one was forked from. Kept even if that thread is later deleted. */
   forkedFrom: string | null;
-  handover?: { sourceId: string; title: string; agent: string } | null;
+  handover?: HandoverLink | null;
   /** Set when the thread runs in a git worktree the hub made for it, or shares one with the thread it was forked from. */
   worktree: ThreadWorktree | null;
   /** A turn finished and nobody has looked at the result yet. */
@@ -649,6 +650,10 @@ export class Store {
         t.speed ?? null,
       );
     return this.getThread(t.id)!;
+  }
+
+  handoverMode(thread: ThreadRecord) {
+    return thread.handover ? effectiveHandoverMode(this.db, thread.handover, thread.createdAt) : null;
   }
 
   getThread(id: string): ThreadRecord | null {

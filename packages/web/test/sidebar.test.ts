@@ -157,8 +157,8 @@ test('threads in no project sit together after the projects, unless pinned or fi
 
 test('handovers group by explicit ancestry and open the latest successor even when the original is active', () => {
   const a = thread('origin', { updatedAt: '2030-01-01' });
-  const b = thread('successor', { handover: { sourceId: a.id, title: a.title, agent: a.agent } });
-  const c = thread('third', { handover: { sourceId: b.id, title: b.title, agent: b.agent }, createdAt: '2027-01-01' });
+  const b = thread('successor', { handover: { sourceId: a.id, title: a.title, agent: a.agent, mode: 'continue' } });
+  const c = thread('third', { handover: { sourceId: b.id, title: b.title, agent: b.agent, mode: 'continue' }, createdAt: '2027-01-01' });
   const unrelated = thread('same-title', { title: a.title });
   const groups = handoverGroups([a, unrelated, c, b]);
   assert.equal(groups.length, 2);
@@ -172,8 +172,8 @@ test('forks stay separate, and corrupt handover cycles terminate', () => {
   const a = thread('a');
   const b = thread('b', { forkedFrom: a.id });
   assert.equal(handoverGroups([a, b]).length, 2);
-  a.handover = { sourceId: b.id, title: b.title, agent: b.agent };
-  b.handover = { sourceId: a.id, title: a.title, agent: a.agent };
+  a.handover = { sourceId: b.id, title: b.title, agent: b.agent, mode: 'continue' };
+  b.handover = { sourceId: a.id, title: a.title, agent: a.agent, mode: 'continue' };
   assert.equal(handoverGroups([a, b]).length, 1);
 });
 
@@ -216,4 +216,11 @@ test('the sidebar dot, the activity order and threadAttention agree', () => {
   const priority = buildActivity(cases, '', new Date('2026-01-02T00:00:00Z'), null).groups.find((g) => g.key === 'priority')!;
   assert.deepEqual(priority.threads.map((x) => x.id), ['w', 'e', 'u', 'r']);
   assert.deepEqual(cases.map((c) => threadAttention(c, null)?.kind ?? null), ['approval', 'error', 'unread', null, null]);
+});
+
+
+test('branch handovers remain separate sidebar rows', () => {
+  const a = thread('source');
+  const b = thread('branch', { handover: { sourceId: a.id, title: a.title, agent: a.agent, mode: 'branch' } });
+  assert.equal(handoverGroups([a, b]).length, 2);
 });

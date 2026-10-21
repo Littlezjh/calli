@@ -42,7 +42,7 @@ export function MergedHistory({ api, thread, merged, ready, agentLabel, onBrowse
     const oldest = segments[0];
     const target = oldest?.thread ?? thread;
     const same = Boolean(oldest?.page.hasOlder);
-    const id = same ? target.id : target.handover?.sourceId;
+    const id = same ? target.id : (target.handover?.mode === 'continue' ? target.handover.sourceId : undefined);
     if (!id) return;
     // Broken/cyclic metadata must not repeatedly insert the same conversation.
     if (!same && [thread.id, ...segments.map(s => s.thread.id)].includes(id)) { setError('missing'); return; }
@@ -68,7 +68,7 @@ export function MergedHistory({ api, thread, merged, ready, agentLabel, onBrowse
   if (!merged) return <ThreadView {...current} />;
   const localOlder = segments.length ? segments[0].page.hasOlder : current.hasOlder;
   const oldest = segments[0]?.thread ?? thread;
-  const more = Boolean(localOlder || oldest.handover);
+  const more = Boolean(localOlder || oldest.handover?.mode === 'continue');
   const olderProps = { hasOlder: ready && more, loadingOlder: loading || Boolean(current.loadingOlder), onLoadOlder: load,
     olderLabel: localOlder ? undefined : t('handover.chain.loadPrevious'),
     chain: true, observeOlder: true, olderError: error ? t(error === 'missing' ? 'handover.chain.missing' : 'handover.chain.failed') : undefined };
@@ -80,7 +80,7 @@ export function MergedHistory({ api, thread, merged, ready, agentLabel, onBrowse
       older={i === 0 ? olderProps : { observeOlder: false, chain: true }} prefix={i === 0 ? beginning : null} />)}
     <div data-history-thread={thread.id} className="history-segment current-segment">
       <ThreadView {...current} {...(segments.length ? { hasOlder: false, observeOlder: false, chain: true } : olderProps)}
-        beforeItems={<>{!segments.length && beginning}{ready && !current.hasOlder && thread.handover && <HandoverBoundary api={api} thread={thread} agentLabel={agentLabel} turnId={current.items.find(item => item.kind === 'user' && item.handoverCollapsed)?.turnId ?? undefined} />}</>}
+        beforeItems={<>{!segments.length && beginning}{ready && !current.hasOlder && thread.handover?.mode === 'continue' && <HandoverBoundary api={api} thread={thread} agentLabel={agentLabel} turnId={current.items.find(item => item.kind === 'user' && item.handoverCollapsed)?.turnId ?? undefined} />}</>}
       />
     </div>
   </div>;
@@ -99,7 +99,7 @@ function EarlierSegment({ segment, api, agentLabel, fork, onFork, onOpenFile, on
   return <div data-history-thread={thread.id} className="history-segment">
     <ThreadView historyApi={api} historyThreadId={thread.id} items={timeline.items} roots={roots} loadImage={loadImage} loadFile={loadFile}
       onOpenFile={onOpenFile} onPreview={onPreview} onFork={fork.enabled ? onFork : undefined} forkAnyTurn={fork.any} {...older}
-      beforeItems={<>{prefix}{!page.hasOlder && thread.handover && <HandoverBoundary api={api} thread={thread} agentLabel={agentLabel} turnId={page.events.find(event => event.type === 'turn.started')?.turnId ?? undefined} />}
+      beforeItems={<>{prefix}{!page.hasOlder && thread.handover?.mode === 'continue' && <HandoverBoundary api={api} thread={thread} agentLabel={agentLabel} turnId={page.events.find(event => event.type === 'turn.started')?.turnId ?? undefined} />}
         {!timeline.items.length && <div className="row chain-beginning">{t('handover.chain.empty')}</div>}</>} />
   </div>;
 }

@@ -106,7 +106,7 @@ function runTurn(text) {
     result({ status: 'SUCCESS', response: reply });
     return;
   }
-  const body = text.split(/<limi-(?:coordination|team)>/)[0].trim();
+  const body = text.split(/<limi-(?:coordination|team|tools)>/)[0].trim();
   if (model !== 'claude-sonnet' && (body === 'quota-exhausted' || body.startsWith('[协作消息') && body.endsWith('quota-exhausted'))) return result({ status: 'ERROR', error: 'You have exhausted your quota on this model.' });
   if ((body === 'quota-near' || body.startsWith('[协作消息') && body.endsWith('quota-near')) && process.env.FAKE_HANDOVER_QUOTA) writeFileSync(process.env.FAKE_HANDOVER_QUOTA, JSON.stringify({ 'Gemini Models': 95, 'Claude Models': 20 }));
   if (text.startsWith('请写一份交接摘要') && process.env.FAKE_HANDOVER_SUMMARY_FAIL) return result({ status: 'ERROR', error: 'summary failed' });
