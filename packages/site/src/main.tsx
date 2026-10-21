@@ -5,7 +5,7 @@ import { useAppearance } from '../../web/src/hooks';
 import { MODES } from '../../web/src/appearance';
 import { copyText } from '../../web/src/clipboard';
 import { Popover } from '../../web/src/components/Popover';
-import { AgentMark, IconAgents, IconArrowRight, IconCheck, IconComputer, IconCopy, IconGlobe, IconPalette, IconRestore, IconBoard, IconSparkle } from '../../web/src/components/icons';
+import { AgentMark, IconAgents, IconArrowRight, IconCheck, IconComputer, IconCopy, IconGlobe, IconPalette, IconRestore, IconBoard, IconSparkle, IconHandover, IconShield } from '../../web/src/components/icons';
 import { ANTIGRAVITY_ICON, CLAUDE_ICON, CODEX_ICON, PI_ICON, TRAE_ICON, ZCODE_ICON } from '../../daemon/src/adapters/icons';
 import { EXAMPLES, DEFAULT_EXAMPLE } from './scenarios';
 import '../../web/src/styles.css';
@@ -145,6 +145,20 @@ function Home() {
           ].map(({ Icon, title, description, detail }) => <article key={title}>
             <div className="site-feature-icon"><Icon size={24} /></div><h3>{title}</h3><p>{description}</p>
             <p className="site-feature-footnote">{detail}</p>
+          </article>)}
+        </div>
+      </section>
+
+      <section className="site-features site-handover-feature site-wrap" id="handover" aria-labelledby="handover-title">
+        <div className="site-section-head"><div><p className="site-eyebrow">{copy.handover}</p><h2 id="handover-title">{copy.handoverTitle}</h2></div></div>
+        <p className="site-section-intro">{copy.handoverDescription}</p>
+        <div className="site-collaboration-actions"><button className="site-button" onClick={() => tryExample('handover')}>{copy.handoverTry}<IconArrowRight size={16} /></button><p>{copy.handoverModelNote}</p></div>
+        <div className="site-feature-grid">
+          {[
+            { Icon: IconHandover, title: copy.handoverAccounts, description: copy.handoverAccountsDescription },
+            { Icon: IconShield, title: copy.handoverMinimal, description: copy.handoverMinimalDescription },
+          ].map(({ Icon, title, description }) => <article key={title}>
+            <div className="site-feature-icon"><Icon size={24} /></div><h3>{title}</h3><p>{description}</p>
           </article>)}
         </div>
       </section>

@@ -56,3 +56,18 @@ export function memoryExamples(): { sources: MemorySource[]; files: MemoryFile[]
     documents: entries.map(({ id, text }) => ({ id, text, modifiedAt: at, truncated: false })),
   };
 }
+
+/** These accounts and sessions exist only in the website's memory. */
+export function handoverExample(): { source: Thread; successor: Thread } {
+  const at = new Date().toISOString();
+  const source: Thread = {
+    id: 'sample-handover-source', agent: 'claude', title: 'handover', cwd: '/sample/project',
+    agentSessionId: null, status: 'idle', pinned: false, permissionMode: 'full_access', model: 'Opus', effort: null,
+    terminalActivity: false, waiting: false, resumeCommand: '', cwdReal: '/sample/project',
+    archivedAt: null, sectionId: null, forkedFrom: null, unread: false, preview: null, schedule: null,
+    doneAt: null, createdAt: at, updatedAt: at, queued: [],
+    autoHandover: { enabled: true, source: 'thread', override: true },
+  };
+  return { source, successor: { ...source, id: 'sample-handover-successor', agent: 'sample-claude-2',
+    handover: { sourceId: source.id, agent: source.agent, title: source.title } } };
+}

@@ -9,6 +9,7 @@ export const SCENARIOS = [
 
 export const EXAMPLES = [
   { ...SCENARIOS[3], route: '' },
+  { id: 'handover', threadId: null, label: copy.handover, hint: copy.handoverHint, route: '#/handover' },
   { id: 'board', threadId: null, label: copy.boardExample, hint: copy.boardHint, route: '#/board' },
   { id: 'memory', threadId: null, label: copy.memoryExample, hint: copy.memoryHint, route: '#/memory' },
   ...SCENARIOS.slice(0, 3).map(s => ({ ...s, route: '' })),

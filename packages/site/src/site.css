@@ -213,3 +213,5 @@ html[data-page='site'], [data-page='site'] body { height: auto; min-height: 100%
   .site-demo-tabs { justify-content: flex-start; }
   .site-demo-tabs > button { padding: 0 12px; }
 }
+
+.site-handover-feature { padding-top: 24px; }

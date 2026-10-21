@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ShowcaseApi } from '../src/ShowcaseApi';
+import { ShowcaseApi, HandoverShowcaseApi } from '../src/ShowcaseApi';
 import { SCENARIOS } from '../src/scenarios';
 import { DemoApi, DemoError } from '../../web/src/demo/DemoApi';
 import { buildTimeline, type StoredEvent } from '../../web/src/timeline';
@@ -214,4 +214,75 @@ test('board acceptance and memory reads use isolated sample data, without networ
     await assert.rejects(api.memoryList('memory', 'unknown'), DemoError);
     assert.deepEqual(await new DemoApi().coordination('demo-dark-mode'), null);
   } finally { globalThis.fetch = fetch; api.dispose(); other.dispose(); }
+});
+
+function handoverSetup() {
+  const tasks = new Set<() => void>();
+  const api = new HandoverShowcaseApi(run => { tasks.add(run); return () => { tasks.delete(run); }; });
+  const tick = () => { const task = tasks.values().next().value!; assert.ok(task); tasks.delete(task); task(); };
+  return { api, tasks, tick };
+}
+
+for (const branch of ['account', 'model'] as const) test(`handover ${branch} finishes a turn, waits, then continues locally`, async () => {
+  const { api, tick, tasks } = handoverSetup();
+  const fetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error('No network allowed'); };
+  try {
+    api.reset(branch); api.start();
+    const sourceId = api.snapshot().source.id;
+    assert.equal(api.snapshot().phase, 'finishing');
+    tick();
+    assert.ok(api.snapshot().sourceEvents.some(e => e.type === 'turn.done'));
+    if (branch === 'account') {
+      assert.equal(api.snapshot().phase, 'preparing');
+      assert.equal((await api.historySummary(sourceId, 'sample-summary')).text, '');
+      tick();
+      assert.match((await api.historySummary(sourceId, 'sample-summary')).text, /虚构/);
+      const items = buildTimeline(api.snapshot().sourceEvents).items;
+      assert.equal(items.filter(i => i.kind === 'handover-summary').length, 1);
+    }
+    assert.equal(api.snapshot().phase, 'countdown');
+    assert.ok(Date.parse(api.snapshot().current.autoHandover!.deadline!) - Date.now() > 4500);
+    tick();
+    const state = api.snapshot();
+    assert.equal(state.phase, 'completed');
+    assert.equal(state.current.id === sourceId, branch === 'model');
+    assert.equal(Boolean(state.current.handover), branch === 'account');
+    assert.equal(state.nextEvents.some(e => e.type === 'handover.model'), branch === 'model');
+    assert.ok(buildTimeline(state.nextEvents).items.some(i => i.kind === 'assistant'));
+    assert.equal(tasks.size, 0);
+  } finally { globalThis.fetch = fetch; api.dispose(); }
+});
+
+for (const phase of ['preparing', 'countdown']) test(`cancel handover during ${phase}, reset and dispose clear every timer`, async () => {
+  const { api, tick, tasks } = handoverSetup();
+  try {
+    api.start(); tick();
+    if (phase === 'countdown') tick();
+    await api.cancelAutoHandover(api.snapshot().current.id);
+    assert.equal(api.snapshot().phase, 'cancelled');
+    assert.equal(api.snapshot().current.id, api.snapshot().source.id);
+    assert.equal(tasks.size, 0);
+    assert.equal(api.snapshot().nextEvents.length, 0);
+    if (phase === 'preparing') assert.equal((await api.historySummary(api.snapshot().source.id, 'sample-summary')).text, '');
+    api.reset(); api.start(); api.reset('model');
+    assert.equal(tasks.size, 0);
+    assert.equal(api.snapshot().sourceEvents.length, 0);
+    api.start(); api.dispose();
+    assert.equal(tasks.size, 0);
+  } finally { api.dispose(); }
+});
+
+test('changing branch during countdown cannot deliver a stale account handover', () => {
+  const { api, tick, tasks } = handoverSetup();
+  try {
+    api.start(); tick(); tick();
+    assert.equal(api.snapshot().phase, 'countdown');
+    api.reset('model');
+    assert.equal(tasks.size, 0);
+    api.start(); tick(); tick();
+    assert.equal(api.snapshot().phase, 'completed');
+    assert.equal(api.snapshot().current.model, 'Sonnet');
+    assert.equal(api.snapshot().current.handover, undefined);
+  } finally { api.dispose(); }
 });
