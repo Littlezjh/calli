@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
 import { request } from 'node:http';
+import { help as toolsHelp, toolsMain } from './limi-tools.mjs';
 const args = process.argv.slice(2);
 if (!args.length || args.includes('--help')) {
   console.log(`limi agents | status | result ID | stop NAME
@@ -23,10 +24,16 @@ limi team ls
 limi team run NAME|ID [--cwd DIR] --task-file FILE|-
 Team commands use LIMI_URL (or local RAH_PORT), LIMI_TOKEN (or RAH_TOKEN).
 FILE may be - for stdin. Reuse the request ID only when retrying the same request.
-Members can message existing teammates; only the lead can spawn or stop members.`);
+Members can message existing teammates; only the lead can spawn or stop members.
+
+${toolsHelp}`);
   process.exit(0);
 }
 try {
+  if (args[0] === 'tools' || args[0] === 'jobs') {
+    await toolsMain(args);
+    process.exit(process.exitCode ?? 0);
+  }
   if (args[0] === 'team') {
     const base = process.env.LIMI_URL || `http://127.0.0.1:${process.env.RAH_PORT || 8787}`;
     const token = process.env.LIMI_TOKEN || process.env.RAH_TOKEN;

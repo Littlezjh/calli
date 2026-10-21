@@ -451,6 +451,12 @@ test('imagePathsIn finds local image files in an answer and leaves web addresses
   assert.deepEqual(imagePathsIn('[截图](/tmp/report/a%20b.png) [missing.png](https://example.com/a.png)'), ['/tmp/report/a b.png']);
 });
 
+test('image paths deduplicate workspace spellings without hiding another directory’s image', () => {
+  const text = '![fox](/linked/project/fox.jpeg)\nSaved `fox.jpeg`, `./fox.jpeg`, /real/project/fox.jpeg and /other/fox.jpeg';
+  assert.deepEqual(imagePathsIn(text, ['/linked/project', '/real/project']), ['/linked/project/fox.jpeg', '/other/fox.jpeg']);
+  assert.deepEqual(imagePathsIn('a.png A.PNG'), ['a.png', 'A.PNG'], 'case still identifies different files');
+});
+
 test('fromTerminal marks a turn that arrived through sync, not from this page', () => {
   seq = 0;
   const tl = buildTimeline([ev('turn.started', { text: 'typed in a terminal', fromTerminal: true }), ev('turn.done', {})]);

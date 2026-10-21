@@ -234,6 +234,8 @@ export interface DiscoveredAccount {
 }
 
 export interface StartOptions {
+  /** Native capability requested for an isolated Limi tool job, absent on ordinary threads. */
+  borrowedTool?: string;
   workMode?: WorkMode;
   onWorkMode?: (mode: WorkMode) => void;
   onSpeed?: (speed: string) => void;
@@ -257,6 +259,8 @@ export interface MemoryReader {
 }
 
 export interface AgentAdapter {
+  /** Optional task capabilities exposed through Limi's on-demand CLI. */
+  readonly borrowedTools?: readonly import('./borrowed-tools.js').BorrowedTool[];
   readonly id: string;
   readonly label: string;
   /** The agent's mark: the path of a 24×24 drawing, filled with the even-odd rule. See icons.ts. */
@@ -390,8 +394,11 @@ export interface AgentAdapter {
 export function sessionEnvironment(base: Record<string, string>, context?: Record<string, string>): NodeJS.ProcessEnv {
   // A daemon launched from another agent must never lend that agent's scoped credentials
   // to a new session. Undefined also masks inherited keys in adapters that merge env again.
-  const env: NodeJS.ProcessEnv = { ...process.env, ...base, LIMI_SOCKET: undefined, LIMI_KEY: undefined,
-    LIMI_HANDOVER_SOCKET: undefined, LIMI_HANDOVER_KEY: undefined, LIMI_BIN_DIR: undefined, ...context };
+  const env: NodeJS.ProcessEnv = {
+    ...process.env, ...base, LIMI_SOCKET: undefined, LIMI_KEY: undefined, LIMI_BIN_DIR: undefined,
+    LIMI_HANDOVER_SOCKET: undefined, LIMI_HANDOVER_KEY: undefined,
+    LIMI_TOOLS_SOCKET: undefined, LIMI_TOOLS_KEY: undefined, LIMI_TOKEN: undefined, RAH_TOKEN: undefined, ...context,
+  };
   if (context?.LIMI_BIN_DIR) env.PATH = `${context.LIMI_BIN_DIR}${process.platform === 'win32' ? ';' : ':'}${base.PATH ?? process.env.PATH ?? ''}`;
   return env;
 }

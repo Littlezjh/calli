@@ -11,6 +11,8 @@ import { commandExists } from '../util.js';
 import { ANTIGRAVITY_ICON } from './icons.js';
 import { configDirectory, findSessionFile } from './session-location.js';
 import { agyLiveUsage } from './session-usage.js';
+import { agyImageTool } from './agy-image.js';
+import { agyBrowserTool, agySearchTool } from './agy-web.js';
 import type {
   AgentAdapter,
   AgentSession,
@@ -192,6 +194,7 @@ export function mapAgyStep(step: any, started: Set<number>): EmittedEvent[] {
         status: 'in_progress',
         // The name the model called, kept for the activity page.
         ...(name ? { tool: name } : {}),
+        ...(sub?.type_name ? { subagentType: sub.type_name } : {}),
         input: sub ? { prompt: sub.initial_prompt } : step.tool_info?.parameters,
       },
     });
@@ -451,6 +454,7 @@ class AgySession implements AgentSession {
 
 /** Adapter for the Antigravity CLI. `command` is the argv prefix, normally just the executable. */
 export class AgyAdapter implements AgentAdapter {
+  readonly borrowedTools = [agyImageTool, agySearchTool, agyBrowserTool];
   readonly id = 'agy';
   readonly label = 'Antigravity';
   readonly icon = ANTIGRAVITY_ICON;

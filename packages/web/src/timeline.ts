@@ -3,7 +3,7 @@
  * Pure: no React, no I/O, so it can be unit-tested directly.
  */
 import { diffStats } from './diff';
-import { IMAGE_FILE } from './paths';
+import { IMAGE_FILE, relativePath } from './paths';
 import type { VideoRef } from './api';
 import { formatDate, formatList, t } from './i18n';
 import { withVoiceItems, type VoiceTranscript } from './voice-timeline';
@@ -743,8 +743,9 @@ const MAX_IMAGE_PATHS = 6;
  * Local image files an answer points at: Markdown images, and paths written out in the text.
  * Web addresses are left alone. Whether a file really exists and is an image is for the daemon to say.
  */
-export function imagePathsIn(text: string): string[] {
+export function imagePathsIn(text: string, roots: string[] = []): string[] {
   const found: string[] = [];
+  const seen = new Set<string>();
   const add = (raw: string, encoded = false) => {
     let path = raw.replace(/^file:\/\//, '');
     if (encoded || path !== raw) {
@@ -755,7 +756,10 @@ export function imagePathsIn(text: string): string[] {
       }
     }
     if (/^[a-z][a-z0-9+.-]*:/i.test(path) || path.startsWith('//')) return; // http:, data:, …
-    if (!IMAGE_FILE.test(path) || found.includes(path) || found.length >= MAX_IMAGE_PATHS) return;
+    // The same returned artifact is often linked absolutely and named relatively in the prose.
+    const key = relativePath(path, roots).replace(/^(?:\.\/)+/, '');
+    if (!IMAGE_FILE.test(path) || seen.has(key) || found.length >= MAX_IMAGE_PATHS) return;
+    seen.add(key);
     found.push(path);
   };
   const rest = text.replace(/!?\[[^\]\n]*\]\(\s*(?:<([^>\n]+)>|((?:\\.|[^\\\s()]|\([^()\s]*\))+))(?:\s+"[^"\n]*")?\s*\)/g, (_match, angle: string | undefined, plain: string) => {

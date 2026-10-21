@@ -10,6 +10,8 @@ import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 import { createInterface } from 'node:readline';
 import { recordSession } from './fake-session-store.mjs';
+import { execFileSync } from 'node:child_process';
+import { join } from 'node:path';
 
 // TRAE exposes both ACP metadata and a Codex-compatible app-server on one CLI.
 if (process.argv.includes('app-server')) {
@@ -299,6 +301,16 @@ rl.on('line', (line) => {
         update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: collaboration } });
         out({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });
         return;
+      }
+      if (text.split('\n')[0] === 'borrow-image') {
+        const cli = (...args) => JSON.parse(execFileSync(process.execPath, [join(process.env.LIMI_BIN_DIR, 'limi'), ...args], {
+          input: JSON.stringify({ prompt: 'a paper fox' }), encoding: 'utf8',
+        }));
+        const tool = cli('tools', 'search', '生图')[0];
+        const job = cli('tools', 'run', tool.id, '--input-file', '-', '--request-id', 'fixture-image');
+        const result = cli('jobs', 'wait', job.id, '--timeout', '15');
+        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: JSON.stringify(result) } });
+        out({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } }); return;
       }
 
       const images = blocks.filter((p) => p.type === 'image');

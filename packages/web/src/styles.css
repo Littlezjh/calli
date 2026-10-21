@@ -6217,7 +6217,7 @@ input.picker-search {
   display: flex;
   flex-direction: column;
   gap: 5px;
-  max-width: 100%;
+  max-width: min(420px, 100%);
   margin: 0;
 }
 
@@ -6233,12 +6233,14 @@ input.picker-search {
 
 .file-image img {
   display: block;
-  max-width: min(420px, 100%);
+  max-width: 100%;
   max-height: 320px;
   object-fit: contain;
 }
 
 .file-image figcaption {
+  /* A long path must not widen the picture's button and expose its background. */
+  contain: inline-size;
   overflow: hidden;
   color: var(--muted);
   font-family: var(--mono);

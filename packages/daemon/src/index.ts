@@ -12,6 +12,8 @@ import { Store } from './store.js';
 import { TerminalManager } from './terminals.js';
 import { ThreadManager } from './threads.js';
 import { Workdirs } from './workdirs.js';
+import { BorrowingService } from './borrowing.js';
+import { borrowingServer } from './borrowing-server.js';
 import { VoiceService } from './voice-service.js';
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -68,6 +70,10 @@ async function main(): Promise<void> {
   const coordination = new CoordinationManager(store, manager, coordinationPath);
   const collaborationServer = coordinationServer(coordination);
   if (!await listenPrivate(collaborationServer, coordinationPath)) throw new Error('Collaboration socket is already in use');
+  const toolsPath = join(config.dataDir, 'tools', 'limi.sock');
+  const borrowing = new BorrowingService(store, manager, adapters, config.dataDir, toolsPath);
+  const toolsServer = borrowingServer(borrowing);
+  if (!await listenPrivate(toolsServer, toolsPath)) throw new Error('Tool socket is already in use');
   // Extensions start after recovery, scheduling and collaboration, and before anything is served,
   // so the first thing they hear is a machine that is ready.
   const extensions = new ExtensionHost({
@@ -133,6 +139,9 @@ async function main(): Promise<void> {
     coordination.dispose();
     collaborationServer.close();
     rmSync(coordinationPath, { force: true });
+    await borrowing.dispose();
+    toolsServer.close();
+    rmSync(toolsPath, { force: true });
     await manager.shutdown();
     scheduler.dispose();
     terminals.dispose();

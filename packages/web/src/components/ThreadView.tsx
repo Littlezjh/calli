@@ -663,7 +663,7 @@ interface AssistantProps {
  */
 const AssistantMessage = memo(function AssistantMessage({ text, done, roots, loadFile, onOpen }: AssistantProps) {
   // Looked for once the message is complete: a path that is still being typed would not be found.
-  const images = useMemo(() => (done ? imagePathsIn(text) : []), [done, text]);
+  const images = useMemo(() => (done ? imagePathsIn(text, roots) : []), [done, text, roots]);
   return (
     <div className="row assistant">
       <div className="markdown">

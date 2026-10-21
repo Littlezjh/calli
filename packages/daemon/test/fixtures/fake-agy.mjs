@@ -5,6 +5,8 @@ if (process.argv.includes('--version')) { process.stdout.write('fixture 1.2.3\n'
 // mode cannot ask for, "slow" waits until interrupted, "crash" exits.
 import { agyUsage } from './live-usage.mjs';
 import { coordinationFixture } from './coordination.mjs';
+import { writeFileSync, symlinkSync } from 'node:fs';
+import { join } from 'node:path';
 const args = process.argv.slice(2);
 
 if (args[0] === 'models') {
@@ -61,6 +63,43 @@ process.on('SIGINT', () => {
 
 function runTurn(text) {
   step({ step_index: stepIndex++, state: 'DONE', step_type: 'user_input' });
+  if (process.env.FAKE_AGY_WEB && text.startsWith('Search the web using')) {
+    const index = stepIndex++;
+    if (process.env.FAKE_AGY_WEB !== 'no-evidence') {
+      const tool_info = { name: 'search_web', parameters: { query: 'example domains' } };
+      step({ step_index: index, state: 'ACTIVE', step_type: 'tool', tool_info });
+      step({ step_index: index, state: process.env.FAKE_AGY_WEB === 'failed' ? 'ERROR' : 'DONE', step_type: 'tool', tool_info });
+    }
+    const reply = 'For documentation. [Example Domain](https://example.com/)';
+    step({ step_index: stepIndex++, state: 'DONE', step_type: 'agent_response', text_delta: reply });
+    result({ status: 'SUCCESS', response: reply }); return;
+  }
+  if (process.env.FAKE_AGY_IMAGE && text.startsWith('Generate exactly one image')) {
+    const mode = process.env.FAKE_AGY_IMAGE;
+    if (mode === 'slow') { waiting = true; return; }
+    const path = join(process.cwd(), 'generated image.png');
+    if (mode === 'outside') symlinkSync(process.env.FAKE_AGY_OUTSIDE, path);
+    else if (mode !== 'missing') writeFileSync(path, mode === 'text' ? 'not an image' : Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX2kAAAAASUVORK5CYII=', 'base64'));
+    if (mode !== 'no-evidence') {
+      const index = stepIndex++;
+      const info = mode === 'subagent' || mode === 'wrong-subagent'
+        ? { name: 'invoke_subagent', parameters: { TypeName: mode === 'subagent' ? 'image-generator' : 'coder' } }
+        : { name: 'generate_image', parameters: { Prompt: text } };
+      if (mode === 'subagent-info') {
+        const subagent_info = { subagents: [{ role: 'Image Generator', type_name: 'image-generator', initial_prompt: text }] };
+        step({ step_index: index, state: 'ACTIVE', step_type: 'subagent', subagent_info });
+        step({ step_index: index, state: 'DONE', step_type: 'subagent', subagent_info });
+      } else {
+        step({ step_index: index, state: 'ACTIVE', step_type: 'tool', tool_info: info });
+        step({ step_index: index, state: mode === 'failed' ? 'ERROR' : 'DONE', step_type: 'tool',
+          tool_info: { ...info, output: mode === 'markdown-title' ? '' : `Image created: "${path}"`, ...(mode === 'failed' ? { error: { message: 'image generation unavailable' } } : {}) } });
+      }
+    }
+    const reply = `![Generated image](${path}${mode === 'markdown-title' ? ' "Paper Fox"' : ''})`;
+    step({ step_index: stepIndex++, state: 'DONE', step_type: 'agent_response', text_delta: reply });
+    result({ status: 'SUCCESS', response: reply });
+    return;
+  }
   const coordinated = coordinationFixture(text);
   if (coordinated !== null) {
     step({ step_index: stepIndex++, state: 'DONE', step_type: 'agent_response', text_delta: coordinated });

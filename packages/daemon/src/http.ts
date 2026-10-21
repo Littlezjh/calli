@@ -19,6 +19,7 @@ import { isWithinWorkdirs } from './workdirs.js';
 import { listProjectDirectories } from './project-directories.js';
 import { MAX_VIDEO_BYTES } from './videos.js';
 import type { VoiceService } from './voice-service.js';
+import { sendToolArtifact } from './borrowing-server.js';
 
 export interface HttpDeps {
   manager: ThreadManager;
@@ -206,6 +207,15 @@ export function createHttpServer(deps: HttpDeps): Server {
     if (!trusted && !signedFileRoute && !tokenMatches(bearer, token)) return sendJson(res, 401, { error: 'unauthorized' });
 
     const parts = path.split('/').filter(Boolean); // ['api', ...]
+
+    if (path === '/api/tools/command' && method === 'POST') {
+      if (!manager.borrowing) throw new HttpError(503, 'tool borrowing is unavailable');
+      return sendJson(res, 200, await manager.borrowing.command('operator', await readJson(req)));
+    }
+    if (parts[1] === 'tool-artifacts' && parts.length === 4 && method === 'GET') {
+      if (!manager.borrowing) throw new HttpError(503, 'tool borrowing is unavailable');
+      return sendToolArtifact(manager.borrowing, 'operator', parts[2], parts[3], res);
+    }
 
     // Other machines. One level only: a machine reached through its socket does not pass requests on.
     if (parts[1] === 'hosts' && hosts && !trusted) {

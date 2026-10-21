@@ -1065,6 +1065,7 @@ test('mapCodexItemStart/End map commands, file changes and the rest of the step 
   assert.deepEqual(mapCodexItemStart({ type: 'contextCompaction', id: 'c' }), { type: 'context.compaction', data: { id: 'c', status: 'in_progress' } });
   assert.deepEqual(mapCodexItemStart({ type: 'webSearch', id: 'w1', query: 'rust async' })?.data, {
     id: 'w1',
+    tool: 'web_search',
     title: 'rust async',
     kind: 'search',
     status: 'in_progress',

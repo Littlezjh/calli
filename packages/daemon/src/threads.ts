@@ -175,6 +175,7 @@ function isDirectory(path: string): boolean {
  */
 export class ThreadManager {
   coordination?: CoordinationManager;
+  borrowing?: import('./borrowing.js').BorrowingService;
 
   /** Drop an idle process so runtime-only connection context takes effect on resume. */
   async refreshRuntime(id: string): Promise<void> {
@@ -1534,9 +1535,10 @@ export class ThreadManager {
     // Slash commands have their own argument grammar; hidden instructions become unwanted arguments.
     const slashCommand = /^\/\S+/.test(rawText);
     const coordinated = slashCommand ? rawText : rawText ? (this.coordination?.instructions(threadId, rawText) ?? rawText) : '';
+    const discoverable = slashCommand || !rawText ? coordinated : (this.borrowing?.instructions(threadId, coordinated) ?? coordinated);
     // With the board's consent, the agent is asked to say where the work stands; read back at the end.
     const askProgress = !slashCommand && Boolean(rawText) && this.progressWanted();
-    const text = askProgress ? progressInstructions(coordinated) : coordinated;
+    const text = askProgress ? progressInstructions(discoverable) : discoverable;
 
     if (rawImages.length > 0) {
       const adapter = this.adapters.get(thread.agent);
@@ -1891,7 +1893,8 @@ export class ThreadManager {
     const adapter = this.adapters.get(thread.agent);
     if (!adapter) throw new Error(`unknown agent: ${thread.agent}`);
     const session = await adapter.start({
-      coordinationEnv: this.coordination?.environment(thread.id),
+      borrowedTool: this.borrowing?.toolForThread(thread.id),
+      coordinationEnv: { ...this.coordination?.environment(thread.id), ...this.borrowing?.environment(thread.id) },
       cwd: thread.cwd,
       resumeId: thread.agentSessionId ?? undefined,
       permissionMode: thread.permissionMode as PermissionMode,

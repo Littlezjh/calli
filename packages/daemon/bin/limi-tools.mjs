@@ -1,0 +1,117 @@
+import { createHash } from 'node:crypto';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { request } from 'node:http';
+
+export const help = `limi tools search [QUERY] [--json]
+limi tools skill
+limi tools describe TOOL [--json]
+limi tools run TOOL --input-file FILE|- --request-id KEY [--json]
+limi jobs get|wait|cancel JOB [--timeout SECONDS] [--json]
+limi jobs fetch JOB ARTIFACT_ID_OR_NAME --output FILE [--json]
+Inside Limi, thread-scoped credentials are provided automatically.
+Outside Limi, set LIMI_URL and LIMI_TOKEN. Output is JSON; fetch never overwrites a file.`;
+
+function responseError(text, status) {
+  try {
+    const value = JSON.parse(text);
+    if (typeof value.error === 'string' && value.error) return value.error;
+  } catch { /* Proxies and older servers may return plain text. */ }
+  return text.trim().slice(0, 1000) || `HTTP ${status}`;
+}
+
+async function transport(path, body, binary = false) {
+  const socketPath = process.env.LIMI_TOOLS_SOCKET;
+  const key = process.env.LIMI_TOOLS_KEY;
+  if (socketPath || key) {
+    if (!socketPath || !key) throw new Error('Incomplete Limi tool credentials; start a new Limi session.');
+    return new Promise((resolve, reject) => {
+      const payload = body ? JSON.stringify(body) : undefined;
+      const req = request({ socketPath, path, method: body ? 'POST' : 'GET',
+        headers: { Authorization: `Bearer ${key}`, ...(body ? { 'Content-Type': 'application/json' } : {}) } }, res => {
+        const chunks = []; let size = 0;
+        res.on('data', chunk => {
+          size += chunk.length;
+          if (size > 21 * 1024 * 1024) req.destroy(new Error('Response too large'));
+          else chunks.push(chunk);
+        });
+        res.on('error', reject);
+        res.on('end', () => {
+          try {
+            const bytes = Buffer.concat(chunks);
+            if (res.statusCode >= 400) throw new Error(responseError(bytes.toString(), res.statusCode));
+            resolve(binary ? bytes : JSON.parse(bytes.toString()));
+          } catch (err) { reject(err); }
+        });
+      });
+      req.setTimeout(30000, () => req.destroy(new Error('Request timed out. Retry with the same request-id.')));
+      req.on('error', reject);
+      req.end(payload);
+    });
+  }
+  const base = process.env.LIMI_URL;
+  const token = process.env.LIMI_TOKEN;
+  if (!base || !token) throw new Error('Run inside a new Limi agent session, or set LIMI_URL and LIMI_TOKEN.');
+  const apiPath = path === '/command' ? '/api/tools/command' : path.replace('/artifacts/', '/api/tool-artifacts/');
+  const res = await fetch(new URL(apiPath, base), {
+    method: body ? 'POST' : 'GET', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    signal: AbortSignal.timeout(30000), ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  if (!res.ok) throw new Error(responseError(await res.text(), res.status));
+  return binary ? Buffer.from(await res.arrayBuffer()) : res.json();
+}
+
+/** CLI syntax is deliberately small; schemas and provider instructions load on demand. */
+export async function toolsMain(args) {
+  const [group, command, ...rest] = args;
+  const positional = [], options = {};
+  while (rest.length) {
+    const part = rest.shift();
+    if (part === '--json') continue;
+    if (part.startsWith('--')) {
+      if (!['--input-file', '--request-id', '--timeout', '--output'].includes(part) || !rest.length || rest[0].startsWith('--')) throw new Error(`Invalid option: ${part}`);
+      if (options[part] !== undefined) throw new Error(`Duplicate option: ${part}`);
+      options[part] = rest.shift();
+    } else positional.push(part);
+  }
+  const check = (min, max, flags = []) => {
+    if (positional.length < min || positional.length > max || Object.keys(options).some(k => !flags.includes(k))) throw new Error(help);
+  };
+  const call = body => transport('/command', body);
+  let result;
+  if (group === 'tools' && command === 'skill') {
+    check(0, 0); result = { name: 'limi-tools', content: readFileSync(new URL('../../../skills/limi-tools/SKILL.md', import.meta.url), 'utf8') };
+  } else if (group === 'tools' && command === 'search') {
+    check(0, 1); result = await call({ op: 'tools.search', query: positional[0] ?? '' });
+  } else if (group === 'tools' && command === 'describe') {
+    check(1, 1); result = await call({ op: 'tools.describe', tool: positional[0] });
+  } else if (group === 'tools' && command === 'run') {
+    check(1, 1, ['--input-file', '--request-id']);
+    if (!options['--input-file'] || !options['--request-id']) throw new Error('Give --input-file FILE|- and --request-id KEY. Reuse the ID only for retries of this request.');
+    const file = options['--input-file'];
+    result = await call({ op: 'tools.run', tool: positional[0], requestId: options['--request-id'], input: JSON.parse(readFileSync(file === '-' ? 0 : file, 'utf8')) });
+  } else if (group === 'jobs' && ['get', 'wait', 'cancel'].includes(command)) {
+    check(1, 1, command === 'wait' ? ['--timeout'] : []);
+    const seconds = Number(options['--timeout'] ?? 300);
+    if (!Number.isFinite(seconds) || seconds <= 0 || seconds > 3600) throw new Error('--timeout must be between 0 and 3600 seconds');
+    const until = Date.now() + seconds * 1000;
+    do {
+      result = await call({ op: command === 'cancel' ? 'jobs.cancel' : 'jobs.get', id: positional[0] });
+      if (command !== 'wait' || !['queued', 'running'].includes(result.state) || result.waiting) break;
+      if (Date.now() >= until) { result = { ...result, timedOut: true }; break; }
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    } while (true);
+    if (command === 'wait' && result.state !== 'succeeded') process.exitCode = 2;
+  } else if (group === 'jobs' && command === 'fetch') {
+    check(2, 2, ['--output']);
+    if (!options['--output']) throw new Error('Give --output FILE; existing files are never overwritten.');
+    const job = await call({ op: 'jobs.get', id: positional[0] });
+    const artifact = job.artifacts.find(a => a.id === positional[1] || a.name === positional[1]);
+    if (!artifact) throw new Error('No such artifact');
+    const bytes = await transport(`/artifacts/${encodeURIComponent(positional[0])}/${encodeURIComponent(artifact.id)}`, undefined, true);
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    if (bytes.length !== artifact.size || sha256 !== artifact.sha256) throw new Error('Artifact integrity check failed');
+    writeFileSync(options['--output'], bytes, { flag: 'wx', mode: 0o600 });
+    result = { path: options['--output'], mimeType: artifact.mimeType, size: bytes.length, sha256 };
+  } else throw new Error(help);
+  console.log(JSON.stringify(result));
+}

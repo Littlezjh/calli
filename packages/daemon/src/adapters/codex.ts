@@ -8,6 +8,9 @@ import { cliDiagnostic } from './diagnostics.js';
 import { trackCompaction } from './compaction.js';
 import { goalSummary, parseGoalCommand, type GoalControl, type GoalCommand } from './native-goal.js';
 import { sessionEnvironment } from './types.js';
+import { codexReadTool, codexSearchTool } from './codex-tools.js';
+import { codexComputerTool, computerDynamicTool } from './codex-computer.js';
+import { BrowserComputer } from '../browser-computer.js';
 import { spawn } from 'node:child_process';
 import { CodexMemoryReader } from './codex-memory.js';
 import { homedir, tmpdir } from 'node:os';
@@ -182,7 +185,8 @@ export function mapCodexItemStart(item: any): EmittedEvent | null {
         },
       };
     case 'webSearch':
-      return { type: 'tool.start', data: { id: item.id, title: String(item.query ?? ''), kind: 'search', status: 'in_progress' } };
+      return { type: 'tool.start', data: { id: item.id, title: String(item.query ?? ''), kind: 'search', status: 'in_progress',
+        tool: 'web_search', ...(item.action ? { action: item.action } : {}) } };
     case 'imageGeneration':
       return { type: 'tool.start', data: { id: item.id, title: '图片', kind: 'create', status: 'in_progress', input: { revisedPrompt: item.revisedPrompt } } };
     case 'dynamicToolCall':
@@ -228,8 +232,12 @@ export function mapCodexItemEnd(item: any): EmittedEvent | null {
       return { type: 'tool.end', data: { ...base, status: failed ? 'failed' : 'completed', ...(output ? { output: String(output) } : {}) } };
     }
     case 'webSearch': {
-      const results = (item.results ?? []).map((r: any) => r?.title).filter(Boolean).join('\n');
-      return { type: 'tool.end', data: { ...base, status: 'completed', ...(results ? { output: results } : {}) } };
+      // Persist the bounded citation metadata, not opaque search bodies or provider media.
+      const results = (Array.isArray(item.results) ? item.results : []).filter((r: any) => typeof r?.url === 'string')
+        .slice(0, 24).map((r: any) => ({ url: r.url.slice(0, 4000), title: typeof r.title === 'string' ? r.title.slice(0, 300) : '' }));
+      const output = results.map((r: any) => r?.title).filter(Boolean).join('\n');
+      return { type: 'tool.end', data: { ...base, status: 'completed', tool: 'web_search',
+        ...(item.action ? { action: item.action } : {}), ...(results.length ? { results } : {}), ...(output ? { output } : {}) } };
     }
     case 'imageGeneration':
       return { type: 'tool.end', data: { ...base, status: item.failure ? 'failed' : 'completed', output: item.savedPath ?? item.failure?.message ?? undefined } };
@@ -463,6 +471,7 @@ class CodexSession implements AgentSession {
   private readonly messageSoFar = new Map<string, string>();
   /** File changes by item id, for approval cards that need to show the patch. */
   private readonly fileChanges = new Map<string, any[]>();
+  private readonly computerCalls = new Set<string>();
   /** Settings sent with turn/start, or persisted before runtime-owned goal turns. */
   private workMode: WorkMode = 'execute';
   private collaboration: any = undefined;
@@ -478,6 +487,7 @@ class CodexSession implements AgentSession {
     initialEffort?: string | null,
     /** Whose app-server this is; TRAE CLI runs the same protocol under its own name. */
     private readonly name = 'codex',
+    private readonly computer?: BrowserComputer,
   ) { this.defaultModel = initialModel ?? ''; this.defaultEffort = initialEffort ?? null; }
 
   /** Called by the peer for every notification. Ignores anything about another thread. */
@@ -631,6 +641,28 @@ class CodexSession implements AgentSession {
   async onRequest(method: string, params: any, requestId?: string | number): Promise<unknown> {
     if (params?.threadId && params.threadId !== this.agentSessionId) return undefined;
     if (params?.turnId && this.turn?.id && params.turnId !== this.turn.id) return undefined;
+    if (method === 'item/tool/call' && this.computer) {
+      const turn = this.turn;
+      const fail = (text: string) => ({ success: false, contentItems: [{ type: 'inputText', text }] });
+      if (!turn || turn.cancelRequested || params?.threadId !== this.agentSessionId || !params?.turnId
+        || params.tool !== 'limi_computer' || params.namespace || typeof params.callId !== 'string') return fail('Unknown or inactive browser tool call.');
+      if (this.computerCalls.has(params.callId)) return fail('Duplicate browser call ID; the action was not repeated.');
+      this.computerCalls.add(params.callId);
+      try {
+        const result = await this.computer.execute(params.arguments);
+        if (this.turn !== turn || turn.cancelRequested) return fail('Browser task was cancelled.');
+        this.emit({ type: 'tool.end', data: { id: params.callId, status: 'completed', computer: result.evidence,
+          output: JSON.stringify(result.evidence) } });
+        return { success: true, contentItems: [
+          { type: 'inputText', text: JSON.stringify(result.evidence) },
+          { type: 'inputImage', imageUrl: `data:image/png;base64,${result.image.toString('base64')}` },
+        ] };
+      } catch (error) {
+        const text = error instanceof Error ? error.message : String(error);
+        if (this.turn === turn && !turn.cancelRequested) this.emit({ type: 'tool.end', data: { id: params.callId, status: 'failed', output: text } });
+        return fail(text);
+      }
+    }
     if (method === 'item/tool/requestUserInput') {
       const questions = nativeQuestions(params?.questions);
       const answer = questions.length && this.hooks?.requestInput
@@ -669,7 +701,9 @@ class CodexSession implements AgentSession {
     this.hooks = null;
     this.outputSoFar.clear();
     this.messageSoFar.clear();
-    turn.resolve({ stopReason, ...(stopReason === 'error' && turn.error ? { error: turn.error } : {}) });
+    const result = { stopReason, ...(stopReason === 'error' && turn.error ? { error: turn.error } : {}) };
+    if (this.computer) void this.computer.close().finally(() => turn.resolve(result));
+    else turn.resolve(result);
   }
 
   /** The settings the thread carries, sent with the next turn so the live session picks them up. */
@@ -828,6 +862,7 @@ class CodexSession implements AgentSession {
   async cancel(): Promise<void> {
     const turn = this.turn;
     if (!turn) return;
+    if (this.computer) { turn.cancelRequested = true; await this.computer.close(); }
     if (turn.goal) {
       turn.cancelRequested = true;
       await this.goalSubmission;
@@ -904,11 +939,13 @@ class CodexSession implements AgentSession {
     this.voice?.handleClosed();
     this.onClosed();
     this.peer.close();
+    await this.computer?.close();
   }
 
   /** The peer is gone: a running turn can only end as an error now. */
   onClosed(): void {
     this.voice?.handleClosed();
+    void this.computer?.close();
     if (this.turn) {
       this.turn.error ??= `${this.name} app-server exited`;
       this.finishTurn('error');
@@ -918,6 +955,7 @@ class CodexSession implements AgentSession {
 
 /** How long a model probe is reused, so several threads opening at once start one process. */
 export class CodexAppServerAdapter implements AgentAdapter {
+  readonly borrowedTools = [codexSearchTool, codexReadTool, codexComputerTool];
   readonly id = 'codex';
   readonly label = 'Codex';
   readonly icon = CODEX_ICON;
@@ -1164,6 +1202,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
   }
 
   async start(opts: StartOptions): Promise<AgentSession> {
+    const computer = opts.borrowedTool === 'computer.use' ? new BrowserComputer(opts.cwd) : undefined;
     const [bin, ...args] = this.command;
     const child = spawn(bin, args, { cwd: opts.cwd, stdio: ['pipe', 'pipe', 'pipe'], env: sessionEnvironment(this.env, opts.coordinationEnv) });
 
@@ -1183,6 +1222,9 @@ export class CodexAppServerAdapter implements AgentAdapter {
       peer.notify('initialized', {});
 
       const mode = opts.permissionMode ? CODEX_MODES[opts.permissionMode] : null;
+      // Override only this delegated session; never edit the user's native configuration.
+      const toolConfig = opts.borrowedTool === 'web.search' || opts.borrowedTool === 'web.read'
+        ? { config: { web_search: 'live' } } : computer ? { dynamicTools: [computerDynamicTool] } : {};
       let threadId: string;
       let nativeModel: string | undefined;
       let nativeEffort: string | null | undefined;
@@ -1191,6 +1233,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
           threadId: opts.resumeId,
           cwd: opts.cwd,
           excludeTurns: true,
+          ...toolConfig,
           ...(mode ? { sandbox: mode.sandbox, approvalPolicy: mode.approvalPolicy } : {}),
         });
         nativeModel = res?.model;
@@ -1199,6 +1242,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
       } else {
         const res = await peer.request('thread/start', {
           cwd: opts.cwd,
+          ...toolConfig,
           ...(mode ? { sandbox: mode.sandbox, approvalPolicy: mode.approvalPolicy } : {}),
           ...(opts.model ? { model: opts.model } : {}),
         });
@@ -1208,7 +1252,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
         if (!threadId) throw new Error('Codex did not return a thread id');
       }
 
-      const session = new CodexSession(threadId, peer, opts.cwd, nativeModel, nativeEffort, this.name);
+      const session = new CodexSession(threadId, peer, opts.cwd, nativeModel, nativeEffort, this.name, computer);
       holder.session = session;
       // An ordinary prompt can also continue a persisted native goal. Older servers omit it.
       if (opts.resumeId) await session.controlGoal('show').catch(() => undefined);
@@ -1222,6 +1266,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
       return session;
     } catch (err) {
       peer.close();
+      await computer?.close();
       throw err;
     }
   }

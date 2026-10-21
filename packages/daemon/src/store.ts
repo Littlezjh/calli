@@ -10,6 +10,7 @@ import { askedText } from './util.js';
 import { referencesFile } from './artifacts.js';
 import type { ProgressReport } from './progress-report.js';
 import { HistoryStore } from './history.js';
+import { ToolJobs } from './tool-jobs.js';
 
 export interface ThreadRecord {
   id: string;
@@ -300,6 +301,7 @@ export class Store {
   readonly telemetry: Telemetry;
   readonly activity: Activity;
   readonly history: HistoryStore;
+  readonly toolJobs: ToolJobs;
 
   constructor(dataDir: string) {
     mkdirSync(dataDir, { recursive: true });
@@ -459,6 +461,7 @@ export class Store {
     this.mcpEntries = new McpRegistry(this.db);
     this.extensions = new ExtensionStore(this.db);
     this.history = new HistoryStore(this.db);
+    this.toolJobs = new ToolJobs(this.db);
   }
 
   /** The MCP registry: business line and purpose notes, plus manually registered servers. */

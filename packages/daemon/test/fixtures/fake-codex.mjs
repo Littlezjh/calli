@@ -39,6 +39,9 @@ let currentEffort = 'high';
 let currentSpeed = null;
 let currentSandbox = 'read-only';
 let currentApproval = 'on-request';
+let currentWebSearch = null;
+let dynamicTools = [];
+const awaitingTool = new Map();
 let goal = process.env.FAKE_CODEX_ACTIVE_GOAL ? { objective: 'Saved target', status: 'active' } : null;
 let goalGeneration = 0;
 
@@ -202,6 +205,47 @@ const runTurn = (text, turnId, done) => {
   const collaboration = coordinationFixture(text);
   if (collaboration !== null) { say(collaboration); done(); return; }
 
+  if (process.env.FAKE_CODEX_COMPUTER && text.startsWith('Use limi_computer')) {
+    const mode = process.env.FAKE_CODEX_COMPUTER;
+    if (!dynamicTools.some(t => t.type === 'function' && t.name === 'limi_computer')) { say('Missing dynamic tool.'); done(); return; }
+    const url = /navigating to (\S+)/.exec(text)?.[1];
+    const actions = mode === 'no-evidence' ? [] : [
+      { action: 'navigate', url }, { action: 'click', x: 150, y: 120 },
+      { action: 'type', text: 'Limi' }, { action: 'click', x: 100, y: 180 }, { action: 'finish' },
+    ];
+    void (async () => {
+      for (const args of actions) {
+        const id = nextServerRequestId++, callId = `computer-${id}`;
+        const item = { type: 'dynamicToolCall', id: callId, tool: 'limi_computer', arguments: args, status: 'inProgress' };
+        notify('item/started', { turnId, item });
+        const response = new Promise(resolve => awaitingTool.set(id, resolve));
+        out({ jsonrpc: '2.0', id, method: 'item/tool/call', params: { threadId, turnId: mode === 'wrong-turn' ? 'wrong-turn' : turnId, callId, tool: 'limi_computer', arguments: args } });
+        const result = await response;
+        if (activeTurn !== turnId) return;
+        notify('item/completed', { turnId, item: { ...item, status: result?.success ? 'completed' : 'failed', ...result } });
+        if (!result?.success) { say('Browser action failed.'); done(); return; }
+        if (!result.contentItems.some(c => c.type === 'inputImage' && c.imageUrl.startsWith('data:image/png;base64,'))) throw new Error('Missing visual feedback');
+        if (mode === 'slow') return;
+      }
+      say('The browser submitted the form.'); done();
+    })();
+    return;
+  }
+  if (process.env.FAKE_CODEX_WEB && (text.startsWith('Search the web using') || text.startsWith('Read this web page using'))) {
+    const mode = process.env.FAKE_CODEX_WEB;
+    if (currentWebSearch !== 'live') { say('Live native web search was not configured.'); done(); return; }
+    const reading = text.startsWith('Read this');
+    const action = { type: mode === 'wrong-action' ? (reading ? 'search' : 'openPage') : (reading ? 'openPage' : 'search'),
+      ...(reading ? { url: 'https://example.com/' } : { query: 'example domains' }) };
+    const item = { type: 'webSearch', id: 'borrowed-web', query: 'example domains' };
+    if (mode !== 'no-evidence') {
+      notify('item/started', { turnId, item: { ...item, action: { type: 'other' } } });
+      notify('item/completed', { turnId, item: { ...item, action,
+        results: [{ type: 'text_result', title: 'Example Domain', url: 'https://example.com/', snippet: 'For documentation.' }] } });
+    }
+    say('For documentation. [Example Domain](https://example.com/)');
+    done(); return;
+  }
   if (text.includes('crash')) {
     setTimeout(() => process.exit(1), 20);
     return;
@@ -308,6 +352,8 @@ rl.on('line', (line) => {
 
   // A decision for an approval we asked about.
   if (msg.id !== undefined && msg.method === undefined) {
+    const tool = awaitingTool.get(msg.id);
+    if (tool) { awaitingTool.delete(msg.id); tool(msg.result); return; }
     const input = awaitingInput.get(msg.id);
     if (input) {
       awaitingInput.delete(msg.id);
@@ -466,11 +512,14 @@ rl.on('line', (line) => {
       return;
     }
     case 'thread/start':
+      dynamicTools = msg.params?.dynamicTools ?? [];
+      currentWebSearch = msg.params?.config?.web_search ?? null;
       if (typeof msg.params?.sandbox === 'string') currentSandbox = msg.params.sandbox.replace(/-([a-z])/g, (_, c) => c.toUpperCase()).replace('Fullaccess', 'FullAccess');
       if (typeof msg.params?.approvalPolicy === 'string') currentApproval = msg.params.approvalPolicy;
       if (typeof msg.params?.model === 'string') currentModel = msg.params.model;
       return out({ jsonrpc: '2.0', id: msg.id, result: { thread: { id: threadId, cwd: '/tmp/one' }, model: currentModel, reasoningEffort: currentEffort, sandbox: { type: 'readOnly' }, approvalPolicy: currentApproval } });
     case 'thread/resume':
+      currentWebSearch = msg.params?.config?.web_search ?? null;
       threadId = msg.params?.threadId ?? threadId;
       if (typeof msg.params?.sandbox === 'string') currentSandbox = msg.params.sandbox.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
       if (typeof msg.params?.approvalPolicy === 'string') currentApproval = msg.params.approvalPolicy;
