@@ -124,7 +124,7 @@ test('handover-thread creates an unsent conversation in the same worktree, inclu
     assert.equal(next.sectionId,source.sectionId);
     assert.equal(next.agentSessionId,null);
     assert.equal(next.forkedFrom,null,'handover does not copy the native session');
-    assert.deepEqual(next.handover,{sourceId:source.id,title:source.title,agent:source.agent});
+    assert.deepEqual(next.handover,{sourceId:source.id,title:source.title,agent:source.agent,mode:'continue',sourceSeq:eventsBefore.at(-1)?.seq ?? 0});
     assert.deepEqual(store.getThread(next.id)?.handover,next.handover);
     assert.equal(next.status,'idle');
     assert.equal(next.title,'原任务（接手）');
@@ -207,7 +207,7 @@ test('merged-history HTTP reads omit handover text until explicitly expanded, an
   const get = (path: string) => fetch(base + path, { headers: { Authorization: 'Bearer history-token' } });
   try {
     const make = (id: string, sourceId?: string) => store.createThread({ id, agent: 'pi', cwd: root, title: id, agentSessionId: null, permissionMode: 'default', model: null, effort: null,
-      handover: sourceId ? { sourceId, agent: 'pi', title: sourceId } : null });
+      handover: sourceId ? { sourceId, agent: 'pi', title: sourceId, mode: 'continue', sourceSeq: 2 } : null });
     make('source'); make('recipient', 'source');
     store.appendEvent('source', 'last', 'turn.started', { text: 'continue' });
     store.appendEvent('source', 'last', 'turn.error', { code: 'plan_exhausted', message: 'limit' });
@@ -239,5 +239,52 @@ test('merged-history HTTP reads omit handover text until explicitly expanded, an
   } finally {
     server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
     await manager.shutdown(); store.close(); rmSync(root, { recursive: true, force: true });
+  }
+});
+
+
+test('handover modes persist, running sources branch by default, and continuing stops the source', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'rah-handover-mode-'));
+  const store = new Store(root);
+  const registry = new AgentRegistry(['source', 'next'].map(id => ({ id, adapter: 'claude', command: [process.execPath, fixture] })), null);
+  const manager = new ThreadManager(store, registry.adapters, new Workdirs([root], null), new AttachmentStore(root));
+  const server = createHttpServer({ manager, token: 'mode-token', webDir: null, version: 'test' });
+  await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const post = (id: string, mode?: unknown, agent = 'next') => fetch(`${base}/api/threads/${id}/handover-thread`, { method: 'POST', headers: { Authorization: 'Bearer mode-token', 'Content-Type': 'application/json' }, body: JSON.stringify({ agent, ...(mode === undefined ? {} : { mode }) }) });
+  try {
+    const source = await manager.createThread({ agent: 'source', cwd: root });
+    await manager.startTurn(source.id, { text: 'slow work' });
+    for (let i = 0; i < 200 && !manager.listEventsSince(source.id, 0).some(e => e.type === 'message.delta'); i++) await new Promise(r => setTimeout(r, 10));
+    assert.equal((await post(source.id, 'wrong')).status, 400);
+    assert.equal((await post(source.id, 'continue', 'missing')).status, 400);
+    assert.equal(manager.threadView(source.id).status, 'running', 'invalid requests never stop work');
+    const branch = await (await post(source.id)).json() as any;
+    assert.equal(branch.handover.mode, 'branch');
+    assert.equal(store.getThread(branch.id)!.handover?.mode, 'branch');
+    assert.equal(manager.threadView(source.id).status, 'running');
+    const continued = await (await post(source.id, 'continue')).json() as any;
+    assert.equal(continued.handover.mode, 'continue');
+    assert.equal(manager.threadView(source.id).status, 'idle');
+    assert.ok(manager.listEventsSince(source.id, 0).some(e => e.type === 'turn.done' && e.data.stopReason === 'cancelled'));
+    const next = await (await post(continued.id)).json() as any;
+    assert.equal(next.handover.mode, 'continue', 'idle default');
+    const independent = await (await post(continued.id, 'branch')).json() as any;
+    assert.equal(independent.handover.mode, 'branch', 'idle sessions may also branch');
+    const stored = JSON.stringify(store.getThread(continued.id)!.handover);
+    // Even identical wall-clock timestamps cannot hide a new turn after the source boundary.
+    store.appendEvent(source.id, 'restarted', 'turn.started', { text: 'another task' });
+    assert.equal(manager.threadView(continued.id).handover?.mode, 'branch');
+    assert.equal(manager.listThreads().find(t => t.id === continued.id)!.handover?.mode, 'branch');
+    assert.equal(manager.threadView(next.id).handover?.mode, 'continue', 'only the resumed edge changes');
+    assert.equal(JSON.stringify(store.getThread(continued.id)!.handover), stored, 'derivation never rewrites the relation');
+    const legacy = store.createThread({ id: 'legacy', agent: 'next', cwd: root, title: 'legacy', permissionMode: 'default', model: null, effort: null, handover: { sourceId: source.id, title: 'source', agent: 'source' } });
+    assert.equal(manager.threadView(legacy.id).handover?.mode, 'branch');
+    assert.equal(store.getThread(legacy.id)!.handover?.mode, undefined);
+    store.appendEvent(legacy.id, 'opening', 'turn.started', { text: 'branch context' });
+    const page = await store.history.page(legacy.id, undefined, 0, true);
+    assert.ok(JSON.stringify(page).includes('branch context'), 'branch context is not hidden as a merged boundary');
+  } finally {
+    await manager.shutdown(); await new Promise<void>(r => server.close(() => r())); store.close(); rmSync(root, { recursive: true, force: true });
   }
 });

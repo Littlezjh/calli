@@ -76,7 +76,7 @@ import { Sidebar, SIDEBAR_SHORTCUT } from './components/Sidebar';
 import { forkBlocked, useThreadActions } from './components/ThreadActions';
 import { MergedHistory } from './components/MergedHistory';
 import { HandoverComposer } from './components/HandoverComposer';
-import { latestHandoverThread } from './handover';
+import { handoverHistoryKey, latestHandoverThread } from './handover';
 import { TurnRuler } from './components/TurnRuler';
 import { NewProjectDialog, ProjectPicker, RootsDialog } from './components/Projects';
 import { NoteMarks, type NoteMark } from './components/NoteMarks';
@@ -409,7 +409,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const selected = threads.find((t) => t.id === selectedId) ?? null;
   const latestSegment = selected ? latestHandoverThread(selected, threads) : null;
   const viewingEarlier = Boolean(selected && latestSegment && latestSegment.id !== selected.id);
-  const mergedHandover = !api.demo && singleSegmentId !== selectedId && Boolean(selected?.handover || viewingEarlier);
+  const mergedHandover = !api.demo && singleSegmentId !== selectedId && Boolean(selected?.handover?.mode === 'continue' || viewingEarlier);
   useEffect(() => {
     let cancelled = false;
     if (!api || !selected?.coordination) { setCoordination(null); return; }
@@ -1863,7 +1863,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           {showcase && selected && !eventsLoading && !timeline.items.length && showcase.intro(selected.id)}
           {selected ? (
             <MergedHistory
-              key={`${selected.id}:${mergedHandover}`}
+              key={`${handoverHistoryKey(selected, threads)}:${mergedHandover}`}
               api={api} thread={selected} merged={mergedHandover} ready={historyReady} agentLabel={agentLabel}
               onBrowseOlder={() => { stickToBottom.current = false; setAtBottom(false); }}
               canFork={thread => ({ enabled: Boolean(thread.agentSessionId && capsOf(thread.agent)?.fork), any: Boolean(capsOf(thread.agent)?.forkAt) })}

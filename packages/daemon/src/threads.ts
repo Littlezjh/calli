@@ -663,7 +663,7 @@ export class ThreadManager {
     }
     const scratch = this.dirs.scratchRoot !== null && isWithinWorkdirs(thread.cwd, [this.dirs.scratchRoot]);
     const runningSince = this.running.get(thread.id)?.since ?? null;
-    return { ...thread, autoHandover: this.autoHandover.view(thread.id), worktree, resumeCommand, cwdReal, waiting, waitingReason, queued, terminalActivity, scratch, runningSince, coordination: this.coordination?.metadata(thread.id) };
+    return { ...thread, handover: thread.handover ? { ...thread.handover, mode: this.store.handoverMode(thread)! } : null, autoHandover: this.autoHandover.view(thread.id), worktree, resumeCommand, cwdReal, waiting, waitingReason, queued, terminalActivity, scratch, runningSince, coordination: this.coordination?.metadata(thread.id) };
   }
 
   /**
@@ -1382,15 +1382,27 @@ export class ThreadManager {
   }
 
   /** A fresh conversation in the source's exact directory, sharing its existing worktree. No agent is started. */
-  async createHandoverThread(threadId: string, agent: string, model?: string): Promise<ThreadView> {
+  async createHandoverThread(threadId: string, agent: string, model?: string, mode?: unknown): Promise<ThreadView> {
     const source = this.getThread(threadId);
+    if (mode !== undefined && mode !== 'continue' && mode !== 'branch') throw new HttpError(400, 'invalid handover mode');
+    const selected = mode ?? (this.running.has(threadId) || source.status === 'running' ? 'branch' : 'continue');
+    // Validate the destination before interrupting any work.
+    if (!this.adapters.has(agent)) throw new HttpError(400, `unknown agent: ${agent}`);
+    if (model) await this.validateModel(agent, model);
+    if (selected === 'continue' && this.running.has(threadId)) {
+      await this.stopTurn(threadId);
+      const deadline = Date.now() + 5000;
+      while (this.running.has(threadId) && Date.now() < deadline) await new Promise(r => setTimeout(r, 20));
+      if (this.running.has(threadId)) throw new HttpError(409, 'source is still running; handover was not created');
+    }
     return this.createThread({
       agent,
       cwd: source.cwd,
       title: `${source.title}（接手）`,
       model,
       sectionId: source.sectionId,
-    }, source.worktree, { sourceId: source.id, title: source.title, agent: source.agent });
+    }, source.worktree, { sourceId: source.id, title: source.title, agent: source.agent, mode: selected,
+      sourceSeq: this.store.history.latest(source.id) });
   }
 
   /** The project roots, each with whether it was added from the page and so can be removed there. */
@@ -1714,7 +1726,7 @@ export class ThreadManager {
 
   async executeAutoHandover(id: string, target: HandoverTarget, summary: string, failedTurn: string | null): Promise<void> {
     const source = this.getThread(id);
-    const successor = await this.createHandoverThread(id, target.agent, target.model);
+    const successor = await this.createHandoverThread(id, target.agent, target.model, 'continue');
     this.autoHandover.inherit(id, successor.id);
     const adapter = this.adapters.get(target.agent)!;
     // Preserve the user's execution and permission choices when the successor supports them.

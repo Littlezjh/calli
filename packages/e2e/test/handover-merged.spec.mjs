@@ -34,6 +34,8 @@ test('three handover segments load on upward navigation, keep their action targe
     // Only B's last turn exhausted its plan. C's divider uses the code, independent of instance type.
     const seq = Number(db.prepare('SELECT MAX(seq) AS n FROM events WHERE thread_id=?').get(b.id).n);
     db.prepare("UPDATE events SET type='turn.error', data=? WHERE thread_id=? AND seq=?").run(JSON.stringify({ code: 'plan_exhausted', message: 'usage limit' }), b.id, seq);
+    // These seeded turns happened before the handovers, so retain their source boundaries.
+    for (const [recipient, source] of [[b, a], [c, b]]) db.prepare("UPDATE threads SET handover=json_set(handover, '$.sourceSeq', (SELECT MAX(seq) FROM events WHERE thread_id=?)) WHERE id=?").run(source.id, recipient.id);
     db.close();
     const agents = await (await api(hub, '/api/agents')).json();
     const label = id => agents.find(agent => agent.id === id).label;

@@ -1,3 +1,4 @@
+import { effectiveHandoverMode, type HandoverLink } from './handover-mode.js';
 import type { DatabaseSync } from 'node:sqlite';
 import type { StoredEvent } from './events.js';
 import { compactDeltas, replaceMessageTail, toolText } from './events.js';
@@ -376,6 +377,9 @@ export class HistoryStore {
     return { ...this.handoverText(thread, turn, offset, snapshot), prompt: String(row.prompt ?? '') };
   }
   private handoverStart(thread: string): number {
+    const record = this.db.prepare('SELECT handover, created_at FROM threads WHERE id=?').get(thread);
+    if (!record?.handover || effectiveHandoverMode(this.db, JSON.parse(String(record.handover)) as HandoverLink, String(record.created_at)) !== 'continue') return 0;
+
     return Number(this.db.prepare(`SELECT e.seq FROM events e JOIN threads t ON t.id=e.thread_id
       WHERE e.thread_id=? AND t.handover IS NOT NULL AND e.type='turn.started' ORDER BY e.seq LIMIT 1`).get(thread)?.seq ?? 0);
   }
@@ -390,7 +394,7 @@ export class HistoryStore {
     const link = this.db.prepare('SELECT handover FROM threads WHERE id=?').get(thread)?.handover;
     if (!link) throw new HttpError(404, 'no handover source');
     const source = JSON.parse(String(link)) as { sourceId: string; agent: string; title: string };
-    const first = this.handoverStart(thread);
+    const first = Number(this.db.prepare("SELECT seq FROM events WHERE thread_id=? AND type='turn.started' ORDER BY seq LIMIT 1").get(thread)?.seq ?? 0);
     const row = this.db.prepare(`SELECT turn_id, ${full ? "COALESCE(json_extract(data, '$.displayText'), json_extract(data, '$.text'))" : 'NULL'} AS text
       FROM events WHERE thread_id=? AND seq=?`).get(thread, first);
     const error = this.db.prepare(`SELECT json_extract(data, '$.code') AS code FROM events WHERE thread_id=? AND type='turn.error'

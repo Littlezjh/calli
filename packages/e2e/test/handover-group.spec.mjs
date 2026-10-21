@@ -96,7 +96,9 @@ test('a turn stopped by a plan that ran out offers another agent, which takes ov
       await page.waitForTimeout(400);
       await page.screenshot({ path: `/tmp/rah-handover-shots/${phone ? 'phone' : 'desktop'}-${theme}-exhausted.png` });
       if (phone || theme === 'light') { await context.close(); continue; }
-      await go.click();
+      const [takeover] = await Promise.all([page.waitForResponse(r => r.url().endsWith('/handover-thread') && r.request().method() === 'POST'), go.click()]);
+      assert.equal(takeover.request().postDataJSON().mode, 'continue');
+      assert.equal((await takeover.json()).handover.mode, 'continue');
       await page.locator('.topbar-title').filter({ hasText: '（接手）' }).waitFor();
       await page.locator('.handover-divider').click();
       await page.locator('.handover-summary').filter({ hasText: '来源机器' }).waitFor();

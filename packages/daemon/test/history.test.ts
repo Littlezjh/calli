@@ -351,7 +351,7 @@ test('merged history defers only the recipient opening prompt across cold/warm p
   const f = fixture();
   try {
     const recipient = f.store.createThread({ id: 'recipient', agent: 'pi', cwd: '/project', title: 'recipient', agentSessionId: null, permissionMode: 'default', model: null, effort: null,
-      handover: { sourceId: 'thread', agent: 'pi', title: 'source' } });
+      handover: { sourceId: 'thread', agent: 'pi', title: 'source', mode: 'continue', sourceSeq: 2 } });
     f.add('failed', 'turn.started', { text: 'first attempt' });
     f.add('failed', 'turn.error', { code: 'plan_exhausted', message: 'limit' });
     const prompt = 'LONG_HANDOVER_BODY'.repeat(5000);

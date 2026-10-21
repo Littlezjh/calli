@@ -1,0 +1,20 @@
+import type { DatabaseSync } from 'node:sqlite';
+
+export type HandoverMode = 'continue' | 'branch';
+export interface HandoverLink {
+  sourceId: string;
+  title: string;
+  agent: string;
+  mode?: HandoverMode;
+  /** Source event boundary at creation; sequence numbers avoid equal timestamp ambiguity. */
+  sourceSeq?: number;
+}
+
+/** Derive the display relation from facts without rewriting stored links. */
+export function effectiveHandoverMode(db: DatabaseSync, link: HandoverLink, createdAt: string): HandoverMode {
+  if (link.mode !== 'continue') return 'branch';
+  const resumed = link.sourceSeq === undefined
+    ? db.prepare("SELECT 1 FROM events WHERE thread_id=? AND type='turn.started' AND ts>? LIMIT 1").get(link.sourceId, createdAt)
+    : db.prepare("SELECT 1 FROM events WHERE thread_id=? AND type='turn.started' AND seq>? LIMIT 1").get(link.sourceId, link.sourceSeq);
+  return resumed ? 'branch' : 'continue';
+}

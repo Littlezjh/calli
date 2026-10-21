@@ -432,7 +432,7 @@ export function useThreadActions(deps: Deps) {
       try {
         const result = await api.handoverSummary(thread.id);
         if (!('summary' in result)) throw new Error(t('handover.notReady'));
-        const successor = await api.createHandoverThread(thread.id, agent);
+        const successor = await api.createHandoverThread(thread.id, agent, undefined, 'continue');
         await api.startTurn(successor.id, handoverMessage(api, result.summary));
         onThreadOpen(successor);
       } catch (e) {

@@ -827,7 +827,7 @@ export function createHttpServer(deps: HttpDeps): Server {
 
       if (method === 'POST' && sub === 'handover-thread') {
         const body = await readJson(req);
-        return sendJson(res, 201, await manager.createHandoverThread(threadId, body.agent, body.model));
+        return sendJson(res, 201, await manager.createHandoverThread(threadId, body.agent, body.model, body.mode));
       }
 
       if (method === 'POST' && sub === 'handover') {
