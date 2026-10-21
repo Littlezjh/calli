@@ -470,6 +470,9 @@ export const en: Messages = {
   'connect.connectHub': 'Connect hub',
 
   // Image viewer
+  'lightbox.fit': 'Fit to screen',
+  'lightbox.actual': 'Show at actual size',
+  'lightbox.percent': (value: number) => `${value}%`,
   'lightbox.saveFailed': 'Could not save this image',
   'lightbox.image': 'Image',
   'lightbox.alt': 'Enlarged image',

@@ -15,3 +15,25 @@ export async function renderMermaidDiagram(code: string, dark = document.documen
   const { svg } = await mermaid.render(`mmd-${Math.random().toString(36).slice(2)}`, code);
   return svg;
 }
+
+/** Isolate the enlarged inline SVG's IDs, including its CSS and marker references. Called on open. */
+export function enlargeMermaidDiagram(svg: string): string {
+  // Mermaid's HTML labels can contain <br> and named entities. Parse like the inline preview.
+  const document = new DOMParser().parseFromString(svg, 'text/html');
+  const ids = [...document.querySelectorAll('[id]')].map(node => node.id);
+  const prefix = `enlarged-${Math.random().toString(36).slice(2)}-`;
+  for (const node of document.querySelectorAll('[id]')) node.id = prefix + node.id;
+  for (const node of document.querySelectorAll('[aria-labelledby], [aria-describedby]')) {
+    for (const attribute of ['aria-labelledby', 'aria-describedby']) {
+      const value = node.getAttribute(attribute);
+      if (value) node.setAttribute(attribute, value.split(/\s+/).map(id => ids.includes(id) ? prefix + id : id).join(' '));
+    }
+  }
+  let markup = new XMLSerializer().serializeToString(document.querySelector('svg')!);
+  // Match longer IDs first: a diagram's root ID can prefix its marker IDs.
+  for (const id of ids.sort((a, b) => b.length - a.length)) {
+    const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    markup = markup.replace(new RegExp(`#${escaped}(?=[\\s).,;:"'\\]{}>]|$)`, 'g'), `#${prefix}${id}`);
+  }
+  return markup;
+}

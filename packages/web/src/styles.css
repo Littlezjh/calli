@@ -5419,6 +5419,28 @@ input.picker-search {
   color: var(--text);
 }
 
+/* The full-size drawing remains vector content, using the page's current Mermaid theme. */
+.lightbox-diagram {
+  background: var(--bg);
+  cursor: default;
+}
+
+.lightbox-vector {
+  flex-shrink: 0;
+  background: var(--bg);
+  cursor: zoom-in;
+}
+
+.lightbox-vector > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: none !important;
+}
+
+.lightbox.zoomed .lightbox-vector { cursor: grab; }
+.lightbox.zoomed .lightbox-vector:active { cursor: grabbing; }
+
 /* Under a finished answer: copy, fork where the thread ends, and when the turn ended. The row is
    pulled left so the first icon lines up with the text above it. */
 .row.message-actions {
@@ -5540,9 +5562,15 @@ input.picker-search {
 
 /* A mermaid drawing fills the block the way a picture does, without growing past it. */
 .code-diagram {
+  cursor: zoom-in;
   overflow-x: auto;
   padding: 14px 10px;
-  background: var(--picture-bg);
+  background: var(--bg);
+}
+
+.code-diagram:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .code-diagram svg {
