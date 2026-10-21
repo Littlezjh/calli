@@ -468,6 +468,9 @@ export const ja: Messages = {
   'connect.connectHub': 'hub に接続',
 
   // Image viewer
+  'lightbox.fit': '画面に合わせる',
+  'lightbox.actual': '原寸で表示',
+  'lightbox.percent': (value: number) => `${value}%`,
   'lightbox.saveFailed': 'この画像を保存できませんでした',
   'lightbox.image': '画像',
   'lightbox.alt': '拡大した画像',

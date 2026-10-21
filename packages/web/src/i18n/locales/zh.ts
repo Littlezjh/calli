@@ -470,6 +470,9 @@ export const zh = {
   'connect.connectHub': '连接 hub',
 
   // Image viewer
+  'lightbox.fit': '适应屏幕',
+  'lightbox.actual': '按原始比例显示',
+  'lightbox.percent': (value: number) => `${value}%`,
   'lightbox.saveFailed': '没能保存这张图片',
   'lightbox.image': '图片',
   'lightbox.alt': '放大的图片',

@@ -44,3 +44,13 @@ test('a picture rests as large as the room allows: a bitmap up to its own size, 
   assert.deepEqual(fitted({ width: 1200, height: 800 }, room, true), { width: 1200, height: 800 });
   assert.deepEqual(fitted({ width: 0, height: 0 }, room, true), { width: 0, height: 0 });
 });
+
+// A diagram wider than eight phone screens must still reach its native text size.
+test('a vector viewer can allow native scale beyond the default image zoom limit', () => {
+  const phone = { width: 350, height: 60 };
+  const native = 4200 / phone.width;
+  const detail = zoomAt(REST, native, centre, phone, native * 2);
+  assert.equal(detail.scale, 12);
+  assert.equal(zoomAt(detail, 10, centre, phone, native * 2).scale, 24);
+  assert.deepEqual(zoomAt(detail, 1 / native, centre, phone, native * 2), REST);
+});

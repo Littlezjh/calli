@@ -4,7 +4,7 @@ import { hydrateWork, HistoryClient, type HistoryDetail, type HistoryWork, type 
 import { Children, createContext, Fragment, isValidElement, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { renderMermaidDiagram } from '../mermaid';
+import { enlargeMermaidDiagram, renderMermaidDiagram } from '../mermaid';
 import { copyText } from '../clipboard';
 import { diffLines, numberLines } from '../diff';
 import { pictureUrl, svgPicture } from '../images';
@@ -531,6 +531,10 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   // A mermaid block draws itself, once the library is in; until then and forever if it cannot
   // parse, the code stands in.
   const [diagram, setDiagram] = useState<string | null>(null);
+  const [enlarged, setEnlarged] = useState(false);
+  // Clone only on opening. Keep the full-size drawing in sync with theme changes.
+  const largeDiagram = useMemo(() => enlarged && diagram ? enlargeMermaidDiagram(diagram) : null, [enlarged, diagram]);
+  const closeDiagram = useCallback(() => setEnlarged(false), []);
   useEffect(() => {
     if (language !== 'mermaid') return;
     let cancelled = false;
@@ -575,7 +579,22 @@ function CodeBlock({ children }: { children?: ReactNode }) {
       </div>
       {drawn && !showCode ? (
         diagram !== null ? (
-          <div className="code-diagram" role="img" aria-label={t('view.mermaid')} dangerouslySetInnerHTML={{ __html: diagram }} />
+          <>
+            <div className="code-diagram" role="button" tabIndex={0} aria-label={t('view.enlarge')} title={t('view.enlarge')}
+              onClick={(event) => {
+                // Drag selection and links inside a diagram keep their original meaning.
+                if (window.getSelection()?.isCollapsed === false || (event.target as Element).closest('a')) return;
+                event.currentTarget.focus({ preventScroll: true });
+                setEnlarged(true);
+              }}
+              onKeyDown={(event) => {
+                if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return;
+                event.preventDefault();
+                setEnlarged(true);
+              }}
+              dangerouslySetInnerHTML={{ __html: diagram }} />
+            {largeDiagram && <Lightbox svg={largeDiagram} onClose={closeDiagram} />}
+          </>
         ) : (
           <button type="button" className="code-picture" aria-label={t('view.enlarge')} onClick={() => picture && pictures?.show(picture, 'drawing.svg')}>
             <img src={picture ?? undefined} alt={t('view.svg')} onError={() => picture && setFailed(picture)} />

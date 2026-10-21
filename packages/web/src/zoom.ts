@@ -30,8 +30,8 @@ function held(view: View, size: Size): View {
  * Zooms by `factor`, keeping the spot under `point` where it is. `point` is measured from where
  * the picture's centre rests; `size` is the picture's size at rest.
  */
-export function zoomAt(view: View, factor: number, point: { x: number; y: number }, size: Size): View {
-  const scale = clamp(view.scale * factor, 1, MAX_ZOOM);
+export function zoomAt(view: View, factor: number, point: { x: number; y: number }, size: Size, maximum = MAX_ZOOM): View {
+  const scale = clamp(view.scale * factor, 1, maximum);
   const k = scale / view.scale;
   return held({ scale, x: point.x - (point.x - view.x) * k, y: point.y - (point.y - view.y) * k }, size);
 }
