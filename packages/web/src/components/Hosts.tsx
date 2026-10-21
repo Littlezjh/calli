@@ -19,6 +19,10 @@ interface SwitcherProps {
   /** The machine on screen; null is the hub's own. */
   current: string | null;
   onPick: (id: string | null) => void;
+  /** Every machine's threads in one list instead of one machine's. */
+  all?: boolean;
+  /** Offers that merged list as a tab of its own, first. */
+  onAll?: () => void;
 }
 
 /** Chooses where a new conversation runs, next to its project rather than only in the sidebar. */
@@ -59,11 +63,18 @@ export function MachinePicker({ hosts, current, onPick, onManage }: SwitcherProp
 }
 
 /** Which machine the list below is of, like the row on top of Codex's phone app. Absent until a machine is added. */
-export function HostSwitcher({ hosts, current, onPick }: SwitcherProps) {
+export function HostSwitcher({ hosts, current, onPick, all = false, onAll }: SwitcherProps) {
   if (hosts.length === 0) return null;
+  // With every machine merged into the list, none of them is the one picked.
+  const at = (id: string | null) => !all && id === current;
   return (
     <div className="host-switch" role="tablist" aria-label={t('hosts.machines')}>
-      <button type="button" role="tab" aria-selected={current === null} className={`host-chip${current === null ? ' active' : ''}`} onClick={() => onPick(null)}>
+      {onAll && (
+        <button type="button" role="tab" aria-selected={all} className={`host-chip${all ? ' active' : ''}`} onClick={() => onAll()}>
+          <span className="host-chip-name">{t('hosts.all')}</span>
+        </button>
+      )}
+      <button type="button" role="tab" aria-selected={at(null)} className={`host-chip${at(null) ? ' active' : ''}`} onClick={() => onPick(null)}>
         <StatusDot status="online" />
         <span className="host-chip-name">{t('hosts.local')}</span>
       </button>
@@ -72,8 +83,8 @@ export function HostSwitcher({ hosts, current, onPick }: SwitcherProps) {
           key={h.id}
           type="button"
           role="tab"
-          aria-selected={h.id === current}
-          className={`host-chip${h.id === current ? ' active' : ''}`}
+          aria-selected={at(h.id)}
+          className={`host-chip${at(h.id) ? ' active' : ''}`}
           title={h.target}
           onClick={() => onPick(h.id)}
         >

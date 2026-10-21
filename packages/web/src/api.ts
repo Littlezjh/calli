@@ -7,6 +7,7 @@ import type { StoredEvent } from './timeline';
 import type { DetailRef } from './timeline';
 import type { HistoryPage, HistoryDetail, HistoryWork } from './history';
 import { cachedQuota, clearQuotaCache, rememberQuota } from './quota-cache';
+import { clearThreadCache } from './thread-cache';
 import { localeTag, t } from './i18n';
 
 /** Where threads may work: the project roots, and whether one can start outside any project. */
@@ -416,6 +417,8 @@ export interface QuotaWindow {
 export interface PlanQuota {
   windows: QuotaWindow[];
   note?: string;
+  /** The subscription the account is on, as the agent reports it (`id`) and as shown (`label`). */
+  plan?: { id: string; label: string };
   /** When the agent was last asked. ISO. */
   checkedAt: string;
 }
@@ -570,7 +573,7 @@ export function loadToken(): string {
 }
 
 export function saveToken(token: string): void {
-  if (!token || token !== loadToken()) clearQuotaCache();
+  if (!token || token !== loadToken()) { clearQuotaCache(); clearThreadCache(); }
   try {
     if (token) localStorage.setItem(TOKEN_KEY, token);
     else localStorage.removeItem(TOKEN_KEY);

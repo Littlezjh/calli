@@ -1,10 +1,10 @@
-import { useEffect, useState, type MouseEvent, type ReactNode } from 'react';
+import { Fragment, useEffect, useState, type MouseEvent, type ReactNode } from 'react';
 import type { AgentInfo, HostInfo, SearchHit, Section, Thread } from '../api';
 import { clockLabel } from '../timeline';
 import { useLongPress, useStoredFlag, useStoredSet } from '../hooks';
 import { attentionCount, threadMark, waitingLabel } from '../notices';
 import { folderName } from '../paths';
-import { buildActivity, buildSidebar, handoverGroups, markTerms, projectDir, SEARCH_MIN, taggedAgents } from '../sidebar';
+import { buildActivity, buildMerged, buildSidebar, handoverGroups, markTerms, projectDir, SEARCH_MIN, taggedAgents, type HostSource } from '../sidebar';
 import { timeAgo } from '../sessions';
 import { deliveredPreview } from '../timeline';
 import { HostSwitcher } from './Hosts';
@@ -62,6 +62,14 @@ interface Props {
   onHost?: (id: string | null) => void;
   /** The machine this list is of cannot be reached: its threads are over there, so there is no list. */
   hostDown?: boolean;
+  /** No list has been read from this machine yet, live or remembered: empty means "not read", not "none". */
+  loading?: boolean;
+  /** Every machine's list, the one on screen among them: the sidebar shows them merged. Absent: just this machine's. */
+  merged?: HostSource[] | null;
+  /** Shows every machine's threads in one list; offered as a tab before the machines. */
+  onAll?: () => void;
+  /** Opens a thread of another machine, which means switching to that machine. */
+  onOpenElsewhere?: (hostId: string | null, threadId: string) => void;
   /** Looks through what was said in every thread; without it the search is of titles and folders only. */
   onSearch?: (query: string) => Promise<SearchHit[]>;
   /** Opens the thread a found turn is in, at that turn. */
@@ -69,6 +77,9 @@ interface Props {
   /** A line over the list, such as the demo's way to connect. */
   notice?: ReactNode;
 }
+
+/** In the merged list, the machine a row's thread is on when that is not the hub's own, and how to open it if it is not the one on screen. */
+interface Elsewhere { label?: string; open?: () => void }
 
 /** Where a menu opened from a "more" button should appear: just under the button. */
 function below(e: MouseEvent<HTMLElement>): [number, number] {
@@ -118,6 +129,10 @@ export function Sidebar({
   hostId = null,
   onHost,
   hostDown = false,
+  loading = false,
+  merged = null,
+  onAll,
+  onOpenElsewhere,
   onSearch,
   onOpenHit,
 }: Props) {
@@ -149,7 +164,12 @@ export function Sidebar({
   // The other way to read the list: by what is going on, not by where a thread is filed. Like Codex's activity view.
   const [byActivity, setByActivity] = useStoredFlag(`${storagePrefix}.activity`);
   const model = buildSidebar(threads, sections, search);
-  const activity = byActivity ? buildActivity(threads, search, new Date(), selectedId) : null;
+  const mergedModel = merged ? buildMerged(merged, search, new Date(), selectedId) : null;
+  const activity = byActivity && !mergedModel ? buildActivity(threads, search, new Date(), selectedId) : null;
+  // Out of their project groups, rows say where they are and what was asked last.
+  const flat = byActivity || Boolean(mergedModel);
+  // The machine on screen being down hides its list, unless every machine is listed.
+  const down = hostDown && !mergedModel;
   const wanted = attentionCount(threads, selectedId);
   // While searching, everything is expanded so matches are never hidden inside a closed group.
   const isOpen = (key: string) => Boolean(search.trim()) || !collapsed.has(key);
@@ -158,8 +178,13 @@ export function Sidebar({
   const agentById = new Map(agents.map((a) => [a.id, a]));
   const tagged = taggedAgents(agents);
 
-  /** `chain`: the handover chain this row stands for, newest first, as `handoverGroups` gives it. */
-  const row = (thread: Thread, title = thread.title, preview = thread.preview, chain?: Thread[]) => {
+  /**
+   * `chain`: the handover chain this row stands for, newest first, as `handoverGroups` gives it.
+   * `on`: in the merged list, the other machine the thread is on (named on the row), and how to open
+   * it there; such a row has no menu, as its actions would go to the machine on screen.
+   */
+  const row = (thread: Thread, title = thread.title, preview = thread.preview, chain?: Thread[], on?: Elsewhere) => {
+    const open = on?.open;
     const mark = threadMark(thread, thread.id === selectedId);
     const agent = agentById.get(thread.agent);
     // The agents the task passed through, first to last, and the one it came from.
@@ -169,7 +194,7 @@ export function Sidebar({
     // Filed by project, the list is for scanning: a title per row, as in Codex. The latest ask
     // shows where it helps finding something, by activity and in a search. A thread that needs a
     // hand says so in every view.
-    const detail = byActivity || query ? preview : null;
+    const detail = flat || query ? preview : null;
     const note = mark === 'waiting' ? waitingLabel(thread) : mark === 'error' ? t('sidebar.failed') : null;
     return (
     <div
@@ -177,20 +202,20 @@ export function Sidebar({
       className={`thread-row${thread.id === selectedId ? ' active' : ''}${mark === 'unread' || mark === 'waiting' ? ' attention' : ''}`}
       onContextMenu={(e) => {
         e.preventDefault();
-        onThreadMenu(thread, e.clientX, e.clientY);
+        if (!open) onThreadMenu(thread, e.clientX, e.clientY);
       }}
-      {...longPress(thread)}
+      {...(open ? {} : longPress(thread))}
     >
       {/* Two accounts of one agent share a mark; which one runs the thread shows on hover and in the
           open thread's top bar, not as text on every row. */}
-      <button className="thread-item" onClick={() => onSelect(thread.id)} title={hint || undefined}>
+      <button className="thread-item" onClick={() => (open ? open() : onSelect(thread.id))} title={[on?.label && open ? t('sidebar.merged.openOn', on.label) : null, hint].filter(Boolean).join(' · ') || undefined}>
         <span className="thread-text">
           <span className="thread-head">
             <span className="thread-title">{title}</span>
             {/* Beside the title, so the row stays one line like the rest. */}
             {note && <span className={`thread-note ${mark}`}>{note}</span>}
             {/* Out of its project group, a thread says where it is. */}
-            {byActivity && <span className="thread-dir">{folderName(projectDir(thread).cwd)}</span>}
+            {flat && <span className="thread-dir">{on?.label ? `${on.label} · ` : ''}{folderName(projectDir(thread).cwd)}</span>}
           </span>
           {detail && <span className="thread-preview">{detail}</span>}
         </span>
@@ -212,9 +237,11 @@ export function Sidebar({
           {mark && <span className={`dot ${mark}`} role="img" aria-label={mark === 'waiting' ? waitingLabel(thread) : MARK_LABELS[mark]} title={mark === 'waiting' ? waitingLabel(thread) : MARK_LABELS[mark]} />}
         </span>
       </button>
-      <button className="row-more" aria-label={t('sidebar.more', thread.title)} onClick={(e) => onThreadMenu(thread, ...below(e))}>
-        <IconMore size={16} />
-      </button>
+      {!open && (
+        <button className="row-more" aria-label={t('sidebar.more', thread.title)} onClick={(e) => onThreadMenu(thread, ...below(e))}>
+          <IconMore size={16} />
+        </button>
+      )}
     </div>
     );
   };
@@ -225,9 +252,9 @@ export function Sidebar({
   const teamOrder = (a: Thread, b: Thread) => busy(b) - busy(a) || b.updatedAt.localeCompare(a.updatedAt);
 
   // Like Orca's agents under a task: the lead's row, then one line per member saying what it is doing.
-  const entry = (thread: Thread) => {
+  const entry = (thread: Thread, on?: Elsewhere) => {
     const team = members?.get(thread.id);
-    if (!team?.length) return row(thread);
+    if (!team?.length || on?.open) return row(thread, thread.title, thread.preview, undefined, on);
     const sorted = [...team].sort(teamOrder);
     const auto = sorted.some((m) => busy(m) > 0 || m.id === selectedId);
     const open = Boolean(search.trim()) || (teamOpen.get(thread.id) ?? auto);
@@ -236,7 +263,7 @@ export function Sidebar({
     const marks = [...new Set(sorted.map((m) => threadMark(m, m.id === selectedId)).filter(Boolean))];
     const current = thread.id === selectedId || sorted.some((m) => m.id === selectedId);
     return <div key={thread.id} className={`handover-group team-group${open ? ' open' : ''}${current ? ' selected' : ''}`}>
-      {row(thread)}
+      {row(thread, thread.title, thread.preview, undefined, on)}
       <button className="handover-toggle" aria-label={open ? t('sidebar.collapseTeam', thread.title) : t('sidebar.expandTeam', thread.title)} aria-expanded={open} onClick={() => setTeamOpen((old) => new Map(old).set(thread.id, !open))}>
         <span>{t('sidebar.agents', sorted.length)}</span>
         {(waiting || working) > 0 && <span className="team-note">{waiting ? t('sidebar.waitingCount', waiting) : t('team.running', working)}</span>}
@@ -319,12 +346,43 @@ export function Sidebar({
   );
 
   const empty = (
-    <p className="group-empty top">
-      {search.trim() ? t('sidebar.noMatch') : compact ? t('sidebar.emptyPhone') : t('sidebar.empty')}
+    <p className="group-empty top" role={loading ? 'status' : undefined}>
+      {loading ? t('sidebar.loading') : search.trim() ? t('sidebar.noMatch') : compact ? t('sidebar.emptyPhone') : t('sidebar.empty')}
     </p>
   );
 
-  const groups = activity ? (
+  const clock = (at: string | null) => {
+    if (!at) return null;
+    const d = new Date(at);
+    const sameDay = d.toDateString() === new Date().toDateString();
+    const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    return sameDay ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
+  };
+  const labelOf = new Map((merged ?? []).map((s) => [s.hostId, s.label]));
+  const groups = mergedModel ? (
+    <nav className="thread-groups activity merged" aria-label={t('sidebar.merged.label')}>
+      {mergedModel.notes.map((n) => (
+        <p key={n.hostId ?? ''} className={`merged-note ${n.state}`} role={n.state === 'loading' ? 'status' : undefined}>
+          {n.state === 'loading' ? t('sidebar.merged.loading', n.label) : n.state === 'offline' ? t('sidebar.merged.offline', n.label, clock(n.at)) : t('sidebar.merged.failed', n.label, clock(n.at))}
+        </p>
+      ))}
+      {mergedModel.count === 0 && !mergedModel.notes.some((n) => n.state === 'loading') && empty}
+      {mergedModel.groups.map((g) => (
+        <section key={g.key} className="thread-group" aria-label={g.label}>
+          <div className="group-label">{g.label}</div>
+          {g.items.map(({ thread, hostId: on }) => (
+            <Fragment key={`${on ?? ''}:${thread.id}`}>
+              {entry(thread, {
+                // The hub's own machine is the usual one; only threads elsewhere are named.
+                label: on === null ? undefined : labelOf.get(on),
+                open: on === hostId ? undefined : () => onOpenElsewhere?.(on, thread.id),
+              })}
+            </Fragment>
+          ))}
+        </section>
+      ))}
+    </nav>
+  ) : activity ? (
     <nav className="thread-groups activity" aria-label={t('sidebar.threadsByActivity')}>
       {activity.count === 0 && empty}
       {activity.groups.map((g) => (
@@ -455,9 +513,9 @@ export function Sidebar({
 
       {notice}
       <div className="sidebar-scroll">
-        {onHost && !search.trim() && <HostSwitcher hosts={hosts} current={hostId} onPick={onHost} />}
-        {hostDown && <p className="group-empty top">{t('sidebar.hostDown')}</p>}
-        {!hostDown && !search.trim() && (
+        {onHost && !search.trim() && <HostSwitcher hosts={hosts} current={hostId} onPick={onHost} all={Boolean(mergedModel)} onAll={onAll} />}
+        {down && <p className="group-empty top">{t('sidebar.hostDown')}</p>}
+        {!down && !search.trim() && (
           <div className="side-nav">
             {/* On a wide screen a new thread is the first row, like Codex; a phone keeps the floating button by the thumb. */}
             {!compact && (
@@ -478,8 +536,8 @@ export function Sidebar({
             ))}
           </div>
         )}
-        {!hostDown && groups}
-        {!hostDown && onSearch && query.length >= SEARCH_MIN && (
+        {!down && groups}
+        {!down && onSearch && query.length >= SEARCH_MIN && (
           <section className="search-hits" aria-label={t('sidebar.inConversations')}>
             <div className="search-hits-head">{t('sidebar.inConversations')}</div>
             {found?.for !== query ? (
@@ -506,7 +564,7 @@ export function Sidebar({
       </div>
 
       <div className="sidebar-float">
-        {compact && !hostDown && (
+        {compact && !down && (
           <button className="new-thread" onClick={onNew}>
             <IconEdit size={19} /> {t('sidebar.newThread')}
           </button>

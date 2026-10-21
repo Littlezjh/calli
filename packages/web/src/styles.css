@@ -6616,9 +6616,12 @@ input.picker-search {
     color 0.12s;
 }
 
-.host-chip:hover {
-  background: var(--hover);
-  color: var(--text);
+/* Only a pointer that can hover lights a chip up: on a touch screen a tap would leave it lit. */
+@media (hover: hover) {
+  .host-chip:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
 }
 
 .host-chip.active,
@@ -10269,3 +10272,51 @@ button.trace-step-head:hover { background: var(--hover); }
   }
 }
 
+
+/* ---------- Every machine's threads in one list ---------- */
+
+/* A machine whose threads are missing or old says so in one quiet line over the list; one that
+   cannot be reached or read is a thing to notice, so that line takes the warning colour. */
+.merged-note {
+  margin: 10px 10px 2px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.merged-note.offline,
+.merged-note.failed {
+  color: var(--warn);
+}
+
+.compact .merged-note {
+  font-size: 13.5px;
+}
+
+/* ---------- The plan an account is on, beside its name on the quota board ---------- */
+
+/* Beside the name on a wide screen; a phone moves it to the line under the name, where it fits whole. */
+.quota-plan {
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.quota-plan.beside {
+  flex: 0 100 auto;
+  min-width: 0;
+  margin-left: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.quota-plan.under {
+  display: none;
+  font-size: inherit;
+}
+
+@media (max-width: 640px) {
+  .quota-plan.beside { display: none; }
+  .quota-plan.under { display: inline; }
+}

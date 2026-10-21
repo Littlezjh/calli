@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Section, Thread } from '../src/api.js';
-import { buildActivity, buildSidebar, handoverGroups, markTerms, searchTerms, taggedAgents, threadAttention } from '../src/sidebar.js';
+import { buildActivity, buildMerged, buildSidebar, handoverGroups, markTerms, searchTerms, taggedAgents, threadAttention, type HostSource } from '../src/sidebar.js';
 import { threadMark } from '../src/notices.js';
 
 let clock = 0;
@@ -225,4 +225,22 @@ test('manual and legacy handovers group in the sidebar just like automatic hando
   assert.equal(handoverGroups([a, b]).length, 1);
   delete b.handover!.mode;
   assert.equal(handoverGroups([a, b]).length, 1);
+});
+
+test('the merged list puts every machine in one activity order, names where each thread is, and keeps team members under their lead', () => {
+  const now = new Date('2026-10-21T12:00:00');
+  const th = (id: string, at: string, extra: Partial<Thread> = {}) => ({ id, title: id, cwd: '/w/p', agent: 'pi', status: 'idle', updatedAt: at, ...extra }) as Thread;
+  const sources: HostSource[] = [
+    { hostId: null, label: '本机', state: 'live', at: '2026-10-21T11:59:00', threads: [th('here', '2026-10-21T11:00:00'), th('lead', '2026-10-20T10:00:00', { coordination: { rootId: 'lead' } as Thread['coordination'] }), th('member', '2026-10-21T11:30:00', { coordination: { rootId: 'lead' } as Thread['coordination'] })] },
+    { hostId: 'devbox', label: 'devbox', state: 'live', at: '2026-10-21T11:59:00', threads: [th('there', '2026-10-21T11:40:00'), th('asks', '2026-10-19T09:00:00', { waiting: true })] },
+    { hostId: 'gpu', label: 'gpu', state: 'offline', at: '2026-10-20T08:00:00', threads: [th('old', '2026-10-20T07:00:00')] },
+    { hostId: 'new', label: 'new', state: 'loading', at: null, threads: [] },
+    { hostId: 'warm', label: 'warm', state: 'cached', at: '2026-10-21T11:00:00', threads: [] },
+  ];
+  const model = buildMerged(sources, '', now, 'here');
+  const flat = model.groups.flatMap((g) => g.items.map((i) => `${g.key}:${i.hostId ?? 'local'}:${i.thread.id}`));
+  assert.deepEqual(flat, ['priority:devbox:asks', 'today:devbox:there', 'today:local:here', 'yesterday:local:lead', 'yesterday:gpu:old']);
+  assert.equal(model.count, 5, 'the member is under its lead, not a row of its own');
+  assert.deepEqual(model.notes.map((n) => `${n.hostId}:${n.state}`), ['gpu:offline', 'new:loading'], 'a remembered list being refreshed needs no note');
+  assert.deepEqual(buildMerged(sources, 'there', now, null).groups.flatMap((g) => g.items.map((i) => i.thread.id)), ['there']);
 });

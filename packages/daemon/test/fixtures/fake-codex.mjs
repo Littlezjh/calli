@@ -491,7 +491,7 @@ rl.on('line', (line) => {
         const rateLimits = { limitId: 'codex', primary: { usedPercent: 16, windowDurationMins: 10080, resetsAt: 1792000000 }, secondary: null };
         return out({ jsonrpc: '2.0', id: msg.id, result: { rateLimits, rateLimitsByLimitId: { codex: rateLimits } } });
       }
-      const rateLimits = { limitId: 'codex', primary: { usedPercent: 25, windowDurationMins: 300, resetsAt: 1791800000 }, secondary: { usedPercent: 82, windowDurationMins: 10080, resetsAt: 1792000000 } };
+      const rateLimits = { limitId: 'codex', planType: process.env.FAKE_CODEX_PLAN ?? 'prolite', primary: { usedPercent: 25, windowDurationMins: 300, resetsAt: 1791800000 }, secondary: { usedPercent: 82, windowDurationMins: 10080, resetsAt: 1792000000 } };
       return out({ jsonrpc: '2.0', id: msg.id, result: { rateLimits, rateLimitsByLimitId: { codex: rateLimits, review: { limitName: '代码审查', primary: { usedPercent: 10, windowDurationMins: 10080 } } } } });
     }
     case 'skills/list': {

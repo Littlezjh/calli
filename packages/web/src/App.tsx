@@ -21,7 +21,7 @@ import {
 } from './api';
 import type { HubAction } from './commands';
 import { buildProjectOptions } from './projects';
-import { useAppearance, useIsCompact, useListSwipe } from './hooks';
+import { useAppearance, useIsCompact, useListSwipe, useStoredFlag } from './hooks';
 import { useHosts } from './hosts';
 import type { PreparedImage } from './images';
 import { restoreVideos, type PreparedVideo } from './videos';
@@ -71,6 +71,8 @@ import type { ConnectionState } from '@rah/extension-api/web';
 import { ExtensionView } from './extensions/ExtensionView';
 import { threadSummaries } from './extensions/project';
 import { createThreadFeed } from './extensions/thread-feed';
+import { cachedThreads, rememberThreads } from './thread-cache';
+import type { HostSource } from './sidebar';
 import { enabledViews, extensionHash, looksLikeExtensionRoute, resolveExtensionRoute } from './extensions/routes';
 import { AgentPicker, type DiscoveredAccount, type DiscoveredAgent, effortsForModel, imagesBlocked, imagesNote, modelName, speedsForModel, ModelPicker, PermissionPicker, UsageMeter, WorkspacePicker } from './components/Pickers';
 import { Sidebar, SIDEBAR_SHORTCUT } from './components/Sidebar';
@@ -209,8 +211,8 @@ interface AppProps {
   showcase?: Showcase;
 }
 
-/** What is open when the app starts over on another machine: the phone's thread list, or the machines panel. */
-export type AppStart = 'list' | 'machines';
+/** What is open when the app starts over on another machine: the phone's thread list, the machines panel, or a thread of that machine. */
+export type AppStart = 'list' | 'machines' | { thread: string };
 
 export function App({ token, onToken, connect, hostId = null, onHost, start, showcase }: AppProps) {
   // Asking for the token, and why: what was being done, or why the old one stopped working.
@@ -252,7 +254,12 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     setRoots(c.roots ?? c.workdirs.map((path) => ({ path, removable: false })));
     setScratchAvailable(c.scratch === true);
   }, []);
-  const [threads, setThreads] = useState<Thread[]>([]);
+  // The list last read from this machine stands in until the live one arrives: switching machines
+  // must not flash an empty sidebar. Demo and showcase lists are not the hub's and are not kept.
+  const keepThreads = Boolean(token) && !showcase;
+  const [threads, setThreads] = useState<Thread[]>(() => (keepThreads ? cachedThreads(hostId)?.threads ?? [] : []));
+  /** Whether there is any list to show yet, cached or live: until then an empty one means "not read", not "none". */
+  const [threadsKnown, setThreadsKnown] = useState(() => !keepThreads || cachedThreads(hostId) !== null);
   const [sections, setSections] = useState<Section[]>([]);
   const [todos, setTodos] = useState<Todo[]>([]);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
@@ -269,16 +276,55 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const threadFeed = useMemo(() => createThreadFeed(api, (list, at) => {
     setThreads(list);
     setObservedAt(at);
-  }, setConnection), [api]);
+    setThreadsKnown(true);
+    if (keepThreads) rememberThreads(hostId, list, at ?? new Date().toISOString());
+  }, setConnection), [api, keepThreads, hostId]);
   useEffect(() => {
     threadFeed.start();
     return () => threadFeed.dispose();
   }, [threadFeed]);
+  // Every machine's threads in one list. A device setting, so it stays on as the app starts over
+  // on another machine; with no other machine there is nothing to merge.
+  const [allHosts, setAllHosts] = useStoredFlag('rah.sidebar.allHosts');
+  const merging = allHosts && keepThreads && hosts.length > 0;
+  const [elsewhere, setElsewhere] = useState<HostSource[]>([]);
+  const hostsRef = useRef(hosts);
+  hostsRef.current = hosts;
+  // Which machines there are and whether they answer: the list is read again when that changes.
+  const hostsKey = hosts.map((h) => `${h.id}:${h.status}`).join('|');
+  useEffect(() => {
+    if (!merging) { setElsewhere([]); return; }
+    let alive = true;
+    const targets = [{ id: null as string | null, label: t('hosts.local'), online: true }, ...hostsRef.current.map((h) => ({ id: h.id as string | null, label: h.label, online: h.status === 'online' }))]
+      .filter((x) => x.id !== hostId);
+    // What this device last read stands in at once; the machines are asked again behind it.
+    setElsewhere(targets.map((x): HostSource => {
+      const kept = cachedThreads(x.id);
+      return { hostId: x.id, label: x.label, state: !x.online ? 'offline' : kept ? 'cached' : 'loading', at: kept?.at ?? null, threads: kept?.threads ?? [] };
+    }));
+    const update = (id: string | null, change: (s: HostSource) => HostSource) => setElsewhere((prev) => prev.map((s) => (s.hostId === id ? change(s) : s)));
+    const read = () => {
+      for (const x of targets.filter((x) => x.online)) {
+        new Api(token, '', x.id).threads().then(
+          (list) => {
+            if (!alive) return;
+            const at = new Date().toISOString();
+            rememberThreads(x.id, list, at);
+            update(x.id, (s) => ({ ...s, state: 'live', at, threads: list }));
+          },
+          () => { if (alive) update(x.id, (s) => ({ ...s, state: 'failed' })); },
+        );
+      }
+    };
+    read();
+    const timer = setInterval(() => { if (!document.hidden) read(); }, 20_000);
+    return () => { alive = false; clearInterval(timer); };
+  }, [merging, token, hostId, hostsKey]);
   /** Bumped by daemon broadcasts, so the open plan page reloads. */
   const [todosKey, setTodosKey] = useState(0);
   /** The same, for the open scheduled-task page. */
   const [schedulesKey, setSchedulesKey] = useState(0);
-  const [selectedId, setSelectedId] = useState<string | null>(showcase?.initialThreadId ?? null);
+  const [selectedId, setSelectedId] = useState<string | null>(typeof start === 'object' ? start.thread : showcase?.initialThreadId ?? null);
   const [singleSegmentId, setSingleSegmentId] = useState<string | null>(null);
   const [coordination, setCoordination] = useState<Coordination | null>(null);
   const memberDefaultsKey = hostId ? `${MEMBER_DEFAULTS_KEY}:${hostId}` : MEMBER_DEFAULTS_KEY;
@@ -1711,8 +1757,18 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           onOpenSettings={(x, y) => setSettingsAt({ x, y })}
           hosts={hosts}
           hostId={hostId}
-          onHost={onHost && ((id) => id !== hostId && onHost(id, 'list'))}
+          onHost={onHost && ((id) => {
+            setAllHosts(false);
+            if (id !== hostId) onHost(id, 'list');
+          })}
           hostDown={Boolean(host) && !hostUp}
+          loading={!threadsKnown}
+          merged={merging ? [
+            { hostId, label: host?.label ?? t('hosts.local'), state: (Boolean(host) && !hostUp ? 'offline' : threadsKnown ? 'live' : 'loading') as HostSource['state'], at: observedAt, threads },
+            ...elsewhere,
+          ].sort((a, b) => (a.hostId === null ? -1 : b.hostId === null ? 1 : hosts.findIndex((h) => h.id === a.hostId) - hosts.findIndex((h) => h.id === b.hostId))) : null}
+          onAll={keepThreads && hosts.length > 0 ? () => setAllHosts(true) : undefined}
+          onOpenElsewhere={onHost && ((id, thread) => onHost(id, { thread }))}
           onHide={compact ? undefined : toggleSidebar}
           onThreadMenu={threadActions.openThreadMenu}
           onSectionMenu={threadActions.openSectionMenu}
