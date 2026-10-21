@@ -12,6 +12,7 @@ function readings(): Record<string, PlanQuota> {
       const q = value as PlanQuota | null;
       return q && typeof q.checkedAt === 'string' && Number.isFinite(Date.parse(q.checkedAt))
         && (q.note === undefined || typeof q.note === 'string') && Array.isArray(q.windows)
+        && (q.plan === undefined || (typeof q.plan?.id === 'string' && typeof q.plan?.label === 'string'))
         && q.windows.every(w => w && typeof w.label === 'string' && Number.isFinite(w.usedPercent)
           && w.usedPercent >= 0 && w.usedPercent <= 100
           && (w.scope === undefined || typeof w.scope === 'string')

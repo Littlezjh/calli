@@ -168,6 +168,11 @@ export interface PlanQuota {
   windows: QuotaWindow[];
   /** An adapter's explanation of missing or limited quota data. */
   note?: string;
+  /**
+   * The subscription the account is on: `id` as the agent reports it, `label` as shown. Absent when
+   * the agent does not say; never guessed.
+   */
+  plan?: { id: string; label: string };
   /** When the agent was last asked. ISO. */
   checkedAt: string;
 }

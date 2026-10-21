@@ -1,11 +1,12 @@
 import { execFile } from 'node:child_process';
 import { claudeLiveUsage } from './session-usage.js';
 import type { UsageSample } from '../telemetry.js';
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { AcpAdapter, AcpSession, airForkPoint } from './acp.js';
 import { CLAUDE_ICON } from './icons.js';
+import { titlePlan } from './plans.js';
 import type { JsonRpcPeer } from './jsonrpc.js';
 import { installJsonMcpServer, jsonMcpServers, removeJsonMcpServer } from '../mcp-format.js';
 import { configDirectory, findSessionFile, quoteArg } from './session-location.js';
@@ -254,6 +255,8 @@ export class ClaudeAcpAdapter extends AcpAdapter {
 
   /** One `claude -p "/usage"` run. A local command, so no session is written and no turn spent. */
   async fetchQuota(): Promise<PlanQuota> {
+    const configDir = configDirectory(this.env, 'CLAUDE_CONFIG_DIR', ['.claude'], process.cwd());
+    const planning = claudePlan(configDir, this.env);
     const stdout = await new Promise<string>((resolve, reject) => {
       execFile(claudeCli(), ['-p', '/usage'], { timeout: 30_000, maxBuffer: 1024 * 1024, env: { ...process.env, ...this.env } }, (err, out) => {
         if (!err) return resolve(out);
@@ -261,7 +264,8 @@ export class ClaudeAcpAdapter extends AcpAdapter {
         reject(new Error(`claude /usage failed: ${reason.slice(0, 200)}`));
       });
     });
-    return { windows: parseClaudeUsage(stdout), checkedAt: new Date().toISOString() };
+    const plan = await planning;
+    return { windows: parseClaudeUsage(stdout), ...(plan ? { plan } : {}), checkedAt: new Date().toISOString() };
   }
 
   /**
@@ -306,21 +310,52 @@ function claudeCli(): string {
   return process.env.RAH_CLAUDE_BIN ?? process.env.RAH_CLAUDE_QUOTA_BIN ?? 'claude';
 }
 
-/** One `claude auth status` run against a config directory; null when it says nothing usable. */
+const CLAUDE_PLANS: Record<string, string> = { free: 'Free', pro: 'Pro', max: 'Max', team: 'Team', enterprise: 'Enterprise' };
+
+/**
+ * The plan's name from what Claude Code keeps about the login: `subscriptionType` (pro, max…) and,
+ * for Max, `rateLimitTier`, the only place that tells 5x from 20x.
+ */
+export function claudePlanName(subscription: unknown, tier?: unknown): PlanQuota['plan'] {
+  if (typeof subscription !== 'string' || !subscription.trim()) return undefined;
+  const id = subscription.trim();
+  const multiple = id.toLowerCase() === 'max' && typeof tier === 'string' ? /max_(\d+)x/i.exec(tier)?.[1] : undefined;
+  const label = multiple ? `Max ${multiple}x` : CLAUDE_PLANS[id.toLowerCase()] ?? titlePlan(id);
+  return { id: multiple ? `${id} · ${tier}` : id, label };
+}
+
+/**
+ * The plan of the account in `configDir`. Its credentials file holds the plan next to the login's
+ * tokens: only the two plan fields are taken from it, and nothing else of it is kept or sent.
+ * Where there is no such file (macOS keeps the login in the Keychain), `claude auth status` still
+ * says the subscription, without Max's multiple.
+ */
+async function claudePlan(configDir: string, extraEnv: Record<string, string>): Promise<PlanQuota['plan']> {
+  try {
+    const oauth = JSON.parse(readFileSync(join(configDir, '.credentials.json'), 'utf8'))?.claudeAiOauth;
+    const plan = claudePlanName(oauth?.subscriptionType, oauth?.rateLimitTier);
+    if (plan) return plan;
+  } catch {
+    // No file or not one the hub understands: ask the CLI instead.
+  }
+  return claudePlanName((await claudeAuthStatus(null, extraEnv))?.subscriptionType);
+}
+
+/** One `claude auth status` run, against a config directory if given; null when it says nothing usable. */
 async function claudeAuthStatus(
-  configDir: string,
+  configDir: string | null,
   extraEnv: Record<string, string>,
-): Promise<{ loggedIn?: boolean; email?: string } | null> {
+): Promise<{ loggedIn?: boolean; email?: string; subscriptionType?: string } | null> {
   try {
     const stdout = await new Promise<string>((resolve, reject) => {
       execFile(
         claudeCli(),
         ['auth', 'status'],
-        { timeout: 15_000, maxBuffer: 64 * 1024, env: { ...process.env, ...extraEnv, CLAUDE_CONFIG_DIR: configDir } },
+        { timeout: 15_000, maxBuffer: 64 * 1024, env: { ...process.env, ...extraEnv, ...(configDir ? { CLAUDE_CONFIG_DIR: configDir } : {}) } },
         (err, out) => (err ? reject(err) : resolve(out)),
       );
     });
-    return JSON.parse(stdout) as { loggedIn?: boolean; email?: string };
+    return JSON.parse(stdout) as { loggedIn?: boolean; email?: string; subscriptionType?: string };
   } catch {
     return null; // not signed in there, or output the hub does not understand
   }

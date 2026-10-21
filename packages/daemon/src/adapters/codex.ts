@@ -17,6 +17,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { EmittedEvent } from '../events.js';
 import { commandExists } from '../util.js';
+import { titlePlan } from './plans.js';
 import { CODEX_ICON } from './icons.js';
 import { configDirectory, findSessionFile, quoteArg } from './session-location.js';
 import { codexSystemPromptMeta, scanJsonl } from './system-prompt.js';
@@ -377,6 +378,20 @@ export const CODEX_LOCAL_COMMANDS: SlashCommand[] = [
   { name: 'usage', description: '查看套餐额度和重置时间', kind: 'command' },
 ];
 
+/**
+ * ChatGPT plans as Codex reports them. `prolite` is the $100 Pro plan (5x Plus's limits) and `pro`
+ * the $200 one (20x); OpenAI names both "Pro", so the multiple tells them apart, as Claude's Max does.
+ */
+const CODEX_PLANS: Record<string, string> = {
+  free: 'Free', go: 'Go', plus: 'Plus', prolite: 'Pro 5x', pro: 'Pro 20x', team: 'Team', business: 'Business', enterprise: 'Enterprise', edu: 'Edu',
+};
+
+export function codexPlan(raw: unknown): PlanQuota['plan'] {
+  if (typeof raw !== 'string' || !raw.trim()) return undefined;
+  const id = raw.trim();
+  return { id, label: CODEX_PLANS[id.toLowerCase()] ?? titlePlan(id) };
+}
+
 /** Prefer the complete bucket map; older servers only return the single snapshot. */
 export function codexQuota(response: any): PlanQuota {
   const buckets = Object.entries(response?.rateLimitsByLimitId ?? {});
@@ -400,8 +415,11 @@ export function codexQuota(response: any): PlanQuota {
     }
   }
   const weeklyOnly = windows.length > 0 && windows.every((window) => window.label === '7D');
+  // The plan rides along with the limits: no second request.
+  const plan = codexPlan(response?.rateLimits?.planType ?? buckets.map(([, b]) => (b as any)?.planType).find((p) => typeof p === 'string'));
   return {
     windows,
+    ...(plan ? { plan } : {}),
     ...(weeklyOnly ? { note: '本次仅返回每周额度，服务端未提供 5 小时窗口。' } : {}),
     checkedAt: new Date().toISOString(),
   };

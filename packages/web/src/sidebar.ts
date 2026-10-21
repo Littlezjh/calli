@@ -221,3 +221,49 @@ export function markTerms(text: string, search: string): Array<{ text: string; h
   if (at < text.length) parts.push({ text: text.slice(at), hit: false });
   return parts;
 }
+
+/**
+ * One machine's part of the merged list. `live`: read just now; `cached`: what was last read on
+ * this device, a fresh read under way; `loading`: never read here, reading; `failed`: the read
+ * failed, the last list (if any) stands in; `offline`: the machine cannot be reached.
+ */
+export interface HostSource {
+  hostId: string | null;
+  label: string;
+  state: 'live' | 'cached' | 'loading' | 'failed' | 'offline';
+  /** When `threads` was read; null when nothing was. */
+  at: string | null;
+  threads: Thread[];
+}
+
+export interface MergedModel {
+  groups: Array<{ key: string; label: string; items: Array<{ thread: Thread; hostId: string | null }> }>;
+  count: number;
+  /** Machines not read yet, unreachable or failing, in the order given: the list says so rather than leaving them out. */
+  notes: HostSource[];
+}
+
+/**
+ * Every machine's threads in one list, by what is going on, as the activity view orders them.
+ * Team members stay under their lead, as in each machine's own list. Thread ids are UUIDs, so the
+ * one open on screen cannot be mistaken for a thread of another machine.
+ */
+export function buildMerged(sources: HostSource[], search: string, now: Date, selectedId: string | null): MergedModel {
+  const owner = new Map<Thread, string | null>();
+  const all: Thread[] = [];
+  for (const source of sources) {
+    const ids = new Set(source.threads.map((t) => t.id));
+    for (const thread of source.threads) {
+      if (thread.coordination && thread.coordination.rootId !== thread.id && ids.has(thread.coordination.rootId)) continue;
+      owner.set(thread, source.hostId);
+      all.push(thread);
+    }
+  }
+  const activity = buildActivity(all, search, now, selectedId);
+  return {
+    groups: activity.groups.map((g) => ({ key: g.key, label: g.label, items: g.threads.map((thread) => ({ thread, hostId: owner.get(thread) ?? null })) })),
+    count: activity.count,
+    // A remembered list being refreshed reads as it is; one that cannot be refreshed says so.
+    notes: sources.filter((s) => s.state === 'loading' || s.state === 'failed' || s.state === 'offline'),
+  };
+}
