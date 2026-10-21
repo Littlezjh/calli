@@ -114,8 +114,8 @@
 - **谁执行，谁展示。** 长程由 agent 的原生循环执行（按 [LoopX README](https://github.com/loopx-project/loopx) 的描述：Codex `/goal`、Claude `/loop`、pi 的 goal 扩展），LoopX 记录目标、待办、关卡和证据，并且有自己的个人工作区、浏览器和 PWA 界面；它的看板只是投影，状态以 LoopX 为准。Limi 只在线程旁边展示这份状态，并链接到 LoopX 自己的界面。原生循环优先。
 - **同一份状态，三处展示。** LoopX 扩展读出的状态，同时用于会话摘要、看板卡片和详情面板，不各自计算。
 - **观察和推进分开。** 本文只做观察。暂停、续轮等操作，要等 CLI 行为核实后再设计，不根据样例命令作承诺。
-- **已核对的源码（只读，没有运行）。** 在 [LoopX 固定版本 aa7d44e](https://github.com/loopx-project/loopx/tree/aa7d44eb6206bba39c216a9727c3a26a325ef0d1) 中：`loopx/cli_commands/status_registration.py` 的 `status` 命令有格式选项，以及 `goal-id`、`agent-id`、`include-task-graph`、`projection-cache` 等参数；`status.py` 的 `handle_status_command` 汇总状态，支持待处理队列、运行历史、agent 分道和格式化输出；`todo_list.py` 有 JSON 输出，但同时会追加一条待办的 rollout 事件，大列表的 JSON 还可能走另一条结果通道。所以结构化输出有源码依据，但不能把所有查询都当作没有副作用。
-- **候选的读取命令：** `loopx status --format json --goal-id <id>`。依据是 [`loopx/cli_runtime.py`](https://github.com/loopx-project/loopx/blob/aa7d44eb6206bba39c216a9727c3a26a325ef0d1/loopx/cli_runtime.py)：`add_subcommand_format`（第 106 行）提供 `--format {markdown,json}`；`print_payload`（第 91 行）用 `json.dumps` 输出 JSON，并且在输出前先调用 `usage_ping.capture_result`。这条命令没有实际运行过，需要注意三点：
+- **已核对的源码（只读，没有运行）。** 在 [LoopX 固定版本 aa7d44e](https://github.com/loopx-project/loopx/tree/aa7d44e) 中：`loopx/cli_commands/status_registration.py` 的 `status` 命令有格式选项，以及 `goal-id`、`agent-id`、`include-task-graph`、`projection-cache` 等参数；`status.py` 的 `handle_status_command` 汇总状态，支持待处理队列、运行历史、agent 分道和格式化输出；`todo_list.py` 有 JSON 输出，但同时会追加一条待办的 rollout 事件，大列表的 JSON 还可能走另一条结果通道。所以结构化输出有源码依据，但不能把所有查询都当作没有副作用。
+- **候选的读取命令：** `loopx status --format json --goal-id <id>`。依据是 [`loopx/cli_runtime.py`](https://github.com/loopx-project/loopx/blob/aa7d44e/loopx/cli_runtime.py)：`add_subcommand_format`（第 106 行）提供 `--format {markdown,json}`；`print_payload`（第 91 行）用 `json.dumps` 输出 JSON，并且在输出前先调用 `usage_ping.capture_result`。这条命令没有实际运行过，需要注意三点：
   - `status` 默认读全局注册表，不限于当前目录，必须明确用 `--goal-id` 过滤；
   - 查询路径上有统计、缓存等可能的副作用，接入测试时要确认并在清单里声明；
   - 待办列表的 JSON 可能被截断或分页，返回的条数不能当作总数。

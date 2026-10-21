@@ -121,7 +121,7 @@ sequenceDiagram
 | 命令行 | `limi team ls`、`limi team run 编码队 --cwd DIR --task-file FILE`，走 HTTP，需要 Hub token | P0 |
 | 定时任务 | 目标可以选团队，`mode: new` 每次新任务 | P1 |
 | 扩展 | 扩展可以派活给团队，结果通过任务完成事件取回 | P1 |
-| IM（飞书、企微等） | 由扩展接入：收到消息就派活，任务进入待确认或出错时把结果回到原会话 | P2 |
+| IM（钉钉、Slack 等） | 由扩展接入：收到消息就派活，任务进入待确认或出错时把结果回到原会话 | P2 |
 | 其他 agent | 提供 MCP 工具 `dispatch_to_team`，让 agent 在自己的会话里把活转给团队 | P2 |
 
 `source` 记录入口和回传地址，任务状态变化时发出统一事件，各入口按需订阅，不在团队逻辑里按入口分支。
