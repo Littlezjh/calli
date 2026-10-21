@@ -129,6 +129,8 @@ export function deliveredPreview(text: string): string {
 }
 
 export type Item =
+  | { kind: 'handover-summary'; key: string; turnId: string; target: string; done: boolean; version: number }
+  | { kind: 'model-switch'; key: string; turnId: string; model: string; previous: string; reason: string }
   | { kind: 'proposal'; key: string; turnId: string; id: string; text: string; done: boolean }
   /**
    * A question or plan approval the agent asked. `ended` on a cancelled answer means the turn ran
@@ -444,6 +446,19 @@ export function buildTimeline(events: StoredEvent[], speech: readonly VoiceTrans
     lastSeq = Math.max(lastSeq, ev.seq);
     const key = `e${ev.seq}`;
     const turn = ev.turnId ?? '';
+    if (ev.type === 'turn.error') {
+      const summary = items.find(i => i.kind === 'handover-summary' && i.turnId === turn);
+      if (summary?.kind === 'handover-summary') { summary.done = true; summary.version = ev.seq; }
+    }
+    if (ev.type === 'history.handover') {
+      closeTurn();
+      const existing = items.find(i => i.kind === 'handover-summary' && i.turnId === turn);
+      const marker: Item = { kind: 'handover-summary', key: `handover-${turn}`, turnId: turn, target: String(ev.data.target), done: Boolean(ev.data.done), version: Number(ev.data.version) };
+      if (existing) Object.assign(existing, marker); else items.push(marker);
+      running = !marker.done;
+      continue;
+    }
+    if (ev.type === 'handover.model') { items.push({ kind: 'model-switch', key, turnId: turn, model: String(ev.data.model ?? ''), previous: String(ev.data.previous ?? ''), reason: String(ev.data.reason ?? 'near') }); continue; }
     // Keep complete events received after a historical snapshot. They also hydrate deferred
     // entries when expanded, including updates for tools whose starts predate this connection.
     if (ev.type === 'tool.update' || ev.type === 'tool.end') {
@@ -1058,7 +1073,7 @@ export function groupByTurn(items: Item[]): TurnGroup[] {
   const groups: TurnGroup[] = [];
   for (const it of items) {
     const last = groups[groups.length - 1];
-    if (it.kind === 'user' || !last) groups.push({ turnId: it.turnId ?? '', items: [it] });
+    if (it.kind === 'user' || it.kind === 'handover-summary' || !last) groups.push({ turnId: it.turnId ?? '', items: [it] });
     else last.items.push(it);
   }
   return groups;

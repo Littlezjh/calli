@@ -3,13 +3,14 @@ if (process.argv.includes('--version')) { process.stdout.write('fixture 1.2.3\n'
 // A stand-in for the Antigravity CLI in headless stream-json mode, for tests.
 // Prompt text drives behaviour: "tool" runs a command, "command" needs a permission that headless
 // mode cannot ask for, "slow" waits until interrupted, "crash" exits.
+import { readFileSync, writeFileSync, symlinkSync } from 'node:fs';
 import { agyUsage } from './live-usage.mjs';
 import { coordinationFixture } from './coordination.mjs';
-import { writeFileSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 const args = process.argv.slice(2);
 
 if (args[0] === 'models') {
+  if (process.env.FAKE_HANDOVER_QUOTA) { process.stdout.write('gemini-pro\tGemini Pro\nclaude-sonnet\tClaude Sonnet\n'); process.exit(0); }
   process.stderr.write('Fetching available models...\n');
   process.stdout.write('fast-low\tFast (Low)\nfast-high\tFast (High)\nnot a model line\nbig-thinking\tBig (Thinking)\n');
   process.exit(0);
@@ -25,6 +26,11 @@ if (promptIndex >= 0 && args[promptIndex + 1] !== undefined) {
   } else if (text === '/skills') {
     process.stdout.write('make-video\tTurn a brief into a video\nreview\tReview the current change\n');
   } else if (text.startsWith('/usage') || text.startsWith('/quota')) {
+    if (process.env.FAKE_HANDOVER_QUOTA) {
+      const used = JSON.parse(readFileSync(process.env.FAKE_HANDOVER_QUOTA, 'utf8'));
+      for (const [scope, percent] of Object.entries(used)) process.stdout.write(`${scope}\tWeekly Limit Remaining\t${100 - percent}%\t2099-01-01T00:00:00Z\n`);
+      process.exit(0);
+    }
     process.stdout.write('Fast models\tWeekly Limit Remaining\t97%\t2026-10-16T11:59:18Z\nSlow | models\tFive Hour Limit Remaining\t40%\t2026-10-10T12:14:28Z\n');
   } else if (text === '/config') {
     process.stdout.write('colorScheme\tterminal\nallowNonWorkspaceAccess\tfalse\n');
@@ -100,6 +106,10 @@ function runTurn(text) {
     result({ status: 'SUCCESS', response: reply });
     return;
   }
+  const body = text.split(/<limi-(?:coordination|team)>/)[0].trim();
+  if (model !== 'claude-sonnet' && (body === 'quota-exhausted' || body.startsWith('[协作消息') && body.endsWith('quota-exhausted'))) return result({ status: 'ERROR', error: 'You have exhausted your quota on this model.' });
+  if ((body === 'quota-near' || body.startsWith('[协作消息') && body.endsWith('quota-near')) && process.env.FAKE_HANDOVER_QUOTA) writeFileSync(process.env.FAKE_HANDOVER_QUOTA, JSON.stringify({ 'Gemini Models': 95, 'Claude Models': 20 }));
+  if (text.startsWith('请写一份交接摘要') && process.env.FAKE_HANDOVER_SUMMARY_FAIL) return result({ status: 'ERROR', error: 'summary failed' });
   const coordinated = coordinationFixture(text);
   if (coordinated !== null) {
     step({ step_index: stepIndex++, state: 'DONE', step_type: 'agent_response', text_delta: coordinated });

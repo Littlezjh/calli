@@ -115,6 +115,7 @@ export function compactHistory(events: HistoryEvent[]): HistoryEvent[] {
 
 /** SQLite-backed projections. Raw payloads are referenced, never copied into the read model. */
 export class HistoryStore {
+  private summaryTargets = new Map<string, string | null>();
   private pending = new Map<string, Promise<void>>();
   private closed = false;
   constructor(private db: DatabaseSync) {
@@ -298,6 +299,15 @@ export class HistoryStore {
     return out;
   }
   private turnView(thread: string, turn: string | null, start: number, end: number, hiddenStart = 0): HistoryEvent[] {
+    if (turn) {
+      const first = this.db.prepare("SELECT thread_id, turn_id, seq, type, ts, '{}' AS data FROM events WHERE thread_id=? AND turn_id=? AND type='turn.started' ORDER BY seq LIMIT 1").get(thread, turn) as unknown as Row | undefined;
+      const marker = first && this.summaryEvent(eventOf(first));
+      if (marker?.type === 'history.handover') {
+        // Errors and pending decisions remain visible outside the collapsed summary.
+        const important = this.db.prepare("SELECT * FROM events WHERE thread_id=? AND turn_id=? AND seq<? AND type IN ('turn.error','approval.request','approval.resolved','input.request','input.resolved') ORDER BY seq").all(thread, turn, end) as unknown as Row[];
+        return [marker, ...important.map(eventOf)];
+      }
+    }
     // Existing projections are optional. Missing ones must never delay the first response.
     const covered = this.db.prepare('SELECT 1 FROM history_coverage WHERE thread_id=? AND start_seq<=? AND end_seq>=?').get(thread, start, end - 1);
     if (!covered) return this.directSummary(thread, start, end, hiddenStart);
@@ -344,6 +354,26 @@ export class HistoryStore {
     const turnIds = before === undefined ? (this.db.prepare("SELECT turn_id FROM events WHERE thread_id=? AND type='turn.started' AND seq<=? ORDER BY seq")
       .all(thread, snapshotSeq) as { turn_id: string }[]).map(row => row.turn_id) : undefined;
     return { events, snapshotSeq, nextCursor: hasOlder ? start : null, hasOlder, turnIds };
+  }
+  /** Summary turns are system activity; only expansion reads their prompt and answer. */
+  summaryEvent(event: HistoryEvent): HistoryEvent {
+    if (!event.turnId || !['turn.started', 'turn.done', 'message.delta', 'message.replace', 'reasoning.delta', 'context.compaction', 'tool.start', 'tool.update', 'tool.end'].includes(event.type)) return event;
+    const key = `${event.threadId}:${event.turnId}`;
+    if (!this.summaryTargets.has(key)) {
+      const start = this.db.prepare(`SELECT COALESCE(json_extract(data, '$.handoverLabel'), json_extract(data, '$.handover')) AS label
+        FROM events WHERE thread_id=? AND turn_id=? AND type='turn.started' ORDER BY seq LIMIT 1`).get(event.threadId, event.turnId);
+      this.summaryTargets.set(key, start?.label ? String(start.label) : null);
+      if (this.summaryTargets.size > 256) this.summaryTargets.delete(this.summaryTargets.keys().next().value!);
+    }
+    const target = this.summaryTargets.get(key);
+    if (!target) return event;
+    const end = this.db.prepare("SELECT MAX(seq) AS version, MAX(CASE WHEN type IN ('turn.done','turn.error') THEN 1 ELSE 0 END) AS done FROM events WHERE thread_id=? AND turn_id=?").get(event.threadId, event.turnId)!;
+    return { ...event, type: 'history.handover', data: { target, done: Boolean(end.done), version: end.version } };
+  }
+  summaryText(thread: string, turn: string, offset = 0, snapshot?: number) {
+    const row = this.db.prepare("SELECT json_extract(data, '$.text') AS prompt FROM events WHERE thread_id=? AND turn_id=? AND type='turn.started' AND json_extract(data, '$.handover') IS NOT NULL LIMIT 1").get(thread, turn);
+    if (!row) throw new HttpError(404, 'handover summary not found');
+    return { ...this.handoverText(thread, turn, offset, snapshot), prompt: String(row.prompt ?? '') };
   }
   private handoverStart(thread: string): number {
     return Number(this.db.prepare(`SELECT e.seq FROM events e JOIN threads t ON t.id=e.thread_id

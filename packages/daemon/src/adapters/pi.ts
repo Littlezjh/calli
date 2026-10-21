@@ -688,6 +688,7 @@ export class PiRpcAdapter implements AgentAdapter {
     workModes: ['execute', 'plan'] as const,
     coordination: true,
     resume: true,
+    modelSwitch: true,
     approvals: false,
     permissionModes: [] as const,
     // The widest set. Each model lists the levels it really takes in ModelOption.efforts.

@@ -1,3 +1,4 @@
+import { AutoHandover, type AutoHandoverView, type HandoverTarget } from './auto-handover.js';
 import type { VoiceTransport } from './voice-sessions.js';
 import { VoiceConversation } from './voice-conversation.js';
 import { UserInputs } from './user-input.js';
@@ -6,7 +7,7 @@ import { diagnosticFailure } from './adapters/diagnostics.js';
 import { turnAnswer, type CoordinationManager, type CoordinationSetup } from './coordination.js';
 import { parseProgress, progressInstructions } from './progress-report.js';
 import { randomUUID } from 'node:crypto';
-import { closeSync, existsSync, mkdirSync, openSync, readSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import {
   EFFORT_LEVELS,
@@ -60,8 +61,9 @@ export interface ForkOptions {
 
 /** A thread as the API returns it: the stored record plus values worked out from it. */
 export type ThreadView = Omit<ThreadRecord, 'worktree'> & {
+  autoHandover?: AutoHandoverView;
   /** `doing`, on a member: its latest task while it works, the opening of its answer once it has returned. */
-  coordination?: { rootId: string; children: number; paused: boolean; doing?: string; team?: { name: string; status: import('./teams.js').TaskStatus; role: string; error?: string } };
+  coordination?: { retired?: boolean; rootId: string; children: number; paused: boolean; doing?: string; team?: { name: string; status: import('./teams.js').TaskStatus; role: string; error?: string } };
   /** Working in the hub's scratch area: a thread that is in no project. */
   scratch: boolean;
   /** `of` is how the directory was spelled when the worktree was made; `ofReal` has symlinks resolved, like `cwdReal`. */
@@ -216,6 +218,8 @@ export class ThreadManager {
 
   /** Where threads may work; directories can be added from the page while the hub runs. */
   readonly dirs: Workdirs;
+  readonly autoHandover: AutoHandover;
+  private readonly settlingHandovers = new Set<Promise<void>>();
 
   constructor(
     private readonly store: Store,
@@ -226,6 +230,7 @@ export class ThreadManager {
     private readonly agentMeta: () => Array<{ id: string; adapter?: string; account?: string }> = () => [],
   ) {
     this.dirs = Array.isArray(workdirs) ? new Workdirs(workdirs) : workdirs;
+    this.autoHandover = new AutoHandover(store, this);
     this.skills = new SkillsManager(this.adapters);
     this.mcp = new McpManager(this.adapters, store.mcpEntries);
   }
@@ -658,7 +663,7 @@ export class ThreadManager {
     }
     const scratch = this.dirs.scratchRoot !== null && isWithinWorkdirs(thread.cwd, [this.dirs.scratchRoot]);
     const runningSince = this.running.get(thread.id)?.since ?? null;
-    return { ...thread, worktree, resumeCommand, cwdReal, waiting, waitingReason, queued, terminalActivity, scratch, runningSince, coordination: this.coordination?.metadata(thread.id) };
+    return { ...thread, autoHandover: this.autoHandover.view(thread.id), worktree, resumeCommand, cwdReal, waiting, waitingReason, queued, terminalActivity, scratch, runningSince, coordination: this.coordination?.metadata(thread.id) };
   }
 
   /**
@@ -1377,12 +1382,13 @@ export class ThreadManager {
   }
 
   /** A fresh conversation in the source's exact directory, sharing its existing worktree. No agent is started. */
-  async createHandoverThread(threadId: string, agent: string): Promise<ThreadView> {
+  async createHandoverThread(threadId: string, agent: string, model?: string): Promise<ThreadView> {
     const source = this.getThread(threadId);
     return this.createThread({
       agent,
       cwd: source.cwd,
       title: `${source.title}（接手）`,
+      model,
       sectionId: source.sectionId,
     }, source.worktree, { sourceId: source.id, title: source.title, agent: source.agent });
   }
@@ -1474,7 +1480,7 @@ export class ThreadManager {
 
   private async startTurnReady(
     threadId: string,
-    input: { workMode?: unknown; text?: unknown; images?: unknown; videos?: unknown; queue?: unknown; mentions?: unknown; collaboration?: CoordinationSetup; handover?: unknown; scheduled?: unknown },
+    input: { workMode?: unknown; text?: unknown; images?: unknown; videos?: unknown; queue?: unknown; mentions?: unknown; collaboration?: CoordinationSetup; handoverFrom?: string; autoContinuation?: boolean; handover?: unknown; scheduled?: unknown },
     delivery?: { turnId: string; source: Record<string, unknown>; displayText: string; claim: () => void },
     fromQueue = false,
   ): Promise<{ turnId: string } | { queued: true; id: string }> {
@@ -1492,7 +1498,7 @@ export class ThreadManager {
     if (storedVideos.length && /^\/\S+/.test(rawText)) throw new HttpError(400, '视频请随普通消息发送，不能附在斜杠命令后');
     if (!rawText && rawImages.length === 0 && !storedVideos.length) throw new HttpError(400, 'text is empty');
     if (thread.archivedAt) throw new HttpError(409, 'this thread is archived; restore it first');
-    if (this.running.has(threadId) || !fromQueue && this.queues.get(threadId)?.some(q => !q.error)) {
+    if (this.running.has(threadId) || this.autoHandover.held(threadId) && !input.handover && !input.autoContinuation || !fromQueue && this.queues.get(threadId)?.some(q => !q.error)) {
       const goalAction = originalText === '/goal' ? 'show' : originalText === '/goal pause' ? 'pause' : originalText === '/goal clear' ? 'clear' : null;
       const adapter = this.adapters.get(thread.agent);
       const session = this.sessions.get(threadId);
@@ -1534,7 +1540,7 @@ export class ThreadManager {
     rawText = this.coordination?.mentionText(threadId, originalText, mentions) ?? originalText;
     // Slash commands have their own argument grammar; hidden instructions become unwanted arguments.
     const slashCommand = /^\/\S+/.test(rawText);
-    const coordinated = slashCommand ? rawText : rawText ? (this.coordination?.instructions(threadId, rawText) ?? rawText) : '';
+    const coordinated = slashCommand ? rawText : rawText ? (this.coordination?.instructions(input.handoverFrom ?? threadId, rawText) ?? rawText) : '';
     const discoverable = slashCommand || !rawText ? coordinated : (this.borrowing?.instructions(threadId, coordinated) ?? coordinated);
     // With the board's consent, the agent is asked to say where the work stands; read back at the end.
     const askProgress = !slashCommand && Boolean(rawText) && this.progressWanted();
@@ -1573,7 +1579,7 @@ export class ThreadManager {
           ...(promptText !== rawText ? { displayText: delivery?.displayText ?? rawText.split('\n\n[指定协作对象]')[0] } : {}),
           ...(stored.length ? { images: stored } : {}),
           ...(storedVideos.length ? { videos: storedVideos } : {}),
-          ...(typeof input.handover === 'string' && input.handover ? { handover: input.handover } : {}),
+          ...(typeof input.handover === 'string' && input.handover ? { handover: input.handover, handoverLabel: this.adapters.get(input.handover)?.label ?? input.handover } : {}),
           ...(input.scheduled === true ? { scheduled: true } : {}),
         });
       });
@@ -1586,12 +1592,12 @@ export class ThreadManager {
    * Asks this thread's agent to write a handover summary for another agent, in its own session:
    * it knows its own context best. The turn runs like any other and streams into the thread.
    */
-  async startHandover(threadId: string, target: string): Promise<{ turnId: string }> {
+  async startHandover(threadId: string, target: string, allowSame = false): Promise<{ turnId: string }> {
     const thread = this.getThread(threadId);
     const successor = this.adapters.get(target);
     if (!successor) throw new HttpError(404, `no such agent: ${target}`);
-    if (target === thread.agent) throw new HttpError(400, 'the successor must be another agent');
-    const started = await this.startTurn(threadId, { text: handoverPrompt(successor.label), handover: target });
+    if (!allowSame && target === thread.agent) throw new HttpError(400, 'the successor must be another agent');
+    const started = await this.startTurn(threadId, { text: handoverPrompt(successor.label), handover: target }, undefined, true);
     if (!('turnId' in started)) throw new HttpError(409, 'a turn is already running in this thread');
     return started;
   }
@@ -1640,11 +1646,101 @@ export class ThreadManager {
       if (turnEvents.length === 0) throw new HttpError(404, 'no such turn');
       if (!turnEvents.some((e) => e.type === 'turn.done' || e.type === 'turn.error')) return { pending: true };
       const written = turnMessage(turnEvents).trim();
-      if (written) return { summary: `${context}\n\n${written}`, source: 'agent' };
+      if (written && !turnEvents.some(e => e.type === 'turn.error' || e.type === 'turn.done' && e.data.stopReason === 'cancelled')) return { summary: `${context}\n\n${written}`, source: 'agent' };
     }
     const successor = (target ? this.adapters.get(target)?.label ?? target : '另一个 agent');
     const from = this.adapters.get(thread.agent)?.label ?? thread.agent;
     return { summary: `${context}\n\n${synthesizeHandover(events, { title: thread.title, from, target: successor })}`, source: 'log' };
+  }
+
+  hasAgent(id: string): boolean { return this.adapters.has(id); }
+  canSwitchHandoverModel(id: string): boolean { return this.adapters.get(id)?.capabilities.modelSwitch === true; }
+  async handoverModel(agent: string, model?: string | null): Promise<string | undefined> {
+    try {
+      const models = await this.adapters.get(agent)?.models() ?? [];
+      return model ? models.find(m => m.id === model)?.id : models.find(m => m.isDefault)?.id;
+    } catch { return model || undefined; }
+  }
+  notifyHandover(id?: string): void {
+    if (id) { if (this.store.getThread(id)) this.emitThreadEvent(id, null, 'thread.updated', {}); }
+    else for (const listener of this.listeners) listener({ threadId: '', seq: 0, turnId: null, type: 'handover.updated', ts: new Date().toISOString(), data: {} });
+  }
+  recordHandoverModel(id: string, model: string, previous: string | undefined, reason: string): void {
+    this.emitThreadEvent(id, null, 'handover.model', { model, previous, reason });
+  }
+  async cancelHandoverSummary(id: string): Promise<void> {
+    const run = this.running.get(id);
+    if (run && this.store.listTurnEvents(id, run.turnId).some(e => e.type === 'turn.started' && e.data.handover)) await this.stopTurn(id).catch(() => undefined);
+  }
+  async autoHandoverSummary(id: string, target: string, exhausted: boolean): Promise<string> {
+    let summaryTurn: string | null = null;
+    if (!exhausted) {
+      try {
+        const started = await this.startHandover(id, target, true);
+        summaryTurn = started.turnId;
+        await new Promise<void>((resolve) => {
+          const finish = () => { clearTimeout(timer); off(); resolve(); };
+          const off = this.subscribe(e => { if (e.threadId === id && e.type === 'thread.updated' && !this.running.has(id)) finish(); });
+          const timer = setTimeout(() => { void this.stopTurn(id); finish(); }, 60_000);
+          if (!this.running.has(id)) finish();
+        });
+        if (this.running.has(id)) throw new HttpError(409, 'handover summary did not stop');
+      } catch (error) {
+        if (this.running.has(id)) throw error;
+        summaryTurn = null;
+      }
+    }
+    const result = await this.handoverSummary(id, summaryTurn, target);
+    if ('summary' in result) return result.summary;
+    const fallback = await this.handoverSummary(id, null, target);
+    if ('summary' in fallback) return fallback.summary;
+    throw new HttpError(409, 'handover summary unavailable');
+  }
+  async retryAutoHandoverTurn(id: string, failedTurn: string): Promise<void> {
+    const failed = this.store.listTurnEvents(id, failedTurn).find(e => e.type === 'turn.started');
+    if (!failed) throw new HttpError(409, 'failed turn not found');
+    const images = ((failed.data.images ?? []) as Array<{ id: string }>).map(img => {
+      const file = this.attachments.find(id, img.id);
+      if (!file) throw new HttpError(409, 'handover attachment unavailable');
+      return { data: readFileSync(file.path).toString('base64') };
+    });
+    const text = String(failed.data.displayText ?? failed.data.text ?? '');
+    const turnId = randomUUID();
+    await this.startTurn(id, { text, images, videos: ((failed.data.videos ?? []) as Array<{ id: string }>).map(v => v.id), autoContinuation: true }, {
+      turnId, source: { retry: failedTurn }, displayText: text,
+      claim: () => this.coordination?.retryHandoverTurn(id, failedTurn, turnId),
+    }, true);
+  }
+
+  async executeAutoHandover(id: string, target: HandoverTarget, summary: string, failedTurn: string | null): Promise<void> {
+    const source = this.getThread(id);
+    const successor = await this.createHandoverThread(id, target.agent, target.model);
+    this.autoHandover.inherit(id, successor.id);
+    const adapter = this.adapters.get(target.agent)!;
+    // Preserve the user's execution and permission choices when the successor supports them.
+    if (adapter.capabilities.permissionModes.includes(source.permissionMode as PermissionMode)) await this.updateThread(successor.id, { permissionMode: source.permissionMode });
+    if (adapter.capabilities.workModes?.includes(source.workMode ?? 'execute')) await this.updateThread(successor.id, { workMode: source.workMode ?? 'execute' });
+    this.attachments.copyThread(id, successor.id);
+    const failed = failedTurn ? this.store.listTurnEvents(id, failedTurn).find(e => e.type === 'turn.started') : undefined;
+    const images = ((failed?.data.images ?? []) as Array<{ id: string }>).map(img => {
+      const file = this.attachments.find(id, img.id);
+      if (!file) throw new HttpError(409, 'handover attachment unavailable');
+      return { mimeType: file.mimeType, data: readFileSync(file.path).toString('base64') };
+    });
+    const videos = ((failed?.data.videos ?? []) as Array<{ id: string }>).map(v => v.id);
+    const retry = failed ? String(failed.data.displayText ?? failed.data.text ?? '') : '';
+    const turnId = randomUUID();
+    const text = summary + (retry ? '\n\n## 继续未完成的这一轮\n\n' + retry : '');
+    // Reserve the mailbox identity in the same synchronous claim as the first successor turn.
+    await this.startTurn(successor.id, { text, images, videos, handoverFrom: id }, {
+      turnId, source: { handover: id }, displayText: text,
+      claim: () => this.coordination?.replaceHandoverMember(id, successor.id, turnId),
+    });
+    const queue = this.queues.get(id) ?? [];
+    this.attachments.copyThread(id, successor.id);
+    this.setQueue(id, []);
+    if (queue.length) this.setQueue(successor.id, [...(this.queues.get(successor.id) ?? []), ...queue]);
+    this.startNextQueued(successor.id);
   }
 
   /** Takes a waiting message out of the queue and hands it back, so the page can edit and resend it. */
@@ -1679,7 +1775,7 @@ export class ThreadManager {
 
   /** Sends the next waiting message, if there is one. Called whenever a turn has finished. */
   private startNextQueued(threadId: string): void {
-    if (this.running.has(threadId) || this.startingTurns.has(threadId) || this.dispatchingQueues.has(threadId)) return;
+    if (this.autoHandover.queuePaused(threadId) || this.running.has(threadId) || this.startingTurns.has(threadId) || this.dispatchingQueues.has(threadId)) return;
     const queue = this.queues.get(threadId);
     const next = queue?.find(q => !q.error);
     if (!queue || !next) return;
@@ -1742,16 +1838,20 @@ export class ThreadManager {
 
   /** Closes live agent processes. Threads and events stay in the store. */
   async shutdown(): Promise<void> {
+    this.autoHandover.close();
     this.coordination?.suspendAll();
     for (const threadId of [...this.running.keys()]) await this.cancelTurn(threadId).catch(() => undefined);
     const deadline = Date.now() + 3000;
     while (this.running.size > 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 25));
+    await Promise.allSettled([...this.settlingHandovers]);
     for (const [, s] of this.sessions) await s.close().catch(() => undefined);
     this.sessions.clear();
     this.sessionAdapters.clear();
   }
 
   private async runTurn(thread: ThreadRecord, turnId: string, input: TurnInput): Promise<void> {
+    const start = this.store.listTurnEvents(thread.id, turnId).find(e => e.type === 'turn.started');
+    if (!start?.data.handover && !start?.data.control) this.autoHandover.reserve(thread.id, turnId);
     let finalStatus: ThreadRecord['status'] = 'idle';
     // A finished turn is something new to look at. A turn the user stopped is not.
     let unread = true;
@@ -1770,6 +1870,7 @@ export class ThreadManager {
         return;
       }
       const result = await session.prompt(input, hooks);
+      if (!start?.data.handover && !start?.data.control) this.autoHandover.reserve(thread.id, turnId);
       if (result.stopReason === 'cancelled') unread = false;
       if (result.stopReason === 'error') {
         finalStatus = 'error';
@@ -1802,6 +1903,9 @@ export class ThreadManager {
       if (this.store.getThread(thread.id)) {
         this.store.updateThread(thread.id, { status: finalStatus, ...(unread ? { unread: true } : {}) }, { touch: true });
         this.emitThreadEvent(thread.id, null, 'thread.updated', {});
+        const settling = this.autoHandover.settled(thread.id, turnId);
+        this.settlingHandovers.add(settling);
+        try { await settling; } finally { this.settlingHandovers.delete(settling); }
         this.startNextQueued(thread.id);
       }
     }

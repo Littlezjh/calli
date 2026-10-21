@@ -224,6 +224,16 @@ test('merged-history HTTP reads omit handover text until explicitly expanded, an
     const expanded = await (await get(path + '/handover?text=1')).json() as { text: string };
     assert.equal(expanded.text, 'received handover');
     assert.ok((await (await get(path)).text()).includes('received handover'));
+    store.appendEvent('source', 'summary-turn', 'turn.started', { text: 'summary prompt', handover: 'pi2' });
+    store.appendEvent('source', 'summary-turn', 'message.delta', { text: 'summary answer' });
+    store.appendEvent('source', 'summary-turn', 'turn.done', {});
+    const summaryPath = '/api/threads/source/history/summary?turn=summary-turn';
+    assert.equal((await fetch(base + summaryPath)).status, 401);
+    assert.equal((await get('/api/threads/source/history/summary')).status, 400);
+    assert.equal((await get('/api/threads/source/history/summary?turn=missing')).status, 404);
+    const summary = await (await get(summaryPath)).json() as any;
+    assert.equal(summary.prompt, 'summary prompt'); assert.equal(summary.text, 'summary answer');
+    assert.equal((await get(summaryPath + '&cursor=-1')).status, 400);
     assert.equal((await get('/api/threads/source/history/handover')).status, 404);
     assert.equal((await get('/api/threads/missing/history/handover')).status, 404);
   } finally {

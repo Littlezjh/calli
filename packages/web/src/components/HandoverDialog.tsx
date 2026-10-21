@@ -1,3 +1,4 @@
+import { AutoHandoverChoice } from './AutoHandover';
 import { useEffect, useRef, useState } from 'react';
 import { copyText } from '../clipboard';
 import type { AgentInfo, Api, Thread } from '../api';
@@ -27,6 +28,13 @@ export function HandoverDialog({ api, thread, agents, onOpen, onClose }: Props) 
   const [copied, setCopied] = useState(false);
   const timer = useRef<number | undefined>(undefined);
   const [target, setTarget] = useState(() => agents.find((a) => a.id === thread.agent && a.available)?.id ?? agents.find((a) => a.available)?.id ?? '');
+  const [targetModel, setTargetModel] = useState<string | undefined>();
+  useEffect(() => {
+    if (api.demo) return;
+    let active = true;
+    void api.autoHandover(thread.id).then(v => { if (active && v.targets[0]) { setTarget(v.targets[0].agent); setTargetModel(v.targets[0].model); } }).catch(() => undefined);
+    return () => { active = false; };
+  }, [api, thread.id]);
   const [creating, setCreating] = useState(false);
   const creatingRef = useRef(false);
 
@@ -70,7 +78,7 @@ export function HandoverDialog({ api, thread, agents, onOpen, onClose }: Props) 
     setCreating(true);
     setError('');
     try {
-      const successor = await api.createHandoverThread(thread.id, target);
+      const successor = await api.createHandoverThread(thread.id, target, targetModel);
       onOpen(successor, summary);
       onClose();
     } catch (e) {
@@ -86,12 +94,14 @@ export function HandoverDialog({ api, thread, agents, onOpen, onClose }: Props) 
       <div className="dialog handover" role="dialog" aria-modal="true" aria-labelledby="handover-title" onClick={(e) => e.stopPropagation()}>
         <h2 id="handover-title" className="dialog-title">{t('handover.title')}</h2>
         <p className="dialog-message">{t('handover.message')}</p>
+        <AutoHandoverChoice api={api} thread={thread} />
         <div className="handover-successor">
           <span>{t('handover.successor')}</span>
           <fieldset disabled={creating}>
-            <AgentPicker agents={agents} value={target} onChange={setTarget} />
+            <AgentPicker agents={agents} value={target} onChange={id => { setTarget(id); setTargetModel(undefined); }} />
           </fieldset>
         </div>
+        {targetModel && <p className="handover-note">{targetModel}</p>}
         <p className="handover-cwd" title={thread.cwd}>{thread.cwd}</p>
         {summary ? <pre className="handover-summary" tabIndex={0}>{summary}</pre> : !error && <p className="handover-note" role="status">{t('handover.preparing')}</p>}
         {error && <p className="panel-error" role="alert">{error}</p>}

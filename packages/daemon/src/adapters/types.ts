@@ -153,6 +153,8 @@ export interface QuotaWindow {
   label: string;
   /** What the window covers, when the agent splits by model group or model. */
   scope?: string;
+  /** Exact model IDs covered by this scoped window; absent means the scope is unmapped. */
+  modelIds?: string[];
   /** How much of the window is used, 0 to 100. */
   usedPercent: number;
   /** When the window resets, if the agent said so. ISO. */
@@ -272,6 +274,8 @@ export interface AgentAdapter {
     speed?: boolean;
     /** Accepts runtime-only limi CLI connection context. */
     coordination?: boolean;
+    /** Changing model preserves the native conversation, including through a resumed process. */
+    modelSwitch?: boolean;
     resume: boolean;
     approvals: boolean;
     /** Permission levels this agent supports. Empty means the UI shows no permission picker. */

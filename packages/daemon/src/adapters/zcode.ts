@@ -89,7 +89,7 @@ export class ZcodeAdapter implements AgentAdapter {
   readonly capabilities = {
     workModes: ['execute', 'plan'] as const,
     goal: { controls: ['pause'] as const, actions: ['set', 'show', 'pause', 'resume', 'clear'] as const },
-    coordination: true, resume: true, approvals: true,
+    coordination: true, resume: true, modelSwitch: true, approvals: true,
     // ZCode also treats toolAllowlist as approval exemptions, so permission tiers would mislead.
     permissionModes: [], effortLevels: [],
     images: true, deleteSession: false, history: false, quota: true,

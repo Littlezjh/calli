@@ -388,3 +388,34 @@ test('merged history defers only the recipient opening prompt across cold/warm p
     assert.equal(f.store.history.handoverInfo(recipient.id, true).text, prompt, 'deleted source keeps the received text');
   } finally { f.close(); }
 });
+
+
+test('handover summary turns defer prompt and answer in snapshots and live events', async () => {
+  const f = fixture();
+  try {
+    const start = f.add('summary', 'turn.started', { text: 'PROMPT_SECRET', handover: 'pi2', handoverLabel: 'Agent 2' });
+    const delta = f.add('summary', 'message.delta', { text: 'SUMMARY_SECRET'.repeat(2000) });
+    assert.equal(f.store.history.summaryEvent(start).type, 'history.handover');
+    assert.equal(f.store.history.summaryEvent(delta).data.done, false);
+    assert.ok(!JSON.stringify(f.store.history.summaryEvent(delta)).includes('SUMMARY_SECRET'));
+    const approval = f.add('summary', 'approval.request', { approvalId: 'decision', title: 'Approve', options: [] });
+    assert.deepEqual(f.store.history.summaryEvent(approval), approval);
+    const end = f.add('summary', 'turn.done', {});
+    assert.equal(f.store.history.summaryEvent(end).data.done, true);
+    for (const chain of [false, true]) {
+      const page = await f.store.history.page('thread', undefined, 0, chain);
+      assert.equal(page.events[0].type, 'history.handover');
+      assert.equal(page.events[0].data.target, 'Agent 2');
+      assert.ok(page.events.some(e => e.type === 'approval.request'));
+      assert.ok(!JSON.stringify(page).includes('SECRET'));
+      assert.ok(!JSON.stringify(await f.store.history.since('thread', start.seq, chain)).includes('SECRET'));
+    }
+    const text = f.store.history.summaryText('thread', 'summary');
+    assert.equal(text.prompt, 'PROMPT_SECRET'); assert.equal(text.text.length, 16000);
+    assert.equal(text.nextOffset, 16000);
+    const rest = f.store.history.summaryText('thread', 'summary', text.nextOffset!, text.snapshotSeq);
+    assert.equal(text.text + rest.text, 'SUMMARY_SECRET'.repeat(2000));
+    f.add('ordinary', 'turn.started', { text: 'hello' });
+    assert.throws(() => f.store.history.summaryText('thread', 'ordinary'), /not found/);
+  } finally { f.close(); }
+});

@@ -338,6 +338,11 @@ export function createHttpServer(deps: HttpDeps): Server {
       return sendJson(res, 200, manager.search(url.searchParams.get('q')));
     }
 
+    if (parts.join('/') === 'api/handover-settings') {
+      if (method === 'GET') return sendJson(res, 200, manager.autoHandover.settings());
+      if (method === 'PUT') return sendJson(res, 200, manager.autoHandover.configure(await readJson(req)));
+    }
+
     // GET /api/agents/:id/quota: plan usage, read outside any session and cached briefly.
     // ?refresh=1 skips the cache: the dashboard's refresh button means "ask again now".
     if (method === 'GET' && parts[0] === 'api' && parts[1] === 'agents' && parts[2] && parts[3] === 'quota') {
@@ -746,6 +751,7 @@ export function createHttpServer(deps: HttpDeps): Server {
         if (parts[4] === 'handover') return sendJson(res, 200, history.handoverInfo(threadId, url.searchParams.get('text') === '1'));
         const turn = url.searchParams.get('turn');
         if (!turn) throw new HttpError(400, 'turn is required');
+        if (parts[4] === 'summary') return sendJson(res, 200, history.summaryText(threadId, turn, positive(url.searchParams.get('cursor'), true), positive(url.searchParams.get('version'), true)));
         const id = positive(url.searchParams.get('id'))!;
         const cursor = positive(url.searchParams.get('cursor'), true);
         const version = positive(url.searchParams.get('version'), true);
@@ -787,7 +793,7 @@ export function createHttpServer(deps: HttpDeps): Server {
           const off = manager.subscribe(ev => {
             if (ev.threadId !== threadId) return;
             if (buffer) buffer.push(ev);
-            else writeEvent(res, url.searchParams.get('chain') === '1' ? history.handoverEvent(ev) : ev);
+            else writeEvent(res, url.searchParams.get('chain') === '1' ? history.handoverEvent(history.summaryEvent(ev)) : history.summaryEvent(ev));
           });
           res.once('close', off);
           try {
@@ -795,7 +801,7 @@ export function createHttpServer(deps: HttpDeps): Server {
             if (res.destroyed) return off();
             openSse(res);
             writeEvent(res, { threadId, turnId: null, type: 'history.reset', seq: backlog.snapshotSeq, ts: new Date().toISOString(), data: backlog });
-            for (const ev of buffer) if (ev.seq > backlog.snapshotSeq) writeEvent(res, url.searchParams.get('chain') === '1' ? history.handoverEvent(ev) : ev);
+            for (const ev of buffer) if (ev.seq > backlog.snapshotSeq) writeEvent(res, url.searchParams.get('chain') === '1' ? history.handoverEvent(history.summaryEvent(ev)) : history.summaryEvent(ev));
             buffer = null;
             return finishStream(req, res, off);
           } catch (err) { off(); throw err; }
@@ -809,9 +815,19 @@ export function createHttpServer(deps: HttpDeps): Server {
         return finishStream(req, res, off);
       }
 
+      if (sub === 'auto-handover') {
+        manager.getThread(threadId);
+        if (method === 'GET') return sendJson(res, 200, { ...manager.autoHandover.view(threadId), targets: await manager.autoHandover.targets(threadId) });
+        if (method === 'PATCH') return sendJson(res, 200, manager.autoHandover.setOverride(threadId, (await readJson(req)).enabled));
+        if (method === 'DELETE') { manager.autoHandover.cancel(threadId); return sendJson(res, 200, manager.autoHandover.view(threadId)); }
+      }
+      if (sub === 'collaboration-handover' && method === 'PATCH') {
+        return sendJson(res, 200, manager.coordination?.setAutoHandover(threadId, (await readJson(req)).enabled));
+      }
+
       if (method === 'POST' && sub === 'handover-thread') {
         const body = await readJson(req);
-        return sendJson(res, 201, await manager.createHandoverThread(threadId, body.agent));
+        return sendJson(res, 201, await manager.createHandoverThread(threadId, body.agent, body.model));
       }
 
       if (method === 'POST' && sub === 'handover') {
