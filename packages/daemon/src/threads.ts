@@ -8,7 +8,7 @@ import { turnAnswer, type CoordinationManager, type CoordinationSetup } from './
 import { parseProgress, progressInstructions } from './progress-report.js';
 import { randomUUID } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
-import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import {
   EFFORT_LEVELS,
   PERMISSION_MODES,
@@ -109,6 +109,27 @@ const MAX_SERVED_SVG_BYTES = 5 * 1024 * 1024;
 const SNIFF_BYTES = 4096;
 /** How long a plan-usage answer is reused. The probes spawn a CLI; a minute is fresh enough. */
 const QUOTA_TTL_MS = 60_000;
+
+/**
+ * The content type a downloaded file is served as. Types a browser can play or show inline are
+ * named so a video streams and a PDF opens; everything else is octet-stream, which saves rather
+ * than guesses. The browser never sniffs these (X-Content-Type-Options: nosniff).
+ */
+const DOWNLOAD_TYPES: Record<string, string> = {
+  '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.mov': 'video/quicktime',
+  '.webm': 'video/webm',
+  '.mp3': 'audio/mpeg',
+  '.m4a': 'audio/mp4',
+  '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg',
+  '.pdf': 'application/pdf',
+};
+function downloadType(path: string): string {
+  const dot = path.lastIndexOf('.');
+  return (dot < 0 ? '' : DOWNLOAD_TYPES[path.slice(dot).toLowerCase()]) ?? 'application/octet-stream';
+}
 
 /** Quotes a path for a POSIX shell, leaving plain paths readable. */
 function shellQuote(value: string): string {
@@ -725,6 +746,20 @@ export class ThreadManager {
     const mimeType = sniffImageType(head) ?? (sniffSvg(head) && stat.size <= MAX_SERVED_SVG_BYTES ? 'image/svg+xml' : null);
     if (!mimeType) throw notImage;
     return { path: real, mimeType, size: stat.size };
+  }
+
+  /**
+   * Any file the thread may read (see resolveReadableFile), for downloading or playing it: its
+   * real path, size and the name to save it under. Unlike the image route this puts no ceiling on
+   * size and does not care what kind of file it is — a download is a download, a video streams.
+   */
+  getThreadDownload(threadId: string, rawPath: unknown): { path: string; mimeType: string; size: number; name: string } {
+    const notFound = new HttpError(404, 'no such file in this thread');
+    if (typeof rawPath !== 'string' || !rawPath) throw new HttpError(400, 'path is required');
+    const { real } = this.resolveReadableFile(threadId, rawPath, notFound);
+    const stat = statSync(real);
+    if (!stat.isFile()) throw notFound;
+    return { path: real, mimeType: downloadType(real), size: stat.size, name: basename(real) };
   }
 
   /** One folder of the thread's directory, for the file browser. No path: the thread's directory itself. */

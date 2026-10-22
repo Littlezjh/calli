@@ -1951,6 +1951,82 @@ test('browse: folders and text files in the thread directory can be read, and no
   }
 });
 
+test('download serves any readable file whole or by range, with the name it has', async () => {
+  const dir = join(workdir, 'download-test');
+  mkdirSync(dir, { recursive: true });
+  try {
+    const bytes = readFileSync(join(here, 'fixtures', 'sample-video.mp4'));
+    writeFileSync(join(dir, '火鸡与Claude神.mp4'), bytes);
+    writeFileSync(join(dir, 'notes.txt'), 'hello');
+    writeFileSync(join(dataDir, 'outside.txt'), 'not for the page');
+    const thread = await newThread({ agent: 'claude', cwd: dir });
+    const url = (path: string, extra = '') => `/api/threads/${thread.id}/download?path=${encodeURIComponent(path)}${extra}`;
+
+    assert.equal((await api(url('notes.txt'), {}, false)).status, 401, 'needs the token');
+    assert.equal((await api(url('notes.txt'), {}, true)).status, 200);
+
+    // Whole file: the bytes, the type, and the name to save it under.
+    const whole = await api(url('火鸡与Claude神.mp4'));
+    assert.equal(whole.status, 200);
+    assert.equal(whole.headers.get('content-type'), 'video/mp4');
+    assert.equal(whole.headers.get('accept-ranges'), 'bytes');
+    assert.equal(whole.headers.get('x-content-type-options'), 'nosniff');
+    assert.equal(Number(whole.headers.get('content-length')), bytes.length);
+    assert.match(whole.headers.get('content-disposition') ?? '', /^inline;/);
+    assert.match(whole.headers.get('content-disposition') ?? '', /filename\*=UTF-8''%E7%81%AB/);
+    assert.deepEqual(Buffer.from(await whole.arrayBuffer()), bytes);
+
+    // `?dl=1` asks for the save prompt rather than an inline open.
+    assert.match((await api(url('notes.txt', '&dl=1'))).headers.get('content-disposition') ?? '', /^attachment;/);
+
+    // A range: only those bytes, and the browser is told which ones.
+    const part = await api(url('notes.txt'), { headers: { Range: 'bytes=1-3' } });
+    assert.equal(part.status, 206);
+    assert.equal(part.headers.get('content-range'), 'bytes 1-3/5');
+    assert.equal(await part.text(), 'ell');
+    const tail = await api(url('notes.txt'), { headers: { Range: 'bytes=-2' } });
+    assert.equal(tail.status, 206);
+    assert.equal(tail.headers.get('content-range'), 'bytes 3-4/5');
+    assert.equal(await tail.text(), 'lo');
+    const open = await api(url('notes.txt'), { headers: { Range: 'bytes=2-' } });
+    assert.equal(open.headers.get('content-range'), 'bytes 2-4/5');
+    assert.equal(await open.text(), 'llo');
+    // Past the end, and a range that cannot be met, are refused rather than served wrong.
+    const past = await api(url('notes.txt'), { headers: { Range: 'bytes=9-20' } });
+    assert.equal(past.status, 416);
+    assert.equal(past.headers.get('content-range'), 'bytes */5');
+
+    assert.equal((await api(url('missing.txt'))).status, 404);
+    assert.equal((await api('/api/threads/nope/download?path=x')).status, 404);
+    assert.equal((await api(url(''))).status, 400, 'a path is required');
+    // A file outside the thread that no answer named is not downloadable.
+    assert.equal((await api(url(join(dataDir, 'outside.txt')))).status, 403);
+    assert.equal((await api(`/api/threads/${thread.id}/download?path=${encodeURIComponent(dir)}`)).status, 404, 'a folder is not a file');
+
+    // A signed link: what a <video> tag or a save link uses, since neither can send the token.
+    const link = (await (await api(`/api/threads/${thread.id}/download-link?path=${encodeURIComponent('火鸡与Claude神.mp4')}&dl=1`)).json()) as { url: string; name: string; size: number; mimeType: string };
+    assert.equal(link.name, '火鸡与Claude神.mp4');
+    assert.equal(link.size, bytes.length);
+    assert.equal(link.mimeType, 'video/mp4');
+    // Fetched with no Authorization header at all, exactly as the browser would.
+    const signed = await fetch(base + link.url, { headers: { Range: 'bytes=0-99' } });
+    assert.equal(signed.status, 206);
+    assert.equal(signed.headers.get('content-range'), `bytes 0-99/${bytes.length}`);
+    assert.match(signed.headers.get('content-disposition') ?? '', /^attachment;/);
+    assert.deepEqual(Buffer.from(await signed.arrayBuffer()), bytes.subarray(0, 100));
+    // The link names one file: another path under the same signature is refused.
+    const retargeted = link.url.replace(encodeURIComponent('火鸡与Claude神.mp4'), encodeURIComponent('notes.txt'));
+    assert.equal((await fetch(base + retargeted)).status, 403);
+    // A tampered signature, and one that ran out, are refused too.
+    assert.equal((await fetch(base + link.url.replace(/sig=[0-9a-f]+/, 'sig=' + 'a'.repeat(64)))).status, 403);
+    assert.equal((await fetch(base + link.url.replace(/exp=\d+/, 'exp=1'))).status, 403);
+    assert.equal((await api(`/api/threads/${thread.id}/download-link?path=${encodeURIComponent('missing.txt')}`)).status, 404, 'a link is only minted for a file that is there');
+    assert.equal((await api(`/api/threads/${thread.id}/download-link?path=${encodeURIComponent(join(dataDir, 'outside.txt'))}`)).status, 403);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('commands: agy lists and answers its own commands; the answer is a normal turn in the thread', async () => {
   const list = (await (await api(`/api/agents/agy/commands?cwd=${encodeURIComponent(workdir)}`)).json()) as Array<{ name: string; kind: string }>;
   assert.ok(list.some((c) => c.name === 'usage' && c.kind === 'command'));

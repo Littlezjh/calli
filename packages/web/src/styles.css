@@ -7466,6 +7466,31 @@ input.picker-search {
   box-shadow: var(--shadow-card);
 }
 
+/* A video the agent made, played where it lies instead of only offering a download. */
+.files-video {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  padding: 16px;
+}
+
+/* Fills the panel's width and keeps its own shape: `contain` letterboxes rather than stretching a
+   tall clip into a wide box. The outline keeps a dark frame from melting into a dark panel. */
+.files-video video {
+  width: 100%;
+  max-height: 78vh;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--code-bg);
+  object-fit: contain;
+  box-shadow: var(--shadow-card);
+}
+
+/* The way out of a file that cannot be shown: save it and open it elsewhere. */
+.files-download {
+  gap: 6px;
+}
+
 /* Highlighting, from the classes highlight.js gives. */
 .files-code .hljs-comment,
 .files-code .hljs-quote {

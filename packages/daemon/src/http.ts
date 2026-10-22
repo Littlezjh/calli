@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { createReadStream, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { connect } from 'node:net';
@@ -183,6 +183,84 @@ function serveStatic(res: ServerResponse, webDir: string, urlPath: string): void
   createReadStream(file).pipe(res);
 }
 
+/** How long a signed download link works. Long enough to watch or seek a long video in one sitting. */
+const DOWNLOAD_GRANT_S = 6 * 60 * 60;
+
+/**
+ * A short-lived signature for one file of one thread, so a `<video>` tag or a save link — neither
+ * of which can send an Authorization header — can still fetch it. Tied to the path as well as the
+ * thread, so it opens that file and nothing else.
+ */
+function downloadSignature(secret: string, threadId: string, path: string, exp: number): string {
+  return createHmac('sha256', secret).update(`${threadId}\n${path}\n${exp}`).digest('hex');
+}
+
+function makeDownloadGrant(secret: string, threadId: string, path: string, now = Date.now()): { exp: number; sig: string } {
+  const exp = Math.floor((now + DOWNLOAD_GRANT_S * 1000) / 1000);
+  return { exp, sig: downloadSignature(secret, threadId, path, exp) };
+}
+
+function checkDownloadGrant(secret: string, threadId: string, path: string, exp: string | null, sig: string | null, now = Date.now()): void {
+  const expired = new HttpError(403, 'this download link has expired; open it again from the thread');
+  if (!exp || !sig || !/^\d+$/.test(exp) || Number(exp) * 1000 < now) throw expired;
+  const want = Buffer.from(downloadSignature(secret, threadId, path, Number(exp)), 'utf8');
+  const got = Buffer.from(sig, 'utf8');
+  if (want.length !== got.length || !timingSafeEqual(want, got)) throw expired;
+}
+
+/**
+ * Serves one of a thread's files for downloading or playing. Range requests get a 206 so a video
+ * can be seeked and a phone can start before the whole file has arrived; a file sent without one
+ * is served whole. `save` (from `?dl=1`) forces the download prompt even for a type the browser
+ * would rather open, such as a video or a PDF.
+ */
+function serveDownload(
+  req: IncomingMessage,
+  res: ServerResponse,
+  file: { path: string; mimeType: string; size: number; name: string },
+  save: boolean,
+): void {
+  // A file name may hold anything a person typed: quotes, a newline, a semicolon. The plain name
+  // is stripped to what a header can carry, and the exact one follows as UTF-8 (RFC 5987), which
+  // is how browsers keep a Chinese file name intact.
+  const plain = file.name.replace(/[^\w.\- ]/g, '_').replace(/["\\]/g, '_') || 'file';
+  const utf8 = encodeURIComponent(file.name).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  const headers: Record<string, string | number> = {
+    'Content-Type': file.mimeType,
+    'Accept-Ranges': 'bytes',
+    'Content-Disposition': `${save ? 'attachment' : 'inline'}; filename="${plain}"; filename*=UTF-8''${utf8}`,
+    'X-Content-Type-Options': 'nosniff',
+    // The agent may rewrite the file any minute: what arrives is what is on disk now.
+    'Cache-Control': 'private, no-store',
+  };
+
+  const range = req.headers.range;
+  const match = typeof range === 'string' ? /^bytes=(\d*)-(\d*)$/.exec(range.trim()) : null;
+  if (!match) {
+    res.writeHead(200, { ...headers, 'Content-Length': file.size });
+    createReadStream(file.path).pipe(res);
+    return;
+  }
+
+  // A suffix range (`-500`) counts back from the end; any other range runs from its start to its
+  // end or, with none given, to the last byte.
+  const [, startText, endText] = match;
+  let start = startText === '' ? file.size - Number(endText) : Number(startText);
+  let end = startText === '' || endText === '' ? file.size - 1 : Number(endText);
+  start = Math.max(0, start);
+  end = Math.min(end, file.size - 1);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= file.size) {
+    res.writeHead(416, { 'Content-Range': `bytes */${file.size}` }).end();
+    return;
+  }
+  res.writeHead(206, {
+    ...headers,
+    'Content-Range': `bytes ${start}-${end}/${file.size}`,
+    'Content-Length': end - start + 1,
+  });
+  createReadStream(file.path, { start, end }).pipe(res);
+}
+
 export function createHttpServer(deps: HttpDeps): Server {
   const { manager, registry, terminals, hosts, scheduler, extensions, voice, trusted, token, webDir, version } = deps;
 
@@ -202,9 +280,11 @@ export function createHttpServer(deps: HttpDeps): Server {
     const auth = req.headers.authorization ?? '';
     const bearer = auth.startsWith('Bearer ') ? auth.slice(7) : undefined;
     // One route carries its own auth instead: preview files are fetched by an iframe, which cannot
-    // send headers, so it opens with a short-lived signature verified inside the route.
+    // send headers, so it opens with a short-lived signature verified inside the route. A download
+    // signed for a `<video>` tag or a save link loses the header the same way and verifies the same.
     const signedFileRoute = /^\/api\/threads\/[^/]+\/files\//.test(path);
-    if (!trusted && !signedFileRoute && !tokenMatches(bearer, token)) return sendJson(res, 401, { error: 'unauthorized' });
+    const signedDownloadRoute = /^\/api\/threads\/[^/]+\/download$/.test(path) && url.searchParams.has('sig');
+    if (!trusted && !signedFileRoute && !signedDownloadRoute && !tokenMatches(bearer, token)) return sendJson(res, 401, { error: 'unauthorized' });
 
     const parts = path.split('/').filter(Boolean); // ['api', ...]
 
@@ -907,6 +987,32 @@ export function createHttpServer(deps: HttpDeps): Server {
         });
         createReadStream(file.path).pipe(res);
         return;
+      }
+
+      // GET /api/threads/:id/download?path=: any file the thread may read, for saving or playing it.
+      // Range is served (206) so a video can seek and a phone can play it; `?dl=1` forces a save,
+      // otherwise a type the browser knows (video, PDF) opens inline.
+      if (method === 'GET' && sub === 'download') {
+        const path = url.searchParams.get('path');
+        // Without a Bearer token (a <video> tag, a save link) the request must carry its own grant.
+        if (!tokenMatches(bearer, token)) {
+          checkDownloadGrant(token, threadId, typeof path === 'string' ? path : '', url.searchParams.get('exp'), url.searchParams.get('sig'));
+        }
+        const file = manager.getThreadDownload(threadId, path);
+        serveDownload(req, res, file, url.searchParams.get('dl') === '1');
+        return;
+      }
+
+      // GET /api/threads/:id/download-link?path=&dl=: a signed address for the download route, for
+      // a <video> or a save link, which cannot send the token as a header.
+      if (method === 'GET' && sub === 'download-link') {
+        const path = url.searchParams.get('path');
+        // Resolved once here, so the link is only ever made for a file the thread may read.
+        const file = manager.getThreadDownload(threadId, path);
+        const grant = makeDownloadGrant(token, threadId, file.path);
+        const query = new URLSearchParams({ path: file.path, exp: String(grant.exp), sig: grant.sig });
+        if (url.searchParams.get('dl') === '1') query.set('dl', '1');
+        return sendJson(res, 200, { url: `/api/threads/${threadId}/download?${query}`, name: file.name, size: file.size, mimeType: file.mimeType });
       }
 
       // GET /api/threads/:id/tree?path=: one folder of the thread's directory, for the file browser

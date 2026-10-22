@@ -1012,6 +1012,18 @@ export class Api {
     return this.request('GET', `/api/threads/${threadId}/find?q=${encodeURIComponent(query)}`);
   }
 
+  /**
+   * A short-lived, signed address for one of the thread's files, for a `<video>` tag or a save
+   * link: neither can send the token as a header. `save` asks for the save prompt rather than an
+   * inline open, and only matters for a type the browser would otherwise play or show.
+   */
+  downloadLink(threadId: string, path: string, save = true): Promise<{ url: string; name: string; size: number; mimeType: string }> {
+    return this.request<{ url: string; name: string; size: number; mimeType: string }>(
+      'GET',
+      `/api/threads/${threadId}/download-link?path=${encodeURIComponent(path)}${save ? '&dl=1' : ''}`,
+    ).then((link) => ({ ...link, url: this.url(link.url) }));
+  }
+
   /** An image attached to a turn. Fetched with the token, since an <img> tag cannot send it. */
   async attachment(threadId: string, attachmentId: string): Promise<Blob> {
     const res = await fetch(this.url(`/api/threads/${threadId}/attachments/${attachmentId}`), { headers: this.headers() });

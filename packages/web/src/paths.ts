@@ -47,6 +47,9 @@ export function nameAttachments(text: string): string {
 /** File names the hub can show as pictures. Whether a file really is one is for the daemon to say. */
 export const IMAGE_FILE = /\.(?:png|jpe?g|gif|webp|svg)$/i;
 
+/** File names the browser can play itself. Shown with a player rather than as binary. */
+export const VIDEO_FILE = /\.(?:mp4|m4v|mov|webm)$/i;
+
 export type LinkTarget =
   /** An address on the web: opens in a tab of its own, so the hub stays where it is. */
   | { kind: 'web'; url: string }

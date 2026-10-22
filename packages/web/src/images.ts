@@ -172,7 +172,7 @@ export function pngFileName(name: string): string {
 }
 
 /** Hands a file to the browser to save. */
-function saveAs(href: string, name: string): void {
+export function saveAs(href: string, name: string): void {
   const link = document.createElement('a');
   link.href = href;
   link.download = name;

@@ -4,9 +4,9 @@ import remarkGfm from 'remark-gfm';
 import type { Api, FolderEntry, FolderListing, TextFile } from '../api';
 import { copyText } from '../clipboard';
 import { crumbsOf, escapeHtml, foldersTo, languageOf, parentDir, resolveRelative, sizeLabel, splitHighlighted } from '../files';
-import { pictureUrl } from '../images';
-import { IMAGE_FILE } from '../paths';
-import { IconChevron, IconClose, IconCopy, IconFile, IconFolder, IconSearch, IconSidebar, IconWrap } from './icons';
+import { pictureUrl, saveAs } from '../images';
+import { IMAGE_FILE, VIDEO_FILE } from '../paths';
+import { IconChevron, IconClose, IconCopy, IconDownload, IconFile, IconFolder, IconSearch, IconSidebar, IconWrap } from './icons';
 import { t } from '../i18n';
 
 /** What the panel is asked to show: a file (at a line), or with no path, the thread's folder. */
@@ -32,6 +32,7 @@ type Shown =
   | { state: 'loading'; path: string }
   | { state: 'text'; file: TextFile }
   | { state: 'picture'; file: TextFile; url: string }
+  | { state: 'video'; file: TextFile; url: string }
   | { state: 'error'; path: string; message: string };
 
 const WIDTH_KEY = 'rah.files.width';
@@ -147,6 +148,17 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
             return;
           } catch {
             // Named like a picture but not one: shown as whatever it is.
+          }
+        }
+        // A video is streamed from a signed link, so seeking works and the whole file is never
+        // pulled into memory. The player fetches only what it needs.
+        if (VIDEO_FILE.test(file.path)) {
+          try {
+            const link = await api.downloadLink(threadId, file.path, false);
+            setShown({ state: 'video', file, url: link.url });
+            return;
+          } catch {
+            // No link: fall through to the binary notice, which still offers a download.
           }
         }
         setShown({ state: 'text', file });
@@ -327,10 +339,16 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
       {shown?.state === 'loading' && <div className="files-empty">{t('common.loading')}</div>}
       {shown?.state === 'error' && <div className="files-empty">{shown.message}</div>}
       {shown?.state === 'picture' && (svg && source ? <SvgSource file={shown.file} wrap={wrap} /> : <div className="files-picture"><img src={shown.url} alt={shown.file.path} /></div>)}
+      {shown?.state === 'video' && (
+        <div className="files-video">
+          <video src={shown.url} controls playsInline preload="metadata" />
+        </div>
+      )}
       {shown?.state === 'text' && shown.file.text === null && (
         <div className="files-empty">
           <IconFile size={30} />
           <span>{t('files.binary', sizeLabel(shown.file.size))}</span>
+          <DownloadButton api={api} threadId={threadId} path={shown.file.path} label={t('files.download')} />
         </div>
       )}
       {shown?.state === 'text' && shown.file.text !== null && markdown && !source && (
@@ -390,6 +408,7 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
       <button type="button" className="icon-btn" aria-label={t('files.copyPath')} title={copied ? t('common.copied') : t('files.copyPath')} onClick={() => void copyPath()}>
         <IconCopy size={16} />
       </button>
+      <DownloadButton api={api} threadId={threadId} path={filePath} label={t('files.download')} icon />
     </>
   );
 
@@ -511,6 +530,37 @@ function EntryRow({ entry, depth, open, current, onClick }: { entry: FolderEntry
       <span className="files-caret">{dir && <IconChevron size={12} open={open} />}</span>
       {dir ? <IconFolder size={14} /> : <IconFile size={14} />}
       <span className="files-name">{entry.name}</span>
+    </button>
+  );
+}
+
+/** Saves one of the thread's files: a signed link is minted, then the browser saves what it names. */
+function DownloadButton({ api, threadId, path, label, icon }: { api: Api; threadId: string; path: string; label: string; icon?: boolean }) {
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const start = async () => {
+    setBusy(true);
+    setFailed(false);
+    try {
+      const link = await api.downloadLink(threadId, path, true);
+      saveAs(link.url, link.name);
+    } catch {
+      setFailed(true);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const title = failed ? t('files.downloadFailed') : label;
+  if (icon)
+    return (
+      <button type="button" className="icon-btn" aria-label={label} title={title} disabled={busy} onClick={() => void start()}>
+        <IconDownload size={16} />
+      </button>
+    );
+  return (
+    <button type="button" className="btn-secondary files-download" disabled={busy} onClick={() => void start()}>
+      <IconDownload size={15} />
+      <span>{busy ? t('files.downloading') : title}</span>
     </button>
   );
 }
