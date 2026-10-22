@@ -37,9 +37,12 @@ test('Codex quota, commands and skills work on desktop and phone in both themes'
         await panel.waitFor();
         const boardRow = panel.locator('.quota-board-row').filter({ hasText: 'Codex' });
         const quotaData = await boardRow.count() ? boardRow : panel;
-        await quotaData.locator('.quota-row').first().waitFor();
-        assert.equal(await quotaData.locator('.quota-row').count(), 3);
-        assert.deepEqual(await quotaData.locator('.quota-percent').allTextContents(), ['25%', '82%', '10%']);
+        // What is left of each window: 5 hours and weekly on Codex's own line, then the review limit's.
+        await quotaData.locator('.quota-cell:not(.quota-none)').first().waitFor();
+        assert.equal(await quotaData.locator('.quota-cell:not(.quota-none)').count(), 3);
+        assert.deepEqual(await quotaData.locator('.quota-percent').allTextContents(), ['75%', '18%', '90%']);
+        assert.deepEqual(await quotaData.locator('.quota-cell.low .quota-percent').allTextContents(), ['18%'], 'only a window running out is red');
+        assert.deepEqual(await panel.locator('.quota-columns span').allTextContents(), ['', '5 小时', '每周']);
         await page.waitForTimeout(400);
         const bounds = await panel.boundingBox();
         assert.ok(bounds && bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= page.viewportSize().width + 1 && bounds.y + bounds.height <= page.viewportSize().height + 1);

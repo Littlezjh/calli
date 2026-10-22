@@ -1022,6 +1022,13 @@ export class CodexAppServerAdapter implements AgentAdapter {
     private readonly name = 'codex',
   ) {}
 
+  /** Device auth prints a code, so it also works when the terminal is not on the browser's machine. */
+  loginCommand(): string {
+    const home = this.env.CODEX_HOME;
+    const prefix = home ? `env CODEX_HOME=${quoteArg(home)} ` : '';
+    return `${prefix}${quoteArg(this.command[0])} login --device-auth`;
+  }
+
   async realtimeSupport(): Promise<{ supported: boolean; login?: 'ready' | 'required' }> {
     return this.withServer(async peer => {
       try {

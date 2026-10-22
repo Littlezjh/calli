@@ -93,6 +93,17 @@ async function handle(message) {
     }
     case 'session/create': case 'session/resume': {
       sessionId = p.sessionId ?? sessionId;
+      // Real zcode validates mcpServers with a strict schema: a stdio entry is exactly
+      // { name, command, args, env: [{ name, value }] } (args and env required, empty allowed,
+      // nothing extra), so the fake rejects the same shapes the real one would.
+      for (const server of p.mcpServers ?? []) {
+        if (!['name', 'command', 'args', 'env'].every((k) => k in server) || Object.keys(server).some((k) => !['name', 'command', 'args', 'env'].includes(k)))
+          return error(id, `Invalid params — mcpServers.${p.mcpServers.indexOf(server)}: Invalid input`);
+        if (typeof server.name !== 'string' || !server.name || typeof server.command !== 'string' || !server.command
+          || !Array.isArray(server.args) || server.args.some((a) => typeof a !== 'string')
+          || !Array.isArray(server.env) || server.env.some((e) => typeof e?.name !== 'string' || !e.name || typeof e?.value !== 'string'))
+          return error(id, `Invalid params — mcpServers.${p.mcpServers.indexOf(server)}: Invalid input`);
+      }
       if (method === 'session/resume' && process.env.FAKE_ZCODE_CONTEXT) contextUsed = 12000;
       if (!process.env.FAKE_ZCODE_NO_PREFERENCES) await preferences();
       mode = p.mode ?? mode; model = p.model ?? model;

@@ -51,6 +51,7 @@ import { ObservabilityPanel } from './components/ObservabilityPanel';
 import { QuotaBoard } from './components/QuotaBoard';
 import { SelectionMenu } from './components/SelectionMenu';
 import { AgentPanel, TeamCard } from './components/AgentPanel';
+import { AgentsPage } from './components/AgentsPage';
 import type { AgentMention, Coordination, MemberDefault, SearchHit } from './api';
 import { Popover as CoordinationPopover } from './components/Popover';
 import { SideChat } from './components/SideChat';
@@ -115,14 +116,15 @@ const isNearBottom = (el: HTMLElement) => el.scrollHeight - el.scrollTop - el.cl
 const TODOS_HASH = '#/todos';
 const SKILLS_HASH = '#/skills';
 const TEAMS_HASH = '#/teams';
+const AGENTS_HASH = '#/agents';
 const MCP_HASH = '#/mcp';
 const SCHEDULES_HASH = '#/schedules';
 const ACTIVITY_HASH = '#/activity';
 const EXTENSIONS_HASH = '#/extensions';
 /** The hub's own pages. Any other `#/…` may be an extension's view; see extensions/routes.ts. */
-const CORE_ROUTES = [TEAMS_HASH, TODOS_HASH, SKILLS_HASH, MCP_HASH, SCHEDULES_HASH, ACTIVITY_HASH, EXTENSIONS_HASH];
+const CORE_ROUTES = [AGENTS_HASH, TEAMS_HASH, TODOS_HASH, SKILLS_HASH, MCP_HASH, SCHEDULES_HASH, ACTIVITY_HASH, EXTENSIONS_HASH];
 
-type MainView = 'teams' | 'thread' | 'todos' | 'schedules' | 'activity' | 'skills' | 'mcp' | 'extensions' | 'ext';
+type MainView = 'agents' | 'teams' | 'thread' | 'todos' | 'schedules' | 'activity' | 'skills' | 'mcp' | 'extensions' | 'ext';
 
 /** The page an address opens; null for none (a thread). Skills and MCP are the hub's own machinery, which the demo has none of. */
 function viewForHash(hash: string, connected: boolean): MainView | null {
@@ -133,6 +135,8 @@ function viewForHash(hash: string, connected: boolean): MainView | null {
       return 'schedules';
     case ACTIVITY_HASH:
       return 'activity';
+    case AGENTS_HASH:
+      return connected ? 'agents' : null;
     case TEAMS_HASH:
       return connected ? 'teams' : null;
     case SKILLS_HASH:
@@ -407,6 +411,8 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const [importOpen, setImportOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
   const [termOpen, setTermOpen] = useState(false);
+  /** The terminal a login started; null attaches to the newest live one. */
+  const [terminalTarget, setTerminalTarget] = useState<string | null>(null);
   /** The agent whose plan usage the quota panel shows. */
   /** The quota dashboard, over every agent that can report usage. */
   const [handoverSettingsOpen, setHandoverSettingsOpen] = useState(false);
@@ -481,6 +487,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const onTodos = view === 'todos' && !selectedId;
   const onSchedules = view === 'schedules' && !selectedId;
   const onActivity = view === 'activity' && !selectedId;
+  const onAgents = view === 'agents' && !selectedId;
   const onTeams = view === 'teams' && !selectedId;
   const onSkills = view === 'skills' && !selectedId;
   const onMcp = view === 'mcp' && !selectedId;
@@ -490,7 +497,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const extOpen = onExt && extensions && extTarget ? resolveExtensionRoute(extTarget, extensions) : null;
   const extName = extOpen ? extensions?.find((e) => e.manifest.id === extOpen.extensionId)?.manifest.name[locale()] ?? extOpen.extensionId : '';
   /** The name of the page the main area shows instead of a thread, for the top bar; null on a thread. */
-  const viewTitle = onTeams ? t('teams.title') : onTodos
+  const viewTitle = onAgents ? t('agents.title') : onTeams ? t('teams.title') : onTodos
     ? t('todos.title')
     : onSchedules
       ? t('sidebar.schedules')
@@ -536,11 +543,11 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   // threads is not a trail for the back button to walk.
   const extWant = onExt ? (extOpen ? extensionHash(extOpen) : extTarget ?? '') : '';
   useEffect(() => {
-    const want = onTeams ? TEAMS_HASH : onTodos ? TODOS_HASH : onSchedules ? SCHEDULES_HASH : onActivity ? ACTIVITY_HASH : onSkills ? SKILLS_HASH : onMcp ? MCP_HASH : onExtensions ? EXTENSIONS_HASH : extWant;
+    const want = onAgents ? AGENTS_HASH : onTeams ? TEAMS_HASH : onTodos ? TODOS_HASH : onSchedules ? SCHEDULES_HASH : onActivity ? ACTIVITY_HASH : onSkills ? SKILLS_HASH : onMcp ? MCP_HASH : onExtensions ? EXTENSIONS_HASH : extWant;
     if (window.location.hash !== want) {
       window.history.replaceState(window.history.state, '', want || window.location.pathname + window.location.search);
     }
-  }, [onTeams, onTodos, onActivity, onSkills, onSchedules, onMcp, onExtensions, extWant]);
+  }, [onAgents, onTeams, onTodos, onActivity, onSkills, onSchedules, onMcp, onExtensions, extWant]);
 
   // Whether the directory a new thread would start in is a git repository. Asked once per directory picked.
   useEffect(() => {
@@ -1189,7 +1196,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       api?.sections().then(setSections).catch(handleError);
       void refreshThreads();
     },
-    onOpenTerminal: () => (demo ? askToConnect() : setTermOpen(true)),
+    onOpenTerminal: () => (demo ? askToConnect() : openTerminal()),
     onError: handleError,
     toast: setToast,
     // The open thread is already in memory; copying it straight away keeps the browser's
@@ -1327,6 +1334,25 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     setSelectedId(null);
     setView('activity');
     setDrawer(false);
+  };
+
+  const reloadAgents = async () => {
+    if (!api) return;
+    const list = await api.agents();
+    setAgents(list);
+    setDraftAgent((prev) => (list.some((a) => a.id === prev) ? prev : list.find((a) => a.available)?.id ?? ''));
+  };
+
+  const openAgents = () => { setSelectedId(null); setView('agents'); setDrawer(false); void reloadAgents().catch(handleError); };
+
+  const openTerminal = () => { setTerminalTarget(null); setTermOpen(true); };
+
+  /** Starts an instance's CLI login in a fresh terminal and shows that terminal. */
+  const openAgentLogin = async (agent: AgentInfo) => {
+    const { terminalId } = await api.loginAgentTerminal(agent.id);
+    setTerminalTarget(terminalId);
+    setTermOpen(true);
+    setToast({ message: t('agents.loginStarted') });
   };
 
   const openTeams = () => { setSelectedId(null); setView('teams'); setDrawer(false); reloadTeams(); };
@@ -1547,7 +1573,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     if (demo && (id === 'term' || id === 'usage' || id === 'skills' || id === 'mcp' || id === 'import')) return askToConnect();
     if (id === 'new') return newThread();
     if (id === 'status') return setStatusOpen(true);
-    if (id === 'term') return setTermOpen(true);
+    if (id === 'term') return openTerminal();
     if (id === 'usage') return setQuotaOpen(true);
     if (id === 'activity') return openActivity();
     if (id === 'skills') return openSkills();
@@ -1872,7 +1898,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
                 <IconFiles />
               </button>
               {!compact && (
-                <button className="icon-btn topbar-term" aria-label={t('actions.terminal')} title={t('term.title')} onClick={() => (demo ? askToConnect() : setTermOpen(true))}>
+                <button className="icon-btn topbar-term" aria-label={t('actions.terminal')} title={t('term.title')} onClick={() => (demo ? askToConnect() : openTerminal())}>
                   <IconTerminal />
                 </button>
               )}
@@ -1933,6 +1959,16 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
             ) : (
               <div className="loading-note">{t('common.loading')}</div>
             )}
+          </div>
+        ) : onAgents ? (
+          <div key="agents" className="scroller">
+            <AgentsPage
+              api={api}
+              agents={agents}
+              onAdd={() => { setOnboardStep('results'); setOnboardOpen(true); }}
+              onReload={reloadAgents}
+              onLogin={openAgentLogin}
+            />
           </div>
         ) : onTeams ? (
           <div key="teams" className="scroller"><TeamsPage api={api} agents={agents} onReload={reloadTeams} /></div>
@@ -2168,8 +2204,9 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         <TerminalPanel
           api={api}
           cwd={selected?.cwd || draftCwd || workdirs[0] || ''}
+          terminalId={terminalTarget}
           toast={setToast}
-          onClose={() => setTermOpen(false)}
+          onClose={() => { setTermOpen(false); setTerminalTarget(null); }}
           onError={handleError}
         />
       )}
@@ -2322,12 +2359,11 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
             ...(!demo
               ? [
                   {
-                    id: 'add-agent',
-                    label: t('addAgent.title'),
-                    icon: IconPlus,
+                    id: 'agents',
+                    label: t('agents.title'),
+                    icon: IconAgents,
                     onSelect: () => {
-                      setOnboardStep('results');
-                      setOnboardOpen(true);
+                      openAgents();
                       setDrawer(false);
                     },
                   },

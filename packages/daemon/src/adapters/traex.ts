@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import { AcpAdapter, airForkPoint } from './acp.js';
 import { CodexAppServerAdapter } from './codex.js';
 import { TRAE_ICON } from './icons.js';
-import { configDirectory, findSessionFile } from './session-location.js';
+import { configDirectory, findSessionFile, quoteArg } from './session-location.js';
 import type { AgentSession, ModelOption, PermissionMode, PlanQuota, QuotaWindow, SlashCommand, StartOptions } from './types.js';
 
 const execFileAsync = promisify(execFile);
@@ -133,6 +133,13 @@ export class TraexAcpAdapter extends AcpAdapter {
   }
 
   override diagnose() { return cliDiagnostic(this.cli, this.env, 'app-server / ACP 1'); }
+
+  /** Device SSO is the login flow that does not need a browser on this host. */
+  loginCommand(): string {
+    const home = this.env.HOME;
+    const prefix = home ? `env HOME=${quoteArg(home)} ` : '';
+    return `${prefix}${quoteArg(this.cli[0])} login --sso-device`;
+  }
 
   override start(opts: StartOptions): Promise<AgentSession> {
     return this.execution.start(opts);

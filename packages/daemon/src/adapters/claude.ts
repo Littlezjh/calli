@@ -195,6 +195,12 @@ export class ClaudeAcpAdapter extends AcpAdapter {
     return `claude --resume ${agentSessionId}`;
   }
 
+  /** Sign in again in the same config directory this instance already uses. */
+  loginCommand(): string {
+    const configDir = configDirectory(this.env, 'CLAUDE_CONFIG_DIR', ['.claude'], process.cwd());
+    return `env CLAUDE_CONFIG_DIR=${quoteArg(configDir)} ${quoteArg(this.env.RAH_CLAUDE_BIN || claudeCli())} auth login`;
+  }
+
   /** "You've hit your session limit · resets 10:10am (UTC)", and the weekly and usage variants. */
   planExhausted(message: string): boolean {
     return /hit your (?:\w+ )?limit|usage limit reached/i.test(message);

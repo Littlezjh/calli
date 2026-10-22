@@ -54,7 +54,7 @@ function AddTarget({ api, agents, add }: { api: Api; agents: AgentInfo[]; add: (
     return () => { alive = false; };
   }, [api, agent]);
   return <div className="auto-add">
-    <AgentPicker agents={agents} value={agent} onChange={setAgent} />
+    <AgentPicker api={api} agents={agents} value={agent} onChange={setAgent} />
     <Popover triggerClassName="context-btn" label={t('auto.modelDefault')} trigger={models?.find(m => m.id === model)?.label ?? t('auto.modelDefault')}>
       {close => <div role="menu">
         <button className="pop-item compact" role="menuitemradio" aria-checked={!model} onClick={() => { setModel(''); close(); }}>{t('auto.modelDefault')}</button>

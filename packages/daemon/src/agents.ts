@@ -1,7 +1,6 @@
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
-import { delimiter } from 'node:path';
+import { delimiter, isAbsolute, join, resolve } from 'node:path';
 import { AgyAdapter, AGY_METADATA } from './adapters/agy.js';
 import { ClaudeAcpAdapter, CLAUDE_METADATA } from './adapters/claude.js';
 import { ZcodeAdapter, ZCODE_METADATA } from './adapters/zcode.js';
@@ -133,21 +132,36 @@ export interface AccountToLink {
   label: string;
 }
 
-/** Basenames of CLIs the hub can already talk to. Anything else (ping, pipx…) is left alone. */
+/**
+ * Basenames of CLIs the hub can already talk to. A name is the CLI itself or a numbered copy
+ * (`agy2`, `claude-2`); lookalikes such as `ping`, `claude-agent-acp` and `traex-bridge` are left
+ * alone. A suffix is a number, optionally after a separator, so an arbitrary word after a dash
+ * does not turn another tool into a copy.
+ */
 const KNOWN_PREFIXES: Array<[AgentInstance['adapter'], RegExp]> = [
-  ['claude', /^claude(?=$|[0-9]|[-_.])/],
-  ['pi', /^pi(?=$|[0-9]|[-_.])/],
-  ['agy', /^agy(?=$|[0-9]|[-_.])/],
-  ['codex', /^codex(?=$|[0-9]|[-_.])/],
-  ['zcode', /^zcode(?=$|[0-9]|[-_.])/],
+  ['claude', copyOf('claude')],
+  ['pi', copyOf('pi')],
+  ['agy', copyOf('agy')],
+  ['codex', copyOf('codex')],
+  ['zcode', copyOf('zcode')],
   // traex and the compatibility names its installer creates for the same CLI
-  ['traex', /^traex(?=$|[0-9]|[-_.])/],
-  ['traex', /^traecli(?=$|[0-9]|[-_.])/],
-  ['traex', /^trae-cli(?=$|[0-9]|[-_.])/],
-  ['traex', /^trae-agent(?=$|[0-9]|[-_.])/],
-  ['traex', /^coco(?=$|[0-9]|[-_.])/],
-  ['traex', /^ta(?=$|[0-9]|[-_.])/],
+  ['traex', copyOf('traex')],
+  ['traex', copyOf('traecli')],
+  ['traex', copyOf('trae-cli')],
+  ['traex', copyOf('trae-agent')],
+  ['traex', copyOf('coco')],
+  ['traex', copyOf('ta')],
 ];
+
+/** Aliases that share one executable: the adapter's own name wins when it is installed. */
+const PREFERRED_NAMES: Record<AgentInstance['adapter'], string[]> = {
+  claude: ['claude'],
+  pi: ['pi'],
+  agy: ['agy'],
+  traex: ['traex', 'traecli', 'trae-cli', 'trae-agent', 'coco', 'ta'],
+  codex: ['codex'],
+  zcode: ['zcode'],
+};
 
 /**
  * Owns the agent instances: reads them from `agents.json` (or the built-in defaults), builds one
@@ -199,6 +213,34 @@ export class AgentRegistry {
 
   list(): AgentInstance[] {
     return [...this.instances.values()];
+  }
+
+  get(id: string): AgentInstance {
+    const instance = this.instances.get(id);
+    if (!instance) throw new HttpError(404, `unknown agent: ${id}`);
+    return instance;
+  }
+
+  /** Renames an instance. Its id is what threads store, so it never changes. */
+  async update(id: string, patch: { label?: unknown }): Promise<AgentInstance> {
+    const instance = this.get(id);
+    const label = typeof patch.label === 'string' ? patch.label.trim().slice(0, 60) : '';
+    if (!label) throw new HttpError(400, 'a label is required');
+    const next = { ...instance, label };
+    await this.persist(this.list().map((i) => (i.id === id ? next : i)));
+    this.instances.set(id, next);
+    const adapter = this.adapters.get(id) as { label: string } | undefined;
+    if (adapter) adapter.label = label;
+    return next;
+  }
+
+  /** Removes only the hub's registration; the agent's own files and login are left alone. */
+  async remove(id: string): Promise<AgentInstance> {
+    const instance = this.get(id);
+    await this.persist(this.list().filter((i) => i.id !== id));
+    this.instances.delete(id);
+    this.adapters.delete(id);
+    return instance;
   }
 
   supported(): SupportedAgent[] {
@@ -298,26 +340,38 @@ export class AgentRegistry {
     return instance;
   }
 
-  private async persist(): Promise<void> {
+  private async persist(instances: AgentInstance[] = this.list()): Promise<void> {
     const file = this.file;
     if (!file) return;
-    const body = JSON.stringify({ agents: this.list() }, null, 2) + '\n';
+    const body = JSON.stringify({ agents: instances }, null, 2) + '\n';
     const fs = await import('node:fs/promises');
     await fs.writeFile(file, body, 'utf8');
   }
 
   /**
    * Looks along PATH for executables that look like another copy of a known CLI (`agy2`, `claude2`).
-   * Only basenames the hub can talk to are offered; the rest of PATH is ignored. The suffix must
-   * start with a digit or a separator, so `ping` or `pix` are not mistaken for extra pi CLIs.
+   * Only basenames the hub can talk to are offered; the rest of PATH is ignored. Names that resolve
+   * to the same executable are listed once, and an executable an instance already runs (including
+   * through a path argument such as Claude's ACP bridge) is not offered again.
    */
   async discover(): Promise<DiscoveredAgent[]> {
     const dirs = (process.env.PATH ?? '').split(delimiter).filter(Boolean);
-    const taken = new Set([
-      ...this.instances.keys(),
-      ...[...this.instances.values()].map((i) => basenameOf(i.command) ?? i.id),
-    ]);
-    const found = new Map<string, DiscoveredAgent>();
+    const taken = new Set(this.instances.keys());
+    const takenPaths = new Set<string>();
+    for (const instance of this.instances.values()) {
+      const command = instance.command ?? this.defaultCommands.get(instance.adapter) ?? [];
+      const base = basenameOf(command);
+      if (base) taken.add(base);
+      for (const [i, token] of command.entries()) {
+        // The executable, and any path-like argument, may name the same program as a PATH entry.
+        if (i > 0 && !token.includes('/') && !token.includes('\\')) continue;
+        const path = resolveCommandPath(token, dirs);
+        if (path) takenPaths.add(realPathOf(path));
+      }
+    }
+
+    const found = new Map<string, DiscoveredAgent>(); // by real path: aliases collapse here
+    const seen = new Set<string>();
     for (const dir of dirs) {
       let names: string[];
       try {
@@ -326,23 +380,31 @@ export class AgentRegistry {
         continue; // unreadable or gone
       }
       for (const name of names) {
-        if (taken.has(name) || found.has(name)) continue;
+        if (taken.has(name) || seen.has(name)) continue;
         const adapter = KNOWN_PREFIXES.find(([, re]) => re.test(name))?.[0];
         if (!adapter) continue;
         const full = join(dir, name);
+        let realPath: string;
         try {
           if (!statSync(full).isFile()) continue;
+          realPath = realpathSync(full);
         } catch {
           continue;
         }
+        seen.add(name);
+        if (takenPaths.has(realPath)) continue;
         const meta = SUPPORTED_AGENTS.find((s) => s.adapter === adapter);
-        found.set(name, {
+        const candidate: DiscoveredAgent = {
           id: name,
           adapter,
           command: full,
           ...(meta?.label ? { label: meta.label } : {}),
           ...(meta?.icon ? { icon: meta.icon } : {}),
-        });
+        };
+        const previous = found.get(realPath);
+        if (!previous || (previous.adapter === adapter && discoveryRank(adapter, name) < discoveryRank(adapter, previous.id))) {
+          found.set(realPath, candidate);
+        }
       }
     }
     return [...found.values()].sort((a, b) => a.id.localeCompare(b.id));
@@ -353,4 +415,51 @@ function basenameOf(command: unknown): string {
   if (!Array.isArray(command) || command.length === 0) return '';
   const raw = String(command[0]);
   return raw.split(/[/\\]/).pop() ?? '';
+}
+
+/** `base` itself, or a numbered copy such as `agy2` or `claude-2`, never `ping` or `traex-bridge`. */
+function copyOf(base: string): RegExp {
+  return new RegExp(`^${escapeRegExp(base)}(?:$|[._-]?\\d)`);
+}
+
+/** Lower is a better name for a group of aliases: the adapter's own name, then compatibility names. */
+function discoveryRank(adapter: AgentInstance['adapter'], name: string): number {
+  if (name === adapter) return 0;
+  if (isNumberedCopy(name, adapter)) return 1;
+  const preferred = PREFERRED_NAMES[adapter];
+  const exact = preferred.indexOf(name);
+  if (exact >= 0) return 10 + exact;
+  const alias = preferred.findIndex((base) => isNumberedCopy(name, base));
+  return alias >= 0 ? 30 + alias : 100;
+}
+
+function isNumberedCopy(name: string, base: string): boolean {
+  return name.length > base.length && copyOf(base).test(name);
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Where a command token lives: an explicit path as given, or the first PATH directory with it. */
+function resolveCommandPath(token: string, dirs: string[]): string | null {
+  const candidates = isAbsolute(token) || token.includes('/') || token.includes('\\')
+    ? [resolve(token)]
+    : dirs.map((dir) => join(dir, token));
+  for (const candidate of candidates) {
+    try {
+      if (statSync(candidate).isFile()) return candidate;
+    } catch {
+      // keep looking
+    }
+  }
+  return null;
+}
+
+function realPathOf(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
 }

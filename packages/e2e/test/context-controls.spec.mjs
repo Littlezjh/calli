@@ -127,7 +127,9 @@ test('effort slider, model subview, reset and compression work in both themes an
       await quota.getByText('本次仅返回每周额度，服务端未提供 5 小时窗口。').waitFor();
       const boardRow = quota.locator('.quota-board-row').filter({ hasText: 'Codex' });
       const quotaData = await boardRow.count() ? boardRow : quota;
-      assert.equal(await quotaData.locator('.quota-chip').innerText(), '7D');
+      // Only the weekly window came back: one cell, in the weekly column.
+      assert.equal(await quotaData.locator('.quota-cell:not(.quota-none)').count(), 1);
+      assert.match(await quotaData.locator('.quota-cell:not(.quota-none)').getAttribute('aria-label'), /^每周/);
       await shot(page, `quota-weekly-${tag}`);
     } finally { await context.close(); }
   }

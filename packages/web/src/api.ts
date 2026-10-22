@@ -358,6 +358,14 @@ export function isFastSpeed(speed: NonNullable<ModelOption['speeds']>[number]): 
   return speed.isFast ?? ['priority', 'fast', 'ultrafast'].includes(speed.id);
 }
 
+/** What would break if an agent instance disappeared from the registry. */
+export interface AgentReferences {
+  threads: number;
+  schedules: number;
+  teams: number;
+  handoverOrders: number;
+}
+
 export interface AgentInfo {
   id: string;
   label: string;
@@ -368,6 +376,8 @@ export interface AgentInfo {
   /** The login this instance runs as, when it is a linked account (an email). */
   account?: string | null;
   available: boolean;
+  /** How it can be signed in from the hub, when its adapter can start the CLI's login. */
+  login?: 'terminal' | 'wizard';
   capabilities: {
     workModes?: WorkMode[];
     speed?: boolean;
@@ -1156,6 +1166,26 @@ export class Api {
   /** Adds an agent instance (another CLI, another account). */
   addAgent(input: { id?: string; adapter: string; label?: string; command?: string[]; env?: Record<string, string>; account?: string }): Promise<{ id: string }> {
     return this.request('POST', '/api/agents', input);
+  }
+
+  /** Renames an instance; its id, which threads store, does not change. */
+  updateAgent(id: string, label: string): Promise<{ id: string; label: string }> {
+    return this.request('PATCH', `/api/agents/${encodeURIComponent(id)}`, { label });
+  }
+
+  /** Removes only the hub's registration; the agent's config, login and sessions stay. */
+  removeAgent(id: string): Promise<void> {
+    return this.request('DELETE', `/api/agents/${encodeURIComponent(id)}`);
+  }
+
+  /** Threads, schedules, teams and handover orders that would block removal. */
+  agentReferences(id: string): Promise<AgentReferences> {
+    return this.request('GET', `/api/agents/${encodeURIComponent(id)}/references`);
+  }
+
+  /** Starts this instance's CLI login in a web terminal, in its own account environment. */
+  loginAgentTerminal(id: string): Promise<{ terminalId: string }> {
+    return this.request('POST', `/api/agents/${encodeURIComponent(id)}/login-terminal`);
   }
 
   /** Commands for an agent in a directory; project-level commands differ between directories. */

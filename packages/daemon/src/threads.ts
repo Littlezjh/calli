@@ -172,6 +172,8 @@ export interface AgentInfo {
   /** The account this instance runs as, when it is a linked second login (an email). */
   account?: string | null;
   available: boolean;
+  /** How it can be signed in from the hub, when its adapter can start the CLI's login. */
+  login?: 'terminal' | 'wizard';
   capabilities: AgentAdapter['capabilities'];
 }
 
@@ -293,6 +295,7 @@ export class ThreadManager {
         ...(m?.adapter ? { adapter: m.adapter } : {}),
         ...(m?.account ? { account: m.account } : {}),
         available: await a.available(),
+        ...(a.loginCommand ? { login: 'terminal' as const } : {}),
         capabilities: a.capabilities,
       });
     }

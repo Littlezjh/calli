@@ -5,6 +5,7 @@ import { commandDraft, searchCommands, slashQuery, type HubAction, type MenuRow 
 import { useIsNarrow, useIsTouch } from '../hooks';
 import { readDrafts, writeDraft, type Sending } from '../drafts';
 import { sizeLabel } from '../files';
+import { mentionAt } from '../mentions';
 import { MAX_IMAGES, prepareImage, restoreImage, type PreparedImage } from '../images';
 import { withNotes, type Note } from '../timeline';
 import { Popover } from './Popover';
@@ -159,6 +160,8 @@ interface Props {
   restore: { text: string; nonce: number; mentions?: AgentMention[] } | null;
   /** A passage noted out of a message, to go along with what is typed. Each one adds to the list. */
   note: (DraftNote & { nonce: number }) | null;
+  /** Acknowledge delivery so the parent does not replay the note after this box remounts. */
+  onNoteConsumed?: (id: string) => void;
   /** Told which notes are in the box, so their passages can stay highlighted in the conversation. */
   onNotesChange?: (notes: DraftNote[]) => void;
   /** The thread's latest message from the user, as it was sent; null when there is none or it is not known yet. */
@@ -208,6 +211,7 @@ export function Composer({
   onSendQueuedNow,
   restore,
   note,
+  onNoteConsumed,
   onNotesChange,
   lastSent = null,
   mentionOptions = [],
@@ -221,6 +225,7 @@ export function Composer({
   const [mentions, setMentions] = useState<AgentMention[]>([]);
   const [mentionActive, setMentionActive] = useState(0);
   const [mentionDismissed, setMentionDismissed] = useState(false);
+  const [selection, setSelection] = useState({ text: '', start: 0, end: 0 });
   const [notes, setNotes] = useState<DraftNote[]>([]);
   const [busy, setBusy] = useState(false);
   const [menuBusy, setMenuBusy] = useState(false);
@@ -313,25 +318,31 @@ export function Composer({
   const selectable = useMemo(() => rows.filter((r): r is Selectable => r.type !== 'heading' && !(r.type === 'action' && r.action.disabled)), [rows]);
   const menuOpen = addOpen || (rows.length > 0 && !dismissed);
 
-  const mentionMatch = /(?:^|\s)@([^\s@]*)$/.exec(text);
-  const mentionRows = mentionOptions.filter(m => !mentions.some(v => v.id === m.id && v.kind === m.kind) && (!mentionMatch?.[1] || `${m.label} ${m.id}`.toLowerCase().includes(mentionMatch[1].toLowerCase())));
+  const readSelection = (el: HTMLTextAreaElement) => setSelection({ text: el.value, start: el.selectionStart, end: el.selectionEnd });
+  const mentionMatch = mentionAt(text, selection.text === text ? selection.start : text.length, selection.text === text ? selection.end : text.length);
+  const mentionRows = mentionOptions.filter(m => !mentions.some(v => v.id === m.id && v.kind === m.kind) && (!mentionMatch?.query || `${m.label} ${m.id}`.toLowerCase().includes(mentionMatch.query.toLowerCase())));
   const mentionOpen = Boolean(mentionMatch && mentionRows.length && !mentionDismissed && !addOpen);
   const taskRefs = useRef<Array<HTMLTextAreaElement | null>>([]);
+  const mentionListRef = useRef<HTMLDivElement>(null);
   const chooseMention = (mention: AgentMention, replaceQuery = true) => {
     const existing = mentions.findIndex(m => m.id === mention.id && m.kind === mention.kind);
     const target = existing < 0 ? mentions.length : existing;
     // Mount and focus inside the tap gesture so mobile browsers can open the keyboard.
     flushSync(() => {
       if (existing < 0) setMentions(prev => [...prev, mention]);
-      if (replaceQuery) setText(prev => prev.replace(/@[^\s@]*$/, ''));
+      if (replaceQuery && mentionMatch) setText(prev => prev.slice(0, mentionMatch.start) + prev.slice(mentionMatch.end));
       setMentionDismissed(true);
     });
     taskRefs.current[target]?.focus();
   };
   // Turned away once, the list stays away for that @: the word after it is the user's own. A new @ asks again.
   const mentioning = mentionMatch !== null;
-  useEffect(() => { setMentionActive(0); }, [text]);
+  useEffect(() => { setMentionActive(0); }, [text, selection.start]);
   useEffect(() => { if (!mentioning) setMentionDismissed(false); }, [mentioning]);
+  useEffect(() => { setMentionDismissed(false); }, [mentionMatch?.start, draftKey]);
+  useEffect(() => {
+    if (mentionOpen) mentionListRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
+  }, [mentionActive, mentionOpen, mentionMatch?.query]);
 
   // Typing changes the list, so the highlight goes back to the first row and a dismissed menu can reopen.
   useEffect(() => {
@@ -344,7 +355,8 @@ export function Composer({
   useEffect(() => {
     if (!note) return;
     const { nonce: _nonce, ...added } = note;
-    setNotes((prev) => [...prev, added]);
+    setNotes((prev) => prev.some((existing) => existing.id === added.id) ? prev : [...prev, added]);
+    onNoteConsumed?.(added.id);
     ref.current?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [note?.nonce]);
@@ -755,6 +767,16 @@ export function Composer({
 
         <div
           className={`composer-box${dragOver ? ' drag-over' : ''}${collapsed ? ' collapsed' : ''}`}
+          onPointerDownCapture={(e) => {
+            // Touch browsers may blur the field without focusing the tapped button. Keep focus
+            // inside the box so folding cannot unmount its trigger or newly opened menu.
+            if (e.pointerType === 'mouse' || !(e.target instanceof Element)) return;
+            const button = e.target.closest('button');
+            if (button && !button.disabled) {
+              e.preventDefault();
+              button.focus({ preventScroll: true });
+            }
+          }}
           onFocus={() => {
             leaving.current?.();
             leaving.current = null;
@@ -860,16 +882,16 @@ export function Composer({
             </div>
           )}
 
-          {mentionOpen && <div className="coord-mention-menu" role="listbox" aria-label={t('collab.choose')}>
+          {mentionOpen && <div ref={mentionListRef} className="coord-mention-menu" role="listbox" aria-label={t('collab.choose')}>
             {(['member', 'agent'] as const).map(kind => <div key={kind}>
               {mentionRows.some(m => m.kind === kind) && <div className="coord-caption">
                 <span>{kind === 'member' ? t('composer.thisCollab') : t('composer.newMember')}</span>
                 {kind === mentionRows[0]?.kind && <button type="button" className="icon-btn" aria-label={t('composer.noMention')} title={t('composer.noMentionHint')} onClick={() => { setMentionDismissed(true); ref.current?.focus(); }}><IconClose size={13} /></button>}
               </div>}
               {mentionRows.map((m, i) => m.kind === kind && (
-                <button type="button" role="option" aria-selected={i === mentionActive} className={`pop-item compact${i === mentionActive ? ' selected' : ''}`} key={m.id} onClick={() => chooseMention(m)}>
+                <button type="button" role="option" aria-selected={i === mentionActive} className={`pop-item compact${i === mentionActive ? ' selected' : ''}`} key={`${m.kind}:${m.id}`} onClick={() => chooseMention(m)}>
                   <span className="pop-item-icon">{mentionIcon?.(m) ? <AgentMark path={mentionIcon(m)!} size={16} /> : null}</span>
-                  <span className="pop-item-label">{m.label}</span>
+                  <span className="pop-item-text"><span className="pop-item-label">{m.label}</span><small className="pop-item-hint">{kind === 'member' ? t('collab.appendTask') : t('composer.createMember')}</small></span>
                 </button>
               ))}
             </div>)}
@@ -879,12 +901,13 @@ export function Composer({
             rows={1}
             value={text}
             placeholder={dragOver ? t('composer.drop') : collapsed && running ? t('composer.appendOne') : placeholder}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => { setText(e.target.value); readSelection(e.target); }}
+            onSelect={(e) => readSelection(e.currentTarget)}
             onKeyDown={onKeyDown}
             onPaste={onPaste}
             disabled={disabled}
             aria-label={t('composer.message')}
-            aria-expanded={menuOpen}
+            aria-expanded={menuOpen || mentionOpen}
             aria-autocomplete="list"
           />
 

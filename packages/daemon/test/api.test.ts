@@ -2293,6 +2293,52 @@ test('agents: instances beyond the built-ins are listed, and PATH discovery offe
   await withRegistryManager.shutdown();
 });
 
+test('agents: rename, reference counts and removal leave a used instance in place', async () => {
+  const data = mkdtempSync(join(tmpdir(), 'rah-agents-manage-api-'));
+  const ownStore = new Store(data);
+  const registry = new AgentRegistry(defaultInstances({
+    claudeCommand: [process.execPath, join(here, 'fixtures', 'fake-acp.mjs')],
+    piCommand: [process.execPath, join(here, 'fixtures', 'fake-pi.mjs')],
+    agyCommand: [process.execPath, join(here, 'fixtures', 'fake-agy.mjs')],
+    traexCommand: [process.execPath, join(here, 'fixtures', 'fake-acp.mjs'), 'acp', 'serve'],
+    codexCommand: [process.execPath, join(here, 'fixtures', 'fake-codex.mjs')],
+  }), null);
+  const ownManager = new ThreadManager(ownStore, registry.adapters, [workdir], new AttachmentStore(data));
+  const own = createHttpServer({ manager: ownManager, registry, token: TOKEN, webDir: null, version: 'test' });
+  await new Promise<void>((r) => own.listen(0, '127.0.0.1', () => r()));
+  const ownBase = `http://127.0.0.1:${(own.address() as AddressInfo).port}`;
+  const call = (path: string, init: RequestInit = {}) => fetch(ownBase + path, {
+    ...init,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}`, ...(init.headers ?? {}) },
+  });
+  try {
+    const renamed = await call('/api/agents/pi', { method: 'PATCH', body: JSON.stringify({ label: 'pi 工作号' }) });
+    assert.equal(renamed.status, 200);
+    assert.equal(((await renamed.json()) as { label: string }).label, 'pi 工作号');
+
+    // A thread, archived or not, keeps the instance from disappearing under it.
+    const made = await call('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: workdir }) });
+    assert.equal(made.status, 201);
+    const refs = (await (await call('/api/agents/pi/references')).json()) as { threads: number };
+    assert.ok(refs.threads >= 1);
+    const blocked = await call('/api/agents/pi', { method: 'DELETE' });
+    assert.equal(blocked.status, 409);
+    const body = (await blocked.json()) as { references: { threads: number } };
+    assert.ok(body.references.threads >= 1);
+
+    // An unused instance goes, and the list no longer offers it.
+    assert.equal((await call('/api/agents/agy', { method: 'DELETE' })).status, 204);
+    const listed = (await (await call('/api/agents')).json()) as Array<{ id: string }>;
+    assert.equal(listed.some((a) => a.id === 'agy'), false);
+    assert.equal((await call('/api/agents/nope', { method: 'DELETE' })).status, 404);
+  } finally {
+    own.close();
+    await ownManager.shutdown();
+    ownStore.close();
+    rmSync(data, { recursive: true, force: true });
+  }
+});
+
 /** Appends events straight to the log, the way a turn would have, without running an agent. */
 function writeLog(threadId: string, turnId: string | null, entries: Array<[type: Parameters<Store['appendEvent']>[2], data: Record<string, unknown>]>) {
   store.transaction(() => {

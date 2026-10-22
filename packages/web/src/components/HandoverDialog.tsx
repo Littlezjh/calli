@@ -98,7 +98,7 @@ export function HandoverDialog({ api, thread, agents, onOpen, onClose }: Props) 
         <div className="handover-successor">
           <span>{t('handover.successor')}</span>
           <fieldset disabled={creating}>
-            <AgentPicker agents={agents} value={target} onChange={id => { setTarget(id); setTargetModel(undefined); }} />
+            <AgentPicker api={api} agents={agents} value={target} onChange={id => { setTarget(id); setTargetModel(undefined); }} />
           </fieldset>
         </div>
         {targetModel && <p className="handover-note">{targetModel}</p>}

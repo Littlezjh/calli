@@ -18,6 +18,8 @@ interface Props {
   api: Api;
   /** Where a terminal starts. Only used when none is alive; after that the shell goes where it pleases. */
   cwd: string;
+  /** Attach to this terminal (a login just started); null attaches to the newest live one. */
+  terminalId?: string | null;
   toast: (t: ToastState | null) => void;
   onClose: () => void;
   onError: (e: unknown) => void;
@@ -73,7 +75,7 @@ function keys(appCursor: boolean): Array<[string, string, JSX.Element?]> {
   ];
 }
 
-export function TerminalPanel({ api, cwd, toast, onClose, onError }: Props) {
+export function TerminalPanel({ api, cwd, terminalId, toast, onClose, onError }: Props) {
   // Bumped by Reopen and Retry: the whole terminal (xterm and stream) is rebuilt from scratch.
   const [nonce, setNonce] = useState(0);
   const [phase, setPhase] = useState<'connecting' | 'running' | 'ended' | 'failed'>('connecting');
@@ -141,7 +143,7 @@ export function TerminalPanel({ api, cwd, toast, onClose, onError }: Props) {
       try {
         // Attach to the newest live terminal; only when there is none does the directory matter.
         const alive = await api.listTerminals();
-        const t = alive.at(-1) ?? (await api.createTerminal(cwd));
+        const t = (terminalId ? alive.find((x) => x.id === terminalId) : undefined) ?? alive.at(-1) ?? (await api.createTerminal(cwd));
         if (disposed) return;
         setInfo(t);
         if (host.clientWidth === 0) await new Promise((r) => requestAnimationFrame(r));
@@ -230,7 +232,7 @@ export function TerminalPanel({ api, cwd, toast, onClose, onError }: Props) {
       if (flushTimer !== null) window.clearTimeout(flushTimer);
       term.dispose();
     };
-  }, [nonce]);
+  }, [nonce, terminalId]);
 
   const restart = () => {
     setFailure('');

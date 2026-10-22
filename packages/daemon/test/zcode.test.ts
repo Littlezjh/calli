@@ -13,6 +13,8 @@ const command = [process.execPath, join(here, 'fixtures/fake-zcode.mjs')];
 function setup(env: Record<string, string> = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'rah-zcode-'));
   const log = join(dir, 'wire.jsonl');
+  // The empty data dir has no plugin store, keeping these baseline tests free of any
+  // machine-local MCP plugins.
   return { dir, adapter: new ZcodeAdapter(command, { ZCODE_DATA_BASE_DIR: dir, ...env, FAKE_ZCODE_LOG: log }), log: () => readFileSync(log, 'utf8').trim().split('\n').map((s) => JSON.parse(s)), clean: () => rmSync(dir, { recursive: true, force: true }) };
 }
 const hooks = (events: EmittedEvent[]): TurnHooks => ({ emit: (event) => events.push(event), requestApproval: async () => ({ cancelled: true }) });

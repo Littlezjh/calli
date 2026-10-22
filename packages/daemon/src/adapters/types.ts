@@ -404,6 +404,11 @@ export interface AgentAdapter {
    */
   discoverAccounts?(home: string): Promise<DiscoveredAccount[]>;
   /**
+   * A shell command that starts this instance's login in a terminal, with the instance's own
+   * account environment. Omitted where the CLI has no login step the hub can start.
+   */
+  loginCommand?(): string;
+  /**
    * Copies a conversation and returns the id of the copy. With capabilities.fork. Given a turn's
    * forkRef (with capabilities.forkAt), the copy ends where that turn ended. Given `intoCwd` (with
    * capabilities.forkInto), the copy is one that can be started there instead of in `cwd`.

@@ -315,6 +315,32 @@ export const ja: Messages = {
   'addAgent.message': 'このホストで見つかった他のエージェントコマンドです。追加すると新しいエージェントとして使え、エージェントの選択肢に表示されます。',
   'addAgent.none': '追加できる新しい項目はありません。',
 
+  // Agent management page
+  'agents.title': 'Agents',
+  'agents.intro': '接続済みの agent を管理します。名前の変更、再ログイン、削除ができます。削除は hub の登録だけを消し、設定ディレクトリ、ログイン情報、ネイティブセッションは残します。',
+  'agents.add': 'agent を追加',
+  'agents.empty': '接続済みの agent はありません。',
+  'agents.actions': '操作',
+  'agents.login': 'ログイン',
+  'agents.loginStarted': 'ターミナルでログインを開きました',
+  'agents.rename': '名前を変更',
+  'agents.renameTitle': 'agent の名前を変更',
+  'agents.renameLabel': '名前',
+  'agents.renameHint': 'hub に表示する名前だけを変更します。インスタンス ID とネイティブセッションは変わりません。',
+  'agents.remove': '削除',
+  'agents.removeTitle': 'agent を削除',
+  'agents.removeHint': 'hub の登録だけを削除します。設定ディレクトリ、ログイン情報、ネイティブセッションは残ります。',
+  'agents.removeBlockedTitle': 'まだ削除できません',
+  'agents.removeBlocked': (threads: number, schedules: number, teams: number, handovers: number) => {
+    const parts: string[] = [];
+    if (threads) parts.push(`${threads} スレッド`);
+    if (schedules) parts.push(`${schedules} 件のスケジュール`);
+    if (teams) parts.push(`${teams} チーム`);
+    if (handovers) parts.push(`${handovers} 件の引き継ぎ設定`);
+    return `まだ ${parts.join('、')} が使用しています。先にこれらを処理するか、このインスタンスを残してください。`;
+  },
+  'agents.unavailable': '利用不可',
+
   // Onboarding & agent discovery
   'onboard.askTitle': 'Coding Agent の検出',
   'onboard.askMessage': 'このホストの Coding Agent を自動検出しますか？インストール済みの CLI やログイン中のアカウントを検出し、ワンクリックで接続します。',

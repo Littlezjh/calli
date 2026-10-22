@@ -287,6 +287,15 @@ export function createHttpServer(deps: HttpDeps): Server {
     if (!trusted && !signedFileRoute && !signedDownloadRoute && !tokenMatches(bearer, token)) return sendJson(res, 401, { error: 'unauthorized' });
 
     const parts = path.split('/').filter(Boolean); // ['api', ...]
+    /** Everything that would break if this instance disappeared from the registry. */
+    const agentReferences = (id: string) => {
+      const threads = [...manager.listThreads(), ...manager.listThreads({ archived: true })].filter((t) => t.agent === id).length;
+      const schedules = scheduler?.list().filter((s) => s.agent === id).length ?? 0;
+      const teams = manager.coordination?.definitions.list().filter((team) => team.members.some((m) => m.agent === id)).length ?? 0;
+      const orders = manager.autoHandover.settings().orders;
+      const handoverOrders = Object.entries(orders).filter(([source, targets]) => source === id || targets.some((t) => t.agent === id)).length;
+      return { threads, schedules, teams, handoverOrders };
+    };
 
     if (path === '/api/tools/command' && method === 'POST') {
       if (!manager.borrowing) throw new HttpError(503, 'tool borrowing is unavailable');
@@ -418,6 +427,48 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (!registry) throw new HttpError(404, 'this daemon has no agent registry');
       const body = await readJson(req);
       return sendJson(res, 201, await registry.add(body));
+    }
+
+    // PATCH /api/agents/:id: rename an instance. The id is what threads store, so it stays.
+    if (method === 'PATCH' && parts[0] === 'api' && parts[1] === 'agents' && parts[2] && !parts[3]) {
+      if (!registry) throw new HttpError(404, 'this daemon has no agent registry');
+      const body = await readJson(req);
+      return sendJson(res, 200, await registry.update(parts[2], { label: body.label }));
+    }
+
+    // DELETE /api/agents/:id: remove only the hub's registration. Native files stay untouched.
+    if (method === 'DELETE' && parts[0] === 'api' && parts[1] === 'agents' && parts[2] && !parts[3]) {
+      if (!registry) throw new HttpError(404, 'this daemon has no agent registry');
+      registry.get(parts[2]);
+      const references = agentReferences(parts[2]);
+      if (Object.values(references).some((n) => n > 0)) {
+        throw new HttpError(409, 'agent is still in use', { references });
+      }
+      await registry.remove(parts[2]);
+      res.writeHead(204).end();
+      return;
+    }
+
+    // GET /api/agents/:id/references: what would block removing this instance
+    if (method === 'GET' && parts[0] === 'api' && parts[1] === 'agents' && parts[2] && parts[3] === 'references' && !parts[4]) {
+      if (!registry) throw new HttpError(404, 'this daemon has no agent registry');
+      registry.get(parts[2]);
+      return sendJson(res, 200, agentReferences(parts[2]));
+    }
+
+    // POST /api/agents/:id/login-terminal: start the CLI's login in a web terminal, in this
+    // instance's own account environment. The command is built on the daemon, never sent by a page.
+    if (method === 'POST' && parts[0] === 'api' && parts[1] === 'agents' && parts[2] && parts[3] === 'login-terminal' && !parts[4]) {
+      if (!registry) throw new HttpError(404, 'this daemon has no agent registry');
+      if (!terminals) throw new HttpError(501, 'terminals are not enabled');
+      const adapter = registry.adapters.get(parts[2]);
+      if (!adapter) throw new HttpError(404, `unknown agent: ${parts[2]}`);
+      const command = adapter.loginCommand?.();
+      if (!command) throw new HttpError(400, 'this agent cannot be signed in from the hub');
+      const cwd = manager.allowedWorkdirs[0] ?? process.cwd();
+      const terminal = terminals.create(cwd);
+      terminals.input(terminal.id, `${command}\r`);
+      return sendJson(res, 201, { terminalId: terminal.id });
     }
 
     // GET /api/agents/:id/sessions: conversations the agent already has, for importing

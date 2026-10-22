@@ -35,10 +35,15 @@ test('TRAE model load and weekly quota appear in existing controls in both theme
       await page.getByRole('button', { name: '配置', exact: true }).click();
       await page.getByRole('menuitem', { name: '额度', exact: true }).click();
       const row = page.locator('.quota-board-row', { hasText: 'TRAE CLI' });
-      await row.getByText('Big 1.0', { exact: true }).waitFor();
+      await row.locator('.quota-cell:not(.quota-none)').waitFor();
       assert.match(await page.locator('.quota-board-row').first().innerText(), /TRAE CLI/);
-      assert.equal(await row.locator('.quota-percent').innerText(), '1%');
+      assert.equal(await row.locator('.quota-percent').innerText(), '99%');
+      // An overloaded model is marked on its cell; the load itself is in the cell's detail.
+      await row.locator('.quota-busy').waitFor();
+      await row.locator('.quota-cell:not(.quota-none)').click();
       assert.equal(await row.locator('.quota-load').innerText(), '负载 184%');
+      assert.match(await row.locator('.quota-detail-name').innerText(), /Big 1\.0/, 'the model a window covers is in its detail');
+      await row.locator('.quota-cell:not(.quota-none)').click();
       await row.getByRole('button', { name: '刷新 TRAE CLI 的额度' }).click();
       await row.getByText(/按模型显示每周额度/).waitFor();
       const settled = () => row.locator('button:enabled[aria-label="刷新 TRAE CLI 的额度"]').waitFor();

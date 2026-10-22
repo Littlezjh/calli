@@ -166,6 +166,8 @@ export type Item =
     }
   /** A turn the user stopped before it did anything worth a work block. */
   | { kind: 'stopped'; key: string; turnId: string; startedAt: string; endedAt: string; timed: boolean }
+  /** Only shown until the active turn produces its first visible output. */
+  | { kind: 'waiting'; key: string; turnId: string; startedAt: string; phase: 'preparing' | 'response' }
   | {
       kind: 'approval';
       key: string;
@@ -364,6 +366,7 @@ export function buildTimeline(events: StoredEvent[], speech: readonly VoiceTrans
   let lastSeq = 0;
   let running = false;
   let usage: Usage | null = null;
+  let waiting: Extract<Item, { kind: 'waiting' }> | null = null;
 
   type Work = Extract<Item, { kind: 'work' }>;
   type Answer = Extract<Item, { kind: 'assistant' }>;
@@ -472,6 +475,9 @@ export function buildTimeline(events: StoredEvent[], speech: readonly VoiceTrans
 
     switch (ev.type) {
       case 'turn.started': {
+        waiting = ev.data.imported || ev.data.fromTerminal ? null : {
+          kind: 'waiting', key: `${key}-waiting`, turnId: turn, startedAt: ev.ts, phase: 'preparing',
+        };
         // A turn that never got its ending (the daemon died under it) ends where the next begins,
         // or it would read as working for the rest of the thread. So does a block left by events
         // that arrived after their turn's ending with no turn open.
@@ -544,6 +550,12 @@ export function buildTimeline(events: StoredEvent[], speech: readonly VoiceTrans
           else if (typeof ev.data.used === 'number' && Number.isFinite(ev.data.used) && ev.data.used >= 0) {
             usage = { used: ev.data.used, size: ev.data.size, ...(ev.data.cost ? { cost: ev.data.cost } : {}) };
           }
+        }
+        break;
+
+      case 'turn.phase':
+        if (waiting && waiting.turnId === turn) {
+          waiting.phase = ['session_ready', 'prompt_sent', 'model_request'].includes(ev.data.phase) ? 'response' : 'preparing';
         }
         break;
 
@@ -738,6 +750,8 @@ export function buildTimeline(events: StoredEvent[], speech: readonly VoiceTrans
     }
   }
 
+  // Acknowledgements and usage do not count as output; tool/approval/history rows do.
+  if (running && waiting && !items.some(it => it.turnId === waiting!.turnId && it.kind !== 'user')) items.push(waiting);
   const withSummaries = addTurnSummaries(items, finished, stopped);
   const awaitingApproval = running && items.some((it) => (it.kind === 'approval' && it.decision === null) || (it.kind === 'input' && it.answer === null));
   return { items: withVoiceItems(withSummaries, events, speech), lastSeq, running, awaitingApproval, usage };

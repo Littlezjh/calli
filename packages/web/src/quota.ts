@@ -25,9 +25,48 @@ export function quotaRows<T extends { id: string; capabilities: { quota: boolean
   return [...rows.filter((a) => a.id === current), ...rows.filter((a) => a.id !== current)];
 }
 
-/** What the panel headline says: the most-used window's level, so the user sees the worst first. */
-export function quotaHeadline(quota: PlanQuota): string {
-  if (quota.windows.length === 0) return t('quota.none');
-  const worst = quota.windows.reduce((a, b) => (b.usedPercent > a.usedPercent ? b : a));
-  return t('quota.worst', worst.usedPercent);
+/** How much of a window is left, 0 to 100, to one decimal at most. */
+export function quotaLeft(window: QuotaWindow): number {
+  return Math.round(Math.max(0, Math.min(100, 100 - window.usedPercent)) * 10) / 10;
+}
+
+/** Hours, then days; a label of another shape keeps the order it was met in, after them. */
+function periodLength(label: string): number {
+  const m = /^(\d+)(H|D)$/.exec(label);
+  return m ? Number(m[1]) * (m[2] === 'D' ? 24 : 1) : Number.POSITIVE_INFINITY;
+}
+
+/** The board's columns: every window length any agent reports, shortest first. */
+export function quotaColumns(quotas: Array<PlanQuota | null | undefined>): string[] {
+  const labels: string[] = [];
+  for (const quota of quotas) for (const w of quota?.windows ?? []) if (!labels.includes(w.label)) labels.push(w.label);
+  return labels.map((label, i) => ({ label, i })).sort((a, b) => periodLength(a.label) - periodLength(b.label) || a.i - b.i).map((c) => c.label);
+}
+
+/** A column's name: "5 hours", "Weekly", "3 days"; a label of another shape as it is. */
+export function periodName(label: string): string {
+  if (label === '7D') return t('quota.board.weekly');
+  const m = /^(\d+)(H|D)$/.exec(label);
+  if (!m) return label;
+  return m[2] === 'H' ? t('quota.board.hours', Number(m[1])) : t('quota.board.days', Number(m[1]));
+}
+
+/** Windows split by the model group they cover, in the order the agent gave; ungrouped first. */
+export function quotaGroups(windows: QuotaWindow[]): Array<{ scope?: string; windows: QuotaWindow[] }> {
+  const groups: Array<{ scope?: string; windows: QuotaWindow[] }> = [];
+  for (const w of windows) {
+    const group = groups.find((g) => g.scope === w.scope);
+    if (group) group.windows.push(w);
+    else groups.push({ scope: w.scope, windows: [w] });
+  }
+  return groups.sort((a, b) => Number(a.scope !== undefined) - Number(b.scope !== undefined));
+}
+
+/** When a window resets, as short as a table cell allows: "14:40" today, "10/12" later. */
+export function shortReset(window: QuotaWindow, now = new Date()): string {
+  if (!window.resetsAt) return '';
+  const at = new Date(window.resetsAt);
+  if (Number.isNaN(at.getTime())) return '';
+  if (at.toDateString() === now.toDateString()) return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+  return `${at.getMonth() + 1}/${at.getDate()}`;
 }

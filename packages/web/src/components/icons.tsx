@@ -480,3 +480,20 @@ export const IconEffortGauge = ({ level, size = 18 }: { level: number | null; si
     </Svg>
   );
 };
+
+/**
+ * How much of a quota window is left, as a ring that empties clockwise from the top.
+ * The track and fill take their colours from CSS (`.quota-ring-track`, `.quota-ring-fill`).
+ */
+export const QuotaRing = ({ remaining, size = 14 }: { remaining: number; size?: number }) => {
+  const left = Math.max(0, Math.min(100, remaining));
+  return (
+    <svg className="quota-ring" width={size} height={size} viewBox="0 0 16 16" aria-hidden="true">
+      <circle className="quota-ring-track" cx="8" cy="8" r="6" fill="none" strokeWidth={2.4} />
+      {left > 0 && (
+        <circle className="quota-ring-fill" cx="8" cy="8" r="6" fill="none" strokeWidth={2.4} strokeLinecap={left < 100 ? 'round' : 'butt'}
+          pathLength={100} strokeDasharray={`${left} 100`} transform="rotate(-90 8 8)" />
+      )}
+    </svg>
+  );
+};

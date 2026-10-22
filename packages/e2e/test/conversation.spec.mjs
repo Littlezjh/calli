@@ -88,6 +88,9 @@ test('while a turn runs its steps stay the story: no changes card until it ends'
   const card = page.locator('.changes');
   await card.waitFor({ timeout: 5_000 });
   assert.match(await card.locator('.changes-head').innerText(), /已更改 1 个文件/);
+  assert.equal(await card.locator('.changes-head').getAttribute('aria-expanded'), 'false');
+  assert.equal(await card.locator('.changes-file').count(), 0);
+  await card.locator('.changes-head').click();
   assert.match(await card.innerText(), /demo\.ts/);
 });
 

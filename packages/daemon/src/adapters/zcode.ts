@@ -10,11 +10,14 @@ import { goalSummary, parseGoalCommand, type GoalControl } from './native-goal.j
 import { isCompaction, trackCompaction } from './compaction.js';
 import { ZCODE_ICON } from './icons.js';
 import { randomUUID } from 'node:crypto';
-import { basename } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { basename, join } from 'node:path';
 import { commandExists } from '../util.js';
 import type { EmittedEvent } from '../events.js';
 import type { UsageSample } from '../telemetry.js';
 import { quoteArg } from './session-location.js';
+import { expandEnvTemplate, probeMcpToolNames, type ConfiguredMcpServer } from './mcp-probe.js';
 import { ZcodeWire } from './zcode-wire.js';
 import { EFFORT_LEVELS, sessionEnvironment, type AgentAdapter, type AgentSession, type EffortLevel, type ModelOption, type StartOptions, type TurnHooks, type TurnInput, type TurnResult } from './types.js';
 
@@ -27,6 +30,72 @@ const COMMANDS = [
   { name: 'session', description: '查看当前会话、模型和记忆状态' },
   { name: 'usage', description: '查看会话 token 用量（非套餐剩余额度）' },
 ];
+
+/**
+ * MCP servers follow zcode's own plugin configuration, so installing one there (`zcode plugins
+ * install …`) is all it takes to reach hub sessions too: the protocol app-server starts nothing
+ * on its own, not even installed plugins, so the hub passes the definitions in session/create.
+ * Sources: the plugin registry and enabled flags under ~/.zcode/cli, and each plugin's .mcp.json;
+ * ${VAR} references resolve against the daemon's environment, keeping secrets out of files.
+ */
+export function readZcodeMcpServers(env: NodeJS.ProcessEnv): ConfiguredMcpServer[] {
+  const root = join(env.ZCODE_DATA_BASE_DIR || homedir(), '.zcode', 'cli');
+  let registry: any;
+  let enabled: Record<string, unknown>;
+  try {
+    registry = JSON.parse(readFileSync(join(root, 'plugins', 'installed_plugins.json'), 'utf8'));
+    enabled = JSON.parse(readFileSync(join(root, 'config.json'), 'utf8'))?.plugins?.enabledPlugins ?? {};
+  } catch {
+    return []; // zcode has no plugin state here: nothing to pass through.
+  }
+  const servers: ConfiguredMcpServer[] = [];
+  for (const plugin of Array.isArray(registry?.plugins) ? registry.plugins : []) {
+    const id = typeof plugin?.id === 'string' ? plugin.id : '';
+    const installPath = typeof plugin?.installPath === 'string' ? plugin.installPath : '';
+    if (!id || !installPath || enabled[id] === false) continue;
+    let declared: unknown;
+    try {
+      declared = JSON.parse(readFileSync(join(installPath, '.mcp.json'), 'utf8'))?.mcpServers;
+    } catch {
+      continue; // A plugin without MCP definitions contributes none.
+    }
+    if (!declared || typeof declared !== 'object') continue;
+    for (const [name, entry] of Object.entries(declared as Record<string, any>)) {
+      if (entry?.type !== undefined && entry.type !== 'stdio') continue; // the hub passes stdio only
+      const command = typeof entry?.command === 'string' ? expandEnvTemplate(entry.command, env) : null;
+      if (!/^[A-Za-z0-9_-]+$/.test(name) || !command) continue;
+      const args: string[] = [];
+      let valid = Array.isArray(entry.args);
+      if (valid) for (const arg of entry.args) {
+        const expanded = typeof arg === 'string' ? expandEnvTemplate(arg, env) : null;
+        if (expanded === null) { valid = false; break; }
+        args.push(expanded);
+      }
+      const variables: Record<string, string> = {};
+      if (valid && entry.env && typeof entry.env === 'object') for (const [key, value] of Object.entries(entry.env)) {
+        const expanded = typeof value === 'string' ? expandEnvTemplate(value, env) : null;
+        if (expanded === null) { valid = false; break; }
+        variables[key] = expanded;
+      }
+      if (valid) servers.push({ name, command, args, env: variables });
+      else console.warn(`[zcode] MCP server ${name} skipped: invalid shape or unresolved \${VAR}`);
+    }
+  }
+  return servers;
+}
+
+/** Probed tool names per server config, cached for the daemon's lifetime. */
+const mcpToolCache = new Map<string, Promise<string[]>>();
+
+function zcodeMcpToolNames(servers: ConfiguredMcpServer[]): Promise<string[]> {
+  const key = JSON.stringify(servers);
+  let probed = mcpToolCache.get(key);
+  if (!probed) {
+    probed = Promise.all(servers.map((server) => probeMcpToolNames(server))).then((lists) => lists.flat());
+    mcpToolCache.set(key, probed);
+  }
+  return probed;
+}
 
 function selection(id: string, effort?: EffortLevel): { providerId: string; modelId: string; options?: { reasoningLevel: string } } {
   try {
@@ -111,6 +180,13 @@ export class ZcodeAdapter implements AgentAdapter {
   }
   diagnose() { return cliDiagnostic(this.command, this.env, 'zcode NDJSON'); }
 
+  /** --no-browser leaves the OAuth URL on screen for a terminal that is not on the browser's host. */
+  loginCommand(): string {
+    const keys = ['HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME'];
+    const env = keys.flatMap((key) => (this.env[key] ? [`${key}=${quoteArg(this.env[key])}`] : [])).join(' ');
+    return `${env ? `env ${env} ` : ''}${quoteArg(this.command[0])} login --no-browser`;
+  }
+
   async available(): Promise<boolean> { return commandExists(this.command[0]); }
   fetchQuota() { return fetchZcodeQuota(this.env); }
   commands() { return Promise.resolve(COMMANDS); }
@@ -169,7 +245,18 @@ class ZcodeSession implements AgentSession {
     const workspace = { workspacePath: opts.cwd, workspaceKey: opts.cwd };
     const model = opts.model ? selection(opts.model, opts.effort) : undefined;
     const thoughtLevel = opts.effort ?? model?.options?.reasoningLevel;
-    const restrictions = { workspace, mcpServers: [], toolAllowlist: ZCODE_BASIC_TOOLS, dynamicWorkflowEnabled: false, offPeakToolEnabled: false };
+    // MCP servers from the machine-local config, if any; their probed tool names widen the
+    // allowlist, which matches exact names only.
+    const mcpServers = readZcodeMcpServers(this.env);
+    const mcpTools = mcpServers.length ? await zcodeMcpToolNames(mcpServers) : [];
+    const restrictions = {
+      workspace,
+      // Real zcode validates mcpServers with a strict schema: name, command, args and env are
+      // all required — an empty argument list is `args: []`, never a missing field.
+      mcpServers: mcpServers.map((server) => ({ name: server.name, command: server.command, args: server.args, env: Object.entries(server.env).map(([name, value]) => ({ name, value })) })),
+      toolAllowlist: mcpTools.length ? [...ZCODE_BASIC_TOOLS, ...mcpTools] : ZCODE_BASIC_TOOLS,
+      dynamicWorkflowEnabled: false, offPeakToolEnabled: false,
+    };
     const snapshot = await this.wire.request(opts.resumeId ? 'session/resume' : 'session/create', opts.resumeId
       ? { ...restrictions, sessionId: opts.resumeId }
       : { ...restrictions, mode: this.workMode === 'plan' ? 'plan' : 'build', persistence: this.probe ? 'deferred' : 'immediate', titleGenerationEnabled: false, ...(model ? { model } : {}), ...(thoughtLevel ? { thoughtLevel } : {}) });

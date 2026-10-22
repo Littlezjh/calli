@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { AgentRegistry } from '../src/agents.js';
 import { AttachmentStore } from '../src/attachments.js';
 import { createHttpServer } from '../src/http.js';
 import { Store } from '../src/store.js';
@@ -188,6 +189,24 @@ test('killing a terminal ends its stream, and it refuses input afterwards', asyn
   assert.equal(frames.at(-1)!.type, 'exit');
   const after = await api(`/api/terminals/${t.body.id}/input`, { method: 'POST', body: JSON.stringify({ data: 'x' }) });
   assert.equal(after.status, 409, 'exited but still remembered');
+});
+
+test('agent login starts a fresh terminal with the adapter command', async () => {
+  const registry = new AgentRegistry([{ id: 'claude', adapter: 'claude', command: ['claude'] }], null);
+  registry.adapters.get('claude')!.loginCommand = () => 'echo rah-login';
+  const loginServer = createHttpServer({ manager, registry, terminals, token: TOKEN, webDir: null, version: 'test' });
+  await new Promise<void>((r) => loginServer.listen(0, '127.0.0.1', () => r()));
+  const loginBase = `http://127.0.0.1:${(loginServer.address() as AddressInfo).port}`;
+  try {
+    const res = await fetch(loginBase + '/api/agents/claude/login-terminal', { method: 'POST', headers: auth });
+    assert.equal(res.status, 201);
+    const { terminalId } = (await res.json()) as { terminalId: string };
+    const frames = await readStream(loginBase, `/api/terminals/${terminalId}/stream`, (f) => textOf([f]).includes('rah-login'));
+    assert.match(textOf(frames), /rah-login/);
+    await fetch(loginBase + `/api/terminals/${terminalId}`, { method: 'DELETE', headers: auth });
+  } finally {
+    loginServer.close();
+  }
 });
 
 test('an idle terminal is reaped, and its tail stays readable for a while', async () => {

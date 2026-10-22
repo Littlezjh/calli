@@ -317,6 +317,32 @@ export const zh = {
   'addAgent.message': '在这台主机上发现的其他 agent 命令。添加后作为新 agent 使用，会出现在 agent 选择器里。',
   'addAgent.none': '没有新的可添加项。',
 
+  // Agent management page
+  'agents.title': 'Agents',
+  'agents.intro': '管理已接入的 agent：改名、重新登录或移除。移除只影响 hub，不会删除配置目录、登录凭据或原生会话。',
+  'agents.add': '添加 agent',
+  'agents.empty': '还没有接入 agent。',
+  'agents.actions': '操作',
+  'agents.login': '登录',
+  'agents.loginStarted': '已在终端中打开登录',
+  'agents.rename': '重命名',
+  'agents.renameTitle': '重命名 agent',
+  'agents.renameLabel': '名称',
+  'agents.renameHint': '只改 hub 里显示的名字，实例 ID 和原生会话不受影响。',
+  'agents.remove': '移除',
+  'agents.removeTitle': '移除 agent',
+  'agents.removeHint': '只从 hub 移除；不会删除它的配置目录、登录凭据或原生会话。',
+  'agents.removeBlockedTitle': '暂时不能移除',
+  'agents.removeBlocked': (threads: number, schedules: number, teams: number, handovers: number) => {
+    const parts: string[] = [];
+    if (threads) parts.push(`${threads} 个线程`);
+    if (schedules) parts.push(`${schedules} 个定时任务`);
+    if (teams) parts.push(`${teams} 个团队`);
+    if (handovers) parts.push(`${handovers} 条交接设置`);
+    return `还有 ${parts.join('、')} 在使用它。先处理这些引用，或保留这个实例。`;
+  },
+  'agents.unavailable': '不可用',
+
   // Onboarding & agent discovery
   'onboard.askTitle': '发现 coding agent',
   'onboard.askMessage': '是否自动发现本机的 coding agent？检测已安装的 CLI 和已登录账号，一键接入 hub。',

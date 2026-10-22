@@ -317,6 +317,32 @@ export const en: Messages = {
   'addAgent.message': 'Other agent commands found on this host. Once added, each works as a new agent and shows up in the agent picker.',
   'addAgent.none': 'Nothing new to add.',
 
+  // Agent management page
+  'agents.title': 'Agents',
+  'agents.intro': 'Manage connected agents: rename, sign in again, or remove them. Removing only affects the hub; config, credentials and native sessions stay.',
+  'agents.add': 'Add agent',
+  'agents.empty': 'No agents connected yet.',
+  'agents.actions': 'Actions',
+  'agents.login': 'Sign in',
+  'agents.loginStarted': 'Sign-in opened in the terminal',
+  'agents.rename': 'Rename',
+  'agents.renameTitle': 'Rename agent',
+  'agents.renameLabel': 'Name',
+  'agents.renameHint': 'Only the name shown in the hub changes; the instance id and native sessions stay.',
+  'agents.remove': 'Remove',
+  'agents.removeTitle': 'Remove agent',
+  'agents.removeHint': 'Removes it from the hub only. Its config directory, login credentials and native sessions stay.',
+  'agents.removeBlockedTitle': 'Cannot remove yet',
+  'agents.removeBlocked': (threads: number, schedules: number, teams: number, handovers: number) => {
+    const parts: string[] = [];
+    if (threads) parts.push(`${threads} ${threads === 1 ? 'thread' : 'threads'}`);
+    if (schedules) parts.push(`${schedules} ${schedules === 1 ? 'schedule' : 'schedules'}`);
+    if (teams) parts.push(`${teams} ${teams === 1 ? 'team' : 'teams'}`);
+    if (handovers) parts.push(`${handovers} handover ${handovers === 1 ? 'setting' : 'settings'}`);
+    return `Still in use by ${parts.join(', ')}. Handle those first, or keep this instance.`;
+  },
+  'agents.unavailable': 'Unavailable',
+
   // Onboarding & agent discovery
   'onboard.askTitle': 'Discover Coding Agents',
   'onboard.askMessage': 'Would you like to automatically discover coding agents on this host? Discovers installed CLIs and signed-in accounts to link in one click.',

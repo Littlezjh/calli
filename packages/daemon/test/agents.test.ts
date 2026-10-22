@@ -1,6 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -63,6 +63,44 @@ test('add persists to agents.json and a later fromEnv reads it back', async () =
   rmSync(dataDir, { recursive: true, force: true });
 });
 
+test('update renames and remove drops an instance from agents.json', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'rah-agents-manage-'));
+  const registry = AgentRegistry.fromEnv({ dataDir, env: {}, defaults });
+  await registry.add({ id: 'agy2', adapter: 'agy', command: ['/opt/agy2/agy2'] });
+
+  const renamed = await registry.update('agy2', { label: '备用号' });
+  assert.equal(renamed.label, '备用号');
+  assert.equal(registry.adapters.get('agy2')!.label, '备用号');
+  const reloaded = AgentRegistry.fromEnv({ dataDir, env: {}, defaults });
+  assert.equal(reloaded.list().find((i) => i.id === 'agy2')?.label, '备用号');
+
+  await registry.remove('agy2');
+  assert.equal(registry.adapters.has('agy2'), false);
+  const after = AgentRegistry.fromEnv({ dataDir, env: {}, defaults });
+  assert.equal(after.list().some((i) => i.id === 'agy2'), false);
+
+  await assert.rejects(registry.update('agy2', { label: 'x' }), HttpError);
+  await assert.rejects(registry.remove('agy2'), HttpError);
+  rmSync(dataDir, { recursive: true, force: true });
+});
+
+test('adapters that can start a login expose a command in their own environment', () => {
+  const registry = new AgentRegistry([
+    { id: 'claude', adapter: 'claude', command: ['claude'], env: { CLAUDE_CONFIG_DIR: '/tmp/claude-login' } },
+    { id: 'codex', adapter: 'codex', command: ['codex', 'app-server'] },
+    { id: 'traex', adapter: 'traex', command: ['traex', 'acp', 'serve'] },
+    { id: 'zcode', adapter: 'zcode', command: ['zcode'] },
+    { id: 'pi', adapter: 'pi', command: ['pi'] },
+    { id: 'agy', adapter: 'agy', command: ['agy'] },
+  ], null);
+  assert.match(registry.adapters.get('claude')!.loginCommand!(), /CLAUDE_CONFIG_DIR='\/tmp\/claude-login'.*auth login/);
+  assert.match(registry.adapters.get('codex')!.loginCommand!(), /login --device-auth/);
+  assert.match(registry.adapters.get('traex')!.loginCommand!(), /login --sso-device/);
+  assert.match(registry.adapters.get('zcode')!.loginCommand!(), /login --no-browser/);
+  assert.equal(registry.adapters.get('pi')!.loginCommand, undefined);
+  assert.equal(registry.adapters.get('agy')!.loginCommand, undefined);
+});
+
 test('add refuses unknown adapters, duplicate ids and junk ids', async () => {
   const registry = new AgentRegistry(defaults, null);
   await assert.rejects(registry.add({ adapter: 'codex' }), HttpError);
@@ -100,6 +138,38 @@ test('discover finds extra CLIs on PATH and leaves lookalikes alone', async () =
     );
     assert.equal(ours[0].adapter, 'agy');
     assert.equal(ours[2].adapter, 'traex', "traecli is traex's compatibility name");
+  } finally {
+    process.env.PATH = oldPath;
+  }
+});
+
+test('discover lists one row per executable and skips aliases an instance already uses', async () => {
+  const bin = join(dir, 'alias-bin');
+  mkdirSync(bin);
+  const target = join(bin, 'traex');
+  writeFileSync(target, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  // The installer's compatibility names are symlinks to the same executable.
+  for (const name of ['coco', 'ta', 'trae-agent', 'trae-cli', 'traecli']) {
+    symlinkSync('traex', join(bin, name));
+  }
+  // Separate programs whose names start with an agent's name are not copies of it.
+  for (const name of ['claude-agent-acp', 'traex-bridge']) {
+    writeFileSync(join(bin, name), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  }
+  const oldPath = process.env.PATH;
+  process.env.PATH = `${bin}:${oldPath}`;
+  try {
+    // Without a TRAE instance, the aliases collapse to the CLI's own name.
+    const fresh = new AgentRegistry(defaults.filter((i) => i.adapter !== 'traex'), null);
+    const offered = (await fresh.discover()).filter((f) => f.command.startsWith(bin));
+    assert.deepEqual(offered.map((f) => f.id), ['traex']);
+
+    // Once an instance runs that executable, none of its aliases are offered.
+    const used = new AgentRegistry([
+      ...defaults.filter((i) => i.adapter !== 'traex'),
+      { id: 'traex', adapter: 'traex', command: [target, 'acp', 'serve'] },
+    ], null);
+    assert.deepEqual((await used.discover()).filter((f) => f.command.startsWith(bin)), []);
   } finally {
     process.env.PATH = oldPath;
   }

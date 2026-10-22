@@ -192,7 +192,12 @@ test('large work blocks and text details paginate with a stable version; file re
     assert.equal((file.content as any[])[0].newText, 'new');
     f.add('a', 'tool.update', { id: '0', output: 'new version' });
     await assert.rejects(f.store.history.detail('thread', 'a', id, 65536, Number(detail.version)), /detail changed/);
-    await assert.rejects(f.store.history.work('thread', 'a', first.seq, 100, work.version), /work changed/);
+    // Work continuation survives a version bump: the entry list only grows, so a stale cursor
+    // still names the same window and the answer carries the current version.
+    const shifted = await f.store.history.work('thread', 'a', first.seq, 100, work.version);
+    assert.equal(shifted.version > Number(work.version), true);
+    assert.equal(shifted.events.filter(e => e.type === 'history.tool.start').length, 100);
+    assert.equal(shifted.nextCursor, 200);
   } finally { f.close(); }
 });
 

@@ -489,9 +489,12 @@ export class HistoryStore {
     events.sort((a,b) => a.seq - b.seq);
     return { events, turns, snapshotSeq };
   }
-  async work(thread: string, turn: string, block: number, cursor = 0, expectedVersion?: number, chain = false): Promise<{ events: HistoryEvent[]; files: unknown[]; version: number; nextCursor: number | null }> {
+  async work(thread: string, turn: string, block: number, cursor = 0, _expectedVersion?: number, chain = false): Promise<{ events: HistoryEvent[]; files: unknown[]; version: number; nextCursor: number | null }> {
     const { start, end } = this.bounds(thread, turn);
-    if (expectedVersion !== undefined && expectedVersion !== end - 1) throw new HttpError(409, 'work changed; reload before continuing');
+    // A stale expectedVersion is accepted: a running turn's end keeps moving, and the entry
+    // list only ever grows, so a cursor still names the same window. Rejecting it made live
+    // work panels page back to the start on every refresh. The returned version is current,
+    // so the next continuation continues from what the server now knows.
     await this.ensure(thread, start, end);
     const rows = compactHistory(this.rows(thread, start, end, chain ? this.handoverStart(thread) : 0));
     const partition = partitionHistory(rows);

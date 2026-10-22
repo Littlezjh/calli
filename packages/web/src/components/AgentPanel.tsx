@@ -5,7 +5,7 @@ import type { AgentInfo, Api, Coordination, Thread } from '../api';
 import { buildTalks } from '../coordination';
 import { buildTimeline, clockLabel, deliveredPreview, type StoredEvent } from '../timeline';
 import { Prose, ThreadView } from './ThreadView';
-import { AgentMark, IconAgents, IconHandover, IconChevron, IconClose } from './icons';
+import { AgentMark, IconAgents, IconChevron, IconClose, IconEdit, IconExternal, IconHandover, IconStop } from './icons';
 import { t } from '../i18n';
 
 /** The width the user dragged the panel to, on a wide screen. Unset, the panel keeps its own. */
@@ -190,12 +190,13 @@ export function AgentPanel({ api, team, agents, leadAgent, memberModel, start, p
     <div className="agent-panel-resize" onPointerDown={startResize} onDoubleClick={() => { setWidth(null); localStorage.removeItem(WIDTH_KEY); }} role="separator" aria-orientation="vertical" aria-label={t('common.resize')} title={t('team.resizeHint')} />
     <header className="agent-panel-head">
       {memberId && <button className="icon-btn" aria-label={t('team.back')} onClick={() => setMemberId(null)}><span className="coord-back"><IconChevron /></span></button>}
-      <div className="agent-panel-heading"><strong>{member?.name ?? t('team.agents')}</strong><span>{thread ? (agents.find(a => a.id === thread.agent)?.label ?? thread.agent) : team.paused ? t('team.pausedHint') : t('team.summary', team.members.filter(m => m.thread?.status === 'running').length, team.members.length)}</span></div>
+      {/* A member: how it stands first, then its agent and the folder it works in (the whole path on hover). */}
+      <div className="agent-panel-heading"><strong>{member?.name ?? t('team.agents')}</strong><span title={thread?.cwd}>{thread ? `${memberStatus(member!)} · ${agents.find(a => a.id === thread.agent)?.label ?? thread.agent} · ${thread.cwd.split('/').filter(Boolean).pop() ?? thread.cwd}` : team.paused ? t('team.pausedHint') : t('team.summary', team.members.filter(m => m.thread?.status === 'running').length, team.members.length)}</span></div>
       {thread && memberModel?.(thread)}
+      {thread && <button className="icon-btn" aria-label={t('team.open')} title={t('team.open')} onClick={() => onOpen(thread)}><IconExternal /></button>}
       <button className="icon-btn" aria-label={t('team.close')} onClick={onClose}><IconClose /></button>
     </header>
     {!memberId && <div className="auto-setting-line"><span>{t('auto.members')}</span><button aria-label={t('auto.members')} className="auto-toggle" role="switch" aria-checked={team.autoHandover !== false} onClick={() => { void api.setCollaborationHandover(team.rootId, team.autoHandover === false).then(onRefresh).catch(onError); }}>{t(team.autoHandover !== false ? 'auto.on' : 'auto.off')}</button></div>}
-    {thread && <div className="agent-panel-location" title={thread.cwd}>{memberStatus(member!)} · {thread.cwd}</div>}
     {!connected && <div className="agent-panel-notice">{t('team.reconnecting')}</div>}
     <div className="agent-panel-body" ref={body} onScroll={() => {
       if (!body.current) return;
@@ -233,12 +234,17 @@ export function AgentPanel({ api, team, agents, leadAgent, memberModel, start, p
       </> : thread ? <ThreadView historyApi={api} historyThreadId={thread.id} items={timeline.items} roots={[thread.cwd, thread.cwdReal]} loadImage={id => api.attachment(thread.id, id)} loadFile={path => api.threadFile(thread.id, path)} hasOlder={older} loadingOlder={loadingOlder} onLoadOlder={() => void loadOlder()} /> : <div className="agent-panel-empty">{t('team.childGone')}</div>}
     </div>
     {memberId && !atBottom && <button className="agent-panel-latest" onClick={() => { stick.current = true; if (body.current) body.current.scrollTop = body.current.scrollHeight; }}>{t('team.latest')}</button>}
-    <footer className="agent-panel-footer">
-      {member && thread ? <>
-        <button onClick={() => onAdjust(member.name)}>{t('team.adjust')}</button>
-        <button onClick={() => onOpen(thread)}>{t('team.open')}</button>
-        {thread.status === 'running' && <button onClick={() => { api.cancel(thread.id).then(onRefresh).catch(onError); }}>{t('team.stopTask')}</button>}
-      </> : <button title={team.paused ? t('team.resumeHint') : t('team.stopHint')} onClick={() => { api.configureCoordination(team.rootId, { action: team.paused ? 'resume' : 'stop' }).then(onRefresh).catch(onError); }}>{team.paused ? t('team.resume') : t('team.stopAll')}</button>}
-    </footer>
+    {/* A member's way to change course goes through the lead: a line shaped like the composer's,
+        which opens the lead's composer with the member named; stop sits where the composer has it. */}
+    {member && thread ? <footer className="agent-panel-footer adjust">
+      <button className="agent-adjust" onClick={() => onAdjust(member.name)}>
+        <IconEdit size={15} /><span>{t('team.adjustPrompt', member.name)}</span>
+      </button>
+      {thread.status === 'running' && <button className="send-btn stop" aria-label={t('team.stopTask')} title={t('team.stopTask')} onClick={() => { api.cancel(thread.id).then(onRefresh).catch(onError); }}>
+        <IconStop size={16} />
+      </button>}
+    </footer> : <footer className="agent-panel-footer">
+      <button title={team.paused ? t('team.resumeHint') : t('team.stopHint')} onClick={() => { api.configureCoordination(team.rootId, { action: team.paused ? 'resume' : 'stop' }).then(onRefresh).catch(onError); }}>{team.paused ? t('team.resume') : t('team.stopAll')}</button>
+    </footer>}
   </aside>;
 }

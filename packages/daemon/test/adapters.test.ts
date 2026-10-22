@@ -150,10 +150,11 @@ test('ClaudeAcpAdapter: resume uses session/load and keeps the same id', async (
   await session.close();
 });
 
-test('PiRpcAdapter: prompt streams events and settles', async () => {
+test('PiRpcAdapter: prompt streams events and settles', async (t) => {
   const adapter = new PiRpcAdapter([process.execPath, fakePi]);
   assert.equal(await adapter.available(), true);
   const session = await adapter.start({ cwd: here });
+  t.after(() => session.close());
   assert.equal(session.agentSessionId, 'pi-session-1');
 
   const { hooks, events } = collectingHooks();
@@ -161,7 +162,7 @@ test('PiRpcAdapter: prompt streams events and settles', async () => {
   assert.deepEqual(result, { stopReason: 'end_turn', error: undefined });
   assert.deepEqual(
     events.map((e) => e.type),
-    ['reasoning.delta', 'tool.start', 'tool.update', 'tool.end', 'message.delta', 'message.delta', 'usage.updated'],
+    ['turn.phase', 'reasoning.delta', 'tool.start', 'tool.update', 'tool.end', 'message.delta', 'message.delta', 'usage.updated'],
   );
   // After the turn pi is asked how full its context is.
   assert.deepEqual(events.at(-1)!.data, { used: 1200, size: 200000, cost: { amount: 0.02, currency: 'USD' } });
@@ -185,7 +186,6 @@ test('PiRpcAdapter: model error ends the turn as error', async () => {
   await session.close();
 });
 
-test('PiRpcAdapter: abort ends a slow turn as cancelled', async () => {
 test('PiRpcAdapter: a model error that pi retried successfully does not fail the turn', async () => {
   const adapter = new PiRpcAdapter([process.execPath, fakePi]);
   const session = await adapter.start({ cwd: here });
@@ -196,6 +196,7 @@ test('PiRpcAdapter: a model error that pi retried successfully does not fail the
   await session.close();
 });
 
+test('PiRpcAdapter: abort ends a slow turn as cancelled', async () => {
   const adapter = new PiRpcAdapter([process.execPath, fakePi]);
   const session = await adapter.start({ cwd: here });
   const { hooks } = collectingHooks();

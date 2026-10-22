@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { PlanQuota, QuotaWindow } from '../src/api.js';
-import { formatReset, quotaHeadline, quotaLevel, quotaRows } from '../src/quota.js';
+import { formatReset, periodName, quotaColumns, quotaGroups, quotaLeft, quotaLevel, quotaRows, shortReset } from '../src/quota.js';
 
 const win = (over: Partial<QuotaWindow> = {}): QuotaWindow => ({ label: '5H', usedPercent: 0, ...over });
 
@@ -20,13 +20,22 @@ test('formatReset is short today and names the day later', () => {
   assert.equal(formatReset(win({ resetsAt: 'not a date' }), now), '');
 });
 
-test('quotaHeadline reports the tightest window', () => {
-  const quota: PlanQuota = {
-    windows: [win({ label: '7D', usedPercent: 40 }), win({ label: '5H', usedPercent: 95 })],
-    checkedAt: '2026-10-10T00:00:00Z',
-  };
-  assert.equal(quotaHeadline(quota), '最紧的一档用了 95%');
-  assert.equal(quotaHeadline({ windows: [], checkedAt: '2026-10-10T00:00:00Z' }), '没有读到额度信息');
+test('the board shows what is left, columns by window length, and groups by model', () => {
+  assert.deepEqual([0, 53, 100, 120, 33.33].map((usedPercent) => quotaLeft(win({ usedPercent }))), [100, 47, 0, 0, 66.7]);
+  const quota = (labels: string[]): PlanQuota => ({ windows: labels.map((label) => win({ label })), checkedAt: '2026-10-10T00:00:00Z' });
+  assert.deepEqual(quotaColumns([quota(['7D', '5H']), null, quota(['5H', 'Pro', '1D'])]), ['5H', '1D', '7D', 'Pro']);
+  assert.deepEqual(quotaColumns([]), []);
+  assert.deepEqual(['5H', '1H', '7D', '3D', 'Pro'].map(periodName), ['5 小时', '1 小时', '每周', '3 天', 'Pro']);
+  const groups = quotaGroups([win({ label: '7D', scope: 'Gemini' }), win({ label: '5H' }), win({ label: '5H', scope: 'Gemini' }), win({ label: '7D', scope: 'Claude' })]);
+  assert.deepEqual(groups.map((g) => [g.scope, g.windows.map((w) => w.label)]), [[undefined, ['5H']], ['Gemini', ['7D', '5H']], ['Claude', ['7D']]]);
+});
+
+test('shortReset fits a table cell: the time today, the date later', () => {
+  const now = new Date(2026, 9, 10, 9, 0);
+  assert.equal(shortReset(win({ resetsAt: new Date(2026, 9, 10, 14, 5).toISOString() }), now), '14:05');
+  assert.equal(shortReset(win({ resetsAt: new Date(2026, 9, 12, 7, 53).toISOString() }), now), '10/12');
+  assert.equal(shortReset(win(), now), '');
+  assert.equal(shortReset(win({ resetsAt: 'not a date' }), now), '');
 });
 
 test('quotaRows keeps agents that report quota and puts the one in use first', () => {

@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
-import { isFastSpeed, type AgentInfo, type ModelOption } from '../api';
+import { isFastSpeed, type AgentInfo, type Api, type ModelOption } from '../api';
 import { usageSummary, type Usage } from '../timeline';
 import { EFFORT_LABELS, PERMISSION_LABELS, PERMISSION_ORDER, permissionHint } from '../permissions';
 import { AgentMark, IconBolt, IconEffortGauge, IconCompress, IconRefresh, IconCheck, IconChevron, IconFolder, IconHand, IconPlus, IconShield, IconShieldAlert, IconSparkle, IconWorktree } from './icons';
 import { Popover } from './Popover';
 import { EffortSlider } from './EffortSlider';
+import { AgentQuota } from './AgentQuota';
 import { useIsNarrow } from '../hooks';
 import { t } from '../i18n';
 
@@ -293,6 +294,7 @@ export interface DiscoveredAccount {
 }
 
 interface AgentProps {
+  api: Api;
   teams?: import('../api').TeamSummary[];
   agents: AgentInfo[];
   value: string;
@@ -322,7 +324,41 @@ function groupLabel(group: AgentInfo[]): string {
   return group.reduce((short, a) => (a.label.length < short.length ? a.label : short), group[0].label);
 }
 
-export function AgentPicker({ agents, value, onChange, accounts = [], onAddAccount, teams = [] }: AgentProps) {
+/**
+ * One agent or account in the picker. The quota sits beside the select button, not inside it,
+ * so opening the quota details never picks the account.
+ */
+function AgentRow({ api, agent, marks, checked, hint, onPick }: {
+  api: Api; agent: AgentInfo; marks: boolean; checked: boolean; hint?: string; onPick: () => void;
+}) {
+  const quota = agent.available && agent.capabilities.quota;
+  return (
+    <div className={`agent-picker-row${marks ? ' has-mark' : ''}${agent.available ? '' : ' disabled'}`} role="none">
+      <button
+        type="button"
+        role="menuitemradio"
+        aria-checked={checked}
+        className="pop-item compact agent-picker-item"
+        disabled={!agent.available}
+        onClick={onPick}
+      >
+        {marks && <span className="pop-item-icon">{agent.icon && <AgentMark path={agent.icon} size={16} />}</span>}
+        <span className="pop-item-text">
+          <span className="pop-item-label">{agent.label}</span>
+          {hint ? (
+            <span className="pop-item-hint">{hint}</span>
+          ) : (
+            !agent.available && <span className="pop-item-hint">{t('pickers.notFound')}</span>
+          )}
+        </span>
+        <span className="pop-item-check">{checked && <IconCheck size={16} />}</span>
+      </button>
+      {quota && <AgentQuota api={api} agent={agent.id} />}
+    </div>
+  );
+}
+
+export function AgentPicker({ api, agents, value, onChange, accounts = [], onAddAccount, teams = [] }: AgentProps) {
   const current = agents.find((a) => a.id === value);
   const team = teams.find(t => `team:${t.id}` === value);
   const [adding, setAdding] = useState<string | null>(null);
@@ -335,6 +371,7 @@ export function AgentPicker({ agents, value, onChange, accounts = [], onAddAccou
   return (
     <Popover
       label="Agent"
+      panelClassName="agent-picker-panel"
       triggerClassName={`context-btn agent-btn${current?.icon ? ' has-mark' : ''}`}
       trigger={
         <>
@@ -351,34 +388,12 @@ export function AgentPicker({ agents, value, onChange, accounts = [], onAddAccou
               <IconChevron size={12} /> {groupLabel(drilled)}
             </button>
             {drilled.map((a) => (
-              <button
-                key={a.id}
-                type="button"
-                role="menuitemradio"
-                aria-checked={a.id === value}
-                className="pop-item compact"
-                disabled={!a.available}
-                onClick={() => {
+              <AgentRow key={a.id} api={api} agent={a} marks={marks} checked={a.id === value} hint={a.account ?? undefined}
+                onPick={() => {
                   onChange(a.id);
                   setOpenGroup(null);
                   close();
-                }}
-              >
-                {marks && <span className="pop-item-icon">{a.icon && <AgentMark path={a.icon} size={16} />}</span>}
-                <span className="pop-item-text">
-                  <span className="pop-item-label">{a.label}</span>
-                  {a.account ? (
-                    <span className="pop-item-hint">{a.account}</span>
-                  ) : (
-                    !a.available && <span className="pop-item-hint">{t('pickers.notFound')}</span>
-                  )}
-                </span>
-                {a.id === value && (
-                  <span className="pop-item-check">
-                    <IconCheck size={16} />
-                  </span>
-                )}
-              </button>
+                }} />
             ))}
           </>
         ) : (
@@ -389,29 +404,11 @@ export function AgentPicker({ agents, value, onChange, accounts = [], onAddAccou
             const solo = group.length === 1 ? group[0] : null;
             if (solo)
               return (
-                <button
-                  key={solo.id}
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={solo.id === value}
-                  className="pop-item compact"
-                  disabled={!solo.available}
-                  onClick={() => {
+                <AgentRow key={solo.id} api={api} agent={solo} marks={marks} checked={solo.id === value}
+                  onPick={() => {
                     onChange(solo.id);
                     close();
-                  }}
-                >
-                  {marks && <span className="pop-item-icon">{solo.icon && <AgentMark path={solo.icon} size={16} />}</span>}
-                  <span className="pop-item-text">
-                    <span className="pop-item-label">{solo.label}</span>
-                    {!solo.available && <span className="pop-item-hint">{t('pickers.notFound')}</span>}
-                  </span>
-                  {solo.id === value && (
-                    <span className="pop-item-check">
-                      <IconCheck size={16} />
-                    </span>
-                  )}
-                </button>
+                  }} />
               );
             // Several accounts of one agent: the row stands for the agent, says which account is
             // in use, and opens to the choice.

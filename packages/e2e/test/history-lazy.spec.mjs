@@ -78,10 +78,17 @@ test('eight history turns load answers first; work, tool output and diffs load o
         await tool.locator('.step-detail pre').filter({ hasText: 'OUTPUT_PRIVATE 15' }).waitFor();
         assert.equal(requests.filter(u => u.includes('/history/detail')).length, 2, 'repeat expansion is cached');
         await tool.locator('.step-head').click();
+        const changes = page.locator('.changes').last();
+        assert.equal(await changes.locator('.changes-head').getAttribute('aria-expanded'), 'false');
+        assert.equal(await page.locator('.changes-file').count(), 0, 'file lists start collapsed');
+        await changes.locator('.changes-head').click();
+        assert.equal(requests.filter(u => u.includes('/history/detail')).length, 2, 'opening the file list does not fetch diffs');
         await page.locator('.changes-row').last().click();
         await page.locator('.changes-file .diff').last().waitFor();
         assert.equal(requests.filter(u => u.includes('/history/detail')).length, 3);
         assert.ok(await page.locator('.changes-file').last().innerText().then(t => t.includes('DIFF_PRIVATE')));
+        await changes.locator('.changes-head').click();
+        assert.equal(await changes.locator('.changes-file').count(), 0, 'the whole card folds again');
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
         if (process.env.RAH_E2E_SHOTS_DIR) {
           mkdirSync(process.env.RAH_E2E_SHOTS_DIR, { recursive: true });
