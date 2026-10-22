@@ -7,7 +7,8 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import WebSocket from 'ws';
 import { AttachmentStore } from '../src/attachments.js';
-import { Desktop, parseDesktopSetting, probeRfb } from '../src/desktop.js';
+import { writeFileSync } from 'node:fs';
+import { Desktop, listeningPorts, parseDesktopSetting } from '../src/desktop.js';
 import { createHttpServer } from '../src/http.js';
 import { Store } from '../src/store.js';
 import { ThreadManager } from '../src/threads.js';
@@ -73,12 +74,31 @@ test('RAH_DESKTOP_VNC: unset looks at displays :0 to :9 here, off turns it off, 
   assert.throws(() => parseDesktopSetting('h:70000'), /host:port or off/);
 });
 
-test('only a server that speaks RFB first counts as a desktop', async () => {
-  assert.equal(await probeRfb({ host: '127.0.0.1', port: vnc.port }), true);
-  const other = await fakeVnc('SSH-2.0-OpenSSH_9\r\n');
-  assert.equal(await probeRfb({ host: '127.0.0.1', port: other.port }), false);
-  await other.close();
-  assert.equal(await probeRfb({ host: '127.0.0.1', port: other.port }), false, 'nothing listening');
+test('a desktop is found from the ports listening here, without connecting to it', async () => {
+  const ports = listeningPorts()!;
+  assert.ok(ports.has(vnc.port), 'the fake server is seen listening');
+  let connections = 0;
+  vnc.server.on('connection', () => connections++);
+  const seen = new Desktop({ targets: [{ host: '127.0.0.1', port: vnc.port + 1 }, { host: '127.0.0.1', port: vnc.port }] });
+  assert.deepEqual(await seen.find(), { host: '127.0.0.1', port: vnc.port });
+  assert.equal(connections, 0, 'looking never connects: TigerVNC would count it as a failed sign-in');
+  seen.dispose();
+
+  // /proc as Linux writes it: a header, then rows; 0A is LISTEN and the port is hex.
+  const file = join(dataDir, 'tcp');
+  writeFileSync(file, '  sl  local_address rem_address   st\n   0: 0100007F:170D 00000000:0000 0A\n   1: 0100007F:170E 0100007F:9C40 01\n');
+  assert.deepEqual([...listeningPorts([file])!], [5901]);
+  assert.equal(listeningPorts([join(dataDir, 'nope')]), null);
+
+  // Without /proc: a server named outright is taken as given, the ports guessed at are not.
+  const named = new Desktop({ targets: [{ host: '127.0.0.1', port: 5901 }], listening: () => null });
+  assert.deepEqual(await named.find(), { host: '127.0.0.1', port: 5901 });
+  const guessed = new Desktop({ targets: parseDesktopSetting(undefined), listening: () => null });
+  assert.equal(await guessed.find(), null);
+  // Another host is never looked at here.
+  const remote = new Desktop({ targets: [{ host: 'desk.example', port: 5901 }], listening: () => new Set() });
+  assert.deepEqual(await remote.find(), { host: 'desk.example', port: 5901 });
+  for (const d of [named, guessed, remote]) d.dispose();
 });
 
 test('the page learns whether there is a desktop, behind the token', async () => {
@@ -100,6 +120,30 @@ test('a ticket opens one WebSocket, joined byte for byte to the VNC server', asy
   assert.deepEqual([...Buffer.from(await echoed, 'latin1')], [0, 1, 2, 255]);
   ws.close();
   assert.equal(await open(url), 403, 'a ticket is spent once used');
+});
+
+test("a server's version line reaches the page in a message of its own, even with more behind it", async () => {
+  // TigerVNC refusing an address sends the version and the reason at once, then closes.
+  const refusing = await fakeVnc('RFB 003.003\n\0\0\0\0\0\0\0\x03no!');
+  const d = new Desktop({ targets: [{ host: '127.0.0.1', port: refusing.port }] });
+  const s = createHttpServer({ manager, desktop: d, token: TOKEN, webDir: null, version: 'test' });
+  await new Promise<void>((r) => s.listen(0, '127.0.0.1', () => r()));
+  const b = `http://127.0.0.1:${(s.address() as AddressInfo).port}`;
+  const { url } = (await (await fetch(`${b}/api/desktop/ticket`, { headers: auth })).json()) as { url: string };
+  const ws = new WebSocket(b.replace('http', 'ws') + url);
+  const messages: string[] = [];
+  await new Promise<void>((resolve) => {
+    ws.on('message', (m: Buffer) => {
+      messages.push(m.toString('latin1'));
+      if (messages.length === 2) resolve();
+    });
+  });
+  assert.deepEqual(messages, ['RFB 003.003\n', '\0\0\0\0\0\0\0\x03no!']);
+  ws.close();
+  s.close();
+  s.closeAllConnections();
+  d.dispose();
+  await refusing.close();
 });
 
 test('no ticket, a forged one, an expired one, or another path is turned away', async () => {

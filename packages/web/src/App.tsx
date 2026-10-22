@@ -88,7 +88,7 @@ import { NoteMarks, type NoteMark } from './components/NoteMarks';
 import { Toast, type ToastState } from './components/Toast';
 import { ConnectDialog, DemoBar } from './components/ConnectDialog';
 import { DemoApi, DemoError } from './demo/DemoApi';
-import { IconCheck, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconMore, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconDesktop, IconLanguage, IconMic, IconMicOff } from './components/icons';
+import { IconCheck, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconMore, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconLanguage, IconMic, IconMicOff } from './components/icons';
 import { chooseLocale, locale, LOCALES, localeChoice, t } from './i18n';
 
 const sleep = (ms: number, signal: AbortSignal) =>
@@ -1209,7 +1209,6 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       void refreshThreads();
     },
     onOpenTerminal: () => (demo ? askToConnect() : openTerminal()),
-    onOpenDesktop: hasDesktop ? () => setDesktopOpen(true) : undefined,
     onError: handleError,
     toast: setToast,
     // The open thread is already in memory; copying it straight away keeps the browser's
@@ -1844,6 +1843,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           onOpenTodos={showcase ? undefined : openTodos}
           todosActive={onTodos}
           onOpenSchedules={showcase ? undefined : openSchedules}
+          onOpenDesktop={hasDesktop ? () => { setDrawer(false); setDesktopOpen(true); } : undefined}
           schedulesActive={onSchedules}
           extensionNav={extensionNav}
           notice={demo && compact ? showcase ? showcase.notice(selectedId, extWant) : <DemoBar compact onConnect={askToConnect} /> : undefined}
@@ -1915,11 +1915,6 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
               {!compact && (
                 <button className="icon-btn topbar-term" aria-label={t('actions.terminal')} title={t('term.title')} onClick={() => (demo ? askToConnect() : openTerminal())}>
                   <IconTerminal />
-                </button>
-              )}
-              {!compact && hasDesktop && (
-                <button className="icon-btn topbar-desktop" aria-label={t('actions.desktop')} title={t('desktop.title')} onClick={() => setDesktopOpen(true)}>
-                  <IconDesktop />
                 </button>
               )}
               <button className="icon-btn topbar-new" aria-label={t('sidebar.newThread')} onClick={() => newThread()}>

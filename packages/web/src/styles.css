@@ -6715,6 +6715,9 @@ input.picker-search {
 }
 
 .term-panel .panel-head {
+  /* Above the status note that covers the panel, so Close always works. */
+  position: relative;
+  z-index: 1;
   padding: 10px 12px 6px 18px;
 }
 

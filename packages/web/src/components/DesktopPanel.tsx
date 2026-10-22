@@ -105,7 +105,15 @@ export function DesktopPanel({ api, onClose }: Props) {
         rfb.addEventListener('credentialsrequired', () => {
           if (!disposed) setAsking(wrongRef.current ? 'wrong' : 'first');
         });
-        rfb.addEventListener('securityfailure', () => {
+        // Why the server turned the connection away, when it is not a wrong password.
+        let refused = '';
+        rfb.addEventListener('securityfailure', (e) => {
+          const reason = (e as CustomEvent<{ reason?: string }>).detail.reason ?? '';
+          // TigerVNC's word for a wrong password; anything else (too many failures) is a refusal.
+          if (reason && !/authentication/i.test(reason)) {
+            refused = /too many/i.test(reason) ? t('desktop.blocked') : t('desktop.refused', reason);
+            return;
+          }
           savePassword(api.host, null);
           wrongRef.current = true;
         });
@@ -113,9 +121,15 @@ export function DesktopPanel({ api, onClose }: Props) {
           if (disposed) return;
           rfbRef.current = null;
           setAsking(null);
-          // A wrong password closes the connection; a new one asks for the password again.
-          if (wrongRef.current) setNonce((n) => n + 1);
-          else phaseNow('disconnected');
+          if (refused) {
+            setFailure(refused);
+            phaseNow('failed');
+          } else if (wrongRef.current) {
+            // A wrong password closes the connection; a new one asks for the password again.
+            setNonce((n) => n + 1);
+          } else {
+            phaseNow('disconnected');
+          }
         });
       } catch (e) {
         if (disposed) return;

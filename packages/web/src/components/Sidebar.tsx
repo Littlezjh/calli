@@ -10,7 +10,7 @@ import { deliveredPreview } from '../timeline';
 import { HostSwitcher } from './Hosts';
 import type { HostIconName } from '@rah/extension-api';
 import { HostIcon } from '../extensions/ui';
-import { AgentMark, IconBell, IconChevron, IconClock, IconClose, IconEdit, IconFolder, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconSidebar } from './icons';
+import { AgentMark, IconBell, IconChevron, IconClock, IconClose, IconDesktop, IconEdit, IconFolder, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconSidebar } from './icons';
 import { t } from '../i18n';
 
 export { folderName } from '../paths';
@@ -48,6 +48,8 @@ interface Props {
   /** The plan page is what the main area shows. */
   todosActive?: boolean;
   onOpenSchedules?: () => void;
+  /** Opens the machine's desktop; absent when the machine shows none. */
+  onOpenDesktop?: () => void;
   /** The scheduled-task page is what the main area shows. */
   schedulesActive?: boolean;
   /** Entries enabled extensions pin to the sidebar, after the hub's own pages. */
@@ -119,6 +121,7 @@ export function Sidebar({
   onOpenTodos,
   todosActive = false,
   onOpenSchedules,
+  onOpenDesktop,
   schedulesActive = false,
   extensionNav = [],
   compact = false,
@@ -528,6 +531,9 @@ export function Sidebar({
             </button>}
             {onOpenSchedules && <button className={`side-link${schedulesActive ? ' active' : ''}`} aria-current={schedulesActive ? 'page' : undefined} onClick={onOpenSchedules}>
               <IconClock size={compact ? 21 : 17} /> {t('sidebar.schedules')}
+            </button>}
+            {onOpenDesktop && <button className="side-link side-desktop" onClick={onOpenDesktop}>
+              <IconDesktop size={compact ? 21 : 17} /> {t('desktop.title')}
             </button>}
             {extensionNav.map((entry) => (
               <button key={entry.key} className={`side-link${entry.active ? ' active' : ''}`} aria-current={entry.active ? 'page' : undefined} onClick={entry.onOpen}>

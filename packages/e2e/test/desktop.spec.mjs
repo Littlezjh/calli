@@ -1,9 +1,10 @@
-// The remote desktop: a real Xvnc started for the test, seen through the daemon's WebSocket and
+// The remote desktop, opened from the sidebar: a real Xvnc started for the test, seen through the daemon's WebSocket and
 // noVNC. View only until Control is pressed; the VNC password is asked once and kept on the device.
 // Skipped where Xvnc is not installed.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, execFileSync } from 'node:child_process';
+import { connect } from 'node:net';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -28,6 +29,8 @@ let locked; // a desktop with a VNC password
 let daemonOpen;
 let daemonLocked;
 let daemonNone;
+let blocked; // a desktop with a password that has turned this address away
+let daemonBlocked;
 let browser;
 
 /** A display number nobody uses, so the test never touches a real desktop. */
@@ -51,6 +54,7 @@ before(async () => {
   const passwd = join(dir, 'passwd');
   writeFileSync(passwd, execFileSync(vncpasswd, ['-f'], { input: 'secret12\n' }));
   locked = await startXvnc(freeDisplay(open.display + 1), ['-SecurityTypes', 'VncAuth', '-PasswordFile', passwd]);
+  blocked = await startXvnc(freeDisplay(locked.display + 1), ['-SecurityTypes', 'VncAuth', '-PasswordFile', passwd]);
   // Without a window manager, keys go to the window under the pointer: the xterm fills the screen.
   const out = join(dir, 'typed.txt');
   children.push(spawn(xterm, ['-geometry', '200x60+0+0', '-e', 'sh', '-c', `read line; printf '%s' "$line" > ${out}; sleep 600`], { env: { ...process.env, DISPLAY: `:${open.display}` }, stdio: 'ignore' }));
@@ -58,6 +62,7 @@ before(async () => {
   daemonOpen = await startDaemon({ RAH_DESKTOP_VNC: `127.0.0.1:${open.port}` });
   daemonLocked = await startDaemon({ RAH_DESKTOP_VNC: `127.0.0.1:${locked.port}` });
   daemonNone = await startDaemon({ RAH_DESKTOP_VNC: 'off' });
+  daemonBlocked = await startDaemon({ RAH_DESKTOP_VNC: `127.0.0.1:${blocked.port}` });
   browser = await launchBrowser();
 });
 
@@ -66,6 +71,7 @@ after(async () => {
   await daemonOpen?.stop();
   await daemonLocked?.stop();
   await daemonNone?.stop();
+  await daemonBlocked?.stop();
   for (const child of children) child.kill('SIGTERM');
   if (dir) rmSync(dir, { recursive: true, force: true });
 });
@@ -77,14 +83,20 @@ async function openThread(page, daemon, title) {
   await page.locator('.thread-item', { hasText: title }).click();
 }
 
+/** The desktop is the machine's, not a thread's: it opens from the sidebar, behind the menu on a phone. */
+async function openDesktop(page) {
+  if (await page.locator('.menu-btn').isVisible()) await page.locator('.menu-btn').click();
+  await page.locator('.side-desktop').click();
+}
+
 const connected = (page) => page.locator('.desktop-screen canvas').waitFor({ timeout: 15_000 }).then(() => page.locator('.desktop-panel .term-note').waitFor({ state: 'detached', timeout: 15_000 }));
 
 test('a machine without a desktop offers none', { skip }, async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   try {
     await openThread(page, daemonNone, '没有桌面');
-    await page.locator('.topbar-term').waitFor();
-    assert.equal(await page.locator('.topbar-desktop').count(), 0);
+    await page.locator('.side-link').first().waitFor();
+    assert.equal(await page.locator('.side-desktop').count(), 0);
   } finally {
     await page.close();
   }
@@ -94,7 +106,8 @@ test('the desktop opens view only; keys reach it only after Control', { skip }, 
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   try {
     await openThread(page, daemonOpen, '桌面');
-    await page.getByLabel('打开桌面').click();
+    await page.screenshot({ path: shot('desktop-sidebar') });
+    await openDesktop(page);
     await connected(page);
     const control = page.locator('.desktop-control');
     assert.equal(await control.getAttribute('aria-pressed'), 'false');
@@ -129,7 +142,7 @@ test('the VNC password is asked, asked again when wrong, then kept on the device
   const page = await ctx.newPage();
   try {
     await openThread(page, daemonLocked, '有密码的桌面');
-    await page.getByLabel('打开桌面').click();
+    await openDesktop(page);
     const field = page.locator('.dialog input');
     await field.waitFor();
     assert.equal(await page.locator('.dialog').count(), 1);
@@ -143,8 +156,7 @@ test('the VNC password is asked, asked again when wrong, then kept on the device
 
     await page.getByLabel('关闭').last().click();
     await page.reload();
-    await page.locator('.thread-item', { hasText: '有密码的桌面' }).click();
-    await page.getByLabel('打开桌面').click();
+    await openDesktop(page);
     await connected(page);
     assert.equal(await page.locator('.dialog').count(), 0, 'not asked again');
   } finally {
@@ -152,13 +164,43 @@ test('the VNC password is asked, asked again when wrong, then kept on the device
   }
 });
 
-test('on a phone the desktop opens from the thread menu, with a typing bar under Control', { skip }, async () => {
+test('a VNC server that turns this address away says so, and the panel still closes', { skip }, async () => {
+  // Five connections that leave before signing in: TigerVNC then refuses the address for a while.
+  for (let i = 0; i < 6; i++) {
+    await new Promise((resolve) => {
+      const s = connect(blocked.port, '127.0.0.1');
+      s.once('data', () => s.destroy());
+      s.on('close', resolve);
+      s.on('error', resolve);
+    });
+  }
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  try {
+    await openUi(page, daemonBlocked);
+    await openDesktop(page);
+    await page.getByText('认证失败次数过多').waitFor({ timeout: 15_000 });
+    await page.waitForTimeout(400); // past the panel's fade-in
+    await page.screenshot({ path: shot('desktop-blocked') });
+    assert.equal(await page.locator('.dialog').count(), 0, 'not taken for a wrong password');
+    await page.locator('.desktop-panel').getByLabel('关闭').click();
+    await page.locator('.desktop-panel').waitFor({ state: 'detached' });
+  } finally {
+    await page.close();
+  }
+});
+
+test('on a phone the desktop opens from the sidebar, with a typing bar under Control', { skip }, async () => {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
   const page = await ctx.newPage();
   try {
     await openThread(page, daemonOpen, '手机桌面');
-    await page.locator('.topbar-more').click();
-    await page.getByRole('menuitem', { name: '打开桌面' }).click();
+    await page.locator('.menu-btn').click();
+    await page.locator('.side-desktop').waitFor();
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.waitForTimeout(500); // past the drawer sliding in
+    await page.screenshot({ path: shot('desktop-phone-sidebar-dark') });
+    await page.emulateMedia({ colorScheme: 'light' });
+    await page.locator('.side-desktop').click();
     await connected(page);
     assert.equal(await page.locator('.desktop-input').count(), 0, 'no typing while view only');
     await page.locator('.desktop-control').click();

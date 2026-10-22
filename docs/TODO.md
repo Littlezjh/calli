@@ -392,15 +392,15 @@
 
 在网页里看、操作 agent 所在机器的 Linux 桌面（VNC）。和终端一样是给人的运维工具，不碰 agent 的会话，不替 agent 设 `DISPLAY`，也不起停 VNC 服务端。
 
-- [x] daemon `desktop.ts`：在本机 5900–5909 找讲 RFB 的端口（读握手行 `RFB 00x.00x`，结果缓存 5 秒），`RAH_DESKTOP_VNC=host:port` 指定、`off` 关闭；`GET /api/desktop` 返回有没有、在哪个端口
-- [x] 转发：HTTP upgrade 只接 `/api/desktop/vnc`，`ws` 把 WebSocket 和 VNC 的 TCP 双向接起来（替掉 websockify），带背压；preview 端口不接
+- [x] daemon `desktop.ts`：在本机 5900–5909 找正在监听的端口（读 `/proc/net/tcp`，结果缓存 5 秒；不去连 VNC：TigerVNC 把没登录就断开的连接算作认证失败，五次后拒绝该地址的所有客户端），`RAH_DESKTOP_VNC=host:port` 指定、`off` 关闭；`GET /api/desktop` 返回有没有、在哪个端口
+- [x] 转发：HTTP upgrade 只接 `/api/desktop/vnc`，`ws` 把 WebSocket 和 VNC 的 TCP 双向接起来（替掉 websockify），带背压；服务端的 12 字节版本行单独成一条消息（noVNC 不读同一条消息里版本行之后的内容，服务端立刻拒绝时原因会丢）；preview 端口不接
 - [x] 鉴权：浏览器 WebSocket 带不了 Authorization，先用 Bearer 换 60 秒票据（`GET /api/desktop/ticket?host=`，HMAC 绑定连接路径，带随机数，用一次作废）。票据总由 hub 签发、校验，被代理的机器信任自己的 socket
 - [x] 多机：hub 把 `/api/hosts/:id/proxy/desktop/vnc` 的 upgrade 原样转到那台机器的 socket，两边直通
-- [x] web `DesktopPanel.tsx`：noVNC（`@novnc/novnc` 1.7）打开面板时才加载（独立 chunk，gzip 55KB）；默认只看，「控制」后才发键鼠；默认缩放适应窗口，可切原始大小（只看时拖动平移），不改远端分辨率；状态分清连接中/要密码/已连接/断开/这台机器没有桌面；VNC 密码用 Dialog 输入，按机器记在这台设备上，认证失败就清掉重问
+- [x] web `DesktopPanel.tsx`：noVNC（`@novnc/novnc` 1.7）打开面板时才加载（独立 chunk，gzip 55KB）；默认只看，「控制」后才发键鼠；默认缩放适应窗口，可切原始大小（只看时拖动平移），不改远端分辨率；状态分清连接中/要密码/已连接/断开/被拒（显示原因，不当成密码错）/这台机器没有桌面，任何状态下都能关闭；VNC 密码用 Dialog 输入，按机器记在这台设备上，认证失败就清掉重问
 - [x] 打字栏：控制模式下的键盘按钮（手机默认展开），按键排 Esc/Tab/退格/Enter/方向键，输入框按 keysym 逐字发送（含中文）
-- [x] 入口：顶栏按钮（桌面）、线程菜单「打开桌面」、斜杠 `/desktop`；这台机器有桌面才显示
+- [x] 入口：侧边栏导航里的「桌面」（跟着当前选的机器，不放在每个线程上）、斜杠 `/desktop`；这台机器有桌面才显示
 - [x] 构建目标升到 Chrome 89 / Safari 15（noVNC 用了顶层 await）
-- [x] 测试：daemon 用假 RFB 服务端验证探测、票据有效/过期/伪造/重放/换路径、无票据拒绝、双向转发、多机透传；e2e 起真 Xvnc（无密码 + VncAuth 两个）：无桌面不显示入口、只看时键盘不到远端、控制后文字打进远端 xterm、密码错重问、记住后免输、手机线程菜单进入。*桌面 1280×800 与手机 390×844、亮暗截图已目检；实体手机没看过*
+- [x] 测试：daemon 用假 RFB 服务端验证探测、票据有效/过期/伪造/重放/换路径、无票据拒绝、双向转发、多机透传；e2e 起真 Xvnc（无密码 + 两个 VncAuth）：无桌面不显示入口、只看时键盘不到远端、控制后文字打进远端 xterm、密码错重问、记住后免输、被拉黑时显示原因且能关闭、手机从侧边栏进入。*桌面 1280×800 与手机 390×844、亮暗截图已目检；实体手机没看过*
 - [ ] 远端剪贴板拿到本机（复制远端的链接、文字）；双指缩放
 - [ ] 安全提示：VNC 服务端只听本机（`-localhost yes`），对外只留 limi 一个入口
 
