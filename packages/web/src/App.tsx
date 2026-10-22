@@ -415,11 +415,14 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const [importOpen, setImportOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
   const [termOpen, setTermOpen] = useState(false);
-  const [desktopOpen, setDesktopOpen] = useState(false);
+  // Minimized keeps the connection: coming back shows the same desktop at once, without reconnecting.
+  const [desktop, setDesktop] = useState<'closed' | 'open' | 'minimized'>('closed');
   // Whether the machine shows a desktop (a VNC server runs on it): its entries appear only then.
   const [hasDesktop, setHasDesktop] = useState(false);
   useEffect(() => {
     setHasDesktop(false);
+    // Another machine: a desktop kept from the one before is not this one's.
+    setDesktop('closed');
     if (demo) return;
     let live = true;
     // A daemon from before desktops answers 404: no desktop, like a machine without a VNC server.
@@ -1603,7 +1606,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     if (id === 'new') return newThread();
     if (id === 'status') return setStatusOpen(true);
     if (id === 'term') return openTerminal();
-    if (id === 'desktop') return setDesktopOpen(true);
+    if (id === 'desktop') return setDesktop('open');
     if (id === 'usage') return setQuotaOpen(true);
     if (id === 'activity') return openActivity();
     if (id === 'skills') return openSkills();
@@ -1859,7 +1862,8 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           onOpenTodos={showcase ? undefined : openTodos}
           todosActive={onTodos}
           onOpenSchedules={showcase ? undefined : openSchedules}
-          onOpenDesktop={hasDesktop ? () => { setDrawer(false); setDesktopOpen(true); } : undefined}
+          onOpenDesktop={hasDesktop ? () => { setDrawer(false); setDesktop('open'); } : undefined}
+          desktopRunning={desktop === 'minimized'}
           schedulesActive={onSchedules}
           extensionNav={extensionNav}
           notice={demo && compact ? showcase ? showcase.notice(selectedId, extWant) : <DemoBar compact onConnect={askToConnect} /> : undefined}
@@ -2242,7 +2246,9 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       {preview && api && (
         <PreviewPanel api={api} threadId={preview.threadId} path={preview.path} onClose={() => setPreview(null)} onError={handleError} />
       )}
-      {desktopOpen && <DesktopPanel api={api} onClose={() => setDesktopOpen(false)} />}
+      {desktop !== 'closed' && (
+        <DesktopPanel api={api} hidden={desktop === 'minimized'} onMinimize={() => setDesktop('minimized')} onClose={() => setDesktop('closed')} />
+      )}
       {termOpen && (
         <TerminalPanel
           api={api}

@@ -50,6 +50,8 @@ interface Props {
   onOpenSchedules?: () => void;
   /** Opens the machine's desktop; absent when the machine shows none. */
   onOpenDesktop?: () => void;
+  /** The desktop is minimized, still connected: its row says so. */
+  desktopRunning?: boolean;
   /** The scheduled-task page is what the main area shows. */
   schedulesActive?: boolean;
   /** Entries enabled extensions pin to the sidebar, after the hub's own pages. */
@@ -122,6 +124,7 @@ export function Sidebar({
   todosActive = false,
   onOpenSchedules,
   onOpenDesktop,
+  desktopRunning = false,
   schedulesActive = false,
   extensionNav = [],
   compact = false,
@@ -532,8 +535,9 @@ export function Sidebar({
             {onOpenSchedules && <button className={`side-link${schedulesActive ? ' active' : ''}`} aria-current={schedulesActive ? 'page' : undefined} onClick={onOpenSchedules}>
               <IconClock size={compact ? 21 : 17} /> {t('sidebar.schedules')}
             </button>}
-            {onOpenDesktop && <button className="side-link side-desktop" onClick={onOpenDesktop}>
+            {onOpenDesktop && <button className="side-link side-desktop" title={desktopRunning ? t('desktop.running') : undefined} onClick={onOpenDesktop}>
               <IconDesktop size={compact ? 21 : 17} /> {t('desktop.title')}
+              {desktopRunning && <span className="side-desktop-live" role="img" aria-label={t('desktop.running')} />}
             </button>}
             {extensionNav.map((entry) => (
               <button key={entry.key} className={`side-link${entry.active ? ' active' : ''}`} aria-current={entry.active ? 'page' : undefined} onClick={entry.onOpen}>

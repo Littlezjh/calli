@@ -6955,6 +6955,19 @@ input.picker-search {
   font-size: 13px;
 }
 
+.term-scrim[hidden] {
+  display: none;
+}
+
+/* The desktop minimized, still connected. */
+.side-desktop-live {
+  width: 7px;
+  height: 7px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: var(--positive);
+}
+
 .desktop-screen {
   position: relative;
   flex: 1;
@@ -6981,7 +6994,8 @@ input.picker-search {
 }
 
 @media (max-width: 640px) {
-  .desktop-control span {
+  .desktop-control span,
+  .desktop-name {
     display: none;
   }
   .desktop-control {

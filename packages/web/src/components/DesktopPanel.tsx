@@ -10,10 +10,14 @@ import { useIsTouch } from '../hooks';
 import { t } from '../i18n';
 import { Dialog } from './Dialog';
 import { Popover } from './Popover';
-import { IconArrowDown, IconArrowLeft, IconArrowRight, IconArrowUp, IconClipboard, IconClose, IconDesktop, IconFit, IconKeyboard, IconPointer, IconSend } from './icons';
+import { IconArrowDown, IconArrowLeft, IconArrowRight, IconArrowUp, IconClipboard, IconClose, IconDesktop, IconFit, IconKeyboard, IconMinus, IconPointer, IconSend } from './icons';
 
 interface Props {
   api: Api;
+  /** Minimized: out of sight, still connected, so coming back needs no reconnect. */
+  hidden?: boolean;
+  onMinimize: () => void;
+  /** Disconnects. */
   onClose: () => void;
 }
 
@@ -54,7 +58,7 @@ function savePassword(host: string | null, password: string | null): void {
   }
 }
 
-export function DesktopPanel({ api, onClose }: Props) {
+export function DesktopPanel({ api, hidden = false, onMinimize, onClose }: Props) {
   // Bumped by Reconnect: a new ticket and a new connection.
   const [nonce, setNonce] = useState(0);
   const [phase, setPhase] = useState<Phase>('connecting');
@@ -180,8 +184,8 @@ export function DesktopPanel({ api, onClose }: Props) {
     rfb.clipViewport = !fit;
     // At full size the picture is panned by dragging, while dragging is not the desktop's own.
     rfb.dragViewport = !fit && !control;
-    if (control && !touch) rfb.focus();
-  }, [control, fit, phase, touch]);
+    if (control && !touch && !hidden) rfb.focus();
+  }, [control, fit, phase, touch, hidden]);
 
   // With a real keyboard the shortcuts carry the clipboard: Ctrl/⌘+V pastes this device's text on
   // the desktop, Ctrl/⌘+C copies the desktop's back. On a Mac, ⌘ stands in for Control.
@@ -277,7 +281,7 @@ export function DesktopPanel({ api, onClose }: Props) {
   const live = phase === 'connected';
 
   return (
-    <div className="dialog-scrim term-scrim">
+    <div className="dialog-scrim term-scrim" hidden={hidden}>
       <div className="panel term-panel desktop-panel" role="dialog" aria-modal="true" aria-label={t('desktop.title')}>
         <header className="panel-head">
           <div className="term-head-main">
@@ -335,7 +339,10 @@ export function DesktopPanel({ api, onClose }: Props) {
                 <IconKeyboard size={18} />
               </button>
             )}
-            <button className="icon-btn" aria-label={t('common.close')} onClick={onClose}>
+            <button className="icon-btn desktop-minimize" aria-label={t('desktop.minimize')} title={t('desktop.minimizeHint')} onClick={onMinimize}>
+              <IconMinus size={18} />
+            </button>
+            <button className="icon-btn" aria-label={t('desktop.close')} title={t('desktop.close')} onClick={onClose}>
               <IconClose size={18} />
             </button>
           </div>

@@ -142,6 +142,45 @@ test('the desktop opens view only; keys reach it only after Control', { skip }, 
   }
 });
 
+test('minimizing keeps the connection: back from the sidebar without reconnecting', { skip }, async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+  try {
+    const sockets = [];
+    page.on('websocket', (ws) => { if (ws.url().includes('/desktop/vnc')) sockets.push(ws); });
+    await openUi(page, daemonOpen);
+    await openDesktop(page);
+    await connected(page);
+    await page.locator('.desktop-control').click();
+
+    await page.getByLabel('最小化').click();
+    await page.locator('.desktop-panel').waitFor({ state: 'hidden' });
+    await page.locator('.side-desktop-live').waitFor();
+    await page.screenshot({ path: shot('desktop-minimized') });
+    await page.waitForTimeout(500);
+    assert.equal(sockets.length, 1);
+    assert.equal(sockets[0].isClosed(), false, 'still connected while minimized');
+
+    await openDesktop(page);
+    await page.locator('.desktop-panel').waitFor();
+    assert.equal(await page.locator('.desktop-panel .term-note').count(), 0, 'no reconnecting');
+    assert.equal(await page.locator('.desktop-control').getAttribute('aria-pressed'), 'true', 'control is kept');
+    const box = await page.locator('.desktop-screen canvas').boundingBox();
+    assert.ok(box && box.width > 300, 'scaled again to the panel');
+    assert.equal(await page.locator('.side-desktop-live').count(), 0);
+    assert.equal(sockets.length, 1, 'the same connection');
+
+    // Close disconnects; opening again is a new connection.
+    await page.getByLabel('断开并关闭').click();
+    await page.locator('.desktop-panel').waitFor({ state: 'detached' });
+    await waitUntil(() => sockets[0].isClosed());
+    await openDesktop(page);
+    await connected(page);
+    assert.equal(sockets.length, 2);
+  } finally {
+    await page.close();
+  }
+});
+
 test('the clipboard goes both ways: through the sheet, and Ctrl+V / Ctrl+C on a keyboard', { skip: skipClip }, async () => {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, permissions: ['clipboard-read', 'clipboard-write'] });
   const page = await ctx.newPage();
