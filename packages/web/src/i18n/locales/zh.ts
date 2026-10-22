@@ -319,7 +319,7 @@ export const zh = {
 
   // Agent management page
   'agents.title': 'Agents',
-  'agents.intro': '管理已接入的 agent：改名、重新登录或移除。移除只影响 hub，不会删除配置目录、登录凭据或原生会话。',
+  'agents.intro': '管理已接入的 agent：改名、重新登录或移除。',
   'agents.add': '添加 agent',
   'agents.empty': '还没有接入 agent。',
   'agents.actions': '操作',
@@ -339,9 +339,10 @@ export const zh = {
     if (schedules) parts.push(`${schedules} 个定时任务`);
     if (teams) parts.push(`${teams} 个团队`);
     if (handovers) parts.push(`${handovers} 条交接设置`);
-    return `还有 ${parts.join('、')} 在使用它。先处理这些引用，或保留这个实例。`;
+    return `还有 ${parts.join('、')}在使用它。先处理这些引用，或保留这个实例。`;
   },
   'agents.unavailable': '不可用',
+  'agents.localAccount': '本机登录',
 
   // Onboarding & agent discovery
   'onboard.askTitle': '发现 coding agent',

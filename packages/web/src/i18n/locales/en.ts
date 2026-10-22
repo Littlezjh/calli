@@ -319,7 +319,7 @@ export const en: Messages = {
 
   // Agent management page
   'agents.title': 'Agents',
-  'agents.intro': 'Manage connected agents: rename, sign in again, or remove them. Removing only affects the hub; config, credentials and native sessions stay.',
+  'agents.intro': 'Manage connected agents: rename, sign in again, or remove them.',
   'agents.add': 'Add agent',
   'agents.empty': 'No agents connected yet.',
   'agents.actions': 'Actions',
@@ -342,6 +342,7 @@ export const en: Messages = {
     return `Still in use by ${parts.join(', ')}. Handle those first, or keep this instance.`;
   },
   'agents.unavailable': 'Unavailable',
+  'agents.localAccount': 'Local login',
 
   // Onboarding & agent discovery
   'onboard.askTitle': 'Discover Coding Agents',

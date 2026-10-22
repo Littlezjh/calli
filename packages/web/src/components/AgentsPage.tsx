@@ -143,8 +143,8 @@ export function AgentsPage({ api, agents, onAdd, onReload, onLogin }: Props) {
                       {!agent.available && <span className="agents-unavailable">{t('agents.unavailable')}</span>}
                     </div>
                     <span className="agents-row-meta">
-                      {agent.account ?? agent.id}
-                      {agent.account && <span className="agents-row-id"> · {agent.id}</span>}
+                      {agent.account ?? t('agents.localAccount')}
+                      {(agent.account || agent.id !== agent.label) && <span className="agents-row-id"> · {agent.id}</span>}
                     </span>
                   </div>
                   <div className="agents-row-actions">
@@ -234,6 +234,7 @@ export function AgentsPage({ api, agents, onAdd, onReload, onLogin }: Props) {
           }
           confirmLabel={total(removing.references) > 0 ? t('common.close') : t('agents.remove')}
           danger={total(removing.references) === 0}
+          hideCancel={total(removing.references) > 0}
           confirmDisabled={busy === removing.agent.id}
           onCancel={() => setRemoving(null)}
           onConfirm={() => {

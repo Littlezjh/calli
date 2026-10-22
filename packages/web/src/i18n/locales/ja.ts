@@ -317,7 +317,7 @@ export const ja: Messages = {
 
   // Agent management page
   'agents.title': 'Agents',
-  'agents.intro': '接続済みの agent を管理します。名前の変更、再ログイン、削除ができます。削除は hub の登録だけを消し、設定ディレクトリ、ログイン情報、ネイティブセッションは残します。',
+  'agents.intro': '接続済みの agent を管理します。名前の変更、再ログイン、削除ができます。',
   'agents.add': 'agent を追加',
   'agents.empty': '接続済みの agent はありません。',
   'agents.actions': '操作',
@@ -337,9 +337,10 @@ export const ja: Messages = {
     if (schedules) parts.push(`${schedules} 件のスケジュール`);
     if (teams) parts.push(`${teams} チーム`);
     if (handovers) parts.push(`${handovers} 件の引き継ぎ設定`);
-    return `まだ ${parts.join('、')} が使用しています。先にこれらを処理するか、このインスタンスを残してください。`;
+    return `まだ ${parts.join('、')}が使用しています。先にこれらを処理するか、このインスタンスを残してください。`;
   },
   'agents.unavailable': '利用不可',
+  'agents.localAccount': 'ローカルログイン',
 
   // Onboarding & agent discovery
   'onboard.askTitle': 'Coding Agent の検出',

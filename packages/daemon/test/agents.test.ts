@@ -84,6 +84,16 @@ test('update renames and remove drops an instance from agents.json', async () =>
   rmSync(dataDir, { recursive: true, force: true });
 });
 
+test('the built-in command survives deleting the instance that supplied it', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'rah-agents-builtin-'));
+  const registry = AgentRegistry.fromEnv({ dataDir, env: {}, defaults });
+  await registry.remove('claude');
+  await registry.add({ id: 'claude-2', adapter: 'claude', env: { CLAUDE_CONFIG_DIR: '/tmp/claude-two' } });
+  const reloaded = AgentRegistry.fromEnv({ dataDir, env: {}, defaults });
+  assert.equal(await reloaded.adapters.get('claude-2')!.available(), true);
+  rmSync(dataDir, { recursive: true, force: true });
+});
+
 test('adapters that can start a login expose a command in their own environment', () => {
   const registry = new AgentRegistry([
     { id: 'claude', adapter: 'claude', command: ['claude'], env: { CLAUDE_CONFIG_DIR: '/tmp/claude-login' } },
@@ -252,6 +262,26 @@ test('account discovery offers signed-in accounts no instance uses', async () =>
         label: 'Claude Code 3',
       },
     ]);
+  } finally {
+    if (oldBin === undefined) delete process.env.RAH_CLAUDE_BIN;
+    else process.env.RAH_CLAUDE_BIN = oldBin;
+    if (oldHome === undefined) delete process.env.HOME;
+    else process.env.HOME = oldHome;
+  }
+});
+
+test('account discovery still sees an adapter after every instance of it is removed', async () => {
+  const home = fakeClaudeHome();
+  const oldBin = process.env.RAH_CLAUDE_BIN;
+  const oldHome = process.env.HOME;
+  process.env.RAH_CLAUDE_BIN = fakeClaudeBin(home);
+  process.env.HOME = home;
+  try {
+    const registry = new AgentRegistry(defaults.filter((i) => i.adapter !== 'claude'), null, defaults);
+    const found = await registry.discoverAccounts();
+    assert.deepEqual(found.map((a) => a.id).sort(), ['claude', 'claude-2', 'claude-3']);
+    assert.equal(found.find((a) => a.id === 'claude')?.label, 'Claude Code');
+    assert.equal(found.find((a) => a.id === 'claude-3')?.label, 'Claude Code 3');
   } finally {
     if (oldBin === undefined) delete process.env.RAH_CLAUDE_BIN;
     else process.env.RAH_CLAUDE_BIN = oldBin;

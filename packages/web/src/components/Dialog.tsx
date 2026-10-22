@@ -11,6 +11,8 @@ interface Props {
   options?: Array<{ label: string; hint?: string }>;
   confirmLabel: string;
   danger?: boolean;
+  /** A dialog that only reports something: no second Cancel next to the one action. */
+  hideCancel?: boolean;
   children?: ReactNode;
   confirmDisabled?: boolean;
   className?: string;
@@ -19,7 +21,7 @@ interface Props {
 }
 
 /** In-app modal used instead of window.prompt / window.confirm, so it matches the rest of the UI. */
-export function Dialog({ title, message, input, options = [], confirmLabel, danger, children, confirmDisabled, className = '', onConfirm, onCancel }: Props) {
+export function Dialog({ title, message, input, options = [], confirmLabel, danger, hideCancel = false, children, confirmDisabled, className = '', onConfirm, onCancel }: Props) {
   const [value, setValue] = useState(input?.initial ?? '');
   const [checked, setChecked] = useState<boolean[]>(() => options.map(() => false));
   const inputRef = useRef<HTMLInputElement>(null);
@@ -85,9 +87,11 @@ export function Dialog({ title, message, input, options = [], confirmLabel, dang
           </label>
         ))}
         <div className="dialog-actions">
-          <button className="ghost" onClick={onCancel}>
-            {t('common.cancel')}
-          </button>
+          {!hideCancel && (
+            <button className="ghost" onClick={onCancel}>
+              {t('common.cancel')}
+            </button>
+          )}
           <button className={danger ? 'danger' : 'primary'} onClick={submit} disabled={confirmDisabled || (!!input && !value.trim())}>
             {confirmLabel}
           </button>

@@ -178,14 +178,22 @@ export class AgentRegistry {
     instances: AgentInstance[],
     /** Where `agents.json` lives, or null for a read-only registry (tests). */
     file: string | null,
+    /** The built-in commands, kept as a fallback after the instance that supplied one is removed. */
+    builtIn: AgentInstance[] = [],
   ) {
+    // The first instance of an adapter decides what an instance without a command runs.
     for (const instance of instances) {
-      // The first instance of an adapter decides what an instance without a command runs.
       if (!this.defaultCommands.has(instance.adapter) && instance.command) {
         this.defaultCommands.set(instance.adapter, instance.command);
       }
-      this.register(instance);
     }
+    // Removing the only instance that had a command must not break the next account of that adapter.
+    for (const instance of builtIn) {
+      if (!this.defaultCommands.has(instance.adapter) && instance.command) {
+        this.defaultCommands.set(instance.adapter, instance.command);
+      }
+    }
+    for (const instance of instances) this.register(instance);
     this.file = file;
   }
 
@@ -208,7 +216,7 @@ export class AgentRegistry {
         console.warn('warning: agents.json is not valid JSON; using the built-in agents');
       }
     }
-    return new AgentRegistry(instances ?? opts.defaults, inline ? null : file);
+    return new AgentRegistry(instances ?? opts.defaults, inline ? null : file, opts.defaults);
   }
 
   list(): AgentInstance[] {
@@ -263,10 +271,17 @@ export class AgentRegistry {
     const out: AccountToLink[] = [];
     // Suggested ids must not collide with real instances nor with each other within this scan.
     const takenIds = new Set(this.instances.keys());
-    for (const [kind, instances] of byAdapter) {
+    // Every supported adapter, so discovery still works after its last instance is removed.
+    for (const { adapter: kind } of SUPPORTED_AGENTS) {
+      const instances = byAdapter.get(kind) ?? [];
       // The adapter of an instance that pins no account env of its own; it is the neutral one to ask.
       const neutral = instances.find((i) => !i.env || Object.keys(i.env).length === 0) ?? instances[0];
-      const adapter = this.adapters.get(neutral.id);
+      const fallback = neutral ? null : this.defaultCommands.get(kind);
+      const adapter = neutral
+        ? this.adapters.get(neutral.id)
+        : fallback
+          ? buildAdapter({ id: kind, adapter: kind, command: fallback }, this.defaultCommands)
+          : undefined;
       if (!adapter?.discoverAccounts) continue;
       // An account is claimed when an instance sets the same env, or when an env-less instance
       // exists and the account is the adapter's default one.
@@ -278,16 +293,19 @@ export class AgentRegistry {
         );
       for (const account of await adapter.discoverAccounts(home)) {
         if (claimed(account)) continue;
-        let n = 2;
-        while (takenIds.has(`${kind}-${n}`)) n += 1;
-        takenIds.add(`${kind}-${n}`);
-        out.push({
-          adapter: kind,
-          email: account.email,
-          env: account.env,
-          id: `${kind}-${n}`,
-          label: `${ADAPTER_LABELS[kind]} ${n}`,
-        });
+        let id: string;
+        let label: string;
+        if (!instances.length && !takenIds.has(kind)) {
+          id = kind;
+          label = ADAPTER_LABELS[kind];
+        } else {
+          let n = 2;
+          while (takenIds.has(`${kind}-${n}`)) n += 1;
+          id = `${kind}-${n}`;
+          label = `${ADAPTER_LABELS[kind]} ${n}`;
+        }
+        takenIds.add(id);
+        out.push({ adapter: kind, email: account.email, env: account.env, id, label });
       }
     }
     return out.sort((a, b) => a.email.localeCompare(b.email));
