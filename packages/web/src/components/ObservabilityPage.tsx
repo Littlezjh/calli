@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { AgentInfo, Api } from '../api';
 import { copyText } from '../clipboard';
 import { compactLabel, durationLabel, numberLabel, type AgentDiagnostic, type UsageReport, type UsageSample } from '../observability';
-import { PanelDialog } from './Dialog';
 import { Popover } from './Popover';
 import { TokenHeatmap } from './TokenHeatmap';
 import { TpmChart } from './TpmChart';
@@ -134,15 +133,15 @@ function DiagnosticRow({ api, agent, onResult }: { api: Api; agent: AgentInfo; o
   </article>;
 }
 
-export function ObservabilityPanel({ api, agents, initial = 'usage', focusAgent, onResult, onClose }: { api: Api; agents: AgentInfo[]; initial?: 'usage' | 'diagnostics'; focusAgent?: string; onResult?: (data: AgentDiagnostic) => void; onClose: () => void }) {
+export function ObservabilityPage({ api, agents, initial = 'usage', focusAgent, onResult }: { api: Api; agents: AgentInfo[]; initial?: 'usage' | 'diagnostics'; focusAgent?: string; onResult?: (data: AgentDiagnostic) => void }) {
   const [tab, setTab] = useState(initial);
-  const close = useCallback(onClose, [onClose]);
   const ordered = [...agents].sort((a, b) => Number(b.id === focusAgent) - Number(a.id === focusAgent));
-  return <PanelDialog title={t('obs.title')} className="obs-panel" onClose={close}>
+  return <section className="obs-page">
+    <h1>{t('obs.title')}</h1>
     <nav className="obs-tabs" aria-label={t('obs.tabs')}>{([['usage', t('obs.tab.usage')], ['diagnostics', t('obs.tab.diagnostics')]] as const).map(([id, label]) => <button key={id} className={tab === id ? 'selected' : ''} aria-pressed={tab === id} onClick={() => setTab(id)}>{label}</button>)}</nav>
     <div className="obs-body">{tab === 'usage' ? <UsageView api={api} agents={agents} /> : <>
       <p className="obs-note">{t('diag.note')}</p>
       {ordered.map(agent => <DiagnosticRow key={agent.id} api={api} agent={agent} onResult={onResult} />)}
     </>}</div>
-  </PanelDialog>;
+  </section>;
 }

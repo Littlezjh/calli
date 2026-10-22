@@ -48,7 +48,7 @@ import { PreviewPanel } from './components/PreviewPanel';
 import { fileRef } from './files';
 import { AddAgentDialog } from './components/AddAgentDialog';
 import { OnboardingDialog } from './components/OnboardingDialog';
-import { ObservabilityPanel } from './components/ObservabilityPanel';
+import { ObservabilityPage } from './components/ObservabilityPage';
 import { QuotaBoard } from './components/QuotaBoard';
 import { SelectionMenu } from './components/SelectionMenu';
 import { AgentPanel, TeamCard } from './components/AgentPanel';
@@ -121,11 +121,12 @@ const AGENTS_HASH = '#/agents';
 const MCP_HASH = '#/mcp';
 const SCHEDULES_HASH = '#/schedules';
 const ACTIVITY_HASH = '#/activity';
+const OBSERVABILITY_HASH = '#/observability';
 const EXTENSIONS_HASH = '#/extensions';
 /** The hub's own pages. Any other `#/…` may be an extension's view; see extensions/routes.ts. */
-const CORE_ROUTES = [AGENTS_HASH, TEAMS_HASH, TODOS_HASH, SKILLS_HASH, MCP_HASH, SCHEDULES_HASH, ACTIVITY_HASH, EXTENSIONS_HASH];
+const CORE_ROUTES = [AGENTS_HASH, TEAMS_HASH, TODOS_HASH, SKILLS_HASH, MCP_HASH, SCHEDULES_HASH, ACTIVITY_HASH, OBSERVABILITY_HASH, EXTENSIONS_HASH];
 
-type MainView = 'agents' | 'teams' | 'thread' | 'todos' | 'schedules' | 'activity' | 'skills' | 'mcp' | 'extensions' | 'ext';
+type MainView = 'agents' | 'teams' | 'thread' | 'todos' | 'schedules' | 'activity' | 'observability' | 'skills' | 'mcp' | 'extensions' | 'ext';
 
 /** The page an address opens; null for none (a thread). Skills and MCP are the hub's own machinery, which the demo has none of. */
 function viewForHash(hash: string, connected: boolean): MainView | null {
@@ -136,6 +137,8 @@ function viewForHash(hash: string, connected: boolean): MainView | null {
       return 'schedules';
     case ACTIVITY_HASH:
       return 'activity';
+    case OBSERVABILITY_HASH:
+      return connected ? 'observability' : null;
     case AGENTS_HASH:
       return connected ? 'agents' : null;
     case TEAMS_HASH:
@@ -429,7 +432,10 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   /** The quota dashboard, over every agent that can report usage. */
   const [handoverSettingsOpen, setHandoverSettingsOpen] = useState(false);
   const [quotaOpen, setQuotaOpen] = useState(false);
-  const [observability, setObservability] = useState<'usage' | 'diagnostics' | null>(null);
+  const [observabilityTab, setObservabilityTab] = useState<'usage' | 'diagnostics'>('usage');
+  const [observabilityFocus, setObservabilityFocus] = useState<string | undefined>(undefined);
+  // Bumped on every visit so the page opens on the requested tab, even when it is already showing.
+  const [observabilityKey, setObservabilityKey] = useState(0);
   /** Other agent CLIs found on this host, added from the settings menu — not the picker. */
   const [addAgentOpen, setAddAgentOpen] = useState(false);
   const [onboardOpen, setOnboardOpen] = useState(false);
@@ -500,6 +506,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const onSchedules = view === 'schedules' && !selectedId;
   const onActivity = view === 'activity' && !selectedId;
   const onAgents = view === 'agents' && !selectedId;
+  const onObservability = view === 'observability' && !selectedId;
   const onTeams = view === 'teams' && !selectedId;
   const onSkills = view === 'skills' && !selectedId;
   const onMcp = view === 'mcp' && !selectedId;
@@ -509,7 +516,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const extOpen = onExt && extensions && extTarget ? resolveExtensionRoute(extTarget, extensions) : null;
   const extName = extOpen ? extensions?.find((e) => e.manifest.id === extOpen.extensionId)?.manifest.name[locale()] ?? extOpen.extensionId : '';
   /** The name of the page the main area shows instead of a thread, for the top bar; null on a thread. */
-  const viewTitle = onAgents ? t('agents.title') : onTeams ? t('teams.title') : onTodos
+  const viewTitle = onObservability ? t('obs.title') : onAgents ? t('agents.title') : onTeams ? t('teams.title') : onTodos
     ? t('todos.title')
     : onSchedules
       ? t('sidebar.schedules')
@@ -555,11 +562,11 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   // threads is not a trail for the back button to walk.
   const extWant = onExt ? (extOpen ? extensionHash(extOpen) : extTarget ?? '') : '';
   useEffect(() => {
-    const want = onAgents ? AGENTS_HASH : onTeams ? TEAMS_HASH : onTodos ? TODOS_HASH : onSchedules ? SCHEDULES_HASH : onActivity ? ACTIVITY_HASH : onSkills ? SKILLS_HASH : onMcp ? MCP_HASH : onExtensions ? EXTENSIONS_HASH : extWant;
+    const want = onObservability ? OBSERVABILITY_HASH : onAgents ? AGENTS_HASH : onTeams ? TEAMS_HASH : onTodos ? TODOS_HASH : onSchedules ? SCHEDULES_HASH : onActivity ? ACTIVITY_HASH : onSkills ? SKILLS_HASH : onMcp ? MCP_HASH : onExtensions ? EXTENSIONS_HASH : extWant;
     if (window.location.hash !== want) {
       window.history.replaceState(window.history.state, '', want || window.location.pathname + window.location.search);
     }
-  }, [onAgents, onTeams, onTodos, onActivity, onSkills, onSchedules, onMcp, onExtensions, extWant]);
+  }, [onObservability, onAgents, onTeams, onTodos, onActivity, onSkills, onSchedules, onMcp, onExtensions, extWant]);
 
   // Whether the directory a new thread would start in is a git repository. Asked once per directory picked.
   useEffect(() => {
@@ -1348,6 +1355,15 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     setDrawer(false);
   };
 
+  const openObservability = (tab: 'usage' | 'diagnostics', focusAgent?: string) => {
+    setSelectedId(null);
+    setObservabilityTab(tab);
+    setObservabilityFocus(focusAgent);
+    setObservabilityKey((n) => n + 1);
+    setView('observability');
+    setDrawer(false);
+  };
+
   const reloadAgents = async () => {
     if (!api) return;
     const list = await api.agents();
@@ -1758,7 +1774,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       effort={effort}
       speed={speed}
       onSpeed={activeCaps?.speed ? v => selected ? updateSelected({ speed: v }) : setDraftSpeed(v) : undefined}
-      onDiagnose={() => setObservability('diagnostics')}
+      onDiagnose={() => openObservability('diagnostics', activeAgent)}
       openSignal={modelSignal}
       onModel={(v) => {
         if (selected) return updateSelected({ model: v }); // the daemon drops an effort the new model lacks
@@ -1974,6 +1990,17 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
             ) : (
               <div className="loading-note">{t('common.loading')}</div>
             )}
+          </div>
+        ) : onObservability ? (
+          <div key="observability" className="scroller">
+            <ObservabilityPage
+              key={`${hostId ?? 'local'}:${observabilityKey}`}
+              api={api}
+              agents={agents}
+              initial={observabilityTab}
+              focusAgent={observabilityFocus}
+              onResult={(result) => { if (result.state === 'ready' || result.state === 'empty') setModelsByAgent(previous => ({ ...previous, [result.agent]: result.models })); }}
+            />
           </div>
         ) : onAgents ? (
           <div key="agents" className="scroller">
@@ -2251,7 +2278,6 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           onClose={() => setStatusOpen(false)}
         />
       )}
-      {observability && api && <ObservabilityPanel key={hostId ?? 'local'} api={api} agents={agents} initial={observability} focusAgent={activeAgent} onResult={result => { if (result.state === 'ready' || result.state === 'empty') setModelsByAgent(previous => ({ ...previous, [result.agent]: result.models })); }} onClose={() => setObservability(null)} />}
       {handoverSettingsOpen && api && <HandoverSettingsDialog api={api} agents={agents} onClose={() => setHandoverSettingsOpen(false)} />}
       {quotaOpen && api && <QuotaBoard api={api} agents={agents} current={onPage ? undefined : activeAgent} onClose={() => setQuotaOpen(false)} onError={handleError} />}
       {onboardOpen && (
@@ -2392,7 +2418,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
             ...(demo
               ? []
               : [
-                  { id: 'observability', label: t('obs.title'), icon: IconGauge, onSelect: () => { setObservability('usage'); setDrawer(false); } },
+                  { id: 'observability', label: t('obs.title'), icon: IconGauge, onSelect: () => openObservability('usage') },
                   { id: 'teams', label: t('teams.title'), icon: IconAgents, onSelect: openTeams },
                   { id: 'skills', label: t('composerMenu.skills'), icon: IconSparkle, onSelect: openSkills },
                   { id: 'mcp', label: 'MCP', icon: IconGlobe, onSelect: openMcp },
