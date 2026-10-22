@@ -2,15 +2,16 @@
 // The machine's Linux desktop, through the VNC server already running there. View only until the
 // person takes control, so a stray touch on a phone cannot disturb an agent working on it. The
 // picture is scaled to the window; the desktop's own resolution is never changed from here.
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type RFB from '@novnc/novnc';
 import type { Api } from '../api';
 import { copyText } from '../clipboard';
+import { clampZoom, fillZoom, fitSize, isTap, LONG_PRESS_MS, pointerDelta, scrollForZoom, TAP_SLOP_PX, twoFingerKind, type Size } from '../desktopTouch';
 import { useIsTouch } from '../hooks';
 import { t } from '../i18n';
 import { Dialog } from './Dialog';
 import { Popover } from './Popover';
-import { IconArrowDown, IconArrowLeft, IconArrowRight, IconArrowUp, IconClipboard, IconClose, IconDesktop, IconFit, IconKeyboard, IconMinus, IconPointer, IconSend } from './icons';
+import { IconArrowDown, IconArrowLeft, IconArrowRight, IconArrowUp, IconClipboard, IconClose, IconDesktop, IconFit, IconKeyboard, IconMinus, IconPointer, IconSend, IconTouchpad } from './icons';
 
 interface Props {
   api: Api;
@@ -32,6 +33,19 @@ const KEY = { esc: 0xff1b, tab: 0xff09, backspace: 0xff08, enter: 0xff0d, left: 
 const MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 /** How long after Ctrl/⌘+C the desktop's new clipboard is still copied here on its own. */
 const COPY_WINDOW_MS = 3000;
+/** Two taps this close in time are a double tap. */
+const DOUBLE_TAP_MS = 300;
+/** On the touchpad, the view follows the pointer to keep it this far inside the edge. */
+const FOLLOW_MARGIN = 48;
+const ROTATE_HINT_KEY = 'rah.desktop.rotateHint';
+
+const rotateHintSeen = () => {
+  try {
+    return localStorage.getItem(ROTATE_HINT_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
 
 /** The keysym that types a character: Latin-1 is its own code, the rest of Unicode is offset. */
 const keysym = (ch: string): number => {
@@ -68,8 +82,24 @@ export function DesktopPanel({ api, hidden = false, onMinimize, onClose }: Props
   const [control, setControl] = useState(false);
   const [fit, setFit] = useState(true);
   const touch = useIsTouch();
-  // The typing bar: open from the start on a touch screen, where there is no other keyboard.
-  const [typing, setTyping] = useState(touch);
+  // The typing bar, on a touch screen only: closed until asked for, so the picture gets the room.
+  const [typing, setTyping] = useState(false);
+  // On a touch screen: the picture's zoom (1 fits it whole), the desktop's own size, the room it
+  // is shown in, and in control whether the screen is a touchpad (the default) or tapped directly.
+  const [zoom, setZoom] = useState(1);
+  const [fb, setFb] = useState<Size>({ w: 0, h: 0 });
+  const [box, setBox] = useState<Size>({ w: 0, h: 0 });
+  const [touchpad, setTouchpad] = useState(true);
+  const [cursor, setCursor] = useState({ x: 0, y: 0 });
+  const [rotateHint, setRotateHint] = useState(() => !rotateHintSeen());
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const padRef = useRef<HTMLDivElement>(null);
+  const zoomRef = useRef(1);
+  zoomRef.current = zoom;
+  const cursorRef = useRef(cursor);
+  cursorRef.current = cursor;
+  /** Where the view scrolls once the new zoom is laid out, so a pinch stays under the fingers. */
+  const pendingScrollRef = useRef<{ left: number; top: number } | null>(null);
   const [line, setLine] = useState('');
   // The desktop's clipboard as last heard, and whether it changed since the person looked.
   const [remoteClip, setRemoteClip] = useState('');
@@ -180,12 +210,250 @@ export function DesktopPanel({ api, hidden = false, onMinimize, onClose }: Props
     const rfb = rfbRef.current;
     if (!rfb) return;
     rfb.viewOnly = !control;
-    rfb.scaleViewport = fit;
-    rfb.clipViewport = !fit;
+    // On a touch screen the picture always fits its box; zooming makes the box bigger.
+    rfb.scaleViewport = touch || fit;
+    rfb.clipViewport = !touch && !fit;
     // At full size the picture is panned by dragging, while dragging is not the desktop's own.
-    rfb.dragViewport = !fit && !control;
+    rfb.dragViewport = !touch && !fit && !control;
     if (control && !touch && !hidden) rfb.focus();
   }, [control, fit, phase, touch, hidden]);
+
+  // The desktop's size, from noVNC's canvas, and the room the picture has: both decide the zoom.
+  useEffect(() => {
+    const canvas = screenRef.current?.querySelector('canvas');
+    const viewport = viewportRef.current;
+    if (!touch || !canvas || !viewport || phase !== 'connected') return;
+    const readFb = () => {
+      setFb({ w: canvas.width, h: canvas.height });
+      setCursor((c) => (c.x || c.y ? c : { x: canvas.width / 2, y: canvas.height / 2 }));
+    };
+    const readBox = () => setBox({ w: viewport.clientWidth, h: viewport.clientHeight });
+    readFb();
+    readBox();
+    const mo = new MutationObserver(readFb);
+    mo.observe(canvas, { attributes: true, attributeFilter: ['width', 'height'] });
+    const ro = new ResizeObserver(readBox);
+    ro.observe(viewport);
+    return () => {
+      mo.disconnect();
+      ro.disconnect();
+    };
+  }, [touch, phase, hidden]);
+
+  useLayoutEffect(() => {
+    const viewport = viewportRef.current;
+    const pending = pendingScrollRef.current;
+    if (!viewport || !pending) return;
+    viewport.scrollLeft = pending.left;
+    viewport.scrollTop = pending.top;
+    pendingScrollRef.current = null;
+  }, [zoom]);
+
+  const fitted = fitSize(fb, box);
+  /** Zooms to `z`, keeping the point at (clientX, clientY) where it is on the screen. */
+  const zoomTo = (z1: number, clientX: number, clientY: number) => {
+    const viewport = viewportRef.current;
+    if (!viewport || !fitted.w) return;
+    const z0 = zoomRef.current;
+    z1 = clampZoom(z1);
+    if (Math.abs(z1 - z0) < 0.001) return;
+    const rect = viewport.getBoundingClientRect();
+    const offset = (z: number, room: number, size: number) => Math.max(0, (room - size * z) / 2);
+    pendingScrollRef.current = {
+      left: scrollForZoom(viewport.scrollLeft, clientX - rect.left, z0, z1, offset(z0, box.w, fitted.w), offset(z1, box.w, fitted.w)),
+      top: scrollForZoom(viewport.scrollTop, clientY - rect.top, z0, z1, offset(z0, box.h, fitted.h), offset(z1, box.h, fitted.h)),
+    };
+    zoomRef.current = z1;
+    setZoom(z1);
+  };
+  /** Double tap, or the fit button: between the whole picture and one that fills the height. */
+  const toggleZoom = (clientX: number, clientY: number) => {
+    const fill = fillZoom(fb, box);
+    zoomTo(zoomRef.current > 1.05 ? 1 : fill > 1.05 ? fill : 2.5, clientX, clientY);
+  };
+  // The gesture handlers below live as long as the mode does; through these they see the latest sizes.
+  const zoomToRef = useRef(zoomTo);
+  zoomToRef.current = zoomTo;
+  const toggleZoomRef = useRef(toggleZoom);
+  toggleZoomRef.current = toggleZoom;
+
+  // View only on a touch screen: one finger scrolls the view (the browser's own), two pinch to
+  // zoom it, a double tap zooms in on a spot or back out. Nothing reaches the desktop.
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!touch || control || !viewport || phase !== 'connected') return;
+    let pinch: { dist: number; zoom: number } | null = null;
+    let lastTap = { t: 0, x: 0, y: 0 };
+    let start = { t: 0, x: 0, y: 0 };
+    const dist = (e: TouchEvent) => Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+    const mid = (e: TouchEvent) => ({ x: (e.touches[0].clientX + e.touches[1].clientX) / 2, y: (e.touches[0].clientY + e.touches[1].clientY) / 2 });
+    const onStart = (e: TouchEvent) => {
+      if (e.touches.length === 2) pinch = { dist: dist(e), zoom: zoomRef.current };
+      else if (e.touches.length === 1) start = { t: Date.now(), x: e.touches[0].clientX, y: e.touches[0].clientY };
+    };
+    const onMove = (e: TouchEvent) => {
+      if (!pinch || e.touches.length !== 2) return;
+      e.preventDefault();
+      const m = mid(e);
+      zoomToRef.current(pinch.zoom * (dist(e) / pinch.dist), m.x, m.y);
+    };
+    const onEnd = (e: TouchEvent) => {
+      if (pinch) {
+        if (e.touches.length < 2) pinch = null;
+        return;
+      }
+      const t = e.changedTouches[0];
+      if (!t || !isTap(Date.now() - start.t, Math.hypot(t.clientX - start.x, t.clientY - start.y))) return;
+      const now = Date.now();
+      if (now - lastTap.t < DOUBLE_TAP_MS && Math.hypot(t.clientX - lastTap.x, t.clientY - lastTap.y) < 40) {
+        toggleZoomRef.current(t.clientX, t.clientY);
+        lastTap = { t: 0, x: 0, y: 0 };
+      } else {
+        lastTap = { t: now, x: t.clientX, y: t.clientY };
+      }
+    };
+    viewport.addEventListener('touchstart', onStart, { passive: true });
+    viewport.addEventListener('touchmove', onMove, { passive: false });
+    viewport.addEventListener('touchend', onEnd);
+    return () => {
+      viewport.removeEventListener('touchstart', onStart);
+      viewport.removeEventListener('touchmove', onMove);
+      viewport.removeEventListener('touchend', onEnd);
+    };
+  }, [touch, control, phase, hidden]);
+
+  // In control on a touch screen, the screen is a touchpad: a finger moves the pointer (drawn
+  // here, the desktop's own cursor is not shown on touch), a tap clicks, two fingers tapped
+  // right-click, two moving scroll, two spreading zoom, and a long press starts a drag. The
+  // gestures become mouse and wheel events on noVNC's canvas, which sends them on.
+  useEffect(() => {
+    const pad = padRef.current;
+    const canvas = screenRef.current?.querySelector('canvas');
+    const viewport = viewportRef.current;
+    if (!touch || !control || !touchpad || !pad || !canvas || !viewport || phase !== 'connected') return;
+    const fire = (type: 'mousedown' | 'mouseup' | 'mousemove', buttons: number, button = 0) => {
+      const rect = canvas.getBoundingClientRect();
+      const s = rect.width / (canvas.width || 1);
+      const { x, y } = cursorRef.current;
+      const ev = new MouseEvent(type, { clientX: rect.left + (x + 0.5) * s, clientY: rect.top + (y + 0.5) * s, buttons, button, bubbles: true, cancelable: true });
+      // A press makes noVNC cover the page with a capture layer, gone only when a release reaches
+      // the window; one sent to the canvas stops there. Sent to the window, noVNC passes it to the
+      // canvas itself and lifts the layer, which would otherwise sit over this touchpad.
+      (type === 'mouseup' ? window : canvas).dispatchEvent(ev);
+    };
+    const click = (button: 0 | 2) => {
+      const mask = button === 2 ? 2 : 1;
+      fire('mousedown', mask, button);
+      fire('mouseup', 0, button);
+    };
+    const wheel = (deltaY: number) => {
+      const rect = canvas.getBoundingClientRect();
+      const s = rect.width / (canvas.width || 1);
+      const { x, y } = cursorRef.current;
+      canvas.dispatchEvent(new WheelEvent('wheel', { deltaY, deltaMode: 0, clientX: rect.left + x * s, clientY: rect.top + y * s, bubbles: true, cancelable: true }));
+    };
+    // Keeps the pointer in sight when zoomed in: the view scrolls after it near the edge.
+    const follow = () => {
+      const rect = canvas.getBoundingClientRect();
+      const vp = viewport.getBoundingClientRect();
+      const s = rect.width / (canvas.width || 1);
+      const px = rect.left + cursorRef.current.x * s - vp.left;
+      const py = rect.top + cursorRef.current.y * s - vp.top;
+      if (px < FOLLOW_MARGIN) viewport.scrollLeft += px - FOLLOW_MARGIN;
+      else if (px > vp.width - FOLLOW_MARGIN) viewport.scrollLeft += px - vp.width + FOLLOW_MARGIN;
+      if (py < FOLLOW_MARGIN) viewport.scrollTop += py - FOLLOW_MARGIN;
+      else if (py > vp.height - FOLLOW_MARGIN) viewport.scrollTop += py - vp.height + FOLLOW_MARGIN;
+    };
+    const moveBy = (dx: number, dy: number, ms: number) => {
+      const rect = canvas.getBoundingClientRect();
+      const perPx = (canvas.width || 1) / (rect.width || 1);
+      const c = cursorRef.current;
+      const next = {
+        x: Math.min(canvas.width - 1, Math.max(0, c.x + pointerDelta(dx, ms, perPx))),
+        y: Math.min(canvas.height - 1, Math.max(0, c.y + pointerDelta(dy, ms, perPx))),
+      };
+      cursorRef.current = next;
+      setCursor(next);
+    };
+
+    type Mode = 'idle' | 'one' | 'drag' | 'two' | 'zoom' | 'scroll';
+    let mode: Mode = 'idle';
+    let started = 0;
+    let last = { x: 0, y: 0, t: 0 };
+    let travelled = 0;
+    let longTimer = 0;
+    let two = { dist: 0, mid: { x: 0, y: 0 }, lastMid: { x: 0, y: 0 }, zoom: 1 };
+    const dist = (e: TouchEvent) => Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+    const mid = (e: TouchEvent) => ({ x: (e.touches[0].clientX + e.touches[1].clientX) / 2, y: (e.touches[0].clientY + e.touches[1].clientY) / 2 });
+
+    const onStart = (e: TouchEvent) => {
+      e.preventDefault();
+      if (e.touches.length === 1 && mode === 'idle') {
+        mode = 'one';
+        started = Date.now();
+        travelled = 0;
+        last = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: started };
+        longTimer = window.setTimeout(() => {
+          if (mode !== 'one' || travelled >= TAP_SLOP_PX) return;
+          mode = 'drag';
+          fire('mousedown', 1);
+          navigator.vibrate?.(10);
+        }, LONG_PRESS_MS);
+      } else if (e.touches.length === 2 && (mode === 'one' || mode === 'idle')) {
+        window.clearTimeout(longTimer);
+        mode = 'two';
+        started = Date.now();
+        const m = mid(e);
+        two = { dist: dist(e), mid: m, lastMid: m, zoom: zoomRef.current };
+      }
+    };
+    const onMove = (e: TouchEvent) => {
+      e.preventDefault();
+      if ((mode === 'one' || mode === 'drag') && e.touches.length === 1) {
+        const t = e.touches[0];
+        const now = Date.now();
+        const dx = t.clientX - last.x;
+        const dy = t.clientY - last.y;
+        travelled += Math.hypot(dx, dy);
+        if (travelled >= TAP_SLOP_PX) window.clearTimeout(longTimer);
+        moveBy(dx, dy, now - last.t);
+        last = { x: t.clientX, y: t.clientY, t: now };
+        fire('mousemove', mode === 'drag' ? 1 : 0);
+        follow();
+      } else if (e.touches.length === 2 && (mode === 'two' || mode === 'zoom' || mode === 'scroll')) {
+        const m = mid(e);
+        if (mode === 'two') {
+          const kind = twoFingerKind(two.dist, dist(e), Math.hypot(m.x - two.mid.x, m.y - two.mid.y));
+          if (kind) mode = kind;
+        }
+        if (mode === 'zoom') zoomToRef.current(two.zoom * (dist(e) / two.dist), m.x, m.y);
+        // Fingers up scroll the page down, as on a phone's own lists.
+        if (mode === 'scroll') wheel((two.lastMid.y - m.y) * 2);
+        two.lastMid = m;
+      }
+    };
+    const onEnd = (e: TouchEvent) => {
+      e.preventDefault();
+      if (e.touches.length > 0) return;
+      window.clearTimeout(longTimer);
+      const ms = Date.now() - started;
+      if (mode === 'one' && isTap(ms, travelled)) click(0);
+      else if (mode === 'two' && ms < 300) click(2);
+      else if (mode === 'drag') fire('mouseup', 0);
+      mode = 'idle';
+    };
+    pad.addEventListener('touchstart', onStart, { passive: false });
+    pad.addEventListener('touchmove', onMove, { passive: false });
+    pad.addEventListener('touchend', onEnd, { passive: false });
+    pad.addEventListener('touchcancel', onEnd, { passive: false });
+    return () => {
+      window.clearTimeout(longTimer);
+      pad.removeEventListener('touchstart', onStart);
+      pad.removeEventListener('touchmove', onMove);
+      pad.removeEventListener('touchend', onEnd);
+      pad.removeEventListener('touchcancel', onEnd);
+    };
+  }, [touch, control, touchpad, phase, hidden]);
 
   // With a real keyboard the shortcuts carry the clipboard: Ctrl/⌘+V pastes this device's text on
   // the desktop, Ctrl/⌘+C copies the desktop's back. On a Mac, ⌘ stands in for Control.
@@ -279,6 +547,7 @@ export function DesktopPanel({ api, hidden = false, onMinimize, onClose }: Props
     [t('term.right'), KEY.right, <IconArrowRight size={16} />],
   ];
   const live = phase === 'connected';
+  const padOn = touch && control && touchpad;
 
   return (
     <div className="dialog-scrim term-scrim" hidden={hidden}>
@@ -305,16 +574,43 @@ export function DesktopPanel({ api, hidden = false, onMinimize, onClose }: Props
               <IconPointer size={16} />
               <span>{t('desktop.control')}</span>
             </button>
-            <button
-              className={`icon-btn${fit ? '' : ' on'}`}
-              aria-pressed={!fit}
-              aria-label={fit ? t('desktop.actual') : t('desktop.fit')}
-              title={fit ? t('desktop.actual') : t('desktop.fit')}
-              disabled={!live}
-              onClick={() => setFit((f) => !f)}
-            >
-              <IconFit size={18} />
-            </button>
+            {touch ? (
+              <button
+                className={`icon-btn${zoom > 1.05 ? ' on' : ''}`}
+                aria-pressed={zoom > 1.05}
+                aria-label={zoom > 1.05 ? t('desktop.fit') : t('desktop.zoomIn')}
+                title={zoom > 1.05 ? t('desktop.fit') : t('desktop.zoomIn')}
+                disabled={!live}
+                onClick={() => {
+                  const r = viewportRef.current?.getBoundingClientRect();
+                  if (r) toggleZoom(r.left + r.width / 2, r.top + r.height / 2);
+                }}
+              >
+                <IconFit size={18} />
+              </button>
+            ) : (
+              <button
+                className={`icon-btn${fit ? '' : ' on'}`}
+                aria-pressed={!fit}
+                aria-label={fit ? t('desktop.actual') : t('desktop.fit')}
+                title={fit ? t('desktop.actual') : t('desktop.fit')}
+                disabled={!live}
+                onClick={() => setFit((f) => !f)}
+              >
+                <IconFit size={18} />
+              </button>
+            )}
+            {control && touch && (
+              <button
+                className={`icon-btn desktop-touchpad-btn${touchpad ? ' on' : ''}`}
+                aria-pressed={touchpad}
+                aria-label={t('desktop.touchpad')}
+                title={t('desktop.touchpadHint')}
+                onClick={() => setTouchpad((v) => !v)}
+              >
+                <IconTouchpad size={18} />
+              </button>
+            )}
             {/* noVNC passes no clipboard either way while view only: it is part of taking control. */}
             {control && <Popover
               label={t('desktop.clipboard')}
@@ -347,7 +643,36 @@ export function DesktopPanel({ api, hidden = false, onMinimize, onClose }: Props
             </button>
           </div>
         </header>
-        <div className={`desktop-screen${control ? ' control' : ''}`} ref={screenRef} />
+        <div className={`desktop-stage${touch ? ' touch' : ''}`}>
+          <div className="desktop-viewport" ref={viewportRef}>
+            <div className="desktop-content" style={touch && fitted.w ? { width: fitted.w * zoom, height: fitted.h * zoom } : undefined}>
+              <div className={`desktop-screen${control ? ' control' : ''}${padOn ? ' under-pad' : ''}`} ref={screenRef} />
+              {padOn && live && fb.w > 0 && (
+                <svg className="desktop-cursor" style={{ left: `${(cursor.x / fb.w) * 100}%`, top: `${(cursor.y / fb.h) * 100}%` }} width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+                  <path d="M2 1.5l12.5 7-5.6 1.4L6.6 15.5z" />
+                </svg>
+              )}
+            </div>
+          </div>
+          {padOn && live && <div className="desktop-pad" ref={padRef} aria-label={t('desktop.touchpadHint')} />}
+          {touch && live && rotateHint && box.h > box.w && fb.w > fb.h && (
+            <button
+              type="button"
+              className="desktop-rotate"
+              onClick={() => {
+                setRotateHint(false);
+                try {
+                  localStorage.setItem(ROTATE_HINT_KEY, '1');
+                } catch {
+                  // Shown again next time.
+                }
+              }}
+            >
+              {t('desktop.rotate')}
+              <IconClose size={14} />
+            </button>
+          )}
+        </div>
         {control && touch && typing && live && (
           <div className="term-input desktop-input">
             <div className="term-keys" role="toolbar" aria-label={t('desktop.keys')}>

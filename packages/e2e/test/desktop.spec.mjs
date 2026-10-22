@@ -23,6 +23,8 @@ const vncpasswd = which('vncpasswd');
 const xclip = which('xclip');
 const skip = !xvnc || !xterm || !vncpasswd ? 'needs Xvnc, xterm and vncpasswd' : false;
 const skipClip = skip || (!xclip ? 'needs xclip' : false);
+const xev = which('xev');
+const skipTouch = skip || (!xev ? 'needs xev' : false);
 
 let dir;
 const children = [];
@@ -33,6 +35,10 @@ let daemonLocked;
 let daemonNone;
 let blocked; // a desktop with a password that has turned this address away
 let daemonBlocked;
+let touchy; // a bare desktop whose clicks xev reports, for the touch gestures
+let daemonTouchy;
+/** What xev saw on the bare desktop's root window, as it comes. */
+let xevOut = '';
 let browser;
 
 /** A display number nobody uses, so the test never touches a real desktop. */
@@ -65,6 +71,13 @@ before(async () => {
   daemonLocked = await startDaemon({ RAH_DESKTOP_VNC: `127.0.0.1:${locked.port}` });
   daemonNone = await startDaemon({ RAH_DESKTOP_VNC: 'off' });
   daemonBlocked = await startDaemon({ RAH_DESKTOP_VNC: `127.0.0.1:${blocked.port}` });
+  if (xev) {
+    touchy = await startXvnc(freeDisplay(blocked.display + 1), ['-SecurityTypes', 'None']);
+    const watcher = spawn('stdbuf', ['-oL', xev, '-root', '-event', 'button'], { env: { ...process.env, DISPLAY: `:${touchy.display}` }, stdio: ['ignore', 'pipe', 'ignore'] });
+    children.push(watcher);
+    watcher.stdout.on('data', (d) => (xevOut += d));
+    daemonTouchy = await startDaemon({ RAH_DESKTOP_VNC: `127.0.0.1:${touchy.port}` });
+  }
   browser = await launchBrowser();
 });
 
@@ -74,6 +87,7 @@ after(async () => {
   await daemonLocked?.stop();
   await daemonNone?.stop();
   await daemonBlocked?.stop();
+  await daemonTouchy?.stop();
   for (const child of children) child.kill('SIGTERM');
   if (dir) rmSync(dir, { recursive: true, force: true });
 });
@@ -341,6 +355,7 @@ test('on a phone the desktop opens from the sidebar, with a typing bar under Con
     await connected(page);
     assert.equal(await page.locator('.desktop-input').count(), 0, 'no typing while view only');
     await page.locator('.desktop-control').click();
+    await page.getByLabel('键盘').click();
     await page.locator('.desktop-input').waitFor();
     for (const dark of [false, true]) {
       await page.emulateMedia({ colorScheme: dark ? 'dark' : 'light' });
@@ -351,6 +366,130 @@ test('on a phone the desktop opens from the sidebar, with a typing bar under Con
     assert.equal(await page.locator('.desktop-clip-hint').count(), 0, 'no keyboard shortcuts to mention on a phone');
     await page.waitForTimeout(300);
     await page.screenshot({ path: shot('desktop-phone-clipboard') });
+  } finally {
+    await ctx.close();
+  }
+});
+
+/** The buttons xev saw pressed since `from`, with where. */
+function pressed(from = 0) {
+  return [...xevOut.slice(from).matchAll(/ButtonPress event[\s\S]*?root:\((\d+),(\d+)\)[\s\S]*?button (\d+)/g)].map((m) => ({ x: +m[1], y: +m[2], button: +m[3] }));
+}
+
+/** Fingers on the screen through CDP: each step is the list of points touching then. */
+async function touches(cdp, steps, gap = 16) {
+  for (const [i, points] of steps.entries()) {
+    const type = i === 0 ? 'touchStart' : points.length ? 'touchMove' : 'touchEnd';
+    await cdp.send('Input.dispatchTouchEvent', { type, touchPoints: points.map(([x, y], id) => ({ x, y, id })) });
+    await new Promise((r) => setTimeout(r, gap));
+  }
+}
+
+const contentWidth = (page) => page.locator('.desktop-content').evaluate((el) => el.getBoundingClientRect().width);
+
+test('on a phone, view only: pinch and double tap zoom the picture, and nothing reaches the desktop', { skip: skipTouch }, async () => {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const page = await ctx.newPage();
+  const cdp = await ctx.newCDPSession(page);
+  try {
+    await openUi(page, daemonTouchy);
+    await openDesktop(page);
+    await connected(page);
+    const from = xevOut.length;
+    const fit = await contentWidth(page);
+    assert.ok(fit > 300 && fit <= 390, 'the whole desktop fits the width');
+
+    const box = await page.locator('.desktop-viewport').boundingBox();
+    const cx = box.x + box.width / 2;
+    const cy = box.y + box.height / 2;
+    const spread = [];
+    for (let d = 40; d <= 160; d += 20) spread.push([[cx - d, cy], [cx + d, cy]]);
+    await touches(cdp, [...spread, []]);
+    const zoomed = await contentWidth(page);
+    assert.ok(zoomed > fit * 2.5, `pinched out: ${fit} -> ${zoomed}`);
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: shot('desktop-phone-zoomed') });
+
+    // A double tap goes back to the whole picture.
+    await page.touchscreen.tap(cx, cy);
+    await page.waitForTimeout(80);
+    await page.touchscreen.tap(cx, cy);
+    await page.waitForFunction((w) => Math.abs(document.querySelector('.desktop-content').getBoundingClientRect().width - w) < 2, fit);
+    // ...and another zooms in to fill the height.
+    await page.touchscreen.tap(cx, cy);
+    await page.waitForTimeout(80);
+    await page.touchscreen.tap(cx, cy);
+    await page.waitForFunction((w) => document.querySelector('.desktop-content').getBoundingClientRect().width > w * 1.5, fit);
+    await page.waitForTimeout(300);
+    assert.deepEqual(pressed(from), [], 'view only: no clicks on the desktop');
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('on a phone, in control the screen is a touchpad: move, tap, two-finger tap, scroll, long-press drag', { skip: skipTouch }, async () => {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const page = await ctx.newPage();
+  const cdp = await ctx.newCDPSession(page);
+  try {
+    await openUi(page, daemonTouchy);
+    await openDesktop(page);
+    await connected(page);
+    await page.locator('.desktop-control').click();
+    await page.locator('.desktop-pad').waitFor();
+    assert.equal(await page.locator('.desktop-touchpad-btn').getAttribute('aria-pressed'), 'true', 'the touchpad is the default');
+    assert.equal(await page.locator('.desktop-input').count(), 0, 'the typing bar waits to be asked for');
+
+    const pad = await page.locator('.desktop-pad').boundingBox();
+    // Anywhere on the pad: the pointer starts in the middle of the desktop (1024x640).
+    const x = pad.x + 60;
+    const y = pad.y + pad.height - 120;
+    let from = xevOut.length;
+    await touches(cdp, [[[x, y]], []]);
+    await waitUntil(() => pressed(from).length === 1);
+    assert.deepEqual(pressed(from), [{ x: 512, y: 320, button: 1 }], 'a tap clicks where the pointer is, not where the finger is');
+
+    // A slow slide moves the pointer right; the next tap clicks there.
+    const slide = [];
+    for (let i = 0; i <= 10; i++) slide.push([[x + i * 6, y]]);
+    await touches(cdp, [...slide, []], 30);
+    from = xevOut.length;
+    await touches(cdp, [[[x, y]], []]);
+    await waitUntil(() => pressed(from).length === 1);
+    const moved = pressed(from)[0];
+    assert.ok(moved.x > 512 && moved.y === 320, `moved right: ${JSON.stringify(moved)}`);
+
+    // Two fingers tapped: a right click.
+    from = xevOut.length;
+    await touches(cdp, [[[x, y], [x + 50, y]], []]);
+    await waitUntil(() => pressed(from).length === 1);
+    assert.equal(pressed(from)[0].button, 3);
+
+    // Two fingers moving up together: the wheel, scrolling down (button 5).
+    from = xevOut.length;
+    const scroll = [];
+    for (let i = 0; i <= 12; i++) scroll.push([[x, y - i * 12], [x + 50, y - i * 12]]);
+    await touches(cdp, [...scroll, []]);
+    await waitUntil(() => pressed(from).some((p) => p.button === 5));
+    assert.ok(pressed(from).every((p) => p.button === 5));
+
+    // A long press, then a slide: the button stays down through the move.
+    from = xevOut.length;
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+    await page.waitForTimeout(600);
+    await waitUntil(() => pressed(from).length === 1);
+    for (let i = 1; i <= 5; i++) {
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x + i * 8, y }] });
+      await page.waitForTimeout(30);
+    }
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await waitUntil(() => /ButtonRelease event/.test(xevOut.slice(from)));
+    assert.equal(pressed(from).length, 1, 'one press for the whole drag');
+
+    for (const dark of [false, true]) {
+      await page.emulateMedia({ colorScheme: dark ? 'dark' : 'light' });
+      await page.screenshot({ path: shot(`desktop-phone-touchpad-${dark ? 'dark' : 'light'}`) });
+    }
   } finally {
     await ctx.close();
   }

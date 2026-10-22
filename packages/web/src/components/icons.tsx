@@ -121,6 +121,13 @@ export const IconPointer = (p: { size?: number }) => (
     <path d="M12.6 11.9l4.6 4.6" />
   </Svg>
 );
+/** A touchpad: the phone's screen moving the desktop's pointer. */
+export const IconTouchpad = (p: { size?: number }) => (
+  <Svg {...p}>
+    <rect x="3.5" y="4.5" width="17" height="13" rx="2.5" />
+    <path d="M8 20.5h8M12 9.5v4" />
+  </Svg>
+);
 /** Fit to the window, or show at full size. */
 export const IconFit = (p: { size?: number }) => (
   <Svg {...p}>
