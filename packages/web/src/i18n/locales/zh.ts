@@ -652,6 +652,18 @@ export const zh = {
   'desktop.input': '发给桌面的文字',
   'desktop.keys': '按键',
   'desktop.backspace': '退格',
+  'desktop.clipboard': '剪贴板',
+  'desktop.clipNew': '剪贴板 · 桌面上有新复制的内容',
+  'desktop.clipRemote': '桌面剪贴板',
+  'desktop.clipEmpty': '桌面上还没有复制过文字',
+  'desktop.clipCopy': '复制到本机',
+  'desktop.clipCopied': '已复制到本机',
+  'desktop.clipCopyFailed': '复制失败，请选中文字手动复制',
+  'desktop.clipLocal': '发到桌面',
+  'desktop.clipPaste': '把本机的文字粘贴到这里',
+  'desktop.clipSend': '发到桌面剪贴板',
+  'desktop.clipSent': '已发到桌面，在桌面上按 Ctrl+V 粘贴',
+  'desktop.clipHint': '控制时可直接按 Ctrl+C / Ctrl+V，⌘ 也行',
 
   // Choosing a directory
   'dir.noBrowse': '这台机器的服务尚不支持浏览家目录，请更新服务，或在「可用目录」中填写项目路径。',

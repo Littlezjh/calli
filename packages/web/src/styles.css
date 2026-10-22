@@ -6854,6 +6854,107 @@ input.picker-search {
   color: var(--faint);
 }
 
+.desktop-clip-btn {
+  position: relative;
+}
+
+/* New text copied on the desktop: a dot, like an unread mark. */
+.desktop-clip-btn.fresh::after {
+  content: '';
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* At the top of the panel its sheet opens below the button; on a phone it is a bottom sheet. */
+@media (min-width: 641px) {
+  .desktop-actions .pop-panel.desktop-clip {
+    top: calc(100% + 8px);
+    bottom: auto;
+    width: 340px;
+  }
+}
+
+.pop-panel.desktop-clip {
+  padding: 14px;
+}
+
+.desktop-clip-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.desktop-clip-body section {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.desktop-clip-body h3 {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 550;
+}
+
+.desktop-clip-text {
+  align-self: stretch;
+  max-height: 120px;
+  margin: 0;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--code-bg);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.desktop-clip-empty,
+.desktop-clip-hint,
+.desktop-clip-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.desktop-clip-note.bad {
+  color: var(--danger);
+}
+
+.desktop-clip-hint {
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  color: var(--faint);
+}
+
+.desktop-clip-body textarea {
+  align-self: stretch;
+  min-height: 64px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  resize: vertical;
+}
+
+.desktop-clip-body .ghost {
+  min-height: 32px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+
 .desktop-screen {
   position: relative;
   flex: 1;

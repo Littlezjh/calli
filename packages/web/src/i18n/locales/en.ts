@@ -652,6 +652,18 @@ export const en: Messages = {
   'desktop.input': 'Text to send to the desktop',
   'desktop.keys': 'Keys',
   'desktop.backspace': 'Backspace',
+  'desktop.clipboard': 'Clipboard',
+  'desktop.clipNew': 'Clipboard · new text copied on the desktop',
+  'desktop.clipRemote': 'Desktop clipboard',
+  'desktop.clipEmpty': 'Nothing copied on the desktop yet',
+  'desktop.clipCopy': 'Copy to this device',
+  'desktop.clipCopied': 'Copied to this device',
+  'desktop.clipCopyFailed': 'Could not copy; select the text and copy it yourself',
+  'desktop.clipLocal': 'Send to desktop',
+  'desktop.clipPaste': 'Paste text from this device here',
+  'desktop.clipSend': 'Send to desktop clipboard',
+  'desktop.clipSent': 'Sent; press Ctrl+V on the desktop to paste',
+  'desktop.clipHint': 'While in control, Ctrl+C / Ctrl+V work directly, and so does ⌘',
 
   // Choosing a directory
   'dir.noBrowse': 'The service on this machine cannot browse the home directory yet. Update it, or enter the project path under "Available directories".',

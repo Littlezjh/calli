@@ -650,6 +650,18 @@ export const ja: Messages = {
   'desktop.input': 'デスクトップに送る文字',
   'desktop.keys': 'キー',
   'desktop.backspace': 'Backspace',
+  'desktop.clipboard': 'クリップボード',
+  'desktop.clipNew': 'クリップボード · デスクトップで新しくコピーされました',
+  'desktop.clipRemote': 'デスクトップのクリップボード',
+  'desktop.clipEmpty': 'デスクトップでまだ何もコピーされていません',
+  'desktop.clipCopy': 'このデバイスにコピー',
+  'desktop.clipCopied': 'このデバイスにコピーしました',
+  'desktop.clipCopyFailed': 'コピーできませんでした。テキストを選択して手動でコピーしてください',
+  'desktop.clipLocal': 'デスクトップへ送る',
+  'desktop.clipPaste': 'このデバイスのテキストをここに貼り付け',
+  'desktop.clipSend': 'デスクトップのクリップボードへ送る',
+  'desktop.clipSent': '送信しました。デスクトップで Ctrl+V を押して貼り付けます',
+  'desktop.clipHint': '操作中は Ctrl+C / Ctrl+V（⌘ も可）がそのまま使えます',
 
   // Choosing a directory
   'dir.noBrowse': 'このマシンのサービスはまだホームディレクトリの閲覧に対応していません。サービスを更新するか、「利用可能なディレクトリ」にプロジェクトのパスを入力してください。',

@@ -233,6 +233,13 @@ export const IconTrash = (p: { size?: number }) => (
     <path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13M10 11v6M14 11v6" />
   </Svg>
 );
+/** A clipboard: the desktop's, shared with this device. */
+export const IconClipboard = (p: { size?: number }) => (
+  <Svg {...p}>
+    <rect x="5" y="4.5" width="14" height="16" rx="2.5" />
+    <path d="M9 4.5V4a1 1 0 011-1h4a1 1 0 011 1v.5a1 1 0 01-1 1h-4a1 1 0 01-1-1zM9 11h6M9 15h4" />
+  </Svg>
+);
 export const IconCopy = (p: { size?: number }) => (
   <Svg {...p}>
     <rect x="9" y="9" width="11" height="11" rx="2.5" />
