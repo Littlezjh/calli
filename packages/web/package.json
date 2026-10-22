@@ -12,7 +12,10 @@
     "test:extensions:e2e": "node --test e2e/extensions.spec.mjs"
   },
   "dependencies": {
+    "@novnc/novnc": "^1.7.0",
     "@rah/ext-board": "*",
+    "@rah/ext-memory": "*",
+    "@rah/ext-voice": "*",
     "@rah/extension-api": "*",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-web-links": "^0.12.0",
@@ -22,9 +25,7 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^9.0.1",
-    "remark-gfm": "^4.0.0",
-    "@rah/ext-memory": "*",
-    "@rah/ext-voice": "*"
+    "remark-gfm": "^4.0.0"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",

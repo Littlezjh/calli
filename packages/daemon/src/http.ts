@@ -8,6 +8,7 @@ import type { ApprovalDecision } from './adapters/types.js';
 import type { AgentRegistry } from './agents.js';
 import type { StoredEvent } from './events.js';
 import type { HistoryEvent } from './history.js';
+import { refuse, type Desktop } from './desktop.js';
 import { HttpError } from './errors.js';
 import type { ExtensionHost } from './extension-host.js';
 import type { HostRegistry } from './hosts.js';
@@ -27,6 +28,8 @@ export interface HttpDeps {
   registry?: AgentRegistry;
   /** Web terminals. Optional so deployments and tests can run without them. */
   terminals?: TerminalManager;
+  /** This machine's VNC desktop, passed through to the page. Absent on the preview port and in tests without one. */
+  desktop?: Desktop;
   /** Other machines this hub shows. Optional so simple setups and tests need none. */
   hosts?: HostRegistry;
   /** Scheduled tasks. Optional so tests can run without one. */
@@ -262,7 +265,7 @@ function serveDownload(
 }
 
 export function createHttpServer(deps: HttpDeps): Server {
-  const { manager, registry, terminals, hosts, scheduler, extensions, voice, trusted, token, webDir, version } = deps;
+  const { manager, registry, terminals, desktop, hosts, scheduler, extensions, voice, trusted, token, webDir, version } = deps;
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? '/', 'http://localhost');
@@ -751,6 +754,21 @@ export function createHttpServer(deps: HttpDeps): Server {
       }
     }
 
+    // GET /api/desktop: whether this machine shows a desktop (a VNC server is found on it)
+    if (method === 'GET' && path === '/api/desktop') {
+      const target = await desktop?.find();
+      return sendJson(res, 200, target ? { available: true, port: target.port } : { available: false });
+    }
+    // GET /api/desktop/ticket?host=: a signed address for the desktop's WebSocket, on this machine or
+    // another one. The hub signs and checks it: a machine behind it trusts its own socket.
+    if (method === 'GET' && path === '/api/desktop/ticket') {
+      if (!desktop) throw new HttpError(501, 'the desktop is not enabled');
+      const host = url.searchParams.get('host');
+      if (host && !hosts?.list().some((h) => h.id === host)) throw new HttpError(404, 'machine not found');
+      const wsPath = host ? `/api/hosts/${encodeURIComponent(host)}/proxy/desktop/vnc` : '/api/desktop/vnc';
+      return sendJson(res, 200, { url: `${wsPath}?${desktop.ticket(token, wsPath)}` });
+    }
+
     // Web terminals: a real PTY each, output over SSE and keystrokes over POST.
     if (terminals) {
       if (path === '/api/terminals') {
@@ -1183,9 +1201,27 @@ export function createHttpServer(deps: HttpDeps): Server {
     sendJson(res, 404, { error: 'not found' });
   };
 
-  return createServer((req, res) => {
+  const server = createServer((req, res) => {
     handle(req, res).catch((err) => sendError(res, err));
   });
+  // The one WebSocket: the desktop's VNC stream, here or on another machine through the hub.
+  if (desktop) {
+    server.on('upgrade', (req: IncomingMessage, socket, head: Buffer) => {
+      socket.on('error', () => socket.destroy());
+      const url = new URL(req.url ?? '/', 'http://localhost');
+      const remote = /^\/api\/hosts\/([^/]+)\/proxy\/desktop\/vnc$/.exec(url.pathname);
+      if (url.pathname !== '/api/desktop/vnc' && !remote) return refuse(socket, 404, 'not found');
+      if (!trusted && !desktop.checkTicket(token, url.pathname, url.searchParams.get('exp'), url.searchParams.get('n'), url.searchParams.get('sig'))) {
+        return refuse(socket, 403, 'this desktop link has expired; open the desktop again');
+      }
+      if (remote) {
+        if (!hosts?.upgrade(decodeURIComponent(remote[1]), '/api/desktop/vnc', req, socket, head)) refuse(socket, 502, 'this machine is not connected');
+        return;
+      }
+      desktop.accept(req, socket, head).catch(() => socket.destroy());
+    });
+  }
+  return server;
 }
 
 /**

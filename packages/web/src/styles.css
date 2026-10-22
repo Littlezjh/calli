@@ -6789,6 +6789,108 @@ input.picker-search {
   background: var(--hover);
 }
 
+.desktop-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.desktop-panel .panel-head {
+  gap: 12px;
+}
+
+.desktop-panel .panel-title {
+  flex: none;
+  white-space: nowrap;
+}
+
+.desktop-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
+
+.desktop-actions .icon-btn.on {
+  background: var(--active);
+}
+
+.desktop-actions .icon-btn:disabled {
+  color: var(--faint);
+}
+
+/* View only is the normal state; taking control is the one that is shown. */
+.desktop-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.desktop-control:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.desktop-control.on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.desktop-control:disabled {
+  color: var(--faint);
+}
+
+.desktop-screen {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  margin: 0 12px 12px;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--code-bg);
+  /* noVNC takes touches itself; the page must not scroll or zoom under them. */
+  touch-action: none;
+}
+
+.desktop-screen > div {
+  width: 100%;
+  height: 100%;
+}
+
+.desktop-hint {
+  max-width: 420px;
+  padding: 0 24px;
+  text-align: center;
+  font-size: 12.5px !important;
+  color: var(--faint) !important;
+}
+
+@media (max-width: 640px) {
+  .desktop-control span {
+    display: none;
+  }
+  .desktop-control {
+    width: 36px;
+    padding: 0;
+    justify-content: center;
+  }
+  .desktop-screen {
+    margin: 0;
+    border-radius: 0;
+  }
+}
+
 /* Touch screens: a row of the keys a phone keyboard lacks, and a field a line is typed into. */
 .term-input {
   display: flex;

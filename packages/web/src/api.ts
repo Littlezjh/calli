@@ -1349,6 +1349,23 @@ export class Api {
     return this.request('DELETE', `/api/mcp/entries/${encodeURIComponent(name)}`);
   }
 
+  /** Whether this machine shows a desktop: a VNC server was found on it. */
+  desktop(): Promise<{ available: boolean; port?: number }> {
+    return this.request('GET', '/api/desktop');
+  }
+
+  /**
+   * The WebSocket address of this machine's desktop, with a ticket that opens it once. A WebSocket
+   * cannot send the token, and the hub signs the ticket even for another machine: asked of the hub.
+   */
+  async desktopSocketUrl(): Promise<string> {
+    const query = this.host ? `?host=${encodeURIComponent(this.host)}` : '';
+    const { url } = await this.send<{ url: string }>('GET', `${this.base}/api/desktop/ticket${query}`);
+    const address = new URL(this.base + url, location.href);
+    address.protocol = address.protocol === 'https:' ? 'wss:' : 'ws:';
+    return address.toString();
+  }
+
   /** Live web terminals on this daemon. */
   listTerminals(): Promise<TerminalInfo[]> {
     return this.request('GET', '/api/terminals');

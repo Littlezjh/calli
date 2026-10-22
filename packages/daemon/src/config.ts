@@ -29,6 +29,8 @@ export interface Config {
   socket: string | null;
   /** argv that starts OpenSSH, for reaching the daemons of other machines. */
   sshCommand: string[];
+  /** RAH_DESKTOP_VNC as given: unset looks for a VNC server here, `off` turns the desktop off. */
+  desktopVnc: string | undefined;
 }
 
 /**
@@ -116,5 +118,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     webDir,
     socket,
     sshCommand: [env.RAH_SSH_BIN || 'ssh'],
+    desktopVnc: env.RAH_DESKTOP_VNC,
   };
 }

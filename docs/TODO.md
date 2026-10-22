@@ -387,3 +387,27 @@
 - [ ] 真实 Claude/Codex 联调和实体手机/iOS Safari：本次未验证；没有运行真实工作任务，也没有重启、部署现有 hub。
 - [ ] 后续：完成后的主线程跨入口实例续用。当前明确返回 409，需从新对话派活，原因见设计文档。
 - [ ] 后续：限制每个主线程保留的终态投递数量（例如最近 N 条），保留活动投递及其必要关联，避免历史邮箱记录持续增长。
+
+## 20. 远程桌面
+
+在网页里看、操作 agent 所在机器的 Linux 桌面（VNC）。和终端一样是给人的运维工具，不碰 agent 的会话，不替 agent 设 `DISPLAY`，也不起停 VNC 服务端。
+
+- [x] daemon `desktop.ts`：在本机 5900–5909 找讲 RFB 的端口（读握手行 `RFB 00x.00x`，结果缓存 5 秒），`RAH_DESKTOP_VNC=host:port` 指定、`off` 关闭；`GET /api/desktop` 返回有没有、在哪个端口
+- [x] 转发：HTTP upgrade 只接 `/api/desktop/vnc`，`ws` 把 WebSocket 和 VNC 的 TCP 双向接起来（替掉 websockify），带背压；preview 端口不接
+- [x] 鉴权：浏览器 WebSocket 带不了 Authorization，先用 Bearer 换 60 秒票据（`GET /api/desktop/ticket?host=`，HMAC 绑定连接路径，带随机数，用一次作废）。票据总由 hub 签发、校验，被代理的机器信任自己的 socket
+- [x] 多机：hub 把 `/api/hosts/:id/proxy/desktop/vnc` 的 upgrade 原样转到那台机器的 socket，两边直通
+- [x] web `DesktopPanel.tsx`：noVNC（`@novnc/novnc` 1.7）打开面板时才加载（独立 chunk，gzip 55KB）；默认只看，「控制」后才发键鼠；默认缩放适应窗口，可切原始大小（只看时拖动平移），不改远端分辨率；状态分清连接中/要密码/已连接/断开/这台机器没有桌面；VNC 密码用 Dialog 输入，按机器记在这台设备上，认证失败就清掉重问
+- [x] 打字栏：控制模式下的键盘按钮（手机默认展开），按键排 Esc/Tab/退格/Enter/方向键，输入框按 keysym 逐字发送（含中文）
+- [x] 入口：顶栏按钮（桌面）、线程菜单「打开桌面」、斜杠 `/desktop`；这台机器有桌面才显示
+- [x] 构建目标升到 Chrome 89 / Safari 15（noVNC 用了顶层 await）
+- [x] 测试：daemon 用假 RFB 服务端验证探测、票据有效/过期/伪造/重放/换路径、无票据拒绝、双向转发、多机透传；e2e 起真 Xvnc（无密码 + VncAuth 两个）：无桌面不显示入口、只看时键盘不到远端、控制后文字打进远端 xterm、密码错重问、记住后免输、手机线程菜单进入。*桌面 1280×800 与手机 390×844、亮暗截图已目检；实体手机没看过*
+- [ ] 远端剪贴板拿到本机（复制远端的链接、文字）；双指缩放
+- [ ] 安全提示：VNC 服务端只听本机（`-localhost yes`），对外只留 limi 一个入口
+
+### 之后：personal agent（网页上的个人事务：邮件、日程、购物、表单）
+
+远程桌面是给人的窗口，agent 自己在同一个显示器上截图、发键鼠（computer-use 或 Playwright 指定 `DISPLAY`），不绕 VNC。
+
+- [ ] 持久的浏览器配置跑在桌面上，账号由人通过远程桌面登录一次，agent 之后沿用（区别于 `browser-computer.ts` 每个任务一个全新无头浏览器）
+- [ ] 「需要你接管」：验证码、二次验证、付款确认由 agent 发起请求 → 手机通知 → 打开桌面处理 → 交还，agent 继续
+- [ ] 线程里显示「agent 正在操作桌面」入口，关键步骤留截图

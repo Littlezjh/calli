@@ -11,10 +11,14 @@ export default defineConfig({
     host: '127.0.0.1',
     port: 5173,
     proxy: {
-      '/api': { target: daemon, changeOrigin: false },
+      // ws: the desktop's VNC stream is the one WebSocket.
+      '/api': { target: daemon, changeOrigin: false, ws: true },
     },
   },
+  // noVNC uses top-level await: the oldest browsers that have it (Safari 15, 2021).
+  optimizeDeps: { esbuildOptions: { target: 'es2022' } },
   build: {
+    target: ['chrome89', 'edge89', 'firefox89', 'safari15'],
     outDir: 'dist',
     // Keep the published UI available if a build fails or is interrupted.
     emptyOutDir: false,

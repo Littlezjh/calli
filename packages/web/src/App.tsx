@@ -42,6 +42,7 @@ import { ImportPanel } from './components/ImportPanel';
 import { Menu } from './components/Menu';
 import { StatusPanel } from './components/StatusPanel';
 import { TerminalPanel } from './components/TerminalPanel';
+import { DesktopPanel } from './components/DesktopPanel';
 import { FilesPanel, type FilesTarget } from './components/FilesPanel';
 import { PreviewPanel } from './components/PreviewPanel';
 import { fileRef } from './files';
@@ -87,7 +88,7 @@ import { NoteMarks, type NoteMark } from './components/NoteMarks';
 import { Toast, type ToastState } from './components/Toast';
 import { ConnectDialog, DemoBar } from './components/ConnectDialog';
 import { DemoApi, DemoError } from './demo/DemoApi';
-import { IconCheck, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconMore, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconLanguage, IconMic, IconMicOff } from './components/icons';
+import { IconCheck, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconMore, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconDesktop, IconLanguage, IconMic, IconMicOff } from './components/icons';
 import { chooseLocale, locale, LOCALES, localeChoice, t } from './i18n';
 
 const sleep = (ms: number, signal: AbortSignal) =>
@@ -411,6 +412,17 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const [importOpen, setImportOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
   const [termOpen, setTermOpen] = useState(false);
+  const [desktopOpen, setDesktopOpen] = useState(false);
+  // Whether the machine shows a desktop (a VNC server runs on it): its entries appear only then.
+  const [hasDesktop, setHasDesktop] = useState(false);
+  useEffect(() => {
+    setHasDesktop(false);
+    if (demo) return;
+    let live = true;
+    // A daemon from before desktops answers 404: no desktop, like a machine without a VNC server.
+    api.desktop().then((d) => live && setHasDesktop(d.available)).catch(() => undefined);
+    return () => { live = false; };
+  }, [api, demo]);
   /** The terminal a login started; null attaches to the newest live one. */
   const [terminalTarget, setTerminalTarget] = useState<string | null>(null);
   /** The agent whose plan usage the quota panel shows. */
@@ -1197,6 +1209,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       void refreshThreads();
     },
     onOpenTerminal: () => (demo ? askToConnect() : openTerminal()),
+    onOpenDesktop: hasDesktop ? () => setDesktopOpen(true) : undefined,
     onError: handleError,
     toast: setToast,
     // The open thread is already in memory; copying it straight away keeps the browser's
@@ -1539,6 +1552,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     { id: 'new', label: t('sidebar.newThread'), hint: t('app.cmd.new'), keywords: ['new', 'clear'] },
     { id: 'status', label: t('statusPanel.status'), hint: t('app.cmd.status'), keywords: ['status', 'info'] },
     { id: 'term', label: t('term.title'), hint: t('app.cmd.term'), keywords: ['term', 'terminal', 'shell', '命令行'] },
+    ...(hasDesktop ? [{ id: 'desktop', label: t('desktop.title'), hint: t('app.cmd.desktop'), keywords: ['desktop', 'vnc', 'screen', 'gui', '桌面', '屏幕'] }] : []),
     ...(agents.some((a) => a.capabilities.quota)
       ? [{ id: 'usage', label: t('app.quota'), hint: t('app.cmd.usage'), keywords: ['usage', 'quota', '额度', 'cost'] }]
       : []),
@@ -1574,6 +1588,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     if (id === 'new') return newThread();
     if (id === 'status') return setStatusOpen(true);
     if (id === 'term') return openTerminal();
+    if (id === 'desktop') return setDesktopOpen(true);
     if (id === 'usage') return setQuotaOpen(true);
     if (id === 'activity') return openActivity();
     if (id === 'skills') return openSkills();
@@ -1902,6 +1917,11 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
                   <IconTerminal />
                 </button>
               )}
+              {!compact && hasDesktop && (
+                <button className="icon-btn topbar-desktop" aria-label={t('actions.desktop')} title={t('desktop.title')} onClick={() => setDesktopOpen(true)}>
+                  <IconDesktop />
+                </button>
+              )}
               <button className="icon-btn topbar-new" aria-label={t('sidebar.newThread')} onClick={() => newThread()}>
                 <IconEdit />
               </button>
@@ -2200,6 +2220,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       {preview && api && (
         <PreviewPanel api={api} threadId={preview.threadId} path={preview.path} onClose={() => setPreview(null)} onError={handleError} />
       )}
+      {desktopOpen && <DesktopPanel api={api} onClose={() => setDesktopOpen(false)} />}
       {termOpen && (
         <TerminalPanel
           api={api}

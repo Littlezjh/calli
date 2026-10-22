@@ -6,7 +6,7 @@ interface Props {
   title: string;
   message?: string;
   /** When set, the dialog asks for text. The value is passed to onConfirm. */
-  input?: { initial: string; label: string };
+  input?: { initial: string; label: string; secret?: boolean };
   /** Optional checkboxes, off by default. Their states, in order, are the second argument to onConfirm. */
   options?: Array<{ label: string; hint?: string }>;
   confirmLabel: string;
@@ -66,6 +66,8 @@ export function Dialog({ title, message, input, options = [], confirmLabel, dang
             <input
               ref={inputRef}
               value={value}
+              type={input.secret ? 'password' : undefined}
+              autoComplete={input.secret ? 'off' : undefined}
               onChange={(e) => setValue(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.nativeEvent.isComposing) {

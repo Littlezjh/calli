@@ -10,11 +10,14 @@ import { PiRpcAdapter } from '../src/adapters/pi.js';
 import type { AgentAdapter } from '../src/adapters/types.js';
 import { AttachmentStore } from '../src/attachments.js';
 import { SOCKET_IN_HOME } from '../src/config.js';
+import WebSocket from 'ws';
+import { Desktop } from '../src/desktop.js';
 import { createHttpServer, listenPrivate, socketHeld } from '../src/http.js';
 import { HostRegistry, sshConfigHosts, sshFailure, type HostInfo } from '../src/hosts.js';
 import { Store } from '../src/store.js';
 import { ThreadManager } from '../src/threads.js';
 import { Workdirs } from '../src/workdirs.js';
+import { fakeVnc } from './fixtures/fake-vnc.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const TOKEN = 'hub-token-0123456789';
@@ -29,6 +32,10 @@ let hosts: HostRegistry;
 let nodeHome: string;
 let nodeSocket: string;
 let nodeServer: Server;
+/** The other machine's desktop, and the hub's own (it has none, but signs the tickets). */
+let nodeDesktop: Desktop;
+let hubDesktop: Desktop;
+let vnc: Awaited<ReturnType<typeof fakeVnc>>;
 const closers: Array<() => Promise<void> | void> = [];
 
 async function waitFor<T>(fn: () => Promise<T | null | undefined | false> | T | null | undefined | false, timeoutMs = 10_000): Promise<T> {
@@ -60,7 +67,7 @@ let node: ReturnType<typeof makeManager>;
 let hub: ReturnType<typeof makeManager>;
 
 function startNode(): Promise<boolean> {
-  nodeServer = createHttpServer({ manager: node.manager, trusted: true, token: 'never-asked-0123456789', webDir: null, version: 'node-test' });
+  nodeServer = createHttpServer({ manager: node.manager, desktop: nodeDesktop, trusted: true, token: 'never-asked-0123456789', webDir: null, version: 'node-test' });
   return listenPrivate(nodeServer, nodeSocket);
 }
 
@@ -77,6 +84,9 @@ before(async () => {
   nodeHome = join(root, 'devbox');
   nodeSocket = join(nodeHome, SOCKET_IN_HOME);
   mkdirSync(nodeHome);
+  vnc = await fakeVnc();
+  nodeDesktop = new Desktop({ targets: [{ host: '127.0.0.1', port: vnc.port }] });
+  hubDesktop = new Desktop({ targets: null });
   assert.equal(await startNode(), true);
 
   // A machine that can be signed in to but runs no daemon, and ones ssh cannot get into.
@@ -105,12 +115,15 @@ before(async () => {
     retryMs: 50,
     healthMs: 100,
   });
-  hubServer = createHttpServer({ manager: hub.manager, hosts, token: TOKEN, webDir: null, version: 'hub-test' });
+  hubServer = createHttpServer({ manager: hub.manager, hosts, desktop: hubDesktop, token: TOKEN, webDir: null, version: 'hub-test' });
   await new Promise<void>((r) => hubServer.listen(0, '127.0.0.1', () => r()));
   hubBase = `http://127.0.0.1:${(hubServer.address() as AddressInfo).port}`;
 });
 
 after(async () => {
+  nodeDesktop.dispose();
+  hubDesktop.dispose();
+  await vnc.close();
   hosts.dispose();
   hubServer.close();
   nodeServer.close();
@@ -278,6 +291,29 @@ test('a turn on the other machine streams back through the hub as it happens', a
   await until('event: turn.done');
   assert.match(seen, /hello over there/);
   ctrl.abort();
+});
+
+test("the other machine's desktop opens through the hub, on a ticket the hub signs", async () => {
+  assert.deepEqual(await (await hubApi('/api/hosts/devbox/proxy/desktop')).json(), { available: true, port: vnc.port });
+  assert.deepEqual(await (await hubApi('/api/desktop')).json(), { available: false }, "the hub's own has none");
+  const { url } = (await (await hubApi('/api/desktop/ticket?host=devbox')).json()) as { url: string };
+  assert.match(url, /^\/api\/hosts\/devbox\/proxy\/desktop\/vnc\?exp=/);
+  const wsBase = hubBase.replace('http', 'ws');
+  const open = (path: string) =>
+    new Promise<WebSocket | number>((resolve) => {
+      const ws = new WebSocket(wsBase + path);
+      ws.on('open', () => resolve(ws));
+      ws.on('unexpected-response', (_req, res) => resolve(res.statusCode ?? 0));
+    });
+  const ws = await open(url);
+  assert.ok(ws instanceof WebSocket);
+  const message = () => new Promise<string>((r) => ws.once('message', (d: Buffer) => r(d.toString('latin1'))));
+  assert.equal(await message(), 'RFB 003.008\n');
+  const echoed = message();
+  ws.send(Buffer.from('over there'));
+  assert.equal(await echoed, 'over there');
+  ws.close();
+  assert.equal(await open('/api/hosts/devbox/proxy/desktop/vnc'), 403, "the hub's ticket is needed");
 });
 
 test('a dropped connection shows as offline and is opened again by itself', async () => {

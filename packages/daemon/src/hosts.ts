@@ -1,8 +1,10 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { request, type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from 'node:http';
+import { connect } from 'node:net';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
+import type { Duplex } from 'node:stream';
 import { SOCKET_IN_HOME } from './config.js';
 import { HttpError } from './errors.js';
 
@@ -467,6 +469,30 @@ export class HostRegistry {
       });
       req.pipe(upstream);
     });
+  }
+
+  /**
+   * Passes a WebSocket upgrade on to the machine's daemon and joins the two sockets, so the
+   * handshake and every frame go through untouched. The caller has already checked who asks.
+   */
+  upgrade(id: string, path: string, req: IncomingMessage, socket: Duplex, head: Buffer): boolean {
+    const link = this.links.get(id);
+    if (!link || link.status !== 'online') return false;
+    const upstream = connect(link.localSocket);
+    const headers = Object.entries(req.headers)
+      .filter(([name, value]) => value !== undefined && name !== 'authorization' && name !== 'host')
+      .flatMap(([name, value]) => (Array.isArray(value) ? value : [value]).map((v) => `${name}: ${v}`));
+    upstream.write([`${req.method ?? 'GET'} ${path} HTTP/1.1`, 'host: localhost', ...headers, '', ''].join('\r\n'));
+    if (head.length) upstream.write(head);
+    upstream.pipe(socket);
+    socket.pipe(upstream);
+    upstream.on('error', () => {
+      void link.check();
+      socket.destroy();
+    });
+    socket.on('error', () => upstream.destroy());
+    socket.on('close', () => upstream.destroy());
+    return true;
   }
 
   /** Closes every tunnel. */

@@ -101,6 +101,32 @@ export const IconTerminal = (p: { size?: number }) => (
     <path d="M5 7l4 4-4 4M12 17h7" />
   </Svg>
 );
+/** A screen on a stand: the machine's desktop. */
+export const IconDesktop = (p: { size?: number }) => (
+  <Svg {...p}>
+    <rect x="3" y="4" width="18" height="12" rx="2" />
+    <path d="M9 20h6M12 16v4" />
+  </Svg>
+);
+export const IconKeyboard = (p: { size?: number }) => (
+  <Svg {...p}>
+    <rect x="2.5" y="6" width="19" height="12" rx="2" />
+    <path d="M6.5 10h.01M10 10h.01M13.5 10h.01M17 10h.01M8 14h8" />
+  </Svg>
+);
+/** A pointer: taking control of the desktop's mouse and keyboard. */
+export const IconPointer = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M5 3.5l13 6.5-5.5 1.8L10.7 17.5z" />
+    <path d="M12.6 11.9l4.6 4.6" />
+  </Svg>
+);
+/** Fit to the window, or show at full size. */
+export const IconFit = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />
+  </Svg>
+);
 export const IconFile = (p: { size?: number }) => (
   <Svg {...p}>
     <path d="M7 3h7l5 5v13H7zM14 3v5h5" />
