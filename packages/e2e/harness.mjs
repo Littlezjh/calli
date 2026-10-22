@@ -4,7 +4,7 @@
  *
  * The browsers come from wherever they are: the playwright cache, or a system Chrome.
  */
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:net';
@@ -29,6 +29,35 @@ function freePort() {
     srv.on('error', reject);
   });
 }
+
+/** Every process below `pid`, so stop() can wait for agent CLIs the daemon probed to exit. */
+function descendants(pid) {
+  let table;
+  try {
+    table = execFileSync('ps', ['-eo', 'pid=,ppid='], { encoding: 'utf8' });
+  } catch {
+    return [];
+  }
+  const children = new Map();
+  for (const line of table.trim().split('\n')) {
+    const [child, parent] = line.trim().split(/\s+/).map(Number);
+    children.set(parent, [...(children.get(parent) ?? []), child]);
+  }
+  const found = [];
+  for (let queue = [pid]; queue.length; ) {
+    for (const child of children.get(queue.shift()) ?? []) found.push(child), queue.push(child);
+  }
+  return found;
+}
+
+const alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 /** Wraps a fixture script in an executable shell shim, so `RAH_*_BIN` can point at a plain name. */
 function shim(dir, name, script) {
@@ -114,8 +143,16 @@ export async function startDaemon(env = {}, opts = {}) {
     binDir,
     log: () => log,
     async stop() {
-      child.kill('SIGTERM');
-      await new Promise((r) => child.on('exit', r));
+      // Real agent CLIs on PATH (zcode, codex) get probed too, and may still write into dataDir
+      // while shutting down; removing it before they are gone leaves it behind in /tmp.
+      const below = descendants(child.pid);
+      if (child.exitCode === null) {
+        child.kill('SIGTERM');
+        await new Promise((r) => child.on('exit', r));
+      }
+      for (const deadline = Date.now() + 5_000; below.some(alive) && Date.now() < deadline; ) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
       rmSync(dataDir, { recursive: true, force: true });
       rmSync(workdir, { recursive: true, force: true });
     },
