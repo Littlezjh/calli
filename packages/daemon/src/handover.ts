@@ -36,6 +36,8 @@ export function handoverContext(info: {
     `- \`limi history ${info.threadId}\`：查看历史；翻页和全文续读按返回的 nextCursor 和 command 继续，参数见 \`limi --help\`。`,
     '', '## 接手要求', '',
     '请直接接着完成任务，将命令执行和文件操作的工作目录设为上面的 cwd。原线程使用 worktree 时，沿用同一个 worktree、当前分支及未提交改动，不要切回主仓库或另建 worktree。',
+    '动手前先核对现状：用 `git status`、`git diff` 和最近的提交确认工作区，与交接摘要对照。原 agent 可能在一轮中途被切断，摘要可能不全，也可能有改到一半的文件。',
+    '再跑项目自带的初始化或检查命令（如 `init.sh`，或 README、AGENTS.md 里写的测试命令），确认现状能跑。发现坏的先修好，再接着做摘要里的下一步。',
     '使用你自己的 agent 会话继续工作；上面的原 agent 实例、配置目录和 Session ID 用于只读查阅原始历史。不要要求用户重新配置工作目录或手动新开会话。',
     '多个同类 agent 使用各自的配置/数据目录，读取历史时请按实例和 Session ID 定位。',
   ];
@@ -61,6 +63,7 @@ export function handoverPrompt(targetLabel: string): string {
     '## 已完成 — 到现在为止做成了什么',
     '## 未完成 / 下一步 — 还剩什么，建议从哪里继续',
     '## 改过的文件 — 哪些文件动过、为什么',
+    '## 验证情况 — 跑过哪些测试或检查、结果如何；哪些改动还没验证；有没有改到一半、现在跑不通的文件',
     '## 关键决定和注意事项 — 容易踩的坑、用户特别提过的要求',
     '直接输出摘要本身，不要寒暄，也不要解释你在做什么。',
   ].join('\n');
@@ -148,6 +151,6 @@ export function synthesizeHandover(events: StoredEvent[], opts: { title: string;
     const why = [lastError.data.code, lastError.data.error].filter(Boolean).join('：');
     if (why) lines.push('## 中断原因', String(why), '');
   }
-  lines.push('> 这份摘要由 hub 从过程记录自动合成，可能不全。接手后先读目录里的代码和 git log 对齐现状。');
+  lines.push('> 这份摘要由 hub 从过程记录自动合成，可能不全，也不知道哪些改动验证过。接手后先用 git status 和 git log 对齐现状，跑一遍项目的检查。');
   return lines.join('\n');
 }

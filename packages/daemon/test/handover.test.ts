@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { StoredEvent } from '../src/events.js';
-import { handoverPrompt, synthesizeHandover } from '../src/handover.js';
+import { handoverContext, handoverPrompt, synthesizeHandover } from '../src/handover.js';
 
 let seq = 0;
 const ev = (turnId: string | null, type: StoredEvent['type'], data: Record<string, unknown> = {}): StoredEvent => ({
@@ -18,6 +18,20 @@ test('the handover prompt tells the agent what its successor can and cannot see'
   assert.match(prompt, /Claude Code 2/);
   assert.match(prompt, /看不到这段对话/);
   assert.match(prompt, /## 任务/);
+  // What was checked, what was not, and what is half-done: the successor cannot tell from the diff.
+  assert.match(prompt, /## 验证情况 — .*还没验证.*改到一半/);
+});
+
+test('the successor is told to check the working tree and run the checks before going on', () => {
+  const text = handoverContext({
+    threadId: 't', agentId: 'claude', agentLabel: 'Claude Code', adapter: 'claude',
+    cwd: '/work', cwdReal: '/work', sessionId: null, resumeCommand: null,
+  });
+  const requirements = text.split('## 接手要求')[1];
+  assert.match(requirements, /git status/);
+  assert.match(requirements, /最近的提交/);
+  assert.match(requirements, /init\.sh/);
+  assert.match(requirements, /发现坏的先修好，再接着做/);
 });
 
 test('a synthesized summary assembles what the log knows and says what it does not', () => {
