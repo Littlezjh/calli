@@ -1231,6 +1231,7 @@ export const zh = {
   'composer.message': '消息',
   'composer.memberDir': '成员工作目录',
   'composer.pickDir': '选择工作目录',
+  'composer.browseDir': '浏览这台机器的目录…',
   'composer.taskPlaceholder': '只给它的任务，留空由主智能体分工',
   'composer.taskFor': (name: string) => `给 ${name} 的任务`,
   'composer.addAndMode': '添加与模式',

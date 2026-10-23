@@ -1229,6 +1229,7 @@ export const ja: Messages = {
   'composer.message': 'メッセージ',
   'composer.memberDir': 'メンバーの作業ディレクトリ',
   'composer.pickDir': '作業ディレクトリを選ぶ',
+  'composer.browseDir': 'そのマシンのフォルダを参照…',
   'composer.taskPlaceholder': 'このメンバーだけのタスク。空欄ならメインのエージェントが分担します',
   'composer.taskFor': (name: string) => `${name} へのタスク`,
   'composer.addAndMode': '追加とモード',

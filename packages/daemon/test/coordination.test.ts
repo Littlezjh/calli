@@ -14,7 +14,8 @@ import { CodexAppServerAdapter } from '../src/adapters/codex.js';
 import { AgyAdapter } from '../src/adapters/agy.js';
 import { TraexAcpAdapter } from '../src/adapters/traex.js';
 import type { AgentAdapter } from '../src/adapters/types.js';
-import { CoordinationManager, coordinationServer, turnAnswer } from '../src/coordination.js';
+import { CoordinationManager, coordinationServer, turnAnswer, type RemoteHosts } from '../src/coordination.js';
+import { HttpError } from '../src/errors.js';
 import { createHttpServer, listenPrivate } from '../src/http.js';
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
@@ -512,4 +513,90 @@ test('natural completion enables queued collaboration without cancelling the act
     assert.notEqual(ended.data.stopReason, 'cancelled');
     assert.ok(h.team.view(h.root.id));
   } finally { await h.close(); }
+});
+
+/** Another machine: a daemon of its own, reached the way the hub's tunnels reach one. */
+async function otherMachine() {
+  const dir = mkdtempSync(join(tmpdir(), 'limi-remote-'));
+  const cwd = join(dir, 'far-project'); mkdirSync(cwd);
+  const store = new Store(dir);
+  const manager = new ThreadManager(store, new Map<string, AgentAdapter>([['pi', new PiRpcAdapter([process.execPath, join(fixtures, 'fake-pi.mjs')])]]), [cwd], new AttachmentStore(dir));
+  const server = createHttpServer({ manager, token: 'node-token', webDir: null, version: 'node' });
+  await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  let online = true;
+  const hosts: RemoteHosts = {
+    list: () => [{ id: 'devbox', label: 'Devbox', status: online ? 'online' : 'offline' }],
+    async call<T>(_id: string, method: string, path: string, body?: unknown): Promise<T> {
+      if (!online) throw new HttpError(502, 'this machine is not connected', { code: 'host_offline' });
+      const res = await fetch(base + path, { method, headers: { Authorization: 'Bearer node-token', 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+      const value = await res.json().catch(() => undefined);
+      if (!res.ok) throw new HttpError(res.status, value?.error ?? `HTTP ${res.status}`);
+      return value as T;
+    },
+  };
+  return { cwd, store, manager, hosts, setOnline(v: boolean) { online = v; },
+    async close() { await manager.shutdown(); await new Promise<void>(r => server.close(() => r())); store.close(); rmSync(dir, { recursive: true, force: true }); } };
+}
+
+test('a member on another machine runs there and its answer comes back to the lead', async () => {
+  const h = await setup();
+  const far = await otherMachine();
+  try {
+    h.team.hosts = far.hosts;
+    await h.team.enable(h.root.id);
+    const agents = await h.team.command(h.root.id, { op: 'agents' }) as Array<{ id: string; host?: string }>;
+    assert.ok(agents.some(a => a.id === 'pi@devbox' && a.host === 'devbox'));
+    assert.ok(agents.some(a => a.id === 'pi' && !a.host));
+    // Directories over there are that machine's: this machine's own list does not apply to them.
+    await assert.rejects(h.team.command(h.root.id, spawn('rel', 'pi@devbox', 'x', { cwd: 'relative' })), /绝对路径/);
+    // No folder is guessed for it; the lead is told where it could work and how to look further.
+    await assert.rejects(h.team.command(h.root.id, spawn('nodir', 'pi@devbox', 'x')), (err: Error) => err.message.includes('--cwd') && err.message.includes(JSON.stringify([far.cwd])));
+    assert.deepEqual(await h.team.command(h.root.id, { op: 'dirs', target: 'devbox' }), { machine: 'devbox', workdirs: [far.cwd] });
+    mkdirSync(join(far.cwd, 'app'));
+    const listed = await h.team.command(h.root.id, { op: 'dirs', target: 'devbox', path: far.cwd }) as { directories: string[]; usable: boolean };
+    assert.deepEqual(listed.directories, [join(far.cwd, 'app')]);
+    assert.equal(listed.usable, true);
+    await assert.rejects(h.team.command(h.root.id, { op: 'dirs', target: 'nowhere' }), /没有这台机器/);
+    assert.equal(h.team.view(h.root.id)!.members.length, 0);
+    await h.team.command(h.root.id, spawn('far', 'pi@devbox', 'REMOTE_TASK', { cwd: far.cwd }));
+    const member = h.team.view(h.root.id)!.members[0];
+    assert.equal(member.host, 'devbox');
+    assert.equal(h.store.getThread(member.id), null);
+    assert.equal(far.manager.threadView(member.id).cwd, far.cwd);
+    await wait(() => h.team.view(h.root.id)!.members[0].latest?.state === 'returned');
+    const state = h.team.view(h.root.id)!;
+    assert.match(state.members[0].latest!.result, /REMOTE_TASK/);
+    assert.ok(state.members[0].thread);
+    // The result goes to the lead like any member's, and starts its turn here.
+    const result = state.messages.find(d => d.from === member.id && d.to === h.root.id && d.kind === 'result');
+    assert.ok(result);
+    await wait(() => h.store.listEvents(h.root.id, 0, -1).some(e => e.type === 'turn.started' && String(e.data.text).includes('REMOTE_TASK')));
+    // A second message continues the same thread over there.
+    await wait(() => h.manager.threadView(h.root.id).status === 'idle');
+    await h.team.command(h.root.id, { op: 'send', target: 'far', text: 'SECOND_TASK', requestId: 'far-2' });
+    await wait(() => h.team.view(h.root.id)!.messages.some(d => d.text === 'SECOND_TASK' && d.state === 'returned'));
+    assert.equal(far.manager.listThreads().length, 1);
+  } finally { await h.close(); await far.close(); }
+});
+
+test('messages for a machine that is away wait for it, and the user can @ an instance there', async () => {
+  const h = await setup();
+  const far = await otherMachine();
+  try {
+    h.team.hosts = far.hosts;
+    await h.team.enable(h.root.id);
+    const text = h.team.mentionText(h.root.id, 'split it', [{ id: 'pi@devbox', kind: 'agent', label: 'Pi · Devbox', cwd: far.cwd, task: 'check' }]);
+    assert.match(text, /"agent":"pi@devbox"/);
+    assert.throws(() => h.team.mentionText(h.root.id, 'x', [{ id: 'pi@devbox', kind: 'agent', cwd: 'rel' }]), /绝对路径/);
+    assert.throws(() => h.team.mentionText(h.root.id, 'x', [{ id: 'pi@nowhere', kind: 'agent' }]), /实例不在本次协作中/);
+    await h.team.command(h.root.id, spawn('far', 'pi@devbox', 'LATER', { cwd: far.cwd }));
+    far.setOnline(false);
+    // Spawned while online; the first message only goes out once the machine is back.
+    await new Promise(r => setTimeout(r, 300));
+    const pending = h.team.view(h.root.id)!.messages.find(d => d.text === 'LATER')!;
+    assert.ok(['queued', 'running'].includes(pending.state));
+    far.setOnline(true);
+    await wait(() => h.team.view(h.root.id)!.messages.some(d => d.text === 'LATER' && d.state === 'returned'));
+  } finally { await h.close(); await far.close(); }
 });

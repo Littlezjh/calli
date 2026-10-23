@@ -328,6 +328,22 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     const timer = setInterval(() => { if (!document.hidden) read(); }, 20_000);
     return () => { alive = false; clearInterval(timer); };
   }, [merging, token, hostId, hostsKey]);
+  // Folders last chosen for members on each machine, offered first next time.
+  const recentRemoteDirs = (host: string): string[] => { try { return JSON.parse(localStorage.getItem(`rah.collab.dirs.${host}`) ?? '[]'); } catch { return []; } };
+  const rememberRemoteDir = (host: string, cwd: string) => localStorage.setItem(`rah.collab.dirs.${host}`, JSON.stringify([cwd, ...recentRemoteDirs(host).filter((d) => d !== cwd)].slice(0, 5)));
+  const [remotePick, setRemotePick] = useState<{ host: string; api: Api; machine: string; roots: string[]; selected: string; choose: (cwd: string) => void } | null>(null);
+  // Instances on the other machines, for a collaboration led from this hub: each with that machine's folders.
+  const [remoteAgents, setRemoteAgents] = useState<Array<AgentInfo & { host: string; directories: string[] }>>([]);
+  useEffect(() => {
+    if (hostId || !token || api.demo) { setRemoteAgents([]); return; }
+    let alive = true;
+    void Promise.all(hostsRef.current.filter((h) => h.status === 'online').map(async (h) => {
+      const remote = new Api(token, '', h.id);
+      const [list, config] = await Promise.all([remote.agents(), remote.workdirs()]).catch((): [AgentInfo[], { workdirs: string[] }] => [[], { workdirs: [] }]);
+      return list.filter((a) => a.available).map((a) => ({ ...a, id: `${a.id}@${h.id}`, label: `${a.label} · ${h.label}`, host: h.id, directories: config.workdirs }));
+    })).then((lists) => { if (alive) setRemoteAgents(lists.flat()); });
+    return () => { alive = false; };
+  }, [token, hostId, hostsKey, api]);
   /** Bumped by daemon broadcasts, so the open plan page reloads. */
   const [todosKey, setTodosKey] = useState(0);
   /** The same, for the open scheduled-task page. */
@@ -1700,8 +1716,9 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const collaborationOptions: AgentMention[] = (!draftTeam && !selected?.coordination?.team && (selected?.coordination ? selected.coordination.rootId === selected.id : activeCaps?.coordination)) ? [
             ...(coordination?.members.map(m => ({ id: m.id, label: m.name, kind: 'member' as const })) ?? []),
             ...agents.filter(a => a.available && a.capabilities.coordination && (!coordination || coordination.agents.includes(a.id))).map(a => ({ id: a.id, label: a.label, kind: 'agent' as const })),
+            ...remoteAgents.map(a => ({ id: a.id, label: a.label, kind: 'agent' as const, host: a.host, directories: [...new Set([...recentRemoteDirs(a.host), ...a.directories])] })),
           ] : [];
-  const collaborationIcon = (m: AgentMention) => agents.find((a) => a.id === (m.kind === 'agent' ? m.id : coordination?.members.find((v) => v.id === m.id)?.thread?.agent))?.icon;
+  const collaborationIcon = (m: AgentMention) => [...agents, ...remoteAgents].find((a) => a.id === (m.kind === 'agent' ? m.id : coordination?.members.find((v) => v.id === m.id)?.thread?.agent))?.icon;
 
   const collaborationControl = (select: (mention: AgentMention) => void, chosen: AgentMention[]) => (!draftTeam && !selected?.coordination?.team && (activeCaps?.coordination || selected?.coordination) && <CoordinationPopover label={t('app.collab')} panelClassName="coord-picker-panel" triggerClassName={`tool-btn coord-tool${selected?.coordination || draftCollaboration ? ' on' : ''}`} triggerLabel={t('app.collab')} triggerTitle={selected?.coordination || draftCollaboration ? t('app.collabOn') : t('app.collab')} trigger={<><IconAgents size={16} /><span>{t('app.collab')}</span></>}>
       {close => <CollaborationMenu options={collaborationOptions} selected={chosen} icon={collaborationIcon}
@@ -1793,6 +1810,18 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
 
   return (
     <div className={`app${listOpen ? ' drawer-open' : ''}${sidebarHidden && !compact ? ' sidebar-hidden' : ''}`}>
+      {remotePick && (
+        <DirectoryPicker
+          api={remotePick.api}
+          roots={remotePick.roots}
+          selected={remotePick.selected}
+          machine={remotePick.machine}
+          onRootsChange={(config) => setRemotePick((p) => (p ? { ...p, roots: config.workdirs } : p))}
+          onManageRoots={() => setRemotePick(null)}
+          onSelect={(cwd) => { rememberRemoteDir(remotePick.host, cwd); remotePick.choose(cwd); }}
+          onClose={() => setRemotePick(null)}
+        />
+      )}
       {showDirPicker && (
         <DirectoryPicker
           api={api}
@@ -2171,6 +2200,10 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           mentionIcon={collaborationIcon}
           collaboration={collaborationControl}
           mentionExtra={(m) => { const a = agents.find((v) => v.id === m.id); return a ? memberModel(a) : null; }}
+          onBrowseMentionDir={(m, choose) => {
+            const a = remoteAgents.find((v) => v.id === m.id);
+            if (a && token) setRemotePick({ host: a.host, api: new Api(token, '', a.host), machine: hosts.find((h) => h.id === a.host)?.label ?? a.host, roots: a.directories, selected: m.cwd ?? '', choose });
+          }}
           mentionDirectories={coordination?.directories ?? (collaborationDirectories.length ? collaborationDirectories : [activeCwd])}
           onStop={stop}
           header={header}
@@ -2237,7 +2270,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         )}
       </main>
 
-      {agentsOpen && coordination && <AgentPanel key={`${coordination.rootId}:${agentsStart ?? ''}`} start={agentsStart} api={api} team={coordination} agents={agents} memberModel={(thread) => {
+      {agentsOpen && coordination && <AgentPanel key={`${coordination.rootId}:${agentsStart ?? ''}`} start={agentsStart} api={api} memberApi={(id) => new Api(token ?? '', '', id)} team={coordination} agents={agents} memberModel={(thread) => {
         const a = agents.find((v) => v.id === thread.agent);
         return a ? <MemberModel agent={a} models={modelsByAgent[a.id] ?? []} value={{ model: thread.model ?? null, effort: thread.effort ?? null }} onNeed={needModels} onChange={({ model, effort }) => { void api.updateThread(thread.id, { model, effort }).then(() => refreshThreads()).catch(handleError); }}
           permission={a.capabilities.permissionModes.length ? thread.permissionMode : undefined} onPermission={(permissionMode) => { void api.updateThread(thread.id, { permissionMode }).then(() => refreshThreads()).catch(handleError); }} /> : null;

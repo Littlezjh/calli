@@ -7,6 +7,7 @@ if (!args.length || (args[0] !== 'browser' && args.includes('--help'))) {
   console.log(`limi agents | status | result ID | stop NAME
 limi spawn --agent ID --name NAME [--cwd DIR] [--model ID] [--effort LEVEL] --message-file FILE --request-id KEY
 limi send NAME --message-file FILE --request-id KEY
+limi dirs MACHINE [PATH]
 limi handover
 limi history THREAD_ID [--before TURN_CURSOR] [--turns N]
 limi history THREAD_ID --turn TURN_ID [--offset N --snapshot SEQ]
@@ -25,6 +26,7 @@ limi team run NAME|ID [--cwd DIR] --task-file FILE|-
 Team commands use LIMI_URL (or local RAH_PORT), LIMI_TOKEN (or RAH_TOKEN).
 FILE may be - for stdin. Reuse the request ID only when retrying the same request.
 Members can message existing teammates; only the lead can spawn or stop members.
+An agent ID like AGENT@MACHINE runs on another machine: --cwd is required, an absolute path there (limi dirs MACHINE [PATH] lists its folders), and that member cannot use limi; its final reply is its result.
 
 ${toolsHelp}`);
   process.exit(0);
@@ -71,6 +73,7 @@ try {
   const input = { op };
   if (rest[0] && !rest[0].startsWith('--')) input.target = rest.shift();
   const readonly = op === 'handover' || op === 'history';
+  if (op === 'dirs' && rest[0] && !rest[0].startsWith('--')) input.path = rest.shift();
   const names = readonly ? { '--before': 'before', '--turns': 'turns', '--turn': 'turn', '--offset': 'offset', '--snapshot': 'snapshot' } : { '--agent': 'agent', '--name': 'name', '--cwd': 'cwd', '--model': 'model', '--effort': 'effort', '--request-id': 'requestId', '--message-file': 'file' };
   while (rest.length) {
     const flag = rest.shift(); const key = names[flag]; const value = rest.shift();

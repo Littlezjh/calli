@@ -1231,6 +1231,7 @@ export const en: Messages = {
   'composer.message': 'Message',
   'composer.memberDir': 'Member\'s working directory',
   'composer.pickDir': 'Choose working directory',
+  'composer.browseDir': 'Browse folders on that machine…',
   'composer.taskPlaceholder': 'Its own task; leave empty to let the lead agent split the work',
   'composer.taskFor': (name: string) => `Task for ${name}`,
   'composer.addAndMode': 'Add and modes',

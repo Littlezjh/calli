@@ -45,7 +45,8 @@ export interface WorkdirsConfig {
   scratch?: boolean;
 }
 
-export interface AgentMention { id: string; label: string; kind: 'agent' | 'member'; cwd?: string; /** What the user asks of this one alone. */ task?: string }
+export interface AgentMention { id: string; label: string; kind: 'agent' | 'member'; cwd?: string; /** What the user asks of this one alone. */ task?: string;
+  /** An instance on another machine: its id there is `agent@host`, and its folders are that machine's. */ host?: string; directories?: string[] }
 /** One turn a search found: where it is, who said it, and the words around the match. */
 export interface SearchHit {
   threadId: string;
@@ -135,7 +136,8 @@ export interface Coordination {
   defaults?: Record<string, MemberDefault>;
   /** How much members may do without asking. Absent from older daemons. */
   permission?: string;
-  members: Array<{ id: string; name: string; thread: Thread | null; latest: CoordinationMessage | null }>;
+  /** `host`: the member runs on another machine, and its thread is that machine's. */
+  members: Array<{ id: string; name: string; host?: string; hostLabel?: string; thread: Thread | null; latest: CoordinationMessage | null }>;
   messages: CoordinationMessage[];
 }
 export interface CoordinationMessage {

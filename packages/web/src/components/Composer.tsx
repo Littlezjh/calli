@@ -119,6 +119,8 @@ interface Props {
   mentionOptions?: AgentMention[];
   collaboration?: (select: (mention: AgentMention) => void, selected: AgentMention[]) => ReactNode;
   mentionDirectories?: string[];
+  /** Browse another machine's folders for an instance there; `choose` sets that one's folder. */
+  onBrowseMentionDir?: (mention: AgentMention, choose: (cwd: string) => void) => void;
   /** A control of the app's own on an agent's line, such as the model its member starts with. */
   mentionExtra?: (mention: AgentMention) => ReactNode;
   /** The mark of the agent behind a choice, for the @ list. */
@@ -217,6 +219,7 @@ export function Composer({
   mentionOptions = [],
   collaboration,
   mentionDirectories = [],
+  onBrowseMentionDir,
   mentionIcon,
   mentionExtra,
 }: Props) {
@@ -919,8 +922,11 @@ export function Composer({
                   {m.kind === 'member' ? (
                     <span className="coord-row-name">@{m.label}</span>
                   ) : (
-                    <Popover label={t('composer.memberDir')} triggerClassName="coord-row-name" triggerTitle={t('composer.pickDir')} trigger={<span>@{m.label}{m.cwd ? ` · ${m.cwd.split('/').pop()}` : ''}</span>}>
-                      {close => <>{mentionDirectories.map(dir => <button className="pop-item compact" key={dir} onClick={() => { setMentions(prev => prev.map(v => v === m ? { ...v, cwd: dir } : v)); close(); }}>{dir}</button>)}</>}
+                    <Popover label={t('composer.memberDir')} triggerClassName="coord-row-name" triggerTitle={t('composer.pickDir')} trigger={<span>@{m.label}{m.cwd ? ` · ${m.cwd.split('/').pop()}` : m.host ? ` · ${t('composer.pickDir')}` : ''}</span>}>
+                      {close => <>
+                        {(m.directories ?? mentionDirectories).map(dir => <button className="pop-item compact" role="menuitemradio" aria-checked={m.cwd === dir} key={dir} onClick={() => { setMentions(prev => prev.map(v => v === m ? { ...v, cwd: dir } : v)); close(); }}>{dir}</button>)}
+                        {m.host && onBrowseMentionDir && <button className="pop-item compact" onClick={() => { close(); onBrowseMentionDir(m, cwd => setMentions(prev => prev.map(v => v.kind === m.kind && v.id === m.id ? { ...v, cwd } : v))); }}>{t('composer.browseDir')}</button>}
+                      </>}
                     </Popover>
                   )}
                   <textarea

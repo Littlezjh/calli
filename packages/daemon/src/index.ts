@@ -105,6 +105,8 @@ async function main(): Promise<void> {
   // Other machines, each reached over SSH through its daemon's socket.
   const hosts = new HostRegistry({ file: join(config.dataDir, 'hosts.json'), ssh: config.sshCommand });
   hosts.start();
+  // Collaboration can then run members on the machines the hub reaches.
+  coordination.hosts = hosts;
   // Previews are served on a port of their own: the iframe needs an origin separate from the app
   // (see preview.ts). One port past the app's is the default; RAH_PREVIEW_PORT picks another.
   const previewPort = Number(process.env.RAH_PREVIEW_PORT) || config.port + 1;

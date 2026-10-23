@@ -266,6 +266,12 @@ test('adding a machine by its ssh name connects it; its daemon answers through t
   assert.equal((await fetch(`${hubBase}/api/hosts/devbox/proxy/threads`)).status, 401, "the hub's token still guards it");
   assert.equal((await hubApi('/api/hosts/devbox/proxy/hosts')).status, 400, 'one level only');
   assert.equal((await hubApi('/api/hosts/other/proxy/threads')).status, 404);
+  // The hub's daemon asks the machine on its own behalf too, for members it runs there.
+  assert.deepEqual((await hosts.call<Array<{ id: string }>>('devbox', 'GET', '/api/threads')).map((t) => t.id), [thread.id]);
+  const made = await hosts.call<{ cwd: string }>('devbox', 'POST', '/api/threads', { agent: 'pi', cwd: node.workdir, title: 'member' });
+  assert.equal(made.cwd, node.workdir);
+  await assert.rejects(hosts.call('devbox', 'GET', '/api/threads/nope'), (err: { status?: number }) => err.status === 404);
+  await assert.rejects(hosts.call('other', 'GET', '/api/threads'), (err: { status?: number }) => err.status === 404);
 });
 
 test('a turn on the other machine streams back through the hub as it happens', async () => {

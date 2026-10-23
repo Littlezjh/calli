@@ -82,8 +82,10 @@ function Said({ who, to, at, state, text, failed }: { who: Speaker; to?: string;
   );
 }
 
-export function AgentPanel({ api, team, agents, leadAgent, memberModel, start, phone, onClose, onOpen, onAdjust, onRefresh, onError }: {
+export function AgentPanel({ api, memberApi, team, agents, leadAgent, memberModel, start, phone, onClose, onOpen, onAdjust, onRefresh, onError }: {
   api: Api; team: Coordination; agents: AgentInfo[]; leadAgent?: string;
+  /** How to reach a member that runs on another machine. */
+  memberApi?: (host: string) => Api;
   /** The control for a member's own model and thinking effort, shown with its details. */
   memberModel?: (thread: Thread) => ReactNode;
   /** The member to open on, when the panel is opened from that member's row elsewhere. */
@@ -136,10 +138,13 @@ export function AgentPanel({ api, team, agents, leadAgent, memberModel, start, p
   const latest = useRef({ onClose, memberId }); latest.current = { onClose, memberId };
   const member = team.members.find(m => m.id === memberId);
   const thread = member?.thread;
+  // A member on another machine is read from that machine; it cannot be opened here as a conversation of this one.
+  const remote = member?.host;
+  const threadApi = useMemo(() => (remote && memberApi ? memberApi(remote) : api), [api, remote]);
   const timeline = useMemo(() => buildTimeline(events), [events]);
   useEffect(() => {
-    if (thread?.unread) void api.updateThread(thread.id, { unread: false }).then(onRefresh).catch(() => undefined);
-  }, [api, thread?.id, thread?.unread]);
+    if (thread?.unread) void threadApi.updateThread(thread.id, { unread: false }).then(onRefresh).catch(() => undefined);
+  }, [threadApi, thread?.id, thread?.unread]);
   useEffect(() => {
     focus.current = document.activeElement as HTMLElement;
     // Escape closes what is on top: a setting opened in the panel goes first, the panel after it.
@@ -164,14 +169,14 @@ export function AgentPanel({ api, team, agents, leadAgent, memberModel, start, p
     historyCursor.current = null; olderRequest.current = null; stick.current = true; setAtBottom(true);
     if (!memberId) { requestAnimationFrame(() => { if (body.current) body.current.scrollTop = listScroll.current; }); return; }
     const ctrl = new AbortController();
-    void watchHistory(api, memberId, ctrl.signal, {
+    void watchHistory(threadApi, memberId, ctrl.signal, {
       page: page => { setEvents(page.events); historyCursor.current = page.nextCursor; setOlder(page.hasOlder); },
       events: batch => setEvents(previous => mergeHistory(previous, batch)),
       error: onError,
       connection: setConnected,
     });
     return () => ctrl.abort();
-  }, [api, memberId]);
+  }, [threadApi, memberId]);
   useEffect(() => { if (memberId && stick.current && body.current) body.current.scrollTop = body.current.scrollHeight; }, [events, memberId]);
   const loadOlder = async () => {
     if (!memberId || loadingOlder || olderRequest.current || !historyCursor.current) return;
@@ -180,7 +185,7 @@ export function AgentPanel({ api, team, agents, leadAgent, memberModel, start, p
     setLoadingOlder(true);
     const el = body.current; const height = el?.scrollHeight ?? 0;
     try {
-      const page = await historyPage(api, id, historyCursor.current);
+      const page = await historyPage(threadApi, id, historyCursor.current);
       if (latest.current.memberId !== id || olderRequest.current !== request) return;
       setEvents(prev => mergeHistory(page.events, prev)); setOlder(page.hasOlder); historyCursor.current = page.nextCursor;
       requestAnimationFrame(() => { if (el) el.scrollTop += el.scrollHeight - height; });
@@ -191,9 +196,9 @@ export function AgentPanel({ api, team, agents, leadAgent, memberModel, start, p
     <header className="agent-panel-head">
       {memberId && <button className="icon-btn" aria-label={t('team.back')} onClick={() => setMemberId(null)}><span className="coord-back"><IconChevron /></span></button>}
       {/* A member: how it stands first, then its agent and the folder it works in (the whole path on hover). */}
-      <div className="agent-panel-heading"><strong>{member?.name ?? t('team.agents')}</strong><span title={thread?.cwd}>{thread ? `${memberStatus(member!)} · ${agents.find(a => a.id === thread.agent)?.label ?? thread.agent} · ${thread.cwd.split('/').filter(Boolean).pop() ?? thread.cwd}` : team.paused ? t('team.pausedHint') : t('team.summary', team.members.filter(m => m.thread?.status === 'running').length, team.members.length)}</span></div>
-      {thread && memberModel?.(thread)}
-      {thread && <button className="icon-btn" aria-label={t('team.open')} title={t('team.open')} onClick={() => onOpen(thread)}><IconExternal /></button>}
+      <div className="agent-panel-heading"><strong>{member?.name ?? t('team.agents')}</strong><span title={thread?.cwd}>{thread ? `${memberStatus(member!)} · ${agents.find(a => a.id === thread.agent)?.label ?? thread.agent}${member?.hostLabel ? ` · ${member.hostLabel}` : ''} · ${thread.cwd.split('/').filter(Boolean).pop() ?? thread.cwd}` : team.paused ? t('team.pausedHint') : t('team.summary', team.members.filter(m => m.thread?.status === 'running').length, team.members.length)}</span></div>
+      {thread && !remote && memberModel?.(thread)}
+      {thread && !remote && <button className="icon-btn" aria-label={t('team.open')} title={t('team.open')} onClick={() => onOpen(thread)}><IconExternal /></button>}
       <button className="icon-btn" aria-label={t('team.close')} onClick={onClose}><IconClose /></button>
     </header>
     {!memberId && <div className="auto-setting-line"><span>{t('auto.members')}</span><button aria-label={t('auto.members')} className="auto-toggle" role="switch" aria-checked={team.autoHandover !== false} onClick={() => { void api.setCollaborationHandover(team.rootId, team.autoHandover === false).then(onRefresh).catch(onError); }}>{t(team.autoHandover !== false ? 'auto.on' : 'auto.off')}</button></div>}
@@ -227,11 +232,11 @@ export function AgentPanel({ api, team, agents, leadAgent, memberModel, start, p
         {!team.members.length && <div className="agent-panel-empty"><IconAgents size={32} /><strong>{t('team.emptyTitle')}</strong><p>{t('team.emptyHint1')}<br />{t('team.emptyHint2')}</p></div>}
         {team.members.map(m => <button className="agent-member" key={m.id} onClick={() => setMemberId(m.id)}>
           <div className="agent-member-line"><strong>{m.name}{m.thread?.handover && <span className="auto-member-mark" role="img" aria-label={t('auto.transferred')} title={t('auto.transferred')}><IconHandover size={13} /></span>}</strong><span className={m.thread?.waiting ? 'coord-attention' : ''}>{memberStatus(m)}</span></div>
-          <div className="coord-caption">{m.thread?.agent} · {m.thread?.cwd.split('/').slice(-2).join('/')}</div>
+          <div className="coord-caption">{m.thread?.agent}{m.hostLabel ? ` · ${m.hostLabel}` : ''} · {m.thread?.cwd.split('/').slice(-2).join('/')}</div>
           <p>{m.latest?.result?.split(/<limi-(?:coordination|team)>/)[0].slice(-160) || m.latest?.text.slice(0, 160) || t('team.waitingTask')}</p>
           {m.thread?.unread && <span className="coord-unread">{t('team.newOutput')}</span>}
         </button>)}
-      </> : thread ? <ThreadView historyApi={api} historyThreadId={thread.id} items={timeline.items} roots={[thread.cwd, thread.cwdReal]} loadImage={id => api.attachment(thread.id, id)} loadFile={path => api.threadFile(thread.id, path)} hasOlder={older} loadingOlder={loadingOlder} onLoadOlder={() => void loadOlder()} /> : <div className="agent-panel-empty">{t('team.childGone')}</div>}
+      </> : thread ? <ThreadView historyApi={threadApi} historyThreadId={thread.id} items={timeline.items} roots={[thread.cwd, thread.cwdReal]} loadImage={id => threadApi.attachment(thread.id, id)} loadFile={path => threadApi.threadFile(thread.id, path)} hasOlder={older} loadingOlder={loadingOlder} onLoadOlder={() => void loadOlder()} /> : <div className="agent-panel-empty">{t('team.childGone')}</div>}
     </div>
     {memberId && !atBottom && <button className="agent-panel-latest" onClick={() => { stick.current = true; if (body.current) body.current.scrollTop = body.current.scrollHeight; }}>{t('team.latest')}</button>}
     {/* A member's way to change course goes through the lead: a line shaped like the composer's,
@@ -240,7 +245,7 @@ export function AgentPanel({ api, team, agents, leadAgent, memberModel, start, p
       <button className="agent-adjust" onClick={() => onAdjust(member.name)}>
         <IconEdit size={15} /><span>{t('team.adjustPrompt', member.name)}</span>
       </button>
-      {thread.status === 'running' && <button className="send-btn stop" aria-label={t('team.stopTask')} title={t('team.stopTask')} onClick={() => { api.cancel(thread.id).then(onRefresh).catch(onError); }}>
+      {thread.status === 'running' && <button className="send-btn stop" aria-label={t('team.stopTask')} title={t('team.stopTask')} onClick={() => { threadApi.cancel(thread.id).then(onRefresh).catch(onError); }}>
         <IconStop size={16} />
       </button>}
     </footer> : <footer className="agent-panel-footer">

@@ -472,6 +472,40 @@ export class HostRegistry {
   }
 
   /**
+   * Asks a machine's daemon something on this daemon's own behalf, not a page's: a JSON body out,
+   * the JSON answer back. Collaboration uses it to run members on other machines.
+   */
+  call<T = unknown>(id: string, method: string, path: string, body?: unknown): Promise<T> {
+    const link = this.links.get(id);
+    if (!link) return Promise.reject(new HttpError(404, 'machine not found'));
+    if (link.status !== 'online') return Promise.reject(new HttpError(502, 'this machine is not connected', { code: 'host_offline' }));
+    const payload = body === undefined ? undefined : Buffer.from(JSON.stringify(body));
+    return new Promise((resolve, reject) => {
+      const req = request({
+        socketPath: link.localSocket, path, method, agent: false, timeout: 30_000,
+        headers: payload ? { 'Content-Type': 'application/json', 'Content-Length': payload.length } : {},
+      }, (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c: Buffer) => chunks.push(c));
+        res.on('error', reject);
+        res.on('end', () => {
+          const text = Buffer.concat(chunks).toString('utf8');
+          let value: any;
+          try { value = text ? JSON.parse(text) : undefined; } catch { value = undefined; }
+          if ((res.statusCode ?? 500) >= 400) return reject(new HttpError(res.statusCode ?? 502, value?.error ?? `HTTP ${res.statusCode}`));
+          resolve(value as T);
+        });
+      });
+      req.on('timeout', () => req.destroy(new Error('the daemon did not answer in time')));
+      req.on('error', (err) => {
+        void link.check();
+        reject(new HttpError(502, err.message, { code: 'host_offline' }));
+      });
+      req.end(payload);
+    });
+  }
+
+  /**
    * Passes a WebSocket upgrade on to the machine's daemon and joins the two sockets, so the
    * handshake and every frame go through untouched. The caller has already checked who asks.
    */
