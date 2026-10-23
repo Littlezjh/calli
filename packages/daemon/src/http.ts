@@ -990,6 +990,9 @@ export function createHttpServer(deps: HttpDeps): Server {
         const body = await readJson(req);
         return sendJson(res, 201, await manager.createHandoverThread(threadId, body.agent, body.model, body.mode));
       }
+      if (method === 'DELETE' && sub === 'handover-link') {
+        return sendJson(res, 200, manager.detachAutomaticHandover(threadId));
+      }
 
       if (method === 'POST' && sub === 'handover') {
         // Asks the thread's agent to write a summary for another agent; the GET reads it back.

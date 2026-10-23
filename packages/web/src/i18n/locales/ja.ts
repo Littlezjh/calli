@@ -289,6 +289,10 @@ export const ja: Messages = {
   // Handover trail
   'handover.chain.single': 'この区間だけ表示',
   'handover.chain.merged': 'チェーン全体を表示',
+  'handover.chain.detach': 'この自動引き継ぎを取り消す',
+  'handover.detach.title': '自動引き継ぎを取り消しますか？',
+  'handover.detach.message': '元のセッションは続行可能な独立した会話に戻り、以後の自動引き継ぎはオフになります。引き継ぎ先は履歴を保持し、協働メンバーの場合はメンバーの役割、タスク、メッセージもそのまま引き継ぎます。',
+  'handover.detach.confirm': '引き継ぎを取り消す',
   'handover.chain.loadPrevious': '前の会話を読み込む',
   'handover.chain.missing': '引き継ぎ元が削除されたか利用できません',
   'handover.chain.failed': '前の会話を読み込めませんでした',
@@ -572,6 +576,7 @@ export const ja: Messages = {
   'handover.notReady': '引き継ぎ情報の準備ができていません。もう一度お試しください。',
   'handover.copyFailed': 'コピーに失敗しました。下の内容を選択して手動でコピーしてください。',
   'handover.mode.continue': '自動引き継ぎ',
+  'handover.mode.detached': '自動引き継ぎを取り消し済み',
   'handover.mode.branch': '手動引き継ぎ',
   'handover.title': '引き継ぎ',
   'handover.message': '同じディレクトリと worktree で新しい会話を作り、引き継ぎ内容を入力欄に入れます。編集してから送信できます。そのままコピーすることもできます。',

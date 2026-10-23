@@ -660,6 +660,12 @@ export class Store {
     return thread.handover ? effectiveHandoverMode(this.db, thread.handover, thread.createdAt) : null;
   }
 
+  detachHandover(id: string): void {
+    const thread = this.getThread(id);
+    if (!thread?.handover) return;
+    this.db.prepare('UPDATE threads SET handover = ? WHERE id = ?').run(JSON.stringify({ ...thread.handover, detached: true }), id);
+  }
+
   getThread(id: string): ThreadRecord | null {
     const row = this.db.prepare('SELECT * FROM threads WHERE id = ?').get(id) as ThreadRow | undefined;
     return row ? toThread(row) : null;

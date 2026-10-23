@@ -168,7 +168,7 @@ export function handoverGroups(threads: Thread[]): Array<{ key: string; latest: 
   const byId = new Map(threads.map((t) => [t.id, t]));
   const root = (t: Thread): string => {
     const seen = new Set<string>();
-    while (t.handover && !seen.has(t.id)) {
+    while (t.handover && !t.handover.detached && !seen.has(t.id)) {
       seen.add(t.id);
       const parent = byId.get(t.handover.sourceId);
       if (!parent) return t.handover.sourceId;

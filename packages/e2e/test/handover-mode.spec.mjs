@@ -124,13 +124,42 @@ for (const mobile of [false, true]) for (const theme of ['light', 'dark']) {
       await page.locator('.handover-entry small').filter({ hasText: /^自动接力 ·/ }).waitFor();
       await page.keyboard.press('Escape');
       await page.screenshot({ path: join(shots, `continue-source-${name}.png`), animations: 'disabled' });
-      // External/source-side activity changes only this relation; the open page responds live.
-      await send(relay.id, '原会话重新开启一轮'); await idle(relay.id);
-      await wait(async () => (await request(`/api/threads/${continued.id}`)).handover.mode === 'branch');
+      const detachButton = page.locator('.handover-readonly').getByRole('button', { name: '取消这次接力', exact: true });
+      await detachButton.waitFor();
+      await detachButton.click();
+      const detachDialog = page.getByRole('dialog', { name: '取消自动接力？', exact: true });
+      await detachDialog.waitFor();
+      await detachDialog.getByRole('button', { name: '取消接力', exact: true }).click();
+      await detachDialog.waitFor({ state: 'detached' });
       await page.locator('.handover-readonly').waitFor({ state: 'detached' });
       await page.locator('.merged-history').waitFor({ state: 'detached' });
-      await uiSend(page, relay.id, '解除接力后发回当前会话');
-      assert.ok(!(await request(`/api/threads/${continued.id}/events`)).some(e => e.type === 'turn.started' && e.data.text === '解除接力后发回当前会话'));
+      assert.equal((await request(`/api/threads/${relay.id}`)).autoHandover.override, false);
+      assert.equal((await request(`/api/threads/${continued.id}`)).autoHandover.override, null);
+      await uiSend(page, relay.id, '取消接力后发回原会话');
+      assert.ok(!(await request(`/api/threads/${continued.id}/events`)).some(e => e.type === 'turn.started' && e.data.text === '取消接力后发回原会话'));
+      await page.locator('.handover-trail button').click();
+      await page.getByRole('menuitem').filter({ hasText: '接手会话' }).click();
+      await uiSend(page, continued.id, '取消接力后接手会话也能发送');
+      assert.ok(!(await request(`/api/threads/${relay.id}/events`)).some(e => e.type === 'turn.started' && e.data.text === '取消接力后接手会话也能发送'));
+      await page.locator('.handover-trail button').click();
+      await page.locator('.handover-entry small').filter({ hasText: /^已取消接力 ·/ }).waitFor();
+      await page.keyboard.press('Escape');
+      await sidebar(page, mobile);
+      const detachedRows = page.locator('.sidebar .thread-title').filter({ hasText: relay.title });
+      assert.equal(await detachedRows.count(), 2, 'the source and successor become separate sidebar cards');
+      await page.screenshot({ path: join(shots, `detached-${name}.png`), animations: 'disabled' });
+
+      // External/source-side activity still separates a continuation when the user did not detach it.
+      const resumedRelay = await create(`自动接力后复用原会话 ${name}`); await send(resumedRelay.id, '准备接力'); await idle(resumedRelay.id);
+      const resumedNext = await request(`/api/threads/${resumedRelay.id}/handover-thread`, 'POST', { agent: 'next', mode: 'continue' });
+      await select(page, resumedRelay.title, mobile);
+      await send(resumedRelay.id, '原会话重新开启一轮'); await idle(resumedRelay.id);
+      await wait(async () => (await request(`/api/threads/${resumedNext.id}`)).handover.mode === 'branch');
+      await page.locator('.handover-readonly').waitFor({ state: 'detached' });
+      await page.locator('.merged-history').waitFor({ state: 'detached' });
+      await origin(page);
+      await uiSend(page, resumedRelay.id, '解除接力后发回当前会话');
+      assert.ok(!(await request(`/api/threads/${resumedNext.id}/events`)).some(e => e.type === 'turn.started' && e.data.text === '解除接力后发回当前会话'));
       await page.screenshot({ path: join(shots, `resumed-source-${name}.png`), animations: 'disabled' });
       assert.deepEqual(errors, []);
     } finally { await context.close(); }

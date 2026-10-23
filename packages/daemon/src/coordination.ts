@@ -186,6 +186,23 @@ export class CoordinationManager {
     const job = t?.deliveries.find(d => d.to === id && d.turnId === previous && d.state === 'running');
     if (t && job) { job.turnId = turnId; this.save(t); }
   }
+  /**
+   * Releases the retired source session after a member handover is split. The successor keeps the
+   * member name, mailbox and unfinished deliveries; the source becomes an ordinary conversation.
+   */
+  detachHandoverMember(source: string, target: string): boolean {
+    const t = this.team(source);
+    const retired = t?.retiredMembers?.find(m => m.id === source);
+    const current = t && (t.rootId === target || t.members.some(m => m.id === target));
+    if (!t || !retired || !current) return false;
+    t.retiredMembers = t.retiredMembers!.filter(m => m.id !== source);
+    if (!t.retiredMembers.length) delete t.retiredMembers;
+    this.save(t);
+    this.manager.notifyCoordination(source);
+    for (const id of [t.rootId, ...t.members.map(m => m.id)]) this.manager.notifyCoordination(id);
+    return true;
+  }
+
   /** Called synchronously in the successor turn's store transaction, before its runtime starts. */
   replaceHandoverMember(source: string, target: string, turnId: string): void {
     const t = this.team(source);

@@ -1956,7 +1956,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
 
         {demo && (showcase ? showcase.notice(selectedId, extWant) : <DemoBar compact={compact} onConnect={askToConnect} />)}
 
-        {selected && !onPage && hostUp && <HandoverTrail merged={mergedHandover} onToggle={() => setSingleSegmentId(mergedHandover ? selected.id : null)} thread={selected} threads={threads} agentLabel={agentLabel} onSelect={pick} />}
+        {selected && !onPage && hostUp && <HandoverTrail api={api} merged={mergedHandover} onToggle={() => setSingleSegmentId(mergedHandover ? selected.id : null)} thread={selected} threads={threads} agentLabel={agentLabel} onSelect={pick} onRefresh={() => { setSingleSegmentId(null); void refreshThreads(); }} />}
 
         {error && (
           <div className="banner" role="alert">
@@ -2157,9 +2157,9 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         {selected?.coordination?.team && selected.coordination.rootId === selected.id && ['awaiting_confirm', 'needs_attention'].includes(selected.coordination.team.status) && <div className="team-task-notice">{selected.coordination.team.status === 'needs_attention' && <span>{selected.coordination.team.error}</span>}{selected.coordination.team.status === 'awaiting_confirm' && <button className="ghost" onClick={() => void api.configureCoordination(selected.id, { action: 'confirm' }).then(value => { setCoordination(value); void refreshThreads(); }).catch(handleError)}>{t('teams.confirm')}</button>}</div>}
         {!selected && draftTeam && <div className="team-text-only">{t('teams.attachments')}</div>}
         {viewingEarlier && latestSegment ? <HandoverComposer
-          key={latestSegment.id} api={api} thread={latestSegment} label={agentLabel(latestSegment.agent)} hostId={hostId}
+          key={latestSegment.id} api={api} thread={latestSegment} sourceId={selected!.id} label={agentLabel(latestSegment.agent)} hostId={hostId}
           attachBlocked={capsOf(latestSegment.agent)?.images ? null : t('app.noImages', agentLabel(latestSegment.agent))}
-          onLatest={() => pick(latestSegment.id)} onRefresh={() => { void refreshThreads(); }} onError={handleError}
+          onLatest={() => pick(latestSegment.id)} onRefresh={() => { setSingleSegmentId(null); void refreshThreads(); }} onError={handleError}
           note={noteSignal?.draftKey === composerDraftKey ? noteSignal.note : null} onNotesChange={onNotesChange}
         /> : <Composer
           draftKey={composerDraftKey}

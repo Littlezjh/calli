@@ -174,6 +174,19 @@ test('member handover preserves its name and routes lead messages and results to
     assert.equal(h.team.view(root.id)!.members.length, 1);
     assert.equal(h.manager.threadView(sourceId).coordination?.retired, true);
     assert.equal(h.manager.threadView(next.id).coordination?.retired, undefined);
+    const detached = await h.api(`/api/threads/${sourceId}/handover-link`, 'DELETE');
+    assert.equal(detached.status, 200);
+    assert.deepEqual((await detached.json() as any).detached, [next.id]);
+    assert.equal(h.manager.threadView(sourceId).coordination, undefined, 'the old session leaves collaboration');
+    assert.equal(h.manager.threadView(next.id).coordination?.retired, undefined, 'the successor keeps the member identity');
+    assert.equal(h.team.view(root.id)!.members[0].id, next.id);
+    assert.equal(h.manager.autoHandover.view(sourceId).override, false);
+    assert.equal(h.manager.autoHandover.view(next.id).override, null);
+    await h.team.command(root.id, { op: 'send', target: 'worker', text: 'after split', requestId: 'after-split' });
+    await wait(() => h.store.listEvents(next.id, 0, -1).some(e => e.type === 'turn.started' && String(e.data.text).includes('after split')));
+    assert.ok(!h.store.listEvents(sourceId, 0, -1).some(e => e.type === 'turn.started' && String(e.data.text).includes('after split')));
+    await h.manager.startTurn(sourceId, { text: 'old session is independent' }); await h.done(sourceId);
+    assert.ok(h.store.listEvents(sourceId, 0, -1).some(e => e.type === 'turn.started' && e.data.text === 'old session is independent'));
   } finally { await h.close(); }
 });
 

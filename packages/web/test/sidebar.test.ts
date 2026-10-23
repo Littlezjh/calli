@@ -166,6 +166,11 @@ test('handovers group by explicit ancestry and open the latest successor even wh
   assert.deepEqual(new Set(ids(groups[0].members)), new Set([a.id, b.id, c.id]));
   assert.equal(handoverGroups([a, unrelated])[0].members.length, 1, 'separate sections do not pull threads in');
   assert.equal(handoverGroups([c])[0].latest.id, c.id, 'missing parents stay usable');
+  b.handover!.detached = true;
+  const split = handoverGroups([a, b, c]);
+  assert.equal(split.length, 2, 'a detached edge becomes two sidebar cards');
+  assert.ok(split.some(group => ids(group.members).join() === a.id));
+  assert.ok(split.some(group => group.members.length === 2 && ids(group.members).every(id => id === b.id || id === c.id)));
 });
 
 test('forks stay separate, and corrupt handover cycles terminate', () => {

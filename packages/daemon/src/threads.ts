@@ -1422,6 +1422,33 @@ export class ThreadManager {
     return this.view(thread);
   }
 
+  /**
+   * Restore one segment as an independent conversation. Its immediate automatic successors split
+   * off together: leaving any one attached would still make the source read-only. When called on a
+   * leaf, its incoming continuation is split instead. Downstream successor chains stay untouched.
+   */
+  detachAutomaticHandover(threadId: string): { detached: string[]; thread: ThreadView } {
+    const selected = this.getThread(threadId);
+    const all = [...this.store.listThreads(), ...this.store.listThreads({ archived: true })];
+    let source = selected;
+    let detached = all.filter(thread => thread.handover?.sourceId === selected.id
+      && thread.handover.mode === 'continue' && this.store.handoverMode(thread) === 'continue');
+    if (!detached.length && selected.handover?.mode === 'continue' && this.store.handoverMode(selected) === 'continue') {
+      source = this.getThread(selected.handover.sourceId);
+      detached = all.filter(thread => thread.handover?.sourceId === source.id
+        && thread.handover.mode === 'continue' && this.store.handoverMode(thread) === 'continue');
+    }
+    if (!detached.length) throw new HttpError(409, 'this handover is already independent');
+    this.autoHandover.setOverride(source.id, false);
+    for (const thread of detached) this.store.detachHandover(thread.id);
+    const currentMember = detached.find(thread => this.coordination?.metadata(thread.id) && !this.coordination.metadata(thread.id)?.retired);
+    if (this.coordination?.metadata(source.id)?.retired && currentMember) {
+      this.coordination.detachHandoverMember(source.id, currentMember.id);
+    }
+    for (const thread of [source, ...detached]) this.emitThreadEvent(thread.id, null, 'thread.updated', {});
+    return { detached: detached.map(thread => thread.id), thread: this.threadView(threadId) };
+  }
+
   /** A fresh conversation in the source's exact directory, sharing its existing worktree. No agent is started. */
   async createHandoverThread(threadId: string, agent: string, model?: string, mode?: unknown): Promise<ThreadView> {
     const source = this.getThread(threadId);

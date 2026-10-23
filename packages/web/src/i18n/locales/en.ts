@@ -291,6 +291,10 @@ export const en: Messages = {
   // Handover trail
   'handover.chain.single': 'Show only this segment',
   'handover.chain.merged': 'Show entire chain',
+  'handover.chain.detach': 'Undo this continuation',
+  'handover.detach.title': 'Undo automatic handover?',
+  'handover.detach.message': 'The original session becomes an independent conversation you can continue, with its future automatic handover turned off. The successor keeps its history and, when it is a collaborator, its member identity, tasks, and messages.',
+  'handover.detach.confirm': 'Undo continuation',
   'handover.chain.loadPrevious': 'Load previous conversation',
   'handover.chain.missing': 'Source conversation is missing or unavailable',
   'handover.chain.failed': 'Could not load the previous conversation',
@@ -574,6 +578,7 @@ export const en: Messages = {
   'handover.notReady': 'The handover is not ready yet. Try again.',
   'handover.copyFailed': 'Copying failed. Select the text below and copy it by hand.',
   'handover.mode.continue': 'Automatic handover',
+  'handover.mode.detached': 'Continuation undone',
   'handover.mode.branch': 'Manual handover',
   'handover.title': 'Hand over',
   'handover.message': 'Starts a new conversation in the same directory and worktree with the handover in the composer, ready to edit before sending. You can also just copy it.',

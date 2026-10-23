@@ -210,6 +210,14 @@ test('collaboration default and overrides; lead CLI sends to the replacement mem
   team = await request(`/api/threads/${root.id}/coordination`);
   assert.ok(team.messages.some(m => m.from === next.id && m.kind === 'result'));
   assert.ok(team.messages.some(m => m.text.includes('成员 worker 已从 agy 交接给 agy2')));
+  const detached = await request(`/api/threads/${oldId}/handover-link`, 'DELETE');
+  assert.ok(detached.detached.includes(next.id));
+  assert.equal((await thread(oldId)).coordination, undefined);
+  team = await request(`/api/threads/${root.id}/coordination`);
+  assert.equal(team.members[0].id, next.id, 'the successor keeps the member identity after the old session is restored');
+  await command(['send', 'worker', '--message-file', '-', '--request-id', 'after-split'], 'after split');
+  await wait(async () => (await request(`/api/threads/${next.id}/events`)).some(e => e.type === 'turn.started' && e.data.text.includes('after split')));
+  assert.ok(!(await request(`/api/threads/${oldId}/events`)).some(e => e.type === 'turn.started' && e.data.text.includes('after split')));
   const context = await browser.newContext({ viewport: { width: 1440, height: 960 }, colorScheme: 'dark' });
   const page = await context.newPage();
   try {

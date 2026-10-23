@@ -291,6 +291,10 @@ export const zh = {
   // Handover trail
   'handover.chain.single': '只看这一段',
   'handover.chain.merged': '显示整条链',
+  'handover.chain.detach': '取消这次接力',
+  'handover.detach.title': '取消自动接力？',
+  'handover.detach.message': '原会话会恢复为可继续的独立对话，并关闭它后续的自动交接。接手会话保留历史；若它是协作成员，也继续承担成员身份、任务和消息。',
+  'handover.detach.confirm': '取消接力',
   'handover.chain.loadPrevious': '加载上一段对话',
   'handover.chain.missing': '来源会话已删除或不可用',
   'handover.chain.failed': '上一段加载失败',
@@ -574,6 +578,7 @@ export const zh = {
   'handover.notReady': '交接信息尚未就绪，请重试。',
   'handover.copyFailed': '复制失败，请选择下方内容手动复制。',
   'handover.mode.continue': '自动接力',
+  'handover.mode.detached': '已取消接力',
   'handover.mode.branch': '手动交接',
   'handover.title': '交接',
   'handover.message': '在原目录和 worktree 中新建对话，交接内容会放进输入框，编辑后再发送。也可以直接复制。',
