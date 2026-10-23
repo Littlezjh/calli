@@ -78,7 +78,7 @@ export async function browserMain(args) {
   return new Promise((resolve, reject) => {
     const child = spawn(executable, args, { stdio: 'inherit', env });
     child.on('error', err => reject(err.code === 'ENOENT'
-      ? new Error('agent-browser is not installed: npm install -g agent-browser, or set LIMI_AGENT_BROWSER.') : err));
+      ? new Error('这台机器还没装 agent-browser。先告诉用户，征得同意后运行 npm install -g agent-browser（约 115 MB），装好即可使用，不用重启 Limi；也可以设置 LIMI_AGENT_BROWSER 指向已有的可执行文件。') : err));
     child.on('exit', (code, signal) => resolve(code ?? (signal ? 1 : 0)));
   });
 }

@@ -28,6 +28,7 @@ const BROWSER_USAGE = [
   '遇到登录、验证码或二次验证：停下来，请用户在 Limi 的「桌面」里处理，完成后重新 snapshot。',
   '不要读取浏览器配置目录或 Cookie 文件，不要关闭浏览器。',
 ];
+const AGENT_BROWSER_MISSING = '这台机器还没装 agent-browser。先告诉用户，征得同意后运行 npm install -g agent-browser（约 115 MB），装好即可使用，不用重启 Limi；也可以设置 LIMI_AGENT_BROWSER 指向已有的可执行文件。';
 const active = (job: ToolJob) => job.state === 'queued' || job.state === 'running';
 const message = (err: unknown) => err instanceof Error ? err.message : String(err);
 
@@ -113,8 +114,7 @@ export class BorrowingService {
 
   private async describeBrowser(browser: PersonalBrowser, schema: boolean) {
     const status = await browser.status();
-    const reason = status.reason
-      ?? (status.agentBrowser ? undefined : 'agent-browser is not installed on this machine: npm install -g agent-browser, or set LIMI_AGENT_BROWSER.');
+    const reason = status.reason ?? (status.agentBrowser ? undefined : AGENT_BROWSER_MISSING);
     return {
       id: BROWSER_TOOL, provider: 'limi', label: 'Limi', description: BROWSER_DESCRIPTION,
       mode: 'direct', availability: reason ? 'unavailable' : 'available', ...(reason ? { reason } : {}),

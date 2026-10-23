@@ -183,7 +183,11 @@ test('agents find the browser on demand through limi tools, with usage only when
     process.env.LIMI_AGENT_BROWSER = '/nonexistent/agent-browser';
     const missing = await s.borrowing.command(s.root.id, { op: 'tools.describe', tool: 'limi/browser' }) as any;
     assert.equal(missing.availability, 'unavailable');
-    assert.match(missing.reason, /npm install -g agent-browser/);
+    assert.match(missing.reason, /征得同意后运行 npm install -g agent-browser/);
+    assert.ok(missing.usage.length, 'usage is there for after the install');
+    // Installing it later is enough: each look checks again, without restarting Limi.
+    process.env.LIMI_AGENT_BROWSER = fakeAgentBrowser;
+    assert.equal((await s.borrowing.command(s.root.id, { op: 'tools.describe', tool: 'limi/browser' }) as any).availability, 'available');
   } finally {
     if (prev === undefined) delete process.env.LIMI_AGENT_BROWSER; else process.env.LIMI_AGENT_BROWSER = prev;
     await s.close(); h.close();
@@ -218,7 +222,7 @@ test('limi browser passes agent-browser commands through, connected to the perso
 
     const noAgentBrowser = await run(['browser', 'snapshot'], { ...s.env, LIMI_AGENT_BROWSER: '/nonexistent/agent-browser' });
     assert.notEqual(noAgentBrowser.code, 0);
-    assert.match(noAgentBrowser.stderr, /npm install -g agent-browser/);
+    assert.match(noAgentBrowser.stderr, /征得同意后运行 npm install -g agent-browser/);
 
     const outsider = await run(['browser'], { ...process.env, LIMI_TOOLS_SOCKET: s.env.LIMI_TOOLS_SOCKET, LIMI_TOOLS_KEY: 'wrong' });
     assert.notEqual(outsider.code, 0, 'needs the thread\'s tool credentials');

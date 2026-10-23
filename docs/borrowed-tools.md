@@ -125,7 +125,7 @@ limi browser get attr @e7 href    # 取链接地址而不点击
 
 浏览器由 daemon 按需启动：有界面的 Chrome（优先 Google Chrome，Google 登录信任它）显示在 VNC 桌面上，配置目录默认在数据目录 `browser/profile`，权限 0700。调试端口由 Chrome 在本机随机选择，从配置目录的 `DevToolsActivePort` 读取。daemon 退出不关闭 Chrome，重启后按配置目录找回，登录和标签页不受影响。配置目录正被一个没有调试端口的 Chrome 使用时，返回错误而不再启动第二个。没有桌面时 `availability: unavailable` 并给出原因。
 
-agent-browser 不随 Limi 安装：npm 包带所有平台的二进制，约 115 MB。用 `npm install -g agent-browser` 安装，或用 `LIMI_AGENT_BROWSER` 指定路径；找不到时 `describe` 返回安装方法。
+agent-browser 不随 Limi 安装：npm 包带所有平台的二进制，约 115 MB。用 `npm install -g agent-browser` 安装，或用 `LIMI_AGENT_BROWSER` 指定路径；找不到时搜索和 `describe` 返回 `unavailable`，`reason` 让 agent 先征得用户同意再安装；装好后下次查询即可用，不用重启 Limi。
 
 边界：这是同一系统用户下的约定，不是沙箱。agent 本来就能执行命令，Limi 不把浏览器包装成权限层；点击、提交、发送这类操作由 agent 自己的审批模式和用户把关，`describe` 的用法里要求先征得同意、一次性链接只取地址。浏览器只给普通会话，借用任务的执行线程没有凭证。管理员凭证可调用 `browser.ensure` 和 `browser.open {url}`（只接受 http(s)，在新标签页打开），供界面使用。
 
