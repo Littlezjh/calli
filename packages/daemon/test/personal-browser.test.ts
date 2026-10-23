@@ -21,7 +21,7 @@ const fakeChrome = join(here, 'fixtures/fake-chrome.mjs');
 const fakeAgentBrowser = join(here, 'fixtures/fake-agent-browser.mjs');
 const cli = join(here, '../bin/limi');
 
-type LogEntry = { pid?: number; display?: string; args?: string[]; opened?: string; exited?: boolean };
+type LogEntry = { pid?: number; display?: string; args?: string[]; hubSecrets?: string[]; opened?: string; exited?: boolean };
 
 function harness(extra: string[] = []) {
   const dir = mkdtempSync(join(tmpdir(), 'limi-browser-'));
@@ -40,11 +40,16 @@ test('starts one Chrome on the desktop with a private profile, and later callers
   const h = harness();
   try {
     const browser = h.make();
-    const [a, b] = await Promise.all([browser.ensure(), browser.ensure()]);
+    const saved = { RAH_TOKEN: process.env.RAH_TOKEN, LIMI_TOOLS_KEY: process.env.LIMI_TOOLS_KEY };
+    process.env.RAH_TOKEN = 'hub-token'; process.env.LIMI_TOOLS_KEY = 'thread-key';
+    const [a, b] = await Promise.all([browser.ensure(), browser.ensure()]).finally(() => {
+      for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    });
     assert.equal(a, b);
     assert.equal(h.launches().length, 1, 'concurrent callers share one start');
     const launch = h.launches()[0];
     assert.equal(launch.display, ':7');
+    assert.deepEqual(launch.hubSecrets, [], 'the hub token and tool credentials stay out of Chrome');
     assert.ok(launch.args!.includes(`--user-data-dir=${h.profileDir}`));
     assert.ok(launch.args!.includes('--remote-debugging-port=0'), 'Chrome picks a free loopback port');
     assert.equal(statSync(h.profileDir).mode & 0o777, 0o700, 'the profile holds sign-ins');

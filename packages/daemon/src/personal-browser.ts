@@ -145,7 +145,9 @@ export class PersonalBrowser {
     // Port 0 lets Chrome pick a free port on loopback and write it to DevToolsActivePort.
     const child = spawn(command[0], [...command.slice(1), `--user-data-dir=${this.opts.profileDir}`,
       '--remote-debugging-port=0', '--no-first-run', '--no-default-browser-check', '--start-maximized'], {
-      detached: true, stdio: 'ignore', env: { ...process.env, DISPLAY: display },
+      // The hub's own credentials stay with the hub; nothing Chrome starts needs them.
+      detached: true, stdio: 'ignore', env: { ...process.env, DISPLAY: display, RAH_TOKEN: undefined, LIMI_TOKEN: undefined,
+        LIMI_TOOLS_SOCKET: undefined, LIMI_TOOLS_KEY: undefined },
     });
     let exitedAt = 0;
     child.once('exit', () => { exitedAt = Date.now(); });
