@@ -411,8 +411,11 @@
 
 ### 之后：personal agent（网页上的个人事务：邮件、日程、购物、表单）
 
-远程桌面是给人的窗口，agent 自己在同一个显示器上截图、发键鼠（computer-use 或 Playwright 指定 `DISPLAY`），不绕 VNC。
+远程桌面是给人的窗口，agent 通过 CDP 操作同一个浏览器，不绕 VNC。方向：connector（API / MCP）优先，浏览器兜底没有接口的服务；Limi 不做第六个大脑，只提供环境、身份、记忆、触发和信任边界。
 
-- [ ] 持久的浏览器配置跑在桌面上，账号由人通过远程桌面登录一次，agent 之后沿用（区别于 `browser-computer.ts` 每个任务一个全新无头浏览器）
+- [x] 用户本人的浏览器（`personal-browser.ts`）：有界面的 Chrome 跑在 VNC 桌面上，配置目录持久（默认数据目录下 `browser/profile`，权限 0700），人通过「桌面」登录一次，agent 沿用同一个浏览器和登录态，网页走这台机器的网络。按需启动，调试端口只在本机（`--remote-debugging-port=0`，从 `DevToolsActivePort` 读）；daemon 重启不关 Chrome，下次按配置目录找回。配置目录被一个 Limi 够不着的 Chrome 占着时报错，不再启动第二个。`LIMI_BROWSER_PROFILE`、`LIMI_BROWSER_DISPLAY`（`off` 关闭）、`LIMI_BROWSER_EXECUTABLE` 可改。*真 Chrome + 真 agent-browser 经临时 daemon 走通发现、启动、开标签、读元素、取链接；未在正式 hub 上跑*
+- [x] agent 按需发现、直接使用 agent-browser：不注入提示词，`limi tools search 浏览器/邮箱` 找到 `limi/browser`，`describe` 才给用法；`limi browser ARGS` 就是 `agent-browser ARGS`，由 Limi 确保浏览器在跑并带上 `AGENT_BROWSER_CDP`、内容边界标记、空闲退出和独立会话名。agent-browser 不随 Limi 安装（各平台二进制共 115 MB），`npm install -g agent-browser` 或 `LIMI_AGENT_BROWSER` 指定
+- [ ] 界面：浏览器入口带地址栏（`browser.open` 已有），回答里的链接「在 Limi 浏览器打开」，设置里可默认这样打开
+- [ ] 只显示浏览器的面板（CDP screencast + 地址栏），手机上比整块桌面好用（参考 Orca 的 streamed 模式）
 - [ ] 「需要你接管」：验证码、二次验证、付款确认由 agent 发起请求 → 手机通知 → 打开桌面处理 → 交还，agent 继续
 - [ ] 线程里显示「agent 正在操作桌面」入口，关键步骤留截图

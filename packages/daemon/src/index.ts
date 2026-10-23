@@ -16,6 +16,7 @@ import { Workdirs } from './workdirs.js';
 import { BorrowingService } from './borrowing.js';
 import { borrowingServer } from './borrowing-server.js';
 import { VoiceService } from './voice-service.js';
+import { displayForDesktop, PersonalBrowser } from './personal-browser.js';
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -93,6 +94,13 @@ async function main(): Promise<void> {
   manager.progressWanted = () => extensions.list().some((s) => s.enabled && s.granted.includes('progress.report'));
   // The desktop a VNC server on this machine shows, if any; looked for when a page asks.
   const desktop = new Desktop({ targets: parseDesktopSetting(config.desktopVnc) });
+  // The person's own browser, shown on that desktop; started only when someone asks for it.
+  if (config.browserDisplay !== 'off') {
+    borrowing.browser = new PersonalBrowser({
+      profileDir: config.browserProfile,
+      display: async () => config.browserDisplay ?? displayForDesktop(await desktop.find()) ?? (process.env.DISPLAY || undefined),
+    });
+  }
   const terminals = new TerminalManager({ workdirs: () => dirs.all(), shell: config.termShell ?? undefined });
   // Other machines, each reached over SSH through its daemon's socket.
   const hosts = new HostRegistry({ file: join(config.dataDir, 'hosts.json'), ssh: config.sshCommand });

@@ -31,6 +31,10 @@ export interface Config {
   sshCommand: string[];
   /** RAH_DESKTOP_VNC as given: unset looks for a VNC server here, `off` turns the desktop off. */
   desktopVnc: string | undefined;
+  /** Chrome profile of the person's own browser: `LIMI_BROWSER_PROFILE`, else under the data directory. */
+  browserProfile: string;
+  /** `LIMI_BROWSER_DISPLAY`: the X display to show it on; unset follows the VNC desktop, `off` turns it off. */
+  browserDisplay: string | undefined;
 }
 
 /**
@@ -119,5 +123,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     socket,
     sshCommand: [env.RAH_SSH_BIN || 'ssh'],
     desktopVnc: env.RAH_DESKTOP_VNC,
+    browserProfile: env.LIMI_BROWSER_PROFILE ? resolve(env.LIMI_BROWSER_PROFILE) : join(dataDir, 'browser', 'profile'),
+    browserDisplay: env.LIMI_BROWSER_DISPLAY?.trim() || undefined,
   };
 }

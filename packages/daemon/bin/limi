@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
 import { request } from 'node:http';
-import { help as toolsHelp, toolsMain } from './limi-tools.mjs';
+import { browserMain, help as toolsHelp, toolsMain } from './limi-tools.mjs';
 const args = process.argv.slice(2);
-if (!args.length || args.includes('--help')) {
+if (!args.length || (args[0] !== 'browser' && args.includes('--help'))) {
   console.log(`limi agents | status | result ID | stop NAME
 limi spawn --agent ID --name NAME [--cwd DIR] [--model ID] [--effort LEVEL] --message-file FILE --request-id KEY
 limi send NAME --message-file FILE --request-id KEY
@@ -30,6 +30,9 @@ ${toolsHelp}`);
   process.exit(0);
 }
 try {
+  if (args[0] === 'browser') {
+    process.exit(await browserMain(args.slice(1)));
+  }
   if (args[0] === 'tools' || args[0] === 'jobs') {
     await toolsMain(args);
     process.exit(process.exitCode ?? 0);

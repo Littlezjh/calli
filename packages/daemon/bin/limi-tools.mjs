@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
@@ -8,6 +9,7 @@ limi tools describe TOOL [--json]
 limi tools run TOOL --input-file FILE|- --request-id KEY [--json]
 limi jobs get|wait|cancel JOB [--timeout SECONDS] [--json]
 limi jobs fetch JOB ARTIFACT_ID_OR_NAME --output FILE [--json]
+limi browser [AGENT_BROWSER_ARGS...]   (see: limi tools describe limi/browser)
 Inside Limi, thread-scoped credentials are provided automatically.
 Outside Limi, set LIMI_URL and LIMI_TOKEN. Output is JSON; fetch never overwrites a file.`;
 
@@ -58,6 +60,27 @@ async function transport(path, body, binary = false) {
   });
   if (!res.ok) throw new Error(responseError(await res.text(), res.status));
   return binary ? Buffer.from(await res.arrayBuffer()) : res.json();
+}
+
+/**
+ * `limi browser ARGS` is `agent-browser ARGS` against the person's own browser: Limi starts it when
+ * needed and says where it listens; the commands themselves are agent-browser's, passed through.
+ */
+export async function browserMain(args) {
+  const browser = await transport('/command', { op: 'browser.ensure' });
+  if (!args.length) { console.log(JSON.stringify(browser)); return 0; }
+  const executable = process.env.LIMI_AGENT_BROWSER || browser.agentBrowser || 'agent-browser';
+  const env = { ...process.env, AGENT_BROWSER_CDP: String(browser.port) };
+  // Page text is marked as untrusted data, and the helper daemon does not linger once unused.
+  env.AGENT_BROWSER_CONTENT_BOUNDARIES ??= '1';
+  env.AGENT_BROWSER_IDLE_TIMEOUT_MS ??= '600000';
+  env.AGENT_BROWSER_SESSION ??= 'limi';
+  return new Promise((resolve, reject) => {
+    const child = spawn(executable, args, { stdio: 'inherit', env });
+    child.on('error', err => reject(err.code === 'ENOENT'
+      ? new Error('agent-browser is not installed: npm install -g agent-browser, or set LIMI_AGENT_BROWSER.') : err));
+    child.on('exit', (code, signal) => resolve(code ?? (signal ? 1 : 0)));
+  });
 }
 
 /** CLI syntax is deliberately small; schemas and provider instructions load on demand. */

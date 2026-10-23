@@ -109,6 +109,26 @@ limi jobs fetch JOB_ID ARTIFACT_ID --output browser.png
 
 动作串行执行，最多 60 次、浏览器时间五分钟；完成、取消、会话关闭与进程断开都会关闭浏览器。每步截图直接返回提供方，不写入持久化事件正文；事件仅存操作、URL、计数和最终文件路径。只有宿主实际处理 `finish` 并写出截图才形成执行证据，再经过现有产物边界与格式校验。`succeeded` 表示执行证据与产物合格，不是业务任务效果的独立判定，仍应查看回答与截图。最终截图可通过统一 `jobs fetch` 下载。
 
+## 用户本人的浏览器
+
+Computer use 每次开一个全新浏览器，没有登录态。`limi/browser` 相反：它是用户本人在这台机器上的浏览器，人通过 Limi「桌面」登录一次（例如邮箱），agent 之后直接沿用，网页从这台机器的网络访问。它不是委托给另一个 agent 的任务，`mode: direct`，没有任务和产物，agent 用 [agent-browser](https://github.com/vercel-labs/agent-browser) 的命令直接操作。
+
+```bash
+limi tools search 邮箱          # 找到 limi/browser
+limi tools describe limi/browser  # 用法和注意事项，只在需要时读取
+limi browser tab new https://mail.google.com/
+limi browser snapshot -i          # 可交互元素，带 @eN 编号
+limi browser get attr @e7 href    # 取链接地址而不点击
+```
+
+`limi browser ARGS` 等于 `agent-browser ARGS`：Limi 先确保浏览器在运行（`browser.ensure`），再带上 `AGENT_BROWSER_CDP`、`AGENT_BROWSER_CONTENT_BOUNDARIES=1`（网页内容包在不可信标记里）、`AGENT_BROWSER_IDLE_TIMEOUT_MS=600000` 和 `AGENT_BROWSER_SESSION=limi` 启动 agent-browser，参数、输出和退出码原样传递。调用方自己设置的同名变量优先。不带参数返回 CDP 地址。
+
+浏览器由 daemon 按需启动：有界面的 Chrome（优先 Google Chrome，Google 登录信任它）显示在 VNC 桌面上，配置目录默认在数据目录 `browser/profile`，权限 0700。调试端口由 Chrome 在本机随机选择，从配置目录的 `DevToolsActivePort` 读取。daemon 退出不关闭 Chrome，重启后按配置目录找回，登录和标签页不受影响。配置目录正被一个没有调试端口的 Chrome 使用时，返回错误而不再启动第二个。没有桌面时 `availability: unavailable` 并给出原因。
+
+agent-browser 不随 Limi 安装：npm 包带所有平台的二进制，约 115 MB。用 `npm install -g agent-browser` 安装，或用 `LIMI_AGENT_BROWSER` 指定路径；找不到时 `describe` 返回安装方法。
+
+边界：这是同一系统用户下的约定，不是沙箱。agent 本来就能执行命令，Limi 不把浏览器包装成权限层；点击、提交、发送这类操作由 agent 自己的审批模式和用户把关，`describe` 的用法里要求先征得同意、一次性链接只取地址。浏览器只给普通会话，借用任务的执行线程没有凭证。管理员凭证可调用 `browser.ensure` 和 `browser.open {url}`（只接受 http(s)，在新标签页打开），供界面使用。
+
 ## 接口与凭证
 
 普通会话的进程环境提供 `LIMI_TOOLS_SOCKET`、`LIMI_TOOLS_KEY` 和 `LIMI_BIN_DIR`。这些值只存在于启动上下文，不写入 Agent 配置文件；PATH 加入 CLI 所在目录。凭证每次 daemon 启动重新生成，仅能调用能力服务、查看和取消本线程发起的任务、下载本线程的产物，不能操作其他线程或批准权限请求。新会话不继承父进程的借用凭证或 hub 管理 token。

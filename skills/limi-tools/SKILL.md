@@ -16,6 +16,8 @@ description: 需要借用其他 Agent 的能力时，通过 Limi CLI 按需发�
 Computer use 参数为 `{"url":"https://example.com/","task":"检查页面并返回截图"}`，通过 `codex/computer.use` 调用。它由 Codex 通过截图、坐标点击、输入、按键与滚动操作 Limi 新建的独立浏览器，返回 `result.scope: browser`、操作数、最终 URL 和截图产物。只控制网页，不控制操作系统桌面，也不继承用户浏览器的登录态；不要传密码或要求绕过登录。任务最多 60 步、浏览器运行五分钟，取消会关闭浏览器。截图证明浏览器确实执行，任务效果仍需核对 `summary` 与画面。
 来源的 `provenance: native` 表示原生工具返回的链接，`answer` 表示提供方在回答中引用的链接；原生执行证据不等于每个结论或引用都已独立核实。`summaryTruncated` 为真时，按需打开 `threadId` 对应的执行记录读取完整回复。
 
+需要用户本人已登录的浏览器（如邮箱）时，`limi tools describe limi/browser` 读取用法，用 `limi browser` 直接操作，不提交任务。
+
 `limi jobs get JOB` 查看进度；`limi jobs cancel JOB` 停止任务。下载不覆盖已有文件。
 失败时说明返回的原因；不要用自画 SVG、文字或占位图代替生成结果，也不要自行提高权限。
 不可用的提供方会给出 `reason`；不要把普通搜索、网页读取或 Limi 浏览器桥接声称为厂商桌面应用内部的原生 Computer use。
