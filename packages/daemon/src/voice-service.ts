@@ -10,8 +10,8 @@ export interface VoiceProviderAdapter {
 }
 
 export interface VoiceThreads {
-  voiceProvider(threadId: string): { providerId: string };
-  voiceTransport(threadId: string, authorize?: () => void): VoiceTransport;
+  voiceProvider(threadId: string, fallbackProviderId?: string): { providerId: string };
+  voiceTransport(threadId: string, authorize?: () => void, providerId?: string): VoiceTransport;
 }
 
 export interface VoiceProvider {
@@ -43,7 +43,7 @@ export class VoiceService {
     this.runtime = createExtensionVoice({
       extensions: options.extensions,
       authorizeTarget: binding => {
-        const target = options.manager.voiceProvider(binding.threadId);
+        const target = options.manager.voiceProvider(binding.threadId, binding.providerId);
         const provider = this.providers.find(p => p.id === binding.providerId);
         if (binding.hostId !== 'local' || target.providerId !== binding.providerId
           || this.identities.get(binding.providerId) !== options.adapters.get(binding.providerId)
@@ -53,7 +53,7 @@ export class VoiceService {
       },
       create: binding => options.manager.voiceTransport(binding.threadId, () => {
         options.extensions.assertUsable(binding.extensionId);
-      }),
+      }, binding.providerId),
     });
     this.sessions = this.runtime.sessions;
   }
@@ -126,7 +126,9 @@ export class VoiceService {
     const extension = this.options.extensions.list().find(e => e.manifest.id === 'voice');
     if (!extension?.installed || !extension.enabled || !extension.granted.includes('voice.control')) throw new HttpError(403, 'voice_permission_required');
     await this.refresh(true);
-    const { providerId } = this.options.manager.voiceProvider(input.threadId);
+    const fallback = this.providers.find(p => p.available && p.supported && p.login === 'ready')
+      ?? this.providers.find(p => p.available && p.supported);
+    const { providerId } = this.options.manager.voiceProvider(input.threadId, fallback?.id);
     if (this.providers.find(provider => provider.id === providerId)?.login === 'required') {
       throw new HttpError(409, 'voice_login_required');
     }

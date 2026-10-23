@@ -73,7 +73,7 @@ test('voice is opt-in; stopping voice preserves native approval and work on desk
   const textOnly = await browser.newContext();
   try {
     const { page } = await threadPage(textOnly, '仅文字提供方', 'text-provider');
-    assert.equal(await page.getByRole('button', { name: '开启实时语音', exact: true }).count(), 0);
+    await page.getByRole('button', { name: '开启实时语音', exact: true }).waitFor();
   } finally { await textOnly.close(); }
   for (const mobile of [false, true]) for (const colorScheme of ['light', 'dark']) {
     const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1400, height: 900 },
@@ -110,6 +110,43 @@ test('voice is opt-in; stopping voice preserves native approval and work on desk
       await page.getByText(/approved:accept/, { exact: false }).first().waitFor();
     } finally { await context.close(); }
   }
+});
+
+test('Pi keeps its conversation while a visible Codex member provides voice in all four layouts', { timeout: 120_000 }, async () => {
+  const server = await startDaemon({ RAH_AGENTS_JSON: JSON.stringify({ agents: [
+    { id: 'speaker', adapter: 'codex', label: 'Codex', command: [process.execPath, join(repoRoot, 'daemon/test/fixtures/fake-codex.mjs')],
+      env: { FAKE_CODEX_VOICE_TASK: 'voice-delegate', FAKE_CODEX_VOICE_RELAY: '1' } },
+    { id: 'worker', adapter: 'pi', command: [process.execPath, join(repoRoot, 'daemon/test/fixtures/fake-pi.mjs')] },
+  ] }) });
+  try {
+    assert.equal((await api(server, '/api/extensions/voice/install', { method: 'POST', body: JSON.stringify({ granted: ['voice.control'] }) })).status, 200);
+    for (const mobile of [false, true]) for (const colorScheme of ['light', 'dark']) {
+      const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1400, height: 900 },
+        isMobile: mobile, hasTouch: mobile, colorScheme });
+      try {
+        await mediaFixture(context);
+        const title = `Pi 语音协作 ${mobile} ${colorScheme}`;
+        const { page, thread } = await threadPage(context, title, 'worker', server);
+        await page.getByRole('button', { name: '开启实时语音', exact: true }).click();
+        await page.getByText('实时语音中 · Codex 语音', { exact: true }).waitFor();
+        await page.getByText('已收到成员结果，将继续检查并汇总。', { exact: true }).waitFor();
+        assert.equal((await (await api(server, `/api/threads/${thread.id}`)).json()).agent, 'worker');
+        const team = await (await api(server, `/api/threads/${thread.id}/coordination`)).json();
+        assert.equal(team.members.length, 1); assert.equal(team.members[0].voiceTarget, thread.id);
+        assert.equal(team.messages.length, 2);
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+        const bar = await page.locator('.voice-bar').boundingBox();
+        assert.ok(bar.x >= 0 && bar.x + bar.width <= page.viewportSize().width + 1);
+        if (process.env.RAH_E2E_SHOTS_DIR) {
+          mkdirSync(process.env.RAH_E2E_SHOTS_DIR, { recursive: true });
+          await page.screenshot({ path: join(process.env.RAH_E2E_SHOTS_DIR, `voice-pi-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
+        }
+        await page.locator('.voice-bar').getByRole('button', { name: '结束语音', exact: true }).click();
+        await page.waitForFunction(() => window.voiceTracks.every(t => t.readyState === 'ended'));
+        assert.equal((await (await api(server, `/api/threads/${thread.id}/coordination`)).json()).messages.length, 2);
+      } finally { await context.close(); }
+    }
+  } finally { await server.stop(); }
 });
 
 test('speech streams in the conversation and final Markdown survives ending and reloading', { timeout: 120_000 }, async () => {

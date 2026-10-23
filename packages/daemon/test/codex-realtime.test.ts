@@ -100,6 +100,25 @@ test('start attaches state before the RPC, and only started-plus-SDP means activ
   assert.ok(!JSON.stringify(h.states).includes('SECRET')); // no SDP, session id or credentials in state
 });
 
+test('host-managed handoffs use speakable text and cannot append after voice stops', async () => {
+  const h = setup();
+  h.transport.on('thread/realtime/appendSpeech', () => ({}));
+  const started = h.rt.start({ sdpOffer: 'OFFER', context: { instructions: 'Bound coordination instructions' } });
+  await flush();
+  h.notify('thread/realtime/started'); h.notify('thread/realtime/sdp', { sdp: 'ANSWER' });
+  await started;
+  assert.equal(h.transport.calls[1].params.clientManagedHandoffs, true);
+  await h.rt.speak('The worker returned its result.');
+  assert.deepEqual(h.transport.calls.at(-1), { method: 'thread/realtime/appendSpeech',
+    params: { threadId: THREAD, text: 'The worker returned its result.' } });
+  await assert.rejects(h.rt.speak('x'.repeat(4001)), /Invalid voice summary/);
+  const stop = h.rt.stop(); h.notify('thread/realtime/closed'); await stop;
+  const count = h.transport.calls.length;
+  await assert.rejects(h.rt.speak('Late result'), reason('session_ended'));
+  assert.equal(h.transport.calls.length, count);
+  assert.ok(!h.transport.calls.some(c => c.method === 'turn/start' || c.method === 'turn/interrupt'));
+});
+
 test('canonical transcripts keep roles and separate repeated utterances, without exposing internal items', async () => {
   const h = setup();
   await reachActive(h);

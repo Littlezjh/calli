@@ -941,6 +941,22 @@ export class Store {
     return rows.map(toEvent);
   }
 
+  /** Bounded conversation context for a voice coordinator; never reads tool payloads. */
+  voiceContext(threadId: string): Array<{ role: string; text: string }> {
+    return (this.db.prepare(`SELECT role, substr(text, 1, 2000) AS text FROM turn_text
+      WHERE thread_id = ? ORDER BY ts DESC, rowid DESC LIMIT 6`).all(threadId) as Array<{ role: string; text: string }>).reverse();
+  }
+
+  /** Answer text and its boundaries only; large tool arguments, output and reasoning stay on disk. */
+  voiceAnswerEvents(threadId: string, turnId: string): StoredEvent[] {
+    return (this.db.prepare(`SELECT thread_id, turn_id, seq, type, ts,
+      CASE WHEN type IN ('message.delta', 'message.replace')
+      THEN json_object('text', json_extract(data, '$.text'), 'previous', json_extract(data, '$.previous')) ELSE '{}' END AS data
+      FROM events WHERE thread_id=? AND turn_id=? AND type IN
+      ('message.delta', 'message.replace', 'tool.start', 'reasoning.delta', 'approval.request') ORDER BY seq`)
+      .all(threadId, turnId) as unknown as EventRow[]).map(toEvent);
+  }
+
   /** Every event of one type in a thread, oldest first. There are few of the types this is asked for. */
   listEventsOfType(threadId: string, type: EventType): StoredEvent[] {
     const rows = this.db

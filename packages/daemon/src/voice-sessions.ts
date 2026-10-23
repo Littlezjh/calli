@@ -45,9 +45,16 @@ export type VoiceEvent =
 /** Only resources owned by this voice connection. No turn cancellation or approval API. */
 export interface VoiceTransport {
   start(offer: string, emit: (event: VoiceSignal) => void): Promise<void>;
+  /** Speak a host-selected task summary without submitting another agent turn. */
+  speak?(text: string): Promise<void>;
   stop(): Promise<void>;
   /** Synchronous, unconditional release, including when the native stop request never settles. */
   dispose(): void;
+}
+
+/** Host-owned instructions for native delegation; never supplied by an extension or the browser. */
+export interface VoiceContext {
+  instructions: string;
 }
 
 export interface VoiceSessionsOptions {

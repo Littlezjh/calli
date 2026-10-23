@@ -27,6 +27,8 @@ let billedTokens = 900000;
 let nextServerRequestId = 1000;
 let voiceAfterPrompt = Boolean(process.env.FAKE_CODEX_VOICE_AFTER_PROMPT);
 let activeTurn = null; // { id }
+let voiceInstructions = '';
+let speechSequence = 0;
 // Settings as the adapter sets them: thread/start takes kebab-case sandbox, turn/start camelCase.
 let currentWorkMode = 'default';
 const awaitingInput = new Map();
@@ -351,8 +353,9 @@ const runTurn = (text, turnId, done) => {
 
 const awaitingApproval = new Map(); // request id -> the turn waiting for its decision
 
-const finishTurn = (turnId, status, error = null) =>
+const finishTurn = (turnId, status, error = null) => {
   notify('turn/completed', { turn: { id: turnId, items: [], itemsView: 'notLoaded', status, error, startedAt: 1, completedAt: 2, durationMs: 1 } });
+};
 
 rl.on('line', (line) => {
   const msg = JSON.parse(line);
@@ -406,6 +409,7 @@ rl.on('line', (line) => {
         ? { id: msg.id, error: { code: -32601, message: 'unsupported' } }
         : { id: msg.id, result: { voices: { v1: [], v2: [] } } });
     case 'thread/realtime/start': {
+      voiceInstructions = msg.params.realtimeStartInstructions ?? '';
       out({ id: msg.id, result: {} });
       notify('thread/realtime/started', {});
       notify('thread/realtime/sdp', { sdp: 'fixture-answer' });
@@ -441,7 +445,16 @@ rl.on('line', (line) => {
         notify('turn/started', { turn: { id, status: 'inProgress' } });
         setTimeout(() => {
           if (activeTurn !== id) return;
-          runTurn(process.env.FAKE_CODEX_VOICE_TASK, id, () => {
+          let task = process.env.FAKE_CODEX_VOICE_TASK;
+          if (task === 'voice-delegate') {
+            if (!voiceInstructions.includes('<limi-coordination>')) { say('Missing voice collaboration instructions'); activeTurn = null; finishTurn(id, 'completed'); return; }
+            const target = /limi send ([a-f0-9-]{36}) --message-file/.exec(voiceInstructions)?.[1];
+            const args = target ? ['send', target] : ['spawn', '--agent', process.env.FAKE_CODEX_VOICE_AGENT ?? 'worker', '--name', 'voice-worker'];
+            const command = { args: [...args, '--message-file', '-', '--request-id', 'voice-first'], text: process.env.FAKE_CODEX_VOICE_MESSAGE ?? 'LIMI_ENV' };
+            coordinationFixture(`LIMI_COMMAND:${Buffer.from(JSON.stringify(command)).toString('base64')}`);
+            say('已派发任务，结果会自动返回。'); activeTurn = null; finishTurn(id, 'completed'); return;
+          }
+          runTurn(task, id, () => {
             activeTurn = null;
             finishTurn(id, 'completed');
           });
@@ -454,6 +467,12 @@ rl.on('line', (line) => {
     case 'thread/realtime/stop':
       out({ id: msg.id, result: {} });
       if (!process.env.FAKE_CODEX_VOICE_NO_CLOSE) notify('thread/realtime/closed', {});
+      return;
+    case 'thread/realtime/appendSpeech':
+      out({ id: msg.id, result: {} });
+      if (process.env.FAKE_CODEX_VOICE_RELAY) notify('thread/realtime/item/completed', {
+        item: { type: 'transcriptSegment', id: `speech-${++speechSequence}`, role: 'assistant', text: msg.params.text },
+      });
       return;
 
     case 'thread/settings/update':

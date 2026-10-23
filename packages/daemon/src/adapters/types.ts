@@ -2,7 +2,7 @@ import type { MemoryDocument, MemoryIndex } from '@rah/extension-api';
 import type { ImageInput } from '../attachments.js';
 import type { EmittedEvent } from '../events.js';
 import type { GoalControl } from './native-goal.js';
-import type { VoiceTransport } from '../voice-sessions.js';
+import type { VoiceContext, VoiceTransport } from '../voice-sessions.js';
 
 /** What the user sent in one turn. `text` may be empty when there are images. */
 export interface TurnInput {
@@ -98,7 +98,7 @@ export interface AgentSession {
    * A one-use native voice channel on this session's own connection. Null when the session's
    * process is gone: the caller refuses instead of respawning it silently.
    */
-  voiceTransport?(): VoiceTransport | null;
+  voiceTransport?(context?: VoiceContext): VoiceTransport | null;
   cancel(): Promise<void>;
   close(): Promise<void>;
 }

@@ -37,7 +37,7 @@ export function coordinationFixture(text) {
     if (body.endsWith('TEAM_BUDGET')) return '@dev Loop TEAM_LOOP';
   }
   if (body.endsWith('LIMI_REPORT')) return '文档审查完成。\n\n已检查接口约定、目录分工和异常处理。建议补充重启后的恢复步骤，测试覆盖其余预期行为。';
-  if (body === 'LIMI_ENV') return `limi-ready:${Boolean(process.env.LIMI_SOCKET && process.env.LIMI_KEY)};cwd:${process.cwd()}`;
+  if (body === 'LIMI_ENV' || body.endsWith('\nLIMI_ENV')) return `limi-ready:${Boolean(process.env.LIMI_SOCKET && process.env.LIMI_KEY)};cwd:${process.cwd()}`;
   if (body === 'LIMI_HANDOVER_ENV') {
     const ready = Boolean(process.env.LIMI_HANDOVER_SOCKET && process.env.LIMI_HANDOVER_KEY);
     return `handover-ready:${ready};collaboration:${Boolean(process.env.LIMI_SOCKET && process.env.LIMI_KEY)};${ready ? execFileSync('limi', ['handover'], { encoding: 'utf8' }).trim() : ''}`;

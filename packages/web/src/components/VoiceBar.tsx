@@ -4,12 +4,13 @@ import { t } from '../i18n';
 
 interface Props {
   session: VoiceSessionState;
+  providerLabel?: string;
   onMuteToggle: () => void;
   onStop: () => void;
   onDismissError: () => void;
 }
 
-export function VoiceBar({ session, onMuteToggle, onStop, onDismissError }: Props) {
+export function VoiceBar({ session, providerLabel, onMuteToggle, onStop, onDismissError }: Props) {
   if (!session.active && !session.error) {
     return null;
   }
@@ -26,6 +27,7 @@ export function VoiceBar({ session, onMuteToggle, onStop, onDismissError }: Prop
   } else if (isConnected) {
     statusLabel = session.isMuted ? t('voice.muted') : t('voice.live');
   }
+  if (!isError && providerLabel) statusLabel += ` · ${t('voice.via', providerLabel)}`;
 
   return (
     <div

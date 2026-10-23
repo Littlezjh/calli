@@ -9,6 +9,7 @@ export interface VoiceSessionState {
   readonly status: 'idle' | 'requesting' | 'connecting' | 'connected' | 'error';
   readonly sessionId: string | null;
   readonly threadId: string | null;
+  readonly providerId?: string | null;
   readonly isMuted: boolean;
   readonly transcript: string;
   readonly transcriptFinal: boolean;
@@ -84,6 +85,7 @@ export class VoiceSessionController {
       status: 'idle',
       sessionId: null,
       threadId: null,
+      providerId: null,
       isMuted: false,
       transcript: '',
       transcriptFinal: false,
@@ -93,6 +95,7 @@ export class VoiceSessionController {
   private mapErrorMessage(err: unknown): string {
     const code = (err as any)?.code ?? (err as any)?.status ?? (err as any)?.name ?? '';
     const text = String((err as any)?.message ?? '');
+    if (/voice_target_busy/.test(text)) return t('voice.targetBusy');
     if (code === 'permission-denied' || code === 'NotAllowedError' || /permission/i.test(text)) {
       return t('voice.permissionDenied');
     }
@@ -165,6 +168,7 @@ export class VoiceSessionController {
       active: true,
       status: 'requesting',
       threadId,
+      providerId: null,
       sessionId: null,
       isMuted: false,
       transcript: '',
@@ -219,7 +223,7 @@ export class VoiceSessionController {
     }
 
     const sessionId = snapshot.id;
-    this.updateState({ sessionId });
+    this.updateState({ sessionId, providerId: snapshot.providerId });
 
     // 3. Connect SSE event stream
     this.sseAbort = new AbortController();

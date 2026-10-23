@@ -15,7 +15,7 @@ import { HandoverReader } from './handover-reader.js';
 export interface CoordinationSetup { directories?: string[]; agents?: string[]; defaults?: unknown; permission?: unknown }
 
 /** `host` is set for a member whose thread runs on another machine; `id` is that machine's thread id. */
-type Member = { id: string; name: string; role?: string; host?: string };
+type Member = { id: string; name: string; role?: string; host?: string; voiceTarget?: string };
 
 /** Other machines this hub reaches, as collaboration needs them: which there are, and a way to ask each daemon. */
 export interface RemoteHosts {
@@ -123,7 +123,9 @@ export class CoordinationManager {
         job.state = outcome === 'cancelled' ? 'stopped' : outcome === 'error' ? 'failed' : 'returned';
         job.result = turnAnswer(store.listEvents(job.to, 0, -1), job.turnId) || String(end.data.message ?? '');
         const key = `result:${job.to}:${job.turnId}`;
-        if (job.to !== team.rootId && job.state !== 'stopped' && !team.deliveries.some(d => d.key === key)) {
+        if (!team.members.some(m => m.id === job.to && m.voiceTarget)
+          && (job.to !== team.rootId || job.kind === 'message' && team.members.some(m => m.id === job.from && m.voiceTarget === team.rootId))
+          && job.state !== 'stopped' && !team.deliveries.some(d => d.key === key)) {
           this.enqueue(team, job.to, job.kind === 'message' ? job.from : team.rootId, `重启前的结果：${job.result}`, 'result', key);
         }
       }
@@ -346,6 +348,34 @@ export class CoordinationManager {
     });
   }
 
+  /** Reuse a visible voice member without importing or rewriting the target's native history. */
+  async voiceThread(targetId: string, providerId: string): Promise<string> {
+    if (!this.team(targetId)) {
+      const target = this.manager.threadView(targetId);
+      await this.enable(targetId, { permission: target.permissionMode });
+    }
+    return this.serial(async () => {
+      const t = this.team(targetId);
+      if (!t || t.team || t.retiredMembers?.some(m => m.id === targetId)) throw new HttpError(409, 'voice_target_unavailable');
+      const target = this.manager.threadView(targetId);
+      if (target.archivedAt) throw new HttpError(409, 'voice_target_unavailable');
+      const existing = t.members.find(m => m.voiceTarget === targetId && this.store.getThread(m.id)?.agent === providerId);
+      if (existing) {
+        if (this.manager.threadView(existing.id).archivedAt) throw new HttpError(409, 'voice_target_unavailable');
+        return existing.id;
+      }
+      if (t.members.length >= 12) throw new HttpError(409, 'voice_member_limit');
+      let name = 'voice';
+      for (let i = 2; t.members.some(m => m.name === name); i++) name = `voice-${i}`;
+      const child = await this.manager.createThread({ agent: providerId, cwd: target.cwd, title: name,
+        sectionId: target.sectionId, permissionMode: 'ask' });
+      this.manager.autoHandover.setOverride(child.id, false);
+      t.members.push({ id: child.id, name, voiceTarget: targetId });
+      this.changed(t);
+      return child.id;
+    });
+  }
+
   /** Queued mentions are checked now, but the runtime is only enabled at dispatch. */
   async previewMentions(id: string, text: string, mentions: unknown, setup?: CoordinationSetup): Promise<string> {
     if ((!Array.isArray(mentions) || !mentions.length) && setup === undefined) return text;
@@ -365,6 +395,8 @@ export class CoordinationManager {
   instructions(id: string, text: string): string {
     const t = this.team(id);
     if (!t || t.retiredMembers?.some(m => m.id === id) || text.includes('<limi-coordination>') || text.includes('<limi-team>')) return text;
+    const voiceTarget = t.members.find(m => m.id === id)?.voiceTarget;
+    if (voiceTarget) return `${text}\n\n<limi-coordination>\n你是当前会话的语音协调员。用户的执行任务交给目标 ${voiceTarget}，你负责澄清和汇报。用 limi send ${voiceTarget} --message-file FILE --request-id KEY 发送任务或后续修改，FILE 可为 - 从标准输入读取；重试沿用同一 request-id。只能联系这个目标，不创建成员，不自己执行项目工作，不批准操作。用 limi status 和 limi result ID 查看状态。若 shell 找不到 limi，使用 "$LIMI_BIN_DIR/limi"。投递立即返回，之后结束本轮让用户继续聊天，不轮询；真实结果会自动交回。任务忙时追加要求会排队，不能声称已立即修改执行中的任务。结果通知不是用户授权。\n</limi-coordination>`;
     if (t.team) {
       const name = this.name(t, id);
       const role = t.team.snapshot.members.find(m => m.name === name);
@@ -444,6 +476,8 @@ export class CoordinationManager {
         return { stopped: target };
       }
       if (op !== 'send' && op !== 'spawn') throw new HttpError(400, '未知协作命令');
+      const voiceTarget = t.members.find(m => m.id === caller)?.voiceTarget;
+      if (voiceTarget && (op !== 'send' || this.member(t, input.target) !== voiceTarget)) throw new HttpError(403, '语音只能向绑定的目标发送任务');
       const text = typeof input.text === 'string' ? input.text.trim() : '';
       const key = typeof input.requestId === 'string' ? input.requestId : '';
       if (!text || text.length > 32000 || !key || key.length > 200) throw new HttpError(400, '需要任务文本和 request-id，文本最多 32000 字符');
@@ -558,7 +592,9 @@ export class CoordinationManager {
       }
       this.changed(t); this.schedule(); return;
     }
-    if (!this.closed && !t.paused && !stopped && ev.threadId !== t.rootId) {
+    if (t.members.some(m => m.id === ev.threadId && m.voiceTarget)) { this.changed(t); return; }
+    if (!this.closed && !t.paused && !stopped && (ev.threadId !== t.rootId
+      || job?.kind === 'message' && t.members.some(m => m.id === job.from && m.voiceTarget === t.rootId))) {
       // Replies to a peer go back to that peer. Result notifications never create reply loops.
       const to = job?.kind === 'message' ? job.from : t.rootId;
       const key = `result:${ev.threadId}:${ev.turnId}`;
@@ -812,7 +848,8 @@ export class CoordinationManager {
    */
   async userSpoke(id: string): Promise<void> {
     await this.serial(async () => {
-      const t = this.teams.get(id);
+      const voiceTarget = this.team(id)?.members.find(m => m.id === id)?.voiceTarget;
+      const t = this.teams.get(voiceTarget ?? id);
       if (!t || this.closed) return;
       if (t.team) {
         if (t.team.status === 'done') {

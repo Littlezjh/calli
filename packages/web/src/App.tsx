@@ -575,7 +575,9 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     }
   }, [voiceExtInstalled, voice.state.active, voice]);
   const canVoice = Boolean(voiceExtInstalled && selected && !selected.archivedAt
-    && agents.find(agent => agent.id === selected.agent)?.capabilities.realtimeVoice);
+    && (agents.find(agent => agent.id === selected.agent)?.capabilities.realtimeVoice
+      || agents.find(agent => agent.id === selected.agent)?.capabilities.coordination && !selected.coordination?.team && !selected.coordination?.retired
+        && agents.some(agent => agent.available && agent.capabilities.realtimeVoice)));
 
   // The address follows what the main area shows. Replaced, not pushed: going between the pages and
   // threads is not a trail for the back button to walk.
@@ -2177,6 +2179,8 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         <div className="composer-slot">
         <VoiceBar
           session={voice.state}
+          providerLabel={voice.state.providerId && voice.state.providerId !== selected?.agent
+            ? agentLabel(voice.state.providerId) : undefined}
           onMuteToggle={voice.toggleMute}
           onStop={voice.stop}
           onDismissError={voice.dismissError}

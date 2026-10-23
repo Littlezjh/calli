@@ -168,7 +168,7 @@ async function handle(message) {
         done('success', `answer:${JSON.stringify(answer)};mode:${mode}`); return;
       }
       if (p.content === 'plan-draft') { done('success', `mode:${mode}`); return; }
-      if (p.content?.startsWith('LIMI_')) {
+      if (p.content?.startsWith('LIMI_') || p.content?.startsWith('[协作消息')) {
         const answer = coordinationFixture(p.content);
         if (answer !== null) { done('success', answer); return; }
       }

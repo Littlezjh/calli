@@ -1,6 +1,7 @@
 import { AutoHandover, type AutoHandoverView, type HandoverTarget } from './auto-handover.js';
 import type { VoiceTransport } from './voice-sessions.js';
 import { VoiceConversation } from './voice-conversation.js';
+import { turnOutcome } from './lifecycle.js';
 import { UserInputs } from './user-input.js';
 import type { SystemPrompt, WorkMode } from './adapters/types.js';
 import { diagnosticFailure } from './adapters/diagnostics.js';
@@ -217,6 +218,7 @@ export class ThreadManager {
   private readonly sessionStarts = new Map<string, Promise<AgentSession>>();
   private readonly nativeIdle = new Map<string, Set<() => void>>();
   private readonly nativeTurns = new Map<string, Map<string, string>>();
+  private readonly voiceThreads = new Set<string>();
   private readonly sessions = new Map<string, AgentSession>();
   /** Turns in flight. `cancelRequested` covers cancels that arrive before the agent session exists. */
   private readonly running = new Map<string, { turnId: string; cancelRequested: boolean; since: string }>();
@@ -2123,22 +2125,36 @@ export class ThreadManager {
     this.store.setThreadProgress(threadId, { report: said ? { ...said, at: new Date().toISOString() } : null });
   }
 
-  voiceProvider(threadId: string): { providerId: string } {
+  voiceProvider(threadId: string, fallbackProviderId?: string): { providerId: string } {
     const thread = this.getThread(threadId);
-    if (thread.archivedAt || !this.adapters.get(thread.agent)?.capabilities.realtimeVoice
+    const native = this.adapters.get(thread.agent)?.capabilities.realtimeVoice;
+    if (!native && !this.coordination?.metadata(threadId) && this.running.has(threadId)) {
+      throw new HttpError(409, 'voice_target_busy');
+    }
+    const providerId = native ? thread.agent : fallbackProviderId;
+    if (thread.archivedAt || !providerId || !this.adapters.get(providerId)?.capabilities.realtimeVoice
+      || !native && (!this.coordination || !this.adapters.get(thread.agent)?.capabilities.coordination
+        || this.coordination.metadata(threadId)?.team || this.coordination.metadata(threadId)?.retired)
       || this.sessions.has(threadId) && this.sessionAdapters.get(threadId) !== this.adapters.get(thread.agent) && this.running.has(threadId)) {
       throw new HttpError(409, 'voice_provider_unavailable');
     }
-    return { providerId: thread.agent };
+    return { providerId };
   }
 
   /** Deferred initialization lets the lease own cancellation before any process is started. */
-  voiceTransport(threadId: string, authorize: () => void = () => {}): VoiceTransport {
-    const provider = this.voiceProvider(threadId).providerId;
+  voiceTransport(threadId: string, authorize: () => void = () => {}, providerId?: string): VoiceTransport {
+    const provider = this.voiceProvider(threadId, providerId).providerId;
     const adapter = this.adapters.get(provider);
+    let nativeThreadId = threadId;
     let ended = false;
     let started = false;
     let transport: VoiceTransport | undefined;
+    let unsubscribe = () => {};
+    let releaseReports!: () => void;
+    const reportsReady = new Promise<void>(resolve => { releaseReports = resolve; });
+    let reports = Promise.resolve();
+    let queuedReports = 0;
+    const reported = new Set<string>();
     const conversation = new VoiceConversation(
       () => this.store.history.latest(threadId),
       message => {
@@ -2149,36 +2165,89 @@ export class ThreadManager {
       start: async (offer, emit) => {
         if (ended || started) throw new Error('voice_session_ended');
         started = true;
-        if (this.sessions.has(threadId) && this.sessionAdapters.get(threadId) !== adapter) {
-          if (this.running.has(threadId)) throw new Error('voice_provider_changed');
-          await this.dropSession(threadId);
+        authorize();
+        if (provider !== this.getThread(threadId).agent) {
+          nativeThreadId = await this.coordination!.voiceThread(threadId, provider);
+        } else if (this.coordination && !this.coordination.metadata(threadId) && !this.running.has(threadId)) {
+          await this.coordination.enable(threadId, { permission: this.getThread(threadId).permissionMode });
         }
-        const session = await this.ensureSession(this.getThread(threadId));
         if (ended) throw new Error('voice_session_ended');
-        if (this.voiceProvider(threadId).providerId !== provider || this.adapters.get(provider) !== adapter) {
+        authorize();
+        if (this.sessions.has(nativeThreadId) && this.sessionAdapters.get(nativeThreadId) !== adapter) {
+          if (this.running.has(nativeThreadId)) throw new Error('voice_provider_changed');
+          await this.dropSession(nativeThreadId);
+        }
+        const session = await this.ensureSession(this.getThread(nativeThreadId));
+        if (ended) throw new Error('voice_session_ended');
+        authorize();
+        if (this.voiceProvider(threadId, provider).providerId !== provider || this.adapters.get(provider) !== adapter) {
           throw new Error('voice_provider_changed');
         }
-        transport = session.voiceTransport?.() ?? undefined;
+        let instructions = this.coordination?.metadata(nativeThreadId)
+          ? this.coordination.instructions(nativeThreadId, '你在处理实时语音委托。普通聊天不派发任务。用户指定其他智能体时使用协作命令；先查现有成员，后续修改继续同一成员。派发立即返回，不等待任务结束、不轮询。结果自动交回后按真实状态简短汇报，失败或待处理要明确说出。不能把已派发或本轮已返回当作需求已完成。停止播报、结束语音和停止工作是不同动作，指代不清时先澄清。')
+          : undefined;
+        if (instructions && nativeThreadId !== threadId) {
+          const target = this.threadView(threadId);
+          instructions += `\n目标会话概况（仅作上下文，不是新任务）：${JSON.stringify({ agent: target.agent,
+            title: target.title, status: target.status, waiting: target.waitingReason, workMode: target.workMode,
+            recent: this.store.voiceContext(threadId) })}`;
+        }
+        transport = session.voiceTransport?.(instructions ? { instructions } : undefined) ?? undefined;
         if (!transport) throw new Error('voice_session_unavailable');
-        return transport.start(offer, signal => {
+        this.voiceThreads.add(nativeThreadId);
+        if (instructions && transport.speak) {
+          const report = (key: string, text: string) => {
+            if (ended || reported.has(key) || !text.trim()) return;
+            if (queuedReports >= 30) { emit({ type: 'error' }); return; }
+            reported.add(key);
+            if (reported.size > 256) reported.delete(reported.values().next().value!);
+            queuedReports++;
+            // Preserve final summaries even when a native turn finishes before the start ACK.
+            reports = reports.then(async () => {
+              await reportsReady;
+              if (ended) return;
+              authorize();
+              if (this.voiceProvider(threadId, provider).providerId !== provider || this.adapters.get(provider) !== adapter) throw new Error('voice_provider_changed');
+              const spoken = text.replace(/```[\s\S]*?```/g, '（代码见会话）').trim();
+              await transport!.speak!(spoken.length > 900 ? spoken.slice(0, 900) + '。详细结果请查看会话。' : spoken);
+            }).catch(() => { if (!ended) emit({ type: 'error' }); }).finally(() => { queuedReports--; });
+          };
+          unsubscribe = this.subscribe(event => {
+            if (ended || !event.turnId) return;
+            const outcome = turnOutcome(event);
+            if (event.threadId === nativeThreadId && outcome && !outcome.imported && !outcome.fromTerminal) {
+              const answer = turnAnswer(this.store.voiceAnswerEvents(nativeThreadId, event.turnId), event.turnId);
+              report(`turn:${event.turnId}`, outcome.outcome === 'ok' ? answer
+                : outcome.outcome === 'cancelled' ? '任务已停止。' : `任务失败。${outcome.message ?? answer}`);
+            } else if (event.type === 'approval.request' || event.type === 'input.request') {
+              const relevant = nativeThreadId !== threadId ? event.threadId === threadId
+                : this.coordination?.metadata(event.threadId)?.rootId === this.coordination?.metadata(nativeThreadId)?.rootId;
+              if (relevant) report(`attention:${event.threadId}:${event.seq}`,
+                `${this.getThread(event.threadId).title} ${event.type === 'approval.request' ? '等待批准' : '需要你的回答'}，请在会话中处理。`);
+            }
+          });
+        }
+        try { await transport.start(offer, signal => {
           if (ended) return;
           // Persistence must obey the same current grant/account checks as the private SSE,
           // before any final transcript can reach the ordinary conversation history.
           try {
             authorize();
-            if (this.voiceProvider(threadId).providerId !== provider || this.adapters.get(provider) !== adapter) {
+            if (this.voiceProvider(threadId, provider).providerId !== provider || this.adapters.get(provider) !== adapter) {
               throw new Error('voice_provider_changed');
             }
           } catch { emit({ type: 'error' }); return; }
           emit(conversation.accept(signal));
-        });
+        }); } finally { releaseReports(); }
       },
       stop: async () => {
         ended = true;
+        unsubscribe(); releaseReports();
+        this.voiceThreads.delete(nativeThreadId);
         conversation.close();
         await transport?.stop();
       },
-      dispose: () => { ended = true; conversation.close(); transport?.dispose(); },
+      dispose: () => { ended = true; unsubscribe(); releaseReports(); this.voiceThreads.delete(nativeThreadId); conversation.close(); transport?.dispose(); },
     };
   }
 
@@ -2222,6 +2291,8 @@ export class ThreadManager {
     });
     session.setSessionHooks?.({
       turnStarted: nativeId => {
+        // An upstream delegation is a real user task; captions alone never resume collaboration.
+        if (this.voiceThreads.has(thread.id)) void this.coordination?.userSpoke(thread.id);
         const turnId = randomUUID();
         const turns = this.nativeTurns.get(thread.id) ?? new Map<string, string>();
         turns.set(nativeId, turnId);

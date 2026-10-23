@@ -1,5 +1,5 @@
 import { CodexVoiceTransport, peerTransport } from './codex-realtime.js';
-import type { VoiceTransport } from '../voice-sessions.js';
+import type { VoiceContext, VoiceTransport } from '../voice-sessions.js';
 import type { SessionHooks } from './types.js';
 import { nativeQuestions } from './questions.js';
 import type { WorkMode } from './types.js';
@@ -455,11 +455,11 @@ class CodexSession implements AgentSession {
 
   setSessionHooks(hooks: SessionHooks): void { this.sessionHooks = hooks; }
 
-  voiceTransport(): VoiceTransport | null {
+  voiceTransport(context?: VoiceContext): VoiceTransport | null {
     if (this.peer.isClosed || !this.voiceReusable) return null;
     this.voiceReusable = false;
     this.voiceStarted = false;
-    const transport = new CodexVoiceTransport(this.agentSessionId, peerTransport(this.peer), { closeTimeoutMs: 2000 });
+    const transport = new CodexVoiceTransport(this.agentSessionId, peerTransport(this.peer), { closeTimeoutMs: 2000 }, context);
     this.voice = transport;
     return {
       start: async (offer, emit) => {
@@ -472,6 +472,7 @@ class CodexSession implements AgentSession {
         }
       },
       stop: () => transport.stop(),
+      speak: text => transport.speak(text),
       dispose: () => {
         transport.dispose();
         if (this.voice === transport) {

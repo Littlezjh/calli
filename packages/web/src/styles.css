@@ -10557,7 +10557,8 @@ button.trace-step-head:hover { background: var(--hover); }
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-shrink: 0;
+  flex: 1;
+  min-width: 0;
   font-size: 12px;
   font-weight: 500;
   color: var(--text);
@@ -10584,7 +10585,6 @@ button.trace-step-head:hover { background: var(--hover); }
   background: var(--danger);
 }
 .voice-status-label {
-  max-width: 160px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

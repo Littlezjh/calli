@@ -1,4 +1,5 @@
 import type { JsonRpcPeer } from './jsonrpc.js';
+import type { VoiceContext } from '../voice-sessions.js';
 
 /**
  * Controller for Codex's experimental thread realtime (voice) sessions: protocol v3, audio output,
@@ -31,7 +32,7 @@ import type { JsonRpcPeer } from './jsonrpc.js';
  * - Failures surface as classification tokens only. SDP and transcripts are forwarded to the host
  *   and never stored in state; raw upstream messages and credentials are neither kept nor logged.
  *
- * For chat-while-working: the whole lifecycle speaks exactly three native requests —
+ * For chat-while-working: the connection lifecycle uses three native requests —
  * `account/read`, `thread/realtime/start`, `thread/realtime/stop` — so starting voice waits only
  * for the control handshake, never for background tasks; transcripts are forwarded as signals and
  * never re-prompted (any delegation is the host's separate decision); and stop never touches
@@ -132,6 +133,7 @@ export interface RealtimeOptions {
 export interface RealtimeStartInput {
   /** SDP offer of the browser's RTCPeerConnection, audio track plus realtime events channel. */
   sdpOffer: string;
+  context?: VoiceContext;
 }
 
 /** Carries only the classification token; safe to show, store and log. */
@@ -249,6 +251,10 @@ export class CodexRealtime {
         version: REALTIME_PROFILE.version,
         outputModality: REALTIME_PROFILE.outputModality,
         transport: { type: REALTIME_PROFILE.transport, sdp: input.sdpOffer },
+        ...(input.context ? {
+          realtimeStartInstructions: input.context.instructions,
+          clientManagedHandoffs: true,
+        } : {}),
       });
       if (!current()) return outcome;
       this.update({ phase: 'signaling' });
@@ -262,6 +268,14 @@ export class CodexRealtime {
       }
     }
     return outcome;
+  }
+
+  /** Native speakable text, distinct from quiet context and from a new task prompt. */
+  async speak(text: string): Promise<void> {
+    if (this.ended || !this.startSent || !LIVE_PHASES.includes(this.snapshot.phase)) throw new RealtimeError('session_ended');
+    if (!text.trim() || text.length > 4000) throw new Error('Invalid voice summary');
+    try { await this.rpc('thread/realtime/appendSpeech', { threadId: this.threadId, text }); }
+    catch (error) { throw new RealtimeError(classifyRealtimeError(error)); }
   }
 
   /** Ends the session. Idempotent; independent of turn cancellation. Never rejects. */
@@ -511,7 +525,7 @@ export class CodexVoiceTransport implements RealtimeVoiceTransport {
   private started = false;
   private disposed = false;
 
-  constructor(threadId: string, transport: RealtimeTransport, options?: RealtimeOptions) {
+  constructor(threadId: string, transport: RealtimeTransport, options?: RealtimeOptions, private readonly context?: VoiceContext) {
     this.rt = new CodexRealtime(threadId, transport, {
       onAccepted: () => {
         const pending = this.pending;
@@ -532,7 +546,7 @@ export class CodexVoiceTransport implements RealtimeVoiceTransport {
     this.emit = emit;
     // Failures after the acknowledgement reach the host as `error` signals; only a failure of the
     // start request itself rejects here.
-    this.rt.start({ sdpOffer: offer }).catch(error => {
+    this.rt.start({ sdpOffer: offer, context: this.context }).catch(error => {
       const pending = this.pending;
       this.pending = null;
       pending?.reject(error instanceof RealtimeError ? error : new RealtimeError(classifyRealtimeError(error)));
@@ -545,6 +559,8 @@ export class CodexVoiceTransport implements RealtimeVoiceTransport {
   async stop(): Promise<void> {
     await this.rt.stop();
   }
+
+  speak(text: string): Promise<void> { return this.rt.speak(text); }
 
   dispose(): void {
     if (this.disposed) return;
