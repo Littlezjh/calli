@@ -1,5 +1,6 @@
 import { AutoHandoverNotice, HandoverSettingsDialog } from './components/AutoHandover';
 import { useWorkSources, WorkSummary } from './extensions/work';
+import { HostIcon } from './extensions/ui';
 import { historyPage, mergeHistory, watchHistory } from './history';
 import type { WorkMode } from './api';
 import { HandoverTrail } from './components/HandoverTrail';
@@ -2456,6 +2457,12 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
               : []),
             // The overview reads only this hub's own log, so the demo has one to show too.
             { id: 'activity', label: t('activity.title'), icon: IconActivity, onSelect: openActivity },
+            ...enabledViews(extensions ?? []).filter(v => v.view.sidebar?.pinned === false).map(v => ({
+              id: `ext:${v.extensionId}/${v.view.id}`,
+              label: v.view.title[locale()],
+              icon: (props: { size?: number }) => <HostIcon name={v.view.icon} {...props} />,
+              onSelect: () => openExtensionView(extensionHash(v)),
+            })),
             // The demo can try them too: what it installs lasts as long as the page.
             { id: 'extensions', label: t('extensions.title'), icon: IconPuzzle, onSelect: openExtensions },
             ...(demo

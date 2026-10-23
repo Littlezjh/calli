@@ -27,7 +27,7 @@
         "icon": "sparkle",
         "route": "#/memory",
         "sidebar": {
-          "pinned": true
+          "pinned": false
         }
       }
     ]

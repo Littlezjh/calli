@@ -50,7 +50,7 @@ export interface ViewContribution {
    * (`#/todos`, `#/schedules`, `#/activity`, `#/skills`, `#/mcp`, `#/extensions`).
    */
   route?: `#/${string}`;
-  /** Show an entry in the sidebar next to 计划 and 定时任务. `pinned` is the default; the user can change it. */
+  /** Place the entry in the sidebar when pinned, or in the settings menu when explicitly false. */
   sidebar?: { pinned: boolean };
 }
 
