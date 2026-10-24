@@ -1405,6 +1405,8 @@ export const en: Messages = {
   'view.thought': (time: string) => `Thought · ${time}`,
   'view.succeeded': 'Succeeded',
   'view.detailMore': 'Load more',
+  'view.toolFullOutput': 'Load full output',
+  'view.toolFullOutputUnavailable': 'Full output cannot be read back from this agent\'s session',
   'view.detailFailed': 'Could not load details',
   'view.noDetail': 'The tool returned no details',
   'view.moreLines': (n: number) => `${n} more ${n === 1 ? 'line' : 'lines'} not shown`,

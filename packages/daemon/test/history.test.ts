@@ -163,7 +163,7 @@ test('large work blocks and text details paginate with a stable version; file re
     f.store.transaction(() => {
       for (let i = 0; i < 205; i++) {
         f.add('a', 'tool.start', { id: String(i), title: `tool ${i}` });
-        f.add('a', 'tool.end', { id: String(i), status: 'completed', output: i === 0 ? 'abc'.repeat(50000) : 'small', content: i === 0 ? [{ type: 'diff', path: 'file.ts', oldText: null, newText: 'new' }] : undefined });
+        f.add('a', 'tool.end', { id: String(i), status: 'completed', output: i === 0 ? 'abc'.repeat(40000) : 'small', content: i === 0 ? [{ type: 'diff', path: 'file.ts', oldText: null, newText: 'new' }] : undefined });
       }
     });
     const page = await f.store.history.page('thread');
@@ -182,10 +182,9 @@ test('large work blocks and text details paginate with a stable version; file re
     const id = (first.data.detail as any).id;
     const detail = await f.store.history.detail('thread', 'a', id);
     assert.equal(String(detail.output).length, 65536);
-    const more = await f.store.history.detail('thread', 'a', id, Number(detail.nextCursor), Number(detail.version));
-    assert.equal(String(more.output).length, 65536);
-    const last = await f.store.history.detail('thread', 'a', id, Number(more.nextCursor), Number(detail.version));
-    assert.equal(String(detail.output) + String(more.output) + String(last.output), 'abc'.repeat(50000));
+    const last = await f.store.history.detail('thread', 'a', id, Number(detail.nextCursor), Number(detail.version));
+    assert.equal(String(last.output).length, 120000 - 65536);
+    assert.equal(String(detail.output) + String(last.output), 'abc'.repeat(40000));
     assert.equal(last.nextCursor, null);
     const file = await f.store.history.detail('thread', 'a', id, 0, undefined, 'file.ts');
     assert.equal(file.output, undefined);

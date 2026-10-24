@@ -2,7 +2,7 @@ import { effectiveHandoverMode, type HandoverLink } from './handover-mode.js';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { replaceMessageTail, type EventType, type StoredEvent } from './events.js';
+import { hasDiffParts, replaceMessageTail, toolText, type EventType, type StoredEvent } from './events.js';
 import { McpRegistry } from './mcp.js';
 import { ExtensionStore } from './extensions.js';
 import { Telemetry } from './telemetry.js';
@@ -13,6 +13,11 @@ import type { ProgressReport } from './progress-report.js';
 import { HistoryStore } from './history.js';
 import { ToolJobs } from './tool-jobs.js';
 import { MessageEdits } from './message-edits.js';
+
+/** Storage cap for one tool snapshot's output; see docs/tool-output-storage-design.md. */
+const MAX_OUTPUT_CHARS = 128 * 1024;
+const OUTPUT_HEAD_CHARS = 96 * 1024;
+const OUTPUT_TAIL_CHARS = 32 * 1024;
 
 export interface ThreadRecord {
   id: string;
@@ -339,6 +344,7 @@ export class Store {
       CREATE INDEX IF NOT EXISTS idx_events_conversation_starts ON events(thread_id, seq) WHERE type IN ('turn.started', 'voice.message');
       CREATE INDEX IF NOT EXISTS idx_events_turn_lifecycle ON events(thread_id, seq) WHERE type IN ('turn.started', 'turn.done', 'turn.error');
       CREATE INDEX IF NOT EXISTS idx_events_tool_starts ON events(ts) WHERE type = 'tool.start';
+      DROP INDEX IF EXISTS idx_events_tool_ids;
     `);
     // Migration: add pinned column if it doesn't exist
     try {
@@ -876,11 +882,107 @@ export class Store {
     this.db.prepare('DELETE FROM todo_threads WHERE todo_id = ? AND thread_id = ?').run(todoId, threadId);
   }
 
+  /**
+   * A tool call's output arrives as snapshots, each superseding the last (see
+   * docs/tool-output-storage-design.md). Keeping every snapshot stored one command's output
+   * once per streamed fragment — terabytes over months for megabytes of actual text. The
+   * store keeps one snapshot per call: an incoming update or end replaces the stored snapshot
+   * when it carries every payload field the stored one does. What the live stream receives is
+   * decided elsewhere; this only sizes what replay will read back.
+   */
+  private collapseToolSnapshot(threadId: string, turnId: string | null, type: EventType, data: Record<string, unknown>): Record<string, unknown> {
+    if (type !== 'tool.update' && type !== 'tool.end' || typeof data.id !== 'string') return data;
+    const stored = this.capOutput({ ...data });
+    if (!turnId) return stored;
+    // Tool ids are unique within a turn, not across a thread's turns; supersede within the turn
+    // only, so one call can never erase another turn's record. Payloads are parsed in JS, guarded:
+    // the write path must survive rows whose data was never valid JSON (a pinned guarantee).
+    const rows = this.db.prepare(
+      "SELECT seq, data FROM events WHERE thread_id = ? AND turn_id = ? AND type = 'tool.update' ORDER BY seq DESC",
+    ).all(threadId, turnId) as Array<{ seq: number; data: string }>;
+    let prior: { seq: number; data: Record<string, unknown> } | undefined;
+    for (const row of rows) {
+      try {
+        const parsed = JSON.parse(row.data) as Record<string, unknown>;
+        if (parsed.id === data.id) { prior = { seq: row.seq, data: parsed }; break; }
+      } catch { /* a row with an unreadable payload is never superseded */ }
+    }
+    if (prior) {
+      const before = prior.data;
+      const brings = (ev: Record<string, unknown>) => ({
+        output: typeof ev.output === 'string' && ev.output.length > 0,
+        content: hasDiffParts(ev.content),
+      });
+      const now = brings(stored);
+      const old = brings(before);
+      // A payload field the incoming snapshot does not carry (diffs especially) is only in the
+      // old row; keep the row then. A call alternates fields rarely, so this stays bounded.
+      if (!(!now.output && old.output) && !(!now.content && old.content)) {
+        this.db.prepare('DELETE FROM events WHERE thread_id = ? AND seq = ?').run(threadId, prior.seq);
+        this.db.prepare('DELETE FROM history_rows WHERE thread_id = ? AND seq = ?').run(threadId, prior.seq);
+      }
+    }
+    return stored;
+  }
+
+  /** One-time rewrite of logs written before snapshots were collapsed; see the design doc. */
+  collapseStoredToolOutputs(): void {
+    if (this.hubSetting('toolOutputCollapsed', false)) return;
+    const threads = this.db.prepare('SELECT id FROM threads').all() as Array<{ id: string }>;
+    for (const { id } of threads) {
+      this.transaction(() => {
+        const rows = this.db.prepare(
+          "SELECT seq, turn_id, type, data FROM events WHERE thread_id = ? AND type IN ('tool.update', 'tool.end') ORDER BY seq",
+        ).all(id) as Array<{ seq: number; turn_id: string | null; type: string; data: string }>;
+        // Seq of the stored snapshot per call id, with what payload fields it carries.
+        const kept = new Map<string, { seq: number; output: boolean; content: boolean }>();
+        const drop: number[] = [];
+        for (const row of rows) {
+          let data: Record<string, unknown>;
+          try {
+            data = JSON.parse(row.data) as Record<string, unknown>;
+          } catch { continue; } // a row with an unreadable payload is never superseded
+          if (typeof data.id !== 'string') continue;
+          const key = `${row.turn_id ?? ''}\u0000${data.id}`;
+          const prior = kept.get(key);
+          const now = { output: typeof data.output === 'string' && data.output.length > 0, content: hasDiffParts(data.content) };
+          if (prior && !(!now.output && prior.output) && !(!now.content && prior.content)) drop.push(prior.seq);
+          if (row.type === 'tool.update') kept.set(key, { seq: row.seq, ...now });
+          else kept.delete(key);
+        }
+        for (const seq of drop) {
+          this.db.prepare('DELETE FROM events WHERE thread_id = ? AND seq = ?').run(id, seq);
+          this.db.prepare('DELETE FROM history_rows WHERE thread_id = ? AND seq = ?').run(id, seq);
+        }
+        // Cap what survived, in place: the cap keeps head and tail, so nothing is re-collapsed.
+        for (const { seq } of kept.values()) {
+          const row = this.db.prepare('SELECT data FROM events WHERE thread_id = ? AND seq = ?').get(id, seq) as { data: string } | undefined;
+          if (!row) continue;
+          const data = JSON.parse(row.data) as Record<string, unknown>;
+          const stored = this.capOutput(data);
+          if (stored !== data) this.db.prepare('UPDATE events SET data = ? WHERE thread_id = ? AND seq = ?').run(JSON.stringify(stored), id, seq);
+        }});
+    }
+    this.saveHubSetting('toolOutputCollapsed', true);
+  }
+
+  /** Head and tail of an oversized output, with an honest marker where the middle was. */
+  private capOutput(data: Record<string, unknown>): Record<string, unknown> {
+    if (typeof data.output !== 'string' || data.output.length <= MAX_OUTPUT_CHARS) return data;
+    const omitted = data.output.length - OUTPUT_HEAD_CHARS - OUTPUT_TAIL_CHARS;
+    const stored = { ...data };
+    stored.output = `${data.output.slice(0, OUTPUT_HEAD_CHARS)}\n[truncated, ${omitted} chars omitted]\n${data.output.slice(-OUTPUT_TAIL_CHARS)}`;
+    stored.outputTruncated = true;
+    stored.outputOmitted = omitted;
+    return stored;
+  }
+
   appendEvent(threadId: string, turnId: string | null, type: EventType, data: Record<string, unknown>): StoredEvent {
     // A savepoint also nests inside bulk import transactions. Publish only committed projections.
     this.db.exec('SAVEPOINT history_event');
     try {
       const ts = new Date().toISOString();
+      data = this.collapseToolSnapshot(threadId, turnId, type, data);
       const row = this.db
         .prepare('SELECT MAX(COALESCE((SELECT MAX(seq) FROM events WHERE thread_id=?),0), COALESCE((SELECT last_seq FROM event_sequences WHERE thread_id=?),0)) + 1 AS next')
         .get(threadId, threadId) as { next: number };

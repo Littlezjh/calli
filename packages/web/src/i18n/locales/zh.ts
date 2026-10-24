@@ -1405,6 +1405,8 @@ export const zh = {
   'view.thought': (time: string) => `思考 · ${time}`,
   'view.succeeded': '成功',
   'view.detailMore': '继续加载',
+  'view.toolFullOutput': '加载完整输出',
+  'view.toolFullOutputUnavailable': '此实例不能从会话回读完整输出',
   'view.detailFailed': '详情加载失败',
   'view.noDetail': '工具未返回详细信息',
   'view.moreLines': (n: number) => `还有 ${n} 行没有显示`,

@@ -138,6 +138,19 @@ async function main(): Promise<void> {
     }
   });
 
+  // Logs written before tool snapshots were collapsed keep one row per streamed fragment; the
+  // rewrite is pure deletion and safe beside live turns, but slow on old data, so it runs here,
+  // after the hub is up. File space comes back when scripts/compact-hub-db.sh vacuums.
+  setTimeout(() => {
+    try {
+      const began = Date.now();
+      store.collapseStoredToolOutputs();
+      if (Date.now() - began > 1000) console.log(`tool snapshot collapse finished in ${Math.round((Date.now() - began) / 1000)}s`);
+    } catch (err) {
+      console.warn(`warning: tool snapshot collapse failed: ${err instanceof Error ? err.message : err}`);
+    }
+  }, 3000).unref();
+
   const shutdown = async (signal: string) => {
     console.log(`${signal} received, shutting down`);
     server.close();

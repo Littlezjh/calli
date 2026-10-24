@@ -35,7 +35,7 @@ import { handoverContext, handoverPrompt, synthesizeHandover, turnMessage } from
 import { McpManager } from './mcp.js';
 import { SkillsManager } from './skills.js';
 import { isWithinWorkdirs, Workdirs } from './workdirs.js';
-import { coalesceToolEvents, compactDeltas, type EmittedEvent, type EventType, type StoredEvent } from './events.js';
+import { coalesceToolEvents, compactDeltas, toolText, type EmittedEvent, type EventType, type StoredEvent } from './events.js';
 import type { SearchHit, SectionRecord, Store, ThreadRecord, ThreadWorktree, TodoRecord } from './store.js';
 import { buildTrace, type TurnTrace } from './trace.js';
 import { askedText } from './util.js';
@@ -635,6 +635,40 @@ export class ThreadManager {
     const prompt = await adapter.readSystemPrompt(thread.agentSessionId, thread.cwd);
     if (!prompt) throw new HttpError(404, '会话文件里没有系统提示词');
     return prompt;
+  }
+
+  /**
+   * One tool call's complete output, read from the agent's own session file. The hub stores a
+   * capped snapshot of every tool output (docs/tool-output-storage-design.md); this is how the
+   * page gets past the cap when someone actually wants the whole thing. Reading changes nothing.
+   */
+  async threadToolOutput(threadId: string, turnId: string, detailId: number): Promise<{ output: string }> {
+    const thread = this.getThread(threadId);
+    if (!thread) throw new HttpError(404, 'no such thread');
+    const detail = await this.store.history.detail(threadId, turnId, detailId) as { toolId?: string | null };
+    if (!detail.toolId) throw new HttpError(404, '这个详情不是一次工具调用');
+    const adapter = this.adapters.get(thread.agent);
+    if (!adapter?.capabilities.history || !adapter.loadHistory) {
+      throw new HttpError(400, `${thread.agent} 的会话历史不能从这里读取`);
+    }
+    if (!thread.agentSessionId) throw new HttpError(400, '这个线程还没有会话');
+    const turns = await adapter.loadHistory(thread.agentSessionId, thread.cwd);
+    for (const turn of turns) {
+      for (const ev of turn.events) {
+        if ((ev.type !== 'tool.update' && ev.type !== 'tool.end') || String((ev.data as Record<string, unknown>).id) !== detail.toolId) continue;
+        const data = ev.data as Record<string, unknown>;
+        const text = toolText(data.output, data.content);
+        if (text) return { output: text };
+      }
+    }
+    throw new HttpError(404, 'agent 会话里找不到这个工具的输出');
+  }
+
+  /** Whether one thread's full tool outputs can be read back from its agent session. */
+  canReadToolOutput(threadId: string): boolean {
+    const thread = this.getThread(threadId);
+    const adapter = thread && this.adapters.get(thread.agent);
+    return !!(thread?.agentSessionId && adapter?.capabilities.history && adapter.loadHistory);
   }
 
   agentDiagnostic(agent: string, refresh = false): Promise<unknown> {

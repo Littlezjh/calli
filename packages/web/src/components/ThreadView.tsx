@@ -1272,7 +1272,17 @@ function StepRun({ run, live, roots }: { run: Extract<WorkSection, { kind: 'run'
 
 function StepRow({ step: original, roots }: { step: Step; roots: string[] }) {
   const [open, setOpen] = useState(false);
+  const client = useContext(HistoryContext);
   const resource = useHistoryResource<HistoryDetail>('detail', original.detail, open);
+  const [full, setFull] = useState<{ state: 'idle' | 'loading' | 'loaded'; text?: string; error?: string }>({ state: 'idle' });
+  const loadFullOutput = () => {
+    if (!original.detail || full.state === 'loading') return;
+    setFull({ state: 'loading' });
+    void client?.api.historyToolOutput(client.threadId, original.detail).then(
+      ({ output }) => setFull({ state: 'loaded', text: output }),
+      (err: unknown) => setFull({ state: 'idle', error: err instanceof Error ? err.message : String(err) }),
+    );
+  };
   const step = useMemo(() => {
     if (!original.detail || !resource.value) return original;
     const newer = (original.liveVersion ?? 0) > resource.value.version;
@@ -1280,6 +1290,10 @@ function StepRow({ step: original, roots }: { step: Step; roots: string[] }) {
       output: newer ? original.output || resource.value.output : resource.value.output,
       diffs: newer && original.diffs.length ? original.diffs : diffsOf(resource.value.content) };
   }, [original, resource.value]);
+  // The hub caps what it stores of a long tool output; the whole text is read on demand from the
+  // agent's own session, or the page says so when that session cannot be read.
+  const truncated = !full.text && resource.value?.outputTruncated === true;
+  const shown = full.text ?? step.output;
   // An edit is best shown as its diff; the raw arguments would repeat the same text as JSON.
   const showInput = step.input !== undefined && step.diffs.length === 0 && JSON.stringify(step.input) !== '{}';
   const result = step.status === 'completed' ? t('view.succeeded') : step.status === 'failed' ? t('team.failed') : null;
@@ -1298,8 +1312,12 @@ function StepRow({ step: original, roots }: { step: Step; roots: string[] }) {
             <ResourceStatus resource={resource} />
             {showInput && <pre>{JSON.stringify(step.input, null, 2)}</pre>}
             {step.diffs.length > 0 && <DiffView diffs={step.diffs} />}
-            {step.output && <pre>{step.output}</pre>}
-            <ResourceMore resource={resource} />
+            {truncated && resource.value?.fullAvailable && full.state !== 'loading' && <button className="text-btn history-more" onClick={loadFullOutput}>{t('view.toolFullOutput')}</button>}
+            {truncated && full.state === 'loading' && <div className="history-status" role="status">{t('common.loading')}</div>}
+            {truncated && !resource.value?.fullAvailable && <div className="history-status" role="status">{t('view.toolFullOutputUnavailable')}</div>}
+            {full.error && <div className="history-status" role="status"><span>{full.error}</span><button className="text-btn" onClick={loadFullOutput}>{t('common.retry')}</button></div>}
+            {shown && <pre>{shown}</pre>}
+            {!full.text && <ResourceMore resource={resource} />}
             {!hasContent && (!original.detail || resource.value) && !resource.loading && !resource.error && <div className="step-detail-empty">{t('view.noDetail')}</div>}
           </div>
           {result && <div className="step-result">{result}</div>}

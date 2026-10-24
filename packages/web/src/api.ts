@@ -878,6 +878,10 @@ export class Api {
     return this.request('GET', `/api/threads/${id}/history/detail?turn=${encodeURIComponent(ref.turnId)}&id=${ref.id}${cursor ? `&cursor=${cursor}&version=${ref.version}` : ''}${path === undefined ? '' : `&path=${encodeURIComponent(path)}`}`);
   }
 
+  historyToolOutput(id: string, ref: DetailRef): Promise<{ output: string }> {
+    return this.request('GET', `/api/threads/${id}/history/tool-output?turn=${encodeURIComponent(ref.turnId)}&id=${ref.id}`);
+  }
+
   /** A thread's whole log, with streamed fragments merged: for copying the conversation out. */
   allEvents(id: string): Promise<StoredEvent[]> {
     return this.request('GET', `/api/threads/${id}/events?all=1`);

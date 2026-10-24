@@ -532,6 +532,9 @@ export class HistoryStore {
     const output = read(d.output_seq);
     const text = toolText(output.output, output.content);
     const next = offset + 65536;
-    return { version: d.version, input: offset ? undefined : read(d.input_seq).input, output: text.slice(offset, next), content: offset ? undefined : read(d.diff_seq).content, nextCursor: next < text.length ? next : null };
+    return { version: d.version, toolId: d.tool_id,
+      outputTruncated: output.outputTruncated === true,
+      outputOmitted: typeof output.outputOmitted === 'number' ? output.outputOmitted : undefined,
+      input: offset ? undefined : read(d.input_seq).input, output: text.slice(offset, next), content: offset ? undefined : read(d.diff_seq).content, nextCursor: next < text.length ? next : null };
   }
 }

@@ -1403,6 +1403,8 @@ export const ja: Messages = {
   'view.thought': (time: string) => `思考 · ${time}`,
   'view.succeeded': '成功',
   'view.detailMore': 'さらに読み込む',
+  'view.toolFullOutput': '完全な出力を読み込む',
+  'view.toolFullOutputUnavailable': 'このエージェントのセッションから完全な出力は読み込めません',
   'view.detailFailed': '詳細を読み込めませんでした',
   'view.noDetail': 'ツールから詳細は返されませんでした',
   'view.moreLines': (n: number) => `表示していない行があと ${n} 行あります`,

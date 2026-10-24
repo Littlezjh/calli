@@ -918,7 +918,12 @@ export function createHttpServer(deps: HttpDeps): Server {
         const version = positive(url.searchParams.get('version'), true);
         if (cursor !== undefined && version === undefined) throw new HttpError(400, 'version is required to continue');
         if (parts[4] === 'work') return sendJson(res, 200, await history.work(threadId, turn, id, cursor, version, url.searchParams.get('chain') === '1'));
-        if (parts[4] === 'detail') return sendJson(res, 200, await history.detail(threadId, turn, id, cursor, version, url.searchParams.get('path') ?? undefined));
+        if (parts[4] === 'detail') {
+          const detail = await history.detail(threadId, turn, id, cursor, version, url.searchParams.get('path') ?? undefined) as Record<string, unknown>;
+          detail.fullAvailable = manager.canReadToolOutput(threadId);
+          return sendJson(res, 200, detail);
+        }
+        if (parts[4] === 'tool-output') return sendJson(res, 200, await manager.threadToolOutput(threadId, turn, id));
         throw new HttpError(404, 'history resource not found');
       }
 

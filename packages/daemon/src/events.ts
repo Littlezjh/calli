@@ -95,7 +95,7 @@ export function compactDeltas(events: StoredEvent[]): StoredEvent[] {
  * merged event leaves the timeline in exactly the state the whole run would. If the web's reading
  * changes (src/timeline.ts, applyToolData), this must change with it. */
 
-function hasDiffParts(content: unknown): boolean {
+export function hasDiffParts(content: unknown): boolean {
   return Array.isArray(content) && content.some((part) => (part as { type?: unknown } | null)?.type === 'diff');
 }
 

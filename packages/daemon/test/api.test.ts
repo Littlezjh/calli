@@ -2464,7 +2464,11 @@ test('history pages limit short turns too, and paging back preserves every event
   const tools = complete.filter(e => e.type === 'tool.end');
   assert.equal(tools.length, 8);
   assert.ok(tools.every(e => e.data.output.startsWith('snapshot 29\n') && e.data.status === 'completed'));
-  assert.equal(store.listEventsOfType(thread.id, 'tool.update').length, 240, 'stored history is unchanged');
+  // Snapshots collapse at write time: one stored update per call, the newest (see
+  // docs/tool-output-storage-design.md); the merged replay above reads the same text.
+  const storedUpdates = store.listEventsOfType(thread.id, 'tool.update');
+  assert.equal(storedUpdates.length, 8, 'one stored snapshot per call');
+  assert.ok(storedUpdates.every(e => String(e.data.output).startsWith('snapshot 29\n')));
 });
 
 test('SSE stream replays everything after the cursor, however long, before going live', async () => {
