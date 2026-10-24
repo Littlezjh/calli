@@ -35,6 +35,18 @@ export interface TextFile {
   text: string | null;
   /** Only the start of a long file is in `text`. */
   truncated: boolean;
+  /** SHA-256 of the whole file, sent back when saving; null for a binary or truncated file. Missing from older daemons. */
+  hash?: string | null;
+  /** A writing-mode body (a `.md` under the thread's `writing/`) that the page may save. */
+  editable?: boolean;
+}
+
+/** The steps of writing mode, in order: first draft, second, third, figures, polish. */
+export type WritingStage = 'draft' | 'second' | 'third' | 'figures' | 'polish';
+/** `file`: the body, relative to the thread's directory; null until the agent has written one. */
+export interface WritingState {
+  stage: WritingStage;
+  file: string | null;
 }
 
 export interface WorkdirsConfig {
@@ -164,6 +176,8 @@ export interface Thread {
   status: 'idle' | 'running' | 'error';
   pinned: boolean;
   workMode?: WorkMode;
+  /** Writing mode and its stage; null when off. Missing from older daemons. */
+  writing?: WritingState | null;
   speed?: string | null;
   permissionMode: string;
   model: string | null;
@@ -1037,6 +1051,24 @@ export class Api {
   /** A text file in the thread's directory. A binary one comes back with `text: null`. */
   threadText(threadId: string, path: string): Promise<TextFile> {
     return this.request('GET', `/api/threads/${threadId}/text?path=${encodeURIComponent(path)}`);
+  }
+
+  /** Starts writing mode, or moves it to another stage. */
+  setWriting(threadId: string, stage: WritingStage): Promise<Thread> {
+    return this.request('PUT', `/api/threads/${threadId}/writing`, { stage });
+  }
+
+  /** Ends writing mode; the body stays where it is. */
+  endWriting(threadId: string): Promise<Thread> {
+    return this.request('DELETE', `/api/threads/${threadId}/writing`);
+  }
+
+  /**
+   * Saves a writing-mode body. Refused with 409 (`details.hash`: what is on disk now) when the file
+   * changed since `baseHash` was read.
+   */
+  saveWritingText(threadId: string, path: string, text: string, baseHash: string): Promise<{ hash: string }> {
+    return this.request('PUT', `/api/threads/${threadId}/writing/text?path=${encodeURIComponent(path)}`, { text, baseHash });
   }
 
   /** Files in the thread's directory whose path has every word of the query, relative to `root`. */

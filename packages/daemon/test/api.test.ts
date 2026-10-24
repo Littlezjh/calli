@@ -18,6 +18,7 @@ import { AttachmentStore, sniffImageType, sniffSvg } from '../src/attachments.js
 import { createHttpServer, tokenMatches } from '../src/http.js';
 import { Store } from '../src/store.js';
 import { matchTurns, ThreadManager } from '../src/threads.js';
+import { contentHash } from '../src/writing.js';
 import { Workdirs } from '../src/workdirs.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -1921,7 +1922,7 @@ test('browse: folders and text files in the thread directory can be read, and no
     assert.equal(src.entries[1].size, 22);
 
     const a2 = (await (await text(join(dir, 'src', 'a2.ts'))).json()) as { root: string; path: string; text: string | null; truncated: boolean; size: number };
-    assert.deepEqual(a2, { root: real, path: join(real, 'src', 'a2.ts'), size: 22, text: 'export const two = 2;\n', truncated: false });
+    assert.deepEqual(a2, { root: real, path: join(real, 'src', 'a2.ts'), size: 22, text: 'export const two = 2;\n', truncated: false, hash: contentHash('export const two = 2;\n'), editable: false });
     const blob = (await (await text('blob.bin')).json()) as typeof a2;
     assert.equal(blob.text, null, 'a binary file has no text');
     const big = (await (await text('big.txt')).json()) as typeof a2;
