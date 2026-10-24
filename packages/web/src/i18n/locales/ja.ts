@@ -1264,10 +1264,6 @@ export const ja: Messages = {
   'composer.queueMax': (n: number) => `キューは ${n} 件までです`,
   'composer.goalNow': '目標の操作をすぐに実行',
   'composer.afterTurn': 'このターンの終了後に送信',
-  'composer.goalMessage': '達成したい結果を書いてください。エージェントが完了まで作業を続けます。',
-  'composer.starting': '開始中…',
-  'composer.start': '実行を開始',
-  'composer.goalPlaceholder': '例：ログインの不具合を直し、回帰テストを追加して通ることを確認する',
 
   // Thread actions
   'actions.forkEmpty': 'まだフォークできる会話がありません。先にメッセージを送ってください',

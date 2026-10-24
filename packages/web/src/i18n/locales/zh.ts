@@ -1266,10 +1266,6 @@ export const zh = {
   'composer.queueMax': (n: number) => `最多排 ${n} 条`,
   'composer.goalNow': '立即执行目标操作',
   'composer.afterTurn': '这一轮结束后发送',
-  'composer.goalMessage': '描述要完成的结果，智能体会持续执行。',
-  'composer.starting': '正在启动…',
-  'composer.start': '开始执行',
-  'composer.goalPlaceholder': '例如：修复登录问题，补齐回归测试并验证通过',
 
   // Thread actions
   'actions.forkEmpty': '还没有对话可以分叉，先发一条消息',

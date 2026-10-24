@@ -11,7 +11,6 @@ import { withNotes, type Note } from '../timeline';
 import { Popover } from './Popover';
 import { ComposerMenu, GOAL_LABELS, type GoalAction, type GoalCapability } from './ComposerMenu';
 import { GoalCard } from './GoalCard';
-import { Dialog } from './Dialog';
 import { Lightbox } from './Lightbox';
 import { VideoPreview } from './VideoPreview';
 import { isVideo, MAX_VIDEOS, prepareVideo, VIDEO_ACCEPT, type PreparedVideo } from '../videos';
@@ -236,8 +235,6 @@ export function Composer({
   const [notes, setNotes] = useState<DraftNote[]>([]);
   const [busy, setBusy] = useState(false);
   const [menuBusy, setMenuBusy] = useState(false);
-  const [goalDialog, setGoalDialog] = useState(false);
-  const [goalText, setGoalText] = useState('');
   /** The send has been going for a while: a picture uploading over a slow line, an agent waking up. */
   const [slow, setSlow] = useState(false);
   const [images, setImages] = useState<PreparedImage[]>([]);
@@ -261,7 +258,6 @@ export function Composer({
   const searchRef = useRef<HTMLInputElement>(null);
   const isTouch = useIsTouch();
 
-  useEffect(() => { setGoalDialog(false); setGoalText(''); }, [draftKey]);
   useEffect(() => { setAddOpen(false); }, [draftKey, narrow]);
   useEffect(() => {
     if (!addOpen) return;
@@ -291,14 +287,24 @@ export function Composer({
     try {
       // Menu controls are independent of the unsent draft and its attachments.
       await onSend(command, []);
-      setGoalDialog(false);
     } catch (error) {
       onError(error instanceof Error ? error.message : String(error));
     } finally { setMenuBusy(false); }
   };
+  // Starting a goal works like Codex: the command lands in the box, the objective is typed
+  // right after it and sent as an ordinary message. No form of the composer's own.
   const chooseGoal = (action: GoalAction) => {
-    if (action === 'set') { setGoalText(''); setGoalDialog(true); }
-    else void runMenuCommand(action === 'show' ? '/goal' : `/goal ${action}`);
+    if (action === 'set') {
+      setText(current => /^\s*\/goal\b/.test(current) ? current : `/goal ${current}`);
+      requestAnimationFrame(() => {
+        const el = ref.current;
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
+      });
+      return;
+    }
+    void runMenuCommand(action === 'show' ? '/goal' : `/goal ${action}`);
   };
 
   const rows = useMemo(() => {
@@ -1026,11 +1032,6 @@ export function Composer({
           </div>
         </div>
       </div>
-      {goalDialog && <Dialog title={t('goal.set')} message={t('composer.goalMessage')} confirmLabel={menuBusy ? t('composer.starting') : t('composer.start')}
-        confirmDisabled={menuBusy || busy || disabled || running || planMode?.active || !goalText.trim() || /^(pause|resume|clear)$/.test(goalText.trim())}
-        onCancel={() => { if (!menuBusy) setGoalDialog(false); }} onConfirm={() => void runMenuCommand(`/goal ${goalText.trim()}`)}>
-        <label className="dialog-field"><span>{t('composer.goal')}</span><textarea autoFocus className="goal-objective" aria-label={t('composer.goal')} placeholder={t('composer.goalPlaceholder')} rows={4} value={goalText} disabled={menuBusy} onChange={e => setGoalText(e.target.value)} /></label>
-      </Dialog>}
       {videoPreview && <VideoPreview url={videoPreview.previewUrl} name={videoPreview.name} onClose={() => setVideoPreview(null)} />}
       {preview && <Lightbox url={preview.previewUrl} name={preview.name} onClose={() => setPreview(null)} />}
     </div>
