@@ -41,10 +41,24 @@ export function ComposerMenu({ commands, planMode, goal, running, attachTitle, a
       <span className="pop-item-text"><span className="pop-item-label">{t('composerMenu.planMode')}</span></span>
       {planMode.active && <span className="pop-item-check"><IconCheck size={16} /></span>}
     </button>}
-    {goal && <button type="button" role="menuitem" className="pop-item" onClick={() => setPage('goal')}>
-      <span className="pop-item-icon"><IconTarget size={19} /></span>
-      <span className="pop-item-text"><span className="pop-item-label">{t('composerMenu.goalMode')}</span></span><IconChevron size={14} />
-    </button>}
+    {goal && (goal.live ? (
+      // Where the goal card can follow the goal, starting one is the only menu entry; the card
+      // owns pause/resume/clear. One tap, like plan mode.
+      (() => {
+        const blocked = running ? t('composerMenu.afterTurn') : planMode?.active ? t('composerMenu.planFirst') : null;
+        return <button type="button" role="menuitem" className="pop-item" disabled={!!blocked}
+          title={blocked ?? t('composer.goalSetHint')}
+          onClick={() => pick(() => onGoal('set'))}>
+          <span className="pop-item-icon"><IconTarget size={19} /></span>
+          <span className="pop-item-text"><span className="pop-item-label">{t('goal.set')}</span>{blocked && <small className="pop-item-hint">{blocked}</small>}</span>
+        </button>;
+      })()
+    ) : (
+      <button type="button" role="menuitem" className="pop-item" onClick={() => setPage('goal')}>
+        <span className="pop-item-icon"><IconTarget size={19} /></span>
+        <span className="pop-item-text"><span className="pop-item-label">{t('composerMenu.goalMode')}</span></span><IconChevron size={14} />
+      </button>
+    ))}
     <div className="pop-divider" />
     <button type="button" role="menuitem" className="pop-item" onClick={() => pick(() => onBrowse('actions'))}>
       <span className="pop-item-icon"><IconBolt size={19} /></span><span className="pop-item-text"><span className="pop-item-label">{t('composerMenu.actions')}</span></span><IconChevron size={14} />
