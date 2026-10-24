@@ -1722,13 +1722,13 @@ html.list-open body {
 .writing-file { display: inline-flex; align-items: center; gap: 6px; min-width: 0; flex: 1; justify-content: flex-end; height: 28px; padding: 0 6px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--muted); font-size: 13px; }
 button.writing-file:hover { color: var(--text); }
 button.writing-file:hover .writing-file-name { text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--border-strong); }
-.writing-file.empty { color: var(--faint); }
+.writing-file.absent { color: var(--faint); }
 .writing-file-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .writing-end { flex: none; height: 28px; padding: 0 10px; border: 0; border-radius: var(--radius-pill); background: none; color: var(--muted); font-size: 13px; }
 .writing-end:hover:not(:disabled) { background: var(--hover); color: var(--text); }
 .writing-bar.compact { gap: 8px; padding: 4px 5px 4px 12px; }
 .writing-bar.compact .writing-file { justify-content: flex-start; padding: 0; gap: 0; font-size: 14px; color: var(--text); }
-.writing-bar.compact .writing-file.empty { color: var(--faint); }
+.writing-bar.compact .writing-file.absent { color: var(--faint); }
 .writing-bar.compact .writing-label::after { content: '·'; padding: 0 6px; color: var(--faint); font-weight: 400; }
 .writing-bar.compact .pop { flex: none; }
 .writing-stage-pick { display: inline-flex; align-items: center; gap: 4px; height: 30px; padding: 0 10px 0 12px; border: 0; border-radius: var(--radius-pill); background: var(--accent); color: var(--accent-fg); font-size: 13.5px; font-weight: 600; }
