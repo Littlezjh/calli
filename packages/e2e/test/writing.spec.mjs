@@ -223,6 +223,19 @@ test('writing mode on a phone: folded bar, stage picker, full-screen editor', { 
       const shot = async (name) => shots && page.screenshot({ path: join(shots, `${prefix}-${name}-phone-${colorScheme}.png`), animations: 'disabled' });
       const title = `写作 手机 ${colorScheme}`;
       const cwd = join(daemon.workdir, `phone-${colorScheme}`);
+      // A new thread, before any article exists: the bar stays one line, not a tall blank card.
+      await openUi(page, daemon);
+      await page.goto(daemon.base + '/#/new');
+      await page.getByRole('button', { name: '添加与模式', exact: true }).click();
+      await page.getByRole('menuitemcheckbox', { name: /^写作模式/ }).click();
+      const fresh = page.locator('.writing-bar.compact');
+      await fresh.waitFor();
+      assert.ok((await fresh.boundingBox()).height < 60, `the bar on a new thread is ${(await fresh.boundingBox()).height}px tall`);
+      await shot('new');
+      await page.getByRole('button', { name: '添加与模式', exact: true }).click();
+      await page.getByRole('menuitemcheckbox', { name: /^写作模式/ }).click();
+      await fresh.waitFor({ state: 'detached' });
+
       const { thread, file } = await setup(title, cwd);
       await select(page, title, true);
 

@@ -23,7 +23,7 @@ export function WritingBar({ writing, busy, onStage, onEnd, onOpen }: Props) {
   const name = writing.file ? bodyName(writing.file) : null;
   const body = writing.file && name
     ? <button type="button" className="writing-file" title={writing.file} aria-label={t('writing.openBody', name)} onClick={() => onOpen(writing.file!)}>{narrow && <span className="writing-label">{t('writing.label')}</span>}<span className="writing-file-name">{name}</span></button>
-    : <span className="writing-file empty">{narrow && <span className="writing-label">{t('writing.label')}</span>}<span className="writing-file-name">{t('writing.noBody')}</span></span>;
+    : <span className="writing-file absent">{narrow && <span className="writing-label">{t('writing.label')}</span>}<span className="writing-file-name">{t('writing.noBody')}</span></span>;
 
   if (narrow) return (
     <div className="writing-bar compact" role="group" aria-label={t('writing.mode')}>
