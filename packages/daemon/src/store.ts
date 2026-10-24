@@ -10,6 +10,7 @@ import { Activity } from './activity.js';
 import { askedText } from './util.js';
 import { referencesFile } from './artifacts.js';
 import type { ProgressReport } from './progress-report.js';
+import type { WritingState } from './writing.js';
 import { HistoryStore } from './history.js';
 import { ToolJobs } from './tool-jobs.js';
 import { MessageEdits } from './message-edits.js';
@@ -55,6 +56,8 @@ export interface ThreadRecord {
   doneAt: string | null;
   /** The agent's `[进度]` line from its last turn that was asked for one. */
   report: ProgressReport | null;
+  /** Writing mode: the stage and the article. Null when the thread is not in writing mode. */
+  writing: WritingState | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -228,6 +231,7 @@ interface ThreadRow {
   schedule: string | null;
   done_at: string | null;
   report: string | null;
+  writing: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -266,6 +270,7 @@ const toThread = (r: ThreadRow): ThreadRecord => ({
   schedule: r.schedule ? (JSON.parse(r.schedule) as ThreadRecord['schedule']) : null,
   doneAt: r.done_at ?? null,
   report: r.report ? (JSON.parse(r.report) as ProgressReport) : null,
+  writing: r.writing ? (JSON.parse(r.writing) as WritingState) : null,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
 });
@@ -371,6 +376,8 @@ export class Store {
     // Migration: the board's done mark and the agent's progress line, as JSON.
     if (!cols.some((c) => c.name === 'done_at')) this.db.exec('ALTER TABLE threads ADD COLUMN done_at TEXT');
     if (!cols.some((c) => c.name === 'report')) this.db.exec('ALTER TABLE threads ADD COLUMN report TEXT');
+    // Migration: writing mode's stage and article, as JSON.
+    if (!cols.some((c) => c.name === 'writing')) this.db.exec('ALTER TABLE threads ADD COLUMN writing TEXT');
     // Migration: forks.
     if (!cols.some((c) => c.name === 'handover')) this.db.exec('ALTER TABLE threads ADD COLUMN handover TEXT');
     if (!cols.some((c) => c.name === 'forked_from')) this.db.exec('ALTER TABLE threads ADD COLUMN forked_from TEXT');
@@ -614,6 +621,7 @@ export class Store {
       | 'status'
       | 'doneAt'
       | 'report'
+      | 'writing'
       | 'createdAt'
       | 'updatedAt'
       | 'agentSessionId'
@@ -1033,6 +1041,11 @@ export class Store {
   setThreadProgress(id: string, patch: { doneAt?: string | null; report?: ProgressReport | null }): void {
     if (patch.doneAt !== undefined) this.db.prepare('UPDATE threads SET done_at = ? WHERE id = ?').run(patch.doneAt, id);
     if (patch.report !== undefined) this.db.prepare('UPDATE threads SET report = ? WHERE id = ?').run(patch.report ? JSON.stringify(patch.report) : null, id);
+  }
+
+  /** Writing mode's state; like the board's, it does not change the thread's place in "recent". */
+  setThreadWriting(id: string, writing: WritingState | null): void {
+    this.db.prepare('UPDATE threads SET writing = ? WHERE id = ?').run(writing ? JSON.stringify(writing) : null, id);
   }
 
   /** The events of one turn, oldest first. */

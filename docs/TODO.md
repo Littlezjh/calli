@@ -423,3 +423,11 @@
 - [ ] 只显示浏览器的面板（CDP screencast + 地址栏），手机上比整块桌面好用（参考 Orca 的 streamed 模式）
 - [ ] 「需要你接管」：验证码、二次验证、付款确认由 agent 发起请求 → 手机通知 → 打开桌面处理 → 交还，agent 继续
 - [ ] 线程里显示「agent 正在操作桌面」入口，关键步骤留截图
+
+## 21. 写作模式
+
+人口述观点，agent 采访、记录、补充，一稿一稿写成文章；正文是 `writing/` 下的 Markdown，人可以当纯文本直接改。设计见 [写作流程设计](writing-design.md)，草图 [design/writing-mode.html](design/writing-mode.html)。
+
+- [~] **P2** 第一版：加号菜单「写作模式」一点就开；初稿、二稿、三稿、配图、润色五个阶段，每个阶段的做法由 hub 附在消息后（`<limi-writing>`，斜杠命令不附）；每轮结束找出 `writing/` 下最新的 `.md` 作为正文。文件面板里 `writing/` 下的 `.md` 可以编辑，保存带 `baseHash`，被 agent 改过就 409 不覆盖，下一轮告诉 agent 先重读；Markdown 预览画 Mermaid、显示相对路径图片。*daemon 已做：`daemon/src/writing.ts`、`PUT/DELETE /api/threads/:id/writing`、`PUT …/writing/text`、`text` 返回 `hash`/`editable`；`test/writing.test.ts` 覆盖各阶段说明、斜杠命令、正文跟随、保存撞车、提醒一次、越权路径（含符号链接）与超限。web：加号菜单与桌面命令面板入口、`WritingBar` 阶段条（手机收成阶段名加 Popover）、文件面板纸面编辑（本机草稿、离开确认、409 提示条：载入新版本 / 仍然覆盖）、Mermaid 预览与放大、相对路径图片；`web/test/writing.test.ts`，E2E `writing.spec.mjs` 桌面与手机通过。无头 Chromium 桌面 1400×900、手机 390×844 亮暗都看过，真机未看；agent 改正文时打开着的面板不会自己刷新，保存时才发现*
+- [ ] **P2** 文件面板里选中正文加注释，写作模式下多一排快捷标签（删、待补、为什么、举个例子、留、改成…）
+- [ ] **P3** 每一稿留快照，方便对比

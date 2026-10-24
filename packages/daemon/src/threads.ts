@@ -7,6 +7,7 @@ import type { SystemPrompt, WorkMode } from './adapters/types.js';
 import { diagnosticFailure } from './adapters/diagnostics.js';
 import { turnAnswer, type CoordinationManager, type CoordinationSetup } from './coordination.js';
 import { parseProgress, progressInstructions } from './progress-report.js';
+import { contentHash, isEditableArticle, isWritingStage, newestArticle, saveArticle, writingInstructions, type WritingState } from './writing.js';
 import { randomUUID } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
@@ -844,12 +845,56 @@ export class ThreadManager {
     return { real, rel: real === root ? '' : real.slice(root.length + 1) };
   }
 
-  readThreadText(threadId: string, rawPath: unknown): { root: string; path: string } & TextFile {
+  readThreadText(threadId: string, rawPath: unknown): { root: string; path: string; hash: string | null; editable: boolean } & TextFile {
     const notFound = new HttpError(404, 'no such file in this thread');
     if (typeof rawPath !== 'string' || !rawPath) throw new HttpError(400, 'path is required');
     const { real, root } = this.resolveReadableFile(threadId, rawPath, notFound);
     if (!statSync(real).isFile()) throw notFound;
-    return { root, path: real, ...readText(real) };
+    const file = readText(real);
+    // A whole text file gets a hash, so an edit can tell whether the file moved on under it.
+    const whole = file.text !== null && !file.truncated;
+    const hash = whole ? contentHash(readFileSync(real)) : null;
+    return { root, path: real, ...file, hash, editable: whole && isEditableArticle(real, this.threadView(threadId).cwdReal) };
+  }
+
+  /** Starts writing mode, or moves it to another stage. Takes effect from the next message. */
+  setWriting(threadId: string, stage: unknown): ThreadView {
+    if (!isWritingStage(stage)) throw new HttpError(400, 'stage must be one of draft, second, third, figures, polish');
+    const thread = this.getThread(threadId);
+    const writing: WritingState = thread.writing
+      ? { ...thread.writing, stage }
+      : { stage, file: newestArticle(this.threadView(threadId).cwdReal) };
+    this.store.setThreadWriting(threadId, writing);
+    this.emitThreadEvent(threadId, null, 'thread.updated', {});
+    return this.threadView(threadId);
+  }
+
+  /** Ends writing mode. The article stays where it is. */
+  endWriting(threadId: string): ThreadView {
+    this.getThread(threadId);
+    this.store.setThreadWriting(threadId, null);
+    this.emitThreadEvent(threadId, null, 'thread.updated', {});
+    return this.threadView(threadId);
+  }
+
+  /**
+   * The person's own edit of an article: only a `.md` under `writing/` in the thread's directory,
+   * and only over the version they opened. The agent hears about it with its next message.
+   */
+  saveWritingText(threadId: string, rawPath: unknown, text: unknown, baseHash: unknown): { hash: string } {
+    const notFound = new HttpError(404, 'no such file in this thread');
+    if (typeof rawPath !== 'string' || !rawPath) throw new HttpError(400, 'path is required');
+    const { real } = this.resolveInThread(threadId, rawPath, notFound);
+    if (!statSync(real).isFile()) throw notFound;
+    const cwdReal = this.threadView(threadId).cwdReal;
+    if (!isEditableArticle(real, cwdReal)) throw new HttpError(403, 'only Markdown files under writing/ can be edited');
+    const saved = saveArticle(real, text, baseHash);
+    const writing = this.getThread(threadId).writing;
+    if (writing) {
+      this.store.setThreadWriting(threadId, { ...writing, file: real.slice(cwdReal.length + 1).split(sep).join('/'), edited: true });
+      this.emitThreadEvent(threadId, null, 'thread.updated', {});
+    }
+    return saved;
   }
 
   /**
@@ -1801,8 +1846,11 @@ export class ThreadManager {
     const coordinated = slashCommand ? rawText : rawText ? (this.coordination?.instructions(input.handoverFrom ?? threadId, rawText) ?? rawText) : '';
     const discoverable = slashCommand || !rawText ? coordinated : (this.borrowing?.instructions(threadId, coordinated) ?? coordinated);
     // With the board's consent, the agent is asked to say where the work stands; read back at the end.
+    // Writing mode's way of working for its stage; an edit the person made is mentioned once.
+    const writing = !slashCommand && rawText ? thread.writing : null;
+    const written = writing ? writingInstructions(discoverable, writing) : discoverable;
     const askProgress = !slashCommand && Boolean(rawText) && this.progressWanted();
-    const text = askProgress ? progressInstructions(discoverable) : discoverable;
+    const text = askProgress ? progressInstructions(written) : written;
 
     if (rawImages.length > 0) {
       const adapter = this.adapters.get(thread.agent);
@@ -1823,6 +1871,10 @@ export class ThreadManager {
         delivery?.claim();
         // New work reopens a thread the person had marked done.
         if (thread.doneAt && !slashCommand) this.store.setThreadProgress(threadId, { doneAt: null });
+        if (writing?.edited) {
+          const now = this.store.getThread(threadId)?.writing;
+          if (now) this.store.setThreadWriting(threadId, { stage: now.stage, file: now.file });
+        }
         this.running.set(threadId, { turnId, cancelRequested: false, since: new Date().toISOString() });
         this.store.updateThread(threadId, { status: 'running', workMode: thread.workMode ?? 'execute', hubTurnAt: new Date().toISOString() }, { touch: true });
         if (thread.title === 'New thread') {
@@ -2161,6 +2213,12 @@ export class ThreadManager {
       }
       // The thread may have been deleted while its last turn was winding down.
       if (this.store.getThread(thread.id)) {
+        const writing = this.store.getThread(thread.id)!.writing;
+        if (writing) {
+          // The agent may have named or started the article this turn.
+          const file = newestArticle(this.threadView(thread.id).cwdReal);
+          if (file !== writing.file) this.store.setThreadWriting(thread.id, { ...writing, file });
+        }
         this.store.updateThread(thread.id, { status: finalStatus, ...(unread ? { unread: true } : {}) }, { touch: true });
         this.emitThreadEvent(thread.id, null, 'thread.updated', {});
         // A goal may have ended with the turn without a notification the hub understood.

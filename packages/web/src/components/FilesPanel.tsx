@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Children, isValidElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Api, FolderEntry, FolderListing, TextFile } from '../api';
@@ -6,7 +6,11 @@ import { copyText } from '../clipboard';
 import { crumbsOf, escapeHtml, foldersTo, languageOf, parentDir, resolveRelative, sizeLabel, splitHighlighted } from '../files';
 import { pictureUrl, saveAs } from '../images';
 import { IMAGE_FILE, VIDEO_FILE } from '../paths';
-import { IconChevron, IconClose, IconCopy, IconDownload, IconFile, IconFolder, IconSearch, IconSidebar, IconWrap } from './icons';
+import { enlargeMermaidDiagram, renderMermaidDiagram } from '../mermaid';
+import { conflictHash, readBodyDraft, relativePicture, writeBodyDraft } from '../writing';
+import { Dialog } from './Dialog';
+import { Lightbox } from './Lightbox';
+import { IconChevron, IconClose, IconCopy, IconDownload, IconEdit, IconFile, IconFolder, IconSearch, IconSidebar, IconWrap } from './icons';
 import { t } from '../i18n';
 
 /** What the panel is asked to show: a file (at a line), or with no path, the thread's folder. */
@@ -34,6 +38,18 @@ type Shown =
   | { state: 'picture'; file: TextFile; url: string }
   | { state: 'video'; file: TextFile; url: string }
   | { state: 'error'; path: string; message: string };
+
+/**
+ * A writing-mode body open as plain text. `baseHash` is the file the text started from; `conflict`
+ * is what is on disk instead, once a save found the file changed.
+ */
+interface Editing {
+  text: string;
+  baseHash: string;
+  saving: boolean;
+  conflict: string | null;
+  error: string | null;
+}
 
 const WIDTH_KEY = 'rah.files.width';
 const WRAP_KEY = 'rah.files.wrap';
@@ -72,7 +88,12 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
   // On a phone: the file, or the folder being looked through.
   const [phoneFolder, setPhoneFolder] = useState<string | null>(target.path ? null : '');
   const [copied, setCopied] = useState(false);
+  const [editing, setEditing] = useState<Editing | null>(null);
+  const [confirmLeave, setConfirmLeave] = useState(false);
   const picture = useRef<string | null>(null);
+  /** Writes the unsaved text now, instead of when typing pauses. */
+  const pendingDraft = useRef<(() => void) | null>(null);
+  useEffect(() => () => pendingDraft.current?.(), []);
 
   // On a phone the page is a step in the browser's history: the back gesture closes it, not the hub.
   const closeRef = useRef(onClose);
@@ -134,6 +155,8 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
     async (path: string, at?: number, preloaded?: TextFile) => {
       setLine(at);
       setSource(false);
+      pendingDraft.current?.();
+      setEditing(null);
       setPhoneFolder(null);
       setShown({ state: 'loading', path });
       try {
@@ -162,6 +185,9 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
           }
         }
         setShown({ state: 'text', file });
+        // Words left unsaved here before, kept on this device: back in the editor, as they were.
+        const draft = file.editable ? readBodyDraft(localStorage, threadId, file.path) : null;
+        if (draft) setEditing({ text: draft.text, baseHash: draft.baseHash, saving: false, conflict: null, error: null });
       } catch {
         setShown({ state: 'error', path, message: t('files.notFound') });
       }
@@ -255,6 +281,85 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
+  const textFile = shown?.state === 'text' ? shown.file : null;
+  const canEdit = !!textFile?.editable && typeof textFile.hash === 'string' && textFile.text !== null;
+  const dirty = !!editing && !!textFile && (editing.text !== textFile.text || editing.baseHash !== textFile.hash);
+
+  // Unsaved text is kept on this device a moment after typing stops, and whenever the page or the
+  // file goes away.
+  useEffect(() => {
+    if (!editing || !textFile) return;
+    const path = textFile.path;
+    const keep = dirty ? { text: editing.text, baseHash: editing.baseHash } : null;
+    const flush = () => {
+      pendingDraft.current = null;
+      writeBodyDraft(localStorage, threadId, path, keep);
+    };
+    pendingDraft.current = flush;
+    const timer = setTimeout(flush, 400);
+    window.addEventListener('pagehide', flush);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('pagehide', flush);
+    };
+  }, [editing?.text, editing?.baseHash, dirty, textFile, threadId]);
+
+  const save = async (baseHash = editing?.baseHash) => {
+    if (!editing || !textFile || baseHash === undefined || editing.saving) return;
+    const text = editing.text;
+    setEditing((e) => e && { ...e, saving: true, error: null });
+    try {
+      const { hash } = await api.saveWritingText(threadId, textFile.path, text, baseHash);
+      setShown((s) => (s?.state === 'text' && s.file.path === textFile.path ? { state: 'text', file: { ...s.file, text, hash, size: new Blob([text]).size } } : s));
+      setEditing((e) => e && { ...e, baseHash: hash, saving: false, conflict: null });
+      writeBodyDraft(localStorage, threadId, textFile.path, null);
+    } catch (error) {
+      const onDisk = conflictHash(error);
+      setEditing((e) => e && { ...e, saving: false, conflict: onDisk, error: onDisk ? null : error instanceof Error ? error.message : String(error) });
+    }
+  };
+
+  // The version on disk replaces what was typed; the banner above said to copy it first.
+  const loadLatest = async () => {
+    if (!textFile) return;
+    try {
+      const file = await api.threadText(threadId, textFile.path);
+      writeBodyDraft(localStorage, threadId, textFile.path, null);
+      setShown({ state: 'text', file });
+      setEditing(file.editable && typeof file.hash === 'string' && file.text !== null ? { text: file.text, baseHash: file.hash, saving: false, conflict: null, error: null } : null);
+    } catch (error) {
+      setEditing((e) => e && { ...e, error: error instanceof Error ? error.message : String(error) });
+    }
+  };
+
+  const startEditing = () => {
+    if (!canEdit || !textFile) return;
+    setSource(false);
+    setEditing({ text: textFile.text ?? '', baseHash: textFile.hash!, saving: false, conflict: null, error: null });
+  };
+  const stopEditing = (discard = false) => {
+    if (dirty && !discard) return setConfirmLeave(true);
+    if (textFile) writeBodyDraft(localStorage, threadId, textFile.path, null);
+    pendingDraft.current = null;
+    setConfirmLeave(false);
+    setEditing(null);
+  };
+
+  // Ctrl/Cmd+S saves wherever the focus is while the body is open for editing.
+  const saveRef = useRef(save);
+  saveRef.current = save;
+  useEffect(() => {
+    if (!editing) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        void saveRef.current();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [!!editing]);
+
   const crumbs = root ? crumbsOf(root, phone && phoneFolder !== null ? phoneFolder || root : (filePath ?? root)) : [];
   const markdown = shown?.state === 'text' && shown.file.text !== null && languageOf(shown.file.path) === 'markdown';
   const svg = shown?.state === 'picture' && /\.svg$/i.test(shown.file.path);
@@ -328,7 +433,59 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
     );
   };
 
-  const viewer = (
+  const editor = editing && textFile && (
+    <div className="files-viewer files-editing">
+      {editing.conflict && (
+        <div className="writing-conflict" role="alert">
+          <span className="writing-conflict-text">{t('writing.conflict')}</span>
+          <span className="writing-conflict-actions">
+            <button type="button" className="btn-secondary" disabled={editing.saving} onClick={() => void loadLatest()}>{t('writing.loadLatest')}</button>
+            <button type="button" className="btn-secondary" disabled={editing.saving} onClick={() => void save(editing.conflict!)}>{t('writing.overwrite')}</button>
+          </span>
+        </div>
+      )}
+      {editing.error && <div className="writing-conflict" role="alert"><span className="writing-conflict-text">{t('writing.saveFailed', editing.error)}</span></div>}
+      <textarea
+        className="writing-editor"
+        aria-label={t('writing.body')}
+        value={editing.text}
+        autoFocus={!phone}
+        spellCheck={false}
+        onChange={(e) => {
+          const text = e.target.value;
+          setEditing((v) => v && { ...v, text });
+        }}
+        onKeyDown={(e: KeyboardEvent<HTMLTextAreaElement>) => {
+          // A tab is a character in the text, not a jump out of the page.
+          if (e.key === 'Tab' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+            e.preventDefault();
+            const el = e.currentTarget;
+            const { selectionStart: a, selectionEnd: b } = el;
+            const text = `${el.value.slice(0, a)}\t${el.value.slice(b)}`;
+            setEditing((v) => v && { ...v, text });
+            requestAnimationFrame(() => el.setSelectionRange(a + 1, a + 1));
+          }
+        }}
+      />
+    </div>
+  );
+
+  const editActions = editing && (
+    <>
+      {dirty && <span className="writing-unsaved"><span className="writing-unsaved-dot" aria-hidden="true" />{t('writing.unsaved')}</span>}
+      <button type="button" className="files-text-btn" onClick={() => stopEditing()}>{dirty ? t('writing.cancel') : t('writing.done')}</button>
+      <button type="button" className="files-text-btn primary-btn" title={t('writing.saveHint')} disabled={editing.saving || (!dirty && !editing.conflict)} onClick={() => void save()}>
+        {editing.saving ? t('writing.saving') : t('writing.save')}
+      </button>
+    </>
+  );
+
+  const leaveDialog = confirmLeave && (
+    <Dialog title={t('writing.discardTitle')} message={t('writing.discardMessage')} confirmLabel={t('writing.discard')} danger
+      onCancel={() => setConfirmLeave(false)} onConfirm={() => stopEditing(true)} />
+  );
+
+  const viewer = editor || (
     <div className="files-viewer">
       {!shown && (
         <div className="files-empty">
@@ -371,7 +528,17 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
                   </a>
                 );
               },
-              img: ({ src, alt }) => (src && /^https?:/i.test(src) ? <img src={src} alt={alt ?? ''} loading="lazy" /> : null),
+              img: ({ src, alt }) => {
+                if (src && /^https?:/i.test(src)) return <img src={src} alt={alt ?? ''} loading="lazy" />;
+                const path = relativePicture(shown.file.path, src);
+                return path ? <FilePicture api={api} threadId={threadId} path={path} alt={alt ?? ''} onOpen={() => void openFile(path)} /> : null;
+              },
+              pre: ({ children }) => {
+                const code = Children.toArray(children).find((c) => isValidElement<{ className?: string; children?: ReactNode }>(c));
+                const props = isValidElement<{ className?: string; children?: ReactNode }>(code) ? code.props : null;
+                if (props && /\blanguage-mermaid\b/.test(props.className ?? '')) return <MermaidDiagram code={String(props.children ?? '').replace(/\n$/, '')} />;
+                return <pre>{children}</pre>;
+              },
             }}
           >
             {shown.file.text}
@@ -383,14 +550,20 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
     </div>
   );
 
-  const fileActions = filePath && (
+  const fileActions = filePath && (editActions || (
     <>
+      {canEdit && (
+        <button type="button" className="files-text-btn" title={t('writing.editHint')} onClick={startEditing}>
+          {!phone && <IconEdit size={14} />}
+          <span>{t('writing.edit')}</span>
+        </button>
+      )}
       {(markdown || svg) && (
         <button type="button" className={`icon-btn files-toggle${source ? ' on' : ''}`} aria-pressed={source} title={source ? t('files.showRendered') : t('files.showSource')} onClick={() => setSource((v) => !v)}>
           <span className="files-toggle-text">{source ? t('files.preview') : t('files.source')}</span>
         </button>
       )}
-      {(shown?.state === 'text' || source) && (
+      {((shown?.state === 'text' && (!markdown || source)) || (svg && source)) && (
         <button
           type="button"
           className={`icon-btn${wrap ? ' on' : ''}`}
@@ -410,7 +583,7 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
       </button>
       <DownloadButton api={api} threadId={threadId} path={filePath} label={t('files.download')} icon />
     </>
-  );
+  ));
 
   if (phone) {
     const inFolder = phoneFolder !== null;
@@ -422,8 +595,8 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
           <button
             type="button"
             className="icon-btn"
-            aria-label={inFolder && shown ? t('files.backToFile') : t('common.close')}
-            onClick={() => (inFolder && shown ? setPhoneFolder(null) : close())}
+            aria-label={inFolder && shown ? t('files.backToFile') : editing ? t('writing.done') : t('common.close')}
+            onClick={() => (inFolder && shown ? setPhoneFolder(null) : editing ? stopEditing() : close())}
           >
             <span className="files-back">
               <IconChevron size={18} />
@@ -443,7 +616,7 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
             )}
           </div>
           {!inFolder && fileActions}
-          {!inFolder && (
+          {!inFolder && !editing && (
             <button type="button" className="icon-btn" aria-label={t('files.browse')} title={t('files.browse')} onClick={() => showFolder(filePath && root && filePath.startsWith(`${root}/`) ? parentDir(filePath) : (root ?? ''))}>
               <IconFolder size={17} />
             </button>
@@ -457,6 +630,7 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
         ) : (
           viewer
         )}
+        {leaveDialog}
       </div>
     );
   }
@@ -513,6 +687,7 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
           </div>
         )}
       </div>
+      {leaveDialog}
     </aside>
   );
 }
@@ -626,4 +801,79 @@ function chunks<T>(list: T[]): T[][] {
 /** An SVG's own text, for when the drawing is not what is wanted. */
 function SvgSource({ file, wrap }: { file: TextFile; wrap: boolean }) {
   return file.text === null ? <div className="files-empty">{t('files.noSource')}</div> : <Code file={file} wrap={wrap} />;
+}
+
+/** A ```mermaid block in a Markdown file, drawn; the code stands in until then, or if it cannot be parsed. */
+function MermaidDiagram({ code }: { code: string }) {
+  const [diagram, setDiagram] = useState<string | null>(null);
+  const [enlarged, setEnlarged] = useState(false);
+  const large = useMemo(() => (enlarged && diagram ? enlargeMermaidDiagram(diagram) : null), [enlarged, diagram]);
+  const closeLarge = useCallback(() => setEnlarged(false), []);
+  useEffect(() => {
+    let alive = true;
+    const draw = () => void renderMermaidDiagram(code).then((svg) => alive && setDiagram(svg)).catch(() => undefined);
+    draw();
+    // Redrawn with the look when it changes while the file is on screen.
+    const observer = new MutationObserver(draw);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-palette'] });
+    return () => {
+      alive = false;
+      observer.disconnect();
+    };
+  }, [code]);
+  if (diagram === null) return <pre><code className="language-mermaid">{code}</code></pre>;
+  return (
+    <>
+      <div
+        className="files-diagram"
+        role="button"
+        tabIndex={0}
+        aria-label={t('view.enlarge')}
+        title={t('view.enlarge')}
+        onClick={(event) => {
+          if (window.getSelection()?.isCollapsed === false || (event.target as Element).closest('a')) return;
+          setEnlarged(true);
+        }}
+        onKeyDown={(event) => {
+          if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return;
+          event.preventDefault();
+          setEnlarged(true);
+        }}
+        dangerouslySetInnerHTML={{ __html: diagram }}
+      />
+      {large && <Lightbox svg={large} onClose={closeLarge} />}
+    </>
+  );
+}
+
+/** A picture a Markdown file names by a relative path, fetched through the thread's image route. */
+function FilePicture({ api, threadId, path, alt, onOpen }: { api: Api; threadId: string; path: string; alt: string; onOpen: () => void }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    let made: string | null = null;
+    setUrl(null);
+    setFailed(false);
+    api
+      .threadFile(threadId, path)
+      .then(pictureUrl)
+      .then((u) => {
+        made = u;
+        if (alive) setUrl(u);
+        else if (u.startsWith('blob:')) URL.revokeObjectURL(u);
+      })
+      .catch(() => alive && setFailed(true));
+    return () => {
+      alive = false;
+      if (made?.startsWith('blob:')) URL.revokeObjectURL(made);
+    };
+  }, [api, threadId, path]);
+  if (failed) return <span className="files-picture-missing" title={path}>{alt || path.split('/').pop()}</span>;
+  if (!url) return <span className="files-picture-loading" aria-label={alt} />;
+  return (
+    <button type="button" className="files-inline-picture" title={path} onClick={onOpen}>
+      <img src={url} alt={alt} />
+    </button>
+  );
 }

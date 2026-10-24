@@ -173,6 +173,13 @@ export const IconEdit = (p: { size?: number }) => (
     <path d="M4 20h4L19 9l-4-4L4 16zM14 6l4 4" />
   </Svg>
 );
+/** A pen nib: writing mode. */
+export const IconPen = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M12 19l7-7 3 3-7 7zM18 13l-1.5-7.5L2 2l3.5 14.5L13 18zM2 2l7.6 7.6" />
+    <circle cx="11" cy="11" r="2" />
+  </Svg>
+);
 export const IconFolder = (p: { size?: number }) => (
   <Svg {...p}>
     <path d="M3 6h6l2 2h10v11H3z" />

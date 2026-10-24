@@ -9,7 +9,7 @@ import { mentionAt } from '../mentions';
 import { MAX_IMAGES, prepareImage, restoreImage, type PreparedImage } from '../images';
 import { withNotes, type Note } from '../timeline';
 import { Popover } from './Popover';
-import { ComposerMenu, GOAL_LABELS, type GoalAction, type GoalCapability } from './ComposerMenu';
+import { ComposerMenu, GOAL_LABELS, type GoalAction, type GoalCapability, type WritingMode } from './ComposerMenu';
 import { GoalCard } from './GoalCard';
 import { Lightbox } from './Lightbox';
 import { VideoPreview } from './VideoPreview';
@@ -29,6 +29,7 @@ import {
   IconInfo,
   IconList,
   IconPaperclip,
+  IconPen,
   IconPlay,
   IconPin,
   IconPlus,
@@ -131,6 +132,10 @@ interface Props {
   header: ReactNode;
   /** Native planning is offered in the add menu only when the agent supports it. */
   planMode?: { active: boolean; disabled: boolean; onChange: (active: boolean) => void };
+  /** Writing mode, offered next to plan mode. */
+  writingMode?: WritingMode;
+  /** A band above the input, such as writing mode's stages. */
+  banner?: ReactNode;
   /** Controls at the left of the bottom bar, after the add menu. */
   left: ReactNode;
   /** Controls at the right of the bottom bar, before the send button. */
@@ -197,6 +202,8 @@ export function Composer({
   onStop,
   header,
   planMode,
+  writingMode,
+  banner,
   left,
   right,
   composerActions,
@@ -316,6 +323,7 @@ export function Composer({
     }
     const additions: HubAction[] = [{ id: 'composer:attach', label: t('composerMenu.attach'), hint: '', keywords: ['attach', 'image', 'video', '附件'] }];
     if (planMode) additions.push({ id: 'composer:plan', label: t('composerMenu.planMode'), hint: planMode.disabled ? t('composer.planAfterTurn') : planMode.active ? t('composer.planActive') : t('composerMenu.planOn'), keywords: ['plan', '计划'], disabled: planMode.disabled });
+    if (writingMode) additions.push({ id: 'composer:writing', label: t('writing.mode'), hint: writingMode.active ? t('writing.off') : t('writing.modeHint'), keywords: ['writing', 'write', '写作', '文章'], disabled: writingMode.disabled });
     // Where the goal card can follow the goal, the card owns pause/resume/clear and the menu
     // keeps only the form that starts one. Agents without that (Claude) keep the text commands.
     const goalActions: GoalAction[] = goal?.live ? ['set'] : (goal?.actions ?? (goal ? ['set', ...goal.controls] : []));
@@ -330,7 +338,7 @@ export function Composer({
       ...searchCommands(query, actions, commands, hiddenCommands),
       ...(!narrow ? group(t('composer.goal'), goals.filter(a => !a.id.endsWith(':set'))) : []),
     ];
-  }, [addOpen, addQuery, catalog, text, narrow, actions, commands, hiddenCommands, planMode, goal, running]);
+  }, [addOpen, addQuery, catalog, text, narrow, actions, commands, hiddenCommands, planMode, writingMode, goal, running]);
   const selectable = useMemo(() => rows.filter((r): r is Selectable => r.type !== 'heading' && !(r.type === 'action' && r.action.disabled)), [rows]);
   const menuOpen = addOpen || (rows.length > 0 && !dismissed);
 
@@ -550,6 +558,7 @@ export function Composer({
       const id = row.action.id;
       if (id === 'composer:attach') fileRef.current?.click();
       else if (id === 'composer:plan') planMode?.onChange(!planMode.active);
+      else if (id === 'composer:writing') writingMode?.onChange(!writingMode.active);
       else if (id.startsWith('composer:goal:')) chooseGoal(id.slice('composer:goal:'.length) as GoalAction);
       else onAction(id);
     } else {
@@ -738,14 +747,16 @@ export function Composer({
               const selected = index >= 0 && row === (selectable[active] ?? selectable[0]);
               const isAction = row.type === 'action';
               const plan = isAction && row.action.id === 'composer:plan';
-              const Icon = isAction ? row.action.id === 'composer:attach' ? IconPaperclip : plan ? IconList : row.action.id.startsWith('composer:goal:') ? IconTarget : (ACTION_ICONS[row.action.id] ?? IconSlash) : row.command.kind === 'skill' ? IconSparkle : IconSlash;
+              const writing = isAction && row.action.id === 'composer:writing';
+              const checked = plan ? planMode?.active : writing ? writingMode?.active : undefined;
+              const Icon = isAction ? row.action.id === 'composer:attach' ? IconPaperclip : plan ? IconList : writing ? IconPen : row.action.id.startsWith('composer:goal:') ? IconTarget : (ACTION_ICONS[row.action.id] ?? IconSlash) : row.command.kind === 'skill' ? IconSparkle : IconSlash;
               return (
                 <button
                   key={isAction ? `a-${row.action.id}` : `c-${row.command.name}`}
                   type="button"
                   role="option"
                   aria-selected={selected}
-                  aria-checked={plan ? planMode?.active : undefined}
+                  aria-checked={checked}
                   disabled={isAction && row.action.disabled}
                   data-active={selected}
                   className={`command-item${selected ? ' active' : ''}`}
@@ -771,7 +782,7 @@ export function Composer({
                       <span className="command-desc">{row.command.description}</span>
                     </>
                   )}</span>
-                  {plan && planMode?.active && <span className="command-check"><IconCheck size={16} /></span>}
+                  {checked && <span className="command-check"><IconCheck size={16} /></span>}
                 </button>
               );
             })}
@@ -781,6 +792,7 @@ export function Composer({
           </div>
         )}
 
+        {banner}
         {goalState && goal?.live && <GoalCard goal={goalState} running={running} actions={goal.actions} controls={goal.controls} onAction={chooseGoal} />}
         <div
           className={`composer-box${dragOver ? ' drag-over' : ''}${collapsed ? ' collapsed' : ''}`}
@@ -984,7 +996,7 @@ export function Composer({
               trigger={<IconPlus size={20} />}
               disabled={disabled || menuBusy || busy}
             >
-              {close => <ComposerMenu close={close} commands={commands} planMode={planMode} goal={goal} running={running}
+              {close => <ComposerMenu close={close} commands={commands} planMode={planMode} writingMode={writingMode} goal={goal} running={running}
                 attachDisabled={Boolean(attachmentsBlocked)}
                 attachTitle={attachBlocked ? t('composer.attachBlocked', attachBlocked) : attachNote ?? t('composer.attachHint')}
                 onAttach={() => fileRef.current?.click()} onGoal={chooseGoal} onBrowse={browse} />}

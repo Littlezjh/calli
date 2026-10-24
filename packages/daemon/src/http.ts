@@ -1112,6 +1112,18 @@ export function createHttpServer(deps: HttpDeps): Server {
         return sendJson(res, 200, manager.readThreadText(threadId, url.searchParams.get('path')));
       }
 
+      // PUT /api/threads/:id/writing {stage}: start writing mode or change its stage; DELETE ends it
+      if (sub === 'writing' && !parts[4]) {
+        if (method === 'PUT') return sendJson(res, 200, manager.setWriting(threadId, (await readJson(req)).stage));
+        if (method === 'DELETE') return sendJson(res, 200, manager.endWriting(threadId));
+      }
+
+      // PUT /api/threads/:id/writing/text?path= {text, baseHash}: the person's own edit of an article
+      if (method === 'PUT' && sub === 'writing' && parts[4] === 'text' && !parts[5]) {
+        const body = await readJson(req, 4 * MAX_BODY);
+        return sendJson(res, 200, manager.saveWritingText(threadId, url.searchParams.get('path'), body.text, body.baseHash));
+      }
+
       // GET /api/threads/:id/preview-link?path=: where the preview of this file lives, plus the
       // short-lived cookie that opens it. The iframe loads from the preview port and the cookie
       // rides along on every request the page makes under its own path, signature or not.

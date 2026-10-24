@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Limi 写作模式 · 界面草图</title>
+  <style>
+    /* Tokens copied from packages/web/src/styles.css (paper), so the sketch opens on its own. */
+    :root {
+      --bg: #f8f6f1; --sidebar: #f1efe9; --surface: #ffffff; --surface-2: #fbfaf7;
+      --text: #1f1e1c; --muted: #827f77; --faint: #a9a69e; --border: #e5e2da; --border-strong: #d6d2c8;
+      --hover: rgba(31, 30, 28, 0.045); --active: rgba(31, 30, 28, 0.08);
+      --accent: #1f1e1c; --accent-fg: #ffffff; --positive: #2f7d5b; --positive-bg: #e6f3eb;
+      --user-bg: #eceae4; --code-bg: #efede7; --warn: #c2410c; --danger: #b42318; --danger-bg: #fdecea;
+      --shadow-pop: 0 14px 40px rgba(31, 30, 28, 0.14), 0 2px 6px rgba(31, 30, 28, 0.06);
+      --shadow-card: 0 1px 2px rgba(31, 30, 28, 0.04), 0 6px 20px rgba(31, 30, 28, 0.05);
+      --radius-pill: 999px; --radius-sm: 8px; --radius: 12px; --radius-lg: 18px; --radius-xl: 30px;
+      --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Noto Sans CJK SC', 'Microsoft YaHei', sans-serif;
+      --serif: 'Songti SC', 'Noto Serif CJK SC', 'Source Han Serif SC', Georgia, serif;
+      --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    [data-theme='dark'] {
+      --bg: #1c1b19; --sidebar: #171614; --surface: #252421; --surface-2: #211f1d;
+      --text: #ecebe7; --muted: #9a978f; --faint: #6d6a63; --border: #34322e; --border-strong: #45423d;
+      --hover: rgba(255, 255, 255, 0.05); --active: rgba(255, 255, 255, 0.09);
+      --accent: #ecebe7; --accent-fg: #1c1b19; --positive: #5cb88d; --positive-bg: #1f3329;
+      --user-bg: #2e2c29; --code-bg: #2a2825; --warn: #f0894e; --danger: #f07167; --danger-bg: #3a2220;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: var(--text); background: var(--bg); font-family: var(--font); font-size: 14px; }
+    button { font: inherit; cursor: pointer; color: inherit; border: 0; background: none; }
+    [hidden] { display: none !important; }
+
+    /* Sketch chrome */
+    .bar { position: sticky; top: 0; z-index: 50; display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
+      padding: 12px 24px; background: var(--bg); border-bottom: 1px solid var(--border); }
+    .bar h1 { font-size: 15px; font-weight: 650; margin: 0 8px 0 0; }
+    .seg { display: inline-flex; padding: 3px; border-radius: var(--radius-pill); background: var(--sidebar); border: 1px solid var(--border); }
+    .seg button { padding: 6px 12px; border-radius: var(--radius-pill); font-size: 12.5px; color: var(--muted); }
+    .seg button[aria-pressed='true'] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-card); font-weight: 600; }
+    .note { max-width: 1320px; margin: 18px auto 0; padding: 0 24px; color: var(--muted); font-size: 12.5px; line-height: 1.8; }
+    .note b { color: var(--text); font-weight: 600; }
+
+    /* Desktop frame */
+    .desk { max-width: 1320px; height: 780px; margin: 14px auto 40px; display: grid; grid-template-rows: minmax(0, 1fr); grid-template-columns: 220px minmax(0, 1fr) 520px;
+      border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; background: var(--bg); box-shadow: var(--shadow-card); }
+    .desk.no-files { grid-template-columns: 220px minmax(0, 1fr); }
+    .side { background: var(--sidebar); border-right: 1px solid var(--border); padding: 18px 12px; }
+    .side .brand { font-weight: 650; font-size: 17px; margin: 0 10px 22px; }
+    .side .group { font-size: 12px; font-weight: 650; margin: 16px 10px 6px; }
+    .side .row { padding: 8px 10px; border-radius: var(--radius); font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .side .row.sel { background: var(--surface); color: var(--text); box-shadow: var(--shadow-card); font-weight: 550; }
+
+    .chat { position: relative; display: flex; flex-direction: column; min-width: 0; }
+    .top { display: flex; align-items: center; justify-content: space-between; padding: 14px 22px; border-bottom: 1px solid var(--border); }
+    .top .title { font-weight: 600; font-size: 14px; }
+    .top .sub { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+    .pill { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius-pill); padding: 6px 12px; font-size: 12.5px; }
+    .scroll { flex: 1; overflow: auto; padding: 22px 28px 12px; }
+    .msg-user { margin-left: auto; max-width: 82%; background: var(--user-bg); border-radius: var(--radius-lg); padding: 12px 15px; line-height: 1.75; font-size: 13.5px; margin-bottom: 18px; }
+    .msg-user small { display: block; color: var(--muted); font-size: 11.5px; margin-top: 6px; }
+    .msg-agent { line-height: 1.8; font-size: 13.5px; margin-bottom: 18px; }
+    .msg-agent p { margin: 0 0 10px; }
+    .file-link { color: var(--text); text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px; cursor: pointer; }
+    .ask { border-left: 3px solid var(--border-strong); padding: 2px 0 2px 12px; margin: 8px 0 10px; font-weight: 550; }
+
+    /* Writing stage strip above the composer */
+    .stage { display: flex; align-items: center; gap: 10px; margin: 0 22px 8px; padding: 7px 8px 7px 14px; border: 1px solid var(--border);
+      border-radius: var(--radius-pill); background: var(--surface); font-size: 12.5px; }
+    .stage .label { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; white-space: nowrap; }
+    .steps { display: flex; gap: 2px; flex: 1; min-width: 0; }
+    .steps button { padding: 4px 10px; border-radius: var(--radius-pill); color: var(--faint); font-size: 12.5px; white-space: nowrap; }
+    .steps button.done { color: var(--muted); }
+    .steps button.now { background: var(--accent); color: var(--accent-fg); font-weight: 600; }
+    .stage .doc { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
+    .stage .end { color: var(--muted); padding: 4px 10px; border-radius: var(--radius-pill); }
+    .stage .end:hover, .steps button:not(.now):hover { background: var(--hover); }
+
+    .composer { margin: 0 22px 18px; border: 1px solid var(--border); background: var(--surface); border-radius: 22px; padding: 12px 12px 10px 16px; box-shadow: var(--shadow-card); }
+    .composer .ph { color: var(--faint); min-height: 40px; font-size: 13.5px; }
+    .composer .row { display: flex; align-items: center; justify-content: space-between; }
+    .plus { width: 32px; height: 32px; border-radius: var(--radius-pill); border: 1px solid var(--border); display: grid; place-items: center; font-size: 18px; color: var(--muted); }
+    .plus[aria-expanded='true'] { background: var(--active); color: var(--text); }
+    .send { width: 32px; height: 32px; border-radius: var(--radius-pill); background: var(--accent); color: var(--accent-fg); display: grid; place-items: center; }
+
+    /* The + menu */
+    .menu { position: absolute; left: 22px; bottom: 82px; width: 260px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-pop); padding: 6px; z-index: 5; }
+    .item { display: flex; align-items: center; gap: 12px; width: 100%; padding: 9px 10px; border-radius: var(--radius); text-align: left; font-size: 13.5px; }
+    .item:hover, .item.hl { background: var(--hover); }
+    .item .ic { width: 20px; color: var(--muted); display: grid; place-items: center; }
+    .item small { display: block; color: var(--muted); font-size: 11.5px; margin-top: 1px; }
+    .item .new { margin-left: auto; font-size: 10.5px; color: var(--positive); background: var(--positive-bg); border-radius: var(--radius-pill); padding: 2px 7px; }
+    .divider { height: 1px; background: var(--border); margin: 5px 8px; }
+
+    /* Start dialog */
+    .scrim { position: absolute; inset: 0; background: rgba(24, 23, 21, 0.28); display: grid; place-items: center; z-index: 6; }
+    .dialog { width: 400px; background: var(--surface); border-radius: var(--radius-lg); box-shadow: var(--shadow-pop); padding: 22px; }
+    .dialog h2 { margin: 0 0 4px; font-size: 16px; }
+    .dialog p { margin: 0 0 18px; color: var(--muted); font-size: 12.5px; line-height: 1.7; }
+    .field { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+    .input { border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 10px 12px; font-size: 14px; margin-bottom: 16px; }
+    .input .faint { color: var(--faint); }
+    .kinds { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 20px; }
+    .kind { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; text-align: left; }
+    .kind b { display: block; font-size: 13px; font-weight: 600; }
+    .kind span { font-size: 11.5px; color: var(--muted); line-height: 1.6; }
+    .kind.sel { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+    .actions { display: flex; justify-content: flex-end; gap: 8px; }
+    .btn { padding: 8px 16px; border-radius: var(--radius-pill); border: 1px solid var(--border); font-size: 13px; }
+    .btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+
+    /* Files panel */
+    .files { border-left: 1px solid var(--border); background: var(--surface); display: flex; flex-direction: column; min-width: 0; }
+    .ftop { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--border); font-size: 12.5px; }
+    .ftop .path { flex: 1; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ftop .path b { color: var(--text); font-weight: 600; }
+    .tbtn { padding: 5px 11px; border-radius: var(--radius-pill); border: 1px solid var(--border); font-size: 12px; white-space: nowrap; }
+    .tbtn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+    .tbtn.ghost { border-color: transparent; color: var(--muted); }
+    .dirty { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+    .dirty::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
+    .fbody { flex: 1; overflow: auto; }
+
+    /* Rendered article */
+    .article { padding: 26px 34px 40px; font-size: 14.5px; line-height: 1.9; }
+    .article h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -.3px; }
+    .article .meta { color: var(--muted); font-size: 12px; margin-bottom: 18px; }
+    .article h2 { font-size: 16px; margin: 26px 0 8px; }
+    .article p { margin: 0 0 12px; }
+    .todo { background: color-mix(in srgb, var(--warn) 12%, transparent); color: var(--warn); border-radius: 5px; padding: 1px 5px; font-size: 13px; }
+    .added { border-left: 3px solid var(--positive); padding: 4px 0 4px 12px; margin: 0 0 12px; }
+    .added .tag { display: inline-block; font-size: 11px; color: var(--positive); background: var(--positive-bg); border-radius: var(--radius-pill); padding: 0 7px; margin-right: 6px; vertical-align: 1px; }
+    .added cite { display: block; font-style: normal; font-size: 12px; color: var(--muted); }
+    figure { margin: 16px 0 18px; }
+    figure figcaption { color: var(--muted); font-size: 12px; text-align: center; margin-top: 6px; }
+    .diagram { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 8px; }
+    .diagram svg { display: block; width: 100%; height: auto; }
+    .diagram text { font-family: var(--font); font-size: 12px; fill: var(--text); }
+    .diagram .n { fill: var(--surface); stroke: var(--border-strong); }
+    .diagram .h { fill: var(--accent); stroke: var(--accent); }
+    .diagram .ht { fill: var(--accent-fg); font-weight: 600; }
+    .diagram .e { stroke: var(--muted); fill: none; marker-end: url(#arrow); }
+    .diagram .el { font-size: 10.5px; fill: var(--muted); }
+    .picture { border-radius: var(--radius); overflow: hidden; border: 1px solid var(--border); background: #fff; aspect-ratio: 16 / 9; display: grid; place-items: center; }
+    .picture img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .picture .wait { color: #a9a69e; font-size: 12px; }
+
+    /* Editing: paper, not an IDE */
+    .paper { width: 100%; height: 100%; border: 0; outline: 0; resize: none; padding: 30px 38px 60px; background: var(--surface);
+      color: var(--text); font-family: var(--serif); font-size: 15.5px; line-height: 2; }
+    .conflict { display: flex; gap: 10px; align-items: center; margin: 12px 14px 0; padding: 10px 12px; border-radius: var(--radius);
+      background: var(--danger-bg); color: var(--danger); font-size: 12.5px; line-height: 1.6; }
+    .conflict span { flex: 1; }
+    .conflict .tbtn { color: var(--text); background: var(--surface); }
+
+    /* Phone frames */
+    .phones { max-width: 1320px; margin: 14px auto 60px; padding: 0 24px; display: flex; gap: 28px; flex-wrap: wrap; }
+    .phone { width: 330px; height: 690px; border: 1px solid var(--border-strong); border-radius: 40px; background: var(--bg); overflow: hidden;
+      display: flex; flex-direction: column; position: relative; box-shadow: var(--shadow-card); }
+    .phone-cap { width: 330px; text-align: center; color: var(--muted); font-size: 12px; margin-top: 10px; }
+    .ptop { padding: 46px 18px 12px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+    .ptop .title { font-weight: 600; font-size: 14px; }
+    .pscroll { flex: 1; overflow: hidden; padding: 16px; }
+    .pstage { margin: 0 12px 8px; display: flex; align-items: center; justify-content: space-between; border: 1px solid var(--border); background: var(--surface);
+      border-radius: var(--radius-pill); padding: 7px 8px 7px 14px; font-size: 12.5px; }
+    .pstage .now { background: var(--accent); color: var(--accent-fg); border-radius: var(--radius-pill); padding: 3px 10px; font-weight: 600; }
+    .pcomposer { margin: 0 12px 26px; border: 1px solid var(--border); background: var(--surface); border-radius: 22px; padding: 10px 10px 10px 14px; display: flex; align-items: center; gap: 10px; }
+    .pcomposer .ph { flex: 1; color: var(--faint); font-size: 13px; }
+    .sheet { position: absolute; left: 0; right: 0; bottom: 0; background: var(--surface); border-radius: 24px 24px 0 0; box-shadow: var(--shadow-pop); padding: 10px 10px 30px; }
+    .sheet .grab { width: 38px; height: 4px; border-radius: 4px; background: var(--border-strong); margin: 2px auto 10px; }
+    .pdim { position: absolute; inset: 0; background: rgba(24, 23, 21, 0.28); }
+    .phone .paper { padding: 18px 20px 40px; font-size: 15px; }
+    .kbd { height: 190px; background: var(--sidebar); border-top: 1px solid var(--border); display: grid; place-items: center; color: var(--muted); font-size: 12px; gap: 6px; }
+    .mic { width: 52px; height: 52px; font-size: 12px; border-radius: 50%; background: var(--surface); border: 1px solid var(--border); display: grid; place-items: center; }
+  </style>
+</head>
+<body>
+  <div class="bar">
+    <h1>写作模式 · 界面草图</h1>
+    <div class="seg" id="steps" role="group" aria-label="步骤">
+      <button data-step="menu" aria-pressed="true">① 加号菜单</button>
+      <button data-step="writing" aria-pressed="false">② 写作中 · 预览</button>
+      <button data-step="edit" aria-pressed="false">③ 直接编辑</button>
+      <button data-step="conflict" aria-pressed="false">④ 和 agent 撞车</button>
+    </div>
+    <div class="seg" role="group" aria-label="外观">
+      <button id="light" aria-pressed="true">亮色</button>
+      <button id="dark" aria-pressed="false">深色</button>
+    </div>
+  </div>
+
+  <p class="note" id="note"></p>
+
+  <!-- Desktop -->
+  <div class="desk" id="desk">
+    <aside class="side">
+      <div class="brand">Limi</div>
+      <div class="group">写作</div>
+      <div class="row sel">思考是人类的事情</div>
+      <div class="row">Agent Memory 踩过的坑</div>
+      <div class="group">remote-agent-hub</div>
+      <div class="row">文件面板支持 Mermaid</div>
+      <div class="row">看板标签筛选</div>
+    </aside>
+
+    <section class="chat">
+      <div class="top">
+        <div><div class="title">思考是人类的事情</div><div class="sub">Claude · ~/blog</div></div>
+        <span class="pill">文件</span>
+      </div>
+      <div class="scroll">
+        <div class="msg-user">
+          今天好久没真正自己思考写东西了，现在很多时候是想一句话，然后让 AI 帮忙把一篇文章写出来。今天写 PR 的时候，我就真的去想为什么要这样写，写完以后有一种感觉，思考应该是由人类来完成的……我把博客原来叫 readlog，改成了「思考是人类的事情」……
+          <small>语音输入 · 1,240 字</small>
+        </div>
+        <div class="msg-agent" data-show="writing edit conflict">
+          <p>记下来了，用的是你的原话，写进了 <a class="file-link">writing/思考是人类的事情.md</a>。顺手改了几个语音同音字：「逮捕」→「待补」，「Cloud」→「Claude」。</p>
+          <p>有两处你还没说清，标了【待补】：章鱼血为什么是蓝的；你写 PR 那一刻具体在想什么。</p>
+          <div class="ask">想问你一个具体的：今天写 PR，写到哪一句的时候，你发现自己原来想的不是这样？</div>
+        </div>
+      </div>
+
+      <div class="stage" data-show="writing edit conflict">
+        <span class="label">写作</span>
+        <div class="steps">
+          <button class="now">初稿</button><button>二稿</button><button>三稿</button><button>配图</button><button>润色</button>
+        </div>
+        <span class="doc">思考是人类的事情.md</span>
+        <button class="end">结束</button>
+      </div>
+
+      <div class="composer">
+        <div class="ph">继续说，或者让 agent 补哪一段…</div>
+        <div class="row">
+          <button class="plus" id="plus" aria-expanded="true">+</button>
+          <button class="send">↑</button>
+        </div>
+      </div>
+
+      <div class="menu" data-show="menu" role="menu">
+        <button class="item"><span class="ic">⌁</span>添加图片或视频</button>
+        <div class="divider"></div>
+        <button class="item"><span class="ic">☰</span>计划模式</button>
+        <button class="item"><span class="ic">◎</span>目标模式</button>
+        <button class="item hl"><span class="ic">✎</span><span>写作模式<small>口述观点，一稿一稿写成文章</small></span><span class="new">新</span></button>
+        <div class="divider"></div>
+        <button class="item"><span class="ic">⌘</span>技能</button>
+      </div>
+
+    </section>
+
+    <section class="files" data-show="writing edit conflict">
+      <div class="ftop">
+        <span class="path">writing / <b>思考是人类的事情.md</b></span>
+        <span data-show="writing"><button class="tbtn ghost">源码</button> <button class="tbtn">编辑</button></span>
+        <span data-show="edit conflict" style="display:inline-flex;gap:8px;align-items:center"><span class="dirty">未保存</span><button class="tbtn ghost">取消</button><button class="tbtn primary">保存</button></span>
+      </div>
+      <div class="conflict" data-show="conflict">
+        <span>agent 刚改过正文。你写的还在下面，可以先复制。</span>
+        <button class="tbtn">载入新版本</button><button class="tbtn">仍然覆盖</button>
+      </div>
+      <div class="fbody">
+        <div class="article" data-show="writing">
+          <h1>思考是人类的事情</h1>
+          <div class="meta">初稿 · 2026-10-24</div>
+          <p>我好久没真正自己思考写东西了。现在很多时候，是想一句话，然后让 AI 帮我把一篇文章写出来。</p>
+          <p>今天写 PR 的时候不一样。我得真的去想，为什么要这样写。写完以后我有一种感觉：这个问题，我被思考过了。<span class="todo">【待补：写到哪一句时发现想法变了】</span></p>
+          <div class="added"><span class="tag">补</span>Zinsser 说过，写作就是在纸上思考。写不清楚，往往是因为还没想清楚。<cite>William Zinsser，《Writing to Learn》</cite></div>
+          <h2>AI 可以做什么</h2>
+          <p>观点得是我的，无论它多偏激。AI 可以帮我润色、帮我查东西、问我问题，让我继续想。</p>
+          <figure>
+            <div class="diagram">
+              <svg viewBox="0 0 440 150" role="img" aria-label="Mermaid 图：AI 在输入端加料，在输出端稀释">
+                <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#827f77"/></marker></defs>
+                <rect class="n" x="10" y="20" width="110" height="34" rx="8"/><text x="65" y="41" text-anchor="middle">采访 · 提问</text>
+                <rect class="n" x="10" y="96" width="110" height="34" rx="8"/><text x="65" y="117" text-anchor="middle">资料 · 比喻</text>
+                <rect class="h" x="170" y="56" width="100" height="38" rx="10"/><text class="ht" x="220" y="79" text-anchor="middle">我的思考</text>
+                <rect class="n" x="320" y="20" width="110" height="34" rx="8"/><text x="375" y="41" text-anchor="middle">我的文章</text>
+                <rect class="n" x="320" y="96" width="110" height="34" rx="8"/><text x="375" y="117" text-anchor="middle">AI 替我下结论</text>
+                <path class="e" d="M120 37 C145 37 150 66 168 70"/><path class="e" d="M120 113 C145 113 150 84 168 80"/>
+                <path class="e" d="M270 70 C290 66 300 37 318 37"/><path class="e" d="M270 80 C290 84 300 113 318 113" stroke-dasharray="4 4"/>
+                <text class="el" x="296" y="140" text-anchor="middle">稀释观点</text>
+              </svg>
+            </div>
+            <figcaption>```mermaid 代码块，文件面板直接画成图</figcaption>
+          </figure>
+          <p>还有一种是让 AI 告诉我一些我不知道的事。它说章鱼有三个心脏，血是蓝的。我接着问为什么。<span class="todo">【待补：章鱼血为什么是蓝的】</span></p>
+          <figure>
+            <div class="picture"><img src="writing-mode-illustration.jpg" alt="AI 配图：人在写字，小机器人举着台灯" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'wait',textContent:'AI 配图（Agy 生成中）'}))"></div>
+            <figcaption>![](思考是人类的事情/人与台灯.png)：Agy 生成的插图，相对路径引用</figcaption>
+          </figure>
+        </div>
+        <textarea class="paper" data-show="edit conflict" aria-label="正文" spellcheck="false"># 思考是人类的事情
+
+我好久没真正自己思考写东西了。现在很多时候，是想一句话，然后让 AI 帮我把一篇文章写出来。
+
+今天写 PR 的时候不一样。我得真的去想，为什么要这样写。写完以后我有一种感觉：这个问题，我被思考过了。【待补：写到哪一句时发现想法变了】
+
+〔补〕Zinsser 说过，写作就是在纸上思考。写不清楚，往往是因为还没想清楚。（William Zinsser，《Writing to Learn》）
+
+## AI 可以做什么
+
+观点得是我的，无论它多偏激。AI 可以帮我润色、帮我查东西、问我问题，让我继续想。
+
+```mermaid
+flowchart LR
+  A[采访 · 提问] --> M((我的思考))
+  B[资料 · 比喻] --> M
+  M --> C[我的文章]
+  M -.稀释观点.-> D[AI 替我下结论]
+```
+
+还有一种是让 AI 告诉我一些我不知道的事。它说章鱼有三个心脏，血是蓝的。我接着问为什么。【待补：章鱼血为什么是蓝的】
+
+![人与台灯](思考是人类的事情/人与台灯.png)
+</textarea>
+      </div>
+    </section>
+  </div>
+
+  <p class="note"><b>手机。</b>入口同样在左下角的加号；阶段条收成一个阶段名，点开是阶段列表；正文全屏编辑，用输入法自己的语音输入。</p>
+  <div class="phones">
+    <div>
+      <div class="phone">
+        <div class="ptop"><span class="title">思考是人类的事情</span><span class="pill">文件</span></div>
+        <div class="pscroll"><div class="msg-user" style="max-width:100%">今天好久没真正自己思考写东西了，现在很多时候是想一句话……</div></div>
+        <div class="pcomposer"><button class="plus" aria-expanded="true">+</button><span class="ph">发消息…</span><button class="send">↑</button></div>
+        <div class="pdim"></div>
+        <div class="sheet">
+          <div class="grab"></div>
+          <button class="item"><span class="ic">⌁</span>添加图片或视频</button>
+          <div class="divider"></div>
+          <button class="item"><span class="ic">☰</span>计划模式</button>
+          <button class="item"><span class="ic">◎</span>目标模式</button>
+          <button class="item hl"><span class="ic">✎</span><span>写作模式<small>口述观点，一稿一稿写成文章</small></span></button>
+          <div class="divider"></div>
+          <button class="item"><span class="ic">⌘</span>技能</button>
+        </div>
+      </div>
+      <div class="phone-cap">加号菜单</div>
+    </div>
+    <div>
+      <div class="phone">
+        <div class="ptop"><span class="title">思考是人类的事情</span><span class="pill">文件</span></div>
+        <div class="pscroll">
+          <div class="msg-agent"><p>记下来了，写进了 <a class="file-link">思考是人类的事情.md</a>。改了几个语音同音字。</p>
+          <div class="ask">今天写 PR，写到哪一句的时候，你发现自己原来想的不是这样？</div></div>
+        </div>
+        <div class="pstage"><span><b>写作</b> · 思考是人类的事情.md</span><span class="now">初稿 ▾</span></div>
+        <div class="pcomposer"><button class="plus">+</button><span class="ph">继续说…</span><button class="send">↑</button></div>
+      </div>
+      <div class="phone-cap">写作中：阶段条收起</div>
+    </div>
+    <div>
+      <div class="phone">
+        <div class="ptop"><span class="title" style="font-size:13px">‹ 思考是人类的事情.md</span><span style="display:flex;gap:6px"><button class="tbtn ghost">源码</button><button class="tbtn">编辑</button></span></div>
+        <div class="fbody">
+          <div class="article" style="padding:18px 20px 30px;font-size:14.5px">
+            <h1 style="font-size:20px">思考是人类的事情</h1>
+            <div class="meta">初稿 · 2026-10-24</div>
+            <p>今天写 PR 的时候不一样。我得真的去想，为什么要这样写。写完以后我有一种感觉：这个问题，我被思考过了。<span class="todo">【待补：写到哪一句时发现想法变了】</span></p>
+            <div class="added"><span class="tag">补</span>Zinsser 说过，写作就是在纸上思考。<cite>William Zinsser，《Writing to Learn》</cite></div>
+            <figure>
+              <div class="diagram"><svg viewBox="0 0 440 150" role="img" aria-label="Mermaid 图">
+                <rect class="n" x="10" y="20" width="110" height="34" rx="8"/><text x="65" y="41" text-anchor="middle">采访 · 提问</text>
+                <rect class="n" x="10" y="96" width="110" height="34" rx="8"/><text x="65" y="117" text-anchor="middle">资料 · 比喻</text>
+                <rect class="h" x="170" y="56" width="100" height="38" rx="10"/><text class="ht" x="220" y="79" text-anchor="middle">我的思考</text>
+                <rect class="n" x="320" y="20" width="110" height="34" rx="8"/><text x="375" y="41" text-anchor="middle">我的文章</text>
+                <rect class="n" x="320" y="96" width="110" height="34" rx="8"/><text x="375" y="117" text-anchor="middle">AI 替我下结论</text>
+                <path class="e" d="M120 37 C145 37 150 66 168 70"/><path class="e" d="M120 113 C145 113 150 84 168 80"/>
+                <path class="e" d="M270 70 C290 66 300 37 318 37"/><path class="e" d="M270 80 C290 84 300 113 318 113" stroke-dasharray="4 4"/>
+                <text class="el" x="296" y="140" text-anchor="middle">稀释观点</text>
+              </svg></div>
+            </figure>
+            <figure>
+              <div class="picture"><img src="writing-mode-illustration.jpg" alt="AI 配图"></div>
+              <figcaption>Agy 生成的插图</figcaption>
+            </figure>
+          </div>
+        </div>
+      </div>
+      <div class="phone-cap">正文预览</div>
+    </div>
+    <div>
+      <div class="phone">
+        <div class="ptop"><span class="title" style="font-size:13px">思考是人类的事情.md</span><span style="display:flex;gap:6px;align-items:center"><span class="dirty">未保存</span><button class="tbtn primary">保存</button></span></div>
+        <textarea class="paper" style="flex:1" aria-label="正文">今天写 PR 的时候不一样。我得真的去想，为什么要这样写。写完以后我有一种感觉：这个问题，我被思考过了。
+
+其实那一刻是写到「为什么不直接复用旧接口」的时候</textarea>
+        <div class="kbd"><div class="mic">语音</div>输入法自带的语音输入</div>
+      </div>
+      <div class="phone-cap">全屏编辑正文</div>
+    </div>
+  </div>
+
+  <script>
+    const notes = {
+      menu: '<b>入口。</b>输入框左下角的加号里，和计划模式、目标模式放在一起，点一下就开始，不弹对话框。题目和文件名由 agent 在初稿有了内容后起。',
+      writing: '<b>写作中。</b>你用语音输入法说一大段，agent 用你的原话整理成初稿、改同音字、标【待补】、问一个具体问题。输入框上方是阶段条；右边文件面板预览正文：Mermaid 直接画成图，相对路径的图片能显示，AI 补的段落带绿色「补」标记。',
+      edit: '<b>直接编辑。</b>点「编辑」，预览换成整页文本框：衬线正文字体、宽行距，没有行号、高亮和工具栏。Ctrl/Cmd+S 保存，没保存的内容存在本机。保存后，下一轮会告诉 agent 先重读正文。',
+      conflict: '<b>撞车。</b>你编辑期间 agent 也改了正文，保存时 daemon 发现哈希对不上，不覆盖。你写的留在文本框里，可以载入新版本或仍然覆盖。',
+    };
+    const desk = document.getElementById('desk');
+    function show(step) {
+      document.querySelectorAll('#steps button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.step === step)));
+      desk.querySelectorAll('[data-show]').forEach((el) => { el.hidden = !el.dataset.show.split(' ').includes(step); });
+      desk.classList.toggle('no-files', step === 'menu');
+      document.getElementById('plus').setAttribute('aria-expanded', String(step === 'menu'));
+      document.getElementById('note').innerHTML = notes[step];
+    }
+    document.querySelectorAll('#steps button').forEach((b) => b.addEventListener('click', () => show(b.dataset.step)));
+    for (const mode of ['light', 'dark']) document.getElementById(mode).addEventListener('click', () => {
+      document.documentElement.dataset.theme = mode;
+      document.getElementById('light').setAttribute('aria-pressed', String(mode === 'light'));
+      document.getElementById('dark').setAttribute('aria-pressed', String(mode === 'dark'));
+    });
+    show('writing');
+  </script>
+</body>
+</html>

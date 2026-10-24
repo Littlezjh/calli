@@ -1710,6 +1710,28 @@ html.list-open body {
 .goal-card-objective { min-width: 0; flex: 1; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .goal-elapsed { flex: none; font-size: 12.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
 .goal-action { flex: none; }
+
+/* Writing mode's stages as a band above the input, like the goal card: one quiet line. */
+.writing-bar { display: flex; align-items: center; gap: 6px; min-height: 42px; margin: 0 0 8px; padding: 5px 8px 5px 14px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow-card); }
+.writing-label { flex: none; font-size: 13px; font-weight: 650; color: var(--text); }
+.writing-stages { display: flex; align-items: center; gap: 2px; flex: none; margin-left: 4px; }
+.writing-stage { height: 28px; padding: 0 10px; border: 0; border-radius: var(--radius-pill); background: none; color: var(--faint); font-size: 13px; transition: background 0.12s, color 0.12s; }
+.writing-stage:hover:not(:disabled):not(.current) { background: var(--hover); color: var(--text); }
+.writing-stage.current { background: var(--accent); color: var(--accent-fg); font-weight: 600; }
+.writing-stage:disabled:not(.current) { opacity: 0.6; }
+.writing-file { display: inline-flex; align-items: center; gap: 6px; min-width: 0; flex: 1; justify-content: flex-end; height: 28px; padding: 0 6px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--muted); font-size: 13px; }
+button.writing-file:hover { color: var(--text); }
+button.writing-file:hover .writing-file-name { text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--border-strong); }
+.writing-file.empty { color: var(--faint); }
+.writing-file-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.writing-end { flex: none; height: 28px; padding: 0 10px; border: 0; border-radius: var(--radius-pill); background: none; color: var(--muted); font-size: 13px; }
+.writing-end:hover:not(:disabled) { background: var(--hover); color: var(--text); }
+.writing-bar.compact { gap: 8px; padding: 4px 5px 4px 12px; }
+.writing-bar.compact .writing-file { justify-content: flex-start; padding: 0; gap: 0; font-size: 14px; color: var(--text); }
+.writing-bar.compact .writing-file.empty { color: var(--faint); }
+.writing-bar.compact .writing-label::after { content: '·'; padding: 0 6px; color: var(--faint); font-weight: 400; }
+.writing-bar.compact .pop { flex: none; }
+.writing-stage-pick { display: inline-flex; align-items: center; gap: 4px; height: 30px; padding: 0 10px 0 12px; border: 0; border-radius: var(--radius-pill); background: var(--accent); color: var(--accent-fg); font-size: 13.5px; font-weight: 600; }
 .goal-card-details { border-top: 1px solid var(--border); padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 8px; }
 .goal-full { margin: 0; font-size: 13.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
 .goal-card-details dl { display: flex; flex-wrap: wrap; gap: 4px 24px; margin: 0; }
@@ -7952,6 +7974,36 @@ input.picker-search {
 .files-panel.phone .files-markdown {
   padding: 16px 18px 40px;
 }
+
+/* Text buttons in the file panel's head: Edit, Done, Save. */
+.files-panel .files-text-btn { display: inline-flex; align-items: center; gap: 5px; flex: none; height: 30px; padding: 0 11px; border: 0; border-radius: var(--radius-pill); background: none; color: var(--muted); font-size: 13px; white-space: nowrap; }
+.files-panel .files-text-btn:hover:not(:disabled) { background: var(--hover); color: var(--text); }
+.files-panel .files-text-btn.primary-btn { background: var(--accent); color: var(--accent-fg); font-weight: 600; }
+.files-panel .files-text-btn.primary-btn:hover:not(:disabled) { background: var(--accent); color: var(--accent-fg); opacity: 0.88; }
+.files-panel .files-text-btn:disabled { opacity: 0.45; }
+.writing-unsaved { display: inline-flex; align-items: center; gap: 6px; flex: none; padding: 0 6px; color: var(--muted); font-size: 12.5px; white-space: nowrap; }
+.writing-unsaved-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
+
+/* Editing a body: a sheet of paper, not a code editor. Body face, roomy lines, a readable measure. */
+.files-viewer.files-editing { display: flex; flex-direction: column; overflow: hidden; background: var(--surface); }
+.writing-editor { flex: 1; display: block; width: 100%; min-height: 0; margin: 0; padding: 28px max(32px, calc((100% - 38em) / 2)) 64px; border: 0; outline: none; resize: none; background: transparent; color: var(--text); font-family: var(--font); font-size: 16px; line-height: 1.95; letter-spacing: 0.01em; tab-size: 4; overflow-y: auto; overscroll-behavior: contain; }
+.writing-editor::selection { background: var(--active); }
+.writing-conflict { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin: 12px 14px 0; padding: 9px 10px 9px 14px; border-radius: var(--radius); background: var(--danger-bg); color: var(--danger); font-size: 13px; line-height: 1.5; }
+.writing-conflict-text { flex: 1; min-width: 12em; }
+.writing-conflict-actions { display: flex; gap: 8px; flex: none; }
+.writing-conflict .btn-secondary { min-height: 30px; padding: 0 12px; border-color: transparent; background: var(--surface); color: var(--text); font-size: 13px; font-weight: 500; }
+.writing-conflict .btn-secondary:hover:not(:disabled) { background: var(--surface-2); }
+.files-panel.phone .writing-editor { padding: 18px 20px calc(48px + var(--safe-bottom)); font-size: 17px; line-height: 1.9; }
+.files-panel.phone .writing-conflict { margin: 10px 10px 0; }
+
+/* Drawings and pictures inside a Markdown file. */
+.files-diagram { cursor: zoom-in; overflow-x: auto; margin: 1em 0; padding: 16px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }
+.files-diagram:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.files-diagram svg { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+.files-inline-picture { display: block; max-width: 100%; margin: 1em 0; padding: 0; border: 0; border-radius: var(--radius); background: none; cursor: zoom-in; }
+.files-inline-picture img { display: block; max-width: 100%; height: auto; margin: 0; border-radius: var(--radius); background: var(--picture-bg); }
+.files-picture-loading { display: block; height: 120px; margin: 1em 0; border-radius: var(--radius); background: var(--hover); }
+.files-picture-missing { display: inline-block; padding: 2px 8px; border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); color: var(--muted); font-size: 13px; }
 
 /* == Skills page: a row per skill, a column per machine, marks where an agent can use it == */
 

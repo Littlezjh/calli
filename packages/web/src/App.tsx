@@ -2,7 +2,7 @@ import { AutoHandoverNotice, HandoverSettingsDialog } from './components/AutoHan
 import { useWorkSources, WorkSummary } from './extensions/work';
 import { HostIcon } from './extensions/ui';
 import { historyPage, mergeHistory, watchHistory } from './history';
-import type { WorkMode } from './api';
+import type { WorkMode, WritingStage } from './api';
 import { HandoverTrail } from './components/HandoverTrail';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Theme } from './appearance';
@@ -83,6 +83,7 @@ import { Sidebar, SIDEBAR_SHORTCUT } from './components/Sidebar';
 import { forkBlocked, useThreadActions } from './components/ThreadActions';
 import { MergedHistory } from './components/MergedHistory';
 import { HandoverComposer } from './components/HandoverComposer';
+import { WritingBar } from './components/WritingBar';
 import { handoverHistoryKey, latestHandoverThread } from './handover';
 import { TurnRuler } from './components/TurnRuler';
 import { NewProjectDialog, ProjectPicker, RootsDialog } from './components/Projects';
@@ -374,6 +375,9 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const [draftSectionId, setDraftSectionId] = useState<string | null>(null);
   const [draftWorkMode, setDraftWorkMode] = useState<WorkMode>('execute');
   const [modeBusy, setModeBusy] = useState(false);
+  /** Writing mode for a thread not started yet: switched on once the first message creates it. */
+  const [draftWriting, setDraftWriting] = useState<WritingStage | null>(null);
+  const [writingBusy, setWritingBusy] = useState(false);
   const [draftPermission, setDraftPermission] = useState('auto_edit');
   const [draftModel, setDraftModel] = useState<string | null>(null);
   const [draftEffort, setDraftEffort] = useState<string | null>(null);
@@ -1291,6 +1295,11 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           ...(draftScratch ? { scratch: true } : draftWorktree && offer ? { worktree: true } : {}),
         });
         id = t.id;
+        if (draftWriting) {
+          const updated = await api.setWriting(id, draftWriting);
+          setThreads(prev => [updated, ...prev.filter(v => v.id !== updated.id)]);
+          setDraftWriting(null);
+        }
         setSelectedId(id);
         setDraftSectionId(null);
         // Every worktree is a new branch; the next thread starts in place unless asked again.
@@ -1529,6 +1538,19 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       if (execute) await api.startTurn(id, t('app.executePlan'));
     } catch (error) { handleError(error); }
     finally { setModeBusy(false); }
+  };
+
+  // Writing mode: the thread's own, or the draft's until the first message creates the thread.
+  const writing = selected ? selected.writing ?? null : draftWriting ? { stage: draftWriting, file: null } : null;
+  const changeWriting = async (stage: WritingStage | null) => {
+    if (!selected) { setDraftWriting(stage); return; }
+    const id = selected.id;
+    setWritingBusy(true);
+    try {
+      const updated = stage ? await api.setWriting(id, stage) : await api.endWriting(id);
+      setThreads(prev => prev.map(v => v.id === id ? updated : v));
+    } catch (error) { handleError(error); }
+    finally { setWritingBusy(false); }
   };
 
   const permission = selected ? selected.permissionMode : draftPermission;
@@ -2220,7 +2242,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           draftKey={composerDraftKey}
           running={running}
           disabled={modeBusy || (!selected && !draftCwd)}
-          placeholder={demo ? t('app.placeholder.demo') : workMode === 'plan' && !running ? t('composerMenu.planOn') : selected ? (running ? t('sideChat.queuePlaceholder') : t('app.placeholder.continue')) : draftScratch ? t('app.placeholder.scratch') : t('app.placeholder.startIn', folderName(draftCwd))}
+          placeholder={demo ? t('app.placeholder.demo') : workMode === 'plan' && !running ? t('composerMenu.planOn') : writing && !running ? t('writing.placeholder') : selected ? (running ? t('sideChat.queuePlaceholder') : t('app.placeholder.continue')) : draftScratch ? t('app.placeholder.scratch') : t('app.placeholder.startIn', folderName(draftCwd))}
           onSend={send}
           mentionOptions={collaborationOptions}
           mentionIcon={collaborationIcon}
@@ -2233,6 +2255,9 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           mentionDirectories={coordination?.directories ?? (collaborationDirectories.length ? collaborationDirectories : [activeCwd])}
           onStop={stop}
           header={header}
+          writingMode={draftTeam ? undefined : { active: !!writing, disabled: writingBusy, onChange: active => void changeWriting(active ? 'draft' : null) }}
+          banner={writing && !draftTeam && <WritingBar writing={writing} busy={writingBusy} onStage={stage => void changeWriting(stage)} onEnd={() => void changeWriting(null)}
+            onOpen={file => void openFileLink(file).catch(handleError)} />}
           planMode={!draftTeam && activeCaps?.workModes?.includes('plan') ? { active: workMode === 'plan', disabled: running || modeBusy, onChange: active => void changeWorkMode(active ? 'plan' : 'execute') } : undefined}
           left={draftTeam ? undefined : left}
           right={draftTeam ? undefined : right}
