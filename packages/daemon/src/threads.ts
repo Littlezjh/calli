@@ -26,6 +26,7 @@ import {
   type TurnHooks,
   type TurnInput,
 } from './adapters/types.js';
+import type { GoalSnapshot } from './adapters/native-goal.js';
 import { findFiles, listDir, readText, type Listing, type TextFile } from './browse.js';
 import { referencedFile } from './artifacts.js';
 import { MAX_IMAGES, sniffImageType, sniffSvg, type AttachmentStore, type StoredAttachment, type StoredVideo } from './attachments.js';
@@ -100,6 +101,21 @@ interface QueuedTurn {
   videos: string[];
 }
 
+/** A thread's native goal as the API serves it to the goal card. */
+export interface GoalView {
+  objective: string;
+  /** Active, paused, blocked… in the agent's own vocabulary. */
+  status: string;
+  tokensUsed?: number;
+  tokenBudget?: number;
+  /** When this goal was set. ISO. */
+  startedAt: string;
+  /** When this view was computed. ISO; while active the clock runs on from here in the UI. */
+  at: string;
+  /** Active work so far, ms. While active: elapsed = activeMs + (now − at). */
+  activeMs: number;
+}
+
 /** How many messages may wait behind a running turn. */
 export const MAX_QUEUED = 5;
 /** The largest image file the hub will serve from a thread's directory. */
@@ -166,6 +182,7 @@ export function matchTurns(agentKeys: string[], hubKeys: string[], tolerance: nu
 export interface AgentInfo {
   id: string;
   label: string;
+  hidden?: boolean;
   /** The agent's mark, when its adapter has one. Instances of one adapter share it. */
   icon?: string;
   /** Which adapter this instance is: instances of one adapter group together in the picker. */
@@ -217,6 +234,8 @@ export class ThreadManager {
   private readonly sessionAdapters = new Map<string, AgentAdapter>();
   private readonly sessionStarts = new Map<string, Promise<AgentSession>>();
   private readonly nativeIdle = new Map<string, Set<() => void>>();
+  /** Each thread's native goal, as the goal card shows it. */
+  private readonly goals = new Map<string, GoalView>();
   private readonly nativeTurns = new Map<string, Map<string, string>>();
   private readonly voiceThreads = new Set<string>();
   private readonly sessions = new Map<string, AgentSession>();
@@ -254,7 +273,7 @@ export class ThreadManager {
     workdirs: string[] | Workdirs,
     private readonly attachments: AttachmentStore,
     /** What each instance is beyond its adapter: its adapter kind and linked account. */
-    private readonly agentMeta: () => Array<{ id: string; adapter?: string; account?: string }> = () => [],
+    private readonly agentMeta: () => Array<{ id: string; adapter?: string; account?: string; hidden?: boolean }> = () => [],
   ) {
     this.dirs = Array.isArray(workdirs) ? new Workdirs(workdirs) : workdirs;
     this.autoHandover = new AutoHandover(store, this);
@@ -296,6 +315,7 @@ export class ThreadManager {
         icon: a.icon,
         ...(m?.adapter ? { adapter: m.adapter } : {}),
         ...(m?.account ? { account: m.account } : {}),
+        ...(m?.hidden !== undefined ? { hidden: m.hidden } : {}),
         available: await a.available(),
         ...(a.loginCommand ? { login: 'terminal' as const } : {}),
         capabilities: a.capabilities,
@@ -1143,6 +1163,7 @@ export class ThreadManager {
     }
     this.emitThreadEvent(id, null, 'thread.updated', {});
     this.queues.delete(id);
+    this.goals.delete(id);
     this.store.deleteThread(id);
     this.attachments.removeThread(id);
   }
@@ -2108,6 +2129,8 @@ export class ThreadManager {
       if (this.store.getThread(thread.id)) {
         this.store.updateThread(thread.id, { status: finalStatus, ...(unread ? { unread: true } : {}) }, { touch: true });
         this.emitThreadEvent(thread.id, null, 'thread.updated', {});
+        // A goal may have ended with the turn without a notification the hub understood.
+        void this.refreshGoal(thread.id);
         const settling = this.autoHandover.settled(thread.id, turnId);
         this.settlingHandovers.add(settling);
         try { await settling; } finally { this.settlingHandovers.delete(settling); }
@@ -2276,6 +2299,7 @@ export class ThreadManager {
       permissionMode: thread.permissionMode as PermissionMode,
       speed: thread.speed,
       workMode: thread.workMode ?? 'execute',
+      onGoal: (goal) => this.applyGoal(thread.id, goal),
       onSpeed: (speed) => {
         if (!this.store.getThread(thread.id)) return;
         this.store.updateThread(thread.id, { speed });
@@ -2344,6 +2368,66 @@ export class ThreadManager {
     this.sessions.delete(threadId);
     this.sessionAdapters.delete(threadId);
     if (s) await s.close().catch(() => undefined);
+  }
+
+  /** Keeps the goal view and tells subscribers; the clock lives in the view, not in events. */
+  private applyGoal(threadId: string, goal: GoalSnapshot | null): void {
+    // A push or a late refresh can land while the thread is being deleted or the store closes
+    // underneath shutdown; the goal card is best-effort state, never worth failing a turn for.
+    try {
+      if (!this.store.getThread(threadId)) return;
+      const previous = this.goals.get(threadId);
+      const now = Date.now();
+      if (!goal) {
+        if (!previous) return;
+        this.goals.delete(threadId);
+        this.emitThreadEvent(threadId, null, 'goal.updated', { goal: null });
+        return;
+      }
+      const unchanged = previous
+        && previous.objective === goal.objective && previous.status === goal.status
+        && previous.tokensUsed === goal.tokensUsed && previous.tokenBudget === goal.tokenBudget;
+      if (unchanged) return;
+      // Another objective is another goal: the clock starts over. The same one keeps counting.
+      const carries = previous?.objective === goal.objective;
+      const view: GoalView = {
+        objective: goal.objective,
+        status: goal.status,
+        ...(goal.tokensUsed !== undefined ? { tokensUsed: goal.tokensUsed } : {}),
+        ...(goal.tokenBudget !== undefined ? { tokenBudget: goal.tokenBudget } : {}),
+        startedAt: carries ? previous!.startedAt : new Date(now).toISOString(),
+        at: new Date(now).toISOString(),
+        activeMs: carries ? previous!.activeMs + (previous!.status === 'active' ? now - Date.parse(previous!.at) : 0) : 0,
+      };
+      this.goals.set(threadId, view);
+      this.emitThreadEvent(threadId, null, 'goal.updated', { goal: view });
+    } catch {
+      // Nothing to keep: the goal went with the thread or the store.
+    }
+  }
+
+  /** The thread's native goal for the card, refreshed from the live session when there is one. */
+  async goalView(threadId: string): Promise<GoalView | null> {
+    this.getThread(threadId);
+    await this.refreshGoal(threadId);
+    return this.goals.get(threadId) ?? null;
+  }
+
+  /** Asks the live session what its goal is; the last known state stands when it cannot say. */
+  private async refreshGoal(threadId: string): Promise<void> {
+    const session = this.sessions.get(threadId);
+    if (!session?.goalState) return;
+    const timeout = Symbol('goal timeout');
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const goal = await Promise.race([
+        session.goalState().catch(() => timeout),
+        new Promise<typeof timeout>(resolve => { timer = setTimeout(() => resolve(timeout), 5000); timer.unref?.(); }),
+      ]);
+      if (goal !== timeout) this.applyGoal(threadId, goal as GoalSnapshot | null);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   private hooksFor(threadId: string, turnId: string): TurnHooks {

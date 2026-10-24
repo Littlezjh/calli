@@ -312,6 +312,7 @@ interface AgentProps {
 export function agentGroups(agents: AgentInfo[]): AgentInfo[][] {
   const groups = new Map<string, AgentInfo[]>();
   for (const a of agents) {
+    if (a.hidden) continue;
     const key = a.adapter ?? `_${a.id}`;
     groups.set(key, [...(groups.get(key) ?? []), a]);
   }
@@ -359,7 +360,7 @@ function AgentRow({ api, agent, marks, checked, hint, onPick }: {
 }
 
 export function AgentPicker({ api, agents, value, onChange, accounts = [], onAddAccount, teams = [] }: AgentProps) {
-  const current = agents.find((a) => a.id === value);
+  const current = agents.find((a) => a.id === value && !a.hidden);
   const team = teams.find(t => `team:${t.id}` === value);
   const [adding, setAdding] = useState<string | null>(null);
   /** The group whose accounts are on screen, drilled in from the list of agents. */
@@ -367,7 +368,7 @@ export function AgentPicker({ api, agents, value, onChange, accounts = [], onAdd
   const groups = useMemo(() => agentGroups(agents), [agents]);
   const drilled = groups.find((g) => g.some((a) => a.id === openGroup)) ?? null;
   // The marks the thread list shows in place of names are introduced here, next to the names.
-  const marks = agents.some((a) => a.icon);
+  const marks = groups.some((group) => group.some((a) => a.icon));
   return (
     <Popover
       label="Agent"
@@ -376,7 +377,7 @@ export function AgentPicker({ api, agents, value, onChange, accounts = [], onAdd
       trigger={
         <>
           {current?.icon && <AgentMark path={current.icon} size={14} />}
-          <span>{team?.name ?? current?.label ?? value}</span>
+          <span>{team?.name ?? current?.label ?? t('pickers.whichAgent')}</span>
           <IconChevron size={12} open />
         </>
       }

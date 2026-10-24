@@ -16,6 +16,7 @@
 ## 1. 侧边栏与线程管理
 
 - [x] 按项目（工作目录）分组
+- [x] 项目选择器不把 worktree 当项目：新建会话的目录列表里，`<仓库>/.worktrees/` 下的会话目录（hub 分叉的、limi 或手动在里面开的）都归并到 `.worktrees` 之前的仓库根显示和选择，与分叉线程映射回原目录的行为一致；用户在「可用目录」里手动加的目录不归并。侧边栏分组不变。无点 `worktrees/`（另一套约定）不处理。单测覆盖元数据缺失、真实路径拼写与草稿归并，Chromium 看过选择器实际列表。
 - [x] 置顶、重命名、按标题和目录搜索
 - [x] 归档：右键"归档"后从侧边栏消失，同时停掉 agent 进程；"已归档"面板里可以恢复或永久删除
 - [x] 永久删除要二次确认；可选"同时删除 agent 自己的会话"，默认不勾
@@ -107,12 +108,14 @@
 - [x] Codex：`codex app-server`（v2 线程协议）。流式、审批（命令/文件改动）、切模型和强度、三档权限、图片按路径发、导入历史、分叉、`/compact`
 - [x] Codex 命令补齐：额度面板（`/usage`）、`/review [审查说明]`、`/mcp`、`/skills`，按项目目录发现技能并通过正式协议调用；`/approvals` 搜索权限入口。支持多额度池、重置时间和旧版单池数据。
 - [x] 原生 `/goal`：接入 Codex、TraeX、Claude Code、zcode 的目标接口和续跑生命周期，运行中按能力立即查看/暂停/清除，保留审批与线程设置；不增加 Hub 续跑。TraeX 执行切到兼容 Codex 的 app-server，模型/历史/分叉保留 ACP，真实验证已有 ACP 会话用相同 ID 恢复并完成目标。假 agent 覆盖多轮、停止、失败与通知顺序；真实 Codex、Claude、TraeX 执行已验证，真实 zcode 使用隔离模型服务验证多轮；Chromium 看过四种 agent 的桌面/手机、亮/暗组合，实体手机未测。
+- [x] 目标卡照 Codex 重做：输入框上方一条常驻卡（状态点、进行中的目标/已暂停的目标/遇到阻塞等状态词、目标文字截断、走秒计时），右侧按能力给暂停/继续/清除，展开才看详情（完整目标、开始时间、token 用量）。适配器会话新增 `goalState()` 与 `onGoal` 推送（Codex/TraeX 走 `thread/goal/*`，zcode 走快照 target；能力标 `live`），daemon 维护累计耗时（暂停冻结、换目标重置）并存事件（`goal.updated`），`GET /api/threads/:id/goal` 供打开线程时读一次；live agent 的「＋」菜单只留「设置目标」，原文本命令从菜单隐藏（手机原本就藏）；Claude 查不到目标状态，不显示卡片，保留原命令入口。daemon 重启后卡片要等下一次会话启动才恢复（状态在内存）。适配器/接口单测 + 假 agent 覆盖设置、暂停、完成、清除、断线；真实 Codex app-server 全生命周期在无头 Chromium 验过，桌面/手机 × 亮/暗四组合看过，实体手机未测。
 - [x] 上下文弹层增加「压缩」：由适配器能力决定是否显示，复用现有命令，运行中排队执行，不清空草稿；模型与思考强度改成紧凑卡片、分档滑杆和模型子列表，支持拖动、触控、方向键和恢复默认。Codex 只返回周额度时说明未提供 5 小时窗口，不补造数据。
 - [x] 自动上下文压缩提示：Codex、TRAE、Claude、Pi、ZCode 原生事件统一显示为工作记录中的独立一行；区分进行中、完成、失败、中断和跳过，重复通知不重复显示，手动压缩不叠加。agy 未找到可靠信号，不根据用量下降推断。五种假 agent 协议测试及 Chromium 桌面/手机尺寸、亮暗主题回放通过，实体手机未测。
 - [x] **P3** zcode：`zcode app-server`，原版协议精简接入（自动记忆关闭、基础工具、流式/恢复/取消/压缩）；扩展全局设置与桌面账号鉴权边界见 `zcode-minimal-design.md`
 [x] 多账号：一个适配器可配多个实例（`data/agents.json` 或 `RAH_AGENTS_JSON`：id、adapter、label、command、env），线程存实例 id，默认实例沿用原名不迁移；实例 env 合并进它起的所有进程（如第二个 Claude 账号带自己的 `CLAUDE_CONFIG_DIR`）；扫描 PATH 发现同类 CLI（`agy2` 这类，`ping`/`pix`、`claude-agent-acp`、`traex-bridge` 不算；同一可执行文件的别名只列一次，已接入的不再列），Agent picker 里一键添加，添加后立刻可用并写回 agents.json
 - [x] 链接另一个账号（发现已登录的）：终端里 `CLAUDE_CONFIG_DIR=~/.claude-2 claude` 登录好的账号，Agent picker「已登录的账号」一节里一键接进来，不用 SSH。`GET /api/agents/accounts/discover`：适配器各自找已登录的账号（Claude 扫 `~/.claude` 和 `~/.claude-2` 这类目录、只认目录，逐个 `claude auth status` 问邮箱，登录过期的自然掉出列表；`env.CLAUDE_CONFIG_DIR` 由适配器构造，前端不认变量名），registry 补上只有它知道的——已被实例占用的账号不列（无 env 的实例占用默认账号），建议 id/label 取第一个空闲的 `claude-N`/「Claude Code N」，同一次发现里也不撞。点一下即 `POST /api/agents` 注册并选中。本地跑 claude 的命令统一走 `RAH_CLAUDE_BIN`（原 `RAH_CLAUDE_QUOTA_BIN` 仍认）。页面里直接完成 OAuth 授权的向导（daemon 起登录进程、贴授权码）以后再做
 - [x] Agent 管理页：`#/agents` 按适配器分组列出实例（名字、账号、可用状态），可改名、移除；移除前查线程（含归档）、定时任务、团队和自动交接顺序，有引用返回各项数量并拒绝，不级联删除。只删 hub 登记，不删配置目录、凭据或原生会话；写回 `agents.json` 失败不生效。删除最后一个实例后仍保留内置命令，并仍能发现该适配器已登录的账号。无头 Chromium 看过桌面 1440×960、手机 390×844，亮/暗。
+- [x] 实例可「从新会话隐藏」：封号/停用的账号在管理页「…」里隐藏，新建会话的 agent 选择器（含多账号下钻）不再列出，默认 agent 回落到第一个可用且未隐藏的；自动交接的目标与手动交接弹窗也跳过隐藏实例。已有线程、侧边栏、登录、改名、移除不受影响，管理页行上给中性「已隐藏」标记，可随时恢复。`PATCH /api/agents/:id` 同时收 label 和 hidden，存 `agents.json`。daemon/web 单测覆盖没藏、组内藏、整组藏与回落；Chromium 看过桌面、手机的隐藏/恢复与标记。
 - [x] 终端预填登录：适配器提供 `loginCommand()`，管理页「登录」调 `POST /api/agents/:id/login-terminal`，由 daemon 在实例自己的 env 下新建 web 终端并执行命令。Claude（`CLAUDE_CONFIG_DIR` + `claude auth login`）、Codex（`--device-auth`）、TRAE（`--sso-device`）、ZCode（`--no-browser`）；pi、agy 没有可启动的登录命令，不显示按钮。命令只由适配器生成，页面不传任意命令，也不保存凭据。
 - [ ] **P1** 页面内 OAuth 登录向导：适配器 `login()` 返回授权 URL/code 输入，daemon 管理登录进程、超时和取消，成功后校验账号并注册；不做无人值守授权，不把 token 存进 hub。先做 Claude，再按适配器扩展。
 - [x] 交接：线程菜单「交接」打开后直接整理可复制内容，无需额外发送一轮；复制不要求选择接手 agent。另可选择接手实例后点「新建接手对话」，在原 cwd 和已有 worktree 创建独立空线程，交接内容预填到可编辑输入框，用户点击发送后才开始一轮。新草稿按机器与线程隔离并立即保存，保留原线程和普通新线程的草稿。包含来源机器、具体 agent 实例名/实例 ID/类型、项目工作目录及真实路径、agent 配置/数据目录、session ID、实际 session 文件地址、hub 线程 ID、原会话恢复命令（仅供参考），以及从事件日志合成的任务进度。接手要求明确写入复制内容：使用接手 agent 自己的会话，在原 cwd 继续；保留原 worktree、分支和未提交改动，不让用户手动新开会话。只读 Git 探测能识别非 hub 创建的 worktree，并保留子目录 cwd。多个 Claude 各自在自己的 `CLAUDE_CONFIG_DIR` 下查会话，恢复命令显式携带该目录；只读查找，不修改 agent 文件，不导出任意环境变量。尚无 session 或找不到文件时明确说明，不猜路径；运行中或只剩一个 agent 也能复制。原有 agent 写摘要接口保留，返回内容同样附带定位信息。覆盖同名 Claude/相同 session ID 的账号隔离、文件未创建/缺失和复制全文；真实无头 Chromium 看过桌面/手机、亮暗四组合，实体手机未测。

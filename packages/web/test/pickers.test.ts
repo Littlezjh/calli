@@ -1,7 +1,25 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { effortsForModel, imagesBlocked, modelName, modelRows } from '../src/components/Pickers.js';
-import { isFastSpeed } from '../src/api.js';
+import { agentGroups, effortsForModel, imagesBlocked, modelName, modelRows } from '../src/components/Pickers.js';
+import { isFastSpeed, type AgentInfo } from '../src/api.js';
+
+test('the new-thread picker omits hidden single instances and accounts before grouping', () => {
+  const agents = [
+    { id: 'solo', hidden: true },
+    { id: 'first', adapter: 'multi', hidden: true },
+    { id: 'second', adapter: 'multi' },
+    { id: 'third', adapter: 'multi', hidden: false },
+    { id: 'gone-1', adapter: 'gone', hidden: true },
+    { id: 'gone-2', adapter: 'gone', hidden: true },
+    { id: 'legacy' },
+  ] as AgentInfo[];
+  assert.deepEqual(agentGroups(agents).map(group => group.map(agent => agent.id)), [['second', 'third'], ['legacy']]);
+  assert.equal(agents.length, 7, 'settings and existing threads retain the complete catalog');
+  assert.deepEqual(agentGroups(agents.map(agent => ({ ...agent, hidden: true }))), []);
+  assert.deepEqual(agentGroups(agents.map(agent => ({ ...agent, hidden: false }))).map(group => group.map(agent => agent.id)), [
+    ['solo'], ['first', 'second', 'third'], ['gone-1', 'gone-2'], ['legacy'],
+  ]);
+});
 
 const claude = [
   { id: 'default', label: 'Default (recommended)', description: 'Opus 5.5' },

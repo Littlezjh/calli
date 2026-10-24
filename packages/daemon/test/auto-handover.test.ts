@@ -20,7 +20,7 @@ const wait = async (check: () => unknown, timeout = 8000) => {
   const end = Date.now() + timeout;
   while (!check()) { if (Date.now() > end) throw new Error('timed out'); await new Promise(r => setTimeout(r, 10)); }
 };
-async function setup(summaryFail = false) {
+async function setup(summaryFail = false, hidden?: string) {
   const dir = mkdtempSync(join(tmpdir(), 'rah-auto-test-'));
   const store = new Store(dir);
   const adapters = new Map<string, AgentAdapter>();
@@ -31,7 +31,7 @@ async function setup(summaryFail = false) {
     }));
   }
   adapters.set('offline', new AgyAdapter(['nonexistent-handover-fixture']));
-  const manager = new ThreadManager(store, adapters, [dir], new AttachmentStore(dir), () => [...adapters.keys()].map(id => ({ id, adapter: 'agy' })));
+  const manager = new ThreadManager(store, adapters, [dir], new AttachmentStore(dir), () => [...adapters.keys()].map(id => ({ id, adapter: 'agy', ...(id === hidden ? { hidden: true } : {}) })));
   Object.defineProperty(manager.autoHandover, 'delayMs', { value: 80 });
   const team = new CoordinationManager(store, manager, join(dir, 'limi.sock'));
   const server = createHttpServer({ manager, token: 'test-token', webDir: null, version: 'test' });
@@ -52,6 +52,16 @@ test('quota windows require fresh data and explicit model coverage', () => {
   assert.equal(freshQuota(q), true);
   assert.equal(freshQuota({ ...q, checkedAt: '2000-01-01' }), false);
   assert.equal(freshQuota({ ...q, checkedAt: 'unknown' }), false);
+});
+
+test('a hidden instance is never an automatic handover target', async () => {
+  const h = await setup(false, 'agy2');
+  try {
+    h.config([{ agent: 'agy2' }, { agent: 'agy3' }]);
+    const targets = await h.manager.autoHandover.targets(h.thread.id);
+    assert.ok(targets.length > 0);
+    assert.ok(targets.every(t => t.agent !== 'agy2'));
+  } finally { await h.close(); }
 });
 
 test('settings API validates and persists machine config; thread overrides are strict', async () => {

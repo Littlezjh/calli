@@ -3,7 +3,7 @@ import { ApiError, type AgentInfo, type AgentReferences, type Api } from '../api
 import { t } from '../i18n';
 import { Dialog } from './Dialog';
 import { Popover } from './Popover';
-import { AgentMark, IconAgents, IconEdit, IconMore, IconPlus, IconSignIn, IconTrash } from './icons';
+import { AgentMark, IconAgents, IconArchive, IconEdit, IconMore, IconPlus, IconRestore, IconSignIn, IconTrash } from './icons';
 
 interface Props {
   api: Api;
@@ -53,8 +53,21 @@ export function AgentsPage({ api, agents, onAdd, onReload, onLogin }: Props) {
     setBusy(renaming.id);
     setError(null);
     try {
-      await api.updateAgent(renaming.id, label.trim());
+      await api.updateAgent(renaming.id, { label: label.trim() });
       setRenaming(null);
+      await onReload();
+    } catch (e) {
+      fail(e);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const toggleHidden = async (agent: AgentInfo) => {
+    setError(null);
+    setBusy(agent.id);
+    try {
+      await api.updateAgent(agent.id, { hidden: !agent.hidden });
       await onReload();
     } catch (e) {
       fail(e);
@@ -140,6 +153,7 @@ export function AgentsPage({ api, agents, onAdd, onReload, onLogin }: Props) {
                   <div className="agents-row-main">
                     <div className="agents-row-name">
                       <strong>{agent.label}</strong>
+                      {agent.hidden && <span className="agents-hidden">{t('agents.hidden')}</span>}
                       {!agent.available && <span className="agents-unavailable">{t('agents.unavailable')}</span>}
                     </div>
                     <span className="agents-row-meta">
@@ -180,6 +194,18 @@ export function AgentsPage({ api, agents, onAdd, onReload, onLogin }: Props) {
                           >
                             <IconEdit size={15} />
                             {t('agents.rename')}
+                          </button>
+                          <button
+                            type="button"
+                            className="pop-item compact"
+                            role="menuitem"
+                            onClick={() => {
+                              close();
+                              void toggleHidden(agent);
+                            }}
+                          >
+                            {agent.hidden ? <IconRestore size={15} /> : <IconArchive size={15} />}
+                            {t(agent.hidden ? 'agents.unhide' : 'agents.hide')}
                           </button>
                           <button
                             type="button"

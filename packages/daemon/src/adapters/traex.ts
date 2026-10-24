@@ -83,7 +83,7 @@ export class TraexAcpAdapter extends AcpAdapter {
   readonly capabilities = {
     workModes: ['execute', 'plan'] as const,
     speed: true,
-    goal: { controls: ['show', 'pause', 'clear'] as const, actions: ['set', 'show', 'pause', 'resume', 'clear'] as const },
+    goal: { controls: ['show', 'pause', 'clear'] as const, actions: ['set', 'show', 'pause', 'resume', 'clear'] as const, live: true },
     compact: true,
     coordination: true,
     resume: true,

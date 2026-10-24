@@ -2,6 +2,27 @@
 export type GoalControl = 'show' | 'pause' | 'clear';
 export type GoalCommand = { action: GoalControl | 'resume' | 'set'; objective?: string };
 
+/** A native goal as the hub shows it: what the adapter knows right now, nothing more. */
+export interface GoalSnapshot {
+  objective: string;
+  /** Active, paused, blocked, complete… in the agent's own vocabulary. */
+  status: string;
+  tokensUsed?: number;
+  tokenBudget?: number;
+}
+
+/** Picks the fields the hub understands out of a native goal object; null when there is none. */
+export function goalSnapshot(goal: unknown): GoalSnapshot | null {
+  if (!goal || typeof goal !== 'object' || typeof (goal as any).objective !== 'string') return null;
+  const g = goal as { objective: string; status?: unknown; tokensUsed?: unknown; tokenBudget?: unknown };
+  return {
+    objective: g.objective,
+    status: typeof g.status === 'string' && g.status ? g.status : 'unknown',
+    ...(typeof g.tokensUsed === 'number' && Number.isFinite(g.tokensUsed) ? { tokensUsed: g.tokensUsed } : {}),
+    ...(typeof g.tokenBudget === 'number' && Number.isFinite(g.tokenBudget) ? { tokenBudget: g.tokenBudget } : {}),
+  };
+}
+
 export function parseGoalCommand(text: string): GoalCommand | null {
   const match = /^\/goal(?:\s+([\s\S]*))?$/.exec(text.trim());
   if (!match) return null;

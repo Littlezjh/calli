@@ -1701,6 +1701,22 @@ html.list-open body {
   position: relative;
 }
 
+/* The native goal as a band above the input: one line, details behind the chevron. */
+.goal-card { margin: 0 0 8px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow-card); }
+.goal-card-row { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 6px 8px 6px 14px; }
+.goal-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+.goal-dot.on { background: var(--positive); box-shadow: 0 0 0 3px color-mix(in srgb, var(--positive) 22%, transparent); animation: pulse 1.6s ease-in-out infinite; }
+.goal-heading { flex: none; font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.goal-card-objective { min-width: 0; flex: 1; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.goal-elapsed { flex: none; font-size: 12.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.goal-action { flex: none; }
+.goal-card-details { border-top: 1px solid var(--border); padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 8px; }
+.goal-full { margin: 0; font-size: 13.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.goal-card-details dl { display: flex; flex-wrap: wrap; gap: 4px 24px; margin: 0; }
+.goal-card-details dl div { display: flex; align-items: baseline; gap: 6px; }
+.goal-card-details dt { font-size: 12px; color: var(--muted); }
+.goal-card-details dd { margin: 0; font-size: 12.5px; color: var(--text); }
+
 .composer-box {
   display: flex;
   flex-direction: column;
@@ -10471,6 +10487,7 @@ button.trace-step-head:hover { background: var(--hover); }
 .agents-row-name { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .agents-row-name strong { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agents-unavailable { color: var(--warn); font-size: 12px; white-space: nowrap; }
+.agents-hidden { color: var(--muted); font-size: 12px; white-space: nowrap; }
 .agents-row-meta { display: block; color: var(--muted); font-size: 13px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agents-row-id { color: var(--faint); }
 .agents-row-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }

@@ -133,7 +133,8 @@ export class AutoHandover {
     const model = await this.manager.handoverModel(thread.agent, thread.model);
     const out: HandoverTarget[] = [];
     for (const target of order) {
-      const agent = agents.find(a => a.id === target.agent && a.available);
+      // A hidden instance is out of rotation on purpose (a banned account, say); handover must not revive it.
+      const agent = agents.find(a => a.id === target.agent && a.available && !a.hidden);
       if (!agent) continue;
       // An unattended handover must not broaden the source conversation's permissions.
       if (thread.permissionMode !== 'full_access' && !agent.capabilities.permissionModes.includes(thread.permissionMode as 'ask' | 'auto_edit')) continue;

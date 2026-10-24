@@ -2293,7 +2293,7 @@ test('agents: instances beyond the built-ins are listed, and PATH discovery offe
   await withRegistryManager.shutdown();
 });
 
-test('agents: rename, reference counts and removal leave a used instance in place', async () => {
+test('agents: rename, hide, restore and removal leave a used instance in place', async () => {
   const data = mkdtempSync(join(tmpdir(), 'rah-agents-manage-api-'));
   const ownStore = new Store(data);
   const registry = new AgentRegistry(defaultInstances({
@@ -2303,7 +2303,7 @@ test('agents: rename, reference counts and removal leave a used instance in plac
     traexCommand: [process.execPath, join(here, 'fixtures', 'fake-acp.mjs'), 'acp', 'serve'],
     codexCommand: [process.execPath, join(here, 'fixtures', 'fake-codex.mjs')],
   }), null);
-  const ownManager = new ThreadManager(ownStore, registry.adapters, [workdir], new AttachmentStore(data));
+  const ownManager = new ThreadManager(ownStore, registry.adapters, [workdir], new AttachmentStore(data), () => registry.list());
   const own = createHttpServer({ manager: ownManager, registry, token: TOKEN, webDir: null, version: 'test' });
   await new Promise<void>((r) => own.listen(0, '127.0.0.1', () => r()));
   const ownBase = `http://127.0.0.1:${(own.address() as AddressInfo).port}`;
@@ -2319,6 +2319,21 @@ test('agents: rename, reference counts and removal leave a used instance in plac
     // A thread, archived or not, keeps the instance from disappearing under it.
     const made = await call('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: workdir }) });
     assert.equal(made.status, 201);
+    const thread = (await made.json()) as { id: string };
+    for (const hidden of [true, false]) {
+      const patched = await call('/api/agents/pi', { method: 'PATCH', body: JSON.stringify({ hidden }) });
+      assert.equal(patched.status, 200);
+      assert.equal(((await patched.json()) as { hidden: boolean }).hidden, hidden);
+      const catalog = (await (await call('/api/agents')).json()) as Array<{ id: string; hidden?: boolean; label: string }>;
+      assert.equal(catalog.find(agent => agent.id === 'pi')?.hidden, hidden);
+      assert.equal(catalog.find(agent => agent.id === 'pi')?.label, 'pi 工作号');
+      assert.equal((await call(`/api/threads/${thread.id}`)).status, 200);
+      assert.equal(registry.adapters.has('pi'), true);
+    }
+    for (const patch of [{}, { hidden: 'true' }, { label: '', hidden: true }]) {
+      assert.equal((await call('/api/agents/pi', { method: 'PATCH', body: JSON.stringify(patch) })).status, 400);
+    }
+    assert.equal((await call('/api/agents/nope', { method: 'PATCH', body: JSON.stringify({ hidden: true }) })).status, 404);
     const refs = (await (await call('/api/agents/pi/references')).json()) as { threads: number };
     assert.ok(refs.threads >= 1);
     const blocked = await call('/api/agents/pi', { method: 'DELETE' });

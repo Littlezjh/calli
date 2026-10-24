@@ -6,7 +6,7 @@ import { ZcodeUsageFile } from './zcode-usage.js';
 import { cliDiagnostic } from './diagnostics.js';
 import { fetchZcodeQuota } from './zcode-quota.js';
 import { loadZcodeAccounts, type ZcodeAccounts } from './zcode-account.js';
-import { goalSummary, parseGoalCommand, type GoalControl } from './native-goal.js';
+import { goalSnapshot, goalSummary, parseGoalCommand, type GoalControl, type GoalSnapshot } from './native-goal.js';
 import { isCompaction, trackCompaction } from './compaction.js';
 import { ZCODE_ICON } from './icons.js';
 import { randomUUID } from 'node:crypto';
@@ -163,7 +163,7 @@ export class ZcodeAdapter implements AgentAdapter {
   readonly icon = ZCODE_METADATA.icon;
   readonly capabilities = {
     workModes: ['execute', 'plan'] as const,
-    goal: { controls: ['pause'] as const, actions: ['set', 'show', 'pause', 'resume', 'clear'] as const },
+    goal: { controls: ['pause'] as const, actions: ['set', 'show', 'pause', 'resume', 'clear'] as const, live: true },
     coordination: true, resume: true, modelSwitch: true, approvals: true,
     // ZCode also treats toolAllowlist as approval exemptions, so permission tiers would mislead.
     permissionModes: [], effortLevels: [],
@@ -229,6 +229,16 @@ class ZcodeSession implements AgentSession {
   private active: { inputId: string; turnId?: string; goal?: boolean; compact?: boolean; error?: string; hooks: TurnHooks; resolve(result: TurnResult): void; reject(error: Error): void; text: string; seen: Set<string> } | null = null;
   private closed = false;
   private goalActive = false;
+  /** The last target the server reported, kept so the goal card can read it any time. */
+  private target: unknown = null;
+  private onGoal?: (goal: GoalSnapshot | null) => void;
+  /** Remembers a target the server just reported and tells the hub when it changed. */
+  private noteTarget(target: unknown): void {
+    this.goalActive = (target as { status?: string } | null)?.status === 'active';
+    if (JSON.stringify(goalSnapshot(target)) === JSON.stringify(goalSnapshot(this.target))) return;
+    this.target = target;
+    this.onGoal?.(goalSnapshot(target));
+  }
   private submission: Promise<void> | null = null;
   private preparing: Promise<void> | null = null;
   private usage: EmittedEvent | null = null;
@@ -241,6 +251,7 @@ class ZcodeSession implements AgentSession {
   }
   async open(opts: StartOptions): Promise<any> {
     this.onWorkMode = opts.onWorkMode;
+    this.onGoal = opts.onGoal;
     this.workMode = opts.workMode ?? 'execute';
     const workspace = { workspacePath: opts.cwd, workspaceKey: opts.cwd };
     const model = opts.model ? selection(opts.model, opts.effort) : undefined;
@@ -268,7 +279,7 @@ class ZcodeSession implements AgentSession {
       await this.close();
       throw new Error('zcode 没有可用模型。请检查 API 模型配置，或在 zcode 中登录 BigModel / Z.ai 个人 Coding Plan 后刷新模型列表；其他账号套餐模型暂未支持。');
     }
-    this.goalActive = (snapshot.session.target ?? snapshot.projection?.target)?.status === 'active';
+    this.noteTarget(snapshot.session.target ?? snapshot.projection?.target);
     if (this.workMode === 'plan' && this.goalActive) throw new Error('请先暂停当前目标，再进入计划模式');
     if (opts.resumeId) {
       await this.wire.request('session/setMode', { sessionId: this.agentSessionId, mode: this.workMode === 'plan' ? 'plan' : 'build' });
@@ -406,7 +417,7 @@ class ZcodeSession implements AgentSession {
       }).then((result) => {
         if (goal && this.active === active) {
           if (typeof result?.startedTurn !== 'boolean' || !result.snapshot) throw new Error('zcode 未返回可识别的目标状态');
-          this.goalActive = (result.snapshot.session?.target ?? result.snapshot.projection?.target)?.status === 'active';
+          this.noteTarget(result.snapshot.session?.target ?? result.snapshot.projection?.target);
           if (!result.startedTurn) {
             hooks.emit({ type: 'message.delta', data: { text: goalSummary(result.snapshot.session?.target ?? result.snapshot.projection?.target) } });
             this.finish({ stopReason: 'end_turn' });
@@ -444,7 +455,17 @@ class ZcodeSession implements AgentSession {
     await this.preparing;
     await this.submission;
     await this.wire.request('session/goal', { sessionId: this.agentSessionId, action: 'pause' });
+    await this.refreshGoal();
     return '目标已暂停。';
+  }
+  /** Reads the session's target fresh; the last answer stands when the wire is gone. */
+  async goalState(): Promise<GoalSnapshot | null> {
+    if (!this.closed && this.agentSessionId) await this.refreshGoal();
+    return goalSnapshot(this.target);
+  }
+  private async refreshGoal(): Promise<void> {
+    const snapshot = await this.wire.request('session/read', { sessionId: this.agentSessionId, messageLimit: 1 }, 3000, false).catch(() => null);
+    if (snapshot) this.noteTarget(snapshot.session?.target ?? snapshot.projection?.target);
   }
   async close(): Promise<void> {
     try { if (!this.closed && this.agentSessionId) await this.wire.request('session/close', { sessionId: this.agentSessionId, ...(this.probe ? { expectedPersistence: 'deferred' } : {}) }, 5_000); }
@@ -465,7 +486,7 @@ class ZcodeSession implements AgentSession {
       void this.wire.request('session/read', { sessionId: this.agentSessionId, messageLimit: 1 }).then((snapshot) => {
         if (this.active !== active) return;
         const target = snapshot.session?.target ?? snapshot.projection?.target;
-        this.goalActive = target?.status === 'active';
+        this.noteTarget(target);
         active.hooks.emit({ type: 'message.delta', data: { text: `\n\n${goalSummary(target)}` } });
         this.finish(event.reason.endsWith('_failed') ? { stopReason: 'error', error: active.error ?? 'zcode 目标执行失败' }
           : { stopReason: target?.status === 'paused' ? 'cancelled' : 'end_turn' });

@@ -436,7 +436,7 @@ export function createHttpServer(deps: HttpDeps): Server {
     if (method === 'PATCH' && parts[0] === 'api' && parts[1] === 'agents' && parts[2] && !parts[3]) {
       if (!registry) throw new HttpError(404, 'this daemon has no agent registry');
       const body = await readJson(req);
-      return sendJson(res, 200, await registry.update(parts[2], { label: body.label }));
+      return sendJson(res, 200, await registry.update(parts[2], { label: body.label, hidden: body.hidden }));
     }
 
     // DELETE /api/agents/:id: remove only the hub's registration. Native files stay untouched.
@@ -974,6 +974,11 @@ export function createHttpServer(deps: HttpDeps): Server {
           if (ev.threadId === threadId) writeEvent(res, ev);
         });
         return finishStream(req, res, off);
+      }
+
+      if (sub === 'goal' && method === 'GET') {
+        manager.getThread(threadId);
+        return sendJson(res, 200, { goal: await manager.goalView(threadId) });
       }
 
       if (sub === 'auto-handover') {

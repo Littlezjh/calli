@@ -9,6 +9,7 @@ import { ClaudeAcpAdapter } from '../src/adapters/claude.js';
 import { ZcodeAdapter } from '../src/adapters/zcode.js';
 import { AgyAdapter } from '../src/adapters/agy.js';
 import { TraexAcpAdapter } from '../src/adapters/traex.js';
+import type { GoalSnapshot } from '../src/adapters/native-goal.js';
 import type { EmittedEvent } from '../src/events.js';
 import type { TurnHooks } from '../src/adapters/types.js';
 import { ThreadManager } from '../src/threads.js';
@@ -177,4 +178,84 @@ test('Codex resumes a persisted goal through ordinary prompts without losing con
     assert.match(text, /目标第 2 轮/);
     assert.match(text, /报告已完成/);
   } finally { await s.close(); }
+});
+
+test('Codex reports the goal to the card as it changes, and on demand', { timeout: 5000 }, async () => {
+  const seen: Array<GoalSnapshot | null> = [];
+  const s = await new CodexAppServerAdapter([process.execPath, join(here, 'fixtures/fake-codex.mjs')]).start({ cwd: here, onGoal: goal => seen.push(goal) });
+  try {
+    assert.equal((await s.prompt(input('/goal approve'), hooks([]))).stopReason, 'end_turn');
+    assert.deepEqual(seen.at(-1), { objective: 'approve', status: 'complete', tokensUsed: 42 });
+    assert.deepEqual(await s.goalState!(), { objective: 'approve', status: 'complete', tokensUsed: 42 });
+    assert.equal((await s.prompt(input('/goal clear'), hooks([]))).stopReason, 'end_turn');
+    assert.equal(seen.at(-1), null);
+    assert.equal(await s.goalState!(), null);
+  } finally { await s.close(); }
+});
+
+test('Codex pausing a running goal reports the paused state', { timeout: 5000 }, async () => {
+  const seen: Array<GoalSnapshot | null> = [];
+  const s = await new CodexAppServerAdapter([process.execPath, join(here, 'fixtures/fake-codex.mjs')]).start({ cwd: here, onGoal: goal => seen.push(goal) });
+  try {
+    const pending = s.prompt(input('/goal slow'), hooks([]));
+    await s.controlGoal!('pause');
+    assert.equal((await pending).stopReason, 'cancelled');
+    assert.equal(seen.at(-1)?.status, 'paused');
+    assert.equal((await s.goalState!())?.status, 'paused');
+  } finally { await s.close(); }
+});
+
+test('Codex reports a persisted goal to the card as soon as the session resumes', { timeout: 5000 }, async () => {
+  const seen: Array<GoalSnapshot | null> = [];
+  const s = await new CodexAppServerAdapter([process.execPath, join(here, 'fixtures/fake-codex.mjs')], { FAKE_CODEX_ACTIVE_GOAL: '1' }).start({ cwd: here, resumeId: 'saved-thread', onGoal: goal => seen.push(goal) });
+  try {
+    assert.deepEqual(seen, [{ objective: 'Saved target', status: 'active' }]);
+    assert.deepEqual(await s.goalState!(), { objective: 'Saved target', status: 'active' });
+  } finally { await s.close(); }
+});
+
+test('zcode reports the session target to the card as it changes, and on demand', { timeout: 5000 }, async () => {
+  const seen: Array<GoalSnapshot | null> = [];
+  const s = await new ZcodeAdapter([process.execPath, join(here, 'fixtures/fake-zcode.mjs')], { ZCODE_DATA_BASE_DIR: here }).start({ cwd: here, onGoal: goal => seen.push(goal) });
+  try {
+    assert.equal((await s.prompt(input('/goal approve'), hooks([]))).stopReason, 'end_turn');
+    assert.deepEqual(seen.at(-1), { objective: 'approve', status: 'completed' });
+    assert.deepEqual(await s.goalState!(), { objective: 'approve', status: 'completed' });
+    assert.equal((await s.prompt(input('/goal clear'), hooks([]))).stopReason, 'end_turn');
+    assert.equal(seen.at(-1), null);
+    assert.equal(await s.goalState!(), null);
+  } finally { await s.close(); }
+});
+
+test('the manager serves the goal card, emits its changes and clears it', { timeout: 10_000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rah-goal-view-test-'));
+  const store = new Store(dir);
+  const adapter = new CodexAppServerAdapter([process.execPath, join(here, 'fixtures/fake-codex.mjs')]);
+  const manager = new ThreadManager(store, new Map([['codex', adapter]]), [dir], new AttachmentStore(dir));
+  const waitUntil = async (condition: () => boolean) => {
+    const deadline = Date.now() + 8000;
+    while (!condition()) {
+      if (Date.now() > deadline) throw new Error('goal card state timed out');
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  };
+  try {
+    const thread = await manager.createThread({ agent: 'codex', cwd: dir });
+    assert.equal(await manager.goalView(thread.id), null);
+    await manager.startTurn(thread.id, { text: '/goal test' });
+    await waitUntil(() => manager.listEvents(thread.id, 0).some(e => e.type === 'goal.updated' && (e.data.goal as { status?: string })?.status === 'complete'));
+    const view = await manager.goalView(thread.id);
+    assert.equal(view?.objective, 'test');
+    assert.equal(view?.status, 'complete');
+    assert.equal(view?.tokensUsed, 42);
+    assert.ok(typeof view?.activeMs === 'number' && view.activeMs >= 0);
+    assert.ok(!Number.isNaN(Date.parse(view!.startedAt)) && !Number.isNaN(Date.parse(view!.at)));
+    await manager.startTurn(thread.id, { text: '/goal clear' });
+    await waitUntil(() => manager.listEvents(thread.id, 0).some(e => e.type === 'goal.updated' && e.data.goal === null));
+    assert.equal(await manager.goalView(thread.id), null);
+  } finally {
+    await manager.shutdown();
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

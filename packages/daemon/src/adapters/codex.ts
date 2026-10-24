@@ -6,7 +6,7 @@ import type { WorkMode } from './types.js';
 import { CodexUsage } from './usage.js';
 import { cliDiagnostic } from './diagnostics.js';
 import { trackCompaction } from './compaction.js';
-import { goalSummary, parseGoalCommand, type GoalControl, type GoalCommand } from './native-goal.js';
+import { goalSnapshot, goalSummary, parseGoalCommand, type GoalControl, type GoalCommand, type GoalSnapshot } from './native-goal.js';
 import { sessionEnvironment } from './types.js';
 import { codexReadTool, codexSearchTool } from './codex-tools.js';
 import { codexComputerTool, computerDynamicTool } from './codex-computer.js';
@@ -484,6 +484,19 @@ class CodexSession implements AgentSession {
   }
   private turn: { id: string; resolve(r: TurnResult): void; error?: string; compact?: boolean; goal?: boolean; goalTurns?: number; cancelRequested?: boolean } | null = null;
   private goal: any = null;
+  /** Where the hub's goal card hears about changes; set right after construction. */
+  onGoal?: (goal: GoalSnapshot | null) => void;
+  private pushGoal(): void {
+    this.onGoal?.(goalSnapshot(this.goal));
+  }
+  async goalState(): Promise<GoalSnapshot | null> {
+    try {
+      this.goal = (await this.peer.request('thread/goal/get', { threadId: this.agentSessionId })).goal ?? null;
+    } catch {
+      // The server is gone or has no goals; whatever notifications left stands.
+    }
+    return goalSnapshot(this.goal);
+  }
   private goalSubmission: Promise<unknown> | null = null;
   /** Command output streamed so far, so each update carries the whole text like other agents do. */
   private readonly outputSoFar = new Map<string, string>();
@@ -543,11 +556,13 @@ class CodexSession implements AgentSession {
         break;
       case 'thread/goal/updated':
         this.goal = params.goal;
+        this.pushGoal();
         if (this.turn && !this.turn.compact && this.goal?.status === 'active') this.turn.goal = true;
         this.finishGoalIfIdle();
         break;
       case 'thread/goal/cleared':
         this.goal = null;
+        this.pushGoal();
         this.finishGoalIfIdle();
         break;
       case 'item/started': {
@@ -886,8 +901,9 @@ class CodexSession implements AgentSession {
       turn.cancelRequested = true;
       await this.goalSubmission;
       if (this.turn !== turn) return;
-      if (this.goal) await this.peer.request('thread/goal/set', { threadId: this.agentSessionId, status: 'paused' });
+      if (this.goal) this.goal = (await this.peer.request('thread/goal/set', { threadId: this.agentSessionId, status: 'paused' })).goal ?? this.goal;
       if (this.turn !== turn) return;
+      this.pushGoal();
       if (!turn.id) { this.finishTurn('cancelled'); return; }
     }
     if (!turn.id) { turn.cancelRequested = true; return; }
@@ -904,15 +920,18 @@ class CodexSession implements AgentSession {
     await this.goalSubmission;
     if (action === 'show') {
       this.goal = (await this.peer.request('thread/goal/get', { threadId: this.agentSessionId })).goal;
+      this.pushGoal();
       return goalSummary(this.goal);
     }
     if (action === 'pause') {
       if (this.turn?.goal) await this.cancel();
-      else await this.peer.request('thread/goal/set', { threadId: this.agentSessionId, status: 'paused' });
+      else this.goal = (await this.peer.request('thread/goal/set', { threadId: this.agentSessionId, status: 'paused' })).goal ?? this.goal;
+      this.pushGoal();
       return '目标已暂停。';
     }
     await this.peer.request('thread/goal/clear', { threadId: this.agentSessionId });
     this.goal = null;
+    this.pushGoal();
     this.finishGoalIfIdle();
     return '目标已清除；当前轮仍可用停止按钮结束。';
   }
@@ -920,9 +939,14 @@ class CodexSession implements AgentSession {
   private async promptGoal(command: GoalCommand, hooks: TurnHooks): Promise<TurnResult> {
     if (command.action !== 'set' && command.action !== 'resume') {
       try {
-        const text = command.action === 'pause'
-          ? goalSummary((await this.peer.request('thread/goal/set', { threadId: this.agentSessionId, status: 'paused' })).goal)
-          : await this.controlGoal(command.action);
+        let text: string;
+        if (command.action === 'pause') {
+          this.goal = (await this.peer.request('thread/goal/set', { threadId: this.agentSessionId, status: 'paused' })).goal;
+          this.pushGoal();
+          text = goalSummary(this.goal);
+        } else {
+          text = await this.controlGoal(command.action);
+        }
         hooks.emit({ type: 'message.delta', data: { text } });
         return { stopReason: 'end_turn' };
       } catch (error) { return { stopReason: 'error', error: String(error) }; }
@@ -935,19 +959,27 @@ class CodexSession implements AgentSession {
     let resolve!: (result: TurnResult) => void;
     const result = new Promise<TurnResult>((r) => { resolve = r; });
     const previousGoal = this.goal;
-    this.goal = { objective: command.objective, status: 'active' };
+    // Optimistic for a new objective; a resume keeps the old one until the server answers.
+    if (command.objective) {
+      this.goal = { objective: command.objective, status: 'active' };
+      this.pushGoal();
+    }
     this.turn = { id: '', resolve, goal: true };
     this.goalSubmission = (async () => {
       // Goal turns are started by the runtime, so turn/start overrides never reach them.
       await this.peer.request('thread/settings/update', { threadId: this.agentSessionId, ...this.turnOverrides() });
-      return this.peer.request('thread/goal/set', {
+      const res = await this.peer.request('thread/goal/set', {
         threadId: this.agentSessionId, status: 'active',
         ...(command.objective ? { objective: command.objective } : {}),
       });
+      this.goal = res?.goal ?? this.goal;
+      this.pushGoal();
+      return res;
     })();
     try { await this.goalSubmission; }
     catch (error) {
       this.goal = previousGoal;
+      this.pushGoal();
       if (this.turn) { this.turn.error = String(error); this.finishTurn('error'); }
     }
     finally { this.goalSubmission = null; }
@@ -991,7 +1023,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
     realtimeVoice: true,
     workModes: ['execute', 'plan'] as const,
     speed: true,
-    goal: { controls: ['show', 'pause', 'clear'] as const, actions: ['set', 'show', 'pause', 'resume', 'clear'] as const },
+    goal: { controls: ['show', 'pause', 'clear'] as const, actions: ['set', 'show', 'pause', 'resume', 'clear'] as const, live: true },
     coordination: true,
     resume: true,
     modelSwitch: true,
@@ -1305,7 +1337,9 @@ export class CodexAppServerAdapter implements AgentAdapter {
 
       const session = new CodexSession(threadId, peer, opts.cwd, nativeModel, nativeEffort, this.name, computer);
       holder.session = session;
+      session.onGoal = opts.onGoal;
       // An ordinary prompt can also continue a persisted native goal. Older servers omit it.
+      // The show also feeds the goal card through onGoal.
       if (opts.resumeId) await session.controlGoal('show').catch(() => undefined);
       // Effort has no place on thread/start; model and mode still ride with the next turn so a
       // resumed thread switches over even where thread/resume kept its old settings.

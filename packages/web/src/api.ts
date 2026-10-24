@@ -209,6 +209,20 @@ export interface Thread {
   updatedAt: string;
 }
 
+/** A thread's native goal, as the goal card shows it. Served by the daemon, then updated by events. */
+export interface GoalView {
+  objective: string;
+  status: string;
+  tokensUsed?: number;
+  tokenBudget?: number;
+  /** When this goal was set. ISO. */
+  startedAt: string;
+  /** When this view was computed. ISO; while active the clock runs on from here. */
+  at: string;
+  /** Active work so far, ms. While active: elapsed = activeMs + (now − at). */
+  activeMs: number;
+}
+
 /** What forking a thread can offer. The worktree is there for a thread in a git repository, with an agent that can move a copy. */
 export interface ForkOptions {
   worktree: { available: boolean; reason?: string; branch?: string | null; changes?: number };
@@ -371,6 +385,7 @@ export interface AgentReferences {
 export interface AgentInfo {
   id: string;
   label: string;
+  hidden?: boolean;
   /** The agent's mark: the path of a 24×24 drawing, filled with the even-odd rule. Missing from daemons that predate it. */
   icon?: string;
   /** Which adapter this instance is; instances of one adapter group together in the picker. */
@@ -400,7 +415,8 @@ export interface AgentInfo {
     compact?: boolean;
     /** Native realtime two-way voice capability. */
     realtimeVoice?: boolean;
-    goal?: { controls: Array<'show' | 'pause' | 'clear'>; actions?: Array<'set' | 'show' | 'pause' | 'resume' | 'clear'> };
+    goal?: { controls: Array<'show' | 'pause' | 'clear'>; actions?: Array<'set' | 'show' | 'pause' | 'resume' | 'clear'>; /** The hub follows the goal's state live, so a card replaces the menu commands. */
+      live?: boolean };
     fork: boolean;
     /** A fork can end at an earlier turn instead of taking the whole thread. Missing from daemons that predate it. */
     forkAt?: boolean;
@@ -1127,6 +1143,8 @@ export class Api {
   handoverSettings(): Promise<HandoverSettings> { return this.request('GET', '/api/handover-settings'); }
   saveHandoverSettings(value: HandoverSettings): Promise<HandoverSettings> { return this.request('PUT', '/api/handover-settings', value); }
   autoHandover(id: string): Promise<AutoHandoverView & { targets: HandoverTarget[] }> { return this.request('GET', `/api/threads/${id}/auto-handover`); }
+  /** The thread's native goal, for the goal card above the input. */
+  threadGoal(id: string): Promise<{ goal: GoalView | null }> { return this.request('GET', `/api/threads/${id}/goal`); }
   setAutoHandover(id: string, enabled: boolean | null): Promise<AutoHandoverView> { return this.request('PATCH', `/api/threads/${id}/auto-handover`, { enabled }); }
   cancelAutoHandover(id: string): Promise<AutoHandoverView> { return this.request('DELETE', `/api/threads/${id}/auto-handover`); }
   setCollaborationHandover(id: string, enabled: boolean): Promise<Coordination> { return this.request('PATCH', `/api/threads/${id}/collaboration-handover`, { enabled }); }
@@ -1173,9 +1191,9 @@ export class Api {
     return this.request('POST', '/api/agents', input);
   }
 
-  /** Renames an instance; its id, which threads store, does not change. */
-  updateAgent(id: string, label: string): Promise<{ id: string; label: string }> {
-    return this.request('PATCH', `/api/agents/${encodeURIComponent(id)}`, { label });
+  /** Updates an instance's presentation; its id, which threads store, does not change. */
+  updateAgent(id: string, patch: { label?: string; hidden?: boolean }): Promise<{ id: string; label?: string; hidden?: boolean }> {
+    return this.request('PATCH', `/api/agents/${encodeURIComponent(id)}`, patch);
   }
 
   /** Removes only the hub's registration; the agent's config, login and sessions stay. */

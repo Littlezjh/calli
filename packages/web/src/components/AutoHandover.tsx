@@ -44,7 +44,7 @@ export function AutoHandoverNotice({ api, thread, agents }: { api: Api; thread: 
 }
 
 function AddTarget({ api, agents, add }: { api: Api; agents: AgentInfo[]; add: (target: HandoverTarget) => void }) {
-  const [agent, setAgent] = useState(agents[0]?.id ?? '');
+  const [agent, setAgent] = useState(agents.find(a => !a.hidden)?.id ?? '');
   const [models, setModels] = useState<ModelOption[] | null>(null);
   const [model, setModel] = useState('');
   const [error, setError] = useState('');

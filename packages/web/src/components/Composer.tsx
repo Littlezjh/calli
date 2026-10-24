@@ -10,6 +10,7 @@ import { MAX_IMAGES, prepareImage, restoreImage, type PreparedImage } from '../i
 import { withNotes, type Note } from '../timeline';
 import { Popover } from './Popover';
 import { ComposerMenu, GOAL_LABELS, type GoalAction, type GoalCapability } from './ComposerMenu';
+import { GoalCard } from './GoalCard';
 import { Dialog } from './Dialog';
 import { Lightbox } from './Lightbox';
 import { VideoPreview } from './VideoPreview';
@@ -140,6 +141,8 @@ interface Props {
   /** The agent's own slash commands. */
   commands: SlashCommand[];
   goal?: GoalCapability;
+  /** The thread's native goal right now, when the agent's state can be followed live. */
+  goalState?: import('../api').GoalView | null;
   /** Things the hub does itself, offered in the same menu. */
   actions: HubAction[];
   /** Agent commands left out because a hub action replaces them. */
@@ -200,6 +203,7 @@ export function Composer({
   composerActions,
   commands,
   goal,
+  goalState,
   actions,
   hiddenCommands,
   onAction,
@@ -306,7 +310,10 @@ export function Composer({
     }
     const additions: HubAction[] = [{ id: 'composer:attach', label: t('composerMenu.attach'), hint: '', keywords: ['attach', 'image', 'video', '附件'] }];
     if (planMode) additions.push({ id: 'composer:plan', label: t('composerMenu.planMode'), hint: planMode.disabled ? t('composer.planAfterTurn') : planMode.active ? t('composer.planActive') : t('composerMenu.planOn'), keywords: ['plan', '计划'], disabled: planMode.disabled });
-    const goals: HubAction[] = (goal?.actions ?? (goal ? ['set' as const, ...goal.controls] : [])).map(action => {
+    // Where the goal card can follow the goal, the card owns pause/resume/clear and the menu
+    // keeps only the form that starts one. Agents without that (Claude) keep the text commands.
+    const goalActions: GoalAction[] = goal?.live ? ['set'] : (goal?.actions ?? (goal ? ['set', ...goal.controls] : []));
+    const goals: HubAction[] = goalActions.map(action => {
       const blocked = running ? !goal?.controls.some(c => c === action) : (action === 'set' || action === 'resume') && planMode?.active;
       return { id: `composer:goal:${action}`, label: GOAL_LABELS[action], hint: blocked ? running ? t('composerMenu.afterTurn') : t('composerMenu.planFirst') : action === 'set' ? t('composer.goalSetHint') : '', keywords: ['目标', 'target'], disabled: !!blocked };
     });
@@ -768,6 +775,7 @@ export function Composer({
           </div>
         )}
 
+        {goalState && goal?.live && <GoalCard goal={goalState} running={running} actions={goal.actions} controls={goal.controls} onAction={chooseGoal} />}
         <div
           className={`composer-box${dragOver ? ' drag-over' : ''}${collapsed ? ' collapsed' : ''}`}
           onPointerDownCapture={(e) => {

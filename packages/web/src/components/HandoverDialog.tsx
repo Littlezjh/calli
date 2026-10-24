@@ -27,7 +27,7 @@ export function HandoverDialog({ api, thread, agents, onOpen, onClose }: Props) 
   const [revision, setRevision] = useState(0);
   const [copied, setCopied] = useState(false);
   const timer = useRef<number | undefined>(undefined);
-  const [target, setTarget] = useState(() => agents.find((a) => a.id === thread.agent && a.available)?.id ?? agents.find((a) => a.available)?.id ?? '');
+  const [target, setTarget] = useState(() => agents.find((a) => a.id === thread.agent && a.available && !a.hidden)?.id ?? agents.find((a) => a.available && !a.hidden)?.id ?? '');
   const [targetModel, setTargetModel] = useState<string | undefined>();
   useEffect(() => {
     if (api.demo) return;
@@ -111,7 +111,7 @@ export function HandoverDialog({ api, thread, agents, onOpen, onClose }: Props) 
           <button className="ghost" onClick={() => void copy()} disabled={!summary}>
             {copied ? <IconCheck size={15} /> : <IconCopy size={15} />} {copied ? t('common.copied') : t('handover.copy')}
           </button>
-          <button className="primary" onClick={() => void create()} disabled={!summary || !agents.some((a) => a.id === target && a.available) || creating}>
+          <button className="primary" onClick={() => void create()} disabled={!summary || !agents.some((a) => a.id === target && a.available && !a.hidden) || creating}>
             <IconEdit size={15} /> {creating ? t('handover.creating') : t('handover.create')}
           </button>
         </div>

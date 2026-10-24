@@ -31,6 +31,8 @@ export type EventType =
   | 'input.resolved'
   | 'usage.updated'
   | 'usage.sample'
+  /** The thread's native goal changed or was cleared; the card reads it. */
+  | 'goal.updated'
   | 'approval.request'
   | 'approval.resolved'
   /** Something on the plan page changed. Broadcast only, never stored in an event log. */

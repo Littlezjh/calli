@@ -1,7 +1,7 @@
 import type { MemoryDocument, MemoryIndex } from '@rah/extension-api';
 import type { ImageInput } from '../attachments.js';
 import type { EmittedEvent } from '../events.js';
-import type { GoalControl } from './native-goal.js';
+import type { GoalControl, GoalSnapshot } from './native-goal.js';
 import type { VoiceContext, VoiceTransport } from '../voice-sessions.js';
 
 /** What the user sent in one turn. `text` may be empty when there are images. */
@@ -92,6 +92,8 @@ export interface AgentSession {
   prompt(input: TurnInput, hooks: TurnHooks): Promise<TurnResult>;
   /** Native controls that can run without queueing behind the current goal. */
   controlGoal?(action: GoalControl): Promise<string>;
+  /** The native goal right now, for the goal card. Null when there is none. */
+  goalState?(): Promise<GoalSnapshot | null>;
   /** Hooks for agent-initiated turns (voice). Set once per session; present only where the adapter implements them. */
   setSessionHooks?(hooks: SessionHooks): void;
   /**
@@ -252,6 +254,8 @@ export interface StartOptions {
   workMode?: WorkMode;
   onWorkMode?: (mode: WorkMode) => void;
   onSpeed?: (speed: string) => void;
+  /** The native goal changed, or was cleared with null. */
+  onGoal?: (goal: GoalSnapshot | null) => void;
   /** Ephemeral limi connection context. Never persisted in agent configuration. */
   coordinationEnv?: Record<string, string>;
   cwd: string;
@@ -308,7 +312,8 @@ export interface AgentAdapter {
     /** Whether /compact can compress the current context. */
     compact?: boolean;
     /** Native goal controls supported while a turn is running. */
-    goal?: { controls: readonly GoalControl[]; actions?: readonly ('set' | 'show' | 'pause' | 'resume' | 'clear')[] };
+    goal?: { controls: readonly GoalControl[]; actions?: readonly ('set' | 'show' | 'pause' | 'resume' | 'clear')[]; /** The hub can follow the goal's state live, so the card replaces the menu commands. */
+      live?: boolean };
     /** Whether a conversation can be copied into a new, independent one. */
     fork: boolean;
     /** Whether that copy can stop at an earlier turn instead of taking everything. Needs fork and history. */

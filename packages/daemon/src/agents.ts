@@ -20,6 +20,8 @@ export interface AgentInstance {
   id: string;
   adapter: 'claude' | 'pi' | 'agy' | 'traex' | 'codex' | 'zcode';
   label?: string;
+  /** Hidden from the new-thread picker; threads and settings keep working. */
+  hidden?: boolean;
   /** Full argv. Defaults to the adapter's own default command. */
   command?: string[];
   /** Merged over the daemon's environment for everything this instance spawns. */
@@ -229,16 +231,24 @@ export class AgentRegistry {
     return instance;
   }
 
-  /** Renames an instance. Its id is what threads store, so it never changes. */
-  async update(id: string, patch: { label?: unknown }): Promise<AgentInstance> {
+  /** Updates an instance's presentation. Its id is what threads store, so it never changes. */
+  async update(id: string, patch: { label?: unknown; hidden?: unknown }): Promise<AgentInstance> {
     const instance = this.get(id);
-    const label = typeof patch.label === 'string' ? patch.label.trim().slice(0, 60) : '';
-    if (!label) throw new HttpError(400, 'a label is required');
-    const next = { ...instance, label };
+    if (patch.label === undefined && patch.hidden === undefined) throw new HttpError(400, 'a label or hidden is required');
+    const next = { ...instance };
+    if (patch.label !== undefined) {
+      const label = typeof patch.label === 'string' ? patch.label.trim().slice(0, 60) : '';
+      if (!label) throw new HttpError(400, 'a label is required');
+      next.label = label;
+    }
+    if (patch.hidden !== undefined) {
+      if (typeof patch.hidden !== 'boolean') throw new HttpError(400, 'hidden must be a boolean');
+      next.hidden = patch.hidden;
+    }
     await this.persist(this.list().map((i) => (i.id === id ? next : i)));
     this.instances.set(id, next);
     const adapter = this.adapters.get(id) as { label: string } | undefined;
-    if (adapter) adapter.label = label;
+    if (adapter && patch.label !== undefined) adapter.label = next.label!;
     return next;
   }
 

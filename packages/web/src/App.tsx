@@ -12,6 +12,7 @@ import {
   AuthError,
   MAX_QUEUED,
   type AgentInfo,
+  type GoalView,
   type ModelOption,
   type Section,
   type SlashCommand,
@@ -502,6 +503,14 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     voice.state.messagesThreadId === selectedId ? voice.state.messages : []),
   [events, selectedId, voice.state.messages, voice.state.messagesThreadId]);
   const turnPreviewMap = useMemo(() => turnPreviews(timeline.items), [timeline.items]);
+  /** The thread's native goal. Live events say it when they can; otherwise what the hub last said. */
+  const [goalFetched, setGoalFetched] = useState<GoalView | null>(null);
+  const goalView = useMemo(() => {
+    for (let i = events.length - 1; i >= 0; i--) {
+      if (events[i].type === 'goal.updated') return (events[i].data.goal as GoalView | null) ?? null;
+    }
+    return goalFetched;
+  }, [events, goalFetched]);
   const rulerTurnIds = useMemo(() => [...new Set([...historyTurnIds, ...turnPreviewMap.keys()])], [historyTurnIds, turnPreviewMap]);
   // What the user last sent here, for a box that was reloaded mid-send to learn that its message arrived.
   const lastSent = useMemo(() => {
@@ -763,7 +772,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         setTodos(td);
         setSchedules(sc);
         setDraftCwd((cur) => cur || c.workdirs[0] || '');
-        const first = a.find((x) => x.available);
+        const first = a.find((x) => x.available && !x.hidden);
         setDraftAgent(first?.id ?? '');
         if (first) setDraftPermission(startingPermission(first.capabilities));
         if (!demo) {
@@ -860,6 +869,14 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
 
   const historyCursor = useRef<number | null>(null);
   const olderRequest = useRef<object | null>(null);
+  // The card reads the goal from events once they arrive; this covers goals older than the page.
+  useEffect(() => {
+    setGoalFetched(null);
+    if (!api || !selectedId) return;
+    let active = true;
+    api.threadGoal(selectedId).then(value => { if (active) setGoalFetched(value.goal); }).catch(() => undefined);
+    return () => { active = false; };
+  }, [api, selectedId, historyEpoch]);
   useEffect(() => {
     setEvents([]); setHistoryTurnIds([]); setHasOlder(false); setLoadingOlder(false); setHistoryReady(false);
     setEventsLoading(Boolean(api && selectedId)); historyCursor.current = null; olderRequest.current = null;
@@ -1390,7 +1407,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     if (!api) return;
     const list = await api.agents();
     setAgents(list);
-    setDraftAgent((prev) => (list.some((a) => a.id === prev) ? prev : list.find((a) => a.available)?.id ?? ''));
+    setDraftAgent((prev) => (list.some((a) => a.id === prev && !a.hidden) ? prev : list.find((a) => a.available && !a.hidden)?.id ?? ''));
   };
 
   const openAgents = () => { setSelectedId(null); setView('agents'); setDrawer(false); void reloadAgents().catch(handleError); };
@@ -1565,10 +1582,10 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
 
   const handleOnboardConnected = (freshList: AgentInfo[]) => {
     setAgents(freshList);
-    const first = freshList.find((x) => x.available);
-    if (first && (!draftAgent || !freshList.some((x) => x.id === draftAgent))) {
-      setDraftAgent(first.id);
-      setDraftPermission(startingPermission(first.capabilities));
+    const first = freshList.find((x) => x.available && !x.hidden);
+    if (!draftAgent || !freshList.some((x) => x.id === draftAgent && !x.hidden)) {
+      setDraftAgent(first?.id ?? '');
+      if (first) setDraftPermission(startingPermission(first.capabilities));
     }
     if (api) {
       api.discoverAgents().then(setDiscovered).catch(() => undefined);
@@ -1640,7 +1657,9 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   };
 
   // The hub has its own controls for these; going through the agent would leave them out of sync.
-  const hiddenCommands = [...(models.length ? ['model'] : []), ...(effortLevels.length ? ['effort'] : []), ...(activeCaps?.quota ? ['usage'] : [])];
+  // The hub's own goal entries (the card, or the menu commands on agents without it) replace the
+  // agent's raw /goal everywhere, as the phone's compact menu already did.
+  const hiddenCommands = [...(models.length ? ['model'] : []), ...(effortLevels.length ? ['effort'] : []), ...(activeCaps?.quota ? ['usage'] : []), ...(activeCaps?.goal ? ['goal'] : [])];
 
   const attachBlocked = !selected && draftTeam ? t('teams.attachments') : !activeCaps?.images ? t('app.noImages', agentLabel(activeAgent)) : imagesBlocked(models, model);
 
@@ -2228,6 +2247,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           )}
           commands={commandsByKey[commandsKey] ?? []}
           goal={activeCaps?.goal}
+          goalState={goalView}
           actions={hubActions}
           hiddenCommands={hiddenCommands}
           onAction={runHubAction}

@@ -84,6 +84,39 @@ test('update renames and remove drops an instance from agents.json', async () =>
   rmSync(dataDir, { recursive: true, force: true });
 });
 
+test('update persists hiding and restoring without losing instance settings or rebuilding its adapter', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'rah-agents-hidden-'));
+  try {
+    const registry = AgentRegistry.fromEnv({ dataDir, env: {}, defaults });
+    const instance = await registry.add({ id: 'pi2', adapter: 'pi', label: 'Second', command: ['node', 'pi.mjs'], env: { PI_CODING_AGENT_DIR: '/tmp/pi-two' }, account: 'second@example.com' });
+    const adapter = registry.adapters.get('pi2');
+    for (const hidden of [true, false]) {
+      assert.deepEqual(await registry.update('pi2', { hidden }), { ...instance, hidden });
+      assert.deepEqual(AgentRegistry.fromEnv({ dataDir, env: {}, defaults }).get('pi2'), { ...instance, hidden });
+      assert.equal(registry.adapters.get('pi2'), adapter);
+      assert.equal(adapter?.label, 'Second');
+    }
+    await registry.update('pi2', { hidden: true, label: ' Renamed ' });
+    assert.equal(registry.get('pi2').hidden, true);
+    assert.equal(adapter?.label, 'Renamed');
+    await registry.update('pi2', { label: 'Again' });
+    assert.equal(registry.get('pi2').hidden, true);
+  } finally {
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('update rejects empty or invalid patches without partially changing the instance', async () => {
+  const registry = new AgentRegistry(defaults, null);
+  const original = registry.get('pi');
+  for (const patch of [{}, { hidden: 'true' }, { hidden: null }, { hidden: 0 }, { label: '' }, { label: '  ', hidden: true }, { label: 'New', hidden: 'false' }]) {
+    await assert.rejects(registry.update('pi', patch), (error: unknown) => error instanceof HttpError && error.status === 400);
+    assert.deepEqual(registry.get('pi'), original);
+  }
+  await registry.update('pi', { label: 'x'.repeat(61) });
+  assert.equal(registry.get('pi').label?.length, 60);
+});
+
 test('the built-in command survives deleting the instance that supplied it', async () => {
   const dataDir = mkdtempSync(join(tmpdir(), 'rah-agents-builtin-'));
   const registry = AgentRegistry.fromEnv({ dataDir, env: {}, defaults });

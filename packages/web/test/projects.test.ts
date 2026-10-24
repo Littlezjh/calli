@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildProjectOptions, projectPath } from '../src/projects.js';
+import { buildProjectOptions, projectPath, projectRoot } from '../src/projects.js';
 
 const thread = (cwd: string, cwdReal = cwd, extra = {}) => ({
   cwd, cwdReal, updatedAt: '2026-01-01', archivedAt: null, scratch: false, ...extra,
@@ -43,4 +43,24 @@ test('worktrees count under their source project and new drafts come first', () 
     }),
   ], ['/work/code'], '/work/new');
   assert.deepEqual(list.map((p) => p.cwd), ['/work/new', '/work/code']);
+});
+
+test('a session started in a .worktrees checkout offers the repository, not the checkout', () => {
+  // No worktree metadata: limi opened the session inside the checkout directly.
+  const list = buildProjectOptions([
+    thread('/data/code/.worktrees/agent-team'),
+    thread('/data/code/.worktrees/b0b51d7d', '/data/code/.worktrees/b0b51d7d', { updatedAt: '2026-01-02' }),
+    thread('/work/code'),
+  ], [], '/data/code/.worktrees/agent-team');
+  assert.deepEqual(list.map((p) => p.cwd).sort(), ['/data/code', '/work/code']);
+  // The draft, too, points at the repository once picked.
+  assert.ok(list.find((p) => p.cwd === '/data/code')!.paths.includes('/data/code'));
+});
+
+test('projectRoot strips the checkout and leaves ordinary paths alone', () => {
+  assert.equal(projectRoot('/data/code/.worktrees/task'), '/data/code');
+  assert.equal(projectRoot('/data/code/.worktrees'), '/data/code');
+  assert.equal(projectRoot('/data/code/.worktrees/task/packages/web'), '/data/code');
+  assert.equal(projectRoot('/data/code'), '/data/code');
+  assert.equal(projectRoot('/data/code/worktrees/task'), '/data/code/worktrees/task');
 });
