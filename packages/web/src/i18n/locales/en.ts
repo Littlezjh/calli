@@ -394,7 +394,6 @@ export const en: Messages = {
 
   // Composer menu
   'goal.set': 'Set goal',
-  'goal.show': 'View goal',
   'goal.pause': 'Pause goal',
   'goal.resume': 'Resume goal',
   'goal.clear': 'Clear goal',
@@ -419,9 +418,7 @@ export const en: Messages = {
   'composerMenu.planOff': 'Turn off plan mode and carry on with the task',
   'composerMenu.planOn': 'Analyze and discuss the approach first',
   'composerMenu.planMode': 'Plan mode',
-  'composerMenu.goalMode': 'Goal mode',
   'composerMenu.actions': 'Actions',
-  'composerMenu.back': 'Back to the add menu',
   'composerMenu.afterTurn': 'Available once this turn ends',
   'composerMenu.planFirst': 'Turn off plan mode first',
 
@@ -1203,7 +1200,6 @@ export const en: Messages = {
   'composer.planActive': 'On; click to turn off',
   'composer.goalSetHint': 'Set a goal to keep working toward',
   'composer.add': 'Add',
-  'composer.goal': 'Goal',
   'composer.maxVideos': (n: number) => `At most ${n} ${n === 1 ? 'video' : 'videos'} per message`,
   'composer.videoFailed': 'The video could not be added',
   'composer.maxImages': (n: number) => `At most ${n} ${n === 1 ? 'image' : 'images'} per message`,

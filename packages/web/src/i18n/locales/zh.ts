@@ -394,7 +394,6 @@ export const zh = {
 
   // Composer menu
   'goal.set': '设置目标',
-  'goal.show': '查看目标',
   'goal.pause': '暂停目标',
   'goal.resume': '继续目标',
   'goal.clear': '清除目标',
@@ -419,9 +418,7 @@ export const zh = {
   'composerMenu.planOff': '关闭计划模式，继续执行任务',
   'composerMenu.planOn': '先分析和讨论方案',
   'composerMenu.planMode': '计划模式',
-  'composerMenu.goalMode': '目标模式',
   'composerMenu.actions': '操作',
-  'composerMenu.back': '返回添加菜单',
   'composerMenu.afterTurn': '当前轮结束后可操作',
   'composerMenu.planFirst': '先关闭计划模式',
 
@@ -1203,7 +1200,6 @@ export const zh = {
   'composer.planActive': '已开启，点击关闭',
   'composer.goalSetHint': '设置要持续完成的目标',
   'composer.add': '添加',
-  'composer.goal': '目标',
   'composer.maxVideos': (n: number) => `一条消息最多 ${n} 个视频`,
   'composer.videoFailed': '视频无法添加',
   'composer.maxImages': (n: number) => `一条消息最多 ${n} 张图片`,

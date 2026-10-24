@@ -9,7 +9,7 @@ import { mentionAt } from '../mentions';
 import { MAX_IMAGES, prepareImage, restoreImage, type PreparedImage } from '../images';
 import { withNotes, type Note } from '../timeline';
 import { Popover } from './Popover';
-import { ComposerMenu, GOAL_LABELS, type GoalAction, type GoalCapability, type WritingMode } from './ComposerMenu';
+import { ComposerMenu, type GoalAction, type GoalCapability, type WritingMode } from './ComposerMenu';
 import { GoalCard } from './GoalCard';
 import { Lightbox } from './Lightbox';
 import { VideoPreview } from './VideoPreview';
@@ -324,19 +324,17 @@ export function Composer({
     const additions: HubAction[] = [{ id: 'composer:attach', label: t('composerMenu.attach'), hint: '', keywords: ['attach', 'image', 'video', '附件'] }];
     if (planMode) additions.push({ id: 'composer:plan', label: t('composerMenu.planMode'), hint: planMode.disabled ? t('composer.planAfterTurn') : planMode.active ? t('composer.planActive') : t('composerMenu.planOn'), keywords: ['plan', '计划'], disabled: planMode.disabled });
     if (writingMode) additions.push({ id: 'composer:writing', label: t('writing.mode'), hint: writingMode.active ? t('writing.off') : t('writing.modeHint'), keywords: ['writing', 'write', '写作', '文章'], disabled: writingMode.disabled });
-    // Where the goal card can follow the goal, the card owns pause/resume/clear and the menu
-    // keeps only the form that starts one. Agents without that (Claude) keep the text commands.
-    const goalActions: GoalAction[] = goal?.live ? ['set'] : (goal?.actions ?? (goal ? ['set', ...goal.controls] : []));
-    const goals: HubAction[] = goalActions.map(action => {
-      const blocked = running ? !goal?.controls.some(c => c === action) : (action === 'set' || action === 'resume') && planMode?.active;
-      return { id: `composer:goal:${action}`, label: GOAL_LABELS[action], hint: blocked ? running ? t('composerMenu.afterTurn') : t('composerMenu.planFirst') : action === 'set' ? t('composer.goalSetHint') : '', keywords: ['目标', 'target'], disabled: !!blocked };
-    });
+    // One entry for every agent, like the phone menu: starting a goal fills the box; what the
+    // card cannot show is typed by hand.
+    if (goal) {
+      const blocked = running ? t('composerMenu.afterTurn') : planMode?.active ? t('composerMenu.planFirst') : '';
+      additions.push({ id: 'composer:goal:set', label: t('goal.set'), hint: blocked || t('composer.goalSetHint'), keywords: ['目标', 'target'], disabled: !!blocked });
+    }
     const group = (label: string, entries: HubAction[]): MenuRow[] => searchCommands(query, entries, []).map(row => row.type === 'heading' ? { ...row, label } : row);
     // Both desktop entry points share one catalog, ordering and filtering behavior.
     return [
-      ...(!narrow ? group(t('composer.add'), [...additions, ...goals.filter(a => a.id.endsWith(':set'))]) : []),
+      ...(!narrow ? group(t('composer.add'), additions) : []),
       ...searchCommands(query, actions, commands, hiddenCommands),
-      ...(!narrow ? group(t('composer.goal'), goals.filter(a => !a.id.endsWith(':set'))) : []),
     ];
   }, [addOpen, addQuery, catalog, text, narrow, actions, commands, hiddenCommands, planMode, writingMode, goal, running]);
   const selectable = useMemo(() => rows.filter((r): r is Selectable => r.type !== 'heading' && !(r.type === 'action' && r.action.disabled)), [rows]);

@@ -392,7 +392,6 @@ export const ja: Messages = {
 
   // Composer menu
   'goal.set': '目標を設定',
-  'goal.show': '目標を表示',
   'goal.pause': '目標を一時停止',
   'goal.resume': '目標を再開',
   'goal.clear': '目標をクリア',
@@ -417,9 +416,7 @@ export const ja: Messages = {
   'composerMenu.planOff': 'プランモードをオフにして、タスクの実行を続ける',
   'composerMenu.planOn': 'まず方針を分析・検討する',
   'composerMenu.planMode': 'プランモード',
-  'composerMenu.goalMode': '目標モード',
   'composerMenu.actions': '操作',
-  'composerMenu.back': '追加メニューに戻る',
   'composerMenu.afterTurn': 'このターンが終わると操作できます',
   'composerMenu.planFirst': '先にプランモードをオフにしてください',
 
@@ -1201,7 +1198,6 @@ export const ja: Messages = {
   'composer.planActive': 'オン（クリックでオフ）',
   'composer.goalSetHint': '達成し続ける目標を設定します',
   'composer.add': '追加',
-  'composer.goal': '目標',
   'composer.maxVideos': (n: number) => `1 件のメッセージにつき動画は ${n} 本までです`,
   'composer.videoFailed': '動画を追加できません',
   'composer.maxImages': (n: number) => `1 件のメッセージにつき画像は ${n} 枚までです`,
