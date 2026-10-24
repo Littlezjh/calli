@@ -1266,10 +1266,6 @@ export const en: Messages = {
   'composer.queueMax': (n: number) => `Up to ${n} queued messages`,
   'composer.goalNow': 'Run the goal action now',
   'composer.afterTurn': 'Sent when this turn ends',
-  'composer.goalMessage': 'Describe the outcome you want; the agent keeps working until it is done.',
-  'composer.starting': 'Starting…',
-  'composer.start': 'Start',
-  'composer.goalPlaceholder': 'For example: fix the login bug, add regression tests and make sure they pass',
 
   // Thread actions
   'actions.forkEmpty': 'Nothing to fork yet; send a message first',
