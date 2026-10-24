@@ -304,7 +304,8 @@ interface EditorProps {
 }
 
 function ScheduleEditor({ api, schedule, agents, workdirs, onCancel, onSaved, onOpenThread, onError }: EditorProps) {
-  const usable = useMemo(() => agents.filter((a) => a.available || a.id === schedule?.agent), [agents, schedule?.agent]);
+  // A hidden instance is not offered to new schedules; editing an existing one keeps its agent.
+  const usable = useMemo(() => agents.filter((a) => (a.available && !a.hidden) || a.id === schedule?.agent), [agents, schedule?.agent]);
   const [name, setName] = useState(schedule?.name ?? '');
   const [agent, setAgent] = useState(schedule?.agent ?? usable[0]?.id ?? '');
   const [cwd, setCwd] = useState(schedule?.cwd ?? workdirs[0] ?? '');

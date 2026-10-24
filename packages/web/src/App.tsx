@@ -1705,9 +1705,10 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     </>
   );
 
-  // The team's own choices once there is a team; until then, what this device remembers.
+  // The team's own choices once there is a team; until then, what this device remembers. A hidden
+  // instance is not offered to a new team; one already in a running coordination stays.
   const leading = Boolean(coordination && selected && coordination.rootId === selected.id);
-  const teamAgents = agents.filter((a) => a.available && a.capabilities.coordination && (!leading || coordination!.agents.includes(a.id)));
+  const teamAgents = agents.filter((a) => a.available && a.capabilities.coordination && (leading ? coordination!.agents.includes(a.id) : !a.hidden));
   const teamDefaults: Record<string, MemberDefault> = leading ? coordination!.defaults ?? {} : memberDefaults;
   const startingDefaults = Object.fromEntries(Object.entries(memberDefaults).filter(([id]) => teamAgents.some((a) => a.id === id)));
   const setMemberDefault = (agent: string, value: MemberDefault) => {
@@ -1737,7 +1738,8 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
 
   const collaborationOptions: AgentMention[] = (!draftTeam && !selected?.coordination?.team && (selected?.coordination ? selected.coordination.rootId === selected.id : activeCaps?.coordination)) ? [
             ...(coordination?.members.map(m => ({ id: m.id, label: m.name, kind: 'member' as const })) ?? []),
-            ...agents.filter(a => a.available && a.capabilities.coordination && (!coordination || coordination.agents.includes(a.id))).map(a => ({ id: a.id, label: a.label, kind: 'agent' as const })),
+            // A hidden instance cannot be picked for new work; members of a running coordination stay.
+            ...agents.filter(a => a.available && a.capabilities.coordination && (coordination ? coordination.agents.includes(a.id) : !a.hidden)).map(a => ({ id: a.id, label: a.label, kind: 'agent' as const })),
             ...remoteAgents.map(a => ({ id: a.id, label: a.label, kind: 'agent' as const, host: a.host, directories: [...new Set([...recentRemoteDirs(a.host), ...a.directories])] })),
           ] : [];
   const collaborationIcon = (m: AgentMention) => [...agents, ...remoteAgents].find((a) => a.id === (m.kind === 'agent' ? m.id : coordination?.members.find((v) => v.id === m.id)?.thread?.agent))?.icon;
@@ -1786,7 +1788,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   // Who takes over when the thread's agent has run out of plan: another instance of the same agent
   // first (its own account, the same tools), otherwise any other agent that is up.
   const current = agents.find((a) => a.id === selected?.agent);
-  const others = agents.filter((a) => a.available && a.id !== selected?.agent);
+  const others = agents.filter((a) => a.available && !a.hidden && a.id !== selected?.agent);
   const successor = others.find((a) => current?.adapter && a.adapter === current.adapter) ?? others[0] ?? null;
 
   const teamWaiting = Boolean(coordination?.members.some((m) => m.thread?.waiting));

@@ -43,9 +43,10 @@ export function TeamsPage({ api, agents, onReload }: { api: Api; agents: AgentIn
   const reload = async () => { setError(null); try { setTeams(await api.teams()); onReload(); } catch (e) { fail(e); } };
   useEffect(() => { void reload(); }, [api]);
   const run = async (action: () => Promise<void>) => { setBusy(true); setError(null); try { await action(); } catch (e) { fail(e); } finally { setBusy(false); } };
-  const create = () => setDraft({ name: '', entry: 'lead', members: [{ name: 'lead', agent: agents.find(a => a.available && a.capabilities.coordination)?.id ?? '' }], relations: [], budget: { maxDeliveries: 30 } });
+  const create = () => setDraft({ name: '', entry: 'lead', members: [{ name: 'lead', agent: agents.find(a => a.available && !a.hidden && a.capabilities.coordination)?.id ?? '' }], relations: [], budget: { maxDeliveries: 30 } });
   const updateMember = (index: number, patch: Partial<TeamMember>) => setDraft(d => d && ({ ...d, members: d.members.map((m, i) => i === index ? { ...m, ...patch } : m) }));
-  const eligible = agents.filter(a => a.capabilities.coordination);
+  // Hidden instances cannot be picked; one a draft already uses stays selectable so editing shows it.
+  const eligible = agents.filter(a => a.capabilities.coordination && (!a.hidden || draft?.members.some(m => m.agent === a.id)));
 
   return <section className="teams-page">
     <div className="teams-page-head">
