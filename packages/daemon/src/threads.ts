@@ -8,7 +8,7 @@ import type { SystemPrompt, WorkMode } from './adapters/types.js';
 import { diagnosticFailure } from './adapters/diagnostics.js';
 import { turnAnswer, type CoordinationManager, type CoordinationSetup } from './coordination.js';
 import { parseProgress, progressInstructions } from './progress-report.js';
-import { contentHash, isEditableArticle, isWritingStage, newestArticle, saveArticle, writingInstructions, type WritingState } from './writing.js';
+import { contentHash, habitsPath, isEditableArticle, isWritingStage, newestArticle, noteFile, saveArticle, writingInstructions, type WritingState } from './writing.js';
 import { randomUUID } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
@@ -65,7 +65,9 @@ export interface ForkOptions {
 }
 
 /** A thread as the API returns it: the stored record plus values worked out from it. */
-export type ThreadView = Omit<ThreadRecord, 'worktree' | 'handover'> & {
+export type ThreadView = Omit<ThreadRecord, 'worktree' | 'handover' | 'writing'> & {
+  /** Writing mode, with where the person's writing habits are kept. */
+  writing: (WritingState & { habits: string }) | null;
   handover?: (NonNullable<ThreadRecord['handover']> & { automatic: boolean }) | null;
   autoHandover?: AutoHandoverView;
   /** `doing`, on a member: its latest task while it works, the opening of its answer once it has returned. */
@@ -753,7 +755,7 @@ export class ThreadManager {
     }
     const scratch = this.dirs.scratchRoot !== null && isWithinWorkdirs(thread.cwd, [this.dirs.scratchRoot]);
     const runningSince = this.running.get(thread.id)?.since ?? null;
-    return { ...thread, handover: thread.handover ? { ...thread.handover, mode: this.store.handoverMode(thread)!, automatic: thread.handover.mode === 'continue' } : null, autoHandover: this.autoHandover.view(thread.id), worktree, resumeCommand, cwdReal, waiting, waitingReason, queued, terminalActivity, scratch, runningSince, coordination: this.coordination?.metadata(thread.id) };
+    return { ...thread, writing: thread.writing ? { ...thread.writing, habits: habitsPath() } : null, handover: thread.handover ? { ...thread.handover, mode: this.store.handoverMode(thread)!, automatic: thread.handover.mode === 'continue' } : null, autoHandover: this.autoHandover.view(thread.id), worktree, resumeCommand, cwdReal, waiting, waitingReason, queued, terminalActivity, scratch, runningSince, coordination: this.coordination?.metadata(thread.id) };
   }
 
   /**
@@ -854,6 +856,14 @@ export class ThreadManager {
   readThreadText(threadId: string, rawPath: unknown): { root: string; path: string; hash: string | null; editable: boolean } & TextFile {
     const notFound = new HttpError(404, 'no such file in this thread');
     if (typeof rawPath !== 'string' || !rawPath) throw new HttpError(400, 'path is required');
+    // The person's notes open from any thread, editable; anything else as the file viewer allows.
+    const note = isAbsolute(rawPath) || rawPath.startsWith('file://') ? noteFile(rawPath) : null;
+    if (note) {
+      this.getThread(threadId);
+      const file = readText(note);
+      const whole = file.text !== null && !file.truncated;
+      return { root: this.threadView(threadId).cwdReal, path: note, ...file, hash: whole ? contentHash(readFileSync(note)) : null, editable: whole };
+    }
     const { real, root } = this.resolveReadableFile(threadId, rawPath, notFound);
     if (!statSync(real).isFile()) throw notFound;
     const file = readText(real);
@@ -890,6 +900,11 @@ export class ThreadManager {
   saveWritingText(threadId: string, rawPath: unknown, text: unknown, baseHash: unknown): { hash: string } {
     const notFound = new HttpError(404, 'no such file in this thread');
     if (typeof rawPath !== 'string' || !rawPath) throw new HttpError(400, 'path is required');
+    const note = isAbsolute(rawPath) || rawPath.startsWith('file://') ? noteFile(rawPath) : null;
+    if (note) {
+      this.getThread(threadId);
+      return saveArticle(note, text, baseHash);
+    }
     const { real } = this.resolveInThread(threadId, rawPath, notFound);
     if (!statSync(real).isFile()) throw notFound;
     const cwdReal = this.threadView(threadId).cwdReal;

@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { extname, join, relative, sep } from 'node:path';
 import { HttpError } from './errors.js';
 import { MAX_TEXT_BYTES } from './browse.js';
@@ -25,8 +26,18 @@ export interface WritingState {
 
 /** Where articles live, relative to the thread's directory. */
 export const WRITING_DIR = 'writing';
-/** The person's writing habits, beside the articles: read before writing, grown by reviews. Never the article. */
-export const HABITS_FILE = '写作习惯.md';
+/**
+ * The person's own notes, kept across projects and agents: what reviews distil, which they confirm
+ * and may edit. Not an agent's memory: plain Markdown the person owns. `LIMI_NOTES_DIR` moves it.
+ */
+export function notesDir(): string {
+  return process.env.LIMI_NOTES_DIR || join(homedir(), '.limi', 'notes');
+}
+
+/** Writing habits: read before writing, grown by 复盘. */
+export function habitsPath(): string {
+  return join(notesDir(), 'writing.md');
+}
 
 export function isWritingStage(value: unknown): value is WritingStage {
   return typeof value === 'string' && (WRITING_STAGES as readonly string[]).includes(value);
@@ -34,13 +45,13 @@ export function isWritingStage(value: unknown): value is WritingStage {
 
 const MARK = '<limi-writing>';
 
-const COMMON = `你在写作模式里，帮我写一篇文章。观点必须是我的，哪怕偏激；你负责采访、记录、补充，不替我下结论，不把尖锐的话磨圆。
+const common = (habits: string) => `你在写作模式里，帮我写一篇文章。观点必须是我的，哪怕偏激；你负责采访、记录、补充，不替我下结论，不把尖锐的话磨圆。
 正文写在 ${WRITING_DIR}/<题目>.md（题目等初稿有了内容再起，之后不要改文件名），配图放 ${WRITING_DIR}/<题目>/，正文里用相对路径引用。
 我的消息常常来自语音输入，会有同音错字：按上下文改正，但保留我的说法和语气。
 我直接改过的正文以文件为准，不要改回去。
 大师们的提醒只是建议：我说不接受，就记下，不再重复。
-动笔前先读 ${WRITING_DIR}/${HABITS_FILE}（有的话），照着写。
-我说「复盘」「总结一下」时：回看这次对话里我的注释、我直接改过的地方、我否掉的写法，提炼成能用到以后文章的习惯（不是只针对这一句的改动），每条一行，写清要怎样、不要怎样，最好带一个 ×/✓ 的例子；追加到 ${WRITING_DIR}/${HABITS_FILE}（没有就新建，开头一行「# 写作习惯」），每条新记的开头标〔新〕。已有的习惯不要重复记，和新的冲突时先问我。写完在回复里逐条列出新记的，请我确认：我说对，就去掉〔新〕；我说不要的，删掉那条。`;
+动笔前先读 ${habits}（我的写作习惯，有的话），照着写。
+我说「复盘」「总结一下」时：回看这次对话里我的注释、我直接改过的地方、我否掉的写法，提炼成能用到以后文章的习惯（不是只针对这一句的改动），每条一行，写清要怎样、不要怎样，最好带一个 ×/✓ 的例子；追加到 ${habits}（没有就新建，开头一行「# 写作习惯」），每条新记的开头标〔新〕。已有的习惯不要重复记，和新的冲突时先问我。写完在回复里逐条列出新记的，请我确认：我说对，就去掉〔新〕；我说不要的，删掉那条。`;
 
 const STAGES: Record<WritingStage, string> = {
   draft: `现在是初稿（关着门写）。
@@ -70,7 +81,7 @@ export function writingInstructions(text: string, state: WritingState): string {
   const edited = state.edited
     ? `\n${state.file ?? '正文'}在你上一轮之后被我直接改过：先重读再动手，不要改回去。`
     : '';
-  return `${text}\n\n${MARK}\n${COMMON}\n\n${STAGES[state.stage]}${edited}\n</limi-writing>`;
+  return `${text}\n\n${MARK}\n${common(habitsPath())}\n\n${STAGES[state.stage]}${edited}\n</limi-writing>`;
 }
 
 /** The newest `.md` directly in `writing/`, relative to the thread's directory, or null. */
@@ -83,7 +94,7 @@ export function newestArticle(cwdReal: string): string | null {
     return null;
   }
   for (const name of names) {
-    if (extname(name).toLowerCase() !== '.md' || name === HABITS_FILE) continue;
+    if (extname(name).toLowerCase() !== '.md') continue;
     try {
       const stat = statSync(join(cwdReal, WRITING_DIR, name));
       if (stat.isFile() && (!best || stat.mtimeMs > best.mtime)) best = { name, mtime: stat.mtimeMs };
@@ -102,6 +113,27 @@ export function isEditableArticle(real: string, cwdReal: string): boolean {
   const rel = relative(cwdReal, real);
   if (!rel || rel.startsWith('..') || rel.split(sep)[0] !== WRITING_DIR) return false;
   return extname(real).toLowerCase() === '.md';
+}
+
+/**
+ * A Markdown file among the person's notes, by its real path (symlinks resolved), or null. Such a
+ * file may be opened and edited from any thread: the notes are the person's, not a project's.
+ */
+export function noteFile(rawPath: string): string | null {
+  let real: string, base: string;
+  try {
+    real = realpathSync(rawPath.startsWith('file://') ? rawPath.slice('file://'.length) : rawPath);
+    base = realpathSync(notesDir());
+  } catch {
+    return null;
+  }
+  const rel = relative(base, real);
+  if (!rel || rel.startsWith('..') || rel.startsWith(sep) || extname(real).toLowerCase() !== '.md') return null;
+  try {
+    return statSync(real).isFile() ? real : null;
+  } catch {
+    return null;
+  }
 }
 
 export function contentHash(bytes: Buffer | string): string {
