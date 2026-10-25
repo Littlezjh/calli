@@ -997,3 +997,16 @@ test('a failed summary stops its preparing label and keeps the error visible', (
   assert.equal(items.find(i => i.kind === 'error')?.message, 'summary failed');
   assert.equal(running, false);
 });
+
+test('agent notices preserve their text and confirmation link marker without changing turn outcome', () => {
+  const timeline = buildTimeline([
+    ev('turn.started', { text: 'Check the draft' }),
+    ev('agent.notice', { text: 'The draft is ready.' }),
+    ev('agent.notice', { text: '待你确认：Review report', confirmation: true }),
+    ev('turn.done'),
+  ]);
+  const notices = timeline.items.filter(item => item.kind === 'notice');
+  assert.equal(notices.length, 2);
+  assert.deepEqual(notices.map(item => [item.text, item.confirmation]), [['The draft is ready.', false], ['待你确认：Review report', true]]);
+  assert.equal(timeline.running, false);
+});

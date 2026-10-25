@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { homedir } from 'node:os';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AgentAdapter } from './adapters/types.js';
@@ -27,6 +28,11 @@ export class PersonalService {
   socket = '';
   constructor(readonly store: Store, private readonly manager: ThreadManager, private readonly adapters: Map<string, AgentAdapter>) {}
   settings(): PersonalSettings { return this.store.hubSetting('personal', { directory: null, agent: null, model: null }); }
+  settingsView() {
+    const settings = this.settings(), home = homedir();
+    const directoryDisplay = settings.directory === home ? '~' : settings.directory?.startsWith(home + sep) ? '~' + settings.directory.slice(home.length) : settings.directory;
+    return { ...settings, directoryDisplay };
+  }
   putSettings(input: Record<string, unknown>): PersonalSettings {
     const next = { ...this.settings() };
     if (input.directory !== undefined) {
@@ -49,6 +55,31 @@ export class PersonalService {
     if (next.directory && !next.agent) throw new HttpError(400, 'personal agent is required');
     this.store.saveHubSetting('personal', next);
     return next;
+  }
+  async delegate(id: string) {
+    const todo = this.store.getTodo(id);
+    if (!todo) throw new HttpError(404, 'todo not found');
+    if (todo.done || todo.proposed) throw new HttpError(409, 'accept an open plan before delegating');
+    const settings = this.settings(), adapter = settings.agent ? this.adapters.get(settings.agent) : undefined;
+    if (!settings.directory || !adapter) throw new HttpError(409, 'personal agent is not configured');
+    const active = this.store.todoThreadIds(id).map(t => this.store.getThread(t)).find(t => t?.status === 'running');
+    if (active) return this.manager.threadView(active.id);
+    const thread = await this.manager.createThread({ agent: settings.agent!, cwd: settings.directory, title: todo.text,
+      permissionMode: adapter.capabilities.defaultPermissionMode, ...(settings.model ? { model: settings.model } : {}) });
+    try {
+      const note = this.store.todoNote(id);
+      const text = `由 Limi 交给你的事项。\n事项：${todo.text}\nID：${id}；状态：${todo.state}；归属：${todo.owner}\n接续说明：\n${note.text}\n\n请推进这件事，结束前更新接续说明；需要人确认完成时用 limi todo propose-done。`;
+      await this.manager.startTurn(thread.id, { text }, undefined, false, undefined, () => {
+        this.store.checkTodoRev(id, todo.rev);
+        this.store.linkTodoThread(id, thread.id);
+        this.store.updateTodo(id, {}, todo.rev);
+      });
+      this.manager.broadcastTodo();
+      return this.manager.threadView(thread.id);
+    } catch (error) {
+      if (!this.store.listEventsOfType(thread.id, 'turn.started').length) await this.manager.deleteThread(thread.id);
+      throw error;
+    }
   }
   private within(path: string, root: string) {
     try { const rel = relative(realpathSync(root), realpathSync(path)); return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel)); }
@@ -118,7 +149,7 @@ export class PersonalService {
       return todo;
     });
     this.manager.broadcastTodo();
-    if (todo.proposed) this.manager.notice(actor!, '待你确认', true);
+    if (todo.proposed) this.manager.notice(actor!, `待你确认：${todo.text}`, true);
     return todo;
   }
   update(id: string, input: Record<string, unknown>, actor?: string): TodoRecord {
@@ -159,7 +190,7 @@ export class PersonalService {
     this.store.transaction(() => {
       this.store.updateTodo(id, {}, current.rev); this.store.saveTodoProposal(proposal); this.store.linkTodoThread(id, actor);
     });
-    this.manager.broadcastTodo(); this.manager.notice(actor, '待你确认', true);
+    this.manager.broadcastTodo(); this.manager.notice(actor, `待你确认：${current.text}`, true);
     return { ...proposal, rev: this.store.getTodo(id)!.rev };
   }
   resolveProposal(id: string, pid: string, action: 'accept' | 'dismiss', rev: unknown) {

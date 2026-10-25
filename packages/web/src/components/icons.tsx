@@ -553,3 +553,11 @@ export const QuotaRing = ({ remaining, size = 14 }: { remaining: number; size?: 
     </svg>
   );
 };
+
+export const IconAgent = (p: { size?: number }) => (
+  <Svg {...p}>
+    <rect x="5" y="7" width="14" height="13" rx="3" />
+    <path d="M12 3v4M2 12v4m20-4v4M9 16h6" />
+    <circle cx="9" cy="12" r=".6" /><circle cx="15" cy="12" r=".6" />
+  </Svg>
+);

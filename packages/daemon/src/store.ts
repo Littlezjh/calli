@@ -965,6 +965,7 @@ export class Store {
   saveWish(id: string, threadId: string, text: string): void {
     this.db.prepare('INSERT INTO wishes (id, thread_id, text, created_at) VALUES (?, ?, ?, ?)').run(id, threadId, text, new Date().toISOString());
   }
+  wishCount(): number { return (this.db.prepare('SELECT COUNT(*) AS count FROM wishes').get() as { count: number }).count; }
   listWishes(): Array<{ id: string; threadId: string; text: string; createdAt: string }> {
     return this.db.prepare('SELECT id, thread_id AS threadId, text, created_at AS createdAt FROM wishes ORDER BY created_at DESC').all() as never;
   }

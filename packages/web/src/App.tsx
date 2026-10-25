@@ -1,3 +1,4 @@
+import { PushSettingsDialog } from './components/PushSettingsDialog';
 import { AutoHandoverNotice, HandoverSettingsDialog } from './components/AutoHandover';
 import { useWorkSources, WorkSummary } from './extensions/work';
 import { HostIcon } from './extensions/ui';
@@ -12,6 +13,7 @@ import {
   AuthError,
   MAX_QUEUED,
   type AgentInfo,
+  type PersonalSettings,
   type GoalView,
   type ModelOption,
   type Section,
@@ -91,7 +93,7 @@ import { NoteMarks, type NoteMark } from './components/NoteMarks';
 import { Toast, type ToastState } from './components/Toast';
 import { ConnectDialog, DemoBar } from './components/ConnectDialog';
 import { DemoApi, DemoError } from './demo/DemoApi';
-import { IconCheck, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconMore, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconLanguage, IconWaveform } from './components/icons';
+import { IconCheck, IconBell, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconMore, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconLanguage, IconWaveform } from './components/icons';
 import { chooseLocale, locale, LOCALES, localeChoice, t } from './i18n';
 
 const sleep = (ms: number, signal: AbortSignal) =>
@@ -350,6 +352,14 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     return () => { alive = false; };
   }, [token, hostId, hostsKey, api]);
   /** Bumped by daemon broadcasts, so the open plan page reloads. */
+  const [personal, setPersonal] = useState<PersonalSettings | null>(null);
+  const [personalError, setPersonalError] = useState('');
+  const [pushSettingsOpen, setPushSettingsOpen] = useState(false);
+  const reloadPersonal = useCallback(() => {
+    if (api.demo) return; setPersonalError('');
+    void api.personalSettings().then(setPersonal).catch(e => setPersonalError(String(e)));
+  }, [api]);
+  useEffect(() => { setPersonal(null); reloadPersonal(); }, [reloadPersonal]);
   const [todosKey, setTodosKey] = useState(0);
   /** The same, for the open scheduled-task page. */
   const [schedulesKey, setSchedulesKey] = useState(0);
@@ -1950,6 +1960,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       {projectDialog === 'roots' && <RootsDialog api={api} roots={roots} onChange={applyWorkdirs} onCancel={() => setProjectDialog(null)} />}
       <aside className="sidebar">
         <Sidebar
+          personalDirectory={personal?.directory}
           storagePrefix={showcase ? 'limi.showcase.sidebar' : undefined}
           showEmptySections={!showcase}
           threads={threads.filter((t) => !t.coordination || t.coordination.rootId === t.id || !threads.some((r) => r.id === t.coordination!.rootId))}
@@ -2169,6 +2180,11 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           // A scroller of its own: the thread's one pins itself to the bottom, a document starts at the top.
           <div key="todos" className="scroller">
             <TodosPage
+              agents={agents}
+              personal={personal}
+              personalError={personalError}
+              onPersonalChange={setPersonal}
+              onPersonalRetry={reloadPersonal}
               api={api}
               todos={todos}
               threads={threads}
@@ -2422,6 +2438,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           onClose={() => setStatusOpen(false)}
         />
       )}
+      {pushSettingsOpen && <PushSettingsDialog api={api} onClose={() => setPushSettingsOpen(false)} />}
       {handoverSettingsOpen && api && <HandoverSettingsDialog api={api} agents={agents} onClose={() => setHandoverSettingsOpen(false)} />}
       {quotaOpen && api && <QuotaBoard api={api} agents={agents} current={onPage ? undefined : activeAgent} onClose={() => setQuotaOpen(false)} onError={handleError} />}
       {onboardOpen && (
@@ -2499,7 +2516,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
                   'separator' as const,
                 ]
               : []),
-            ...(!api.demo ? [{ id: 'auto-handover', label: t('auto.title'), icon: IconAgents, onSelect: () => { setHandoverSettingsOpen(true); setDrawer(false); } }] : []),
+            ...(!api.demo ? [{ id: 'push', label: t('push.title'), icon: IconBell, onSelect: () => { setPushSettingsOpen(true); setDrawer(false); } }, { id: 'auto-handover', label: t('auto.title'), icon: IconAgents, onSelect: () => { setHandoverSettingsOpen(true); setDrawer(false); } }] : []),
             {
               id: 'appearance',
               label: t('appearance.title'),

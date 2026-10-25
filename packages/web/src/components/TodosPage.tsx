@@ -1,3 +1,5 @@
+import { PersonalSettingsDialog } from './PersonalSettingsDialog';
+import { TodoDetails, TodoMetadata, Wishes } from './PersonalTodo';
 import {
   useEffect,
   useLayoutEffect,
@@ -7,14 +9,19 @@ import {
   type MouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
-import type { Api, Thread, Todo } from '../api';
+import { ApiError, type AgentInfo, type PersonalSettings, type Api, type Thread, type Todo } from '../api';
 import { buildTodoBoard, indentPlace, linkableThreads, moveTodo, openRows, outdentPlace, type TodoNode, type TodoPlace } from '../todos';
 import { Dialog } from './Dialog';
 import { Menu, type MenuEntry } from './Menu';
-import { IconArrowDown, IconArrowUp, IconCheck, IconChevron, IconClose, IconGrip, IconList, IconMore, IconPlus } from './icons';
+import { IconFile, IconSettings, IconAgent, IconArrowDown, IconArrowUp, IconCheck, IconChevron, IconClose, IconGrip, IconList, IconMore, IconPlus } from './icons';
 import { t } from '../i18n';
 
 interface Props {
+  agents: AgentInfo[];
+  personal: PersonalSettings | null;
+  personalError: string;
+  onPersonalChange: (value: PersonalSettings) => void;
+  onPersonalRetry: () => void;
   api: Api;
   /** The whole list, owned by App: the thread menu needs it too. */
   todos: Todo[];
@@ -139,8 +146,30 @@ function TodoEditor({
  * can be struck through and linked to threads, so the work happening in threads and the plan it
  * serves stay side by side.
  */
-export function TodosPage({ api, todos, threads, refreshKey, onReload, onChange, onOpenThread, onError }: Props) {
+export function TodosPage({ agents, personal, personalError, onPersonalChange, onPersonalRetry, api, todos, threads, refreshKey, onReload, onChange, onOpenThread, onError }: Props) {
   const [adding, setAdding] = useState('');
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [pendingDelegate, setPendingDelegate] = useState<{ id?: string; text?: string } | null>(null);
+  const [delegating, setDelegating] = useState(false);
+  const [wishCount, setWishCount] = useState(0);
+  const [wishError, setWishError] = useState('');
+  const loadWishes = () => { if (api.demo) return; setWishError(''); void api.wishCount().then(v => setWishCount(v.count)).catch(e => setWishError(String(e))); };
+  useEffect(loadWishes, [api, refreshKey]);
+  const toggleDetails = (id: string) => setExpanded(previous => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+  const delegate = async (request: { id?: string; text?: string }, configured = false) => {
+    if (delegating) return;
+    if (!configured && (!personal?.directory || !personal.agent)) { setPendingDelegate(request); setSettingsOpen(true); return; }
+    setDelegating(true);
+    let id = request.id;
+    try {
+      if (!id) { const created = await api.createTodo(request.text!); id = created.id; setAdding(''); onReload(); }
+      const thread = await api.delegateTodo(id); setPendingDelegate(null); onReload(); onOpenThread(thread.id);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409 && e.message === 'personal agent is not configured') { setPendingDelegate({ id }); setSettingsOpen(true); }
+      else onError(e);
+    } finally { setDelegating(false); }
+  };
   // The plan a sub-item is being typed under, with what has been typed so far.
   const [child, setChild] = useState<{ parentId: string; text: string } | null>(null);
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
@@ -179,7 +208,7 @@ export function TodosPage({ api, todos, threads, refreshKey, onReload, onChange,
     }
   };
 
-  const board = buildTodoBoard(todos);
+  const board = buildTodoBoard(todos.filter(todo => !todo.proposed));
   const empty = board.open.length === 0 && board.done.length === 0;
 
   const add = async (parentId: string | null, text: string) => {
@@ -378,8 +407,8 @@ export function TodosPage({ api, todos, threads, refreshKey, onReload, onChange,
   const row = (todo: TodoNode, isChild: boolean) => {
     const editingThis = editing?.id === todo.id;
     return (
-      <div key={todo.id} data-id={todo.id} className={`todo${isChild ? ' child' : ''}${dragging === todo.id ? ' dragging' : ''}`}>
-        <div className="todo-line">
+      <div key={todo.id} data-id={todo.id} className={`todo${isChild ? ' child' : ''}${dragging === todo.id ? ' dragging' : ''}${expanded.has(todo.id) ? ' expanded' : ''}`} >
+        <div className="todo-line" onClick={e => { if (!api.demo && !(e.target as HTMLElement).closest('button, input, textarea, a')) toggleDetails(todo.id); }}>
           {/* Finished plans keep the order they were finished in; everything else can be dragged. */}
           {!touch && siblingsOf(todo) && (
             <button
@@ -400,38 +429,49 @@ export function TodosPage({ api, todos, threads, refreshKey, onReload, onChange,
           >
             {todo.done && <IconCheck size={12} />}
           </button>
-          {editingThis ? (
-            <TodoEditor
-              value={editing.text}
-              onChange={(text) => setEditing({ id: todo.id, text })}
-              onSave={saveEdit}
-              onCancel={() => setEditing(null)}
-              onTab={(out) => tab(todo, out)}
-              onDeleteEmpty={() => deleteEmpty(todo)}
-            />
-          ) : (
+          <div className="todo-title">
+            {editingThis ? (
+              <TodoEditor
+                value={editing.text}
+                onChange={(text) => setEditing({ id: todo.id, text })}
+                onSave={saveEdit}
+                onCancel={() => setEditing(null)}
+                onTab={(out) => tab(todo, out)}
+                onDeleteEmpty={() => deleteEmpty(todo)}
+              />
+            ) : (
+              <button
+                type="button"
+                className={`todo-text${todo.done ? ' done' : ''}`}
+                title={t('todos.clickToEdit')}
+                onClick={() => setEditing({ id: todo.id, text: todo.text })}
+              >
+                {todo.text}
+              </button>
+            )}
+            {!api.demo && todo.owner === 'agent' && <span className="todo-owner" title={t('personal.agentOwned')}><IconAgent size={14} /></span>}
+          </div>
+          {!api.demo && <>
+            <TodoMetadata todo={todo} />
+            {todo.noteUpdatedAt && <button className="todo-details-toggle" aria-label={t('personal.details')} aria-expanded={expanded.has(todo.id)} onClick={() => toggleDetails(todo.id)}><IconFile size={14} /></button>}
+          </>}
+          <div className="todo-actions">
+            {!api.demo && !todo.done && !todo.threads.some(thread => thread.status === 'running') && <button className="todo-delegate" disabled={delegating} onClick={() => void delegate({ id: todo.id })}>{t('personal.delegate')}</button>}
             <button
               type="button"
-              className={`todo-text${todo.done ? ' done' : ''}`}
-              title={t('todos.clickToEdit')}
-              onClick={() => setEditing({ id: todo.id, text: todo.text })}
+              className="row-more"
+              aria-label={t('todos.more', todo.text)}
+              onClick={(e) => {
+                const [x, y] = below(e);
+                setMenu({ todo, x, y });
+              }}
             >
-              {todo.text}
+              <IconMore size={15} />
             </button>
-          )}
-          <button
-            type="button"
-            className="row-more"
-            aria-label={t('todos.more', todo.text)}
-            onClick={(e) => {
-              const [x, y] = below(e);
-              setMenu({ todo, x, y });
-            }}
-          >
-            <IconMore size={15} />
-          </button>
+          </div>
         </div>
         {todo.threads.length > 0 && <div className="todo-chips">{todo.threads.map((t) => chip(todo, t))}</div>}
+        {expanded.has(todo.id) && <TodoDetails api={api} todo={todo} onReload={onReload} onOpenThread={onOpenThread} />}
         {(todo.children.length > 0 || child?.parentId === todo.id) && (
           <div className="todo-children">
             {todo.children.map((c) => row(c, true))}
@@ -468,11 +508,19 @@ export function TodosPage({ api, todos, threads, refreshKey, onReload, onChange,
   };
 
   return (
-    <div className="todos-page" ref={pageRef}>
+    <div className={`todos-page${api.demo ? '' : ' personal-plan'}`} ref={pageRef}>
       <header className="todos-head">
         <h1 className="todos-title">{t('todos.title')}</h1>
         <p className="todos-hint">{t('todos.hint')}</p>
+        {!api.demo && <button className="personal-summary" onClick={() => setSettingsOpen(true)} disabled={!personal}>
+          {personal?.directory && personal.agent ? <><span>{t('personal.private')}</span><span className="personal-summary-directory">{personal.directoryDisplay ?? personal.directory} · </span><span>{agents.find(agent => agent.id === personal.agent)?.label ?? personal.agent}{personal.model && ` · ${personal.model}`}</span></> : t(personal ? 'personal.setup' : 'common.loading')}<IconSettings size={14} />
+        </button>}
+        {personalError && <p className="panel-error" role="alert">{personalError} <button className="ghost" onClick={onPersonalRetry}>{t('common.retry')}</button></p>}
       </header>
+      {todos.some(todo => todo.proposals?.length) && <section className="todo-proposals" aria-label={t('personal.confirm')}><p>{t('personal.confirm')}</p>{todos.flatMap(todo => (todo.proposals ?? []).map(proposal => <div key={proposal.id} className="todo-proposal">
+        <small>{t(proposal.kind === 'done' ? 'personal.proposeDone' : 'personal.proposeAdd')}</small><div className="todo-proposal-body"><span>{todo.text}</span><small>{proposal.evidence || t('personal.source', todo.threads.find(thread => thread.id === proposal.threadId)?.title || t('sidebar.threads'))}</small></div>
+        <div className="todo-proposal-actions"><button className="primary" onClick={() => void act(() => api.resolveTodoProposal(todo.id, proposal.id, 'accept', todo.rev))}>{t(proposal.kind === 'done' ? 'personal.acceptDone' : 'personal.acceptAdd')}</button><button className="ghost" onClick={() => void act(() => api.resolveTodoProposal(todo.id, proposal.id, 'dismiss', todo.rev))}>{t('personal.dismiss')}</button></div>
+      </div>))}</section>}
 
       <div className="todos-list">
         {board.open.map((n) => row(n, false))}
@@ -492,9 +540,13 @@ export function TodosPage({ api, todos, threads, refreshKey, onReload, onChange,
             }}
             aria-label={t('todos.new')}
           />
+          {!api.demo && adding.trim() && <button className="primary todo-delegate-new" disabled={delegating} onClick={() => void delegate({ text: adding.trim() })}>{t('personal.delegate')}</button>}
         </div>
       </div>
 
+      {!api.demo && <Wishes api={api} count={wishCount} threads={threads} onOpenThread={onOpenThread} />}
+      {wishError && <p className="panel-error" role="alert">{wishError} <button className="ghost" onClick={loadWishes}>{t('common.retry')}</button></p>}
+      {settingsOpen && personal && <PersonalSettingsDialog api={api} agents={agents} initial={personal} onClose={() => { setSettingsOpen(false); setPendingDelegate(null); }} onSave={value => { onPersonalChange(value); setSettingsOpen(false); if (pendingDelegate) void delegate(pendingDelegate, true); }} />}
       {board.done.length > 0 && (
         <div className="todos-done-group">
           <button type="button" className="todos-done-head" aria-expanded={showDone} onClick={toggleDone}>

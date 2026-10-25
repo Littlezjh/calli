@@ -102,7 +102,7 @@ export class PushService {
       return { cli: reason !== 'cli_missing', botReady: false, recipient: '', reason };
     }
   }
-  async status() { return { ...await this.identity(), records: this.records.map(r => ({ ...r })), dropped: this.dropped }; }
+  async status(summary = false) { return { ...await this.identity(), records: (summary ? this.records.slice(0, 1) : this.records).map(r => ({ ...r })), dropped: this.dropped }; }
   test(): PushRecord { return this.enqueue('test', null, randomUUID()); }
 
   private onEvent(ev: StoredEvent) {
@@ -132,7 +132,7 @@ export class PushService {
     } else if (end?.outcome === 'error' && settings.failure && origin.initiator !== 'coordination') kind = 'failure';
     else if (end?.outcome === 'ok' && ev.data.quiet !== true && settings.scheduled && origin.initiator === 'schedule') kind = 'scheduled';
     else if (ev.type === 'agent.notice' && settings.notice) kind = ev.data.confirmation ? 'confirmation' : 'notice';
-    if (kind) this.enqueue(kind, ev.threadId, `${ev.threadId}:${ev.seq}`, kind === 'notice' ? String(ev.data.text ?? '') : undefined);
+    if (kind) this.enqueue(kind, ev.threadId, `${ev.threadId}:${ev.seq}`, (kind === 'notice' || kind === 'confirmation') ? String(ev.data.text ?? '') : undefined);
   }
   private enqueue(kind: PushKind, threadId: string | null, key: string, notice?: string): PushRecord {
     const settings = this.settings(), now = this.now();

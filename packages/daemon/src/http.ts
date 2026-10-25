@@ -303,10 +303,11 @@ export function createHttpServer(deps: HttpDeps): Server {
     };
 
     if (path === '/api/personal/settings') {
-      if (method === 'GET') return sendJson(res, 200, manager.personal.settings());
-      if (method === 'PUT') return sendJson(res, 200, manager.personal.putSettings(await readJson(req)));
+      if (method === 'GET') return sendJson(res, 200, manager.personal.settingsView());
+      if (method === 'PUT') { manager.personal.putSettings(await readJson(req)); return sendJson(res, 200, manager.personal.settingsView()); }
     }
-    if (path === '/api/wishes' && method === 'GET') return sendJson(res, 200, manager.personal.store.listWishes());
+    if (path === '/api/wishes' && method === 'GET') return sendJson(res, 200, url.searchParams.get('summary') === 'true' ? { count: manager.personal.store.wishCount() } : manager.personal.store.listWishes());
+    if (parts[1] === 'todos' && parts[2] && parts[3] === 'delegate' && method === 'POST') return sendJson(res, 201, await manager.personal.delegate(parts[2]));
     if (parts[1] === 'todos' && parts[2] && parts[3] === 'note') {
       if (method === 'GET') return sendJson(res, 200, manager.personal.note(parts[2]));
       if (method === 'PUT') return sendJson(res, 200, manager.personal.writeNote(parts[2], await readJson(req)));
@@ -319,7 +320,7 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (!deps.push) throw new HttpError(503, 'push is unavailable');
       if (path === '/api/push/settings' && method === 'GET') return sendJson(res, 200, await deps.push.getSettings());
       if (path === '/api/push/settings' && method === 'PUT') return sendJson(res, 200, deps.push.putSettings(await readJson(req)));
-      if (path === '/api/push/status' && method === 'GET') return sendJson(res, 200, await deps.push.status());
+      if (path === '/api/push/status' && method === 'GET') return sendJson(res, 200, await deps.push.status(url.searchParams.get('summary') === 'true'));
       if (path === '/api/push/test' && method === 'POST') return sendJson(res, 202, deps.push.test());
     }
 

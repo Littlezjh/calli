@@ -25,6 +25,7 @@ export interface ExtensionNavEntry {
 }
 
 interface Props {
+  personalDirectory?: string | null;
   /** Keeps a standalone walkthrough's preferences separate from the workspace. */
   storagePrefix?: string;
   showEmptySections?: boolean;
@@ -107,6 +108,7 @@ function GroupAdd({ label, onClick }: { label: string; onClick: () => void }) {
 export const SIDEBAR_SHORTCUT = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⇧⌘S' : 'Ctrl+Shift+S';
 
 export function Sidebar({
+  personalDirectory,
   storagePrefix = 'rah.sidebar',
   showEmptySections = true,
   threads,
@@ -447,7 +449,7 @@ export function Sidebar({
           <>
             <IconFolder size={13} />
             <span className="group-name" title={p.cwd}>
-              {p.name}
+              {p.key === personalDirectory ? t('personal.private') : p.name}
             </span>
           </>,
           p.threads,

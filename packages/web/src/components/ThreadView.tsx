@@ -44,8 +44,11 @@ import {
 import { VoiceCloud } from './VoiceOrb';
 import { Lightbox } from './Lightbox';
 import { PlanCopyButton, PlanDownloadButton, PlanReader } from './PlanReader';
-import { ActivityIcon, IconAgents, IconCheck, IconChevron, IconClose, IconCompact, IconCopy, IconEdit, IconFile, IconFork, IconHand, IconHandover, IconList, IconQuote, IconWorktree } from './icons';
+import { IconBell, ActivityIcon, IconAgents, IconCheck, IconChevron, IconClose, IconCompact, IconCopy, IconEdit, IconFile, IconFork, IconHand, IconHandover, IconList, IconQuote, IconWorktree } from './icons';
 import { t } from '../i18n';
+
+// The daemon's confirmation marker is replaced by the localized notice label.
+const PERSONAL_CONFIRMATION_TEXT = '待你确认';
 
 interface Props {
   beforeItems?: ReactNode;
@@ -235,6 +238,10 @@ export function ThreadView({ chain = false, observeOlder = true, beforeItems, ol
       switch (item.kind) {
         case 'voice-recap': return <VoiceRecap key={item.key} item={item} render={renderItems} />;
         case 'handover-summary': return <HandoverSummary key={item.key} item={item} />;
+        case 'notice': {
+          const title = item.confirmation ? item.text.replace(new RegExp(`^${PERSONAL_CONFIRMATION_TEXT}[：:]?`), '') : item.text;
+          return <div key={item.key} className="agent-notice"><IconBell size={14} /><span>{item.confirmation ? (title ? t('personal.confirmTitle', title) : t('personal.confirm')) : <>{t('personal.notice')} {title}</>}{item.confirmation && <> · <a href="#/todos">{t('personal.openPlans')}</a></>}</span></div>;
+        }
         case 'model-switch': return <div key={item.key} className="context-compaction handover-divider">{t('auto.switched', item.model, item.previous, t(item.reason === 'exhausted' ? 'auto.exhausted' : 'auto.near'))}</div>;
         case 'user': {
           if (item.handoverCollapsed) return null;

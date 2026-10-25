@@ -24,7 +24,8 @@ test('thread deep links survive connection, open on desktop/mobile in both theme
       assert.equal((await (await api(daemon, `/api/threads/${thread.id}`)).json()).archivedAt, null);
       await page.getByText('Deep link content', { exact: true }).first().waitFor();
       await page.getByText('正在加载…', { exact: true }).waitFor({ state: 'hidden' });
-      assert.equal(await page.getByText('Invisible notice fixture', { exact: true }).count(), 0);
+      await page.locator('.agent-notice', { hasText: 'Invisible notice fixture' }).waitFor();
+      assert.equal(await page.locator('.agent-notice', { hasText: 'Invisible notice fixture' }).count(), 1);
       await page.getByText('Notice recorded.', { exact: true }).first().waitFor();
       await page.screenshot({ path: join(shots, `thread-${mobile ? 'mobile' : 'desktop'}-${theme}.png`), fullPage: true });
       await page.evaluate(() => { location.hash = '#/thread/missing-thread'; });

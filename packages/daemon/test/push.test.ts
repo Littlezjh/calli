@@ -56,6 +56,8 @@ test('push settings persist, test uses bot argv/stdin, safe links, scrubbed envi
     assert.ok(h.calls().every(c => c.credentials.length === 0));
     assert.equal((await h.api('test', 'POST')).status, 202); await wait(() => h.sent().length === 2);
     assert.equal(h.store.hubSetting<any>('push', {}).enabled, true);
+    assert.equal((await (await h.api('status?summary=true')).json()).records.length, 1);
+    assert.equal((await (await h.api('status')).json()).records.length, 2);
   } finally { await h.close(); }
 });
 test('live trigger matrix excludes normal completion, historical/terminal/control/cancelled/interrupted/member failures', async () => {

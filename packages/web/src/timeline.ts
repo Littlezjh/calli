@@ -130,6 +130,7 @@ export function deliveredPreview(text: string): string {
 
 export type Item =
   | { kind: 'handover-summary'; key: string; turnId: string; target: string; done: boolean; version: number }
+  | { kind: 'notice'; key: string; turnId: string; text: string; confirmation: boolean }
   | { kind: 'model-switch'; key: string; turnId: string; model: string; previous: string; reason: string }
   | { kind: 'proposal'; key: string; turnId: string; id: string; text: string; done: boolean }
   /**
@@ -462,6 +463,7 @@ export function buildTimeline(events: StoredEvent[], speech: readonly VoiceTrans
       running = !marker.done;
       continue;
     }
+    if (ev.type === 'agent.notice') { items.push({ kind: 'notice', key, turnId: turn, text: String(ev.data.text ?? ''), confirmation: Boolean(ev.data.confirmation) }); continue; }
     if (ev.type === 'handover.model') { items.push({ kind: 'model-switch', key, turnId: turn, model: String(ev.data.model ?? ''), previous: String(ev.data.previous ?? ''), reason: String(ev.data.reason ?? 'near') }); continue; }
     // Keep complete events received after a historical snapshot. They also hydrate deferred
     // entries when expanded, including updates for tools whose starts predate this connection.

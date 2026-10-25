@@ -312,7 +312,23 @@ export interface Section {
 }
 
 /** One entry on the plan page. `parentId` is a top-level todo or null: one level of nesting. */
+export interface PersonalSettings { directoryDisplay?: string | null; directory: string | null; agent: string | null; model: string | null }
+export interface TodoNote { text: string; updatedAt: string | null; threadId: string | null; rev: number }
+export interface Wish { id: string; threadId: string; text: string; createdAt: string }
+export interface PushSettings { enabled: boolean; recipient: string; baseUrl: string; waiting: boolean; failure: boolean; notice: boolean; scheduled: boolean }
+export interface PushRecord { key: string; at: string; kind: string; title: string; result: 'queued' | 'sent' | 'failed' | 'dropped'; reason: string | null }
+export interface PushStatus { cli: boolean; botReady: boolean; recipient: string; reason: string | null; records: PushRecord[]; dropped: number }
 export interface Todo {
+  owner?: 'me' | 'agent';
+  state?: 'open' | 'waiting' | 'done';
+  waitingOn?: string | null;
+  dueAt?: string | null;
+  followUpAt?: string | null;
+  followUpPaused?: boolean;
+  noteUpdatedAt?: string | null;
+  proposed?: boolean;
+  rev?: number;
+  proposals?: Array<{ id: string; kind: 'add' | 'done'; evidence: string; threadId: string }>;
   id: string;
   text: string;
   done: boolean;
@@ -785,6 +801,18 @@ export class Api {
     return this.request('DELETE', `/api/sections/${id}`);
   }
 
+  personalSettings(): Promise<PersonalSettings> { return this.request('GET', '/api/personal/settings'); }
+  savePersonalSettings(value: PersonalSettings): Promise<PersonalSettings> { return this.request('PUT', '/api/personal/settings', value); }
+  todoNote(id: string): Promise<TodoNote> { return this.request('GET', `/api/todos/${id}/note`); }
+  resolveTodoProposal(id: string, pid: string, action: 'accept' | 'dismiss', rev?: number): Promise<Todo | null> { return this.request('POST', `/api/todos/${id}/proposals/${pid}/${action}`, { rev }); }
+  delegateTodo(id: string): Promise<Thread> { return this.request('POST', `/api/todos/${id}/delegate`, {}); }
+  wishCount(): Promise<{ count: number }> { return this.request('GET', '/api/wishes?summary=true'); }
+  wishes(): Promise<Wish[]> { return this.request('GET', '/api/wishes'); }
+  pushSettings(): Promise<PushSettings> { return this.request('GET', '/api/push/settings'); }
+  savePushSettings(value: PushSettings): Promise<PushSettings> { return this.request('PUT', '/api/push/settings', value); }
+  pushStatus(full = false): Promise<PushStatus> { return this.request('GET', `/api/push/status${full ? '' : '?summary=true'}`); }
+  testPush(): Promise<PushRecord> { return this.request('POST', '/api/push/test', {}); }
+
   todos(): Promise<Todo[]> {
     return this.request('GET', '/api/todos');
   }
@@ -793,7 +821,7 @@ export class Api {
     return this.request('POST', '/api/todos', { text, parentId });
   }
 
-  updateTodo(id: string, patch: { text?: string; done?: boolean }): Promise<Todo> {
+  updateTodo(id: string, patch: { text?: string; done?: boolean; followUpAt?: string | null }): Promise<Todo> {
     return this.request('PATCH', `/api/todos/${id}`, patch);
   }
 

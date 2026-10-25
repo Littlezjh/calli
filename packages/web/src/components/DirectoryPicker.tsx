@@ -7,6 +7,7 @@ import { t } from '../i18n';
 
 interface DirectoryPickerProps {
   api: Api;
+  allowedOnly?: boolean;
   roots: string[];
   selected: string;
   machine: string;
@@ -27,7 +28,7 @@ function explain(error: unknown): string {
   return error instanceof Error ? error.message : t('dir.unreadable');
 }
 
-export function DirectoryPicker({ api, roots, selected, machine, onRootsChange, onManageRoots, onSelect, onClose }: DirectoryPickerProps) {
+export function DirectoryPicker({ api, allowedOnly = false, roots, selected, machine, onRootsChange, onManageRoots, onSelect, onClose }: DirectoryPickerProps) {
   // null shows configured roots; an empty path asks the daemon for its own home directory.
   const [at, setAt] = useState<string | null>(selected || null);
   const [info, setInfo] = useState<ProjectDirectoryInfo | null>(null);
@@ -70,7 +71,7 @@ export function DirectoryPicker({ api, roots, selected, machine, onRootsChange, 
     setRetry((n) => n + 1);
   };
   const useDirectory = async () => {
-    if (!info?.selectable || busy) return;
+    if (!info?.selectable || (allowedOnly && !info.allowed) || busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -99,7 +100,7 @@ export function DirectoryPicker({ api, roots, selected, machine, onRootsChange, 
       title={t('dir.title')}
       className="project-browser"
       confirmLabel={busy ? t('dir.adding') : info && !info.allowed ? t('dir.addAndUse') : t('dir.use')}
-      confirmDisabled={!info?.selectable || busy}
+      confirmDisabled={!info?.selectable || (allowedOnly && !info.allowed) || busy}
       onConfirm={() => void useDirectory()}
       onCancel={() => { if (!busy) onClose(); }}
     >
@@ -107,8 +108,8 @@ export function DirectoryPicker({ api, roots, selected, machine, onRootsChange, 
       <div className="project-browser-controls" aria-busy={busy}>
         <div className="project-browser-nav">
           <button disabled={busy} type="button" className="ghost" onClick={() => navigate(null)}>{t('dir.available')}</button>
-          <button disabled={busy} type="button" className="ghost" onClick={() => navigate('')}>{t('dir.browseHome')}</button>
-          {info?.parent && <button disabled={busy} type="button" className="ghost" onClick={() => navigate(info.parent)}>{t('dir.up')}</button>}
+          {!allowedOnly && <button disabled={busy} type="button" className="ghost" onClick={() => navigate('')}>{t('dir.browseHome')}</button>}
+          {info?.parent && (!allowedOnly || roots.some(root => info.parent === root || info.parent!.startsWith(root.replace(/\/$/, '') + '/'))) && <button disabled={busy} type="button" className="ghost" onClick={() => navigate(info.parent)}>{t('dir.up')}</button>}
         </div>
         <p className="project-browser-path">{at === null ? t('dir.added') : info?.path || at || t('dir.openingHome')}</p>
         <input disabled={busy} aria-label={t('dir.search')} placeholder={t('dir.searchPlaceholder')} className="picker-search" value={search} onChange={(e) => setSearch(e.target.value)} />
@@ -123,8 +124,8 @@ export function DirectoryPicker({ api, roots, selected, machine, onRootsChange, 
           {(at === null || info) && shown.length === 0 && <p className="project-browser-note">{search ? t('dir.noMatch') : t('dir.empty')}</p>}
         </div>
         {error && <div className="project-browser-error" role="alert">{error} <button disabled={busy} type="button" className="ghost" onClick={() => navigate(at)}>{t('common.retry')}</button></div>}
-        {info && !info.allowed && <p className="project-browser-note">{info.selectable ? t('dir.willAppear') : t('dir.enterProject')}</p>}
-        <button disabled={busy} type="button" className="ghost project-browser-manage" onClick={onManageRoots}>{t('dir.manual')}</button>
+        {!allowedOnly && info && !info.allowed && <p className="project-browser-note">{info.selectable ? t('dir.willAppear') : t('dir.enterProject')}</p>}
+        {!allowedOnly && <button disabled={busy} type="button" className="ghost project-browser-manage" onClick={onManageRoots}>{t('dir.manual')}</button>}
       </div>
     </Dialog>
   );

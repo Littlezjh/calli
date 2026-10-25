@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, symlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { DatabaseSync } from 'node:sqlite';
@@ -223,7 +223,8 @@ test('real personal CLI uses scoped credentials, denies symlink escape and stale
     const todo = await h.cli(['todo', 'add', '--owner', 'me', '--text-file', h.file('text', 'Review report')]);
     await wait(async () => (await h.push.status()).records[0]?.result === 'sent');
     assert.equal((await h.push.status()).records[0].kind, 'confirmation');
-    assert.ok(!readFileSync(h.log, 'utf8').includes('Review report'));
+    assert.ok(readFileSync(h.log, 'utf8').includes('待你确认：Review report'));
+    assert.equal(h.store.listEventsOfType(h.thread.id, 'agent.notice')[0].data.text, '待你确认：Review report');
     assert.equal(todo.proposed, true); assert.equal(h.store.getThread(h.thread.id)?.unread, true);
     assert.equal((await h.cli(['todo', 'show', todo.id])).proposals[0].kind, 'add');
     await assert.rejects(h.cli(['todo', 'update', todo.id, '--rev', String(todo.rev), '--state', 'done']), /propose-done/);
@@ -255,6 +256,7 @@ test('shell-only fake agent creates, writes, follows up in a fresh thread, propo
     assert.equal(h.store.getThread(run.threadId!)?.model, 'small');
     await wait(() => h.store.getThread(run.threadId!)?.status !== 'running');
     assert.equal(h.store.getTodo(todo.id)?.followUpAt, null); assert.equal(h.store.getTodo(todo.id)?.done, false);
+    assert.equal(h.store.listEventsOfType(run.threadId!, 'agent.notice').find(event => event.data.confirmation)?.data.text, `待你确认：${todo.text}`);
     const proposal = h.store.todoProposals(todo.id).find(p => p.kind === 'done')!;
     assert.match(h.store.todoNote(todo.id).text, /Reviewed/); assert.equal(h.store.todoNote(todo.id).threadId, run.threadId);
     assert.equal((await h.api(`/api/todos/${todo.id}/proposals/${proposal.id}/accept`, 'POST', { rev: accepted.rev })).status, 409);
@@ -427,4 +429,63 @@ test('schedule history survives the nullable schedule-id migration for one-shot 
     assert.equal(store.listScheduleRuns('schedule')[0].status, 'done');
     assert.equal(store.listScheduleRuns('schedule')[0].id, 'run');
   } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('delegating a plan uses personal settings, links before the first turn, includes its note and rejects missing setup', async () => {
+  const h = await setup();
+  try {
+    const todo = h.service.create({ text: 'Prepare the checklist' });
+    h.service.writeNote(todo.id, { text: '## 下一步\nReview the remaining steps' });
+    h.service.putSettings({ directory: null });
+    assert.equal((await h.api(`/api/todos/${todo.id}/delegate`, 'POST', {})).status, 409);
+    assert.equal((await h.api('/api/todos/missing/delegate', 'POST', {})).status, 404);
+    h.service.putSettings({ directory: h.cwd, agent: 'pi', model: 'fake/plain' });
+    const response = await h.api(`/api/todos/${todo.id}/delegate`, 'POST', {});
+    assert.equal(response.status, 201, response.status === 201 ? undefined : await response.text());
+    const thread = await response.json();
+    assert.equal(thread.cwd, h.cwd); assert.equal(thread.agent, 'pi'); assert.equal(thread.model, 'fake/plain');
+    assert.ok(h.store.todoThreadIds(todo.id).includes(thread.id));
+    await wait(() => h.store.getThread(thread.id)?.status !== 'running');
+    const events = h.store.listEvents(thread.id);
+    const prompt = events.find(e => e.type === 'turn.started');
+    assert.match(String(prompt?.data.text), /Prepare the checklist/);
+    assert.match(String(prompt?.data.text), /Review the remaining steps/);
+    assert.ok(h.service.environment(thread.id)?.LIMI_TODO_KEY);
+    h.service.update(todo.id, { done: true });
+    assert.equal((await h.api(`/api/todos/${todo.id}/delegate`, 'POST', {})).status, 409);
+  } finally { await h.close(); }
+});
+
+test('wish summaries contain only a count until details are requested', async () => {
+  const h = await setup();
+  try {
+    h.store.saveWish('one', h.thread.id, 'A private side note');
+    assert.deepEqual(await (await h.api('/api/wishes?summary=true')).json(), { count: 1 });
+    assert.equal((await (await h.api('/api/wishes')).json())[0].text, 'A private side note');
+  } finally { await h.close(); }
+});
+
+test('a rejected delegation removes only its empty thread and does not associate the plan', async () => {
+  const h = await setup();
+  try {
+    const todo = h.service.create({ text: 'A rejected delegation' });
+    const before = h.store.listThreads().map(t => t.id);
+    h.manager.startTurn = async () => { throw new Error('fixture refuses to start'); };
+    assert.equal((await h.api(`/api/todos/${todo.id}/delegate`, 'POST', {})).status, 500);
+    assert.deepEqual(h.store.listThreads().map(t => t.id), before);
+    assert.deepEqual(h.store.todoThreadIds(todo.id), []);
+    assert.equal(h.store.getTodo(todo.id)?.rev, todo.rev);
+  } finally { await h.close(); }
+});
+
+test('personal settings abbreviate only home directory boundaries for display without changing stored paths', async () => {
+  const h = await setup(); try {
+    for (const [directory, display] of [[homedir(), '~'], [join(homedir(), 'personal'), '~/personal'], [homedir() + '-other', homedir() + '-other']]) {
+      h.store.saveHubSetting('personal', { directory, agent: 'claude', model: null });
+      const settings = await (await h.api('/api/personal/settings')).json();
+      assert.equal(settings.directoryDisplay, display); assert.equal(settings.directory, directory);
+      assert.equal(h.service.settings().directory, directory);
+      assert.equal(Object.hasOwn(h.service.settings(), 'directoryDisplay'), false);
+    }
+  } finally { await h.close(); }
 });
