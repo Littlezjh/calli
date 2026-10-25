@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import type { AgentAdapter } from './adapters/types.js';
 import { isWithinWorkdirs } from './workdirs.js';
 import { HttpError } from './errors.js';
+import { PersonalReview } from './personal-review.js';
 import type { Store, TodoPatch, TodoRecord, TodoProposal } from './store.js';
 import type { ThreadManager } from './threads.js';
 import { SummaryService } from './summary.js';
@@ -39,15 +40,15 @@ const time = (value: unknown): string | null => {
 
 /** Delegation starts a new work thread; linked threads are records, not a handover chain. */
 function delegationPrompt(todo: TodoRecord, note: string, personal: boolean): string {
-  const clarify = '没有接续说明，或事项太笼统、看不出要交付什么时，这一轮只做澄清：在回复中用 1～3 个具体问题问人，每个问题给出你建议的默认选项，不要自己猜着开工。';
+  const clarify = '只有目标笼统、看不出要交付什么时，这一轮才只做澄清：在回复中用 1～3 个具体问题问人，每个问题给出你建议的默认选项，不要自己猜着开工。';
   const workflow = personal
     ? `先用 limi todo show ${todo.id} 读取事项与最新 rev。${clarify}
 澄清时用 limi todo update ${todo.id} --rev N --state waiting --waiting-on "等你说明目标" --note-file FILE，把事项设为等待，并写一版接续说明：用「## 欠谁什么」写已知部分，「## 定了什么」「## 做到哪」只写已知事实，「## 下一步」写「等回答后……」。
 再用 limi notify --text-file FILE 发一句话提醒人来回答，然后结束本轮。人回复后再按回答推进。
-目标清楚且已有接续说明时，直接按说明的「下一步」推进；结束前更新接续说明，需要人确认完成时用 limi todo propose-done。`
+目标清楚时直接推进：有接续说明就按说明的「下一步」推进；没有说明也直接推进，并在结束前写第一版接续说明，已有说明则更新。需要人确认完成时用 limi todo propose-done。`
     : `${clarify}
 本线程没有事项管理凭证：需要澄清时只在回复中提问并结束本轮，人回复后再按回答推进。
-目标清楚且已有接续说明时，直接按说明的「下一步」推进；结束前在回复中写进展和更新后的接续说明，需要人确认完成时向人提议确认。`;
+目标清楚时直接推进：有接续说明就按说明的「下一步」推进；没有说明也直接推进，并在结束前于回复中写进展和第一版接续说明，已有说明则更新。需要人确认完成时向人提议确认。`;
   return `这是一件新交给你的事，不是交接；这个线程就是它的工作线程，没有更早的对话需要读。
 由 Limi 交给你的事项。
 事项：${todo.text}
@@ -57,7 +58,7 @@ ${note.trim() ? note : '尚未写入。'}
 
 ${workflow}
 关联线程只是记录；不要用 handover/history 查关联线程，也不要翻本地会话文件找上下文。
-事项涉及不可逆操作（提交、付款、发消息、删除、推送代码）时，先停下来问人，得到明确同意后再操作。`;
+事项涉及不可逆操作（提交、付款、发消息、删除、推送代码）时，先停下来问人，得到明确同意后再操作。例如回邮件，可先起草给人看，发送前再问。`;
 }
 
 export class PersonalService {
@@ -65,8 +66,10 @@ export class PersonalService {
   private readonly introduced = new Set<string>();
   socket = '';
   readonly summary: SummaryService;
+  readonly review: PersonalReview;
   constructor(readonly store: Store, private readonly manager: ThreadManager, private readonly adapters: Map<string, AgentAdapter>) {
     this.summary = new SummaryService(store, manager, this, adapters);
+    this.review = new PersonalReview(store);
   }
   private storedSettings(): PersonalSettings { return this.store.hubSetting('personal', { directory: null, agent: null, model: null }); }
   directory(): string {
@@ -325,6 +328,7 @@ export class PersonalService {
   }
   async command(owner: string, input: Record<string, unknown>) {
     this.require(owner);
+    if (String(input.op).startsWith('review.')) return this.review.command(owner, String(input.op), input.time);
     const linkedThreads = (id: string) => this.store.todoThreadIds(id).map(threadId => ({ id: threadId, self: threadId === owner }));
     switch (input.op) {
       case 'todo.list': return this.store.listTodos().filter(t => !t.done).map(todo => ({ ...todo, threads: linkedThreads(todo.id) }));
@@ -332,6 +336,7 @@ export class PersonalService {
         const todo = this.store.getTodo(String(input.id)); if (!todo) throw new HttpError(404, 'todo not found');
         return { ...todo, note: this.note(todo.id), threads: linkedThreads(todo.id), proposals: this.store.todoProposals(todo.id) };
       }
+      case 'todo.delegate': this.review.assertCanDelegate(owner); return this.delegate(String(input.id));
       case 'todo.add': return this.create(input, owner);
       case 'todo.update': return this.update(String(input.id), input, owner);
       case 'todo.propose-done': return this.propose(String(input.id), input, owner);

@@ -43,7 +43,7 @@ export class SummaryService {
   constructor(private readonly store: Store, private readonly manager: ThreadManager, private readonly personal: PersonalService,
     private readonly adapters: Map<string, AgentAdapter>) {}
 
-  /** Threads with turns since `since`, newest first. Summary runs and quiet scheduled runs are left out. */
+  /** Threads with turns since `since`, newest first. Summary runs, plan reviews and quiet scheduled runs are left out. */
   threads(input: Record<string, unknown>, owner: string) {
     let since = dayStart(6);
     if (input.since !== undefined) {
@@ -54,7 +54,7 @@ export class SummaryService {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) throw new HttpError(400, 'limit must be 1–200');
     const skip = new Set([...this.store.summaryThreadIds(), ...this.store.quietRunThreadIds()]);
     skip.delete(owner);
-    const all = this.store.activeThreadsSince(since).filter(row => !skip.has(row.threadId) && this.store.getThread(row.threadId));
+    const all = this.store.activeThreadsSince(since).filter(row => !skip.has(row.threadId) && (row.threadId === owner || !this.store.isReviewThread(row.threadId)) && this.store.getThread(row.threadId));
     const linked = new Map<string, Array<{ id: string; text: string; done: boolean; parentId: string | null }>>();
     for (const todo of this.store.listTodos()) {
       for (const id of this.store.todoThreadIds(todo.id)) linked.set(id, [...(linked.get(id) ?? []), { id: todo.id, text: todo.text, done: todo.done, parentId: todo.parentId }]);

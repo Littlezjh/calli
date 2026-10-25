@@ -5,9 +5,18 @@ import { join } from 'node:path';
 export function personalFixture(text) {
   const command = text.split('\n')[0];
   const clarification = process.env.FAKE_PERSONAL_DELEGATE_CLARIFY === '1' && command.startsWith('这是一件新交给你的事，不是交接');
-  if (!clarification && !['personal-ui', 'personal-start', 'personal-notify', 'personal-quiet', 'personal-wish', '由 Limi 发起的事项跟进。', '由 Limi 发起的近期总结。', '# 交接信息'].includes(command)) return null;
+  const review = process.env.FAKE_PERSONAL_REVIEW && (command === '由 Limi 发起的私人事项盘点。' || command.startsWith('开始 '));
+  if (!review && !clarification && !['personal-ui', 'personal-start', 'personal-notify', 'personal-quiet', 'personal-wish', '由 Limi 发起的事项跟进。', '由 Limi 发起的近期总结。', '# 交接信息'].includes(command)) return null;
   if (command === '# 交接信息' && !text.includes('## 关联事项与接续说明')) return null;
   const cli = (args, input = '') => JSON.parse(execFileSync(process.execPath, [join(process.env.LIMI_BIN_DIR, 'limi'), ...args], { input, encoding: 'utf8' }));
+  if (review) {
+    if (command.startsWith('开始 ')) return JSON.stringify(cli(['todo', 'delegate', command.slice('开始 '.length)]));
+    if (process.env.FAKE_PERSONAL_REVIEW === 'quiet') { cli(['quiet']); return 'Nothing needs attention.'; }
+    const todo = cli(['todo']).find(item => !item.done && !item.proposed);
+    cli(['notify', '--text-file', '-'], `要开始「${todo.text}」吗？`);
+    cli(['review', 'next', new Date(Date.now() + 3600000).toISOString()]);
+    return `等待你说「开始 ${todo.id}」。`;
+  }
   if (clarification) {
     const id = text.match(/^ID：([^；]+)；/m)?.[1];
     const todo = cli(['todo', 'show', id]);

@@ -613,26 +613,33 @@ test('delegation accepts allowed projects without personal credentials and rejec
 });
 
 
-for (const personal of [true, false]) for (const hasNote of [true, false]) test(`delegation prompt distinguishes a new task from handover: ${personal ? 'personal' : 'project'}, ${hasNote ? 'with' : 'without'} note`, async () => {
+for (const personal of [true, false]) for (const scenario of [
+  { name: 'with note', text: '跟着 Agent 架构变化', note: '## 下一步\n列出本项目所用框架的三条架构变化，写成一页摘要' },
+  { name: 'without note and clear goal', text: '给房东回邮件确认退租日期', note: '' },
+  { name: 'without note and vague goal', text: '跟着 Agent 架构变化', note: '' },
+]) test(`delegation prompt distinguishes a new task from handover: ${personal ? 'personal' : 'project'}, ${scenario.name}`, async () => {
   const h = await setup();
   try {
     h.service.putSettings({ agent: 'pi' });
-    const todo = h.service.create({ text: '跟着 Agent 架构变化' });
-    if (hasNote) h.service.writeNote(todo.id, { text: '## 下一步\n列出本项目所用框架的三条架构变化，写成一页摘要' });
+    const todo = h.service.create({ text: scenario.text });
+    if (scenario.note) h.service.writeNote(todo.id, { text: scenario.note });
     const response = await h.api(`/api/todos/${todo.id}/delegate`, 'POST', personal ? {} : { cwd: h.outside });
     assert.equal(response.status, 201);
     const thread = await response.json();
     await wait(() => h.store.getThread(thread.id)?.status !== 'running');
     const prompt = String(h.store.listEventsOfType(thread.id, 'turn.started')[0].data.text);
     assert.ok(prompt.startsWith('这是一件新交给你的事，不是交接；这个线程就是它的工作线程，没有更早的对话需要读。'));
-    assert.match(prompt, /事项：跟着 Agent 架构变化/);
-    assert.match(prompt, /没有接续说明，或事项太笼统、看不出要交付什么时，这一轮只做澄清/);
+    assert.ok(prompt.includes(`事项：${scenario.text}`));
+    assert.match(prompt, /只有目标笼统、看不出要交付什么时，这一轮才只做澄清/);
+    assert.doesNotMatch(prompt, /没有接续说明，或|目标清楚且已有接续说明/);
+    assert.match(prompt, /没有说明也直接推进，并在结束前.*第一版接续说明/);
+    assert.match(prompt, /先起草给人看，发送前再问/);
     assert.match(prompt, /1～3 个具体问题.*每个问题给出你建议的默认选项/);
     assert.match(prompt, /不要自己猜着开工/);
     assert.match(prompt, /按说明的「下一步」推进/);
     assert.match(prompt, /不要用 handover\/history.*不要翻本地会话文件/);
     assert.match(prompt, /不可逆操作（提交、付款、发消息、删除、推送代码）.*先停下来问人/);
-    assert.match(prompt, hasNote ? /列出本项目所用框架的三条架构变化/ : /接续说明：\n尚未写入。/);
+    assert.match(prompt, scenario.note ? /列出本项目所用框架的三条架构变化/ : /接续说明：\n尚未写入。/);
     if (personal) {
       assert.match(prompt, /limi todo update .*--state waiting --waiting-on "等你说明目标" --note-file FILE/);
       assert.match(prompt, /「## 欠谁什么」写已知部分/);

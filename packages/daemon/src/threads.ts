@@ -993,6 +993,7 @@ export class ThreadManager {
   notice(id: string, text: unknown, confirmation = false): StoredEvent {
     this.getThread(id);
     if (typeof text !== 'string' || !text.trim() || [...text].length > 500) throw new HttpError(400, 'notice text must contain 1–500 characters');
+    this.personal.review.recordNotice(id, this.running.get(id)?.turnId ?? null);
     this.store.updateThread(id, { unread: true });
     const event = this.store.appendEvent(id, this.running.get(id)?.turnId ?? null, 'agent.notice', { text, ...(confirmation ? { confirmation: true } : {}) });
     for (const listener of this.listeners) listener(event);
@@ -1820,7 +1821,7 @@ export class ThreadManager {
 
   private async startTurnReady(
     threadId: string,
-    input: { voiceSummary?: string; workMode?: unknown; text?: unknown; images?: unknown; videos?: unknown; queue?: unknown; mentions?: unknown; collaboration?: CoordinationSetup; handoverFrom?: string; autoContinuation?: boolean; handover?: unknown; scheduled?: unknown },
+    input: { voiceSummary?: string; workMode?: unknown; text?: unknown; images?: unknown; videos?: unknown; queue?: unknown; mentions?: unknown; collaboration?: CoordinationSetup; handoverFrom?: string; autoContinuation?: boolean; handover?: unknown; scheduled?: unknown; review?: boolean },
     delivery?: { turnId: string; source: Record<string, unknown>; displayText: string; claim: () => void },
     fromQueue = false,
     reservedTurnId?: string,
@@ -1933,6 +1934,7 @@ export class ThreadManager {
           ...(storedVideos.length ? { videos: storedVideos } : {}),
           ...(typeof input.handover === 'string' && input.handover ? { handover: input.handover, handoverLabel: this.adapters.get(input.handover)?.label ?? input.handover } : {}),
           ...(input.scheduled === true ? { scheduled: true } : {}),
+          ...(input.review === true ? { review: true } : {}),
         });
       });
     } catch (err) { this.running.delete(threadId); this.reportTurns.delete(turnId); throw err; }

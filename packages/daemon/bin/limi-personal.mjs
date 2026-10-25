@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { transport } from './limi-tools.mjs';
 export const personalHelp = `limi todo
 limi todo show ID
+limi todo delegate ID
 limi todo add --owner agent|me --text-file FILE|- [--parent ID] [--due TIME] [--thread THREAD_ID ...]
 limi todo update ID --rev N [--state open|waiting|done] [--waiting-on TEXT] [--due TIME] [--follow-up TIME] [--note-file FILE|-] [--thread THREAD_ID ...] [--unlink THREAD_ID ...]
 limi todo delete ID --rev N
@@ -11,7 +12,11 @@ limi threads show THREAD_ID [--before TURN_CURSOR] [--turns N]
 limi threads show THREAD_ID --turn TURN_ID [--offset N --snapshot SEQ]
 limi wish --text-file FILE|-
 limi quiet
-todo, threads and wish use LIMI_TODO_SOCKET / LIMI_TODO_KEY, only in the personal directory.
+limi review on|off|status
+limi review next TIME
+Review next accepts 30 minutes to 3 days from now; the result reports nextReviewAt and adjustment reasons: quiet_hours, daily_limit, idle_backoff.
+Reviews only ask; delegate only after the person explicitly says to start.
+todo, threads, review and wish use LIMI_TODO_SOCKET / LIMI_TODO_KEY, only in the personal directory.
 quiet uses LIMI_TOOLS_SOCKET / LIMI_TOOLS_KEY in any thread.
 In linked threads, self: true marks the current thread. Other linked threads are records only: work from the todo and its note, not their history; handover/history are only for a handover chain.
 Read before writing: stale rev returns 409. For me commitments use propose-done; only the person can mark them done.
@@ -26,12 +31,17 @@ quiet suppresses routine completion notifications for this turn; wish never mark
 export async function personalMain(args) {
   const [group, ...rest] = args;
   if (group === 'threads') return threadsMain(rest);
+  if (group === 'review') {
+    const [action, time, extra] = rest;
+    if (!['on', 'off', 'status', 'next'].includes(action) || extra !== undefined || (action === 'next' ? !time : time !== undefined)) throw new Error(personalHelp);
+    console.log(JSON.stringify(await transport('/command', { op: `review.${action}`, ...(action === 'next' ? { time } : {}) }, false, true))); return;
+  }
   const command = group === 'todo' ? (rest.shift() ?? 'list') : group;
   const input = { op: group === 'todo' ? `todo.${command}` : group };
-  if (['show', 'update', 'delete', 'propose-done'].includes(command)) {
+  if (['show', 'update', 'delete', 'propose-done', 'delegate'].includes(command)) {
     input.id = rest.shift(); if (!input.id || input.id.startsWith('--')) throw new Error(personalHelp);
   }
-  const allowed = { list: [], show: [], add: ['--owner', '--text-file', '--parent', '--due', '--thread'], update: ['--rev', '--state', '--waiting-on', '--due', '--follow-up', '--note-file', '--thread', '--unlink'], delete: ['--rev'], 'propose-done': ['--rev', '--evidence-file'], wish: ['--text-file'], quiet: [] }[command];
+  const allowed = { list: [], show: [], delegate: [], add: ['--owner', '--text-file', '--parent', '--due', '--thread'], update: ['--rev', '--state', '--waiting-on', '--due', '--follow-up', '--note-file', '--thread', '--unlink'], delete: ['--rev'], 'propose-done': ['--rev', '--evidence-file'], wish: ['--text-file'], quiet: [] }[command];
   if (!allowed) throw new Error(personalHelp);
   const fields = { '--owner': 'owner', '--parent': 'parentId', '--due': 'dueAt', '--rev': 'rev', '--state': 'state', '--waiting-on': 'waitingOn', '--follow-up': 'followUpAt', '--text-file': 'text', '--note-file': 'note', '--evidence-file': 'evidence', '--thread': 'threads', '--unlink': 'unlink' };
   const repeatable = new Set(['--thread', '--unlink']);
