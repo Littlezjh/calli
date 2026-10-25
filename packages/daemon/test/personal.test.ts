@@ -23,7 +23,7 @@ import { Scheduler } from '../src/scheduler.js';
 import { sessionEnvironment } from '../src/adapters/types.js';
 const exec = promisify(execFile);
 const wait = async (fn: () => boolean | Promise<boolean>) => { for (let i = 0; i < 500; i++) { if (await fn()) return; await new Promise(r => setTimeout(r, 20)); } throw new Error('timed out'); };
-async function setup(options: { startError?: string; followUpMode?: string } = {}) {
+async function setup(options: { startError?: string; followUpMode?: string; clarifyDelegate?: boolean } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'limi-personal-'));
   const cwd = join(dir, 'personal'), outside = join(dir, 'elsewhere'); mkdirSync(cwd); mkdirSync(outside);
   const store = new Store(dir);
@@ -31,7 +31,7 @@ async function setup(options: { startError?: string; followUpMode?: string } = {
   const followUpMode = join(dir, 'follow-up-mode');
   if (options.followUpMode) writeFileSync(followUpMode, options.followUpMode);
   const env = { ...(options.startError ? { FAKE_ACP_START_ERROR: options.startError } : {}), ...(options.followUpMode ? { FAKE_PERSONAL_FOLLOW_UP_MODE_FILE: followUpMode } : {}) };
-  const adapters = new Map<string, AgentAdapter>([['claude', new ClaudeAcpAdapter([process.execPath, resolve('test/fixtures/fake-acp.mjs')], env)], ['pi', new PiRpcAdapter([process.execPath, resolve('test/fixtures/fake-pi.mjs')])]]);
+  const adapters = new Map<string, AgentAdapter>([['claude', new ClaudeAcpAdapter([process.execPath, resolve('test/fixtures/fake-acp.mjs')], env)], ['pi', new PiRpcAdapter([process.execPath, resolve('test/fixtures/fake-pi.mjs')], options.clarifyDelegate ? { FAKE_PERSONAL_DELEGATE_CLARIFY: '1' } : {})]]);
   const manager = new ThreadManager(store, adapters, new Workdirs([dir], join(dir, 'dirs')), new AttachmentStore(dir));
   const push = new PushService(store, manager, { executable: resolve('test/fixtures/fake-lark-cli.mjs'), retryMs: 1, env: { ...process.env, FAKE_LARK_LOG: log, FAKE_LARK_CONFIG: config } });
   const service = manager.personal; service.socket = join(dir, 'personal.sock'); service.putSettings({ directory: cwd, agent: 'claude' });
@@ -610,4 +610,93 @@ test('delegation accepts allowed projects without personal credentials and rejec
     assert.match(prompt, /Review project changes/); assert.match(prompt, /Check the project checklist/);
     assert.doesNotMatch(prompt, /limi todo/);
   } finally { await h.close(); rmSync(forbidden, { recursive: true, force: true }); }
+});
+
+
+for (const personal of [true, false]) for (const scenario of [
+  { name: 'with note', text: '跟着 Agent 架构变化', note: '## 下一步\n列出本项目所用框架的三条架构变化，写成一页摘要' },
+  { name: 'without note and clear goal', text: '给房东回邮件确认退租日期', note: '' },
+  { name: 'without note and vague goal', text: '跟着 Agent 架构变化', note: '' },
+]) test(`delegation prompt distinguishes a new task from handover: ${personal ? 'personal' : 'project'}, ${scenario.name}`, async () => {
+  const h = await setup();
+  try {
+    h.service.putSettings({ agent: 'pi' });
+    const todo = h.service.create({ text: scenario.text });
+    if (scenario.note) h.service.writeNote(todo.id, { text: scenario.note });
+    const response = await h.api(`/api/todos/${todo.id}/delegate`, 'POST', personal ? {} : { cwd: h.outside });
+    assert.equal(response.status, 201);
+    const thread = await response.json();
+    await wait(() => h.store.getThread(thread.id)?.status !== 'running');
+    const prompt = String(h.store.listEventsOfType(thread.id, 'turn.started')[0].data.text);
+    assert.ok(prompt.startsWith('这是一件新交给你的事，不是交接；这个线程就是它的工作线程，没有更早的对话需要读。'));
+    assert.ok(prompt.includes(`事项：${scenario.text}`));
+    assert.match(prompt, /只有目标笼统、看不出要交付什么时，这一轮才只做澄清/);
+    assert.doesNotMatch(prompt, /没有接续说明，或|目标清楚且已有接续说明/);
+    assert.match(prompt, /没有说明也直接推进，并在结束前.*第一版接续说明/);
+    assert.match(prompt, /先起草给人看，发送前再问/);
+    assert.match(prompt, /1～3 个具体问题.*每个问题给出你建议的默认选项/);
+    assert.match(prompt, /不要自己猜着开工/);
+    assert.match(prompt, /按说明的「下一步」推进/);
+    assert.match(prompt, /不要用 handover\/history.*不要翻本地会话文件/);
+    assert.match(prompt, /不可逆操作（提交、付款、发消息、删除、推送代码）.*先停下来问人/);
+    assert.match(prompt, scenario.note ? /列出本项目所用框架的三条架构变化/ : /接续说明：\n尚未写入。/);
+    if (personal) {
+      assert.match(prompt, /limi todo update .*--state waiting --waiting-on "等你说明目标" --note-file FILE/);
+      assert.match(prompt, /「## 欠谁什么」写已知部分/);
+      assert.match(prompt, /「## 下一步」写「等回答后……」/);
+      assert.match(prompt, /limi notify.*然后结束本轮/);
+      assert.match(prompt, /limi todo propose-done/);
+    } else {
+      assert.match(prompt, /只在回复中提问并结束本轮/);
+      assert.doesNotMatch(prompt, /limi todo/);
+      assert.equal(h.service.environment(thread.id), undefined);
+    }
+  } finally { await h.close(); }
+});
+
+test('real todo CLI marks self in list and show without exposing linked thread history', async () => {
+  const h = await setup();
+  try {
+    const todo = h.service.create({ text: 'Clarify the outcome' });
+    const other = await h.manager.createThread({ agent: 'pi', cwd: h.cwd });
+    h.store.linkTodoThread(todo.id, other.id); h.store.linkTodoThread(todo.id, h.thread.id);
+    const expected = h.store.todoThreadIds(todo.id).map(id => ({ id, self: id === h.thread.id }));
+    const shown = await h.cli(['todo', 'show', todo.id]);
+    assert.deepEqual(shown.threads, expected);
+    assert.deepEqual((await h.cli(['todo'])).find((item: { id: string }) => item.id === todo.id).threads, expected);
+    const unlinked = h.service.create({ text: 'An unrelated item' });
+    h.store.linkTodoThread(unlinked.id, other.id);
+    assert.deepEqual((await h.cli(['todo', 'show', unlinked.id])).threads, [{ id: other.id, self: false }]);
+    const help = (await exec(process.execPath, [resolve('bin/limi'), 'todo', '--help'])).stdout;
+    assert.match(help, /self: true marks the current thread/);
+    assert.match(help, /cannot read their history; handover\/history are only for a handover chain/);
+  } finally { await h.close(); }
+});
+
+test('fake Pi clarifies a newly delegated item without a note, sets waiting, notifies and ends the turn', async () => {
+  const h = await setup({ clarifyDelegate: true });
+  try {
+    h.service.putSettings({ agent: 'pi' }); h.push.putSettings({ enabled: true });
+    const todo = h.service.create({ text: '跟着 Agent 架构变化' });
+    h.store.linkTodoThread(todo.id, h.thread.id);
+    const response = await h.api(`/api/todos/${todo.id}/delegate`, 'POST', {});
+    assert.equal(response.status, 201);
+    const thread = await response.json();
+    await wait(() => h.store.listEventsOfType(thread.id, 'turn.done').length === 1);
+    const updated = h.store.getTodo(todo.id)!;
+    assert.equal(updated.state, 'waiting'); assert.equal(updated.waitingOn, '等你说明目标');
+    assert.equal(updated.done, false); assert.equal(updated.followUpAt, null);
+    assert.match(h.store.todoNote(todo.id).text, /## 欠谁什么\n.*具体交付尚未确定/);
+    assert.match(h.store.todoNote(todo.id).text, /## 下一步\n等回答后/);
+    const events = h.store.listEvents(thread.id);
+    const answer = events.filter(e => e.type === 'message.delta').map(e => e.data.text).join('');
+    assert.equal((answer.match(/建议默认：/g) ?? []).length, 2);
+    const notices = events.filter(e => e.type === 'agent.notice');
+    assert.equal(notices.length, 1); assert.match(String(notices[0].data.text), /需要你回答目标和交付形式/);
+    assert.equal(events.filter(e => e.type === 'turn.started').length, 1);
+    assert.equal(events.filter(e => e.type === 'turn.error').length, 0);
+    assert.equal(h.store.todoProposals(todo.id).length, 0);
+    await wait(async () => (await h.push.status()).records.some(record => record.kind === 'notice' && record.result === 'sent'));
+    assert.equal(h.store.getThread(thread.id)?.unread, true);
+  } finally { await h.close(); }
 });

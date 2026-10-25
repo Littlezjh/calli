@@ -58,6 +58,8 @@ type ChangeListener = () => void;
 export class Scheduler {
   private unsubscribe?: () => void;
   private following = false;
+  private reviewing = false;
+  private reviewFailure: { attempts: number; retryAt: number } | null = null;
   private readonly followUpFailures = new Map<string, { attempts: number; retryAt: number }>();
   private stopped = false;
   private readonly quietArchives = new Set<string>();
@@ -100,6 +102,10 @@ export class Scheduler {
 
   /** A turn's ending settles its run: done, error, or skipped when it was stopped. */
   private onTurnEvent(ev: StoredEvent): void {
+    if (this.manager.personal.review.onEvent(ev)) {
+      if (ev.data.quiet === true) { this.quietArchives.add(ev.threadId); this.archiveQuiet(ev.threadId); }
+      return;
+    }
     if (ev.type === 'thread.updated') {
       if (this.quietArchives.has(ev.threadId)) this.archiveQuiet(ev.threadId);
       void this.followUps();
@@ -137,6 +143,7 @@ export class Scheduler {
   }
 
   private recover(): void {
+    this.manager.personal.review.recover();
     const now = new Date();
     for (const run of this.store.runningScheduleRuns()) {
       this.store.updateScheduleRun(run.id, { status: 'error', finishedAt: now.toISOString(), message: 'daemon 重启时被打断' });
@@ -192,8 +199,42 @@ export class Scheduler {
       await this.fire(s, now);
     }
     await this.followUps();
+    await this.reviews();
     this.sweep();
     this.changed();
+  }
+
+  /** Reviews own their schedule in hub settings, while their conversations remain ordinary threads. */
+  async reviews(): Promise<void> {
+    if (this.stopped || this.reviewing || this.reviewFailure && Date.now() < this.reviewFailure.retryAt) return;
+    const review = this.manager.personal.review, expected = review.due();
+    if (!expected) return;
+    this.reviewing = true;
+    let threadId: string | undefined;
+    try {
+      const settings = await this.manager.personal.resolvedSettings();
+      const adapter = settings.agent ? this.adapters.get(settings.agent) : undefined;
+      if (!adapter || !settings.agent) throw new HttpError(503, 'personal agent unavailable');
+      const thread = await this.manager.createThread({ agent: settings.agent, cwd: settings.directory,
+        title: `盘点 · ${localDate(new Date())}`, permissionMode: adapter.capabilities.defaultPermissionMode,
+        ...(settings.model ? { model: settings.model } : {}) });
+      threadId = thread.id;
+      await this.manager.startTurn(thread.id, { text: review.prompt(), scheduled: true, review: true }, undefined, false, undefined, turnId => {
+        if (this.stopped) throw new HttpError(409, 'scheduler stopped');
+        review.started(expected, thread.id, turnId);
+      });
+      this.reviewFailure = null;
+    } catch (error) {
+      if (threadId && this.store.getThread(threadId)?.status !== 'running' && !this.store.listEventsOfType(threadId, 'turn.started').length) await this.manager.deleteThread(threadId).catch(() => undefined);
+      if (this.stopped || error instanceof HttpError && error.status === 409) return;
+      const attempts = (this.reviewFailure?.attempts ?? 0) + 1;
+      this.reviewFailure = { attempts, retryAt: Date.now() + FOLLOW_UP_BACKOFF_MS[Math.min(attempts - 1, FOLLOW_UP_BACKOFF_MS.length - 1)] };
+      if (attempts === 1) {
+        const recent = review.failureThread();
+        if (recent) this.manager.notice(recent, '盘点没能启动：无法启动 agent，稍后自动重试');
+        else console.warn('[review] unable to start agent; will retry');
+      }
+    } finally { this.reviewing = false; }
   }
 
   private archiveQuiet(threadId: string) {

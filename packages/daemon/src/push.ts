@@ -130,7 +130,7 @@ export class PushService {
       const attention = attentionOf({ waiting: true, waitingReason: ev.type === 'approval.request' ? 'approval' : ev.data.kind === 'plan' ? 'plan' : 'question', unread: false, status: 'running' });
       kind = attention!.kind as 'approval' | 'question' | 'plan';
     } else if (end?.outcome === 'error' && settings.failure && origin.initiator !== 'coordination') kind = 'failure';
-    else if (end?.outcome === 'ok' && ev.data.quiet !== true && settings.scheduled && origin.initiator === 'schedule') kind = 'scheduled';
+    else if (end?.outcome === 'ok' && started?.data.review !== true && ev.data.quiet !== true && settings.scheduled && origin.initiator === 'schedule') kind = 'scheduled';
     else if (ev.type === 'agent.notice' && settings.notice) kind = ev.data.confirmation ? 'confirmation' : 'notice';
     if (kind) this.enqueue(kind, ev.threadId, `${ev.threadId}:${ev.seq}`, (kind === 'notice' || kind === 'confirmation') ? String(ev.data.text ?? '') : undefined);
   }

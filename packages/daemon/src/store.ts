@@ -903,6 +903,14 @@ export class Store {
 
   // ---------- Plan page (todos) ----------
 
+  isReviewThread(threadId: string): boolean {
+    return !!this.db.prepare("SELECT 1 FROM events WHERE thread_id = ? AND type = 'turn.started' AND json_extract(data, '$.review') = 1 LIMIT 1").get(threadId);
+  }
+
+  hasRunningReview(): boolean {
+    return !!this.db.prepare("SELECT 1 FROM threads t WHERE t.status = 'running' AND EXISTS (SELECT 1 FROM events e WHERE e.thread_id = t.id AND e.type = 'turn.started' AND json_extract(e.data, '$.review') = 1) LIMIT 1").get();
+  }
+
   listTodos(): TodoRecord[] {
     return (this.db.prepare('SELECT * FROM todos ORDER BY position ASC, created_at ASC').all() as unknown as TodoRow[]).map(toTodo);
   }
