@@ -444,6 +444,9 @@ async function readSkills(peer: JsonRpcPeer, cwd: string): Promise<CodexSkill[]>
   return [...skills.values()];
 }
 
+const MAX_PENDING_NOTIFICATIONS = 200;
+const MAX_FINISHED_TURNS = 200;
+
 /** A live Codex thread: one process, one thread id, any number of turns. */
 class CodexSession implements AgentSession {
   private readonly accounting = new CodexUsage();
@@ -483,7 +486,8 @@ class CodexSession implements AgentSession {
       },
     };
   }
-  private turn: { id: string; resolve(r: TurnResult): void; error?: string; compact?: boolean; goal?: boolean; goalTurns?: number; cancelRequested?: boolean } | null = null;
+  private turn: { id: string; resolve(r: TurnResult): void; awaitingId?: boolean; notifications?: Array<{ method: string; params: any; turnId: string }>; error?: string; compact?: boolean; goal?: boolean; goalTurns?: number; cancelRequested?: boolean } | null = null;
+  private readonly finishedTurns = new Set<string>();
   private goal: any = null;
   /** Where the hub's goal card hears about changes; set right after construction. */
   onGoal?: (goal: GoalSnapshot | null) => void;
@@ -526,15 +530,25 @@ class CodexSession implements AgentSession {
   /** Called by the peer for every notification. Ignores anything about another thread. */
   onNotification(method: string, params: any): void {
     if (params?.threadId !== undefined && params.threadId !== this.agentSessionId) return;
+    const nativeId = params?.turnId ?? (method === 'turn/started' || method === 'turn/completed' ? params?.turn?.id : undefined);
+    if (nativeId && this.finishedTurns.has(String(nativeId))) return;
     if (method.startsWith('thread/realtime/')) {
       // Only a positively observed native close permits reusing this notification source.
       if (method === 'thread/realtime/closed' && this.voice) this.voiceReusable = true;
       this.voice?.handleNotification(method, params);
       return;
     }
-    if (this.turn?.id && params?.turnId && params.turnId !== this.turn.id) return;
-    if (this.turn?.compact && this.turn.id && params?.turnId && params.turnId !== this.turn.id) return;
-    if (params?.item?.type === 'contextCompaction' && this.turn?.id && params.turnId && params.turnId !== this.turn.id) return;
+    // Only started can provisionally claim an id. Hold content until the RPC confirms it,
+    // so a mismatched claim cannot leak items or settle the wrong turn.
+    const pending = this.turn;
+    if (pending?.awaitingId && (nativeId || /^(item|turn)\//.test(method) || method === 'thread/tokenUsage/updated' || method === 'error')) {
+      if (method === 'turn/started' && params?.turn?.id && !pending.id) pending.id = String(params.turn.id);
+      const notifications = pending.notifications ??= [];
+      if (notifications.length === MAX_PENDING_NOTIFICATIONS) notifications.shift();
+      notifications.push({ method, params, turnId: nativeId ? String(nativeId) : pending.id });
+      return;
+    }
+    if (this.turn?.id && nativeId && String(nativeId) !== this.turn.id) return;
     switch (method) {
       case 'serverRequest/resolved':
         this.hooks?.cancelInput?.(String(params.requestId));
@@ -656,6 +670,7 @@ class CodexSession implements AgentSession {
       case 'turn/completed': {
         const turn = this.turn;
         if (!turn || params?.turn?.id !== turn.id) break;
+        this.rememberFinishedTurn(turn.id);
         if (params.turn.status === 'failed') turn.error ??= params.turn.error?.message ? String(params.turn.error.message) : 'Codex turn failed';
         if (turn.goal && params.turn.status === 'completed') {
           turn.id = '';
@@ -732,6 +747,7 @@ class CodexSession implements AgentSession {
     if (turn.compact) {
       if (stopReason === 'end_turn') this.emit({ type: 'message.delta', data: { text: '上下文压缩完成。' } });
     }
+    if (!turn.awaitingId) this.rememberFinishedTurn(turn.id);
     this.turn = null;
     this.hooks = null;
     this.outputSoFar.clear();
@@ -739,6 +755,12 @@ class CodexSession implements AgentSession {
     const result = { stopReason, ...(stopReason === 'error' && turn.error ? { error: turn.error } : {}) };
     if (this.computer) void this.computer.close().finally(() => turn.resolve(result));
     else turn.resolve(result);
+  }
+
+  private rememberFinishedTurn(id: string): void {
+    if (!id) return;
+    this.finishedTurns.add(id);
+    if (this.finishedTurns.size > MAX_FINISHED_TURNS) this.finishedTurns.delete(this.finishedTurns.values().next().value!);
   }
 
   /** The settings the thread carries, sent with the next turn so the live session picks them up. */
@@ -837,6 +859,8 @@ class CodexSession implements AgentSession {
     const result = new Promise<TurnResult>((resolve) => {
       resolveTurn = resolve;
     });
+    const pending: NonNullable<CodexSession['turn']> = { id: '', resolve: resolveTurn, awaitingId: true, goal: this.goal?.status === 'active', goalTurns: 1 };
+    this.turn = pending;
     try {
       let skill: CodexSkill | undefined;
       if (name && name !== 'review') {
@@ -857,12 +881,25 @@ class CodexSession implements AgentSession {
         ],
         ...this.turnOverrides(),
       });
-      this.turn = { id: String(res?.turn?.id ?? ''), resolve: resolveTurn, goal: this.goal?.status === 'active', goalTurns: 1 };
-      if (!this.turn.id) throw new Error('Codex did not return a turn id');
+      const id = String(res?.turn?.id ?? '');
+      if (!id) throw new Error('Codex did not return a turn id');
+      // The RPC id is authoritative; replay only its buffered notifications.
+      if (this.turn === pending && pending.awaitingId) {
+        if (pending.id && pending.id !== id) console.warn(`[${this.name}] turn/start id mismatch; discarded unmatched notifications`);
+        pending.id = id;
+        pending.awaitingId = false;
+        const notifications = pending.notifications ?? [];
+        pending.notifications = undefined;
+        if (pending.cancelRequested) void this.cancel();
+        for (const notification of notifications) {
+          if (notification.turnId === id) this.onNotification(notification.method, notification.params);
+        }
+      }
     } catch (err) {
-      this.hooks = null;
-      const message = err instanceof Error ? err.message : String(err);
-      return { stopReason: 'error', error: message };
+      if (this.turn === pending) {
+        pending.error = err instanceof Error ? err.message : String(err);
+        this.finishTurn('error');
+      }
     }
     return result;
   }

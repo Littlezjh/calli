@@ -574,6 +574,36 @@ rl.on('line', (line) => {
       const text = (msg.params?.input ?? []).filter((i) => i.type === 'text').map((i) => i.text).join('');
       const images = (msg.params?.input ?? []).filter((i) => i.type === 'localImage');
       const skills = (msg.params?.input ?? []).filter((i) => i.type === 'skill');
+      if (['batch-completed', 'batch-item-first', 'batch-completed-only', 'batch-failed', 'batch-rejected', 'batch-late-previous', 'batch-late-no-start', 'batch-mismatched-start', 'batch-noise'].includes(text)) {
+        const failed = text === 'batch-failed';
+        const batch = [];
+        const event = (method, params) => batch.push({ jsonrpc: '2.0', method, params: { threadId, ...params } });
+        const stale = (id) => {
+          event('thread/tokenUsage/updated', { turnId: id, tokenUsage: { last: { totalTokens: 999999 }, modelContextWindow: 1000000 } });
+          event('turn/started', { turn: { id, status: 'inProgress' } });
+          event('item/agentMessage/delta', { turnId: id, itemId: 'stale-answer', delta: 'Stale answer' });
+          event('turn/completed', { turn: { id, status: 'failed', error: { message: 'stale failure' } } });
+        };
+        if (text.startsWith('batch-late-')) stale(`turn-${nextTurnSeq - 2}`);
+        if (text === 'batch-mismatched-start') stale('unrelated-turn');
+        if (text === 'batch-noise') for (let i = 0; i < 250; i++) event('item/agentMessage/delta', { turnId: `noise-${i}`, itemId: 'noise', delta: 'Noise' });
+        batch.push({ jsonrpc: '2.0', id: msg.id, ...(text === 'batch-rejected'
+          ? { error: { code: -32603, message: 'fixture start rejected' } }
+          : { result: { turn: { id: turnId, status: 'inProgress' } } }) });
+        if (text !== 'batch-rejected') {
+          if (text === 'batch-completed' || text === 'batch-late-previous') event('turn/started', { turn: { id: turnId, status: 'inProgress' } });
+          if (!['batch-completed-only', 'batch-failed'].includes(text)) {
+            event('item/started', { turnId, item: { id: 'batch-answer', type: 'agentMessage', text: '' } });
+            event('item/agentMessage/delta', { turnId, itemId: 'batch-answer', delta: 'Immediate answer' });
+            event('item/completed', { turnId, item: { id: 'batch-answer', type: 'agentMessage', text: 'Immediate answer' } });
+          }
+          if (failed) event('error', { turnId, error: { message: 'fixture turn failed' }, willRetry: false });
+          event('turn/completed', { turn: { id: turnId, status: failed ? 'failed' : 'completed', error: null } });
+        }
+        // One write makes notifications arrive before the awaiting request's continuation runs.
+        process.stdout.write(batch.map(row => JSON.stringify(row)).join('\n') + '\n');
+        break;
+      }
       out({ jsonrpc: '2.0', id: msg.id, result: { turn: { id: turnId, items: [], itemsView: 'notLoaded', status: 'inProgress', error: null } } });
       activeTurn = turnId;
       notify('turn/started', { turn: { id: turnId, items: [], itemsView: 'notLoaded', status: 'inProgress', error: null } });
