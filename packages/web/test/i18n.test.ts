@@ -91,13 +91,14 @@ test('lists are joined with the language\'s own separator', () => {
 });
 
 test('no Chinese is written into the interface outside the dictionaries', () => {
-  // What may stay: the daemon's own wording that is parsed back, slash-menu search aliases, and
-  // the dictionaries and their language names. Anything else on screen goes through t().
+  // What may stay: the daemon's own wording that is parsed back, slash-menu search aliases, the
+  // writing mode's marks the agent writes into bodies, and the dictionaries and their language
+  // names. Anything else on screen goes through t().
   const allowed = [
     /^i18n\//,
     /^demo\/data\.ts$/,
   ];
-  const parsed = /来自 |状态：|注释|评论：|（接手）|'失败'|'结果'|keywords: \[|^const (?:NEXT_STEP_HEADING|PERSONAL_CONFIRMATION_TEXT) = /;
+  const parsed = /来自 |状态：|注释|评论：|文件：|（接手）|〔补〕|【待补|'失败'|'结果'|keywords: \[|^const (?:NEXT_STEP_HEADING|PERSONAL_CONFIRMATION_TEXT) = /;
   const offenders: string[] = [];
   const walk = (dir: string, rel = ''): void => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {

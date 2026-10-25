@@ -1476,6 +1476,7 @@ function SentNotes({ notes }: { notes: Note[] }) {
             <li key={i} className="note-strip">
               <span className="note-num">{i + 1}</span>
               <span className="note-body">
+                {n.file && <span className="note-file" title={n.file}>{n.file}</span>}
                 <span className="note-quote">{n.quote}</span>
                 {n.comment && <span className="note-comment">{n.comment}</span>}
               </span>

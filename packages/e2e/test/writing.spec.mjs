@@ -1,6 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { deflateSync } from 'node:zlib';
 import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
@@ -47,6 +47,8 @@ const BODY = `# ${NAME}
 我好久没真正自己思考写东西了。现在很多时候，是想一句话，然后让 AI 帮我把一篇文章写出来。
 
 今天写 PR 的时候不一样。我得真的去想，为什么要这样写。【待补：写到哪一句时发现想法变了】
+
+〔补〕Zinsser 说过，写作就是在纸上思考。写不清楚，往往是因为还没想清楚。
 
 ## AI 可以做什么
 
@@ -96,8 +98,10 @@ const send = async (page, text) => {
   await page.waitForFunction(() => document.querySelector('.composer textarea')?.value === '');
 };
 const fitsWidth = (page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
+/** The stage chip's popover: opened, tapped through, closed again. */
+const openStages = (page) => page.locator('.writing-chip').click();
 
-test('writing mode on desktop: start, change stage, preview, edit and save, conflicts, end', { timeout: 240000 }, async () => {
+test('writing mode on desktop: chip and stages, article preview, write and save, conflicts, end', { timeout: 240000 }, async () => {
   for (const colorScheme of ['light', 'dark']) {
     const context = await browser.newContext({ viewport: { width: 1400, height: 900 }, colorScheme });
     try {
@@ -116,29 +120,48 @@ test('writing mode on desktop: start, change stage, preview, edit and save, conf
       await choice.click();
       const bar = page.locator('.writing-bar');
       await bar.waitFor();
+      await page.locator('.writing-chip', { hasText: '初稿' }).waitFor();
       assert.equal((await view(thread.id)).writing?.stage, 'draft');
-      // The daemon may name an existing body at once; until it has one the bar says so.
-      await bar.locator('.writing-file').waitFor();
       await page.locator('.composer textarea[placeholder="继续说，或者让 agent 补哪一段…"]').waitFor();
 
       // After a turn the daemon names the newest body under writing/.
       await send(page, '今天想写一篇关于思考的文章');
       await waitIdle(thread.id);
       await waitFor(async () => (await view(thread.id)).writing?.file, 'the body is named after the turn');
-      const link = bar.getByRole('button', { name: `打开正文 ${NAME}.md`, exact: true });
-      await link.waitFor();
 
-      // Stages: the current one is marked; a click moves it.
-      assert.equal(await bar.locator('.writing-stage.current').textContent(), '初稿');
-      await bar.getByRole('button', { name: '二稿', exact: true }).click();
-      await bar.locator('.writing-stage.current', { hasText: '二稿' }).waitFor();
+      // One chip; the stages live behind it, each with its word of advice, the current one checked.
+      await openStages(page);
+      const pop = page.getByRole('menu');
+      await pop.waitFor();
+      assert.equal(await pop.getByRole('menuitemradio', { name: /^初稿/ }).getAttribute('aria-checked'), 'true');
+      await shot('stages');
+      await pop.getByRole('menuitemradio', { name: /^二稿/ }).click();
+      await page.locator('.writing-chip', { hasText: '二稿' }).waitFor();
       assert.equal((await view(thread.id)).writing.stage, 'second');
 
-      // The body opens in the file panel: the diagram is drawn and the relative picture loads.
-      await link.click();
+      // The body opens from the same popover: an article on a wide sheet, tree folded away.
+      await openStages(page);
+      await pop.getByRole('menuitem', { name: /^打开正文/ }).click();
       const panel = page.locator('.files-panel');
-      await panel.locator('.files-markdown h1', { hasText: NAME }).waitFor();
-      await panel.locator('.files-diagram svg').waitFor({ timeout: 20_000 });
+      await panel.locator('.files-markdown.article h1', { hasText: NAME }).waitFor();
+      const panelBox = await panel.boundingBox();
+      assert.ok(panelBox && panelBox.width >= 640, `the panel is ${panelBox?.width}px wide for the body`);
+      assert.equal(await panel.locator('.files-tree').count(), 0, 'the tree starts folded for the body');
+      // What the body takes, it leaves whole: the composer's bottom row keeps its full words.
+      const composer = await page.evaluate(() => {
+        const bar = [...document.querySelectorAll('.composer-bar')].at(-1);
+        return [...(bar?.children ?? [])].filter((c) => c.scrollWidth > c.clientWidth + 1).length;
+      });
+      assert.equal(composer, 0, 'no button in the composer\u2019s bottom row is cut short');
+      // The title says where the piece stands; the marks are colour, not punctuation.
+      assert.match(await panel.locator('.article-meta').textContent(), /^二稿 · [\d,]+ 字$/);
+      assert.equal(await panel.locator('.writing-todo').textContent(), '待补：写到哪一句时发现想法变了');
+      assert.equal(await panel.locator('.writing-added').textContent(), 'Zinsser 说过，写作就是在纸上思考。写不清楚，往往是因为还没想清楚。');
+      // The diagram takes the theme's own colours, and the relative picture loads.
+      const diagram = panel.locator('.files-diagram svg');
+      await diagram.waitFor({ timeout: 20_000 });
+      const nodeFill = await diagram.locator('rect, path.node, polygon').first().evaluate((el) => getComputedStyle(el).fill);
+      assert.notEqual(nodeFill, 'rgb(236, 236, 255)', 'mermaid is not left on its purple default');
       const picture = panel.locator('.files-inline-picture img');
       await picture.waitFor();
       await page.waitForFunction(() => (document.querySelector('.files-inline-picture img')?.naturalWidth ?? 0) === 240);
@@ -149,12 +172,41 @@ test('writing mode on desktop: start, change stage, preview, edit and save, conf
       await page.keyboard.press('Escape');
       await page.locator('.lightbox').waitFor({ state: 'detached' });
 
-      // Edit: a plain page of text, saved with Ctrl+S.
-      await panel.getByRole('button', { name: '编辑', exact: true }).click();
+      // The writing habits note: offered once it exists, with a word about how it gets written.
+      const habitsFile = join(daemon.notesDir, 'writing.md');
+      rmSync(habitsFile, { force: true });
+      await openStages(page);
+      const habitsItem = pop.locator('.pop-item', { hasText: '写作习惯' });
+      await habitsItem.getByText('说「复盘」后会生成').waitFor();
+      await shot('habits-off');
+      await page.keyboard.press('Escape');
+      mkdirSync(daemon.notesDir, { recursive: true });
+      writeFileSync(habitsFile, '# 写作习惯\n\n- 短句。× 冗长的从句。\n');
+      await openStages(page);
+      await pop.getByRole('menuitem', { name: /写作习惯/ }).click();
+      await panel.locator('.files-markdown.article h1', { hasText: '写作习惯' }).waitFor();
+      // Not this thread's draft: no stage over the title, only the count of what is written.
+      assert.match(await panel.locator('.article-meta').textContent(), /^[\d,]+ 字$/);
+      await shot('habits');
+      // Back to the body for the writing that follows.
+      await openStages(page);
+      await pop.getByRole('menuitem', { name: /^打开正文/ }).click();
+      await panel.locator('.files-markdown.article h1', { hasText: NAME }).waitFor();
+
+      // Writing: the same sheet, turned over. The markers dim under the typing.
+      await panel.getByRole('button', { name: '写', exact: true }).click();
       const editor = panel.getByRole('textbox', { name: '正文', exact: true });
       await editor.waitFor();
       assert.equal(await editor.inputValue(), BODY);
       assert.equal(await panel.locator('.files-num').count(), 0, 'no line numbers in the editor');
+      assert.ok((await panel.locator('.writing-paper-layer .w-mk').count()) > 0, 'the marks are dimmed');
+      // The layer behind the typing shares its every measure, so the caret lines up with what is seen.
+      const metrics = await page.evaluate(() => {
+        const read = (el) => { const c = getComputedStyle(el); return [c.font, c.lineHeight, c.paddingTop, c.paddingRight, c.paddingBottom, c.paddingLeft, c.letterSpacing].join('|'); };
+        return { typing: read(document.querySelector('.writing-paper-input')), seen: read(document.querySelector('.writing-paper-layer')) };
+      });
+      assert.equal(metrics.typing, metrics.seen, 'the page behind the typing is set the same');
+      await panel.getByText('已保存', { exact: true }).waitFor();
       const edited = BODY.replace('【待补：写到哪一句时发现想法变了】', '其实那一刻是写到「为什么不直接复用旧接口」的时候。');
       await editor.fill(edited);
       await panel.getByText('未保存', { exact: true }).waitFor();
@@ -164,7 +216,8 @@ test('writing mode on desktop: start, change stage, preview, edit and save, conf
       await page.waitForTimeout(600);
       await page.reload();
       await page.locator('.thread-title', { hasText: title }).first().click();
-      await page.locator('.writing-bar').getByRole('button', { name: `打开正文 ${NAME}.md`, exact: true }).click();
+      await openStages(page);
+      await page.getByRole('menu').getByRole('menuitem', { name: /^打开正文/ }).click();
       await panel.getByRole('textbox', { name: '正文', exact: true }).waitFor();
       assert.equal(await panel.getByRole('textbox', { name: '正文', exact: true }).inputValue(), edited, 'the draft came back after reload');
       await panel.getByRole('textbox', { name: '正文', exact: true }).focus();
@@ -195,18 +248,42 @@ test('writing mode on desktop: start, change stage, preview, edit and save, conf
       await conflict.waitFor({ state: 'detached' });
       assert.equal(await editor.inputValue(), theirs);
 
-      // Leaving with unsaved text asks first.
+      // Turning back to reading with unsaved text asks first.
       await editor.fill(`${theirs}没保存的。\n`);
-      await panel.getByRole('button', { name: '取消', exact: true }).click();
+      await panel.getByRole('button', { name: '读', exact: true }).click();
       const dialog = page.getByRole('dialog', { name: '放弃没保存的修改？' });
       await dialog.waitFor();
       await dialog.getByRole('button', { name: '放弃修改', exact: true }).click();
       await editor.waitFor({ state: 'detached' });
       assert.equal(readFileSync(file, 'utf8'), theirs, 'discarding does not write');
-      await panel.getByRole('button', { name: '编辑', exact: true }).waitFor();
+      await panel.getByRole('button', { name: '写', exact: true }).waitFor();
 
-      // End: the bar goes, the body stays.
-      await page.locator('.writing-bar').getByRole('button', { name: '结束', exact: true }).click();
+      // A passage picked out of the body: the quick labels are there, one tap is the whole note,
+      // and it carries the file it came from.
+      // The preview has just come back from the writing page: its diagram settles last, so the
+      // page is let still before a passage is picked out of it.
+      await panel.locator('.files-diagram svg').waitFor({ timeout: 20_000 });
+      // The pick is made near the passage's first words: dead centre can land on a mark of
+      // punctuation, and a double click there selects the break instead of the word.
+      await panel.locator('.files-markdown.article p', { hasText: '观点得是我的' }).dblclick({ position: { x: 30, y: 16 } });
+      const selection = page.locator('.selection-menu');
+      await selection.waitFor();
+      assert.ok((await selection.locator('.selection-tag').count()) > 0, 'the writing body offers its quick labels');
+      await shot('select');
+      await selection.locator('.selection-tag', { hasText: '删' }).click();
+      const strip = page.locator('.composer .note-strip');
+      await strip.waitFor();
+      const stripText = await strip.textContent();
+      assert.ok(stripText?.includes(`writing/${NAME}.md`), 'the note carries the file it came from');
+      assert.ok(stripText?.includes('删'), 'the note carries the label as its comment');
+      // Sent, the note goes ahead of the message with the file's own line, and the agent reads it.
+      await send(page, '按注释改');
+      await waitIdle(thread.id);
+      await page.getByText(`文件：writing/${NAME}.md`).first().waitFor();
+
+      // End: the chip goes, the body stays.
+      await openStages(page);
+      await page.getByRole('menu').getByRole('menuitem', { name: '结束写作' }).click();
       await page.locator('.writing-bar').waitFor({ state: 'detached' });
       assert.equal((await view(thread.id)).writing, null);
       assert.equal(readFileSync(file, 'utf8'), theirs);
@@ -215,7 +292,35 @@ test('writing mode on desktop: start, change stage, preview, edit and save, conf
   }
 });
 
-test('writing mode on a phone: folded bar, stage picker, full-screen editor', { timeout: 180000 }, async () => {
+test('the open body leaves the composer its whole bottom row', { timeout: 120000 }, async () => {
+  // A body takes most of the window, but never the composer's bottom line: the collaboration
+  // button and the model's name keep their whole words at every desktop width.
+  for (const vw of [1280, 1440, 1920]) {
+    const context = await browser.newContext({ viewport: { width: vw, height: 900 } });
+    try {
+      const page = await context.newPage();
+      const shot = async (name) => shots && page.screenshot({ path: join(shots, `${prefix}-${name}-desktop-light.png`), animations: 'disabled' });
+      const title = `写作 宽度 ${vw}`;
+      const { thread } = await setup(title, join(daemon.workdir, `width-${vw}`));
+      await api(daemon, `/api/threads/${thread.id}/writing`, { method: 'PUT', body: JSON.stringify({ stage: 'second' }) });
+      await select(page, title, false);
+      await openStages(page);
+      await page.getByRole('menu').getByRole('menuitem', { name: /^打开正文/ }).click();
+      await page.locator('.files-panel .files-markdown.article h1', { hasText: NAME }).waitFor();
+      const measured = await page.evaluate(() => {
+        const bar = [...document.querySelectorAll('.composer-bar')].at(-1);
+        const cut = [...(bar?.children ?? [])].filter((c) => c.scrollWidth > c.clientWidth + 1).map((c) => c.className.toString().slice(0, 30));
+        const chat = [...(document.querySelector('.main')?.children ?? [])].find((c) => !c.classList.contains('files-panel'));
+        return { cut, chatW: Math.round(chat?.getBoundingClientRect().width ?? 0) };
+      });
+      assert.deepEqual(measured.cut, [], 'no button in the composer\u2019s bottom row is cut short');
+      assert.ok(measured.chatW >= 440, `the conversation keeps ${measured.chatW}px`);
+      await shot(`width-${vw}`);
+    } finally { await context.close(); }
+  }
+});
+
+test('writing mode on a phone: one chip beside the input, full-screen editor', { timeout: 180000 }, async () => {
   for (const colorScheme of ['light', 'dark']) {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, colorScheme });
     try {
@@ -223,14 +328,14 @@ test('writing mode on a phone: folded bar, stage picker, full-screen editor', { 
       const shot = async (name) => shots && page.screenshot({ path: join(shots, `${prefix}-${name}-phone-${colorScheme}.png`), animations: 'disabled' });
       const title = `写作 手机 ${colorScheme}`;
       const cwd = join(daemon.workdir, `phone-${colorScheme}`);
-      // A new thread, before any article exists: the bar stays one line, not a tall blank card.
+      // A new thread, before any article exists: the chip stays one short line, not a tall card.
       await openUi(page, daemon);
       await page.goto(daemon.base + '/#/new');
       await page.getByRole('button', { name: '添加与模式', exact: true }).click();
       await page.getByRole('menuitemcheckbox', { name: /^写作模式/ }).click();
-      const fresh = page.locator('.writing-bar.compact');
+      const fresh = page.locator('.writing-bar');
       await fresh.waitFor();
-      assert.ok((await fresh.boundingBox()).height < 60, `the bar on a new thread is ${(await fresh.boundingBox()).height}px tall`);
+      assert.ok((await fresh.boundingBox()).height < 60, `the chip line on a new thread is ${(await fresh.boundingBox()).height}px tall`);
       await shot('new');
       await page.getByRole('button', { name: '添加与模式', exact: true }).click();
       await page.getByRole('menuitemcheckbox', { name: /^写作模式/ }).click();
@@ -242,38 +347,68 @@ test('writing mode on a phone: folded bar, stage picker, full-screen editor', { 
       await page.getByRole('button', { name: '添加与模式', exact: true }).click();
       await shot('menu');
       await page.getByRole('menuitemcheckbox', { name: /^写作模式/ }).click();
-      const bar = page.locator('.writing-bar.compact');
+      const bar = page.locator('.writing-bar');
       await bar.waitFor();
       await send(page, '开始写');
       await waitIdle(thread.id);
-      await bar.getByRole('button', { name: `打开正文 ${NAME}.md`, exact: true }).waitFor();
+      // The body is one tap from the chip itself.
+      const openBody = bar.getByRole('button', { name: `打开正文 ${NAME}.md`, exact: true });
+      await openBody.waitFor();
       await shot('bar');
       assert.ok(await fitsWidth(page));
 
-      // The stage is a picker on a phone.
-      await bar.locator('.writing-stage-pick').click();
+      // The stage is a picker behind the chip.
+      await openStages(page);
       await page.getByRole('menuitemradio', { name: '三稿' }).waitFor();
       await shot('stages');
       await page.getByRole('menuitemradio', { name: '三稿' }).click();
-      await bar.locator('.writing-stage-pick', { hasText: '三稿' }).waitFor();
+      await page.locator('.writing-chip', { hasText: '三稿' }).waitFor();
       assert.equal((await view(thread.id)).writing.stage, 'third');
 
-      // The body: preview, then a full-screen editor.
-      await bar.getByRole('button', { name: `打开正文 ${NAME}.md`, exact: true }).click();
+      // The body: an article, then a full-screen page to write on.
+      await openBody.click();
       const panel = page.locator('.files-panel.phone');
+      await panel.locator('.files-markdown.article h1', { hasText: NAME }).waitFor();
+      assert.match(await panel.locator('.article-meta').textContent(), /^三稿 · [\d,]+ 字$/);
       await panel.locator('.files-diagram svg').waitFor({ timeout: 20_000 });
       await page.waitForFunction(() => (document.querySelector('.files-inline-picture img')?.naturalWidth ?? 0) === 240);
       await shot('preview');
-      await panel.getByRole('button', { name: '编辑', exact: true }).click();
+      await panel.getByRole('button', { name: '写', exact: true }).click();
       const editor = panel.getByRole('textbox', { name: '正文', exact: true });
       await editor.fill(`${BODY}\n手机上写的一段。\n`);
       await panel.getByText('未保存', { exact: true }).waitFor();
       const box = await editor.boundingBox();
       assert.ok(box && box.width >= 380, 'the editor fills the screen');
+      assert.ok((await panel.locator('.writing-paper-layer .w-mk').count()) > 0, 'the marks are dimmed');
       await shot('edit');
       await panel.getByRole('button', { name: '保存', exact: true }).click();
       await panel.getByText('未保存', { exact: true }).waitFor({ state: 'detached' });
       assert.equal(readFileSync(file, 'utf8'), `${BODY}\n手机上写的一段。\n`);
+
+      // A passage picked out of the writing page itself: labelled with one tap, counted at the
+      // panel's foot (the box is hidden behind this full-screen page), sent after going back.
+      const start = BODY.indexOf('观点得是我的');
+      await editor.evaluate((el, at) => {
+        el.setSelectionRange(at, at + 6);
+        el.dispatchEvent(new Event('select', { bubbles: true }));
+      }, start);
+      const docked = page.locator('.selection-menu.docked');
+      await docked.waitFor();
+      assert.ok((await docked.locator('.selection-tag').count()) > 0, 'the writing page offers its quick labels');
+      await shot('select');
+      await docked.locator('.selection-tag', { hasText: '删' }).click();
+      const noted = panel.locator('.files-noted');
+      await noted.waitFor();
+      assert.match(await noted.textContent(), /已加 1 条注释/);
+      await shot('noted');
+      await noted.getByRole('button', { name: '回到对话发送' }).click();
+      await panel.waitFor({ state: 'detached' });
+      const strip = page.locator('.composer .note-strip');
+      await strip.waitFor();
+      assert.ok((await strip.textContent())?.includes(`writing/${NAME}.md`));
+      await send(page, '按注释改');
+      await waitIdle(thread.id);
+      await page.getByText(`文件：writing/${NAME}.md`).first().waitFor();
       assert.ok(await fitsWidth(page));
     } finally { await context.close(); }
   }

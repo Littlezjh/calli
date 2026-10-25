@@ -498,9 +498,14 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   // Where each noted passage stands in the conversation, for as long as its note waits in the box.
   const noteRanges = useRef(new Map<string, Range>());
   const [noteMarks, setNoteMarks] = useState<NoteMark[]>([]);
+  // Notes waiting in the box, and a tick each time one is picked out of the file panel — the phone's
+  // full-screen page cannot show the box, so it counts them at its foot instead.
+  const [noteCount, setNoteCount] = useState(0);
+  const [filesNotePulse, setFilesNotePulse] = useState(0);
   const onNotesChange = useCallback((notes: DraftNote[]) => {
     const ranges = noteRanges.current;
     for (const id of [...ranges.keys()]) if (!notes.some((n) => n.id === id)) ranges.delete(id);
+    setNoteCount(notes.length);
     setNoteMarks(notes.flatMap((n, i) => {
       const range = ranges.get(n.id);
       return range ? [{ id: n.id, n: i + 1, range }] : [];
@@ -1600,6 +1605,20 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
 
   // Writing mode: the thread's own, or the draft's until the first message creates the thread.
   const writing = selected ? selected.writing ?? null : draftWriting ? { stage: draftWriting, file: null } : null;
+  const habitsPath = writing?.habits ?? null;
+  // The habits note is looked for when the writing menu opens: it may not exist yet, and may have
+  // been written by the last turn.
+  const [habitsReady, setHabitsReady] = useState<boolean | null>(null);
+  useEffect(() => { setHabitsReady(null); }, [habitsPath]);
+  const checkWritingHabits = useCallback(async () => {
+    if (!api || !selectedId || !habitsPath) return;
+    try {
+      await api.threadText(selectedId, habitsPath);
+      setHabitsReady(true);
+    } catch {
+      setHabitsReady(false);
+    }
+  }, [api, selectedId, habitsPath]);
   const changeWriting = async (stage: WritingStage | null) => {
     if (!selected) { setDraftWriting(stage); return; }
     const id = selected.id;
@@ -2325,7 +2344,10 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           header={header}
           writingMode={draftTeam ? undefined : { active: !!writing, disabled: writingBusy, onChange: active => void changeWriting(active ? 'draft' : null) }}
           banner={writing && !draftTeam && <WritingBar writing={writing} busy={writingBusy} onStage={stage => void changeWriting(stage)} onEnd={() => void changeWriting(null)}
-            onOpen={file => void openFileLink(file).catch(handleError)} />}
+            onOpen={file => void openFileLink(file).catch(handleError)}
+            habits={habitsPath ? { path: habitsPath, ready: habitsReady } : null}
+            onCheckHabits={() => void checkWritingHabits()}
+            onOpenHabits={path => void openFileLink(path).catch(handleError)} />}
           planMode={!draftTeam && activeCaps?.workModes?.includes('plan') ? { active: workMode === 'plan', disabled: running || modeBusy, onChange: active => void changeWorkMode(active ? 'plan' : 'execute') } : undefined}
           left={draftTeam ? undefined : left}
           right={draftTeam ? undefined : right}
@@ -2396,7 +2418,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         return a ? <MemberModel agent={a} models={modelsByAgent[a.id] ?? []} value={{ model: thread.model ?? null, effort: thread.effort ?? null }} onNeed={needModels} onChange={({ model, effort }) => { void api.updateThread(thread.id, { model, effort }).then(() => refreshThreads()).catch(handleError); }}
           permission={a.capabilities.permissionModes.length ? thread.permissionMode : undefined} onPermission={(permissionMode) => { void api.updateThread(thread.id, { permissionMode }).then(() => refreshThreads()).catch(handleError); }} /> : null;
       }} leadAgent={threads.find((t) => t.id === coordination.rootId)?.agent} phone={compact} onClose={() => setAgentsOpen(false)} onOpen={thread => { openThread(thread); setAgentsOpen(false); }} onAdjust={name => { setAgentsOpen(false); setSelectedId(coordination.rootId); setRestore({ text: t('app.adjustTask', name), nonce: Date.now() }); }} onRefresh={() => { void refreshThreads(); }} onError={handleError} />}
-      {files && selected && api && <FilesPanel api={api} threadId={filesThreadId ?? selected.id} target={files} phone={compact} onClose={() => setFiles(null)} />}
+      {files && selected && api && <FilesPanel api={api} threadId={filesThreadId ?? selected.id} target={files} phone={compact} writingStage={selected.writing?.stage ?? null} writingHabits={selected.writing?.habits ?? null} noted={{ count: noteCount, nonce: filesNotePulse }} onClose={() => setFiles(null)} />}
       {preview && api && (
         <PreviewPanel api={api} threadId={preview.threadId} path={preview.path} onClose={() => setPreview(null)} onError={handleError} />
       )}
@@ -2657,10 +2679,11 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       <Toast toast={toast} onDismiss={dismissToast} />
       <NoteMarks marks={noteMarks} scrollerRef={scrollerRef} />
       <SelectionMenu
-        onNote={(quote, comment, range) => {
+        onNote={(quote, comment, range, file) => {
           const id = `note-${Date.now()}`;
-          noteRanges.current.set(id, range);
-          setNoteSignal({ draftKey: composerDraftKey, note: { id, quote, comment, nonce: Date.now() } });
+          if (range) noteRanges.current.set(id, range);
+          setNoteSignal({ draftKey: composerDraftKey, note: { id, quote, comment, nonce: Date.now(), ...(file ? { file } : {}) } });
+          if (file) setFilesNotePulse((v) => v + 1);
         }}
         onSideAsk={(text, threadId) => {
           if (threadId && threadId !== selectedId) void api.thread(threadId).then(source => setSideAsk({ text, nonce: Date.now(), source })).catch(handleError);
