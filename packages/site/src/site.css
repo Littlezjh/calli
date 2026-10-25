@@ -215,3 +215,5 @@ html[data-page='site'], [data-page='site'] body { height: auto; min-height: 100%
 }
 
 .site-handover-feature { padding-top: 24px; }
+.site-handover-feature .site-feature-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 700px) { .site-handover-feature .site-feature-grid { grid-template-columns: 1fr; } }

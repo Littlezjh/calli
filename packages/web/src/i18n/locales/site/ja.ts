@@ -8,6 +8,8 @@ export const ja: SiteMessages = {
   handoverTry: "自動引き継ぎを試す",
   handoverAccounts: "複数アカウント・モデルで引き継ぐ",
   handoverAccountsDescription: "リバースプロキシや API リクエストの書き換えは不要。agy、agy2、agy3、Claude Code と Claude Code 2 のように、各アカウントは公式 CLI の独立したインスタンスです。hub はターンの間に切り替えます。",
+  handoverMention: "上限に達したら、@ で次へ",
+  handoverMentionDescription: "今の agent が利用上限に達したら、入力欄で別のインスタンスを @ し、次にやることを書いて送信すれば引き継ぎます。チームでは新しいリーダーになり、メンバーの結果もそちらに届きます。引き継ぎ先が受け取るのはスレッド ID と読み方だけで、元の会話は自分で読みます。",
   handoverMinimal: "必要な情報だけ、変更は最小限",
   handoverMinimalDescription: "agent のディレクトリ、設定、セッションは変更しません。引き継ぎ先は読み取り専用の limi handover / limi history で元の会話を確認。チームメンバーは自動引き継ぎが標準で有効になり、名前を保ったままメッセージと結果が引き継ぎ先に届きます。",
   handoverModelNote: "同じ agent がモデル切り替えに対応していれば、元のセッションで切り替えます。",

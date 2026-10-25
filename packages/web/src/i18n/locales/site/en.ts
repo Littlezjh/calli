@@ -8,6 +8,8 @@ export const en: SiteMessages = {
   handoverTry: "Try automatic handover",
   handoverAccounts: "Accounts and models take turns",
   handoverAccountsDescription: "No reverse proxy or rewritten API requests. Each account runs its own official CLI instance, such as agy, agy2, agy3, or Claude Code and Claude Code 2. The hub switches between turns.",
+  handoverMention: "Out of plan? @ the next one",
+  handoverMentionDescription: "When the current agent runs out, @ another instance in the box, add what to do next, and send: it takes over the thread. In a team it becomes the new lead and members report to it. The successor gets only the thread id and how to read it, and reads the source itself.",
   handoverMinimal: "A small handover, few changes",
   handoverMinimalDescription: "Agent directories, configuration and sessions stay intact. The successor reads the source through read-only limi handover / limi history. Team members enable automatic handover by default, keeping their names while messages and results follow the successor.",
   handoverModelNote: "When the agent supports model switching, it switches in the same session.",

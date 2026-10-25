@@ -5,7 +5,7 @@ import { useAppearance } from '../../web/src/hooks';
 import { MODES } from '../../web/src/appearance';
 import { copyText } from '../../web/src/clipboard';
 import { Popover } from '../../web/src/components/Popover';
-import { AgentMark, IconAgents, IconArrowRight, IconCheck, IconComputer, IconCopy, IconGlobe, IconPalette, IconRestore, IconBoard, IconSparkle, IconHandover, IconShield } from '../../web/src/components/icons';
+import { AgentMark, IconAgents, IconArrowRight, IconCheck, IconComputer, IconCopy, IconGlobe, IconPalette, IconRestore, IconBoard, IconSparkle, IconHandover, IconHand, IconShield } from '../../web/src/components/icons';
 import { ANTIGRAVITY_ICON, CLAUDE_ICON, CODEX_ICON, PI_ICON, TRAE_ICON, ZCODE_ICON } from '../../daemon/src/adapters/icons';
 import { EXAMPLES, DEFAULT_EXAMPLE } from './scenarios';
 import '../../web/src/styles.css';
@@ -156,6 +156,7 @@ function Home() {
         <div className="site-feature-grid">
           {[
             { Icon: IconHandover, title: copy.handoverAccounts, description: copy.handoverAccountsDescription },
+            { Icon: IconHand, title: copy.handoverMention, description: copy.handoverMentionDescription },
             { Icon: IconShield, title: copy.handoverMinimal, description: copy.handoverMinimalDescription },
           ].map(({ Icon, title, description }) => <article key={title}>
             <div className="site-feature-icon"><Icon size={24} /></div><h3>{title}</h3><p>{description}</p>
