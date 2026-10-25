@@ -80,6 +80,10 @@ test('each stage has its own way of working, appended once, with an edit mention
   assert.match(texts[0], /只记录、只采访/);
   assert.match(texts[0], /【待补/);
   assert.match(texts[1], /〔补〕/);
+  for (const text of texts) {
+    assert.match(text, /先读 writing\/写作习惯\.md/, 'every stage writes by the habits');
+    assert.match(text, /「复盘」「总结一下」[\s\S]*〔新〕[\s\S]*请我确认/, 'a review adds habits marked new, for the person to confirm');
+  }
   assert.doesNotMatch(texts[0], /被我直接改过/);
   assert.match(writingInstructions('hi', { stage: 'third', file: 'writing/a.md', edited: true }), /writing\/a\.md在你上一轮之后被我直接改过/);
 });
@@ -106,6 +110,10 @@ test('writing mode rides along with messages, follows the article and takes the 
 
   // The agent starts the article during the turn; the hub finds it when the turn ends.
   const article = join(workdir, 'writing', '思考是人类的事情.md');
+  // The habits file sits beside the articles and is never taken for one.
+  work.push(() => { mkdirSync(join(workdir, 'writing'), { recursive: true }); writeFileSync(join(workdir, 'writing', '写作习惯.md'), '# 写作习惯\n'); });
+  await turn(id, '先有习惯');
+  assert.deepEqual(store.getThread(id)!.writing, { stage: 'draft', file: null });
   work.push(() => { mkdirSync(join(workdir, 'writing'), { recursive: true }); writeFileSync(article, '# 思考是人类的事情\n\n初稿\n'); });
   const first = await turn(id, '今天写 PR 的时候');
   assert.match(first, /<limi-writing>[\s\S]*现在是初稿/);

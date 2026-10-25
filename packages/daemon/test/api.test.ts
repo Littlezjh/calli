@@ -2658,6 +2658,8 @@ test('title and preview are what was asked, not the notes or quote in front of i
   assert.deepEqual(await ask('[注释 1]\n> 输出免费'), ['输出免费', '输出免费']);
   assert.deepEqual(await ask('> scripts/restart.sh\n\n重启一下'), ['重启一下', '重启一下']);
   assert.deepEqual(await ask('评论：不是注释'), ['评论：不是注释', '评论：不是注释']);
+  assert.deepEqual(await ask('[注释 1]\n文件：writing/思考是人类的事情.md\n> 我的大脑真的在全心全意地思考\n评论：删'), ['删', '删'], 'a note on a file');
+  assert.deepEqual(await ask('文件：不是注释'), ['文件：不是注释', '文件：不是注释']);
 });
 
 test('GET /api/search finds what was said in any thread, and needs the token', async () => {
