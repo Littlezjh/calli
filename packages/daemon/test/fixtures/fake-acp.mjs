@@ -240,11 +240,12 @@ rl.on('line', (line) => {
         out({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } }); return;
       }
       if (text === 'plan-draft') { update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `mode:${currentMode};model:${currentModel};effort:${currentEffort}` } }); out({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } }); return; }
-      if (text === 'plan-question' || text === 'plan-approval') {
+      const planCommand = text.split('\n')[0];
+      if (planCommand === 'plan-question' || planCommand === 'plan-approval') {
         pendingPrompt = msg;
         const id = nextAgentRequestId++;
-        awaitingInput.set(id, { prompt: msg.id, kind: text === 'plan-approval' ? 'plan' : 'question' });
-        if (text === 'plan-approval') {
+        awaitingInput.set(id, { prompt: msg.id, kind: planCommand === 'plan-approval' ? 'plan' : 'question' });
+        if (planCommand === 'plan-approval') {
           const options = ['exit-plan-default', 'exit-plan-accept-edits', 'exit-plan-bypass'].map(optionId => ({ optionId, name: optionId, kind: 'allow_once' }));
           out({ jsonrpc: '2.0', id, method: 'session/request_permission', params: { sessionId, options, toolCall: { toolCallId: 'plan', title: 'ExitPlanMode', rawInput: { plan: '## 实施计划\n\n1. 阅读代码\n2. 完成验证' } } } });
         } else out({ jsonrpc: '2.0', id, method: 'elicitation/create', params: { sessionId, mode: 'form', toolCallId: 'ask', message: '优先支持哪一端？', requestedSchema: { type: 'object', properties: { question_0: { type: 'string', oneOf: [{ const: '桌面和手机', title: '桌面和手机' }, { const: '先做桌面', title: '先做桌面' }] }, question_0_custom: { type: 'string', title: '补充回答' } } } } });

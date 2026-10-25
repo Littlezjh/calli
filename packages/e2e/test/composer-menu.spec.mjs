@@ -26,15 +26,16 @@ const search = async (page, section, query) => {
 };
 const openGoal = async page => {
   await add(page).click();
-  if (mobileMenu(page)) await item(page, '目标模式').click();
-  else await page.getByRole('textbox', { name: '搜索操作与技能' }).fill('目标');
+  if (!mobileMenu(page)) await page.getByRole('textbox', { name: '搜索操作与技能' }).fill('目标');
 };
-const goalAction = async (page, name) => { await openGoal(page); await item(page, name).click(); };
+const goalAction = async (page, name) => {
+  if (name === '设置目标') { await openGoal(page); await item(page, name).click(); }
+  else await page.locator('.goal-card').getByRole('button', { name, exact: true }).click();
+};
 const startGoal = async (page, objective) => {
   await goalAction(page, '设置目标');
-  await page.getByRole('textbox', { name: '目标', exact: true }).fill(objective);
-  await page.getByRole('dialog', { name: '设置目标', exact: true }).getByRole('button', { name: '开始执行', exact: true }).click();
-  await page.getByRole('dialog', { name: '设置目标', exact: true }).waitFor({ state: 'hidden' });
+  await input(page).fill(`/goal ${objective}`);
+  await page.getByRole('button', { name: '发送', exact: true }).click();
 };
 const create = async (page, agent, title, mobile) => {
   const res = await api(daemon, '/api/threads', { method: 'POST', body: JSON.stringify({ agent, title, cwd: daemon.workdir, permissionMode: 'full_access' }) });
@@ -258,12 +259,12 @@ test('add menu offers searchable actions and skills and controls goals without l
       await input(page).fill('保留我的草稿');
 
       await goalAction(page, '设置目标');
-      await page.getByRole('textbox', { name: '目标', exact: true }).fill('完成修复\n验证回归测试通过');
-      await screenshot(page, `goal-form-${key}`);
-      await page.getByRole('dialog', { name: '设置目标', exact: true }).getByRole('button', { name: '取消', exact: true }).click();
-      assert.equal(await input(page).inputValue(), '保留我的草稿');
+      assert.equal(await input(page).inputValue(), '/goal 保留我的草稿');
+      await screenshot(page, `goal-compose-${key}`);
+      await input(page).fill('保留我的草稿');
       await startGoal(page, 'slow');
       await page.getByRole('button', { name: '停止', exact: true }).waitFor();
+      await input(page).fill('保留我的草稿');
       // Control commands must not consume or send pending attachments.
       await add(page).click();
       const chooser = page.waitForEvent('filechooser');
@@ -274,16 +275,20 @@ test('add menu offers searchable actions and skills and controls goals without l
         await page.setViewportSize({ width: 390, height: 450 });
         await add(page).click();
         const menu = await page.getByRole('menu', { name: '添加与模式', exact: true }).boundingBox();
-        const last = await page.getByRole('menuitem', { name: '技能', exact: true }).boundingBox();
-        assert.ok(menu.y >= 0 && last.y + last.height <= menu.y + menu.height + 1, 'all home entries fit above the keyboard');
+        const skills = page.getByRole('menuitem', { name: '技能', exact: true });
+        await skills.scrollIntoViewIfNeeded();
+        const last = await skills.boundingBox();
+        assert.ok(menu.y >= 0 && last.y + last.height <= menu.y + menu.height + 1, 'the last menu entry can be scrolled into view above the keyboard');
         await screenshot(page, `home-keyboard-${key}`);
         await page.keyboard.press('Escape');
       }
       await openGoal(page);
       assert.equal(await item(page, /^设置目标/).isDisabled(), true);
       await screenshot(page, `goal-running-${key}`);
-      await item(page, '查看目标').click();
-      await page.getByText('目标：slow', { exact: true }).waitFor();
+      assert.equal(await item(page, '查看目标').count(), 0);
+      await page.keyboard.press('Escape');
+      await page.locator('.goal-card').getByRole('button', { name: '目标详情', exact: true }).click();
+      await page.locator('.goal-full', { hasText: 'slow' }).waitFor();
       assert.equal(await input(page).inputValue(), '保留我的草稿');
       assert.equal(await page.locator('.attachment img').count(), 1);
       assert.equal(await page.locator('.queue-item').count(), 0);
@@ -294,7 +299,7 @@ test('add menu offers searchable actions and skills and controls goals without l
       await goalAction(page, '暂停目标');
       await page.getByRole('button', { name: '停止', exact: true }).waitFor({ state: 'hidden' });
       await goalAction(page, '清除目标');
-      await page.getByText(/目标已清除/).waitFor();
+      await page.locator('.goal-card').waitFor({ state: 'detached' });
       assert.equal(await input(page).inputValue(), '保留我的草稿');
       const events = await (await api(daemon, `/api/threads/${thread.id}/events`)).json();
       assert.ok(events.some(e => e.type === 'turn.started' && e.data.text === '/goal slow'));
@@ -316,8 +321,12 @@ test('goal actions follow capabilities, Plan blocks starting a goal, and Pi skil
     await startGoal(page, 'slow');
     await page.getByRole('button', { name: '停止', exact: true }).waitFor();
     await openGoal(page);
-    assert.equal(await item(page, /^查看目标/).isDisabled(), true);
-    await item(page, '清除目标').click();
+    assert.equal(await item(page, /^查看目标/).count(), 0);
+    assert.equal(await item(page, /^设置目标/).isDisabled(), true);
+    await page.keyboard.press('Escape');
+    // Claude has no live card; native control commands remain available in the composer.
+    await input(page).fill('/goal clear');
+    await page.getByRole('button', { name: '发送', exact: true }).click();
     await page.getByRole('button', { name: '停止', exact: true }).waitFor({ state: 'hidden' });
 
     await create(page, 'codex', '计划内的目标菜单', false);
@@ -326,7 +335,7 @@ test('goal actions follow capabilities, Plan blocks starting a goal, and Pi skil
     await page.locator('.composer textarea[placeholder="先分析和讨论方案"]').waitFor();
     await openGoal(page);
     assert.equal(await item(page, /^设置目标/).isDisabled(), true);
-    assert.equal(await item(page, /^继续目标/).isDisabled(), true);
+    assert.equal(await item(page, /^继续目标/).count(), 0);
     const query = page.getByRole('textbox', { name: '搜索操作与技能' });
     await query.fill('设置目标');
     await query.press('ArrowDown');
@@ -334,7 +343,7 @@ test('goal actions follow capabilities, Plan blocks starting a goal, and Pi skil
     assert.equal(await page.getByRole('dialog', { name: '设置目标', exact: true }).count(), 0);
     await query.fill('目标');
     await query.press('ArrowUp');
-    assert.equal(await page.getByRole('option', { selected: true }).textContent(), '清除目标');
+    assert.equal(await page.getByRole('option', { selected: true }).count(), 0, 'disabled goal action cannot be selected');
 
     await create(page, 'pi', 'Pi 技能菜单', false);
     await input(page).fill('整理文档');

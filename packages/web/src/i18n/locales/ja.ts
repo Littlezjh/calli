@@ -883,6 +883,7 @@ export const ja: Messages = {
   'files.download': 'ファイルをダウンロード',
   'files.downloading': '準備中…',
   'files.downloadFailed': 'ダウンロードできませんでした。もう一度お試しください',
+  'files.more': 'ファイルのその他の操作',
   'files.files': 'ファイル',
   'files.noted': (n: number) => `注釈を ${n} 件追加`,
   'files.backToChat': '会話に戻って送信',

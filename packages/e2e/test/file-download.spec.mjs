@@ -63,10 +63,14 @@ test('a file an answer names can be played in the viewer and saved, on desktop a
 
         // Save from the panel: the browser gets a file with the name the server chose.
         const save = page.waitForEvent('download');
-        await panel.getByRole('button', { name: mobile ? '下载文件' : '下载文件', exact: true }).first().click();
+        if (mobile) {
+          await panel.getByRole('button', { name: '文件的更多操作' }).click();
+          await page.getByRole('menuitem', { name: '下载文件', exact: true }).click();
+        } else await panel.getByRole('button', { name: '下载文件', exact: true }).first().click();
         const download = await save;
         assert.equal(download.suggestedFilename(), '火鸡与Claude神.mp4');
         await download.cancel();
+        if (mobile) await page.keyboard.press('Escape');
 
         await panel.getByRole('button', { name: mobile ? '关闭' : '关闭文件', exact: true }).click();
         await panel.waitFor({ state: 'detached' });
@@ -81,7 +85,8 @@ test('a file an answer names can be played in the viewer and saved, on desktop a
         await zip.cancel();
         await shot('file-binary-download');
         if (mobile) {
-          await panel.getByRole('button', { name: '浏览文件夹', exact: true }).click();
+          await panel.getByRole('button', { name: '文件的更多操作' }).click();
+          await page.getByRole('menuitem', { name: '浏览文件夹', exact: true }).click();
           await panel.getByRole('tree').waitFor();
           await panel.getByRole('button', { name: '回到文件', exact: true }).click();
         }

@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { rehypeArticleMarks } from '../src/article.js';
 import { ApiError } from '../src/api.js';
 import { setLocale } from '../src/i18n/index.js';
 import { BODY_DRAFTS_KEY, bodyName, conflictHash, MAX_BODY_DRAFTS, readBodyDraft, relativePicture, stageLabel, WRITING_STAGES, writeBodyDraft } from '../src/writing.js';
@@ -71,4 +72,13 @@ test('only the most recent body drafts are kept, and junk in storage is ignored'
   assert.equal(readBodyDraft(s, 't1', 'p'), null);
   assert.ok(readBodyDraft(s, `t${MAX_BODY_DRAFTS + 3}`, 'p'));
   assert.equal(readBodyDraft(memory({ [BODY_DRAFTS_KEY]: 'not json' }), 'a', 'b'), null);
+});
+
+
+test('article marks leave code and Mermaid source unchanged', () => {
+  const code = { type: 'element', tagName: 'code', children: [{ type: 'text', value: 'A["【待补：例子】"] --> B' }] };
+  const tree = { type: 'root', children: [{ type: 'element', tagName: 'pre', children: [code] }, code] };
+  const before = structuredClone(tree);
+  rehypeArticleMarks()(tree);
+  assert.deepEqual(tree, before);
 });
