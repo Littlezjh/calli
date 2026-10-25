@@ -1484,6 +1484,7 @@ export const zh = {
   'sched.preset.weekdays': '每工作日',
   'sched.preset.weekly': '每周',
   'sched.preset.monthly': '每月',
+  'sched.run.quiet': '安静结束',
   'sched.run.done': '已完成',
   'sched.run.skipped': '跳过',
   'sched.run.missed': '错过',
@@ -1549,6 +1550,7 @@ export const zh = {
   'sched.create': '创建任务',
 
   // App
+  'app.threadNotFound': '找不到这个线程，它可能已被删除。',
   'app.tokenExpired': 'token 无效或已过期，请重新输入',
   'app.newVersion': '有新版本',
   'app.connectToSend': '连接后再发送，输入框里的内容会留着。',

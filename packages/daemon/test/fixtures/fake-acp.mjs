@@ -5,6 +5,7 @@ if (process.argv.includes('--version')) { process.stdout.write('fixture 1.2.3\n'
 // the effort option is named reasoning_effort, and "delete" on the command line (its CLI,
 // which the adapter runs for deletion) logs to FAKE_ACP_DELETE_LOG and exits.
 import { claudeUsage } from './live-usage.mjs';
+import { personalFixture } from './personal.mjs';
 import { coordinationFixture } from './coordination.mjs';
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
@@ -124,6 +125,7 @@ rl.on('line', (line) => {
     case 'initialize':
       return out({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1, agentCapabilities: {} } });
     case 'session/new':
+      if (process.env.FAKE_ACP_START_ERROR) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: process.env.FAKE_ACP_START_ERROR } });
       out({
         jsonrpc: '2.0',
         method: 'session/update',
@@ -295,6 +297,13 @@ rl.on('line', (line) => {
         update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: asked ? `已处理。\n\n[进度] ${progress[1]}：${progress[2]}` : '已处理。' } });
         out({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });
         return;
+      }
+      let personal;
+      try { personal = personalFixture(text); }
+      catch (error) { return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: error.message } }); }
+      if (personal !== null) {
+        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: personal } });
+        out({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } }); return;
       }
       const collaboration = coordinationFixture(text);
       if (collaboration !== null) {

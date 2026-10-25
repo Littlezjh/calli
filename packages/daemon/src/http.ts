@@ -1,3 +1,4 @@
+import type { PushService } from './push.js';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { createReadStream, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
@@ -23,6 +24,7 @@ import type { VoiceService } from './voice-service.js';
 import { sendToolArtifact } from './borrowing-server.js';
 
 export interface HttpDeps {
+  push?: PushService;
   manager: ThreadManager;
   /** Agent instances beyond the built-in ones. Optional so simple setups and tests need none. */
   registry?: AgentRegistry;
@@ -299,6 +301,27 @@ export function createHttpServer(deps: HttpDeps): Server {
       const handoverOrders = Object.entries(orders).filter(([source, targets]) => source === id || targets.some((t) => t.agent === id)).length;
       return { threads, schedules, teams, handoverOrders };
     };
+
+    if (path === '/api/personal/settings') {
+      if (method === 'GET') return sendJson(res, 200, manager.personal.settings());
+      if (method === 'PUT') return sendJson(res, 200, manager.personal.putSettings(await readJson(req)));
+    }
+    if (path === '/api/wishes' && method === 'GET') return sendJson(res, 200, manager.personal.store.listWishes());
+    if (parts[1] === 'todos' && parts[2] && parts[3] === 'note') {
+      if (method === 'GET') return sendJson(res, 200, manager.personal.note(parts[2]));
+      if (method === 'PUT') return sendJson(res, 200, manager.personal.writeNote(parts[2], await readJson(req)));
+    }
+    if (parts[1] === 'todos' && parts[2] && parts[3] === 'proposals' && parts[4] && ['accept', 'dismiss'].includes(parts[5]) && method === 'POST') {
+      return sendJson(res, 200, manager.personal.resolveProposal(parts[2], parts[4], parts[5] as 'accept' | 'dismiss', (await readJson(req)).rev));
+    }
+
+    if (path.startsWith('/api/push/')) {
+      if (!deps.push) throw new HttpError(503, 'push is unavailable');
+      if (path === '/api/push/settings' && method === 'GET') return sendJson(res, 200, await deps.push.getSettings());
+      if (path === '/api/push/settings' && method === 'PUT') return sendJson(res, 200, deps.push.putSettings(await readJson(req)));
+      if (path === '/api/push/status' && method === 'GET') return sendJson(res, 200, await deps.push.status());
+      if (path === '/api/push/test' && method === 'POST') return sendJson(res, 202, deps.push.test());
+    }
 
     if (path === '/api/tools/command' && method === 'POST') {
       if (!manager.borrowing) throw new HttpError(503, 'tool borrowing is unavailable');
@@ -705,34 +728,35 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (method === 'GET') return sendJson(res, 200, manager.listTodos());
       if (method === 'POST') {
         const body = await readJson(req);
-        return sendJson(res, 201, manager.createTodo(body.text, body.parentId));
+        return sendJson(res, 201, manager.createTodo(body.text, body.parentId, body));
       }
     }
     if (parts[1] === 'todos' && parts[2] && !parts[3]) {
       if (method === 'PATCH') {
         const body = await readJson(req);
-        return sendJson(res, 200, manager.updateTodo(parts[2], { text: body.text, done: body.done }));
+        return sendJson(res, 200, manager.updateTodo(parts[2], body));
       }
       if (method === 'DELETE') {
-        manager.deleteTodo(parts[2]);
+        manager.deleteTodo(parts[2], url.searchParams.has('rev') ? Number(url.searchParams.get('rev')) : undefined);
         res.writeHead(204).end();
         return;
       }
     }
     if (parts[1] === 'todos' && parts[2] && parts[3] === 'move' && method === 'POST') {
       const body = await readJson(req);
-      manager.moveTodo(parts[2], { parentId: body.parentId, before: body.before });
+      manager.moveTodo(parts[2], body);
       res.writeHead(204).end();
       return;
     }
     if (parts[1] === 'todos' && parts[2] && parts[3] === 'threads') {
       if (method === 'POST') {
-        manager.linkTodoThread(parts[2], (await readJson(req)).threadId);
+        const body = await readJson(req);
+        manager.linkTodoThread(parts[2], body.threadId, body.rev);
         res.writeHead(204).end();
         return;
       }
       if (method === 'DELETE') {
-        manager.unlinkTodoThread(parts[2], url.searchParams.get('threadId'));
+        manager.unlinkTodoThread(parts[2], url.searchParams.get('threadId'), url.searchParams.has('rev') ? Number(url.searchParams.get('rev')) : undefined);
         res.writeHead(204).end();
         return;
       }

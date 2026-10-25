@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Limi 个人 agent · 界面草图（待审）</title>
+  <style>
+    /* Tokens copied from packages/web/src/styles.css (paper), so the sketch opens on its own. */
+    :root {
+      --bg: #f8f6f1; --sidebar: #f1efe9; --surface: #ffffff; --surface-2: #fbfaf7;
+      --text: #1f1e1c; --muted: #827f77; --faint: #a9a69e; --border: #e5e2da; --border-strong: #d6d2c8;
+      --hover: rgba(31, 30, 28, 0.045); --active: rgba(31, 30, 28, 0.08);
+      --accent: #1f1e1c; --accent-fg: #ffffff; --positive: #2f7d5b; --positive-bg: #e6f3eb;
+      --user-bg: #eceae4; --code-bg: #efede7; --warn: #c2410c; --danger: #b42318; --danger-bg: #fdecea;
+      --shadow-pop: 0 14px 40px rgba(31, 30, 28, 0.14), 0 2px 6px rgba(31, 30, 28, 0.06);
+      --shadow-card: 0 1px 2px rgba(31, 30, 28, 0.04), 0 6px 20px rgba(31, 30, 28, 0.05);
+      --radius-pill: 999px; --radius-sm: 8px; --radius: 12px; --radius-lg: 18px; --radius-xl: 30px;
+      --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Noto Sans CJK SC', 'Microsoft YaHei', sans-serif;
+    }
+    [data-theme='dark'] {
+      --bg: #1c1b19; --sidebar: #171614; --surface: #252421; --surface-2: #211f1d;
+      --text: #ecebe7; --muted: #9a978f; --faint: #6d6a63; --border: #34322e; --border-strong: #45423d;
+      --hover: rgba(255, 255, 255, 0.05); --active: rgba(255, 255, 255, 0.09);
+      --accent: #ecebe7; --accent-fg: #1c1b19; --positive: #5cb88d; --positive-bg: #1f3329;
+      --user-bg: #2e2c29; --code-bg: #2a2825; --warn: #f0894e; --danger: #f07167; --danger-bg: #3a2220;
+      --shadow-pop: 0 14px 40px rgba(0, 0, 0, 0.45); --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3);
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: var(--text); background: var(--bg); font-family: var(--font); font-size: 14px; }
+    button { font: inherit; cursor: pointer; color: inherit; border: 0; background: none; }
+    svg { flex: none; }
+
+    /* Sketch chrome */
+    .bar { position: sticky; top: 0; z-index: 50; display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+      padding: 12px 24px; background: var(--bg); border-bottom: 1px solid var(--border); }
+    .bar h1 { font-size: 15px; font-weight: 650; margin: 0 8px 0 0; }
+    .seg { display: inline-flex; padding: 3px; border-radius: var(--radius-pill); background: var(--sidebar); border: 1px solid var(--border); }
+    .seg button { padding: 6px 12px; border-radius: var(--radius-pill); font-size: 12.5px; color: var(--muted); }
+    .seg button[aria-pressed='true'] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-card); font-weight: 600; }
+    section.shot { max-width: 1240px; margin: 26px auto 0; padding: 0 24px; }
+    section.shot > h2 { font-size: 13px; font-weight: 650; margin: 0 0 4px; }
+    section.shot > p { margin: 0 0 12px; color: var(--muted); font-size: 12.5px; line-height: 1.7; }
+    .frames { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
+    .frame { border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; background: var(--bg); box-shadow: var(--shadow-card); position: relative; }
+    .frame.desk { width: 860px; }
+    .frame.phone { width: 390px; }
+
+    /* Plan page (matches TodosPage: document layout) */
+    .top { display: flex; align-items: center; gap: 12px; height: 56px; padding: 0 20px; font-weight: 650; font-size: 15px; }
+    .back { width: 40px; height: 40px; border-radius: 50%; background: var(--surface); box-shadow: var(--shadow-card); display: grid; place-items: center; }
+    .doc { padding: 34px 72px 48px; }
+    .phone .doc { padding: 14px 18px 36px; }
+    .doc h1 { font-size: 34px; margin: 0 0 14px; font-weight: 750; letter-spacing: 0.5px; }
+    .phone .doc h1 { font-size: 26px; margin-bottom: 8px; }
+    .lead { color: var(--muted); font-size: 15px; line-height: 1.7; margin: 0 0 6px; }
+    .dirline { color: var(--muted); font-size: 13px; margin: 0 0 22px; display: flex; gap: 6px; align-items: center; }
+    .dirline .link { color: var(--text); text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px; }
+
+    .confirm { border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius); padding: 4px 0; margin: 0 0 22px; box-shadow: var(--shadow-card); }
+    .confirm .head { font-size: 12.5px; color: var(--muted); padding: 8px 14px 4px; }
+    .crow { display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 14px; }
+    .crow + .crow { border-top: 1px solid var(--border); }
+    .crow .kind { font-size: 12px; color: var(--muted); white-space: nowrap; }
+    .crow .text { flex: 1; min-width: 0; font-size: 14.5px; }
+    .crow .text small { display: block; color: var(--muted); font-size: 12.5px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .btn { padding: 6px 12px; border-radius: var(--radius-pill); font-size: 13px; white-space: nowrap; }
+    .btn.primary { background: var(--accent); color: var(--accent-fg); }
+    .btn.ghost { color: var(--muted); }
+    .phone .crow { flex-wrap: wrap; }
+    .phone .crow .text { flex-basis: 100%; }
+    .phone .crow .acts { margin-left: auto; display: flex; gap: 4px; }
+
+    .item { display: flex; gap: 12px; align-items: flex-start; padding: 7px 0; }
+    .item.sub { padding-left: 34px; }
+    .box { width: 18px; height: 18px; border: 1.5px solid var(--border-strong); border-radius: 4px; margin-top: 3px; background: var(--surface); }
+    .item.sub .box { width: 16px; height: 16px; margin-top: 2px; }
+    .body { flex: 1; min-width: 0; }
+    .line { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+    .title { font-size: 16px; line-height: 1.55; }
+    .item.sub .title { font-size: 14.5px; color: var(--muted); }
+    .meta { display: inline-flex; gap: 8px; align-items: center; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+    .meta .over { color: var(--warn); }
+    .agentmark { display: inline-flex; color: var(--faint); transform: translateY(2px); }
+    .note { margin-top: 3px; display: flex; gap: 6px; align-items: center; font-size: 13px; color: var(--muted); cursor: pointer; }
+    .note span.t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    .noteopen { margin: 8px 0 4px; padding: 12px 14px; border-radius: var(--radius); background: var(--surface-2); border: 1px solid var(--border); font-size: 13px; line-height: 1.75; }
+    .noteopen h4 { margin: 8px 0 2px; font-size: 12.5px; color: var(--muted); font-weight: 600; }
+    .noteopen h4:first-child { margin-top: 0; }
+    .noteopen p { margin: 0; }
+    .noteopen .src { margin-top: 8px; font-size: 12px; color: var(--faint); }
+    .chips { display: flex; gap: 6px; margin-top: 5px; flex-wrap: wrap; }
+    .chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border: 1px solid var(--border); border-radius: var(--radius-pill); font-size: 12.5px; background: var(--surface); }
+    .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); }
+    .dot.run { background: var(--positive); }
+    .add { display: flex; gap: 12px; align-items: center; padding: 10px 0 0; color: var(--faint); font-size: 15px; }
+    .add .box { border-style: dashed; background: none; margin: 0; }
+    .fold { margin-top: 18px; font-size: 13px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
+
+    /* Thread timeline */
+    .thread { padding: 18px 28px 22px; }
+    .msg-user { margin-left: auto; max-width: 70%; background: var(--user-bg); border-radius: var(--radius-lg); padding: 10px 14px; font-size: 14px; line-height: 1.7; margin-bottom: 14px; width: fit-content; }
+    .msg-ai { font-size: 14px; line-height: 1.75; margin-bottom: 12px; }
+    .tool { font-size: 12.5px; color: var(--muted); margin: 6px 0; }
+    .notice { display: flex; gap: 8px; align-items: flex-start; margin: 10px 0 14px; font-size: 13px; color: var(--muted); line-height: 1.6; }
+    .notice b { color: var(--text); font-weight: 550; }
+
+    /* Dialog */
+    .scrim { position: absolute; inset: 0; background: rgba(20, 19, 17, 0.28); display: grid; place-items: center; }
+    .dialog { width: 460px; background: var(--surface); border-radius: var(--radius-lg); box-shadow: var(--shadow-pop); padding: 20px 22px 18px; }
+    .phone .scrim { place-items: end stretch; }
+    .phone .dialog { width: auto; border-radius: var(--radius-lg) var(--radius-lg) 0 0; padding-bottom: 28px; }
+    .dialog h3 { margin: 0 0 4px; font-size: 17px; }
+    .dialog .sub { margin: 0 0 14px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+    .row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--border); font-size: 14px; }
+    .row:first-of-type { border-top: 0; }
+    .row .k { flex: 1; min-width: 0; }
+    .row .k small { display: block; color: var(--muted); font-size: 12.5px; margin-top: 1px; }
+    .switch { width: 36px; height: 21px; border-radius: 99px; background: var(--border-strong); position: relative; flex: none; }
+    .switch::after { content: ''; position: absolute; top: 2.5px; left: 2.5px; width: 16px; height: 16px; border-radius: 50%; background: var(--surface); box-shadow: 0 1px 2px rgba(0,0,0,.2); }
+    .switch.on { background: var(--accent); }
+    .switch.on::after { left: 17.5px; background: var(--accent-fg); }
+    .field { width: 210px; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 13px; color: var(--text); background: var(--surface-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .field.empty { color: var(--faint); }
+    .phone .field { width: 150px; }
+    .status { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); }
+    .status .dot { background: var(--positive); }
+    .foot { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; }
+    .foot .last { font-size: 12.5px; color: var(--muted); display: flex; gap: 4px; align-items: center; }
+
+    /* Lark message */
+    .lark { width: 360px; padding: 18px; background: #eef0f3; border-radius: var(--radius-lg); }
+    [data-theme='dark'] .lark { background: #1f2124; }
+    .lark .from { font-size: 12px; color: var(--muted); margin: 0 0 6px 44px; }
+    .lark .wrap { display: flex; gap: 10px; }
+    .lark .ava { flex: none; width: 34px; height: 34px; border-radius: 50%; background: var(--accent); color: var(--accent-fg); display: grid; place-items: center; font-weight: 700; font-size: 13px; }
+    .lark .bubble { background: #fff; color: #1f2329; border-radius: 10px; padding: 10px 12px; font-size: 14px; line-height: 1.7; }
+    [data-theme='dark'] .lark .bubble { background: #2b2d31; color: #e8e9eb; }
+    .lark .bubble a { color: #3370ff; }
+
+    /* Private entry */
+    .menu { position: absolute; left: 16px; bottom: 64px; width: 210px; background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow-pop); padding: 6px; font-size: 14px; }
+    .menu .mi { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: var(--radius-sm); color: var(--text); }
+    .menu .mi svg { color: var(--muted); }
+    .menu .mi.hl { background: var(--hover); font-weight: 550; }
+    .menu .sep { height: 1px; background: var(--border); margin: 5px 8px; }
+    .gear { position: absolute; left: 160px; bottom: 16px; width: 38px; height: 38px; border-radius: 50%; background: var(--surface); box-shadow: var(--shadow-card); display: grid; place-items: center; }
+    .side2 { position: absolute; inset: 0 auto 0 0; width: 220px; background: var(--sidebar); border-right: 1px solid var(--border); padding: 18px 12px; }
+    .side2 .brand { font-weight: 650; font-size: 17px; margin: 0 10px 18px; }
+    .side2 .nav { display: flex; gap: 10px; align-items: center; padding: 7px 10px; font-size: 13.5px; }
+    .side2 .grp { font-size: 11.5px; color: var(--muted); margin: 14px 10px 4px; }
+    .side2 .row { padding: 7px 10px; font-size: 13px; border-radius: var(--radius-sm); }
+    .side2 .row.sel { background: var(--surface); box-shadow: var(--shadow-card); font-weight: 550; }
+    .pmain { position: absolute; inset: 0 0 0 220px; display: flex; flex-direction: column; }
+    .phone .pmain { inset: 0; }
+    .ptop { display: flex; align-items: center; justify-content: space-between; height: 56px; padding: 0 20px; font-weight: 650; font-size: 15px; }
+    .ptop .r { display: flex; gap: 8px; align-items: center; font-weight: 400; font-size: 12.5px; color: var(--muted); }
+    .ptop .ib { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; color: var(--muted); }
+    .hello { flex: 1; display: grid; place-items: center; font-size: 24px; letter-spacing: .3px; padding: 0 24px; text-align: center; }
+    .phone .hello { font-size: 20px; }
+    .composer { margin: 0 auto 22px; width: min(620px, calc(100% - 32px)); background: var(--surface); border: 1px solid var(--border); border-radius: 22px; box-shadow: var(--shadow-card); }
+    .composer .in { padding: 16px 18px 6px; color: var(--faint); font-size: 14.5px; }
+    .composer .ft { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px 10px 14px; }
+    .composer .tag { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); }
+    .composer .send { width: 34px; height: 34px; border-radius: 50%; background: var(--border-strong); display: grid; place-items: center; color: var(--surface); }
+    .todoact { margin-left: auto; font-size: 12.5px; color: var(--muted); border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 3px 10px; background: var(--surface); white-space: nowrap; }
+
+    .noteic { display: inline-flex; color: var(--faint); transform: translateY(2px); }
+    .meta { color: var(--faint) !important; }
+    .meta .over { color: var(--warn); }
+    .noteflat { margin: 6px 0 2px; padding: 2px 0 2px 12px; border-left: 2px solid var(--border); font-size: 13px; line-height: 1.8; color: var(--muted); }
+    .noteflat p { margin: 0; }
+    .noteflat b { color: var(--text); font-weight: 550; }
+    .noteflat .src { font-size: 12px; color: var(--faint); margin-top: 2px; }
+
+    .add.typing { color: var(--text); }
+    .add .typed { font-size: 15px; }
+    .add .caret { width: 1.5px; height: 18px; background: var(--text); margin-left: -8px; }
+    .todoact.strong { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+    .hint { margin: 8px 0 0 30px; font-size: 12px; color: var(--faint); }
+    .dirline svg { color: var(--faint); }
+  </style>
+</head>
+<body>
+  <div class="bar">
+    <h1>个人 agent · 界面草图（待审）</h1>
+    <div class="seg" role="group" aria-label="主题">
+      <button type="button" aria-pressed="true" data-theme-set="light">亮色</button>
+      <button type="button" aria-pressed="false" data-theme-set="dark">深色</button>
+    </div>
+  </div>
+
+  <!-- 1. Plan page -->
+  <section class="shot" id="plan">
+    <h2>① 计划页：加在现有行里，不新开页面</h2>
+    <p>新增：说明下面一行「个人目录」；有建议或完成提议时顶部出现「待你确认」，没有就不出现；行尾短文字表示截止、等待、跟进，逾期才用注意色；agent 负责的事项在标题后有一个小标记；有接续说明时只在行尾放一个淡色小图标，默认收起；点行或图标才展开、才读取全文（见下方「点开后」）；底部「顺带 N 条」默认收起。</p>
+    <div class="frames">
+      <div class="frame desk">
+        <div class="top">计划</div>
+        <div class="doc">
+          <h1>计划</h1>
+          <p class="lead">长期的计划，做完划掉；计划可以关联线程，跟着线程推进。</p>
+          <p class="dirline">个人目录 <span class="link">~/personal</span></p>
+
+          <div class="confirm">
+            <div class="head">待你确认</div>
+            <div class="crow">
+              <span class="kind">完成提议</span>
+              <div class="text">周五前交 10 月报销<small>已在报销系统提交，单号 R-2031，状态「审批中」</small></div>
+              <div class="acts"><button class="btn primary">标为完成</button><button class="btn ghost">忽略</button></div>
+            </div>
+            <div class="crow">
+              <span class="kind">建议新增</span>
+              <div class="text">下周三前给李四回复合同修改意见<small>来自邮件「合同第 3 版」</small></div>
+              <div class="acts"><button class="btn primary">添加</button><button class="btn ghost">忽略</button></div>
+            </div>
+          </div>
+
+          <div class="item"><div class="box"></div><div class="body">
+            <div class="line"><span class="title">周五前交 10 月报销</span><span class="meta"><span>周五截止</span><span class="noteic" title="有接续说明"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 2.5h7l3 3v8H3z"/><path d="M5.5 7h5M5.5 9.5h5"/></svg></span></span></div>
+          </div></div>
+          <div class="item sub"><div class="box"></div><div class="body">
+            <div class="line"><span class="title">整理报销单据</span><span class="agentmark" title="agent 负责"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="5" width="10" height="8" rx="2.5"/><path d="M8 2.5V5M6 9h.01M10 9h.01"/></svg></span></div>
+          </div></div>
+
+          <div class="item"><div class="box"></div><div class="body">
+            <div class="line"><span class="title">续签护照：查预约时间</span><span class="meta"><span>周三跟进</span><span class="noteic" title="有接续说明"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 2.5h7l3 3v8H3z"/><path d="M5.5 7h5M5.5 9.5h5"/></svg></span></span></div>
+            <div class="chips"><span class="chip"><span class="dot"></span>护照预约</span></div>
+          </div></div>
+
+          <div class="item"><div class="box"></div><div class="body">
+            <div class="line"><span class="title">给房东回邮件确认退租日期</span><span class="meta"><span>等房东回复</span><span class="over">已逾期 2 天</span></span></div>
+          </div></div>
+
+          <div class="add"><div class="box"></div>添加一条计划，回车确认</div>
+          <div class="fold"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m6 4 4 4-4 4"/></svg>顺带 2 条</div>
+          <div class="fold"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m6 4 4 4-4 4"/></svg>已完成 3</div>
+        </div>
+      </div>
+
+      <div class="frame phone">
+        <div class="top"><span class="back"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m10 3-5 5 5 5"/></svg></span>计划</div>
+        <div class="doc">
+          <h1>计划</h1>
+          <p class="lead">长期的计划，做完划掉；计划可以关联线程，跟着线程推进。</p>
+          <p class="dirline">个人目录 <span class="link">~/personal</span></p>
+          <div class="confirm">
+            <div class="head">待你确认</div>
+            <div class="crow">
+              <span class="kind">完成提议</span>
+              <div class="text">周五前交 10 月报销<small>已在报销系统提交，单号 R-2031</small></div>
+              <div class="acts"><button class="btn ghost">忽略</button><button class="btn primary">标为完成</button></div>
+            </div>
+          </div>
+          <div class="item"><div class="box"></div><div class="body">
+            <div class="line"><span class="title">周五前交 10 月报销</span><span class="meta">周五截止</span><span class="noteic" title="有接续说明"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 2.5h7l3 3v8H3z"/><path d="M5.5 7h5M5.5 9.5h5"/></svg></span></div>
+          </div></div>
+          <div class="item sub"><div class="box"></div><div class="body">
+            <div class="line"><span class="title">整理报销单据</span><span class="agentmark"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="5" width="10" height="8" rx="2.5"/><path d="M8 2.5V5M6 9h.01M10 9h.01"/></svg></span></div>
+          </div></div>
+          <div class="item"><div class="box"></div><div class="body">
+            <div class="line"><span class="title">续签护照：查预约时间</span><span class="meta">周三跟进</span><span class="noteic" title="有接续说明"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 2.5h7l3 3v8H3z"/><path d="M5.5 7h5M5.5 9.5h5"/></svg></span></div>
+          </div></div>
+          <div class="item"><div class="box"></div><div class="body">
+            <div class="line"><span class="title">给房东回邮件确认退租日期</span></div>
+            <div class="line"><span class="meta">等房东回复 <span class="over">已逾期 2 天</span></span></div>
+          </div></div>
+          <div class="add"><div class="box"></div>添加一条计划，回车确认</div>
+          <div class="fold"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m6 4 4 4-4 4"/></svg>顺带 2 条</div>
+        </div>
+      </div>
+    </div>
+  
+    <p style="margin:18px 0 10px">点开后：说明缩进显示在这一行下面，没有底色和边框，只用左侧细线；再点收起。</p>
+    <div class="frames"><div class="frame desk"><div class="doc" style="padding:24px 72px 26px">
+      <div class="item"><div class="box"></div><div class="body">
+        <div class="line"><span class="title">续签护照：查预约时间</span><span class="meta"><span>周三跟进</span></span><span class="noteic" title="有接续说明"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 2.5h7l3 3v8H3z"/><path d="M5.5 7h5M5.5 9.5h5"/></svg></span></div>
+        <div class="noteflat">
+          <p><b>下一步</b>　周三上午再查一次放号，有号就请你确认后预约。</p>
+          <p><b>做到哪</b>　10/24 查过，11 月尚未放号；网站说每周三 9:00 放号。</p>
+          <p><b>定了什么</b>　只约工作日上午；不考虑另一个区的办证点。</p>
+          <p><b>欠谁什么</b>　给你：11 月内可约的办证时段。</p>
+          <p class="src">更新于昨天 18:20 · 护照预约</p>
+        </div>
+      </div></div>
+    </div></div></div>
+  </section>
+
+  <!-- 2. Thread notice -->
+  <section class="shot" id="notice">
+    <h2>② 线程里 agent 的主动通知（limi notify）</h2>
+    <p>一行，和终端同步、交接分隔同一级别的安静样式；铃铛图标 + 「通知你」+ 原文。线程照常标未读，开了推送就同时发飞书。</p>
+    <div class="frames">
+      <div class="frame desk">
+        <div class="thread">
+          <div class="msg-user">帮我把 10 月的报销整理好提交</div>
+          <div class="tool">运行 limi browser open … · 读取 6 张发票</div>
+          <div class="msg-ai">单据整理好了，共 6 张，合计 ¥1,284.50。提交前需要你确认两张餐费的事由。</div>
+          <div class="notice"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" style="margin-top:2px"><path d="M4 11V7a4 4 0 0 1 8 0v4l1 1.5H3z"/><path d="M6.5 14a1.6 1.6 0 0 0 3 0"/></svg><span><b>通知你</b>　两张餐费（10/12、10/19）需要你确认事由，确认后我再提交。</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3. Push dialog -->
+  <section class="shot" id="push">
+    <h2>③ 推送设置：配置菜单里加一项「推送」，打开弹窗（同「自动交接」），不新开页面</h2>
+    <p>默认关。状态一行：找到 Lark CLI、机器人已就绪时为中性的绿点短句，异常时换成原因。四类开关只列名字。「发一条测试」在底部；最近记录收在底部一行「最近：10:42 已发」，点开看 20 条。手机上是底部抽屉。</p>
+    <div class="frames">
+      <div class="frame desk" style="height: 560px; background: var(--bg);">
+        <div class="scrim">
+          <div class="dialog">
+            <h3>推送</h3>
+            <p class="sub">需要你时，用飞书机器人私聊你。只发种类、线程标题和链接，不发对话内容。</p>
+            <div class="row"><div class="k">推送到飞书<small><span class="status"><span class="dot"></span>Lark CLI 已就绪 · 机器人</span></small></div><span class="switch on"></span></div>
+            <div class="row"><div class="k">接收人</div><span class="field">张三（当前登录用户）</span></div>
+            <div class="row"><div class="k">Limi 地址<small>用于消息里的链接，可不填</small></div><span class="field empty">例如 http://手机能打开的地址</span></div>
+            <div class="row"><div class="k">等你批准、回答或确认</div><span class="switch on"></span></div>
+            <div class="row"><div class="k">一轮失败</div><span class="switch on"></span></div>
+            <div class="row"><div class="k">agent 主动通知</div><span class="switch on"></span></div>
+            <div class="row"><div class="k">定时任务跑完</div><span class="switch"></span></div>
+            <div class="foot"><span class="last">最近：10:42 已发 <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m6 4 4 4-4 4"/></svg></span><button class="btn primary">发一条测试</button></div>
+          </div>
+        </div>
+      </div>
+      <div class="frame phone" style="height: 700px;">
+        <div class="scrim">
+          <div class="dialog">
+            <h3>推送</h3>
+            <p class="sub">需要你时，用飞书机器人私聊你。只发种类、线程标题和链接。</p>
+            <div class="row"><div class="k">推送到飞书<small><span class="status"><span class="dot"></span>Lark CLI 已就绪</span></small></div><span class="switch on"></span></div>
+            <div class="row"><div class="k">接收人</div><span class="field">张三</span></div>
+            <div class="row"><div class="k">Limi 地址</div><span class="field empty">可不填</span></div>
+            <div class="row"><div class="k">等你批准、回答或确认</div><span class="switch on"></span></div>
+            <div class="row"><div class="k">一轮失败</div><span class="switch on"></span></div>
+            <div class="row"><div class="k">agent 主动通知</div><span class="switch on"></span></div>
+            <div class="row"><div class="k">定时任务跑完</div><span class="switch"></span></div>
+            <div class="foot"><span class="last">最近：10:42 已发</span><button class="btn primary">发一条测试</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+
+  <!-- 5. Private entry -->
+  <section class="shot" id="private">
+    <h2>⑤ 私人入口：就在计划页，不加菜单项、不占侧边栏</h2>
+    <p>计划页最后一行输入框照旧：回车只是记一条计划。输入时右侧出现「交给 agent」：记下这条计划，并按私人设置开一个对话把它交过去（事项自动关联对话）。说明下面一行显示当前的私人设置（目录 · agent · 模型），点它改设置；还没设置时，第一次点「交给 agent」先弹出设置。私人对话在侧边栏归在「私人」一组。</p>
+    <div class="frames">
+      <div class="frame desk"><div class="doc" style="padding:30px 72px 34px">
+        <h1>计划</h1>
+        <p class="lead">长期的计划，做完划掉；计划可以关联线程，跟着线程推进。</p>
+        <p class="dirline">私人 <span class="link">~/personal · pi · GPT-5.6-Sol</span><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M3.6 12.4 5 11M11 5l1.4-1.4"/></svg></p>
+        <div class="item"><div class="box"></div><div class="body"><div class="line"><span class="title">周五前交 10 月报销</span><span class="meta">周五截止</span></div><div class="chips"><span class="chip"><span class="dot run"></span>10 月报销</span></div></div></div>
+        <div class="item"><div class="box"></div><div class="body"><div class="line"><span class="title">给房东回邮件确认退租日期</span></div></div></div>
+        <div class="add typing"><div class="box"></div><span class="typed">帮我约护照续签，11 月工作日上午</span><span class="caret"></span><span class="todoact strong">交给 agent</span></div>
+        <p class="hint">回车：只记下来　·　交给 agent：记下来并开一个私人对话去办</p>
+      </div></div>
+      <div class="frame phone"><div class="doc">
+        <h1>计划</h1>
+        <p class="dirline">私人 <span class="link">pi · GPT-5.6-Sol</span><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M3.6 12.4 5 11M11 5l1.4-1.4"/></svg></p>
+        <div class="item"><div class="box"></div><div class="body"><div class="line"><span class="title">周五前交 10 月报销</span><span class="meta">周五截止</span></div></div></div>
+        <div class="item"><div class="box"></div><div class="body"><div class="line"><span class="title">给房东回邮件确认退租日期</span></div></div></div>
+        <div class="add typing" style="flex-wrap:wrap"><div class="box"></div><span class="typed">帮我约护照续签</span><span class="caret"></span><span class="todoact strong">交给 agent</span></div>
+      </div></div>
+    </div>
+  </section>
+
+  <!-- 6. Hand an item to the agent -->
+  <section class="shot" id="handoff">
+    <h2>⑥ 计划页：把一条事项交给 agent</h2>
+    <p>悬停（手机上点开）事项时，行尾出现「交给 agent」：在私人模式开一个对话，把这条事项和它的说明交过去，事项自动关联这个对话。已经关联了进行中对话的事项不显示这个按钮，改显示对话标签。</p>
+    <div class="frames">
+      <div class="frame desk"><div class="doc" style="padding:28px 72px 30px">
+        <div class="item"><div class="box"></div><div class="body"><div class="line" style="flex-wrap:nowrap"><span class="title">约护照续签</span><span class="meta">11 月内</span><span class="todoact">交给 agent</span></div></div></div>
+        <div class="item"><div class="box"></div><div class="body"><div class="line"><span class="title">周五前交 10 月报销</span><span class="meta">周五截止</span></div><div class="chips"><span class="chip"><span class="dot run"></span>10 月报销</span></div></div></div>
+      </div></div>
+    </div>
+  </section>
+
+  <!-- 4. Lark message -->
+  <section class="shot" id="lark" style="margin-bottom: 48px;">
+    <h2>④ 飞书里收到的样子</h2>
+    <p>纯文字，第一行是种类和线程标题；不放审批详情和对话正文。agent 主动通知会带上它写的那句话。</p>
+    <div class="frames">
+      <div class="lark">
+        <div class="from">Limi</div>
+        <div class="wrap"><div class="ava">L</div><div class="bubble">
+          <b>等你批准</b> · 整理报销单据<br>pi · 10:42<br><a>打开线程</a>
+        </div></div>
+        <div style="height:14px"></div>
+        <div class="wrap"><div class="ava">L</div><div class="bubble">
+          <b>通知你</b> · 整理报销单据<br>来自 agent：两张餐费（10/12、10/19）需要你确认事由，确认后我再提交。<br><a>打开线程</a>
+        </div></div>
+      </div>
+    </div>
+  </section>
+
+  <script>
+    for (const b of document.querySelectorAll('[data-theme-set]')) {
+      b.addEventListener('click', () => {
+        document.documentElement.dataset.theme = b.dataset.themeSet;
+        for (const o of document.querySelectorAll('[data-theme-set]')) o.setAttribute('aria-pressed', String(o === b));
+      });
+    }
+  </script>
+</body>
+</html>

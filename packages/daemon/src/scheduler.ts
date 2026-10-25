@@ -29,6 +29,7 @@ interface RunOutcome {
 }
 
 const TICK_MS = 30_000;
+const FOLLOW_UP_BACKOFF_MS = [60_000, 5 * 60_000, 30 * 60_000, 60 * 60_000];
 /** How long a turn's ending is remembered without its run row, for the race at fire time. */
 const REMEMBERED_TURNS = 128;
 const MAX_PROMPT = 8000;
@@ -55,6 +56,11 @@ type ChangeListener = () => void;
  * runs a restart cut short.
  */
 export class Scheduler {
+  private unsubscribe?: () => void;
+  private following = false;
+  private readonly followUpFailures = new Map<string, { attempts: number; retryAt: number }>();
+  private stopped = false;
+  private readonly quietArchives = new Set<string>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly listeners = new Set<ChangeListener>();
   /** Turn endings that arrived before (or without) a run row, keyed by turn id. */
@@ -78,19 +84,26 @@ export class Scheduler {
 
   /** Starts ticking. First closes out what a restart or downtime left behind. */
   start(): void {
+    this.stopped = false;
     this.recover();
-    this.manager.subscribe((ev) => this.onTurnEvent(ev));
+    this.unsubscribe = this.manager.subscribe((ev) => this.onTurnEvent(ev));
     void this.tick();
     this.timer = setInterval(() => void this.tick(), TICK_MS);
   }
 
   dispose(): void {
+    this.stopped = true;
+    this.unsubscribe?.();
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
   }
 
   /** A turn's ending settles its run: done, error, or skipped when it was stopped. */
   private onTurnEvent(ev: StoredEvent): void {
+    if (ev.type === 'thread.updated') {
+      if (this.quietArchives.has(ev.threadId)) this.archiveQuiet(ev.threadId);
+      void this.followUps();
+    }
     const end = turnOutcome(ev);
     if (!end || !ev.turnId) return;
     const outcome: RunOutcome =
@@ -98,10 +111,23 @@ export class Scheduler {
         ? { status: 'error', message: end.message }
         : end.outcome === 'cancelled'
           ? { status: 'skipped', message: '这一轮被打断' }
-          : { status: 'done', message: null };
+          : { status: ev.data.quiet === true ? 'quiet' : 'done', message: null };
     const run = this.store.findScheduleRunByTurn(ev.turnId);
     if (run) {
-      this.store.updateScheduleRun(run.id, { status: outcome.status, finishedAt: new Date().toISOString(), ...(outcome.message ? { message: outcome.message } : {}) });
+      const paused = this.store.transaction(() => {
+        this.store.updateScheduleRun(run.id, { status: outcome.status, finishedAt: new Date().toISOString(), ...(outcome.message ? { message: outcome.message } : {}) });
+        return run.todoId ? this.store.finishTodoFollowUp(run.id) : false;
+      });
+      if (run.todoId) {
+        this.manager.broadcastTodo();
+        if (paused) {
+          const recent = this.store.todoThreadIds(run.todoId).find(id => this.store.getThread(id));
+          if (recent) this.manager.notice(recent, '连续 3 次跟进没有进展，已停止自动跟进');
+        }
+      }
+      if (outcome.status === 'quiet' && run.threadId && (run.newThread || run.scheduleId && this.store.getSchedule(run.scheduleId)?.mode === 'new')) {
+        this.quietArchives.add(run.threadId); this.archiveQuiet(run.threadId);
+      }
       this.changed();
       return;
     }
@@ -165,8 +191,77 @@ export class Scheduler {
       this.store.updateSchedule(s.id, { lastFiredAt: now.toISOString() });
       await this.fire(s, now);
     }
+    await this.followUps();
     this.sweep();
     this.changed();
+  }
+
+  private archiveQuiet(threadId: string) {
+    const thread = this.store.getThread(threadId);
+    if (!thread) { this.quietArchives.delete(threadId); return; }
+    if (thread.status === 'running') return;
+    this.quietArchives.delete(threadId);
+    // A notice sent during the turn is still something the person should see.
+    if (!thread.unread) void this.manager.updateThread(threadId, { archived: true }).catch(() => undefined);
+  }
+
+  /** Due one-shot follow-ups share turn execution and run history with recurring schedules. */
+  async followUps(): Promise<void> {
+    if (this.following || this.stopped) return;
+    this.following = true;
+    try {
+      const settings = this.manager.personal.settings();
+      if (!settings.directory) return;
+      for (const todo of this.store.listTodos()) {
+        if (this.stopped) return;
+        if (todo.done || todo.proposed || todo.followUpPaused || !todo.followUpAt || Date.parse(todo.followUpAt) > Date.now()) continue;
+        const failure = this.followUpFailures.get(todo.id);
+        if (failure && Date.now() < failure.retryAt) continue;
+        const linked = this.store.todoThreadIds(todo.id).map(id => this.store.getThread(id)).find(t => t && this.manager.personal.allowed(t.id));
+        if (linked?.status === 'running') continue;
+        const existing = linked && !linked.archivedAt ? linked : null;
+        let threadId = existing?.id;
+        let created = false;
+        try {
+          if (!threadId) {
+            const agent = settings.agent;
+            if (!agent || !this.adapters.has(agent)) throw new HttpError(503, 'personal agent unavailable');
+            const thread = await this.manager.createThread({ agent, cwd: settings.directory, title: todo.text,
+              permissionMode: this.adapters.get(agent)?.capabilities.defaultPermissionMode,
+              ...(settings.model ? { model: settings.model } : {}) });
+            threadId = thread.id; created = true;
+          }
+          const note = this.store.todoNote(todo.id);
+          const text = `由 Limi 发起的事项跟进。\n事项：${todo.text}\nID：${todo.id}；状态：${todo.state}；归属：${todo.owner}\n${todo.waitingOn ? `等待：${todo.waitingOn}\n` : ''}接续说明（${note.updatedAt ?? '尚未写入'}）：\n${note.text}\n\n处理完更新说明；没有进展就设下次跟进时间并 limi quiet。事项操作见 limi todo --help。`;
+          const runId = randomUUID();
+          await this.manager.startTurn(threadId, { text, scheduled: true }, undefined, false, undefined, turnId => {
+            if (this.stopped) throw new HttpError(409, 'scheduler stopped');
+            this.store.checkTodoRev(todo.id, todo.rev);
+            this.store.updateTodo(todo.id, { followUpAt: null }, todo.rev);
+            this.store.linkTodoThread(todo.id, threadId!);
+            this.store.insertScheduleRun({ id: runId, scheduleId: null, todoId: todo.id, newThread: created,
+              status: 'running', threadId: threadId!, turnId, startedAt: new Date().toISOString(), finishedAt: null, message: null }, note.text);
+          });
+          this.followUpFailures.delete(todo.id);
+          this.manager.broadcastTodo();
+        } catch (e) {
+          // Only discard threads that never began a turn; keep all actual conversation history.
+          if (created && threadId && this.store.getThread(threadId)?.status !== 'running' &&
+              this.store.listEventsOfType(threadId, 'turn.started').length === 0) {
+            await this.manager.deleteThread(threadId).catch(() => undefined);
+          }
+          // Busy or concurrently edited items remain due; the next tick reads their fresh state.
+          if (this.stopped || e instanceof HttpError && e.status === 409) continue;
+          const attempts = (failure?.attempts ?? 0) + 1;
+          this.followUpFailures.set(todo.id, { attempts, retryAt: Date.now() + FOLLOW_UP_BACKOFF_MS[Math.min(attempts - 1, FOLLOW_UP_BACKOFF_MS.length - 1)] });
+          if (!failure) {
+            const recent = this.store.todoThreadIds(todo.id).find(id => this.store.getThread(id));
+            if (recent) this.manager.notice(recent, '跟进没能启动：无法启动 agent，稍后自动重试');
+          }
+          console.warn('[follow-up] could not start a due item; retry delayed');
+        }
+      }
+    } finally { this.following = false; }
   }
 
   /** Closes out runs whose thread was deleted under them: no event will ever end those turns. */
@@ -227,6 +322,7 @@ export class Scheduler {
       const outcome = this.outcomes.get(started.turnId);
       if (outcome) {
         this.outcomes.delete(started.turnId);
+        if (outcome.status === 'quiet' && s.mode === 'new') { this.quietArchives.add(threadId); this.archiveQuiet(threadId); }
         this.store.updateScheduleRun(run.id, { status: outcome.status, finishedAt: new Date().toISOString(), ...(outcome.message ? { message: outcome.message } : {}) });
       }
       return { status: 'running' };
@@ -308,7 +404,7 @@ export class Scheduler {
       id,
       name,
       agent: thread ? thread.agent : agent,
-      cwd: thread ? thread.cwd : this.cwd(input.cwd),
+      cwd: thread ? thread.cwd : this.cwd(input.cwd ?? this.manager.personal.settings().directory),
       prompt,
       cron: (input.cron as string).trim(),
       mode,

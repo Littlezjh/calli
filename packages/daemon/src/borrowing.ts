@@ -131,6 +131,12 @@ export class BorrowingService {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new HttpError(400, 'command must be an object');
     const input = raw as Record<string, unknown>;
     switch (input.op) {
+      case 'quiet':
+        if (owner === 'operator') throw new HttpError(403, 'quiet requires thread-scoped credentials');
+        return this.manager.quiet(owner);
+      case 'notify':
+        if (owner === 'operator') throw new HttpError(403, 'notify requires thread-scoped credentials');
+        return this.manager.notice(owner, input.text);
       case 'tools.search': {
         if (input.query !== undefined && typeof input.query !== 'string') throw new HttpError(400, 'query must be a string');
         const query = String(input.query ?? '').toLowerCase().trim();

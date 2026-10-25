@@ -133,6 +133,7 @@ type MainView = 'agents' | 'teams' | 'thread' | 'todos' | 'schedules' | 'activit
 
 /** The page an address opens; null for none (a thread). Skills and MCP are the hub's own machinery, which the demo has none of. */
 function viewForHash(hash: string, connected: boolean): MainView | null {
+  if (hash.startsWith('#/thread/')) return null;
   switch (hash) {
     case TODOS_HASH:
       return 'todos';
@@ -276,6 +277,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   /** What the main area shows: a thread (or the blank one a new thread starts from), one of the hub's pages, or an extension's view. */
   // Those pages have addresses of their own, so a reload or a bookmark lands back on them.
+  const [threadLink, setThreadLink] = useState(() => window.location.hash.startsWith('#/thread/') ? window.location.hash : null);
   const [view, setView] = useState<MainView>(() => viewForHash(window.location.hash, Boolean(token)) ?? 'thread');
   /** The address of the extension view asked for. Which view that is waits for the list of extensions. */
   const [extTarget, setExtTarget] = useState<string | null>(() => (viewForHash(window.location.hash, Boolean(token)) === 'ext' ? window.location.hash : null));
@@ -611,11 +613,12 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   // threads is not a trail for the back button to walk.
   const extWant = onExt ? (extOpen ? extensionHash(extOpen) : extTarget ?? '') : '';
   useEffect(() => {
+    if (threadLink) return;
     const want = onObservability ? OBSERVABILITY_HASH : onAgents ? AGENTS_HASH : onTeams ? TEAMS_HASH : onTodos ? TODOS_HASH : onSchedules ? SCHEDULES_HASH : onActivity ? ACTIVITY_HASH : onSkills ? SKILLS_HASH : onMcp ? MCP_HASH : onExtensions ? EXTENSIONS_HASH : extWant;
     if (window.location.hash !== want) {
       window.history.replaceState(window.history.state, '', want || window.location.pathname + window.location.search);
     }
-  }, [onObservability, onAgents, onTeams, onTodos, onActivity, onSkills, onSchedules, onMcp, onExtensions, extWant]);
+  }, [onObservability, onAgents, onTeams, onTodos, onActivity, onSkills, onSchedules, onMcp, onExtensions, extWant, threadLink]);
 
   // Whether the directory a new thread would start in is a git repository. Asked once per directory picked.
   useEffect(() => {
@@ -640,6 +643,8 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   useEffect(() => {
     const onHash = () => {
       const hash = window.location.hash;
+      if (hash.startsWith('#/thread/')) { setThreadLink(hash); return; }
+      setThreadLink(null);
       const next = viewForHash(hash, Boolean(token));
       if (!next) return;
       // An address no enabled extension claims is let through too: it lands on the thread view.
@@ -1517,6 +1522,31 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       handleError(e);
     }
   };
+
+  useEffect(() => {
+    if (!threadLink || !token) return;
+    if (hostId) { onHost?.(null); return; }
+    let active = true;
+    let id: string;
+    try { id = decodeURIComponent(threadLink.slice('#/thread/'.length)); }
+    catch { id = ''; }
+    void api.thread(id).then(async thread => {
+      if (!active) return;
+      if (thread.archivedAt) {
+        thread = await api.updateThread(id, { archived: false });
+        if (active) setArchiveKey(key => key + 1);
+      }
+      if (active) openThread(thread);
+    }).catch(() => {
+      if (active) setToast({ message: t('app.threadNotFound') });
+    }).finally(() => {
+      if (active) {
+        setThreadLink(null);
+        window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search);
+      }
+    });
+    return () => { active = false; };
+  }, [api, token, hostId, threadLink]);
 
   // A session that is already a thread may have been archived since; opening it brings it back.
   const openImported = async (threadId: string) => {

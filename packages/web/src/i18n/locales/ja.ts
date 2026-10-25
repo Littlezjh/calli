@@ -1482,6 +1482,7 @@ export const ja: Messages = {
   'sched.preset.weekdays': '平日',
   'sched.preset.weekly': '毎週',
   'sched.preset.monthly': '毎月',
+  'sched.run.quiet': '通知なしで終了',
   'sched.run.done': '完了',
   'sched.run.skipped': 'スキップ',
   'sched.run.missed': '未実行',
@@ -1547,6 +1548,7 @@ export const ja: Messages = {
   'sched.create': 'タスクを作成',
 
   // App
+  'app.threadNotFound': 'スレッドが見つかりません。削除された可能性があります。',
   'app.tokenExpired': 'トークンが無効か期限切れです。もう一度入力してください。',
   'app.newVersion': '新しいバージョンがあります',
   'app.connectToSend': '接続してから送信してください。入力欄の内容はそのまま残ります。',

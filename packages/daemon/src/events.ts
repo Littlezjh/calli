@@ -3,6 +3,7 @@
  * so the web UI only has to understand one stream.
  */
 export type EventType =
+  | 'agent.notice'
   | 'handover.updated'
   | 'handover.model'
   | 'thread.created'

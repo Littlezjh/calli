@@ -1,3 +1,4 @@
+import { PersonalService } from './personal.js';
 import { AutoHandover, type AutoHandoverView, type HandoverTarget } from './auto-handover.js';
 import type { VoiceTransport } from './voice-sessions.js';
 import { VoiceConversation } from './voice-conversation.js';
@@ -233,6 +234,7 @@ export class ThreadManager {
   notifyCoordination(id: string): void {
     if (this.store.getThread(id)) this.emitThreadEvent(id, null, 'thread.updated', {});
   }
+  private readonly personalScopes = new Map<string, boolean>();
   private readonly sessionAdapters = new Map<string, AgentAdapter>();
   private readonly sessionStarts = new Map<string, Promise<AgentSession>>();
   private readonly nativeIdle = new Map<string, Set<() => void>>();
@@ -267,6 +269,8 @@ export class ThreadManager {
   /** Where threads may work; directories can be added from the page while the hub runs. */
   readonly dirs: Workdirs;
   readonly autoHandover: AutoHandover;
+  readonly personal: PersonalService;
+  private readonly quietTurns = new Set<string>();
   private readonly settlingHandovers = new Set<Promise<void>>();
 
   constructor(
@@ -279,6 +283,7 @@ export class ThreadManager {
   ) {
     this.dirs = Array.isArray(workdirs) ? new Workdirs(workdirs) : workdirs;
     this.autoHandover = new AutoHandover(store, this);
+    this.personal = new PersonalService(store, this, adapters);
     this.skills = new SkillsManager(this.adapters);
     this.mcp = new McpManager(this.adapters, store.mcpEntries);
   }
@@ -949,12 +954,30 @@ export class ThreadManager {
     return value;
   }
 
+  quiet(id: string): { turnId: string } {
+    const turnId = this.running.get(id)?.turnId;
+    if (!turnId) throw new HttpError(409, 'quiet requires a running turn');
+    this.quietTurns.add(turnId);
+    return { turnId };
+  }
+
+  notice(id: string, text: unknown, confirmation = false): StoredEvent {
+    this.getThread(id);
+    if (typeof text !== 'string' || !text.trim() || [...text].length > 500) throw new HttpError(400, 'notice text must contain 1–500 characters');
+    this.store.updateThread(id, { unread: true });
+    const event = this.store.appendEvent(id, this.running.get(id)?.turnId ?? null, 'agent.notice', { text, ...(confirmation ? { confirmation: true } : {}) });
+    for (const listener of this.listeners) listener(event);
+    this.emitThreadEvent(id, null, 'thread.updated', {});
+    return event;
+  }
+
   // ---------- Plan page (todos) ----------
 
   /** Todos with their linked threads as full views, so chips can show agent, title and state. */
   listTodos(): Array<TodoRecord & { threads: ThreadView[] }> {
     return this.store.listTodos().map((todo) => ({
       ...todo,
+      proposals: this.store.todoProposals(todo.id).filter(p => p.state === 'open'),
       threads: this.store
         .todoThreadIds(todo.id)
         .map((id) => this.store.getThread(id))
@@ -963,28 +986,16 @@ export class ThreadManager {
     }));
   }
 
-  createTodo(text: unknown, parentId?: unknown): TodoRecord {
-    const parent = parentId == null ? null : this.todoParent(parentId);
-    const todo = this.store.createTodo(randomUUID(), this.todoText(text), parent?.id ?? null);
-    this.broadcastTodo();
-    return todo;
+  createTodo(text: unknown, parentId?: unknown, fields: Record<string, unknown> = {}): TodoRecord {
+    return this.personal.create({ ...fields, text, parentId });
   }
 
-  updateTodo(id: string, patch: { text?: unknown; done?: unknown }): TodoRecord {
-    if (!this.store.getTodo(id)) throw new HttpError(404, 'todo not found');
-    const next: { text?: string; done?: boolean } = {};
-    if (patch.text !== undefined) next.text = this.todoText(patch.text);
-    if (patch.done !== undefined) {
-      if (typeof patch.done !== 'boolean') throw new HttpError(400, 'done must be a boolean');
-      next.done = patch.done;
-    }
-    const todo = this.store.updateTodo(id, next);
-    this.broadcastTodo();
-    return todo;
+  updateTodo(id: string, patch: Record<string, unknown>): TodoRecord {
+    return this.personal.update(id, patch);
   }
 
-  deleteTodo(id: string): void {
-    if (!this.store.getTodo(id)) throw new HttpError(404, 'todo not found');
+  deleteTodo(id: string, rev?: unknown): void {
+    this.store.checkTodoRev(id, rev === undefined ? this.store.getTodo(id)?.rev : rev);
     this.store.deleteTodo(id);
     this.broadcastTodo();
   }
@@ -994,9 +1005,8 @@ export class ThreadManager {
    * sub-item coming back to the top level (Shift+Tab). Still one level: a plan with sub-items of its
    * own cannot go under another.
    */
-  moveTodo(id: string, target: { parentId?: unknown; before?: unknown }): void {
-    const todo = this.store.getTodo(id);
-    if (!todo) throw new HttpError(404, 'todo not found');
+  moveTodo(id: string, target: { parentId?: unknown; before?: unknown; rev?: unknown }): void {
+    const todo = this.store.checkTodoRev(id, target.rev === undefined ? this.store.getTodo(id)?.rev : target.rev);
     const parent = target.parentId == null ? null : this.todoParent(target.parentId);
     if (parent?.id === id) throw new HttpError(400, '不能放到自己下面');
     if (parent && this.store.listTodos().some((t) => t.parentId === id)) throw new HttpError(400, '有子项的计划不能变成子项');
@@ -1011,16 +1021,18 @@ export class ThreadManager {
     this.broadcastTodo();
   }
 
-  linkTodoThread(id: string, threadId: unknown): void {
-    if (!this.store.getTodo(id)) throw new HttpError(404, 'todo not found');
+  linkTodoThread(id: string, threadId: unknown, rev?: unknown): void {
+    this.store.checkTodoRev(id, rev === undefined ? this.store.getTodo(id)?.rev : rev);
     this.getThread(this.threadId(threadId));
     this.store.linkTodoThread(id, this.threadId(threadId));
+    this.store.updateTodo(id, {});
     this.broadcastTodo();
   }
 
-  unlinkTodoThread(id: string, threadId: unknown): void {
-    if (!this.store.getTodo(id)) throw new HttpError(404, 'todo not found');
+  unlinkTodoThread(id: string, threadId: unknown, rev?: unknown): void {
+    this.store.checkTodoRev(id, rev === undefined ? this.store.getTodo(id)?.rev : rev);
     this.store.unlinkTodoThread(id, this.threadId(threadId));
+    this.store.updateTodo(id, {});
     this.broadcastTodo();
   }
 
@@ -1033,20 +1045,13 @@ export class ThreadManager {
     return parent;
   }
 
-  private todoText(text: unknown): string {
-    const value = typeof text === 'string' ? text.trim() : '';
-    if (!value) throw new HttpError(400, 'todo text is empty');
-    if (value.length > 300) throw new HttpError(400, 'todo text is longer than 300 characters');
-    return value;
-  }
-
   private threadId(threadId: unknown): string {
     if (typeof threadId !== 'string' || !threadId) throw new HttpError(400, 'threadId is required');
     return threadId;
   }
 
   /** Plan-page changes are not thread events: they go to listeners only, without an event log. */
-  private broadcastTodo(): void {
+  broadcastTodo(): void {
     const ev: StoredEvent = { threadId: '', seq: 0, turnId: null, type: 'todo.updated', ts: new Date().toISOString(), data: {} };
     for (const l of this.listeners) l(ev);
   }
@@ -1557,7 +1562,7 @@ export class ThreadManager {
     const source = this.getThread(threadId);
     if (mode !== undefined && mode !== 'continue' && mode !== 'branch') throw new HttpError(400, 'invalid handover mode');
     const selected = mode ?? 'branch';
-    return this.createThread({
+    const successor = await this.createThread({
       agent,
       cwd: source.cwd,
       title: `${source.title}（接手）`,
@@ -1565,6 +1570,8 @@ export class ThreadManager {
       sectionId: source.sectionId,
     }, source.worktree, { sourceId: source.id, title: source.title, agent: source.agent, mode: selected,
       sourceSeq: this.store.history.latest(source.id) });
+    this.personal.inherit(source.id, successor.id);
+    return successor;
   }
 
   /** The project roots, each with whether it was added from the page and so can be removed there. */
@@ -1768,10 +1775,11 @@ export class ThreadManager {
     fromQueue = false,
     /** Sends this exact turn id, reserved by an edit; the edit's steps all use it. */
     reservedTurnId?: string,
+    beforeStart?: (turnId: string) => void,
   ): Promise<{ turnId: string } | { queued: true; id: string }> {
     // Setup may await discovery or an idle runtime refresh. Keep competing sends in order.
     const previous = this.startingTurns.get(threadId) ?? Promise.resolve();
-    const next = previous.catch(() => undefined).then(() => this.startTurnReady(threadId, input, delivery, fromQueue, reservedTurnId));
+    const next = previous.catch(() => undefined).then(() => this.startTurnReady(threadId, input, delivery, fromQueue, reservedTurnId, beforeStart));
     this.startingTurns.set(threadId, next);
     const clean = () => {
       if (this.startingTurns.get(threadId) === next) this.startingTurns.delete(threadId);
@@ -1787,6 +1795,7 @@ export class ThreadManager {
     delivery?: { turnId: string; source: Record<string, unknown>; displayText: string; claim: () => void },
     fromQueue = false,
     reservedTurnId?: string,
+    beforeStart?: (turnId: string) => void,
   ): Promise<{ turnId: string } | { queued: true; id: string }> {
     const thread = this.getThread(threadId);
     if (this.changingModes.has(threadId)) throw new HttpError(409, '模式正在切换，请稍后发送');
@@ -1845,7 +1854,7 @@ export class ThreadManager {
     // Slash commands have their own argument grammar; hidden instructions become unwanted arguments.
     const slashCommand = /^\/\S+/.test(rawText);
     const coordinated = slashCommand ? rawText : rawText ? (this.coordination?.instructions(input.handoverFrom ?? threadId, rawText) ?? rawText) : '';
-    const discoverable = slashCommand || !rawText ? coordinated : (this.borrowing?.instructions(threadId, coordinated) ?? coordinated);
+    const discoverable = slashCommand || !rawText ? coordinated : this.personal.instructions(threadId, this.borrowing?.instructions(threadId, coordinated) ?? coordinated);
     // With the board's consent, the agent is asked to say where the work stands; read back at the end.
     // Writing mode's way of working for its stage; an edit the person made is mentioned once.
     const writing = !slashCommand && rawText ? thread.writing : null;
@@ -1870,6 +1879,7 @@ export class ThreadManager {
     try {
       this.store.transaction(() => {
         delivery?.claim();
+        beforeStart?.(turnId);
         // New work reopens a thread the person had marked done.
         if (thread.doneAt && !slashCommand) this.store.setThreadProgress(threadId, { doneAt: null });
         if (writing?.edited) {
@@ -1909,7 +1919,7 @@ export class ThreadManager {
     const successor = this.adapters.get(target);
     if (!successor) throw new HttpError(404, `no such agent: ${target}`);
     if (!allowSame && target === thread.agent) throw new HttpError(400, 'the successor must be another agent');
-    const started = await this.startTurn(threadId, { text: handoverPrompt(successor.label), handover: target }, undefined, true);
+    const started = await this.startTurn(threadId, { text: handoverPrompt(successor.label) + this.personal.context(threadId), handover: target }, undefined, true);
     if (!('turnId' in started)) throw new HttpError(409, 'a turn is already running in this thread');
     return started;
   }
@@ -1952,7 +1962,7 @@ export class ThreadManager {
       sessionId: thread.agentSessionId,
       ...location,
       resumeCommand: location?.resumeCommand ? `cd ${shellQuote(thread.cwd)} && ${location.resumeCommand}` : thread.resumeCommand,
-    });
+    }) + this.personal.context(threadId);
     if (turnId) {
       const turnEvents = events.filter((e) => e.turnId === turnId);
       if (turnEvents.length === 0) throw new HttpError(404, 'no such turn');
@@ -2185,7 +2195,7 @@ export class ThreadManager {
       }
       const result = await session.prompt(input, hooks);
       if (!start?.data.handover && !start?.data.control) this.autoHandover.reserve(thread.id, turnId);
-      if (result.stopReason === 'cancelled') unread = false;
+      if (result.stopReason === 'cancelled' || this.quietTurns.has(turnId) && result.stopReason !== 'error') unread = false;
       if (result.stopReason === 'error') {
         finalStatus = 'error';
         const message = result.error ?? 'agent error';
@@ -2205,6 +2215,7 @@ export class ThreadManager {
       this.emitThreadEvent(thread.id, turnId, 'turn.error', { message, ...(exhausted ? { code: 'plan_exhausted' } : {}) });
       await this.dropSession(thread.id);
     } finally {
+      this.quietTurns.delete(turnId);
       this.reportTurns.delete(turnId);
       if (!this.nativeTurns.get(thread.id)?.size) this.inputs.cancel(thread.id, undefined, true);
       if (this.running.get(thread.id)?.turnId === turnId) this.running.delete(thread.id);
@@ -2430,6 +2441,8 @@ export class ThreadManager {
   }
 
   private async createSession(thread: ThreadRecord): Promise<AgentSession> {
+    const personalScope = Boolean(this.personal.environment(thread.id));
+    if (this.sessions.has(thread.id) && this.personalScopes.get(thread.id) !== personalScope) await this.dropSession(thread.id);
     const existing = this.sessions.get(thread.id);
     if (existing) {
       if (existing.setWorkMode) await existing.setWorkMode(thread.workMode ?? 'execute');
@@ -2439,7 +2452,7 @@ export class ThreadManager {
     if (!adapter) throw new Error(`unknown agent: ${thread.agent}`);
     const session = await adapter.start({
       borrowedTool: this.borrowing?.toolForThread(thread.id),
-      coordinationEnv: { ...this.coordination?.environment(thread.id), ...this.borrowing?.environment(thread.id) },
+      coordinationEnv: { ...this.coordination?.environment(thread.id), ...this.borrowing?.environment(thread.id), ...this.personal.environment(thread.id) },
       cwd: thread.cwd,
       resumeId: thread.agentSessionId ?? undefined,
       permissionMode: thread.permissionMode as PermissionMode,
@@ -2493,12 +2506,14 @@ export class ThreadManager {
           this.running.delete(thread.id);
           this.inputs.cancel(thread.id, undefined, true);
           for (const [id, approval] of this.approvals) if (approval.threadId === thread.id) this.resolveApproval(id, { cancelled: true });
-          this.store.updateThread(thread.id, { status: result.stopReason === 'error' ? 'error' : 'idle', unread: result.stopReason !== 'cancelled' }, { touch: true });
+          this.store.updateThread(thread.id, { status: result.stopReason === 'error' ? 'error' : 'idle', ...(result.stopReason !== 'cancelled' && (result.stopReason === 'error' || !this.quietTurns.has(turnId)) ? { unread: true } : {}) }, { touch: true });
+          this.quietTurns.delete(turnId);
           this.emitThreadEvent(thread.id, null, 'thread.updated', {});
           this.startNextQueued(thread.id);
         }
       },
     });
+    this.personalScopes.set(thread.id, personalScope);
     this.sessions.set(thread.id, session);
     this.sessionAdapters.set(thread.id, adapter);
     if (session.agentSessionId !== thread.agentSessionId) {
@@ -2511,6 +2526,7 @@ export class ThreadManager {
     const pending = this.sessionStarts.get(threadId);
     if (pending) await pending.catch(() => undefined);
     const s = this.sessions.get(threadId);
+    this.personalScopes.delete(threadId);
     this.sessions.delete(threadId);
     this.sessionAdapters.delete(threadId);
     if (s) await s.close().catch(() => undefined);
@@ -2620,7 +2636,9 @@ export class ThreadManager {
   }
 
   private emitThreadEvent(threadId: string, turnId: string | null, type: EventType, data: Record<string, unknown>): void {
+    if (type === 'turn.done' && turnId && this.quietTurns.has(turnId) && data.stopReason !== 'cancelled') data = { ...data, quiet: true };
     if (type === 'turn.started') {
+      if (!data.control && String(data.text ?? '').includes('<limi-todo>')) this.personal.started(threadId);
       const agent = this.store.getThread(threadId)?.agent;
       const account = this.agentMeta().find(m => m.id === agent)?.account;
       if (account) data = { ...data, linkedAccount: account };

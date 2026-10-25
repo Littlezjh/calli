@@ -2,6 +2,7 @@ let pendingCompact = null;
 if (process.argv.includes('--version')) { process.stdout.write('fixture 1.2.3\n'); process.exit(0); }
 // Fake pi RPC process for tests. Speaks pi's JSONL RPC protocol on stdio.
 // Prompt text drives behaviour: "slow" waits until abort, "fail" ends with an error.
+import { personalFixture } from './personal.mjs';
 import { coordinationFixture } from './coordination.mjs';
 import { readFileSync, watchFile, unwatchFile } from 'node:fs';
 import { basename } from 'node:path';
@@ -247,6 +248,13 @@ rl.on('line', (line) => {
         watchFile(file, { interval: 20 }, finish);
         finish();
         return;
+      }
+      const personal = personalFixture(cmd.message);
+      if (personal !== null) {
+        reply({ disposition: 'started' });
+        out({ type: 'agent_start' });
+        out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: personal } });
+        out({ type: 'agent_settled', aborted: false }); return;
       }
       const collaboration = coordinationFixture(cmd.message);
       if (collaboration !== null) {

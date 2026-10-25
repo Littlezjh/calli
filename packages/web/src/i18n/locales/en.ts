@@ -1484,6 +1484,7 @@ export const en: Messages = {
   'sched.preset.weekdays': 'Weekdays',
   'sched.preset.weekly': 'Weekly',
   'sched.preset.monthly': 'Monthly',
+  'sched.run.quiet': 'Quiet',
   'sched.run.done': 'Done',
   'sched.run.skipped': 'Skipped',
   'sched.run.missed': 'Missed',
@@ -1549,6 +1550,7 @@ export const en: Messages = {
   'sched.create': 'Create task',
 
   // App
+  'app.threadNotFound': 'This thread could not be found. It may have been deleted.',
   'app.tokenExpired': 'The token is invalid or has expired. Enter it again.',
   'app.newVersion': 'A new version is available',
   'app.connectToSend': 'Connect first to send; what you typed stays in the composer.',

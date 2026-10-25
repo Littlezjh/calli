@@ -3,7 +3,8 @@ import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 
-export const help = `limi tools search [QUERY] [--json]
+export const help = `limi notify --text-file FILE|-
+limi tools search [QUERY] [--json]
 limi tools skill
 limi tools describe TOOL [--json]
 limi tools run TOOL --input-file FILE|- --request-id KEY [--json]
@@ -21,9 +22,9 @@ function responseError(text, status) {
   return text.trim().slice(0, 1000) || `HTTP ${status}`;
 }
 
-async function transport(path, body, binary = false) {
-  const socketPath = process.env.LIMI_TOOLS_SOCKET;
-  const key = process.env.LIMI_TOOLS_KEY;
+export async function transport(path, body, binary = false, personal = false) {
+  const socketPath = personal ? process.env.LIMI_TODO_SOCKET : process.env.LIMI_TOOLS_SOCKET;
+  const key = personal ? process.env.LIMI_TODO_KEY : process.env.LIMI_TOOLS_KEY;
   if (socketPath || key) {
     if (!socketPath || !key) throw new Error('Incomplete Limi tool credentials; start a new Limi session.');
     return new Promise((resolve, reject) => {
@@ -50,6 +51,7 @@ async function transport(path, body, binary = false) {
       req.end(payload);
     });
   }
+  if (personal) throw new Error('Personal commands require a new thread in the personal directory; see limi todo --help.');
   const base = process.env.LIMI_URL;
   const token = process.env.LIMI_TOKEN;
   if (!base || !token) throw new Error('Run inside a new Limi agent session, or set LIMI_URL and LIMI_TOKEN.');
@@ -137,4 +139,11 @@ export async function toolsMain(args) {
     result = { path: options['--output'], mimeType: artifact.mimeType, size: bytes.length, sha256 };
   } else throw new Error(help);
   console.log(JSON.stringify(result));
+}
+
+export async function notifyMain(args) {
+  if (args.length !== 2 || args[0] !== '--text-file' || !args[1]) throw new Error('Use limi notify --text-file FILE|-');
+  if (!process.env.LIMI_TOOLS_SOCKET || !process.env.LIMI_TOOLS_KEY) throw new Error('notify requires thread-scoped credentials');
+  const text = readFileSync(args[1] === '-' ? 0 : args[1], 'utf8');
+  console.log(JSON.stringify(await transport('/command', { op: 'notify', text })));
 }

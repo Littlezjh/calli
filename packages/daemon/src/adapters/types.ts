@@ -435,6 +435,7 @@ export function sessionEnvironment(base: Record<string, string>, context?: Recor
   const env: NodeJS.ProcessEnv = {
     ...process.env, ...base, LIMI_SOCKET: undefined, LIMI_KEY: undefined, LIMI_BIN_DIR: undefined,
     LIMI_HANDOVER_SOCKET: undefined, LIMI_HANDOVER_KEY: undefined,
+    LIMI_TODO_SOCKET: undefined, LIMI_TODO_KEY: undefined,
     LIMI_TOOLS_SOCKET: undefined, LIMI_TOOLS_KEY: undefined, LIMI_TOKEN: undefined, RAH_TOKEN: undefined, ...context,
   };
   if (context?.LIMI_BIN_DIR) env.PATH = `${context.LIMI_BIN_DIR}${process.platform === 'win32' ? ';' : ':'}${base.PATH ?? process.env.PATH ?? ''}`;

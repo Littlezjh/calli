@@ -246,7 +246,7 @@ export interface ForkOptions {
 export interface ScheduleRun {
   id: string;
   scheduleId: string;
-  status: 'running' | 'done' | 'error' | 'skipped' | 'missed';
+  status: 'running' | 'done' | 'quiet' | 'error' | 'skipped' | 'missed';
   threadId: string | null;
   turnId: string | null;
   startedAt: string;

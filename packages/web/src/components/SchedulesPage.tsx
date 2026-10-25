@@ -97,6 +97,7 @@ function presetFromCron(cron: string): { preset: Preset; time: string; weekday: 
 const RUN_LABELS: Record<ScheduleRun['status'], string> = {
   running: t('status.running'),
   done: t('sched.run.done'),
+  quiet: t('sched.run.quiet'),
   error: t('status.error'),
   skipped: t('sched.run.skipped'),
   missed: t('sched.run.missed'),
@@ -119,6 +120,7 @@ function nextLabel(iso: string): string {
 const STATUS_DOT: Record<ScheduleRun['status'], string> = {
   running: 'running',
   done: 'ok',
+  quiet: 'idle',
   error: 'bad',
   skipped: 'idle',
   missed: 'idle',

@@ -120,13 +120,18 @@ test('same instance changes model in the same native conversation without a summ
 test('exhausted fallback skips unavailable and near-quota targets and forwards the failed prompt', async () => {
   const h = await setup();
   try {
+    h.manager.personal.putSettings({ directory: h.dir, agent: 'agy', model: 'gemini-pro' });
+    const todo = h.manager.personal.create({ text: 'Continue across quota exhaustion', owner: 'agent' }, h.thread.id);
+    h.manager.personal.writeNote(todo.id, { rev: todo.rev, text: 'Persistent continuation evidence' }, h.thread.id);
     writeFileSync(join(h.dir, 'agy2.json'), JSON.stringify({ 'Gemini Models': 95 }));
     h.config([{ agent: 'offline', model: 'gemini-pro' }, { agent: 'agy2', model: 'gemini-pro' }, { agent: 'agy3', model: 'gemini-pro' }]);
     await h.manager.startTurn(h.thread.id, { text: 'quota-exhausted' }); await h.done();
     assert.equal(h.store.listEvents(h.thread.id, 0, -1).filter(e => e.type === 'turn.started').length, 1);
     const next = h.manager.listThreads().find(t => t.handover?.sourceId === h.thread.id)!;
+    assert.equal(h.store.todoThreadIds(todo.id)[0], next.id);
     assert.equal(next.agent, 'agy3'); await h.done(next.id);
     const start = h.store.listEvents(next.id, 0, -1).find(e => e.type === 'turn.started')!;
+    assert.match(String(start.data.text), /Persistent continuation evidence/);
     assert.match(String(start.data.text), /hub 从过程记录合成/); assert.match(String(start.data.text), /继续未完成的这一轮\n\nquota-exhausted/);
   } finally { await h.close(); }
 });
