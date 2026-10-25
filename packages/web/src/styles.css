@@ -6453,14 +6453,22 @@ input.picker-search {
   min-height: 30px;
   padding: 0 8px;
   border: 0;
-  border-radius: 8px;
+  /* Round like every other control in the bar, never a square tile. */
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--faint);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
-.usage:hover,
+/* A tap leaves :hover stuck on a phone; only a pointer that can hover gets the hover fill. */
+@media (hover: hover) {
+  .usage:hover {
+    background: var(--hover);
+    color: var(--muted);
+  }
+}
+
 .usage[aria-expanded='true'] {
   background: var(--hover);
   color: var(--muted);
