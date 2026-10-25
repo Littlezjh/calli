@@ -243,3 +243,29 @@ test('microphone refusal is visible and disabling an extension releases media wi
     assert.equal((await (await api(daemon, `/api/threads/${thread.id}`)).json()).status, 'running');
   } finally { await context.close(); }
 });
+
+test('voice can start from a new thread: the thread is created first, then voice opens on it', { timeout: 30_000 }, async () => {
+  await api(daemon, '/api/extensions/voice/install', { method: 'POST', body: JSON.stringify({ granted: ['voice.control'] }) });
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  try {
+    await mediaFixture(context);
+    const page = await context.newPage();
+    await openUi(page, daemon);
+    const before = (await (await api(daemon, '/api/threads')).json()).length;
+    // The draft's agent is the first one, the native voice provider.
+    const shot = async name => { if (process.env.RAH_E2E_SHOTS_DIR) {
+      mkdirSync(process.env.RAH_E2E_SHOTS_DIR, { recursive: true });
+      await page.screenshot({ path: join(process.env.RAH_E2E_SHOTS_DIR, `voice-draft-${name}.png`) });
+    } };
+    await page.getByRole('button', { name: '开启实时语音', exact: true }).waitFor();
+    await shot('before');
+    await page.getByRole('button', { name: '开启实时语音', exact: true }).click();
+    await page.locator('.voice-orb[data-phase="listening"], .voice-orb[data-phase="thinking"], .voice-orb[data-phase="speaking"]').waitFor();
+    await shot('live');
+    const threads = await (await api(daemon, '/api/threads')).json();
+    assert.equal(threads.length, before + 1);
+    assert.ok(threads.some(t => t.agent === 'voice-provider'));
+    await page.locator('.voice-controls').getByRole('button', { name: '结束语音', exact: true }).click();
+    await page.waitForFunction(() => window.voiceTracks.length > 0 && window.voiceTracks.every(t => t.readyState === 'ended'));
+  } finally { await context.close(); }
+});

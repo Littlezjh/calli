@@ -588,10 +588,24 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       void voice.stop();
     }
   }, [voiceExtInstalled, voice.state.active, voice]);
-  const canVoice = Boolean(voiceExtInstalled && selected && !selected.archivedAt
-    && (agents.find(agent => agent.id === selected.agent)?.capabilities.realtimeVoice
-      || agents.find(agent => agent.id === selected.agent)?.capabilities.coordination && !selected.coordination?.team && !selected.coordination?.retired
-        && agents.some(agent => agent.available && agent.capabilities.realtimeVoice)));
+  const voiceAgent = (id: string | undefined) => {
+    const caps = agents.find(agent => agent.id === id)?.capabilities;
+    return Boolean(caps?.realtimeVoice || caps?.coordination && agents.some(agent => agent.available && agent.capabilities.realtimeVoice));
+  };
+  const canVoice = Boolean(voiceExtInstalled && selected && !selected.archivedAt && voiceAgent(selected.agent)
+    && (agents.find(agent => agent.id === selected.agent)?.capabilities.realtimeVoice || !selected.coordination?.team && !selected.coordination?.retired));
+  // A draft has no thread yet: starting voice creates it first, as its first message would.
+  const canVoiceDraft = Boolean(voiceExtInstalled && !selected && !draftTeam && draftAgent && (draftCwd || draftScratch) && voiceAgent(draftAgent));
+  const [voiceOnSelect, setVoiceOnSelect] = useState<string | null>(null);
+  useEffect(() => {
+    if (!voiceOnSelect || selectedId !== voiceOnSelect) return;
+    setVoiceOnSelect(null);
+    void voice.start();
+  }, [voiceOnSelect, selectedId, voice]);
+  const startDraftVoice = async () => {
+    try { setVoiceOnSelect(await createDraftThread(true)); void refreshThreads(); }
+    catch (e) { handleError(e); }
+  };
 
   // The address follows what the main area shows. Replaced, not pushed: going between the pages and
   // threads is not a trail for the back button to walk.
@@ -1272,6 +1286,32 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     },
   });
 
+  // A new thread is created by its first message, or by starting voice on the draft.
+  const createDraftThread = async (isNewThread: boolean) => {
+    const t = await api.createThread({
+      agent: draftAgent,
+      cwd: draftCwd,
+      permissionMode: draftPermission,
+      workMode: draftWorkMode,
+      model: draftModel,
+      effort: draftEffort,
+      speed: draftSpeed,
+      ...(draftSectionId && isNewThread ? { sectionId: draftSectionId } : {}),
+      ...(draftScratch ? { scratch: true } : draftWorktree && offer ? { worktree: true } : {}),
+    });
+    const id = t.id;
+    if (draftWriting) {
+      const updated = await api.setWriting(id, draftWriting);
+      setThreads(prev => [updated, ...prev.filter(v => v.id !== updated.id)]);
+      setDraftWriting(null);
+    }
+    setSelectedId(id);
+    setDraftSectionId(null);
+    // Every worktree is a new branch; the next thread starts in place unless asked again.
+    setDraftWorktree(false);
+    return id;
+  };
+
   const performSend = async (text: string, images: PreparedImage[], isNewThread: boolean, mentions?: AgentMention[], videos: PreparedVideo[] = []) => {
     setError(null);
     try {
@@ -1282,29 +1322,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         setSelectedId(task.threadId); setDraftTeam(null); setDraftSectionId(null);
         setView('thread'); void refreshThreads(); return;
       }
-      if (!id) {
-        const t = await api.createThread({
-          agent: draftAgent,
-          cwd: draftCwd,
-          permissionMode: draftPermission,
-          workMode: draftWorkMode,
-          model: draftModel,
-          effort: draftEffort,
-          speed: draftSpeed,
-          ...(draftSectionId && isNewThread ? { sectionId: draftSectionId } : {}),
-          ...(draftScratch ? { scratch: true } : draftWorktree && offer ? { worktree: true } : {}),
-        });
-        id = t.id;
-        if (draftWriting) {
-          const updated = await api.setWriting(id, draftWriting);
-          setThreads(prev => [updated, ...prev.filter(v => v.id !== updated.id)]);
-          setDraftWriting(null);
-        }
-        setSelectedId(id);
-        setDraftSectionId(null);
-        // Every worktree is a new branch; the next thread starts in place unless asked again.
-        setDraftWorktree(false);
-      }
+      if (!id) id = await createDraftThread(isNewThread);
       // Bringing an agent in with @ is itself the request to collaborate; there is no switch to find first.
       const collaboration = (draftCollaboration || mentions?.length) && !selected?.coordination
         ? { directories: collaborationDirectories.length ? collaborationDirectories : undefined, defaults: startingDefaults, permission: memberPermission } : undefined;
@@ -2265,11 +2283,12 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           planMode={!draftTeam && activeCaps?.workModes?.includes('plan') ? { active: workMode === 'plan', disabled: running || modeBusy, onChange: active => void changeWorkMode(active ? 'plan' : 'execute') } : undefined}
           left={draftTeam ? undefined : left}
           right={draftTeam ? undefined : right}
-          composerActions={canVoice && !voice.state.active && (
+          composerActions={(canVoice || canVoiceDraft) && !voice.state.active && (
             <button
               type="button"
               className={`tool-btn composer-voice${voice.state.active ? ' active' : ''}`}
-              onClick={voice.state.active ? () => void voice.stop() : () => void voice.start()}
+              disabled={modeBusy}
+              onClick={voice.state.active ? () => void voice.stop() : canVoiceDraft ? () => void startDraftVoice() : () => void voice.start()}
               title={voice.state.active ? t('voice.end') : t('voice.start')}
               aria-label={voice.state.active ? t('voice.end') : t('voice.start')}
             >

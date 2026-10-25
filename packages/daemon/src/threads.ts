@@ -1878,7 +1878,7 @@ export class ThreadManager {
         }
         this.running.set(threadId, { turnId, cancelRequested: false, since: new Date().toISOString() });
         this.store.updateThread(threadId, { status: 'running', workMode: thread.workMode ?? 'execute', hubTurnAt: new Date().toISOString() }, { touch: true });
-        if (thread.title === 'New thread') {
+        if (thread.title === 'New thread' && !input.voiceSummary) {
           const title = askedText(rawText).split('\n')[0].slice(0, 60) || (storedVideos.length ? '视频' : '图片');
           this.store.updateThread(threadId, { title });
         }
@@ -2281,7 +2281,14 @@ export class ThreadManager {
     const conversation = new VoiceConversation(
       () => this.store.history.latest(threadId),
       message => {
-        if (this.store.getThread(threadId)) this.emitThreadEvent(threadId, null, 'voice.message', { ...message, sessionId: conversation.id });
+        const thread = this.store.getThread(threadId);
+        if (!thread) return;
+        // A thread started by voice is named by the first thing said in it, as a typed first message would.
+        if (thread.title === 'New thread' && message.role === 'user' && message.final && message.text.trim()) {
+          this.store.updateThread(threadId, { title: message.text.trim().split('\n')[0].slice(0, 60) });
+          this.emitThreadEvent(threadId, null, 'thread.updated', {});
+        }
+        this.emitThreadEvent(threadId, null, 'voice.message', { ...message, sessionId: conversation.id });
       },
     );
     const finalize = () => {

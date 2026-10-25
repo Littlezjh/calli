@@ -217,20 +217,23 @@ test('replacing an idle provider cannot reuse the previous account connection fo
 
 
 test('typed voice uses appendText and does not create a normal turn for a greeting', async t => {
-  const { manager, thread, events, methods } = await setup(t);
+  const { manager, thread, events, methods, store } = await setup(t);
   const voice = manager.voiceTransport(thread.id);
   const ready: VoiceSignal[] = [];
   await voice.start('fixture-offer', signal => ready.push(signal));
   await until(() => ready.some(s => s.type === 'sdp'));
+  assert.equal(store.getThread(thread.id)?.title, 'New thread');
   await voice.appendText!('Hello');
   await until(() => events.some(e => e.type === 'voice.message' && e.data.text === 'Hello'));
   await voice.stop(); voice.dispose();
   assert.equal(methods().filter(m => m === 'thread/realtime/appendText').length, 1);
   assert.equal(methods().filter(m => m === 'turn/start').length, 0);
+  // A thread started by voice is named by the first thing said in it.
+  assert.equal(store.getThread(thread.id)?.title, 'Hello');
 });
 
 test('substantial speech creates one summary, repeated close and reopening do not replay it', async t => {
-  const { manager, thread, events, methods } = await setup(t);
+  const { manager, thread, events, methods, store } = await setup(t);
   const voice = manager.voiceTransport(thread.id);
   const ready: VoiceSignal[] = [];
   await voice.start('fixture-offer', signal => ready.push(signal));
@@ -242,6 +245,8 @@ test('substantial speech creates one summary, repeated close and reopening do no
   assert.equal(events.filter(e => e.type === 'voice.closed').length, 1);
   assert.equal(events.filter(e => e.type === 'turn.started' && e.data.voiceSummary).length, 1);
   assert.equal(methods().filter(m => m === 'turn/start').length, 1);
+  // The summary turn is not the thread's first message: it must not rename it.
+  assert.equal(store.getThread(thread.id)?.title, 'Please record decision number 0 for the next step.');
   const reopened = manager.voiceTransport(thread.id);
   await reopened.start('fixture-offer', () => {});
   await reopened.stop(); reopened.dispose();
