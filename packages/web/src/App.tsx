@@ -1903,6 +1903,10 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const current = agents.find((a) => a.id === selected?.agent);
   const others = agents.filter((a) => a.available && !a.hidden && a.id !== selected?.agent);
   const successor = others.find((a) => current?.adapter && a.adapter === current.adapter) ?? others[0] ?? null;
+  // The same moment, from the box: with the thread's agent out of plan, an @ hands it over.
+  const lastItem = timeline.items[timeline.items.length - 1];
+  const outOfPlan = Boolean(selected && !running && lastItem?.kind === 'error' && lastItem.planExhausted
+    && (!selected.coordination || selected.coordination.rootId === selected.id));
 
   const teamWaiting = Boolean(coordination?.members.some((m) => m.thread?.waiting));
   const teamRunning = coordination?.members.filter((m) => m.thread?.status === 'running').length ?? 0;
@@ -2289,7 +2293,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
                 busy: takingOver,
                 go: () => {
                   setTakingOver(true);
-                  void threadActions.takeOver(selected, successor.id).finally(() => setTakingOver(false));
+                  void threadActions.takeOver(selected, successor.id).catch(() => undefined).finally(() => setTakingOver(false));
                 },
                 choose: () => threadActions.handover(selected),
               } : null}
@@ -2357,6 +2361,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           onStop={stop}
           header={header}
           writingMode={draftTeam ? undefined : { active: !!writing, disabled: writingBusy, onChange: active => void changeWriting(active ? 'draft' : null) }}
+          takeover={outOfPlan && !voice.state.active ? { from: agentLabel(selected!.agent), current: selected!.agent, go: (agent, note) => threadActions.takeOver(selected!, agent, note) } : undefined}
           banner={writing && !draftTeam && <WritingBar writing={writing} busy={writingBusy} onStage={stage => void changeWriting(stage)} onEnd={() => void changeWriting(null)}
             onOpen={file => void openFileLink(file).catch(handleError)}
             habits={habitsPath ? { path: habitsPath, ready: habitsReady } : null}

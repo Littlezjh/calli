@@ -6,6 +6,7 @@ import { useIsNarrow, useIsTouch } from '../hooks';
 import { readDrafts, writeDraft, type Sending } from '../drafts';
 import { sizeLabel } from '../files';
 import { mentionAt } from '../mentions';
+import { takeoverMention } from '../handover';
 import { MAX_IMAGES, prepareImage, restoreImage, type PreparedImage } from '../images';
 import { withNotes, type Note } from '../timeline';
 import { Popover } from './Popover';
@@ -24,6 +25,7 @@ import {
   IconCube,
   IconEdit,
   IconFork,
+  IconHand,
   IconHelp,
   IconImport,
   IconInfo,
@@ -136,6 +138,11 @@ interface Props {
   writingMode?: WritingMode;
   /** A band above the input, such as writing mode's stages. */
   banner?: ReactNode;
+  /**
+   * The thread's agent (`current`, shown as `from`) is out of plan: one instance brought in with @
+   * takes the thread over through `go`, with what was written as its note, instead of being sent work.
+   */
+  takeover?: { from: string; current: string; go: (agent: string, note: string) => Promise<void> };
   /** Controls at the left of the bottom bar, after the add menu. */
   left: ReactNode;
   /** Controls at the right of the bottom bar, before the send button. */
@@ -205,6 +212,7 @@ export function Composer({
   planMode,
   writingMode,
   banner,
+  takeover,
   left,
   right,
   composerActions,
@@ -586,7 +594,11 @@ export function Composer({
     choose(row);
   };
 
-  const hasContent = text.trim() !== '' || images.length > 0 || videos.length > 0 || notes.length > 0 || mentions.some((m) => m.task?.trim());
+  // The person can say no, and the @ goes back to asking for work; a new @ asks again.
+  const [takeoverOff, setTakeoverOff] = useState(false);
+  useEffect(() => { if (!mentions.length) setTakeoverOff(false); }, [mentions.length]);
+  const taker = takeover && !takeoverOff ? takeoverMention(mentions, true, takeover.current) : null;
+  const hasContent = !!taker || text.trim() !== '' || images.length > 0 || videos.length > 0 || notes.length > 0 || mentions.some((m) => m.task?.trim());
   // On a phone, a box with nothing being written gives up the room: one line, back to two the
   // moment it is touched. Anything in it, waiting in it, or focus keeps the whole box; so does a
   // new thread's strip of agent and directory, which is the choice being made.
@@ -635,6 +647,7 @@ export function Composer({
     if (!canSend) return;
     if (attachmentsBlocked && (images.length || videos.length)) return onError(attachmentsBlocked);
     if (images.length && attachBlocked) return onError(attachBlocked);
+    if (taker && (images.length || videos.length)) return onError(t('composer.takeoverAttachments'));
     setBusy(true);
     sendingRef.current = true;
     const message = asMessage(text, notes);
@@ -645,7 +658,8 @@ export function Composer({
     if (sentFrom !== undefined) keepDraft(sentFrom, { text, notes, images, videos, mentions, sending: mark });
     const slowTimer = setTimeout(() => setSlow(true), SLOW_SEND_MS);
     try {
-      await onSend(message, images, mentions, videos);
+      if (taker) await takeover!.go(taker.id, [message, taker.task?.trim()].filter(Boolean).join('\n\n'));
+      else await onSend(message, images, mentions, videos);
       setMentions([]);
       // Forgotten at once, not when the box next saves itself: a reload right now must not bring it back.
       if (sentFrom !== undefined) keepDraft(sentFrom, null);
@@ -793,6 +807,11 @@ export function Composer({
         )}
 
         {banner}
+        {taker && <div className="takeover-note" role="status">
+          <IconHand size={14} />
+          <span>{t('composer.takeover', takeover!.from, taker.label)}</span>
+          <button type="button" className="icon-btn" aria-label={t('composer.takeoverOff')} title={t('composer.takeoverOff')} onClick={() => setTakeoverOff(true)}><IconClose size={13} /></button>
+        </div>}
         {goalState && goal?.live && <GoalCard goal={goalState} running={running} actions={goal.actions} controls={goal.controls} onAction={chooseGoal} />}
         <div
           className={`composer-box${dragOver ? ' drag-over' : ''}${collapsed ? ' collapsed' : ''}`}
@@ -960,7 +979,7 @@ export function Composer({
                     ref={(el) => { taskRefs.current[i] = el; }}
                     rows={1}
                     value={m.task ?? ''}
-                    placeholder={t('composer.taskPlaceholder')}
+                    placeholder={taker ? t('composer.takeoverTask') : t('composer.taskPlaceholder')}
                     aria-label={t('composer.taskFor', m.label)}
                     disabled={disabled}
                     onChange={(e) => { const task = e.target.value; setMentions(prev => prev.map(v => v === m ? { ...v, task } : v)); }}
@@ -1036,8 +1055,8 @@ export function Composer({
                 className={`send-btn${slow ? ' sending' : ''}`}
                 onClick={() => void submit()}
                 disabled={!canSend}
-                aria-label={slow ? t('composer.sending') : running && !immediate ? t('composer.queueSend') : t('common.send')}
-                title={slow ? t('composer.sendingEllipsis') : queueFull ? t('composer.queueMax', MAX_QUEUED) : running ? immediate ? t('composer.goalNow') : t('composer.afterTurn') : undefined}
+                aria-label={slow ? t('composer.sending') : taker ? t('composer.takeoverSend', taker.label) : running && !immediate ? t('composer.queueSend') : t('common.send')}
+                title={slow ? t('composer.sendingEllipsis') : taker ? t('composer.takeoverSend', taker.label) : queueFull ? t('composer.queueMax', MAX_QUEUED) : running ? immediate ? t('composer.goalNow') : t('composer.afterTurn') : undefined}
               >
                 {slow ? <span className="send-spinner" aria-hidden="true" /> : <IconSend size={16} />}
               </button>

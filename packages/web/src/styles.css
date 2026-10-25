@@ -11239,3 +11239,9 @@ button.trace-step-head:hover { background: var(--hover); }
 .todo-delegate-new { border: 1px solid var(--border); background: transparent; color: var(--text); }
 .todo-thread-picker .pop-scroll { max-height: 48dvh; }
 .todo-thread-picker .dialog-actions { margin-top: 16px; }
+
+/* Above the box while an @ hands the thread over instead of asking for work. */
+.takeover-note { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; padding: 4px 4px 4px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--muted); font-size: 13px; line-height: 1.4; }
+.takeover-note > svg { flex: none; color: var(--text); }
+.takeover-note > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.takeover-note > .icon-btn { flex: none; }

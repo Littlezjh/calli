@@ -1222,6 +1222,10 @@ export class Api {
   createHandoverThread(threadId: string, agent: string, model?: string, mode?: 'continue' | 'branch'): Promise<Thread> {
     return this.request('POST', `/api/threads/${threadId}/handover-thread`, { agent, model, mode });
   }
+  /** Hands the thread to `agent` now: its conversation, queue and any collaboration lead. */
+  takeOver(threadId: string, agent: string, note?: string): Promise<Thread> {
+    return this.request('POST', `/api/threads/${threadId}/takeover`, { agent, note });
+  }
   detachAutomaticHandover(threadId: string): Promise<{ detached: string[]; thread: Thread }> {
     return this.request('DELETE', `/api/threads/${threadId}/handover-link`);
   }

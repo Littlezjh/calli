@@ -65,6 +65,7 @@ export function handoverPrompt(targetLabel: string): string {
     '## 改过的文件 — 哪些文件动过、为什么',
     '## 验证情况 — 跑过哪些测试或检查、结果如何；哪些改动还没验证；有没有改到一半、现在跑不通的文件',
     '## 关键决定和注意事项 — 容易踩的坑、用户特别提过的要求',
+    '每节几行即可，整体不超过 30 行：对方可以自己查阅原对话，细节不必复述。',
     '直接输出摘要本身，不要寒暄，也不要解释你在做什么。',
   ].join('\n');
 }
@@ -96,11 +97,8 @@ export function turnMessage(events: StoredEvent[]): string {
 
 const trunc = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n)}…` : s);
 
-/**
- * The summary the hub writes itself, from nothing but the event log. Sections the log cannot
- * answer are left out rather than guessed at; the successor is told to check the repository.
- */
-export function synthesizeHandover(events: StoredEvent[], opts: { title: string; from: string; target: string }): string {
+/** What the event log can say about a thread, leaving out the hub's own handover turns. */
+function logFacts(events: StoredEvent[]) {
   // Hub-injected handover turns are not part of the conversation: not the user's asks, and not
   // where the thread's story ends. Imported terminal history is real conversation and stays.
   const handoverTurns = new Set(
@@ -108,16 +106,29 @@ export function synthesizeHandover(events: StoredEvent[], opts: { title: string;
   );
   const asks = events
     .filter((e) => e.type === 'turn.started' && !e.data.handover)
-    .map((e) => String(e.data.text ?? '').trim())
+    .map((e) => String(e.data.displayText ?? e.data.text ?? '').trim())
     .filter(Boolean);
-
   const turnIds = [...new Set(events.filter((e) => e.turnId && !handoverTurns.has(e.turnId)).map((e) => e.turnId as string))];
   const lastTurnEvents = turnIds.length ? events.filter((e) => e.turnId === turnIds[turnIds.length - 1]) : [];
-  const lastAnswer = trunc(turnMessage(lastTurnEvents).trim(), 800);
   const lastError = [...events].reverse().find((e) => e.type === 'turn.error');
+  const lastFailed = lastTurnEvents.some((e) => e.type === 'turn.error');
   const plan = [...events].reverse().find((e) => e.type === 'plan.updated');
-  const files = changedFiles(events).slice(0, 30);
+  return {
+    asks,
+    lastFailed,
+    lastAnswer: turnMessage(lastTurnEvents).trim(),
+    why: lastError ? [lastError.data.code, lastError.data.error].filter(Boolean).join('：') : '',
+    plan: (plan?.data.entries ?? []) as Array<Record<string, unknown>>,
+    files: changedFiles(events),
+  };
+}
 
+/**
+ * The summary the hub writes itself, from nothing but the event log. Sections the log cannot
+ * answer are left out rather than guessed at; the successor is told to check the repository.
+ */
+export function synthesizeHandover(events: StoredEvent[], opts: { title: string; from: string; target: string }): string {
+  const { asks, lastAnswer, why, plan, files } = logFacts(events);
   const lines: string[] = [`# 交接摘要（hub 从过程记录合成）`, '', `- 原线程：${opts.title}（${opts.from}）`, `- 接手：${opts.target}`, ''];
 
   if (asks.length) {
@@ -128,29 +139,59 @@ export function synthesizeHandover(events: StoredEvent[], opts: { title: string;
   }
   if (files.length) {
     lines.push('## 改过的文件');
-    lines.push(...files.map((f) => `- ${f}`), '');
+    lines.push(...files.slice(0, 30).map((f) => `- ${f}`), '');
   }
-  if (plan) {
-    const entries = (plan.data.entries ?? []) as Array<Record<string, unknown>>;
-    if (entries.length) {
-      lines.push('## 计划清单（最后一次更新）');
-      lines.push(
-        ...entries.map((en) => {
-          const done = en.status === 'completed';
-          return `- [${done ? 'x' : ' '}] ${trunc(String(en.content ?? ''), 160)}`;
-        }),
-        '',
-      );
-    }
+  if (plan.length) {
+    lines.push('## 计划清单（最后一次更新）');
+    lines.push(...plan.map((en) => `- [${en.status === 'completed' ? 'x' : ' '}] ${trunc(String(en.content ?? ''), 160)}`), '');
   }
   if (lastAnswer) {
     lines.push('## 最后的回答');
-    lines.push(`> ${lastAnswer.replace(/\n/g, '\n> ')}`, '');
+    lines.push(`> ${trunc(lastAnswer, 800).replace(/\n/g, '\n> ')}`, '');
   }
-  if (lastError) {
-    const why = [lastError.data.code, lastError.data.error].filter(Boolean).join('：');
-    if (why) lines.push('## 中断原因', String(why), '');
-  }
+  if (why) lines.push('## 中断原因', why, '');
   lines.push('> 这份摘要由 hub 从过程记录自动合成，可能不全，也不知道哪些改动验证过。接手后先用 git status 和 git log 对齐现状，跑一遍项目的检查。');
   return lines.join('\n');
+}
+
+/**
+ * The short handover for a successor the hub starts itself. It can read the source with `limi`,
+ * so it gets where to look and how, plus a few lines of where things stood, not a retelling.
+ */
+export function handoverBrief(info: {
+  threadId: string;
+  from: string;
+  cwd: string;
+  worktree?: { root: string; branch: string | null } | null;
+  lead?: boolean;
+}): string {
+  const place = info.worktree
+    ? `${info.cwd}（worktree ${info.worktree.root}，分支 ${info.worktree.branch ?? '游离 HEAD'}）`
+    : info.cwd;
+  return [
+    '# 接手',
+    '',
+    `你接手 ${info.from} 在 hub 线程 ${info.threadId} 里的任务，看不到原对话。需要时自己读（找不到 limi 就用 "$LIMI_BIN_DIR/limi"）：`,
+    '- `limi handover`：来源会话信息',
+    `- \`limi history ${info.threadId}\`：按轮读问答和工具调用，按返回的 command 翻页`,
+    '',
+    `工作目录 ${place}。沿用它和未提交的改动，先用 git status、git diff 对齐现状再继续。`,
+    ...(info.lead ? ['', '你现在是本次协作的主控：成员的结果会投给你，用 `limi status` 查看成员和未交回的任务。'] : []),
+  ].join('\n');
+}
+
+/** A few lines of where the thread stood, for the brief handover. The rest is in `limi history`. */
+export function synthesizeBrief(events: StoredEvent[]): string {
+  const { asks, lastFailed, lastAnswer, why, plan, files } = logFacts(events);
+  // A failed last ask is carried over word for word after the brief; it is not repeated here.
+  const ask = lastFailed ? asks.at(-2) : asks.at(-1);
+  const open = plan.filter((en) => en.status !== 'completed').slice(0, 5);
+  const lines = [
+    ...(ask ? [`- 最近的要求：${trunc(ask.replace(/\s+/g, ' '), 200)}`] : []),
+    ...(lastAnswer ? [`- 最后的回答：${trunc(lastAnswer.replace(/\s+/g, ' '), 300)}`] : []),
+    ...(open.length ? [`- 未完成的计划：${open.map((en) => trunc(String(en.content ?? ''), 80)).join('；')}`] : []),
+    ...(files.length ? [`- 改过的文件：${files.slice(0, 8).join('、')}${files.length > 8 ? ` 等 ${files.length} 个` : ''}`] : []),
+    ...(why ? [`- 中断原因：${trunc(why, 160)}`] : []),
+  ];
+  return lines.length ? ['## 进度（hub 从记录整理，可能不全）', ...lines].join('\n') : '';
 }

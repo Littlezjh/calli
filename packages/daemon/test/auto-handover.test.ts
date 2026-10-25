@@ -132,7 +132,7 @@ test('exhausted fallback skips unavailable and near-quota targets and forwards t
     assert.equal(next.agent, 'agy3'); await h.done(next.id);
     const start = h.store.listEvents(next.id, 0, -1).find(e => e.type === 'turn.started')!;
     assert.match(String(start.data.text), /Persistent continuation evidence/);
-    assert.match(String(start.data.text), /hub 从过程记录合成/); assert.match(String(start.data.text), /继续未完成的这一轮\n\nquota-exhausted/);
+    assert.match(String(start.data.text), /hub 从记录整理/); assert.match(String(start.data.text), /继续未完成的这一轮\n\nquota-exhausted/);
   } finally { await h.close(); }
 });
 
@@ -150,7 +150,7 @@ test('cancel suppresses this quota episode, and summary failure uses the log fal
     await h.manager.startTurn(h.thread.id, { text: 'recovered' }); await h.done();
     await h.manager.startTurn(h.thread.id, { text: 'quota-near' }); await h.done();
     const next = h.manager.listThreads().find(t => t.handover?.sourceId === h.thread.id)!; assert.ok(next); await h.done(next.id);
-    assert.match(String(h.store.listEvents(next.id, 0, -1).find(e => e.type === 'turn.started')?.data.text), /hub 从过程记录合成/);
+    assert.match(String(h.store.listEvents(next.id, 0, -1).find(e => e.type === 'turn.started')?.data.text), /hub 从记录整理/);
   } finally { await h.close(); }
 });
 
@@ -330,5 +330,32 @@ test('automatic selection does not broaden an approval-required conversation', a
     h.config();
     h.store.updateThread(h.thread.id, { permissionMode: 'ask' });
     assert.deepEqual(await h.manager.autoHandover.targets(h.thread.id), []);
+  } finally { await h.close(); }
+});
+
+test('takeover: an exhausted lead hands its place, failed ask and note to the chosen agent', async () => {
+  const h = await setup();
+  try {
+    await h.team.enable(h.thread.id);
+    const job = await h.team.command(h.thread.id, { op: 'spawn', name: 'worker', agent: 'agy3', model: 'gemini-pro', text: 'hello', requestId: 'spawn-take' }) as { to: string };
+    await h.done(job.to); await h.done();
+    await h.manager.startTurn(h.thread.id, { text: 'quota-exhausted' }); await h.done();
+    assert.equal(h.manager.listThreads().filter(t => t.handover).length, 0, 'automatic handover is off');
+    for (const bad of [{}, { agent: 'missing' }, { agent: 'agy2', note: 7 }]) assert.equal((await h.api(`/api/threads/${h.thread.id}/takeover`, 'POST', bad)).status, 400);
+    const res = await h.api(`/api/threads/${h.thread.id}/takeover`, 'POST', { agent: 'agy2', note: '先挑三道更难的题' });
+    assert.equal(res.status, 201);
+    const next = await res.json() as { id: string; agent: string; handover: { mode: string; sourceId: string } };
+    assert.equal(next.agent, 'agy2'); assert.equal(next.handover.mode, 'continue'); assert.equal(next.handover.sourceId, h.thread.id);
+    await h.done(next.id);
+    assert.equal(h.team.view(job.to)?.rootId, next.id);
+    assert.equal(h.team.view(next.id)?.members[0].name, 'worker');
+    const text = String(h.store.listEvents(next.id, 0, -1).find(e => e.type === 'turn.started')!.data.text);
+    assert.match(text, new RegExp(`limi history ${h.thread.id}`));
+    assert.match(text, /你现在是本次协作的主控/);
+    assert.match(text, /## 继续未完成的这一轮\n\nquota-exhausted/);
+    assert.match(text, /## 用户补充\n\n先挑三道更难的题/);
+    // The brief leaves the full coordinates and the long synthesized summary to `limi`.
+    assert.doesNotMatch(text, /Session 文件地址|# 交接摘要/);
+    assert.ok(text.length < 1500, `brief handover is ${text.length} chars`);
   } finally { await h.close(); }
 });

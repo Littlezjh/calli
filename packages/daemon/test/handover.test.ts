@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { StoredEvent } from '../src/events.js';
-import { handoverContext, handoverPrompt, synthesizeHandover } from '../src/handover.js';
+import { handoverBrief, handoverContext, handoverPrompt, synthesizeBrief, synthesizeHandover } from '../src/handover.js';
 
 let seq = 0;
 const ev = (turnId: string | null, type: StoredEvent['type'], data: Record<string, unknown> = {}): StoredEvent => ({
@@ -75,4 +75,26 @@ test('a handover or imported turn is not listed as one of the user\'s asks', () 
   assert.doesNotMatch(text, /请写一份交接摘要/);
   assert.match(text, /做完了/);
   assert.doesNotMatch(text, /## 任务/, 'the handover turn\u2019s own text is not the thread\u2019s last answer');
+});
+
+test('the brief handover points at the source and keeps progress to a few lines', () => {
+  const head = handoverBrief({ threadId: 'src', from: 'Claude Code 3', cwd: '/work', worktree: { root: '/work', branch: 'feat' }, lead: true });
+  assert.match(head, /limi history src/);
+  assert.match(head, /分支 feat/);
+  assert.match(head, /主控/);
+  assert.doesNotMatch(handoverBrief({ threadId: 'src', from: 'pi', cwd: '/work' }), /主控/);
+  const files = Array.from({ length: 12 }, (_, i) => ({ type: 'diff', path: `f${i}.ts` }));
+  const text = synthesizeBrief([
+    ev('u1', 'turn.started', { text: 'with hub additions', displayText: '先做第一步' }),
+    ev('u1', 'tool.start', { id: 'a', content: files }),
+    ev('u1', 'message.delta', { text: '做完了\n第一步' }),
+    ev('u1', 'turn.done', {}),
+    ev('u2', 'turn.started', { text: '再重跑一次' }),
+    ev('u2', 'turn.error', { code: 'plan_exhausted', error: 'limit' }),
+  ]);
+  assert.match(text, /最近的要求：先做第一步/, 'the failed ask is carried over separately, and hub additions are left out');
+  assert.doesNotMatch(text, /再重跑一次/);
+  assert.match(text, /f7\.ts 等 12 个/);
+  assert.match(text, /中断原因：plan_exhausted：limit/);
+  assert.equal(synthesizeBrief([]), '');
 });
