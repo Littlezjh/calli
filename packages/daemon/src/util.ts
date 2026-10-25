@@ -45,6 +45,8 @@ export function askedText(text: string): string {
     if (/^\[注释 \d+\]$/.test(line.trim())) inNote = true;
     else if (line.startsWith('>')) quoted.push(line.replace(/^>\s?/, '').trim());
     else if (inNote && line.startsWith('评论：')) comments.push(line.slice('评论：'.length).trim());
+    // A note on a file names it on its own line; the passage and comment are what was asked.
+    else if (inNote && line.startsWith('文件：')) continue;
     else break;
   }
   const body = lines.slice(i).join('\n').trim();

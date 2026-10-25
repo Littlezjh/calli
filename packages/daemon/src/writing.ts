@@ -25,6 +25,8 @@ export interface WritingState {
 
 /** Where articles live, relative to the thread's directory. */
 export const WRITING_DIR = 'writing';
+/** The person's writing habits, beside the articles: read before writing, grown by reviews. Never the article. */
+export const HABITS_FILE = '写作习惯.md';
 
 export function isWritingStage(value: unknown): value is WritingStage {
   return typeof value === 'string' && (WRITING_STAGES as readonly string[]).includes(value);
@@ -36,7 +38,9 @@ const COMMON = `你在写作模式里，帮我写一篇文章。观点必须是�
 正文写在 ${WRITING_DIR}/<题目>.md（题目等初稿有了内容再起，之后不要改文件名），配图放 ${WRITING_DIR}/<题目>/，正文里用相对路径引用。
 我的消息常常来自语音输入，会有同音错字：按上下文改正，但保留我的说法和语气。
 我直接改过的正文以文件为准，不要改回去。
-大师们的提醒只是建议：我说不接受，就记下，不再重复。`;
+大师们的提醒只是建议：我说不接受，就记下，不再重复。
+动笔前先读 ${WRITING_DIR}/${HABITS_FILE}（有的话），照着写。
+我说「复盘」「总结一下」时：回看这次对话里我的注释、我直接改过的地方、我否掉的写法，提炼成能用到以后文章的习惯（不是只针对这一句的改动），每条一行，写清要怎样、不要怎样，最好带一个 ×/✓ 的例子；追加到 ${WRITING_DIR}/${HABITS_FILE}（没有就新建，开头一行「# 写作习惯」），每条新记的开头标〔新〕。已有的习惯不要重复记，和新的冲突时先问我。写完在回复里逐条列出新记的，请我确认：我说对，就去掉〔新〕；我说不要的，删掉那条。`;
 
 const STAGES: Record<WritingStage, string> = {
   draft: `现在是初稿（关着门写）。
@@ -79,7 +83,7 @@ export function newestArticle(cwdReal: string): string | null {
     return null;
   }
   for (const name of names) {
-    if (extname(name).toLowerCase() !== '.md') continue;
+    if (extname(name).toLowerCase() !== '.md' || name === HABITS_FILE) continue;
     try {
       const stat = statSync(join(cwdReal, WRITING_DIR, name));
       if (stat.isFile() && (!best || stat.mtimeMs > best.mtime)) best = { name, mtime: stat.mtimeMs };
