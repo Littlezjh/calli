@@ -700,7 +700,7 @@ export const PI_METADATA = {
   adapter: 'pi' as const,
   label: 'pi',
   icon: PI_ICON,
-  installGuide: 'npm install -g @mariozechner/pi-coding-agent',
+  installGuide: 'npm install -g @earendil-works/pi-coding-agent',
 };
 
 export class PiRpcAdapter implements AgentAdapter {

@@ -366,7 +366,7 @@ test('supported lists all built-in adapters with labels and install guides', () 
   }
   assert.equal(supported.find((s) => s.adapter === 'claude')?.installGuide, 'npm install -g @anthropic-ai/claude-code');
   assert.equal(supported.find((s) => s.adapter === 'codex')?.installGuide, 'npm install -g @openai/codex');
-  assert.equal(supported.find((s) => s.adapter === 'pi')?.installGuide, 'npm install -g @mariozechner/pi-coding-agent');
+  assert.equal(supported.find((s) => s.adapter === 'pi')?.installGuide, 'npm install -g @earendil-works/pi-coding-agent');
   assert.equal(supported.find((s) => s.adapter === 'agy')?.installGuide, undefined);
   assert.equal(supported.find((s) => s.adapter === 'traex')?.installGuide, undefined);
   assert.equal(supported.find((s) => s.adapter === 'zcode')?.installGuide, undefined);
