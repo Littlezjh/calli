@@ -278,15 +278,25 @@ test('piEfforts follows pi\'s own rule for which thinking levels a model takes',
   assert.deepEqual(piEfforts({ reasoning: true, thinkingLevelMap: { xhigh: 'xhigh' } }), ['off', 'minimal', 'low', 'medium', 'high', 'xhigh']);
 });
 
+// Vision fallback is populated independently of the model catalog.
+async function piModelsWithVision(adapter: PiRpcAdapter) {
+  for (let i = 0; i < 300; i++) {
+    const models = await adapter.models();
+    if (models.find(model => model.id === 'fake/plain')?.images !== undefined) return models;
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  throw new Error('MCP detection did not finish');
+}
+
 test('PiRpcAdapter: models report efforts, image support and which one is pi\'s default', async () => {
   const adapter = new PiRpcAdapter([process.execPath, fakePi]);
-  const models = await adapter.models(); // fails in the fake if the probe forgets --no-session
+  const models = await piModelsWithVision(adapter); // fails in the fake if the probe forgets --no-session
   assert.deepEqual(models.map((m) => m.id), ['fake/think', 'fake/plain', 'fake/loose']);
   assert.deepEqual(models.map((m) => m.efforts), [['low', 'high', 'max'], [], ['off', 'minimal', 'low', 'medium', 'high']]);
   assert.deepEqual(models.map((m) => m.images), [true, false, false]);
   assert.deepEqual(models.map((m) => m.isDefault ?? false), [true, false, false]);
   assert.equal(models[0].label, 'Think');
-  assert.equal(await adapter.models(), models, 'a fresh result is reused');
+  assert.deepEqual(await adapter.models(), models, 'a fresh catalog is reused');
 });
 
 test('PiRpcAdapter: commands carry their kind and have no leading slash', async () => {
@@ -943,7 +953,7 @@ test('pi: a model that cannot see gets paths for describe_image, when that exten
   const adapter = new PiRpcAdapter([process.execPath, fakePi]);
   let models;
   try {
-    models = await adapter.models();
+    models = await piModelsWithVision(adapter);
   } finally {
     delete process.env.FAKE_PI_VISION;
   }
@@ -984,7 +994,7 @@ test('pi: the zai vision MCP server also gives a text-only model sight, when it 
   const adapter = new PiRpcAdapter([process.execPath, fakePi]);
   let models;
   try {
-    models = await adapter.models();
+    models = await piModelsWithVision(adapter);
   } finally {
     delete process.env.FAKE_PI_MCP;
   }
@@ -999,7 +1009,7 @@ test('pi: the zai vision MCP server also gives a text-only model sight, when it 
   process.env.FAKE_PI_VISION = '1';
   const both = new PiRpcAdapter([process.execPath, fakePi]);
   try {
-    models = await both.models();
+    models = await piModelsWithVision(both);
   } finally {
     delete process.env.FAKE_PI_MCP;
     delete process.env.FAKE_PI_VISION;

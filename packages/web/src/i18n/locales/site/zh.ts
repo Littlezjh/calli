@@ -7,6 +7,8 @@ export const zh = {
   handoverTry: "体验自动交接",
   handoverAccounts: "多账号、多模型接力",
   handoverAccountsDescription: "不走反向代理，不改写 API 请求。每个账号都是各自官方 CLI 的独立实例，例如 agy、agy2、agy3，或 Claude Code 与 Claude Code 2；hub 只在轮次之间切换。",
+  handoverMention: "额度用完了，@ 一个接着做",
+  handoverMentionDescription: "当前 agent 额度用完时，在输入框里 @ 另一个实例，写一句下一步，发送就由它接手。在协作里，它会成为新的主控，成员结果改投给它。接手方只收到线程 ID 和读法，自己去读原会话。",
   handoverMinimal: "最小注入，最小改动",
   handoverMinimalDescription: "不改 agent 的目录、配置和会话。接手方通过只读的 limi handover / limi history 查阅来源会话。协作成员默认开启自动交接：名字不变，消息和结果转到接手会话。",
   handoverModelNote: "同一 agent 支持切换模型时，直接在原会话换模型。",

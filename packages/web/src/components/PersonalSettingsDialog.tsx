@@ -5,7 +5,7 @@ import { Dialog } from './Dialog';
 import { DirectoryPicker } from './DirectoryPicker';
 import { AgentPicker } from './Pickers';
 import { Popover } from './Popover';
-import { IconChevron, IconFolder } from './icons';
+import { IconChevron, IconFolder, IconSearch } from './icons';
 
 export function PersonalSettingsDialog({ api, agents, initial, onSave, onClose }: {
   api: Api; agents: AgentInfo[]; initial: PersonalSettings; onSave: (value: PersonalSettings) => void; onClose: () => void;
@@ -18,9 +18,10 @@ export function PersonalSettingsDialog({ api, agents, initial, onSave, onClose }
   const [modelError, setModelError] = useState('');
   const [saving, setSaving] = useState(false);
   const [retry, setRetry] = useState(0);
+  const [query, setQuery] = useState('');
   useEffect(() => { let live = true; void api.workdirs().then(v => { if (live) setRoots(v.workdirs); }).catch(e => { if (live) setError(String(e)); }); return () => { live = false; }; }, [api, initial.defaultDirectory, retry]);
   useEffect(() => {
-    let live = true; setModels(null); setModelError('');
+    let live = true; setModels(null); setQuery(''); setModelError('');
     if (value.agent) void api.models(value.agent).then(v => { if (live) setModels(v); }).catch(e => { if (live) setModelError(String(e)); });
     return () => { live = false; };
   }, [api, value.agent, retry]);
@@ -32,10 +33,10 @@ export function PersonalSettingsDialog({ api, agents, initial, onSave, onClose }
   }}>
     <div className="personal-setting-line"><span>{t('personal.directory')}</span><button className="context-btn personal-directory" disabled={!roots} onClick={() => setPicking(true)}><IconFolder size={16} />{directoryLabel || t('personal.chooseDirectory')}</button></div>
     <div className="personal-setting-line"><span>{t('personal.agent')}</span><AgentPicker api={api} agents={agents} value={value.agent ?? ''} onChange={agent => setValue({ ...value, agent, model: null })} /></div>
-    <div className="personal-setting-line"><span>{t('personal.model')}</span><Popover label={t('personal.model')} triggerClassName="context-btn" disabled={!value.agent} trigger={<>{models?.find(m => m.id === value.model)?.label ?? value.model ?? t('auto.modelDefault')}<IconChevron size={12} open /></>}>
-      {close => <><button className="pop-item compact" role="menuitemradio" aria-checked={!value.model} onClick={() => { setValue({ ...value, model: null }); close(); }}>{t('auto.modelDefault')}</button>
-        {models?.map(m => <button key={m.id} className="pop-item compact" role="menuitemradio" aria-checked={m.id === value.model} onClick={() => { setValue({ ...value, model: m.id }); close(); }}>{m.label}</button>)}
-        {!models && !modelError && <p>{t('common.loading')}</p>}
+    <div className="personal-setting-line"><span>{t('personal.model')}</span><Popover label={t('personal.model')} placement="below" panelClassName="personal-models" triggerClassName="context-btn" disabled={!value.agent} trigger={<>{!models && !modelError ? t('common.loading') : modelError ? t('common.retry') : models?.find(m => m.id === value.model)?.label ?? value.model ?? t('auto.modelDefault')}<IconChevron size={12} open /></>}>
+      {close => <>{models && models.length > 10 && <label className="pop-search"><IconSearch size={15} /><input aria-label={t('personal.searchModels')} placeholder={t('personal.searchModels')} value={query} onChange={e => setQuery(e.target.value)} /></label>}<div className="pop-scroll"><button className="pop-item compact" role="menuitemradio" aria-checked={!value.model} onClick={() => { setValue({ ...value, model: null }); close(); }}>{t('auto.modelDefault')}</button>
+        {models?.filter(m => `${m.label} ${m.id}`.toLowerCase().includes(query.trim().toLowerCase())).map(m => <button key={m.id} className="pop-item compact" role="menuitemradio" aria-checked={m.id === value.model} onClick={() => { setValue({ ...value, model: m.id }); close(); }}>{m.label}</button>)}
+        </div>{!models && !modelError && <p role="status">{t('common.loading')}</p>}
         {modelError && <p className="panel-error" role="alert">{modelError} <button className="ghost" onClick={() => setRetry(n => n + 1)}>{t('common.retry')}</button></p>}
       </>}
     </Popover></div>

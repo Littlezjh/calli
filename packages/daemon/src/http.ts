@@ -71,6 +71,7 @@ const GLOBAL_EVENT_TYPES = new Set([
   'input.request',
   'input.resolved',
   'todo.updated',
+  'agent.modelsChanged',
   // Not a thread event: written by the extension host's own subscription below, like schedules.changed.
   'extensions.changed',
 ]);
@@ -307,7 +308,7 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (method === 'PUT') { manager.personal.putSettings(await readJson(req)); return sendJson(res, 200, await manager.personal.settingsView()); }
     }
     if (path === '/api/wishes' && method === 'GET') return sendJson(res, 200, url.searchParams.get('summary') === 'true' ? { count: manager.personal.store.wishCount() } : manager.personal.store.listWishes());
-    if (parts[1] === 'todos' && parts[2] && parts[3] === 'delegate' && method === 'POST') return sendJson(res, 201, await manager.personal.delegate(parts[2]));
+    if (parts[1] === 'todos' && parts[2] && parts[3] === 'delegate' && method === 'POST') return sendJson(res, 201, await manager.personal.delegate(parts[2], await readJson(req)));
     if (parts[1] === 'todos' && parts[2] && parts[3] === 'note') {
       if (method === 'GET') return sendJson(res, 200, manager.personal.note(parts[2]));
       if (method === 'PUT') return sendJson(res, 200, manager.personal.writeNote(parts[2], await readJson(req)));
@@ -1030,6 +1031,10 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (method === 'POST' && sub === 'handover-thread') {
         const body = await readJson(req);
         return sendJson(res, 201, await manager.createHandoverThread(threadId, body.agent, body.model, body.mode));
+      }
+      if (method === 'POST' && sub === 'takeover') {
+        const body = await readJson(req);
+        return sendJson(res, 201, await manager.takeOver(threadId, body.agent, body.model, body.note));
       }
       if (method === 'DELETE' && sub === 'handover-link') {
         return sendJson(res, 200, manager.detachAutomaticHandover(threadId));

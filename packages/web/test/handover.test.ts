@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { handoverHistoryKey, latestHandoverThread } from '../src/handover';
+import { handoverHistoryKey, latestHandoverThread, takeoverMention } from '../src/handover';
 import type { Thread } from '../src/api';
 
 const segment = (id: string, parent?: string) => ({ id, createdAt: id, handover: parent ? { sourceId: parent, mode: 'continue' } : null }) as Thread;
@@ -24,4 +24,15 @@ test('branch relations leave each conversation independent and reset loaded ance
   assert.notEqual(handoverHistoryKey(c, [a, b, c]), key);
   delete b.handover!.mode;
   assert.equal(latestHandoverThread(a, [a, b, c]).id, 'a');
+});
+
+test('one local instance brought in with @ takes over only while the thread is out of plan', () => {
+  const agent = { id: 'claude2', label: 'Claude Code 2', kind: 'agent' } as const;
+  assert.equal(takeoverMention([agent], true, 'claude3'), agent);
+  assert.equal(takeoverMention([agent], false, 'claude3'), null, 'a working lead is sent work as before');
+  assert.equal(takeoverMention([agent, { id: 'pi', label: 'pi', kind: 'agent' }], true, 'claude3'), null);
+  assert.equal(takeoverMention([{ id: 'm', label: 'worker', kind: 'member' }], true, 'claude3'), null);
+  assert.equal(takeoverMention([{ ...agent, host: 'box' }], true, 'claude3'), null);
+  assert.equal(takeoverMention([agent], true, 'claude2'), null, 'not the stranded instance itself');
+  assert.equal(takeoverMention([], true), null);
 });

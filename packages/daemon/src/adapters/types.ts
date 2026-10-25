@@ -343,6 +343,10 @@ export interface AgentAdapter {
   realtimeSupport?(): Promise<{ supported: boolean; reason?: string; login?: 'ready' | 'required' }>;
   /** Models the user can pick from. May start a short-lived process to ask the agent. */
   models(refresh?: boolean): Promise<ModelOption[]>;
+  /** A background catalog or capability probe changed the last published list. */
+  onModelsChanged?: (models: ModelOption[]) => void;
+  /** Resolve deferred image capabilities before accepting an image attachment. */
+  modelForImages?(model: string | null): Promise<ModelOption | undefined>;
   /** Read-only runtime identity; no prompt, login or config write. */
   diagnose?(): Promise<import('./diagnostics.js').RuntimeDiagnostic>;
   /**

@@ -162,6 +162,8 @@ export class CoordinationManager {
     this.chain = next.catch(() => undefined);
     return next;
   }
+  /** Whether the thread leads a collaboration, so its successor would take the lead. */
+  leads(id: string): boolean { return this.teams.has(id); }
   private team(id: string): Team | undefined {
     return this.teams.get(id) ?? [...this.teams.values()].find(t => t.members.some(m => m.id === id) || t.retiredMembers?.some(m => m.id === id));
   }

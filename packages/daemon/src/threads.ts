@@ -33,7 +33,7 @@ import { findFiles, listDir, readText, type Listing, type TextFile } from './bro
 import { referencedFile } from './artifacts.js';
 import { imagePathNote, MAX_IMAGES, sniffImageType, sniffSvg, type AttachmentStore, type StoredAttachment, type StoredVideo } from './attachments.js';
 import { HttpError } from './errors.js';
-import { handoverContext, handoverPrompt, synthesizeHandover, turnMessage } from './handover.js';
+import { handoverBrief, handoverContext, handoverPrompt, synthesizeBrief, synthesizeHandover, turnMessage } from './handover.js';
 import { McpManager } from './mcp.js';
 import { SkillsManager } from './skills.js';
 import { isWithinWorkdirs, Workdirs } from './workdirs.js';
@@ -693,7 +693,7 @@ export class ThreadManager {
         if (!await adapter.available()) return { ...base, checkedAt: new Date().toISOString(), state: 'missing', message: '没有找到 CLI，请检查该实例的命令和 PATH。', version: null, protocol: null, models: [] };
         const runtime = await adapter.diagnose?.().catch(() => null);
         try {
-          const models = await adapter.models(refresh);
+          const models = await this.adapterModels(adapter, refresh);
           return { ...base, ...runtime, checkedAt: new Date().toISOString(), state: models.length ? 'ready' : 'empty',
             message: models.length ? '模型读取成功。登录有效性以实际请求结果为准。' : 'CLI 可启动，但未返回可选模型。请检查原生 CLI 的登录、模型配置和套餐。', models };
         } catch (error) { return { ...base, ...runtime, checkedAt: new Date().toISOString(), ...diagnosticFailure(error), models: [] }; }
@@ -703,10 +703,22 @@ export class ThreadManager {
     return entry.value;
   }
 
+  private adapterModels(adapter: AgentAdapter, refresh = false): Promise<ModelOption[]> {
+    adapter.onModelsChanged = models => {
+      // Instance ids can differ from adapter ids; removed/replaced instances must not publish.
+      const agent = [...this.adapters].find(([, current]) => current === adapter)?.[0];
+      if (!agent) return;
+      const event: StoredEvent = { threadId: '', seq: 0, turnId: null, type: 'agent.modelsChanged',
+        ts: new Date().toISOString(), data: { agent, models } };
+      for (const listener of this.listeners) listener(event);
+    };
+    return adapter.models(refresh);
+  }
+
   async listModels(agent: string): Promise<ModelOption[]> {
     const adapter = this.adapters.get(agent);
     if (!adapter) throw new HttpError(404, `unknown agent: ${agent}`);
-    return adapter.models();
+    return this.adapterModels(adapter);
   }
 
   /** Turns of any thread, archived ones too, in which the words were said. */
@@ -1274,7 +1286,7 @@ export class ThreadManager {
   private async validateModel(agent: string, model: string): Promise<string> {
     const adapter = this.adapters.get(agent);
     if (!adapter) throw new HttpError(400, `unknown agent: ${agent}`);
-    const options: ModelOption[] = await adapter.models();
+    const options: ModelOption[] = await this.adapterModels(adapter);
     if (!options.some((o) => o.id === model)) throw new HttpError(400, `unknown model for ${agent}: ${model}`);
     return model;
   }
@@ -1295,7 +1307,7 @@ export class ThreadManager {
    * an entry with the id "default" if the agent has one, else the entry it marks as its default.
    */
   private async modelOption(adapter: AgentAdapter, model: string | null): Promise<ModelOption | undefined> {
-    const options = await adapter.models();
+    const options = await this.adapterModels(adapter);
     if (model !== null) return options.find((o) => o.id === model);
     return options.find((o) => o.id === 'default') ?? options.find((o) => o.isDefault);
   }
@@ -1882,7 +1894,8 @@ export class ThreadManager {
     if (rawImages.length > 0) {
       const adapter = this.adapters.get(thread.agent);
       if (!adapter?.capabilities.images) throw new HttpError(400, `${thread.agent} does not accept images`);
-      const option = await this.modelOption(adapter, thread.model);
+      let option = await this.modelOption(adapter, thread.model);
+      if (adapter.modelForImages) option = await adapter.modelForImages(thread.model);
       if (option?.images === false && !option.imagesVia) throw new HttpError(400, `${option.label} cannot read images; pick another model`);
       // The model lookup above can take a moment, so check again before claiming the thread.
       if (this.running.has(threadId)) throw new HttpError(409, 'a turn is already running in this thread');
@@ -1954,32 +1967,38 @@ export class ThreadManager {
   /**
    * The handover summary: what the agent wrote in its handover turn, or — when the turn failed or
    * none was run — one the hub synthesizes from the event log, which holds the whole process.
+   * `brief` is for a successor the hub starts itself: it can read the source with `limi`, so it gets
+   * where to look and a few lines of progress. Without it the text stands alone, to copy anywhere.
    */
   async handoverSummary(
     threadId: string,
     turnId: string | null,
     target?: string,
+    brief = false,
   ): Promise<{ pending: true } | { summary: string; source: 'agent' | 'log' }> {
     const thread = this.threadView(threadId);
     const events = this.listEventsSince(threadId, 0);
     const adapter = this.adapters.get(thread.agent);
-    const location = await adapter?.sessionLocation?.(thread.agentSessionId, thread.cwd);
     const checkout = await findCheckout(thread.cwd);
-    const context = handoverContext({
-      threadId,
-      title: thread.title,
-      agentId: thread.agent,
-      agentLabel: adapter?.label ?? thread.agent,
-      adapter: adapter?.id ?? '未知',
-      cwd: thread.cwd,
-      cwdReal: thread.cwdReal,
-      worktree: checkout && !samePath(checkout.top, checkout.main)
-        ? { root: checkout.top, branch: checkout.branch, main: checkout.main }
-        : thread.worktree ? { root: thread.worktree.root, branch: thread.worktree.branch, main: thread.worktree.of } : null,
-      sessionId: thread.agentSessionId,
-      ...location,
-      resumeCommand: location?.resumeCommand ? `cd ${shellQuote(thread.cwd)} && ${location.resumeCommand}` : thread.resumeCommand,
-    }) + this.personal.context(threadId);
+    const worktree = checkout && !samePath(checkout.top, checkout.main)
+      ? { root: checkout.top, branch: checkout.branch, main: checkout.main }
+      : thread.worktree ? { root: thread.worktree.root, branch: thread.worktree.branch, main: thread.worktree.of } : null;
+    const location = brief ? undefined : await adapter?.sessionLocation?.(thread.agentSessionId, thread.cwd);
+    const context = (brief
+      ? handoverBrief({ threadId, from: adapter?.label ?? thread.agent, cwd: thread.cwd, worktree, lead: this.coordination?.leads(threadId) })
+      : handoverContext({
+        threadId,
+        title: thread.title,
+        agentId: thread.agent,
+        agentLabel: adapter?.label ?? thread.agent,
+        adapter: adapter?.id ?? '未知',
+        cwd: thread.cwd,
+        cwdReal: thread.cwdReal,
+        worktree,
+        sessionId: thread.agentSessionId,
+        ...location,
+        resumeCommand: location?.resumeCommand ? `cd ${shellQuote(thread.cwd)} && ${location.resumeCommand}` : thread.resumeCommand,
+      })) + this.personal.context(threadId);
     if (turnId) {
       const turnEvents = events.filter((e) => e.turnId === turnId);
       if (turnEvents.length === 0) throw new HttpError(404, 'no such turn');
@@ -1987,6 +2006,7 @@ export class ThreadManager {
       const written = turnMessage(turnEvents).trim();
       if (written && !turnEvents.some(e => e.type === 'turn.error' || e.type === 'turn.done' && e.data.stopReason === 'cancelled')) return { summary: `${context}\n\n${written}`, source: 'agent' };
     }
+    if (brief) return { summary: [context, synthesizeBrief(events)].filter(Boolean).join('\n\n'), source: 'log' };
     const successor = (target ? this.adapters.get(target)?.label ?? target : '另一个 agent');
     const from = this.adapters.get(thread.agent)?.label ?? thread.agent;
     return { summary: `${context}\n\n${synthesizeHandover(events, { title: thread.title, from, target: successor })}`, source: 'log' };
@@ -1996,7 +2016,8 @@ export class ThreadManager {
   canSwitchHandoverModel(id: string): boolean { return this.adapters.get(id)?.capabilities.modelSwitch === true; }
   async handoverModel(agent: string, model?: string | null): Promise<string | undefined> {
     try {
-      const models = await this.adapters.get(agent)?.models() ?? [];
+      const adapter = this.adapters.get(agent);
+      const models = adapter ? await this.adapterModels(adapter) : [];
       return model ? models.find(m => m.id === model)?.id : models.find(m => m.isDefault)?.id;
     } catch { return model || undefined; }
   }
@@ -2029,9 +2050,9 @@ export class ThreadManager {
         summaryTurn = null;
       }
     }
-    const result = await this.handoverSummary(id, summaryTurn, target);
+    const result = await this.handoverSummary(id, summaryTurn, target, true);
     if ('summary' in result) return result.summary;
-    const fallback = await this.handoverSummary(id, null, target);
+    const fallback = await this.handoverSummary(id, null, target, true);
     if ('summary' in fallback) return fallback.summary;
     throw new HttpError(409, 'handover summary unavailable');
   }
@@ -2051,7 +2072,27 @@ export class ThreadManager {
     }, true);
   }
 
-  async executeAutoHandover(id: string, target: HandoverTarget, summary: string, failedTurn: string | null): Promise<void> {
+  /**
+   * The person hands the thread to `agent` now, because its own agent cannot go on (its plan ran
+   * out). Same path as an automatic handover, without asking the source for a summary first: the
+   * successor takes over the conversation, its queue and, in a collaboration, its place.
+   */
+  async takeOver(id: string, agent: unknown, model: unknown, note: unknown): Promise<ThreadView> {
+    const thread = this.getThread(id);
+    if (typeof agent !== 'string' || !this.adapters.has(agent) || agent === thread.agent && !model) throw new HttpError(400, 'invalid handover target');
+    if (model !== undefined && typeof model !== 'string') throw new HttpError(400, 'invalid model');
+    if (note !== undefined && (typeof note !== 'string' || note.length > 20_000)) throw new HttpError(400, 'invalid note');
+    if (this.running.has(id) || this.threadView(id).waiting) throw new HttpError(409, 'the thread is busy');
+    this.autoHandover.cancel(id);
+    // The turn that failed is carried over, so the successor picks up the ask that was cut off.
+    const last = this.store.listTurns(id).at(-1)?.turnId ?? null;
+    const failed = last && this.store.listTurnEvents(id, last).some(e => e.type === 'turn.error') ? last : null;
+    const result = await this.handoverSummary(id, null, agent, true);
+    if (!('summary' in result)) throw new HttpError(409, 'handover summary unavailable');
+    return this.executeAutoHandover(id, { agent, ...(model ? { model } : {}) }, result.summary, failed, note?.trim());
+  }
+
+  async executeAutoHandover(id: string, target: HandoverTarget, summary: string, failedTurn: string | null, note?: string): Promise<ThreadView> {
     const source = this.getThread(id);
     const successor = await this.createHandoverThread(id, target.agent, target.model, 'continue');
     this.autoHandover.inherit(id, successor.id);
@@ -2069,7 +2110,7 @@ export class ThreadManager {
     const videos = ((failed?.data.videos ?? []) as Array<{ id: string }>).map(v => v.id);
     const retry = failed ? String(failed.data.displayText ?? failed.data.text ?? '') : '';
     const turnId = randomUUID();
-    const text = summary + (retry ? '\n\n## 继续未完成的这一轮\n\n' + retry : '');
+    const text = summary + (retry ? '\n\n## 继续未完成的这一轮\n\n' + retry : '') + (note ? '\n\n## 用户补充\n\n' + note : '');
     // Reserve the mailbox identity in the same synchronous claim as the first successor turn.
     await this.startTurn(successor.id, { text, images, videos, handoverFrom: id }, {
       turnId, source: { handover: id }, displayText: text,
@@ -2080,6 +2121,7 @@ export class ThreadManager {
     this.setQueue(id, []);
     if (queue.length) this.setQueue(successor.id, [...(this.queues.get(successor.id) ?? []), ...queue]);
     this.startNextQueued(successor.id);
+    return this.threadView(successor.id);
   }
 
   /** Takes a waiting message out of the queue and hands it back, so the page can edit and resend it. */

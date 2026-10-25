@@ -1,4 +1,4 @@
-import type { Thread } from './api';
+import type { AgentMention, Thread } from './api';
 
 /** Follow descendants only: another branch of the same root is not this conversation's recipient. */
 export function latestHandoverThread(thread: Thread, threads: Thread[]): Thread {
@@ -26,4 +26,13 @@ export function handoverHistoryKey(thread: Thread | undefined, threads: Thread[]
     thread = thread.handover?.mode === 'continue' ? threads.find(t => t.id === thread!.handover!.sourceId) : undefined;
   }
   return path.join('/');
+}
+
+/**
+ * While the thread's own agent is out of plan, bringing one other local instance in with @ hands it
+ * the thread instead of asking the stranded agent to send it work.
+ */
+export function takeoverMention(mentions: AgentMention[], exhausted: boolean, current?: string): AgentMention | null {
+  const [only] = mentions;
+  return exhausted && mentions.length === 1 && only.kind === 'agent' && !only.host && only.id !== current ? only : null;
 }

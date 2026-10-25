@@ -29,7 +29,7 @@ test('personal plans, delegation, proposals, lazy details, follow-up, wishes and
     const defaults = await json(daemon, '/api/personal/settings');
     assert.equal(defaults.directoryIsDefault, true); assert.equal(defaults.agent, 'pi'); assert.equal(defaults.model, null);
     await page.getByLabel('新计划', { exact: true }).fill('帮我安排周末行程');
-    await page.getByRole('button', { name: '交给 agent', exact: true }).click();
+    await page.getByRole('button', { name: '交给 agent', exact: true }).click(); await page.getByRole('menuitem', { name: '新开私人对话', exact: true }).click();
     await page.locator('.todos-page').waitFor({ state: 'detached' });
     assert.equal(await page.getByRole('dialog', { name: '私人设置' }).count(), 0);
     await plans(page); await page.locator('.personal-summary').click();
@@ -62,7 +62,7 @@ test('personal plans, delegation, proposals, lazy details, follow-up, wishes and
     await plans(page);
     await page.getByLabel('新计划', { exact: true }).fill('联系房东确认日期'); await page.getByLabel('新计划', { exact: true }).press('Enter');
     const existing = page.locator('.todo', { hasText: '联系房东确认日期' }); await existing.waitFor(); assert.equal(await existing.locator('.todo-details-toggle').count(), 0); await existing.hover();
-    await existing.getByRole('button', { name: '交给 agent', exact: true }).click();
+    await existing.getByRole('button', { name: '交给 agent', exact: true }).click(); await page.getByRole('menuitem', { name: '新开私人对话', exact: true }).click();
     await page.locator('.todos-page').waitFor({ state: 'detached' });
     todos = await json(daemon, '/api/todos'); assert.equal(todos.find(t => t.text === '联系房东确认日期').threads.length, 1);
     for (const text of ['周五前交报销', '确认合同修改']) await json(daemon, '/api/todos', 'POST', { text });

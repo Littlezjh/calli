@@ -3,7 +3,7 @@ import { ApiError, type AgentInfo, type Api, type Section, type Thread, type Tod
 import { copyText } from '../clipboard';
 import { folderName } from '../paths';
 import { ChoiceDialog, Dialog } from './Dialog';
-import { HandoverDialog, handoverMessage } from './HandoverDialog';
+import { HandoverDialog } from './HandoverDialog';
 import { Menu, type MenuEntry } from './Menu';
 import { IconArchive, IconCheck, IconCopy, IconDot, IconEdit, IconFork, IconHand, IconList, IconPin, IconPlus, IconTerminal, IconTrash, IconWorktree } from './icons';
 import type { ToastState } from './Toast';
@@ -424,19 +424,17 @@ export function useThreadActions(deps: Deps) {
     /** Opens the handover, to pick who takes over or copy what it says. */
     handover: (thread: Thread) => setDialog({ kind: 'handover', thread }),
     /**
-     * Hands the thread to `agent` at once: a new conversation in the same place, sent the handover the
-     * hub assembles from the log. For when the thread's own agent cannot go on, so it is not asked.
+     * Hands the thread to `agent` at once: the hub continues it in a new conversation in the same
+     * place, with its queue and collaboration lead. For when the thread's own agent cannot go on, so
+     * it is not asked. `note` is what the person adds for the successor.
      */
-    takeOver: async (thread: Thread, agent: string) => {
+    takeOver: async (thread: Thread, agent: string, note?: string) => {
       if (!api) return;
       try {
-        const result = await api.handoverSummary(thread.id);
-        if (!('summary' in result)) throw new Error(t('handover.notReady'));
-        const successor = await api.createHandoverThread(thread.id, agent, undefined, 'continue');
-        await api.startTurn(successor.id, handoverMessage(api, result.summary));
-        onThreadOpen(successor);
+        onThreadOpen(await api.takeOver(thread.id, agent, note));
       } catch (e) {
         onError(e);
+        throw e;
       }
     },
     /** Forks so that the copy ends with the given turn. */

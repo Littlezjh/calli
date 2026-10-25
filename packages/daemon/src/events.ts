@@ -38,6 +38,8 @@ export type EventType =
   | 'goal.updated'
   | 'approval.request'
   | 'approval.resolved'
+  /** Deferred model capabilities changed. Broadcast only, never stored in an event log. */
+  | 'agent.modelsChanged'
   /** Something on the plan page changed. Broadcast only, never stored in an event log. */
   | 'todo.updated'
   /** The scheduled-task list changed. Broadcast only, never stored in an event log. */

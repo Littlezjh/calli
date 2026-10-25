@@ -288,7 +288,9 @@ export class ApiError extends Error {
     readonly details: Record<string, unknown> = {},
     readonly status = 0,
   ) {
-    super(message);
+    const missingEndpoint = status === 404 && (message === 'not found' || message === 'HTTP 404');
+    super(missingEndpoint ? t('api.updateBackend') : message);
+    if (missingEndpoint) this.name = '';
   }
 }
 
@@ -328,6 +330,7 @@ export interface Todo {
   dueAt?: string | null;
   followUpAt?: string | null;
   followUpPaused?: boolean;
+  hasNote?: boolean;
   noteUpdatedAt?: string | null;
   proposed?: boolean;
   rev?: number;
@@ -808,7 +811,7 @@ export class Api {
   savePersonalSettings(value: PersonalSettings): Promise<PersonalSettings> { return this.request('PUT', '/api/personal/settings', value); }
   todoNote(id: string): Promise<TodoNote> { return this.request('GET', `/api/todos/${id}/note`); }
   resolveTodoProposal(id: string, pid: string, action: 'accept' | 'dismiss', rev?: number): Promise<Todo | null> { return this.request('POST', `/api/todos/${id}/proposals/${pid}/${action}`, { rev }); }
-  delegateTodo(id: string): Promise<Thread> { return this.request('POST', `/api/todos/${id}/delegate`, {}); }
+  delegateTodo(id: string, cwd?: string): Promise<Thread> { return this.request('POST', `/api/todos/${id}/delegate`, { cwd }); }
   wishCount(): Promise<{ count: number }> { return this.request('GET', '/api/wishes?summary=true'); }
   wishes(): Promise<Wish[]> { return this.request('GET', '/api/wishes'); }
   pushSettings(): Promise<PushSettings> { return this.request('GET', '/api/push/settings'); }
@@ -1218,6 +1221,10 @@ export class Api {
 
   createHandoverThread(threadId: string, agent: string, model?: string, mode?: 'continue' | 'branch'): Promise<Thread> {
     return this.request('POST', `/api/threads/${threadId}/handover-thread`, { agent, model, mode });
+  }
+  /** Hands the thread to `agent` now: its conversation, queue and any collaboration lead. */
+  takeOver(threadId: string, agent: string, note?: string): Promise<Thread> {
+    return this.request('POST', `/api/threads/${threadId}/takeover`, { agent, note });
   }
   detachAutomaticHandover(threadId: string): Promise<{ detached: string[]; thread: Thread }> {
     return this.request('DELETE', `/api/threads/${threadId}/handover-link`);

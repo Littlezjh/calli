@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AgentAdapter } from './adapters/types.js';
+import { isWithinWorkdirs } from './workdirs.js';
 import { HttpError } from './errors.js';
 import type { Store, TodoPatch, TodoRecord, TodoProposal } from './store.js';
 import type { ThreadManager } from './threads.js';
@@ -90,19 +91,22 @@ export class PersonalService {
     this.store.saveHubSetting('personal', next);
     return next;
   }
-  async delegate(id: string) {
+  async delegate(id: string, input: { cwd?: unknown } = {}) {
     const todo = this.store.getTodo(id);
     if (!todo) throw new HttpError(404, 'todo not found');
     if (todo.done || todo.proposed) throw new HttpError(409, 'accept an open plan before delegating');
     const settings = await this.resolvedSettings(), adapter = settings.agent ? this.adapters.get(settings.agent) : undefined;
     if (!settings.directory || !adapter) throw new HttpError(409, 'personal agent is not configured');
+    if (input.cwd !== undefined && (typeof input.cwd !== 'string' || !input.cwd.trim())) throw new HttpError(400, 'cwd must be a nonempty directory');
+    const cwd = typeof input.cwd === 'string' ? input.cwd : settings.directory;
+    if (!isWithinWorkdirs(cwd, this.manager.allowedWorkdirs)) throw new HttpError(403, 'cwd is not in allowed workdirs');
     const active = this.store.todoThreadIds(id).map(t => this.store.getThread(t)).find(t => t?.status === 'running');
     if (active) return this.manager.threadView(active.id);
-    const thread = await this.manager.createThread({ agent: settings.agent!, cwd: settings.directory, title: todo.text,
+    const thread = await this.manager.createThread({ agent: settings.agent!, cwd, title: todo.text,
       permissionMode: adapter.capabilities.defaultPermissionMode, ...(settings.model ? { model: settings.model } : {}) });
     try {
       const note = this.store.todoNote(id);
-      const text = `由 Limi 交给你的事项。\n事项：${todo.text}\nID：${id}；状态：${todo.state}；归属：${todo.owner}\n接续说明：\n${note.text}\n\n请推进这件事，结束前更新接续说明；需要人确认完成时用 limi todo propose-done。`;
+      const text = `由 Limi 交给你的事项。\n事项：${todo.text}\nID：${id}；状态：${todo.state}；归属：${todo.owner}\n接续说明：\n${note.text}\n\n${this.within(cwd, settings.directory) ? '请推进这件事，结束前更新接续说明；需要人确认完成时用 limi todo propose-done。' : '请推进这件事，并在回复中说明进展与下一步。'}`;
       await this.manager.startTurn(thread.id, { text }, undefined, false, undefined, () => {
         this.store.checkTodoRev(id, todo.rev);
         this.store.linkTodoThread(id, thread.id);

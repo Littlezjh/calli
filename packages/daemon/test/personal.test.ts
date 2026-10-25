@@ -93,15 +93,18 @@ test('todo note previews prefer next steps, skip headings and backfill existing 
       ['## 欠谁什么\nBackground\n## 下一步\n\n## 其他\nUnrelated', ''],
       ['\n# Title\n## Section\n', ''],
       ['', ''],
+      [' \t\r\n　', ''],
     ];
     for (const [index, [note, preview]] of cases.entries()) {
       const todo = store.createTodo(String(index), 'Preview fixture', null);
       store.writeTodoNote(todo.id, note, null, todo.rev);
       assert.equal(store.getTodo(todo.id)?.notePreview, preview);
+      assert.equal(store.getTodo(todo.id)?.hasNote, Boolean(note.trim()));
     }
     const expected = store.listTodos();
     store.close();
     const old = new DatabaseSync(join(dir, 'hub.db'));
+    old.exec("ALTER TABLE todos DROP COLUMN has_note");
     old.exec("UPDATE todos SET note_preview = '## 欠谁什么'; DELETE FROM hub_settings WHERE key = 'todo_note_preview_v2'"); old.close();
     store = new Store(dir);
     assert.deepEqual(store.listTodos(), expected, 'backfill updates only the cached preview');
@@ -582,4 +585,29 @@ test('follow-ups create threads using the effective default directory and availa
     await wait(() => h.store.getThread(run.threadId!)?.status !== 'running');
     assert.ok(h.store.todoProposals(todo.id).some(proposal => proposal.kind === 'done'));
   } finally { await h.close(); }
+});
+
+test('delegation accepts allowed projects without personal credentials and rejects outside or symlink paths', async () => {
+  const h = await setup();
+  const forbidden = mkdtempSync(join(tmpdir(), 'limi-forbidden-'));
+  try {
+    const todo = h.service.create({ text: 'Review project changes' });
+    h.service.writeNote(todo.id, { text: '## 下一步\nCheck the project checklist' });
+    for (const cwd of [forbidden, join(h.dir, '..'), '', 7]) {
+      const response = await h.api(`/api/todos/${todo.id}/delegate`, 'POST', { cwd });
+      assert.equal(response.status, typeof cwd === 'string' && cwd ? 403 : 400);
+    }
+    const link = join(h.dir, 'escape'); symlinkSync(forbidden, link);
+    assert.equal((await h.api(`/api/todos/${todo.id}/delegate`, 'POST', { cwd: link })).status, 403);
+    const response = await h.api(`/api/todos/${todo.id}/delegate`, 'POST', { cwd: h.outside });
+    assert.equal(response.status, 201);
+    const thread = await response.json();
+    assert.equal(thread.cwd, h.outside);
+    assert.equal(h.service.environment(thread.id), undefined);
+    assert.ok(h.store.todoThreadIds(todo.id).includes(thread.id));
+    await wait(() => h.store.getThread(thread.id)?.status !== 'running');
+    const prompt = String(h.store.listEvents(thread.id).find(e => e.type === 'turn.started')?.data.text);
+    assert.match(prompt, /Review project changes/); assert.match(prompt, /Check the project checklist/);
+    assert.doesNotMatch(prompt, /limi todo/);
+  } finally { await h.close(); rmSync(forbidden, { recursive: true, force: true }); }
 });

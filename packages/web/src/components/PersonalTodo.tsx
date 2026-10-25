@@ -50,9 +50,9 @@ export function TodoDetails({ api, todo, onReload, onOpenThread }: { api: Api; t
   return <div className="todo-details">
     {!note && !error && <p role="status">{t('common.loading')}</p>}
     {error && <p role="alert">{error} <button className="ghost" onClick={() => setRetry(n => n + 1)}>{t('common.retry')}</button></p>}
-    {note && <>{note.text.trim() ? sections.map((section, i) => <div className="todo-note-section" key={i}>{section.title && <strong>{section.title}</strong>}<span>{section.lines.join('\n').trim()}</span></div>) : <p>{t('personal.noNote')}</p>}
+    {note && <>{note.text.trim() ? sections.map((section, i) => <div className="todo-note-section" key={i}>{section.title && <strong>{section.title}</strong>}<span>{section.lines.join('\n').trim()}</span></div>) : null}
     </>}
-    <div className="todo-note-source">{note?.updatedAt && <>{t('personal.updated', personalTime(note.updatedAt))}{source && <> · <button className="text-btn" onClick={() => onOpenThread(source.id)}>{source.title}</button></>} · </>}
+    <div className="todo-note-source">{note && !note.text.trim() && <>{t('personal.noNote')} · </>}{note?.text.trim() && note.updatedAt && <>{t('personal.updated', personalTime(note.updatedAt))}{source && <> · <button className="text-btn" onClick={() => onOpenThread(source.id)}>{source.title}</button></>} · </>}
       <Popover label={t(todo.followUpAt ? 'personal.changeFollowUp' : 'personal.setFollowUp')} triggerClassName="text-btn" trigger={t(todo.followUpAt ? 'personal.changeFollowUp' : 'personal.setFollowUp')} disabled={busy} placement="below">
         {close => <>{(['later', 'tomorrow', 'threeDays', 'monday', 'clear'] as const).map(preset => <button key={preset} className="pop-item compact" role="menuitem" onClick={() => void followUp(preset, close)}>{t(`personal.${preset}`)}</button>)}</>}
       </Popover>
