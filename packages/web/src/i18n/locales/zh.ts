@@ -892,6 +892,7 @@ export const zh = {
   'files.download': '下载文件',
   'files.downloading': '准备下载…',
   'files.downloadFailed': '下载失败，再试一次',
+  'files.more': '文件的更多操作',
   'files.files': '文件',
   'files.noted': (n: number) => `已加 ${n} 条注释`,
   'files.backToChat': '回到对话发送',

@@ -6,6 +6,8 @@
  */
 
 let loading: Promise<typeof import('mermaid').default> | null = null;
+// initialize changes global configuration; keep it paired with its render.
+let rendering: Promise<unknown> = Promise.resolve();
 
 /**
  * The theme's own colours, read from the page's variables so a diagram follows the look — light,
@@ -69,16 +71,21 @@ function themeVariables(): Record<string, string> {
 /** Renders one diagram to the SVG markup mermaid produces, themed as the page is. */
 export async function renderMermaidDiagram(code: string, dark = document.documentElement.dataset.theme === 'dark'): Promise<string> {
   loading ??= import('mermaid').then((m) => m.default);
-  const mermaid = await loading;
-  mermaid.initialize({
-    startOnLoad: false,
-    securityLevel: 'strict',
-    darkMode: dark,
-    theme: 'base',
-    themeVariables: themeVariables(),
+  const variables = themeVariables();
+  const result = rendering.then(async () => {
+    const mermaid = await loading!;
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: 'strict',
+      darkMode: dark,
+      theme: 'base',
+      themeVariables: variables,
+    });
+    const { svg } = await mermaid.render(`mmd-${Math.random().toString(36).slice(2)}`, code);
+    return svg;
   });
-  const { svg } = await mermaid.render(`mmd-${Math.random().toString(36).slice(2)}`, code);
-  return svg;
+  rendering = result.catch(() => undefined);
+  return result;
 }
 
 /** Isolate the enlarged inline SVG's IDs, including its CSS and marker references. Called on open. */

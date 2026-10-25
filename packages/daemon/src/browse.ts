@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { closeSync, openSync, readdirSync, readSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -94,7 +95,7 @@ export interface TextFile {
 }
 
 /** A file's text, up to MAX_TEXT_BYTES and cut at a line. A file with a zero byte in its start is binary. */
-export function readText(path: string): TextFile {
+export function readText(path: string): TextFile & { hash: string | null } {
   const size = statSync(path).size;
   const want = Math.min(size, MAX_TEXT_BYTES);
   const buf = Buffer.alloc(want);
@@ -110,14 +111,14 @@ export function readText(path: string): TextFile {
     closeSync(fd);
   }
   let bytes = buf.subarray(0, got);
-  if (bytes.subarray(0, SNIFF_BYTES).includes(0)) return { size, text: null, truncated: false };
+  if (bytes.subarray(0, SNIFF_BYTES).includes(0)) return { size, text: null, truncated: false, hash: null };
   const truncated = size > got;
   if (truncated) {
     // End on a whole line, so the last one shown is not half a line or half a character.
     const lastNewline = bytes.lastIndexOf(0x0a);
     if (lastNewline > 0) bytes = bytes.subarray(0, lastNewline + 1);
   }
-  return { size, text: bytes.toString('utf8'), truncated };
+  return { size, text: bytes.toString('utf8'), truncated, hash: truncated ? null : createHash('sha256').update(bytes).digest('hex') };
 }
 
 /** The most file names a search returns: enough to pick from, not a dump of the project. */

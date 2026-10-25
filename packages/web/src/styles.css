@@ -50,6 +50,7 @@
   --syn-type: color-mix(in srgb, #8a5a00 85%, var(--text));
   --syn-attr: color-mix(in srgb, #1b6f87 85%, var(--text));
   --warn: #c2410c;
+  --writing-todo-bg: color-mix(in srgb, var(--warn) 9%, transparent);
   --danger: #b42318;
   --danger-bg: #fdecea;
   --scrim: rgba(24, 23, 21, 0.32);
@@ -7857,8 +7858,8 @@ input.picker-search {
    what the agent added (a green line down the left). */
 .writing-todo {
   color: var(--warn);
-  background: color-mix(in srgb, var(--warn) 9%, transparent);
-  border-radius: 4px;
+  background: var(--writing-todo-bg);
+  border-radius: var(--radius-sm);
   padding: 1px 4px;
   font-size: 0.92em;
 }
@@ -7875,7 +7876,7 @@ input.picker-search {
   top: 0.45em;
   bottom: 0.45em;
   width: 2px;
-  border-radius: 2px;
+  border-radius: var(--radius-pill);
   background: var(--positive);
 }
 
@@ -8102,7 +8103,7 @@ input.picker-search {
 .files-seg button:hover { color: var(--text); }
 .files-seg button.on { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: var(--shadow-card); }
 .writing-state { display: inline-flex; align-items: center; gap: 6px; flex: none; padding: 0 4px; color: var(--muted); font-size: 12px; white-space: nowrap; }
-.writing-state.dirty::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
+.writing-state.dirty::before { content: ''; width: 6px; height: 6px; border-radius: var(--radius-pill); background: var(--warn); }
 
 /* Editing a body: the same sheet of paper as the preview, typed on through transparent words. */
 .files-viewer.files-editing { display: flex; flex-direction: column; overflow: hidden; background: var(--surface); }
@@ -11231,6 +11232,9 @@ button.trace-step-head:hover { background: var(--hover); }
   .push-settings .personal-setting-line { padding: 10px 0; }
   .push-settings .push-bottom { margin-top: 12px; }
 }
+
+.files-menu-path { padding: 8px 12px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.files-menu-actions { display: flex; flex-direction: column; }
 
 /* Menus inside a dialog escape its scrolling and stacking context. */
 .pop-panel.personal-models { z-index: 72; display: flex; flex-direction: column; overflow: hidden; }

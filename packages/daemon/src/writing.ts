@@ -3,7 +3,7 @@ import { readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, 
 import { homedir } from 'node:os';
 import { extname, join, relative, sep } from 'node:path';
 import { HttpError } from './errors.js';
-import { MAX_TEXT_BYTES } from './browse.js';
+import { MAX_TEXT_BYTES, readText } from './browse.js';
 
 /**
  * Writing mode: the person talks an article out, the agent interviews, records and fills in, draft
@@ -96,7 +96,9 @@ export function newestArticle(cwdReal: string): string | null {
   for (const name of names) {
     if (extname(name).toLowerCase() !== '.md') continue;
     try {
-      const stat = statSync(join(cwdReal, WRITING_DIR, name));
+      const real = realpathSync(join(cwdReal, WRITING_DIR, name));
+      if (!isEditableArticle(real, cwdReal)) continue;
+      const stat = statSync(real);
       if (stat.isFile() && (!best || stat.mtimeMs > best.mtime)) best = { name, mtime: stat.mtimeMs };
     } catch {
       // Gone between listing and looking.
@@ -149,11 +151,17 @@ export function saveArticle(real: string, text: unknown, baseHash: unknown): { h
   if (typeof baseHash !== 'string' || !baseHash) throw new HttpError(400, 'baseHash is required');
   const bytes = Buffer.from(text, 'utf8');
   if (bytes.length > MAX_TEXT_BYTES) throw new HttpError(413, 'the article is larger than 1 MB');
-  const current = contentHash(readFileSync(real));
+  const opened = readText(real);
+  if (opened.truncated) throw new HttpError(413, 'the article is larger than 1 MB');
+  if (opened.hash === null) throw new HttpError(403, 'only text articles can be edited');
+  const current = opened.hash;
   if (current !== baseHash) throw new HttpError(409, 'the article changed since it was opened', { hash: current });
   const temp = `${real}.${randomUUID()}.tmp`;
   try {
-    writeFileSync(temp, bytes);
+    writeFileSync(temp, bytes, { flag: 'wx', mode: statSync(real).mode });
+    // An agent can write while this process prepares the replacement. Check again at commit.
+    const latest = contentHash(readFileSync(real));
+    if (latest !== baseHash) throw new HttpError(409, 'the article changed since it was opened', { hash: latest });
     renameSync(temp, real);
   } catch (error) {
     rmSync(temp, { force: true });

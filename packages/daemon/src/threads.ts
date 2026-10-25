@@ -8,7 +8,7 @@ import type { SystemPrompt, WorkMode } from './adapters/types.js';
 import { diagnosticFailure } from './adapters/diagnostics.js';
 import { turnAnswer, type CoordinationManager, type CoordinationSetup } from './coordination.js';
 import { parseProgress, progressInstructions } from './progress-report.js';
-import { contentHash, habitsPath, isEditableArticle, isWritingStage, newestArticle, noteFile, saveArticle, writingInstructions, type WritingState } from './writing.js';
+import { habitsPath, isEditableArticle, isWritingStage, newestArticle, noteFile, saveArticle, writingInstructions, type WritingState } from './writing.js';
 import { randomUUID } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
@@ -875,15 +875,14 @@ export class ThreadManager {
       this.getThread(threadId);
       const file = readText(note);
       const whole = file.text !== null && !file.truncated;
-      return { root: this.threadView(threadId).cwdReal, path: note, ...file, hash: whole ? contentHash(readFileSync(note)) : null, editable: whole };
+      return { root: this.threadView(threadId).cwdReal, path: note, ...file, editable: whole };
     }
     const { real, root } = this.resolveReadableFile(threadId, rawPath, notFound);
     if (!statSync(real).isFile()) throw notFound;
     const file = readText(real);
     // A whole text file gets a hash, so an edit can tell whether the file moved on under it.
     const whole = file.text !== null && !file.truncated;
-    const hash = whole ? contentHash(readFileSync(real)) : null;
-    return { root, path: real, ...file, hash, editable: whole && isEditableArticle(real, this.threadView(threadId).cwdReal) };
+    return { root, path: real, ...file, editable: whole && isEditableArticle(real, this.threadView(threadId).cwdReal) };
   }
 
   /** Starts writing mode, or moves it to another stage. Takes effect from the next message. */
@@ -937,6 +936,8 @@ export class ThreadManager {
    * so the page can tell a missing file from one it may not show.
    */
   private resolveReadableFile(threadId: string, rawPath: string, notFound: HttpError): { real: string; root: string } {
+    const note = isAbsolute(rawPath) || rawPath.startsWith('file://') ? noteFile(rawPath) : null;
+    if (note) return { real: note, root: this.threadView(threadId).cwdReal };
     try {
       return this.resolveInThread(threadId, rawPath, notFound);
     } catch (error) {

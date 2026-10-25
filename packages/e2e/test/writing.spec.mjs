@@ -103,7 +103,7 @@ const openStages = (page) => page.locator('.writing-chip').click();
 
 test('writing mode on desktop: chip and stages, article preview, write and save, conflicts, end', { timeout: 240000 }, async () => {
   for (const colorScheme of ['light', 'dark']) {
-    const context = await browser.newContext({ viewport: { width: 1400, height: 900 }, colorScheme });
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme });
     try {
       const page = await context.newPage();
       const shot = async (name) => shots && page.screenshot({ path: join(shots, `${prefix}-${name}-desktop-${colorScheme}.png`), animations: 'disabled' });
@@ -210,6 +210,8 @@ test('writing mode on desktop: chip and stages, article preview, write and save,
       const edited = BODY.replace('【待补：写到哪一句时发现想法变了】', '其实那一刻是写到「为什么不直接复用旧接口」的时候。');
       await editor.fill(edited);
       await panel.getByText('未保存', { exact: true }).waitFor();
+      await panel.getByRole('button', { name: '写', exact: true }).click();
+      assert.equal(await editor.inputValue(), edited, 'clicking write twice preserves the draft');
       await shot('edit');
 
       // Unsaved text outlives a reload.
@@ -315,6 +317,7 @@ test('the open body leaves the composer its whole bottom row', { timeout: 120000
       });
       assert.deepEqual(measured.cut, [], 'no button in the composer\u2019s bottom row is cut short');
       assert.ok(measured.chatW >= 440, `the conversation keeps ${measured.chatW}px`);
+      await page.locator('.files-diagram svg').waitFor({ timeout: 20_000 });
       await shot(`width-${vw}`);
     } finally { await context.close(); }
   }
@@ -373,6 +376,13 @@ test('writing mode on a phone: one chip beside the input, full-screen editor', {
       await panel.locator('.files-diagram svg').waitFor({ timeout: 20_000 });
       await page.waitForFunction(() => (document.querySelector('.files-inline-picture img')?.naturalWidth ?? 0) === 240);
       await shot('preview');
+      const titleBox = await panel.locator('.files-title-name').boundingBox();
+      assert.ok(titleBox.width >= 180, `the phone title has ${titleBox.width}px`);
+      assert.equal(await panel.locator('.files-head').getByRole('button', { name: '复制路径' }).count(), 0);
+      await panel.getByRole('button', { name: '文件的更多操作' }).click();
+      await page.getByRole('menu', { name: '文件的更多操作' }).getByRole('menuitem', { name: '下载文件' }).waitFor();
+      await shot('more');
+      await page.keyboard.press('Escape');
       await panel.getByRole('button', { name: '写', exact: true }).click();
       const editor = panel.getByRole('textbox', { name: '正文', exact: true });
       await editor.fill(`${BODY}\n手机上写的一段。\n`);
@@ -412,4 +422,75 @@ test('writing mode on a phone: one chip beside the input, full-screen editor', {
       assert.ok(await fitsWidth(page));
     } finally { await context.close(); }
   }
+});
+
+test('late saves preserve newer typing and cannot change another file; preview refreshes after a turn', { timeout: 120000 }, async () => {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  try {
+    const page = await context.newPage();
+    const { thread, file } = await setup('Writing races', join(daemon.workdir, 'races'));
+    await api(daemon, `/api/threads/${thread.id}/writing`, { method: 'PUT', body: JSON.stringify({ stage: 'second' }) });
+    const habits = join(daemon.notesDir, 'writing.md');
+    mkdirSync(daemon.notesDir, { recursive: true });
+    writeFileSync(habits, '# Habits\n');
+    await select(page, 'Writing races', false);
+    const openBody = async () => {
+      await openStages(page);
+      await page.getByRole('menuitem', { name: /^打开正文/ }).click();
+    };
+    await openBody();
+    const panel = page.locator('.files-panel');
+    const editor = panel.getByRole('textbox', { name: '正文', exact: true });
+    await panel.getByRole('button', { name: '写', exact: true }).click();
+    let release, intercepted;
+    const holdSave = async () => {
+      const reached = new Promise(resolve => { intercepted = resolve; });
+      const gate = new Promise(resolve => { release = resolve; });
+      await page.route('**/writing/text?*', async route => { intercepted(); await gate; await route.continue(); }, { times: 1 });
+      return { reached };
+    };
+    await editor.fill('first save');
+    let held = await holdSave();
+    await panel.getByRole('button', { name: '保存', exact: true }).click();
+    await held.reached;
+    await editor.fill('newer typing');
+    release();
+    await waitFor(() => readFileSync(file, 'utf8') === 'first save', 'the held save committed');
+    await panel.getByRole('button', { name: '保存', exact: true }).waitFor();
+    assert.equal(await editor.inputValue(), 'newer typing');
+    await panel.getByRole('button', { name: '保存', exact: true }).click();
+    await waitFor(() => readFileSync(file, 'utf8') === 'newer typing', 'the next save uses its updated base hash');
+
+    await editor.fill('article saved in background');
+    held = await holdSave();
+    await panel.getByRole('button', { name: '保存', exact: true }).click();
+    await held.reached;
+    await openStages(page);
+    await page.getByRole('menuitem', { name: /写作习惯/ }).click();
+    await panel.locator('h1', { hasText: 'Habits' }).waitFor();
+    await panel.getByRole('button', { name: '写', exact: true }).click();
+    await editor.fill('# My new habits\n');
+    release();
+    await waitFor(() => readFileSync(file, 'utf8') === 'article saved in background', 'background save committed');
+    await panel.getByRole('button', { name: '保存', exact: true }).click();
+    await waitFor(() => readFileSync(habits, 'utf8') === '# My new habits\n', 'the habits editor kept its own base hash');
+
+    await panel.getByRole('button', { name: '关闭文件', exact: true }).click();
+    writeFileSync(file, BODY + '\n```mermaid\nflowchart LR\n A["【待补：例子】"] --> B\n```\n');
+    assert.equal(await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('rah.writing.drafts') ?? '{}')).length), 0, 'background saves clear only their saved draft');
+    await openBody();
+    await page.waitForFunction(() => document.querySelectorAll('.files-diagram svg').length === 2);
+    const first = await panel.locator('.files-diagram').first().innerHTML();
+    await page.emulateMedia({ colorScheme: 'dark' });
+    assert.equal(await panel.locator('.files-diagram svg').count(), 2, 'theme changes keep the existing drawings mounted');
+    await page.waitForFunction(before => document.querySelectorAll('.files-diagram svg').length === 2 && document.querySelector('.files-diagram')?.innerHTML !== before, first);
+    assert.equal(await panel.locator('.files-diagram svg').count(), 2);
+    await panel.getByRole('button', { name: '关闭文件', exact: true }).click();
+    await openBody();
+    await page.waitForFunction(() => document.querySelectorAll('.files-diagram svg').length === 2);
+    writeFileSync(file, '# Changed by the agent\n');
+    await send(page, 'refresh the article');
+    await waitIdle(thread.id);
+    await panel.locator('h1', { hasText: 'Changed by the agent' }).waitFor();
+  } finally { await context.close(); }
 });

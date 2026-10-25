@@ -44,7 +44,7 @@ export function rehypeArticleMarks(): (tree: HastNode) => void {
 }
 
 function walk(node: HastNode): void {
-  if (!node.children) return;
+  if (!node.children || node.tagName === 'pre' || node.tagName === 'code') return;
   const out: HastNode[] = [];
   for (const child of node.children) {
     if (child.type === 'text' && child.value?.includes('【')) out.push(...splitTodo(child.value));

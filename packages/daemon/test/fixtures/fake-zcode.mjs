@@ -159,8 +159,9 @@ async function handle(message) {
         if (turn === activeTurn) done();
         return;
       }
-      if (p.content === 'plan-question' || p.content === 'plan-approval') {
-        const plan = p.content === 'plan-approval';
+      const planCommand = typeof p.content === 'string' ? p.content.split('\n')[0] : '';
+      if (planCommand === 'plan-question' || planCommand === 'plan-approval') {
+        const plan = planCommand === 'plan-approval';
         const question = plan ? 'Review this implementation plan.' : '优先支持哪一端？';
         const answer = await request('interaction/requestUserInput', { sessionId, requestId: 'question-1', prompt: question, questions: [{ question, options: plan ? [{ value: 'approve', label: 'Approve' }] : [{ value: '桌面和手机', label: '桌面和手机' }, { value: '先做桌面', label: '先做桌面' }] }], schema: plan ? { interaction: 'plan_approval' } : {}, input: plan ? { plan: '## 实施计划\n\n1. 阅读代码\n2. 完成验证' } : {} });
         if (turn !== activeTurn) return;

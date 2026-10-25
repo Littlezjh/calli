@@ -892,6 +892,7 @@ export const en: Messages = {
   'files.download': 'Download file',
   'files.downloading': 'Preparing…',
   'files.downloadFailed': 'Download failed, try again',
+  'files.more': 'More file actions',
   'files.files': 'Files',
   'files.noted': (n: number) => (n === 1 ? '1 note added' : `${n} notes added`),
   'files.backToChat': 'Back to the chat to send',

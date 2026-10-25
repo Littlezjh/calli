@@ -1,6 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, statSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server } from 'node:http';
@@ -10,7 +10,7 @@ import { AttachmentStore } from '../src/attachments.js';
 import { createHttpServer } from '../src/http.js';
 import { Store } from '../src/store.js';
 import { ThreadManager } from '../src/threads.js';
-import { contentHash, habitsPath, isEditableArticle, WRITING_STAGES, writingInstructions } from '../src/writing.js';
+import { contentHash, habitsPath, isEditableArticle, newestArticle, WRITING_STAGES, writingInstructions } from '../src/writing.js';
 
 // Writing mode: the stage's way of working rides along with each message, and the person may edit
 // the article under writing/ as plain text, over the version they opened only.
@@ -203,6 +203,8 @@ test('the person’s notes open and save from any thread; nothing else outside i
 
   const opened = (await (await read(habits)).json()) as { editable: boolean; hash: string; text: string };
   assert.equal(opened.editable, true);
+  assert.equal(manager.getThreadDownload(thread.id, habits).path, habits, 'readable notes can also be downloaded');
+  assert.throws(() => manager.getThreadDownload(thread.id, join(notes, 'escape.md')), /no answer|no such file/);
   assert.match(opened.text, /〔新〕/);
   assert.equal((await save(habits, { text: '# 写作习惯\n\n- 不用「你」说教\n', baseHash: opened.hash })).status, 200);
   assert.equal(readFileSync(habits, 'utf8'), '# 写作习惯\n\n- 不用「你」说教\n');
@@ -212,4 +214,33 @@ test('the person’s notes open and save from any thread; nothing else outside i
   assert.equal((await save(join(notes, 'escape.md'), { text: 'x', baseHash: contentHash('secret') })).status, 404, 'a link out of the notes is not one');
   assert.equal(readFileSync(join(outside, 'secret.md'), 'utf8'), 'secret');
   assert.equal(store.getThread(thread.id)!.writing, null, 'saving a note is not writing an article');
+});
+
+
+test('article discovery ignores symlinks outside writing, including a linked directory', () => {
+  const cwd = join(workdir, 'discovery');
+  mkdirSync(join(cwd, 'writing'), { recursive: true });
+  writeFileSync(join(cwd, 'elsewhere.md'), 'outside the writing directory');
+  symlinkSync(join(cwd, 'elsewhere.md'), join(cwd, 'writing', 'escape.md'));
+  assert.equal(newestArticle(cwd), null);
+  const linked = join(workdir, 'linked-writing');
+  mkdirSync(linked);
+  symlinkSync(outside, join(linked, 'writing'));
+  assert.equal(newestArticle(linked), null);
+});
+
+test('competing saves cannot share a base hash and saving preserves file permissions', async () => {
+  const thread = await (await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'echo', cwd: workdir, title: 'Concurrent saves' }) })).json() as { id: string };
+  const path = join(workdir, 'writing', 'race.md');
+  writeFileSync(path, 'original');
+  chmodSync(path, 0o600);
+  const save = (text: string) => api(`/api/threads/${thread.id}/writing/text?path=${encodeURIComponent(path)}`, {
+    method: 'PUT', body: JSON.stringify({ text, baseHash: contentHash('original') }),
+  });
+  const results = await Promise.all([save('first'), save('second')]);
+  assert.deepEqual(results.map(r => r.status).sort(), [200, 409]);
+  assert.equal(statSync(path).mode & 0o777, 0o600);
+  writeFileSync(path, Buffer.from([0, 1, 2]));
+  assert.equal(manager.readThreadText(thread.id, path).editable, false);
+  assert.throws(() => manager.saveWritingText(thread.id, path, 'text', contentHash(Buffer.from([0, 1, 2]))), /only text/);
 });
