@@ -308,6 +308,10 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (method === 'PUT') { manager.personal.putSettings(await readJson(req)); return sendJson(res, 200, await manager.personal.settingsView()); }
     }
     if (path === '/api/wishes' && method === 'GET') return sendJson(res, 200, url.searchParams.get('summary') === 'true' ? { count: manager.personal.store.wishCount() } : manager.personal.store.listWishes());
+    if (path === '/api/todos/summary') {
+      if (method === 'GET') return sendJson(res, 200, manager.personal.summary.status());
+      if (method === 'POST') return sendJson(res, 201, await manager.personal.summary.start(await readJson(req)));
+    }
     if (parts[1] === 'todos' && parts[2] && parts[3] === 'delegate' && method === 'POST') return sendJson(res, 201, await manager.personal.delegate(parts[2], await readJson(req)));
     if (parts[1] === 'todos' && parts[2] && parts[3] === 'note') {
       if (method === 'GET') return sendJson(res, 200, manager.personal.note(parts[2]));

@@ -319,6 +319,7 @@ export interface Section {
 /** One entry on the plan page. `parentId` is a top-level todo or null: one level of nesting. */
 export interface PersonalSettings { directoryIsDefault?: boolean; defaultDirectory?: string; defaultDirectoryDisplay?: string; directoryDisplay?: string | null; directory: string | null; agent: string | null; model: string | null }
 export interface TodoNote { text: string; updatedAt: string | null; threadId: string | null; rev: number }
+export interface TodoSummaryStatus { threadId: string | null; running: boolean; days: number | null; startedAt: string | null }
 export interface Wish { id: string; threadId: string; text: string; createdAt: string }
 export interface PushSettings { enabled: boolean; recipient: string; baseUrl: string; waiting: boolean; failure: boolean; notice: boolean; scheduled: boolean }
 export interface PushRecord { key: string; at: string; kind: string; title: string; result: 'queued' | 'sent' | 'failed' | 'dropped'; reason: string | null }
@@ -812,6 +813,10 @@ export class Api {
   todoNote(id: string): Promise<TodoNote> { return this.request('GET', `/api/todos/${id}/note`); }
   resolveTodoProposal(id: string, pid: string, action: 'accept' | 'dismiss', rev?: number): Promise<Todo | null> { return this.request('POST', `/api/todos/${id}/proposals/${pid}/${action}`, { rev }); }
   delegateTodo(id: string, cwd?: string): Promise<Thread> { return this.request('POST', `/api/todos/${id}/delegate`, { cwd }); }
+  /** The latest "summarize recent days" run on the plan page. */
+  todoSummary(): Promise<TodoSummaryStatus> { return this.request('GET', '/api/todos/summary'); }
+  /** Starts a personal thread that summarizes recent threads into the plan; `heading` is the parent item's text. */
+  summarizeTodos(days: number, title: string, heading: string): Promise<Thread> { return this.request('POST', '/api/todos/summary', { days, title, heading }); }
   wishCount(): Promise<{ count: number }> { return this.request('GET', '/api/wishes?summary=true'); }
   wishes(): Promise<Wish[]> { return this.request('GET', '/api/wishes'); }
   pushSettings(): Promise<PushSettings> { return this.request('GET', '/api/push/settings'); }

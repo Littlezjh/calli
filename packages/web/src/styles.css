@@ -11148,6 +11148,12 @@ button.trace-step-head:hover { background: var(--hover); }
 .personal-summary > svg { flex-shrink: 0; }
 .personal-summary:hover { color: var(--text); }
 .personal-warning { color: var(--warn); }
+.todo-summary-bar { display: flex; align-items: center; gap: 2px; margin-top: 6px; color: var(--muted); font-size: 13px; }
+.todo-summary-run, .todo-summary-range { display: inline-flex; align-items: center; gap: 6px; padding: 2px 6px; border: 0; border-radius: var(--radius-sm); background: none; color: inherit; font: inherit; }
+.todo-summary-run { margin-left: -6px; }
+.todo-summary-range { gap: 3px; color: var(--faint); }
+.todo-summary-run:hover:not(:disabled), .todo-summary-range:hover { background: var(--hover); color: var(--text); }
+.todo-summary-run:disabled { opacity: 0.6; }
 .personal-plan .todo-line { align-items: center; min-height: 35px; gap: 8px; }
 .todo-title { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
 .personal-plan .todo-title { flex: 0 1 auto; }

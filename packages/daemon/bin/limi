@@ -35,7 +35,7 @@ ${personalHelp}`);
   process.exit(0);
 }
 try {
-  if (['todo', 'wish', 'quiet'].includes(args[0])) { await personalMain(args); process.exit(0); }
+  if (['todo', 'threads', 'wish', 'quiet'].includes(args[0])) { await personalMain(args); process.exit(0); }
   if (args[0] === 'notify') { await notifyMain(args.slice(1)); process.exit(0); }
   if (args[0] === 'browser') {
     process.exit(await browserMain(args.slice(1)));

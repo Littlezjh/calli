@@ -11,11 +11,12 @@ import {
   type MouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
-import { ApiError, type AgentInfo, type PersonalSettings, type Api, type Thread, type Todo } from '../api';
+import { ApiError, type AgentInfo, type PersonalSettings, type Api, type Thread, type Todo, type TodoSummaryStatus } from '../api';
 import { buildTodoBoard, indentPlace, linkableThreads, moveTodo, openRows, outdentPlace, type TodoNode, type TodoPlace } from '../todos';
 import { Dialog } from './Dialog';
 import { Menu, type MenuEntry } from './Menu';
-import { IconFile, IconSettings, IconAgent, IconArrowDown, IconArrowUp, IconCheck, IconChevron, IconClose, IconGrip, IconList, IconMore, IconPlus } from './icons';
+import { Popover } from './Popover';
+import { IconFile, IconSettings, IconSparkle, IconAgent, IconArrowDown, IconArrowUp, IconCheck, IconChevron, IconClose, IconGrip, IconList, IconMore, IconPlus } from './icons';
 import { t } from '../i18n';
 
 interface Props {
@@ -48,6 +49,17 @@ function below(e: MouseEvent<HTMLElement>): [number, number] {
 
 /** Whether the done group is open, kept on this device. */
 const SHOW_DONE_KEY = 'rah.todos.showDone';
+const SUMMARY_DAYS_KEY = 'rah.todos.summaryDays';
+const SUMMARY_RANGES = [1, 3, 7, 14];
+
+function readSummaryDays(): number {
+  try {
+    const days = Number(localStorage.getItem(SUMMARY_DAYS_KEY));
+    return SUMMARY_RANGES.includes(days) ? days : 7;
+  } catch {
+    return 7;
+  }
+}
 
 function readShowDone(): boolean {
   try {
@@ -160,6 +172,32 @@ export function TodosPage({ agents, personal, personalError, onPersonalChange, o
   const [wishError, setWishError] = useState('');
   const loadWishes = () => { if (api.demo) return; setWishError(''); void api.wishCount().then(v => setWishCount(v.count)).catch(e => setWishError(String(e))); };
   useEffect(loadWishes, [api, refreshKey]);
+  // "Summarize recent days": a personal thread groups recent threads into the plan. Its result is the
+  // plan itself, so the page stays here; while it runs, the button opens that thread instead.
+  const [summaryDays, setSummaryDays] = useState(readSummaryDays);
+  const [summary, setSummary] = useState<TodoSummaryStatus | null>(null);
+  const [summarizing, setSummarizing] = useState(false);
+  const [pendingSummary, setPendingSummary] = useState(false);
+  useEffect(() => { if (!api.demo) void api.todoSummary().then(setSummary).catch(() => setSummary(null)); }, [api, refreshKey]);
+  const chooseSummaryDays = (days: number) => {
+    setSummaryDays(days);
+    try { localStorage.setItem(SUMMARY_DAYS_KEY, String(days)); } catch { /* the choice lasts until the page reloads */ }
+  };
+  const summarize = async (configured = false) => {
+    if (summarizing) return;
+    if (summary?.running && summary.threadId) { onOpenThread(summary.threadId); return; }
+    if (!configured && personal && !personal.agent) { setPendingSummary(true); setSettingsOpen(true); return; }
+    setSummarizing(true);
+    try {
+      const now = new Date();
+      const thread = await api.summarizeTodos(summaryDays, t('todos.summaryTitle', summaryDays), t('todos.summaryHeading', now.getMonth() + 1, now.getDate()));
+      setPendingSummary(false);
+      setSummary({ threadId: thread.id, running: true, days: summaryDays, startedAt: now.toISOString() });
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409 && e.message === 'personal agent is not configured') { setPendingSummary(true); setSettingsOpen(true); }
+      else onError(e);
+    } finally { setSummarizing(false); }
+  };
   const toggleDetails = (id: string) => setExpanded(previous => { const next = new Set(previous); if (next.has(id)) next.delete(id); else { if (narrow) next.clear(); next.add(id); } return next; });
   const delegate = async (request: DelegateRequest, configured = false) => {
     if (delegating) return;
@@ -515,6 +553,18 @@ export function TodosPage({ agents, personal, personalError, onPersonalChange, o
         {!api.demo && <button className="personal-summary" onClick={() => setSettingsOpen(true)} disabled={!personal}>
           {personal?.directory && personal.agent ? <><span>{t('personal.private')}</span><span className="personal-summary-directory">{personal.directoryIsDefault ? t('personal.defaultDirectory', personal.directoryDisplay ?? personal.directory) : personal.directoryDisplay ?? personal.directory} · </span><span>{agents.find(agent => agent.id === personal.agent)?.label ?? personal.agent}{personal.model && ` · ${personal.model}`}</span></> : t(personal ? 'personal.setup' : 'common.loading')}<IconSettings size={14} />
         </button>}
+        {!api.demo && <div className="todo-summary-bar">
+          <button type="button" className="todo-summary-run" disabled={!personal || summarizing} title={summary?.running ? undefined : t('todos.summaryHint')} onClick={() => void summarize()}>
+            <IconSparkle size={14} />{summary?.running ? t('todos.summarizing') : t('todos.summarize')}
+          </button>
+          {!summary?.running && <Popover label={t('todos.summaryRangeLabel')} triggerLabel={t('todos.summaryRangeLabel')} triggerClassName="todo-summary-range" placement="below"
+            trigger={<>{t('todos.summaryRange', summaryDays)}<IconChevron size={12} open /></>}>
+            {close => <div role="menu">{SUMMARY_RANGES.map(days => <button key={days} type="button" className="pop-item compact" role="menuitemradio" aria-checked={days === summaryDays} onClick={() => { chooseSummaryDays(days); close(); }}>
+              <span className="pop-item-label">{t('todos.summaryRange', days)}</span>
+              {days === summaryDays && <span className="pop-item-check"><IconCheck size={16} /></span>}
+            </button>)}</div>}
+          </Popover>}
+        </div>}
         {personalError && <p className="panel-error" role="alert">{personalError} <button className="ghost" onClick={onPersonalRetry}>{t('common.retry')}</button></p>}
       </header>
       {todos.some(todo => todo.proposals?.length) && <section className="todo-proposals" aria-label={t('personal.confirm')}><p>{t('personal.confirm')}</p>{todos.flatMap(todo => (todo.proposals ?? []).map(proposal => <div key={proposal.id} className="todo-proposal">
@@ -555,7 +605,7 @@ export function TodosPage({ agents, personal, personalError, onPersonalChange, o
           await api.linkTodo(id, threadId); setLinkRequest(null); onReload();
         })().catch(onError).finally(() => setDelegating(false));
       }} />}
-      {settingsOpen && personal && <PersonalSettingsDialog api={api} agents={agents} initial={personal} onClose={() => { setSettingsOpen(false); setPendingDelegate(null); }} onSave={value => { onPersonalChange(value); setSettingsOpen(false); if (pendingDelegate) void delegate(pendingDelegate, true); }} />}
+      {settingsOpen && personal && <PersonalSettingsDialog api={api} agents={agents} initial={personal} onClose={() => { setSettingsOpen(false); setPendingDelegate(null); setPendingSummary(false); }} onSave={value => { onPersonalChange(value); setSettingsOpen(false); if (pendingDelegate) void delegate(pendingDelegate, true); if (pendingSummary) void summarize(true); }} />}
       {board.done.length > 0 && (
         <div className="todos-done-group">
           <button type="button" className="todos-done-head" aria-expanded={showDone} onClick={toggleDone}>

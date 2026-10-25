@@ -9,6 +9,7 @@ import { isWithinWorkdirs } from './workdirs.js';
 import { HttpError } from './errors.js';
 import type { Store, TodoPatch, TodoRecord, TodoProposal } from './store.js';
 import type { ThreadManager } from './threads.js';
+import { SummaryService } from './summary.js';
 
 // Keep the default location in one place so its final component can change independently.
 const PERSONAL_DIRECTORY = ['.limi', 'personal'] as const;
@@ -36,11 +37,37 @@ const time = (value: unknown): string | null => {
   return new Date(value).toISOString();
 };
 
+/** Delegation starts a new work thread; linked threads are records, not a handover chain. */
+function delegationPrompt(todo: TodoRecord, note: string, personal: boolean): string {
+  const clarify = '没有接续说明，或事项太笼统、看不出要交付什么时，这一轮只做澄清：在回复中用 1～3 个具体问题问人，每个问题给出你建议的默认选项，不要自己猜着开工。';
+  const workflow = personal
+    ? `先用 limi todo show ${todo.id} 读取事项与最新 rev。${clarify}
+澄清时用 limi todo update ${todo.id} --rev N --state waiting --waiting-on "等你说明目标" --note-file FILE，把事项设为等待，并写一版接续说明：用「## 欠谁什么」写已知部分，「## 定了什么」「## 做到哪」只写已知事实，「## 下一步」写「等回答后……」。
+再用 limi notify --text-file FILE 发一句话提醒人来回答，然后结束本轮。人回复后再按回答推进。
+目标清楚且已有接续说明时，直接按说明的「下一步」推进；结束前更新接续说明，需要人确认完成时用 limi todo propose-done。`
+    : `${clarify}
+本线程没有事项管理凭证：需要澄清时只在回复中提问并结束本轮，人回复后再按回答推进。
+目标清楚且已有接续说明时，直接按说明的「下一步」推进；结束前在回复中写进展和更新后的接续说明，需要人确认完成时向人提议确认。`;
+  return `这是一件新交给你的事，不是交接；这个线程就是它的工作线程，没有更早的对话需要读。
+由 Limi 交给你的事项。
+事项：${todo.text}
+ID：${todo.id}；状态：${todo.state}；归属：${todo.owner}
+接续说明：
+${note.trim() ? note : '尚未写入。'}
+
+${workflow}
+关联线程只是记录；不要用 handover/history 查关联线程，也不要翻本地会话文件找上下文。
+事项涉及不可逆操作（提交、付款、发消息、删除、推送代码）时，先停下来问人，得到明确同意后再操作。`;
+}
+
 export class PersonalService {
   private readonly credentials = new Map<string, string>();
   private readonly introduced = new Set<string>();
   socket = '';
-  constructor(readonly store: Store, private readonly manager: ThreadManager, private readonly adapters: Map<string, AgentAdapter>) {}
+  readonly summary: SummaryService;
+  constructor(readonly store: Store, private readonly manager: ThreadManager, private readonly adapters: Map<string, AgentAdapter>) {
+    this.summary = new SummaryService(store, manager, this, adapters);
+  }
   private storedSettings(): PersonalSettings { return this.store.hubSetting('personal', { directory: null, agent: null, model: null }); }
   directory(): string {
     const configured = this.storedSettings().directory;
@@ -106,7 +133,7 @@ export class PersonalService {
       permissionMode: adapter.capabilities.defaultPermissionMode, ...(settings.model ? { model: settings.model } : {}) });
     try {
       const note = this.store.todoNote(id);
-      const text = `由 Limi 交给你的事项。\n事项：${todo.text}\nID：${id}；状态：${todo.state}；归属：${todo.owner}\n接续说明：\n${note.text}\n\n${this.within(cwd, settings.directory) ? '请推进这件事，结束前更新接续说明；需要人确认完成时用 limi todo propose-done。' : '请推进这件事，并在回复中说明进展与下一步。'}`;
+      const text = delegationPrompt(todo, note.text, this.within(thread.cwd, settings.directory));
       await this.manager.startTurn(thread.id, { text }, undefined, false, undefined, () => {
         this.store.checkTodoRev(id, todo.rev);
         this.store.linkTodoThread(id, thread.id);
@@ -168,9 +195,20 @@ export class PersonalService {
     if (input.followUpAt !== undefined) patch.followUpAt = time(input.followUpAt);
     return patch;
   }
+  /** Thread IDs an agent names with --thread / --unlink; each must exist. */
+  private threadList(value: unknown, name: string): string[] {
+    if (value === undefined) return [];
+    if (!Array.isArray(value) || value.length > 20 || value.some(id => typeof id !== 'string')) throw new HttpError(400, `${name} must list at most 20 thread IDs`);
+    for (const id of value) if (!this.store.getThread(id)) throw new HttpError(404, `thread ${id} not found; use IDs from limi threads`);
+    return [...new Set(value as string[])];
+  }
+  /** The agent's own thread is linked as a work record, except when it names the threads that did the work, or only summarizes. */
+  private recordsSelf(actor: string | undefined, links: string[]): boolean {
+    return Boolean(actor && !links.length && !this.store.summaryThreadIds().has(actor));
+  }
   create(input: Record<string, unknown>, actor?: string): TodoRecord {
     if (actor) this.require(actor);
-    const patch = this.patch(input);
+    const patch = this.patch(input), links = actor ? this.threadList(input.threads, 'threads') : [];
     const text = personalText(input.text, 300).trim();
     let parentId: string | null = null;
     if (input.parentId != null) {
@@ -180,9 +218,15 @@ export class PersonalService {
       parentId = parent.id;
     }
     const todo = this.store.transaction(() => {
-      const proposed = Boolean(actor && (patch.owner ?? 'me') === 'me');
+      // An agent's "me" item is a suggestion, unless it records existing threads or the person asked
+      // for it through the plan page's summary: then it describes work that happened.
+      const recorded = links.some(id => id !== actor) || Boolean(actor && this.store.summaryThreadIds().has(actor));
+      const proposed = Boolean(actor && (patch.owner ?? 'me') === 'me' && !recorded);
       const todo = this.store.createTodo(randomUUID(), text, parentId, { owner: patch.owner, dueAt: patch.dueAt, proposed });
-      if (actor) this.store.linkTodoThread(todo.id, actor);
+      if (this.recordsSelf(actor, links)) this.store.linkTodoThread(todo.id, actor!);
+      for (const id of links) this.store.linkTodoThread(todo.id, id);
+      // Work the person already marked done in every one of its threads is recorded as done.
+      if (recorded && links.length && links.every(id => this.store.getThread(id)?.doneAt)) return this.store.updateTodo(todo.id, { done: true });
       if (proposed) this.store.saveTodoProposal({ id: randomUUID(), todoId: todo.id, kind: 'add', evidence: '', threadId: actor!, createdAt: new Date().toISOString(), state: 'open' });
       return todo;
     });
@@ -197,6 +241,7 @@ export class PersonalService {
     if (actor && current.owner === 'me' && (patch.done === true || patch.state === 'done' || patch.owner === 'agent')) throw new HttpError(403, 'use limi todo propose-done for your personal commitments');
     if ((patch.state ?? current.state) === 'waiting' && !(patch.waitingOn ?? current.waitingOn)) throw new HttpError(400, 'waitingOn is required for waiting');
     const note = input.note !== undefined ? personalText(input.note, 4000, true) : undefined;
+    const links = actor ? this.threadList(input.threads, 'threads') : [], unlinks = actor ? this.threadList(input.unlink, 'unlink') : [];
     if (patch.followUpAt != null) {
       if (actor && current.followUpPaused && (note === undefined || note === this.store.todoNote(id).text)) {
         throw new HttpError(409, '连续 3 次跟进没有进展，已停止自动跟进；请更新接续说明，或由人在网页重新设置跟进时间');
@@ -206,10 +251,22 @@ export class PersonalService {
     const todo = this.store.transaction(() => {
       let next = this.store.updateTodo(id, patch, current.rev);
       if (note !== undefined) next = this.store.writeTodoNote(id, note, actor ?? null, next.rev, false);
-      if (actor) this.store.linkTodoThread(id, actor);
+      if (this.recordsSelf(actor, links)) this.store.linkTodoThread(id, actor!);
+      for (const thread of links) this.store.linkTodoThread(id, thread);
+      for (const thread of unlinks) this.store.unlinkTodoThread(id, thread);
       return next;
     });
     this.manager.broadcastTodo(); return todo;
+  }
+  /** Agents delete with a fresh rev, one item at a time: a plan with sub-items goes only once they are gone. */
+  remove(id: string, input: Record<string, unknown>, actor: string) {
+    this.require(actor);
+    const current = this.store.checkTodoRev(id, input.rev);
+    if (this.store.listTodos().some(t => t.parentId === id)) throw new HttpError(409, 'delete its sub-items first');
+    if (current.owner === 'me' && current.done) throw new HttpError(403, 'finished commitments stay; only the person removes them');
+    this.store.deleteTodo(id);
+    this.manager.broadcastTodo();
+    return { id, deleted: true };
   }
   writeNote(id: string, input: Record<string, unknown>, actor?: string): TodoRecord {
     if (actor) this.require(actor);
@@ -268,15 +325,19 @@ export class PersonalService {
   }
   async command(owner: string, input: Record<string, unknown>) {
     this.require(owner);
+    const linkedThreads = (id: string) => this.store.todoThreadIds(id).map(threadId => ({ id: threadId, self: threadId === owner }));
     switch (input.op) {
-      case 'todo.list': return this.store.listTodos().filter(t => !t.done);
+      case 'todo.list': return this.store.listTodos().filter(t => !t.done).map(todo => ({ ...todo, threads: linkedThreads(todo.id) }));
       case 'todo.show': {
         const todo = this.store.getTodo(String(input.id)); if (!todo) throw new HttpError(404, 'todo not found');
-        return { ...todo, note: this.note(todo.id), threads: this.store.todoThreadIds(todo.id), proposals: this.store.todoProposals(todo.id) };
+        return { ...todo, note: this.note(todo.id), threads: linkedThreads(todo.id), proposals: this.store.todoProposals(todo.id) };
       }
       case 'todo.add': return this.create(input, owner);
       case 'todo.update': return this.update(String(input.id), input, owner);
       case 'todo.propose-done': return this.propose(String(input.id), input, owner);
+      case 'todo.delete': return this.remove(String(input.id), input, owner);
+      case 'threads': return this.summary.threads(input, owner);
+      case 'threads.show': return this.summary.show(input);
       case 'wish': { const id = randomUUID(); this.store.saveWish(id, owner, personalText(input.text, 500)); return { id }; }
       default: throw new HttpError(400, 'unknown personal command; see limi todo --help');
     }

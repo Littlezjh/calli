@@ -40,32 +40,37 @@ export class HandoverReader {
     }
     if (input.op !== 'history') throw new HttpError(403, 'handover credentials are read-only');
     if (typeof input.target !== 'string' || !chain.some(t => t.id === input.target)) throw new HttpError(403, 'thread outside handover chain');
-    const number = (value: unknown, fallback: number | undefined, max: number, min = 1) => {
-      if (value === undefined) return fallback;
-      if ((typeof value !== 'number' && typeof value !== 'string') || !/^(0|[1-9]\d*)$/.test(String(value))) throw new HttpError(400, 'expected an integer');
-      const n = Number(value);
-      if (!Number.isSafeInteger(n) || n < min || n > max) throw new HttpError(400, `value must be between ${min} and ${max}`);
-      return n;
-    };
-    // IDs from imported history can contain shell syntax; quote them as literal arguments.
-    const quote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
-    const command = (turn: string, offset: number, snapshot: number) =>
-      `limi history ${quote(input.target as string)} --turn ${quote(turn)} --snapshot ${snapshot} --offset ${offset}`;
-    if (input.limit !== undefined) throw new HttpError(400, 'use --turns to page complete rounds');
-    if (input.turn !== undefined) {
-      if (typeof input.turn !== 'string' || !input.turn || input.before !== undefined || input.turns !== undefined) throw new HttpError(400, 'use --turn TURN_ID without --before or --turns');
-      const offset = number(input.offset, 0, Number.MAX_SAFE_INTEGER, 0)!;
-      const snapshot = number(input.snapshot, undefined, Number.MAX_SAFE_INTEGER);
-      if (offset > 0 && snapshot === undefined) throw new HttpError(400, 'continuing text requires --snapshot from the previous response');
-      const text = this.manager.history(input.target).handoverText(input.target, input.turn, offset, snapshot);
-      return { ...text, command: text.nextOffset === null ? null : command(input.turn, text.nextOffset, text.snapshotSeq) };
-    }
-    if (input.offset !== undefined || input.snapshot !== undefined) throw new HttpError(400, '--offset and --snapshot require --turn');
-    const page = this.manager.history(input.target).handoverPage(input.target,
-      number(input.before, undefined, Number.MAX_SAFE_INTEGER), number(input.turns, 10, 50));
-    return { ...page, turns: page.turns.map(turn => ({
-      ...turn, answer: { ...turn.answer, fullText: turn.answer.fullText
-        ? { ...turn.answer.fullText, command: command(turn.turnId, 0, page.snapshotSeq) } : null },
-    })) };
+    return readHistory(this.manager, input.target, input, 'limi history');
   }
+}
+
+/** Pages a thread's history in complete rounds, or one answer in chunks; `prefix` is the CLI command that continues. */
+export function readHistory(manager: ThreadManager, target: string, input: Record<string, unknown>, prefix: string) {
+  const number = (value: unknown, fallback: number | undefined, max: number, min = 1) => {
+    if (value === undefined) return fallback;
+    if ((typeof value !== 'number' && typeof value !== 'string') || !/^(0|[1-9]\d*)$/.test(String(value))) throw new HttpError(400, 'expected an integer');
+    const n = Number(value);
+    if (!Number.isSafeInteger(n) || n < min || n > max) throw new HttpError(400, `value must be between ${min} and ${max}`);
+    return n;
+  };
+  // IDs from imported history can contain shell syntax; quote them as literal arguments.
+  const quote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
+  const command = (turn: string, offset: number, snapshot: number) =>
+    `${prefix} ${quote(target)} --turn ${quote(turn)} --snapshot ${snapshot} --offset ${offset}`;
+  if (input.limit !== undefined) throw new HttpError(400, 'use --turns to page complete rounds');
+  if (input.turn !== undefined) {
+    if (typeof input.turn !== 'string' || !input.turn || input.before !== undefined || input.turns !== undefined) throw new HttpError(400, 'use --turn TURN_ID without --before or --turns');
+    const offset = number(input.offset, 0, Number.MAX_SAFE_INTEGER, 0)!;
+    const snapshot = number(input.snapshot, undefined, Number.MAX_SAFE_INTEGER);
+    if (offset > 0 && snapshot === undefined) throw new HttpError(400, 'continuing text requires --snapshot from the previous response');
+    const text = manager.history(target).handoverText(target, input.turn, offset, snapshot);
+    return { ...text, command: text.nextOffset === null ? null : command(input.turn, text.nextOffset, text.snapshotSeq) };
+  }
+  if (input.offset !== undefined || input.snapshot !== undefined) throw new HttpError(400, '--offset and --snapshot require --turn');
+  const page = manager.history(target).handoverPage(target,
+    number(input.before, undefined, Number.MAX_SAFE_INTEGER), number(input.turns, 10, 50));
+  return { ...page, turns: page.turns.map(turn => ({
+    ...turn, answer: { ...turn.answer, fullText: turn.answer.fullText
+      ? { ...turn.answer.fullText, command: command(turn.turnId, 0, page.snapshotSeq) } : null },
+  })) };
 }

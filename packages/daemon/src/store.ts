@@ -513,6 +513,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS todo_notes (todo_id TEXT PRIMARY KEY REFERENCES todos(id) ON DELETE CASCADE, text TEXT NOT NULL, updated_at TEXT NOT NULL, thread_id TEXT);
       CREATE TABLE IF NOT EXISTS todo_proposals (id TEXT PRIMARY KEY, todo_id TEXT NOT NULL REFERENCES todos(id) ON DELETE CASCADE, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS wishes (id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, text TEXT NOT NULL, created_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS todo_summaries (id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, days INTEGER NOT NULL, started_at TEXT NOT NULL);
     `);
     if (!todoColumns.has('has_note')) this.transaction(() => {
       const update = this.db.prepare('UPDATE todos SET has_note = ? WHERE id = ?');
@@ -553,6 +554,7 @@ export class Store {
       );
     `);
     if (!indexed) this.indexText();
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_turn_text_ts ON turn_text(ts)');
     this.telemetry = new Telemetry(this.db);
     this.activity = new Activity(this.db);
     this.mcpEntries = new McpRegistry(this.db);
@@ -1011,6 +1013,36 @@ export class Store {
 
   unlinkTodoThread(todoId: string, threadId: string): void {
     this.db.prepare('DELETE FROM todo_threads WHERE todo_id = ? AND thread_id = ?').run(todoId, threadId);
+  }
+
+  // ---------- Recent-work summaries ----------
+
+  /** The plan page's "summarize recent days" runs: their threads are summaries, not work. */
+  saveSummaryRun(id: string, threadId: string, days: number): void {
+    this.db.prepare('INSERT INTO todo_summaries (id, thread_id, days, started_at) VALUES (?, ?, ?, ?)').run(id, threadId, days, new Date().toISOString());
+  }
+  latestSummaryRun(): { threadId: string; days: number; startedAt: string } | null {
+    const row = this.db.prepare('SELECT thread_id, days, started_at FROM todo_summaries ORDER BY started_at DESC, rowid DESC LIMIT 1').get() as { thread_id: string; days: number; started_at: string } | undefined;
+    return row ? { threadId: row.thread_id, days: row.days, startedAt: row.started_at } : null;
+  }
+  summaryThreadIds(): Set<string> {
+    return new Set((this.db.prepare('SELECT thread_id FROM todo_summaries').all() as Array<{ thread_id: string }>).map(r => r.thread_id));
+  }
+  /** Threads that ran a scheduled turn which ended quietly: nothing in them for a summary. */
+  quietRunThreadIds(): Set<string> {
+    return new Set((this.db.prepare("SELECT DISTINCT thread_id FROM schedule_runs WHERE status = 'quiet' AND thread_id IS NOT NULL").all() as Array<{ thread_id: string }>).map(r => r.thread_id));
+  }
+  /** Threads with turns since `since`, newest activity first. */
+  activeThreadsSince(since: string): Array<{ threadId: string; lastAt: string }> {
+    return (this.db.prepare('SELECT thread_id, MAX(ts) AS last FROM turn_text WHERE ts >= ? GROUP BY thread_id ORDER BY last DESC')
+      .all(since) as Array<{ thread_id: string; last: string }>).map(r => ({ threadId: r.thread_id, lastAt: r.last }));
+  }
+  /** The first and last thing asked since `since`, and the end of the latest answer, each bounded. */
+  turnTextSince(threadId: string, since: string): { firstAsk: string | null; lastAsk: string | null; lastAnswer: string | null } {
+    const one = (role: string, order: string, part: string) => (this.db.prepare(`SELECT ${part} AS text FROM turn_text WHERE thread_id = ? AND role = ? AND ts >= ? ORDER BY ts ${order}, rowid ${order} LIMIT 1`)
+      .get(threadId, role, since) as { text: string } | undefined)?.text ?? null;
+    return { firstAsk: one('user', 'ASC', 'substr(text, 1, 200)'), lastAsk: one('user', 'DESC', 'substr(text, 1, 200)'),
+      lastAnswer: one('assistant', 'DESC', 'substr(text, max(1, length(text) - 299))') };
   }
 
   /**

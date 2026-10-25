@@ -4,9 +4,48 @@ import { join } from 'node:path';
 /** A portable coding agent needs only shell execution, its scoped env and the prompt. */
 export function personalFixture(text) {
   const command = text.split('\n')[0];
-  if (!['personal-ui', 'personal-start', 'personal-notify', 'personal-quiet', 'personal-wish', '由 Limi 发起的事项跟进。', '# 交接信息'].includes(command)) return null;
+  const clarification = process.env.FAKE_PERSONAL_DELEGATE_CLARIFY === '1' && command.startsWith('这是一件新交给你的事，不是交接');
+  if (!clarification && !['personal-ui', 'personal-start', 'personal-notify', 'personal-quiet', 'personal-wish', '由 Limi 发起的事项跟进。', '由 Limi 发起的近期总结。', '# 交接信息'].includes(command)) return null;
   if (command === '# 交接信息' && !text.includes('## 关联事项与接续说明')) return null;
   const cli = (args, input = '') => JSON.parse(execFileSync(process.execPath, [join(process.env.LIMI_BIN_DIR, 'limi'), ...args], { input, encoding: 'utf8' }));
+  if (clarification) {
+    const id = text.match(/^ID：([^；]+)；/m)?.[1];
+    const todo = cli(['todo', 'show', id]);
+    if (todo.note.text.trim()) throw new Error('clarification fixture expects no continuation note');
+    if (todo.threads.filter(thread => thread.self).length !== 1) throw new Error('current work thread must be marked self');
+    for (const instruction of ['1～3 个具体问题', '默认选项', 'waiting', '等你说明目标', 'limi notify', '然后结束本轮', '不要翻本地会话文件']) {
+      if (!text.includes(instruction)) throw new Error(`missing clarification instruction: ${instruction}`);
+    }
+    cli(['todo', 'update', id, '--rev', String(todo.rev), '--state', 'waiting', '--waiting-on', '等你说明目标', '--note-file', '-'],
+      `## 欠谁什么\n帮你明确「${todo.text}」的目标，具体交付尚未确定\n## 定了什么\n先问清目标\n## 做到哪\n已提出澄清问题，尚未开展任务\n## 下一步\n等回答后明确交付形式与范围，再按确认的目标推进`);
+    cli(['notify', '--text-file', '-'], `「${todo.text}」需要你回答目标和交付形式后再推进。`);
+    return '1. 你更关心哪一类架构变化？建议默认：当前项目使用的 Agent 框架。\n2. 希望我交付什么？建议默认：一页变化摘要和对当前项目的影响。';
+  }
+  if (command === '由 Limi 发起的近期总结。') {
+    // Follows the summary prompt with the generic commands only, grouping threads by directory.
+    const since = text.match(/limi threads --since ([0-9T:.Z+-]+)/)[1];
+    const heading = text.match(/文字是「([^」]+)」的事项/)[1];
+    const recent = cli(['threads', '--since', since]).threads.filter(thread => !thread.self);
+    if (recent[0]) cli(['threads', 'show', recent[0].id, '--turns', '1']);
+    const parent = cli(['todo']).find(todo => todo.text === heading && !todo.parentId) ?? cli(['todo', 'add', '--owner', 'me', '--text-file', '-'], heading);
+    const groups = new Map();
+    for (const thread of recent.filter(thread => !thread.todos.some(todo => todo.parentId === parent.id))) {
+      const name = `${thread.cwd.split('/').pop()} 的工作`;
+      groups.set(name, [...(groups.get(name) ?? []), thread.id]);
+    }
+    const children = cli(['todo']).filter(todo => todo.parentId === parent.id);
+    for (const [name, ids] of groups) {
+      const existing = children.find(todo => todo.text === name);
+      const links = ids.flatMap(id => ['--thread', id]);
+      if (existing) cli(['todo', 'update', existing.id, '--rev', String(existing.rev), ...links]);
+      else cli(['todo', 'add', '--owner', 'me', '--parent', parent.id, ...links, '--text-file', '-'], name);
+    }
+    const current = cli(['todo', 'show', parent.id]);
+    const titles = done => recent.filter(thread => thread.done === done).map(thread => thread.title).join('、') || '无';
+    cli(['todo', 'update', parent.id, '--rev', String(current.rev), '--note-file', '-'], `## 做完了什么\n${titles(true)}\n## 还没做完的\n${titles(false)}\n## 需要你决定的\n无`);
+    cli(['quiet']);
+    return [...groups.keys()].map(name => `- ${name}`).join('\n') || '没有新的会话。';
+  }
   if (command === 'personal-ui') {
     const list = cli(['todo']);
     for (const todo of list.filter(item => item.text === '周五前交报销' || item.text === '确认合同修改')) {

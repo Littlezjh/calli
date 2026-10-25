@@ -23,7 +23,7 @@ import { Scheduler } from '../src/scheduler.js';
 import { sessionEnvironment } from '../src/adapters/types.js';
 const exec = promisify(execFile);
 const wait = async (fn: () => boolean | Promise<boolean>) => { for (let i = 0; i < 500; i++) { if (await fn()) return; await new Promise(r => setTimeout(r, 20)); } throw new Error('timed out'); };
-async function setup(options: { startError?: string; followUpMode?: string } = {}) {
+async function setup(options: { startError?: string; followUpMode?: string; clarifyDelegate?: boolean } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'limi-personal-'));
   const cwd = join(dir, 'personal'), outside = join(dir, 'elsewhere'); mkdirSync(cwd); mkdirSync(outside);
   const store = new Store(dir);
@@ -31,7 +31,7 @@ async function setup(options: { startError?: string; followUpMode?: string } = {
   const followUpMode = join(dir, 'follow-up-mode');
   if (options.followUpMode) writeFileSync(followUpMode, options.followUpMode);
   const env = { ...(options.startError ? { FAKE_ACP_START_ERROR: options.startError } : {}), ...(options.followUpMode ? { FAKE_PERSONAL_FOLLOW_UP_MODE_FILE: followUpMode } : {}) };
-  const adapters = new Map<string, AgentAdapter>([['claude', new ClaudeAcpAdapter([process.execPath, resolve('test/fixtures/fake-acp.mjs')], env)], ['pi', new PiRpcAdapter([process.execPath, resolve('test/fixtures/fake-pi.mjs')])]]);
+  const adapters = new Map<string, AgentAdapter>([['claude', new ClaudeAcpAdapter([process.execPath, resolve('test/fixtures/fake-acp.mjs')], env)], ['pi', new PiRpcAdapter([process.execPath, resolve('test/fixtures/fake-pi.mjs')], options.clarifyDelegate ? { FAKE_PERSONAL_DELEGATE_CLARIFY: '1' } : {})]]);
   const manager = new ThreadManager(store, adapters, new Workdirs([dir], join(dir, 'dirs')), new AttachmentStore(dir));
   const push = new PushService(store, manager, { executable: resolve('test/fixtures/fake-lark-cli.mjs'), retryMs: 1, env: { ...process.env, FAKE_LARK_LOG: log, FAKE_LARK_CONFIG: config } });
   const service = manager.personal; service.socket = join(dir, 'personal.sock'); service.putSettings({ directory: cwd, agent: 'claude' });
@@ -610,4 +610,166 @@ test('delegation accepts allowed projects without personal credentials and rejec
     assert.match(prompt, /Review project changes/); assert.match(prompt, /Check the project checklist/);
     assert.doesNotMatch(prompt, /limi todo/);
   } finally { await h.close(); rmSync(forbidden, { recursive: true, force: true }); }
+});
+
+
+for (const personal of [true, false]) for (const hasNote of [true, false]) test(`delegation prompt distinguishes a new task from handover: ${personal ? 'personal' : 'project'}, ${hasNote ? 'with' : 'without'} note`, async () => {
+  const h = await setup();
+  try {
+    h.service.putSettings({ agent: 'pi' });
+    const todo = h.service.create({ text: '跟着 Agent 架构变化' });
+    if (hasNote) h.service.writeNote(todo.id, { text: '## 下一步\n列出本项目所用框架的三条架构变化，写成一页摘要' });
+    const response = await h.api(`/api/todos/${todo.id}/delegate`, 'POST', personal ? {} : { cwd: h.outside });
+    assert.equal(response.status, 201);
+    const thread = await response.json();
+    await wait(() => h.store.getThread(thread.id)?.status !== 'running');
+    const prompt = String(h.store.listEventsOfType(thread.id, 'turn.started')[0].data.text);
+    assert.ok(prompt.startsWith('这是一件新交给你的事，不是交接；这个线程就是它的工作线程，没有更早的对话需要读。'));
+    assert.match(prompt, /事项：跟着 Agent 架构变化/);
+    assert.match(prompt, /没有接续说明，或事项太笼统、看不出要交付什么时，这一轮只做澄清/);
+    assert.match(prompt, /1～3 个具体问题.*每个问题给出你建议的默认选项/);
+    assert.match(prompt, /不要自己猜着开工/);
+    assert.match(prompt, /按说明的「下一步」推进/);
+    assert.match(prompt, /不要用 handover\/history.*不要翻本地会话文件/);
+    assert.match(prompt, /不可逆操作（提交、付款、发消息、删除、推送代码）.*先停下来问人/);
+    assert.match(prompt, hasNote ? /列出本项目所用框架的三条架构变化/ : /接续说明：\n尚未写入。/);
+    if (personal) {
+      assert.match(prompt, /limi todo update .*--state waiting --waiting-on "等你说明目标" --note-file FILE/);
+      assert.match(prompt, /「## 欠谁什么」写已知部分/);
+      assert.match(prompt, /「## 下一步」写「等回答后……」/);
+      assert.match(prompt, /limi notify.*然后结束本轮/);
+      assert.match(prompt, /limi todo propose-done/);
+    } else {
+      assert.match(prompt, /只在回复中提问并结束本轮/);
+      assert.doesNotMatch(prompt, /limi todo/);
+      assert.equal(h.service.environment(thread.id), undefined);
+    }
+  } finally { await h.close(); }
+});
+
+test('real todo CLI marks self in list and show without exposing linked thread history', async () => {
+  const h = await setup();
+  try {
+    const todo = h.service.create({ text: 'Clarify the outcome' });
+    const other = await h.manager.createThread({ agent: 'pi', cwd: h.cwd });
+    h.store.linkTodoThread(todo.id, other.id); h.store.linkTodoThread(todo.id, h.thread.id);
+    const expected = h.store.todoThreadIds(todo.id).map(id => ({ id, self: id === h.thread.id }));
+    const shown = await h.cli(['todo', 'show', todo.id]);
+    assert.deepEqual(shown.threads, expected);
+    assert.deepEqual((await h.cli(['todo'])).find((item: { id: string }) => item.id === todo.id).threads, expected);
+    const unlinked = h.service.create({ text: 'An unrelated item' });
+    h.store.linkTodoThread(unlinked.id, other.id);
+    assert.deepEqual((await h.cli(['todo', 'show', unlinked.id])).threads, [{ id: other.id, self: false }]);
+    const help = (await exec(process.execPath, [resolve('bin/limi'), 'todo', '--help'])).stdout;
+    assert.match(help, /self: true marks the current thread/);
+    assert.match(help, /work from the todo and its note, not their history; handover\/history are only for a handover chain/);
+  } finally { await h.close(); }
+});
+
+test('fake Pi clarifies a newly delegated item without a note, sets waiting, notifies and ends the turn', async () => {
+  const h = await setup({ clarifyDelegate: true });
+  try {
+    h.service.putSettings({ agent: 'pi' }); h.push.putSettings({ enabled: true });
+    const todo = h.service.create({ text: '跟着 Agent 架构变化' });
+    h.store.linkTodoThread(todo.id, h.thread.id);
+    const response = await h.api(`/api/todos/${todo.id}/delegate`, 'POST', {});
+    assert.equal(response.status, 201);
+    const thread = await response.json();
+    await wait(() => h.store.listEventsOfType(thread.id, 'turn.done').length === 1);
+    const updated = h.store.getTodo(todo.id)!;
+    assert.equal(updated.state, 'waiting'); assert.equal(updated.waitingOn, '等你说明目标');
+    assert.equal(updated.done, false); assert.equal(updated.followUpAt, null);
+    assert.match(h.store.todoNote(todo.id).text, /## 欠谁什么\n.*具体交付尚未确定/);
+    assert.match(h.store.todoNote(todo.id).text, /## 下一步\n等回答后/);
+    const events = h.store.listEvents(thread.id);
+    const answer = events.filter(e => e.type === 'message.delta').map(e => e.data.text).join('');
+    assert.equal((answer.match(/建议默认：/g) ?? []).length, 2);
+    const notices = events.filter(e => e.type === 'agent.notice');
+    assert.equal(notices.length, 1); assert.match(String(notices[0].data.text), /需要你回答目标和交付形式/);
+    assert.equal(events.filter(e => e.type === 'turn.started').length, 1);
+    assert.equal(events.filter(e => e.type === 'turn.error').length, 0);
+    assert.equal(h.store.todoProposals(todo.id).length, 0);
+    await wait(async () => (await h.push.status()).records.some(record => record.kind === 'notice' && record.result === 'sent'));
+    assert.equal(h.store.getThread(thread.id)?.unread, true);
+  } finally { await h.close(); }
+});
+
+test('personal agents list and read recent threads, link items to them, delete with revisions, and the summary button only combines those commands', async () => {
+  const h = await setup();
+  try {
+    const run = async (cwd: string, title: string) => {
+      mkdirSync(cwd, { recursive: true });
+      const thread = await h.manager.createThread({ agent: 'claude', cwd, title });
+      await h.manager.startTurn(thread.id, { text: `work on ${title}` });
+      await wait(() => h.store.getThread(thread.id)?.status !== 'running');
+      return thread.id;
+    };
+    const [a, b, c, d, e] = [await run(join(h.outside, 'web'), 'Web A'), await run(join(h.outside, 'web'), 'Web B'), await run(join(h.outside, 'api'), 'API C'),
+      await run(join(h.outside, 'old'), 'Old D'), await run(join(h.outside, 'stale'), 'Stale E')];
+    const db = new DatabaseSync(join(h.dir, 'hub.db'));
+    db.prepare('UPDATE turn_text SET ts = ? WHERE thread_id = ?').run(new Date(Date.now() - 3 * 86400000).toISOString(), d);
+    db.prepare('UPDATE turn_text SET ts = ? WHERE thread_id = ?').run(new Date(Date.now() - 20 * 86400000).toISOString(), e);
+    db.close();
+    h.store.setThreadProgress(c, { doneAt: new Date().toISOString() });
+    const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
+    const ids = (list: { threads: Array<{ id: string }> }) => list.threads.map(t => t.id).sort();
+    assert.deepEqual(ids(await h.cli(['threads', '--since', midnight.toISOString()])), [a, b, c].sort());
+    const week = await h.cli(['threads']);
+    assert.deepEqual(ids(week), [a, b, c, d].sort(), 'the default looks back over today and six days before');
+    const old = week.threads.find((t: { id: string }) => t.id === d);
+    assert.equal(old.today, false); assert.equal(old.done, false); assert.match(old.firstAsk, /work on Old D/); assert.ok(old.lastAnswerEnd);
+    assert.equal(week.threads.find((t: { id: string }) => t.id === c).done, true);
+    assert.equal((await h.cli(['threads', '--limit', '1'])).omitted, 3);
+    const page = await h.cli(['threads', 'show', a, '--turns', '1']);
+    assert.equal(page.turns.length, 1); assert.match(JSON.stringify(page.turns[0]), /work on Web A/);
+    await assert.rejects(h.cli(['threads', 'show', 'missing']), /thread not found/);
+
+    // A "me" item recording other threads is written directly; without them it stays a suggestion.
+    const suggested = await h.cli(['todo', 'add', '--owner', 'me', '--text-file', h.file('s.txt', 'A guess')]);
+    assert.equal(suggested.proposed, true);
+    await assert.rejects(h.cli(['todo', 'add', '--owner', 'me', '--thread', 'missing', '--text-file', h.file('m.txt', 'Missing')]), /not found/);
+    const parent = await h.cli(['todo', 'add', '--owner', 'me', '--text-file', h.file('p.txt', 'Plans')]);
+    const recorded = await h.cli(['todo', 'add', '--owner', 'me', '--parent', parent.id, '--thread', a, '--thread', b, '--text-file', h.file('r.txt', 'Website')]);
+    assert.equal(recorded.proposed, false);
+    assert.deepEqual(h.store.todoThreadIds(recorded.id).sort(), [a, b].sort(), 'naming the threads does not also link the agent\'s own');
+    const finished = await h.cli(['todo', 'add', '--owner', 'me', '--parent', parent.id, '--thread', c, '--text-file', h.file('f.txt', 'API')]);
+    assert.equal(finished.done, true, 'every linked thread was already marked done by the person');
+    const moved = await h.cli(['todo', 'update', recorded.id, '--rev', String(recorded.rev), '--thread', d, '--unlink', b]);
+    assert.deepEqual(h.store.todoThreadIds(recorded.id).sort(), [a, d].sort()); assert.equal(moved.rev, recorded.rev + 1);
+    await assert.rejects(h.cli(['todo', 'delete', parent.id, '--rev', String(h.store.getTodo(parent.id)!.rev)]), /sub-items first/);
+    await assert.rejects(h.cli(['todo', 'delete', finished.id, '--rev', String(finished.rev)]), /only the person/);
+    await assert.rejects(h.cli(['todo', 'delete', recorded.id, '--rev', String(recorded.rev)]), /changed/);
+    assert.deepEqual(await h.cli(['todo', 'delete', recorded.id, '--rev', String(moved.rev)]), { id: recorded.id, deleted: true });
+    h.manager.deleteTodo(finished.id); h.manager.deleteTodo(parent.id); h.manager.deleteTodo(suggested.id);
+
+    // The button: a personal thread runs the summary prompt with these commands.
+    const started = await h.api('/api/todos/summary', 'POST', { days: 7, title: 'Recent days', heading: '今日 TODO 10-25' });
+    assert.equal(started.status, 201, started.status === 201 ? undefined : await started.text());
+    const summary = await started.json();
+    assert.equal(summary.cwd, h.cwd); assert.equal(summary.title, 'Recent days');
+    await wait(() => h.store.getThread(summary.id)?.status !== 'running');
+    const status = await (await h.api('/api/todos/summary')).json();
+    assert.equal(status.threadId, summary.id); assert.equal(status.running, false); assert.equal(status.days, 7);
+    assert.equal(h.store.getThread(summary.id)?.unread, false);
+    const prompt = String(h.store.listEvents(summary.id).find(ev => ev.type === 'turn.started')?.data.text);
+    for (const command of ['limi threads --since', 'limi threads show', 'limi todo add --owner me --parent', '--thread', 'limi quiet']) assert.ok(prompt.includes(command), command);
+    const heading = h.store.listTodos().find(t => t.text === '今日 TODO 10-25')!;
+    assert.ok(heading); assert.equal(heading.proposed, false);
+    const items = () => h.store.listTodos().filter(t => t.parentId === heading.id);
+    const item = (text: string) => items().find(t => t.text === text)!;
+    assert.deepEqual(items().map(t => t.text).sort(), ['api 的工作', 'old 的工作', 'web 的工作']);
+    assert.deepEqual(h.store.todoThreadIds(item('web 的工作').id).sort(), [a, b].sort());
+    assert.equal(item('api 的工作').done, true); assert.equal(item('web 的工作').done, false);
+    assert.ok(!h.store.listTodos().some(t => h.store.todoThreadIds(t.id).includes(summary.id)), 'the summary thread is not a work record');
+    assert.match(h.store.todoNote(heading.id).text, /## 还没做完的/);
+    assert.ok(!(await h.cli(['threads'])).threads.some((t: { id: string }) => t.id === summary.id), 'summary runs are not listed');
+
+    // Running it again adds only what is new, to the item it belongs to; the person's edits stay.
+    assert.equal((await h.api(`/api/todos/${item('old 的工作').id}`, 'PATCH', { text: '旧项目收尾' })).status, 200);
+    const f = await run(join(h.outside, 'web'), 'Web F');
+    const again = await (await h.api('/api/todos/summary', 'POST', { days: 7, heading: '今日 TODO 10-25' })).json();
+    await wait(() => h.store.getThread(again.id)?.status !== 'running');
+    assert.deepEqual(items().map(t => t.text).sort(), ['api 的工作', 'web 的工作', '旧项目收尾']);
+    assert.ok(h.store.todoThreadIds(item('web 的工作').id).includes(f));
+  } finally { await h.close(); }
 });
