@@ -24,7 +24,7 @@ test('voice media negotiates local Chromium peers and plays a streamless audio t
         window.result = (async () => {
           const audio = new AudioContext();
           const oscillator = audio.createOscillator();
-          const gain = audio.createGain(); gain.gain.value = 0;
+          const gain = audio.createGain(); gain.gain.value = .15;
           oscillator.connect(gain); oscillator.start();
           const local = audio.createMediaStreamDestination();
           const remote = audio.createMediaStreamDestination();
@@ -55,7 +55,14 @@ test('voice media negotiates local Chromium peers and plays a streamless audio t
             }
             const result = { state: controller.state, error: controller.error?.code,
               stream: sink.srcObject instanceof MediaStream, playing: !sink.paused && sink.readyState >= 2 };
+            const meterDeadline = Date.now() + 2000;
+            let levels;
+            do { levels = controller.levels(); await new Promise(resolve => setTimeout(resolve, 20)); }
+            while (Date.now() < meterDeadline && (levels.input <= .01 || levels.output <= .01));
+            result.inputMeter = levels.input > .01;
+            result.outputMeter = levels.output > .01;
             controller.setMuted(true);
+            result.mutedMeter = controller.levels().input === 0;
             result.muted = local.stream.getAudioTracks().every(track => !track.enabled);
             controller.dispose();
             result.closed = controller.state === 'closed' && local.stream.getTracks().every(track => track.readyState === 'ended') && sink.srcObject === null;
@@ -70,7 +77,7 @@ test('voice media negotiates local Chromium peers and plays a streamless audio t
     });
     await page.click('#start');
     const result = await page.evaluate(() => window.result);
-    assert.deepEqual(result, { state: 'connected', error: undefined, stream: true, playing: true, muted: true, closed: true });
+    assert.deepEqual(result, { state: 'connected', error: undefined, stream: true, playing: true, inputMeter: true, outputMeter: true, mutedMeter: true, muted: true, closed: true });
   } finally {
     await browser?.close();
     server.closeAllConnections();

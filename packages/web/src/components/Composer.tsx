@@ -142,6 +142,7 @@ interface Props {
   right: ReactNode;
   /** Host-owned extension actions stay reachable when the phone composer is collapsed. */
   composerActions?: ReactNode;
+  voiceControls?: ReactNode;
   /** The agent's own slash commands. */
   commands: SlashCommand[];
   goal?: GoalCapability;
@@ -207,6 +208,7 @@ export function Composer({
   left,
   right,
   composerActions,
+  voiceControls,
   commands,
   goal,
   goalState,
@@ -623,7 +625,7 @@ export function Composer({
       leaving.current?.();
     };
   }, []);
-  const collapsed = narrow && !header && !hasContent && queued.length === 0 && preparing === 0 && !focused;
+  const collapsed = !voiceControls && narrow && !header && !hasContent && queued.length === 0 && preparing === 0 && !focused;
   const goalControl = text.trim() === '/goal' ? 'show' : text.trim() === '/goal pause' ? 'pause' : text.trim() === '/goal clear' ? 'clear' : null;
   const immediate = !!goalControl && !!goal?.controls.includes(goalControl) && !images.length && !videos.length && !notes.length && !mentions.length;
   const queueFull = running && !immediate && queued.length >= MAX_QUEUED;
@@ -727,7 +729,7 @@ export function Composer({
   };
 
   return (
-    <div className="composer">
+    <div className={`composer${voiceControls ? ' voice-composer' : ''}`}>
       <div className="composer-anchor">
         {menuOpen && (
           <div className={`command-menu${addOpen && catalog !== 'all' ? ' catalog-menu' : ''}`} ref={paletteRef}>
@@ -1028,7 +1030,7 @@ export function Composer({
               </button>
             )}
             {/* While a turn runs the send button appears only once there is something to queue. */}
-            {(!running || hasContent) && (
+            {(voiceControls ? hasContent : !running || hasContent) && (
               <button
                 className={`send-btn${slow ? ' sending' : ''}`}
                 onClick={() => void submit()}
@@ -1042,6 +1044,7 @@ export function Composer({
           </div>
         </div>
       </div>
+      {voiceControls}
       {videoPreview && <VideoPreview url={videoPreview.previewUrl} name={videoPreview.name} onClose={() => setVideoPreview(null)} />}
       {preview && <Lightbox url={preview.previewUrl} name={preview.name} onClose={() => setPreview(null)} />}
     </div>

@@ -83,3 +83,24 @@ test('an authoritative corrected remark keeps its place when later work folds it
   assert.equal(work.entries.find(e => e.kind === 'note')?.text, '**Correct**');
   assert.equal(timeline.items.filter(i => i.kind === 'assistant').length, 1);
 });
+
+
+test('closed sessions fold live and persisted speech without absorbing task answers', () => {
+  const closed = event(4, 'voice.closed', { sessionId: 'call', startedAt: '2026-01-01T00:00:00Z', endedAt: '2026-01-01T00:02:03Z', count: 1 }, null);
+  const timeline = buildTimeline([
+    event(1, 'voice.message', { ...speech('call:u1', 'user', 'spoken'), sessionId: 'call' }, null),
+    event(2, 'turn.started', { text: 'task' }), event(3, 'message.delta', { text: 'result' }), closed,
+  ], [speech('call:u1', 'user', 'spoken')]);
+  assert.equal(timeline.items.filter(i => i.kind === 'user' && i.text === 'spoken').length, 0);
+  assert.ok(timeline.items.some(i => i.kind === 'assistant' && i.text === 'result'));
+  const recap = timeline.items.find(i => i.kind === 'voice-recap');
+  assert.equal(recap?.seconds, 123);
+  assert.equal(recap?.count, 1);
+});
+
+
+test('a failed recap request leaves the actual background task running', () => {
+  const timeline = buildTimeline([event(1, 'turn.started', { text: 'work' }), event(2, 'voice.summary.error', {}, null)]);
+  assert.equal(timeline.running, true);
+  assert.equal(timeline.items.filter(i => i.kind === 'error').length, 1);
+});

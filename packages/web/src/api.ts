@@ -1558,6 +1558,14 @@ export class Api {
     return this.sendVoice('POST', this.url(`/api/voice/${encodeURIComponent(sessionId)}/connected`));
   }
 
+  appendVoiceText(sessionId: string, text: string, images: OutgoingImage[] = [], videos: string[] = []): Promise<void> {
+    return this.sendVoice('POST', this.url(`/api/voice/${encodeURIComponent(sessionId)}/text`), { text, images, videos });
+  }
+
+  voiceHistory(threadId: string, sessionId: string, cursor?: number): Promise<{ events: StoredEvent[]; nextCursor: number | null }> {
+    return this.request('GET', `/api/threads/${encodeURIComponent(threadId)}/history/voice?session=${encodeURIComponent(sessionId)}${cursor ? `&cursor=${cursor}` : ''}`);
+  }
+
   /** Stops and releases a realtime voice session. */
   stopVoiceSession(sessionId: string): Promise<void> {
     return this.sendVoice('DELETE', this.url(`/api/voice/${encodeURIComponent(sessionId)}`));

@@ -173,6 +173,36 @@ export class VoiceMediaController {
   private cancelPending!: () => void;
   private readonly cancellation = new Promise<void>(resolve => { this.cancelPending = resolve; });
 
+  private audioContext: AudioContext | null = null;
+  private meters: Partial<Record<'input' | 'output', { source: MediaStreamAudioSourceNode; analyser: AnalyserNode; data: Float32Array<ArrayBuffer>; level: number }>> = {};
+
+  private meter(stream: MediaStreamLike, side: 'input' | 'output'): void {
+    if (typeof AudioContext === 'undefined') return;
+    try {
+      this.audioContext ??= new AudioContext();
+      void this.audioContext.resume().catch(() => {});
+      this.meters[side]?.source.disconnect();
+      const source = this.audioContext.createMediaStreamSource(stream as MediaStream);
+      const analyser = this.audioContext.createAnalyser();
+      analyser.fftSize = 256;
+      source.connect(analyser);
+      this.meters[side] = { source, analyser, data: new Float32Array(256), level: 0 };
+    } catch { /* Metering is optional; a visual failure must not interrupt speech. */ }
+  }
+
+  /** Sampled by the orb's animation frame, never put in React state. */
+  levels(): { input: number; output: number } {
+    const read = (side: 'input' | 'output') => {
+      const meter = this.meters[side];
+      if (!meter) return 0;
+      meter.analyser.getFloatTimeDomainData(meter.data);
+      const rms = Math.sqrt(meter.data.reduce((n, v) => n + v * v, 0) / meter.data.length);
+      meter.level = meter.level * .72 + Math.min(1, rms * 5) * .28;
+      return side === 'input' && this._isMuted ? 0 : meter.level;
+    };
+    return { input: read('input'), output: read('output') };
+  }
+
   private localStream: MediaStreamLike | null = null;
   private remoteTrack: MediaTrackLike | null = null;
   private pc: RTCPeerConnectionLike | null = null;
@@ -299,6 +329,10 @@ export class VoiceMediaController {
   }
 
   private cleanupResources(): void {
+    for (const meter of Object.values(this.meters)) { meter.source.disconnect(); meter.analyser.disconnect(); }
+    this.meters = {};
+    void this.audioContext?.close().catch(() => {});
+    this.audioContext = null;
     if (this.pendingIceCleanup) {
       try {
         this.pendingIceCleanup();
@@ -419,6 +453,7 @@ export class VoiceMediaController {
     }
 
     this.localStream = stream;
+    this.meter(stream, 'input');
     const localTracks = stream.getAudioTracks?.() ?? stream.getTracks?.() ?? [];
     for (const track of localTracks) {
       track.enabled = !this._isMuted;
@@ -640,6 +675,7 @@ export class VoiceMediaController {
           if (!this.env.createMediaStream) throw new Error('MediaStream is unavailable');
           sink.srcObject = this.env.createMediaStream([track]);
         }
+        this.meter(sink.srcObject, 'output');
         const p = sink.play();
         if (p && typeof (p as any).then === 'function') {
           await p;

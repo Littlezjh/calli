@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light" data-orb="mist">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Limi 实时语音 · 界面草图</title>
+  <style>
+    /* Tokens copied from packages/web/src/styles.css (paper), so the sketch opens on its own. */
+    :root {
+      --bg: #f8f6f1; --sidebar: #f1efe9; --surface: #ffffff; --surface-2: #fbfaf7;
+      --text: #1f1e1c; --muted: #827f77; --faint: #a9a69e; --border: #e5e2da; --border-strong: #d6d2c8;
+      --hover: rgba(31, 30, 28, 0.045); --active: rgba(31, 30, 28, 0.08);
+      --accent: #1f1e1c; --accent-fg: #ffffff; --positive: #2f7d5b; --positive-bg: #e6f3eb;
+      --user-bg: #eceae4; --warn: #c2410c; --danger: #b42318; --danger-bg: #fdecea;
+      --shadow-pop: 0 14px 40px rgba(31, 30, 28, 0.14), 0 2px 6px rgba(31, 30, 28, 0.06);
+      --shadow-card: 0 1px 2px rgba(31, 30, 28, 0.04), 0 6px 20px rgba(31, 30, 28, 0.05);
+      --radius-pill: 999px; --radius-sm: 8px; --radius: 12px; --radius-lg: 18px; --radius-xl: 30px;
+      --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Noto Sans CJK SC', 'Microsoft YaHei', sans-serif;
+    }
+    [data-theme='dark'] {
+      --bg: #1c1b19; --sidebar: #171614; --surface: #252421; --surface-2: #211f1d;
+      --text: #ecebe7; --muted: #9a978f; --faint: #6d6a63; --border: #34322e; --border-strong: #45423d;
+      --hover: rgba(255, 255, 255, 0.05); --active: rgba(255, 255, 255, 0.09);
+      --accent: #ecebe7; --accent-fg: #1c1b19; --positive: #5cb88d; --positive-bg: #1f3329;
+      --user-bg: #2e2c29; --warn: #f0894e; --danger: #f07167; --danger-bg: #3a2220;
+    }
+    /* Proposed new tokens: the orb's three stops. Only voice uses them. */
+    [data-orb='mist'] { --orb-top: #3f6fe0; --orb-mid: #9db8f6; --orb-low: #c8d6fa; --orb-cloud: #ffffff; }
+    [data-theme='dark'][data-orb='mist'] { --orb-top: #5d8cf5; --orb-mid: #a9c1fa; --orb-low: #34477a; --orb-cloud: #e9efff; }
+    [data-orb='ink'] { --orb-top: #2a2926; --orb-mid: #8c877d; --orb-low: #e4dfd4; --orb-cloud: #fbfaf7; }
+    [data-theme='dark'][data-orb='ink'] { --orb-top: #f1eee7; --orb-mid: #8f8a80; --orb-low: #34322e; --orb-cloud: #fbfaf7; }
+    :root { --voice-bg: color-mix(in srgb, var(--orb-top) 9%, var(--surface)); --voice-fg: color-mix(in srgb, var(--orb-top) 72%, var(--text)); }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; color: var(--text); background: var(--bg); font-family: var(--font); font-size: 14px; }
+    button { font: inherit; cursor: pointer; color: inherit; border: 0; background: none; padding: 0; }
+
+    /* Sketch chrome */
+    .bar { position: sticky; top: 0; z-index: 50; display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
+      padding: 12px 24px; background: var(--bg); border-bottom: 1px solid var(--border); }
+    .bar h1 { font-size: 15px; font-weight: 650; margin: 0 8px 0 0; }
+    .seg { display: inline-flex; padding: 3px; border-radius: var(--radius-pill); background: var(--sidebar); border: 1px solid var(--border); }
+    .seg button { padding: 6px 12px; border-radius: var(--radius-pill); font-size: 12.5px; color: var(--muted); }
+    .seg button[aria-pressed='true'] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-card); font-weight: 600; }
+    h2 { max-width: 1500px; margin: 28px auto 0; padding: 0 24px; font-size: 14px; font-weight: 650; }
+    .note { max-width: 1500px; margin: 6px auto 0; padding: 0 24px; color: var(--muted); font-size: 12.5px; line-height: 1.8; }
+
+    .phones { max-width: 1500px; margin: 14px auto 40px; padding: 0 24px; display: flex; gap: 26px; flex-wrap: wrap; }
+    .phone { position: relative; width: 320px; height: 680px; border: 1px solid var(--border-strong); border-radius: 40px;
+      background: var(--bg); overflow: hidden; box-shadow: var(--shadow-card); display: flex; flex-direction: column; }
+    .phone-cap { width: 320px; text-align: center; color: var(--muted); font-size: 12px; margin-top: 10px; line-height: 1.6; }
+
+    /* Thread chrome */
+    .top { display: flex; align-items: center; gap: 10px; padding: 46px 14px 8px; }
+    .circle-btn { width: 38px; height: 38px; border-radius: var(--radius-pill); background: var(--surface); box-shadow: var(--shadow-card);
+      display: grid; place-items: center; color: var(--text); flex: none; }
+    .top .title { flex: 1; min-width: 0; }
+    .top .title b { display: block; font-size: 14.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .top .title span { font-size: 11.5px; color: var(--muted); }
+    .msgs { flex: 1; overflow: hidden; padding: 6px 16px 0; display: flex; flex-direction: column; gap: 12px; font-size: 14.5px; line-height: 1.65; }
+    .u { align-self: flex-end; max-width: 82%; background: var(--user-bg); padding: 9px 14px; border-radius: var(--radius-lg); }
+    .u.voice { background: var(--voice-bg); color: var(--voice-fg); }
+    .u.voice.live { opacity: .7; }
+    .a { max-width: 100%; }
+    .a.voice { color: var(--text); }
+    .a.dim { color: var(--muted); }
+    .fade-top { -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 70px); mask-image: linear-gradient(to bottom, transparent 0, #000 70px); }
+
+    /* Folded voice segment after the session ends: same shape as the existing "worked for" row. */
+    .fold { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; padding: 4px 0; }
+    .fold svg { flex: none; }
+    .fold .chev { margin-left: auto; }
+    .rule { height: 1px; background: var(--border); margin: 2px 0; }
+    .result h4 { margin: 0 0 4px; font-size: 14.5px; }
+    .result ul { margin: 4px 0 0; padding-left: 18px; }
+    .result li { margin: 2px 0; }
+    .meta { display: flex; gap: 14px; color: var(--faint); font-size: 12px; align-items: center; }
+
+    /* Voice dock: the orb sits above the controls, centred; nothing else is added. */
+    .dock { position: relative; padding: 0 14px 26px; display: flex; flex-direction: column; align-items: center; gap: 12px;
+      background: linear-gradient(to bottom, transparent, var(--bg) 30%); }
+    .status { font-size: 12.5px; color: var(--muted); min-height: 18px; text-align: center; }
+    .status.err { color: var(--danger); }
+    .controls { display: flex; align-items: center; gap: 10px; width: 100%; }
+    .pill { flex: 1; min-width: 0; height: 50px; border-radius: var(--radius-pill); background: var(--surface); box-shadow: var(--shadow-card);
+      border: 1px solid var(--border); display: flex; align-items: center; gap: 10px; padding: 0 16px; color: var(--faint); font-size: 14px; }
+    .pill span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .round { width: 50px; height: 50px; border-radius: var(--radius-pill); display: grid; place-items: center; flex: none;
+      background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow-card); color: var(--text); }
+    .round.on { background: var(--text); color: var(--bg); border-color: transparent; }
+    .round.end { background: var(--accent); color: var(--accent-fg); border-color: transparent; }
+
+    /* Work chip: one line, only while something runs or waits. */
+    .chip { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; padding: 6px 12px; border-radius: var(--radius-pill);
+      background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow-card); font-size: 12.5px; color: var(--muted); }
+    .chip b { color: var(--text); font-weight: 550; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .chip.wait { border-color: color-mix(in srgb, var(--warn) 40%, var(--border)); }
+    .chip.wait b { color: var(--warn); }
+    .spin { width: 12px; height: 12px; border-radius: 50%; border: 1.6px solid var(--border-strong); border-top-color: var(--text); animation: rot 1s linear infinite; flex: none; }
+    @keyframes rot { to { transform: rotate(360deg); } }
+
+    /* Normal composer, for the "after" frame. */
+    .composer { margin: 0 14px 26px; border-radius: var(--radius-xl); background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow-card); padding: 14px 16px 10px; }
+    .composer .ph { color: var(--faint); font-size: 14.5px; padding: 2px 2px 18px; }
+    .composer .row { display: flex; align-items: center; gap: 14px; color: var(--muted); }
+    .composer .row .sp { flex: 1; }
+    .send { width: 38px; height: 38px; border-radius: var(--radius-pill); background: var(--accent); color: var(--accent-fg); display: grid; place-items: center; }
+
+    /* ---------- The orb ---------- */
+    .orb { display: block; border-radius: 50%; position: relative; flex: none; transition: transform .25s ease;
+      filter: drop-shadow(0 10px 28px color-mix(in srgb, var(--orb-top) 22%, transparent)); }
+    .orb svg { display: block; width: 100%; height: 100%; }
+    /* Selectors do not reach into <use>, so state reaches the cloud layers through inherited variables. */
+    .drift { animation: drift var(--drift, 16s) ease-in-out infinite alternate; animation-play-state: var(--play, running); }
+    .drift2 { animation: drift calc(var(--drift, 16s) * 1.7) ease-in-out infinite alternate-reverse; animation-play-state: var(--play, running); opacity: .5; }
+    @keyframes drift { from { transform: translateX(0); } to { transform: translateX(-400px); } }
+    .orb.xl { width: 190px; height: 190px; }
+    .orb.md { width: 76px; height: 76px; }
+    .orb.sm { width: 22px; height: 22px; filter: none; }
+    /* States. Listening and speaking follow the real audio level in the product; here they are faked. */
+    .orb.listening { animation: listen 2.6s ease-in-out infinite; }
+    .orb.speaking { animation: speak .9s ease-in-out infinite; }
+    .orb.speaking { --drift: 7s; }
+    .orb.thinking { --drift: 4s; }
+    .orb.thinking { animation: breathe 2.2s ease-in-out infinite; }
+    .orb.connecting { animation: breathe 1.4s ease-in-out infinite; opacity: .55; }
+    .orb.muted { filter: saturate(0) brightness(1.05); opacity: .55; }
+    .orb.muted, .orb.broken { --play: paused; }
+    .orb.broken { filter: saturate(0); opacity: .35; }
+    @keyframes listen { 0%,100% { transform: scale(1); } 30% { transform: scale(1.035); } 55% { transform: scale(.995); } 75% { transform: scale(1.05); } }
+    @keyframes speak { 0%,100% { transform: scale(1); } 20% { transform: scale(1.07); } 45% { transform: scale(1.01); } 70% { transform: scale(1.09); } }
+    @keyframes breathe { 0%,100% { transform: scale(.97); } 50% { transform: scale(1.01); } }
+    @media (prefers-reduced-motion: reduce) { .orb, .orb * { animation: none !important; } }
+
+    /* Composer entry button: waveform in a filled circle, replacing the mic glyph. */
+    .entry { width: 38px; height: 38px; border-radius: var(--radius-pill); display: grid; place-items: center; background: var(--hover); color: var(--text); }
+
+    /* Desktop frame */
+    .desk { max-width: 1500px; margin: 14px auto 60px; padding: 0 24px; }
+    .win { width: 980px; height: 600px; border: 1px solid var(--border-strong); border-radius: 16px; overflow: hidden; display: flex; background: var(--bg); box-shadow: var(--shadow-card); }
+    .side { width: 230px; background: var(--sidebar); border-right: 1px solid var(--border); padding: 18px 14px; font-size: 13px; color: var(--muted); display: flex; flex-direction: column; gap: 8px; }
+    .side .t { padding: 6px 10px; border-radius: var(--radius-sm); }
+    .side .t.sel { background: var(--active); color: var(--text); }
+    .main { flex: 1; display: flex; flex-direction: column; }
+    .main .msgs { width: 100%; max-width: 640px; margin: 0 auto; padding-top: 30px; }
+    .main .dock { width: 100%; max-width: 640px; margin: 0 auto; }
+
+    .legend { max-width: 1500px; margin: 0 auto; padding: 0 24px 60px; display: flex; gap: 28px; flex-wrap: wrap; }
+    .legend figure { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 10px; width: 120px; }
+    .legend figcaption { font-size: 12px; color: var(--muted); text-align: center; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <!-- One cloud texture, shared by every orb. -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <filter id="cloud" x="0" y="0" width="100%" height="100%">
+        <feTurbulence type="fractalNoise" baseFrequency="0.011 0.034" numOctaves="4" seed="7" stitchTiles="stitch" />
+        <feColorMatrix type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 2.6 -1.05" />
+      </filter>
+      <linearGradient id="band" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0.28" stop-color="#fff" stop-opacity="0" />
+        <stop offset="0.52" stop-color="#fff" stop-opacity="1" />
+        <stop offset="0.72" stop-color="#fff" stop-opacity="0.35" />
+        <stop offset="0.9" stop-color="#fff" stop-opacity="0" />
+      </linearGradient>
+      <mask id="bandMask" maskContentUnits="userSpaceOnUse"><rect width="200" height="200" fill="url(#band)" /></mask>
+      <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" style="stop-color: var(--orb-top)" />
+        <stop offset="0.5" style="stop-color: var(--orb-mid)" />
+        <stop offset="1" style="stop-color: var(--orb-low)" />
+      </linearGradient>
+      <radialGradient id="shade" cx="0.5" cy="0.42" r="0.6">
+        <stop offset="0.7" stop-color="#000" stop-opacity="0" />
+        <stop offset="1" stop-color="#000" stop-opacity="0.08" />
+      </radialGradient>
+      <clipPath id="disc"><circle cx="100" cy="100" r="100" /></clipPath>
+      <symbol id="orb" viewBox="0 0 200 200">
+        <g clip-path="url(#disc)">
+          <rect width="200" height="200" fill="url(#sky)" />
+          <g mask="url(#bandMask)">
+            <g class="drift"><rect width="600" height="200" filter="url(#cloud)" style="fill: var(--orb-cloud)" /></g>
+            <g class="drift2"><rect width="600" height="200" y="14" filter="url(#cloud)" transform="scale(1 0.8)" style="fill: var(--orb-cloud)" /></g>
+          </g>
+          <rect width="200" height="200" fill="url(#shade)" />
+        </g>
+      </symbol>
+      <!-- Icons, same stroke style as icons.tsx -->
+      <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+      <symbol id="i-mic" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0013 0M12 17.5V21"/></g></symbol>
+      <symbol id="i-micoff" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M9 9V6a3 3 0 015.8-1.1M15 10v1a3 3 0 01-4.6 2.5M5.5 11a6.5 6.5 0 0010.9 4.8M18.5 11c0 .6-.1 1.2-.2 1.7M12 17.5V21M4 4l16 16"/></g></symbol>
+      <symbol id="i-wave" viewBox="0 0 24 24"><path d="M5 10v4M9 7v10M13 4.5v15M17 8v8M21 11v2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+      <symbol id="i-chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-more" viewBox="0 0 24 24"><g fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></g></symbol>
+      <symbol id="i-people" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="9" cy="8" r="3.2"/><path d="M3 19c.6-3.3 3-5 6-5s5.4 1.7 6 5M16 5a3 3 0 010 6M18 14c1.6.6 2.7 2.2 3 5"/></g></symbol>
+    </defs>
+  </svg>
+
+  <div class="bar">
+    <h1>实时语音 · 草图</h1>
+    <div class="seg" id="theme"><button data-v="light" aria-pressed="true">亮色</button><button data-v="dark" aria-pressed="false">深色</button></div>
+    <div class="seg" id="orbset"><button data-v="mist" aria-pressed="true">晨雾（推荐）</button><button data-v="ink" aria-pressed="false">墨</button></div>
+  </div>
+
+  <h2>手机：一次语音从开到关</h2>
+  <p class="note">去掉横条。语音期间输入框换成一行：左边仍能打字的胶囊，右边静音和结束两个圆钮；球放在控制行正上方居中，自己就是状态。文字状态只在连接、静音和出错时出现。所有画面都在原线程里，不跳新页面，历史还在上面。</p>
+  <div class="phones">
+    <!-- 1. Empty thread, just opened -->
+    <div>
+      <div class="phone">
+        <div class="top"><div class="circle-btn"><svg width="18" height="18"><use href="#i-back"/></svg></div><div class="title"><b>新线程</b><span>Codex · remote-agent-hub</span></div></div>
+        <div class="msgs" style="align-items:center;justify-content:center;padding-bottom:40px"><span class="orb xl listening"><svg><use href="#orb"/></svg></span></div>
+        <div class="dock">
+          <div class="controls">
+            <div class="pill"><svg width="20" height="20" style="color:var(--text)"><use href="#i-plus"/></svg><span>继续这个线程</span></div>
+            <button class="round" aria-label="静音"><svg width="20" height="20"><use href="#i-mic"/></svg></button>
+            <button class="round end" aria-label="结束语音"><svg width="20" height="20"><use href="#i-x"/></svg></button>
+          </div>
+        </div>
+      </div>
+      <div class="phone-cap">① 空线程开启：大球居中，没有任何字<br>球随你的音量起伏</div>
+    </div>
+
+    <!-- 2. Conversation in an existing thread -->
+    <div>
+      <div class="phone">
+        <div class="top"><div class="circle-btn"><svg width="18" height="18"><use href="#i-back"/></svg></div><div class="title"><b>/goal 从 master 拉一个分支…</b><span>TRAE CLI · billing-api</span></div><div class="circle-btn"><svg width="18" height="18"><use href="#i-more"/></svg></div></div>
+        <div class="msgs fade-top">
+          <div class="a dim">现在主要卡在两件事：CLI 登录失效要重新认证，还有 数据库和预发环境的权限还在审批。</div>
+          <div class="u voice">那审批大概要多久</div>
+          <div class="a voice">一般一个工作日内。我可以帮你在两张单子上都催一下，要吗？</div>
+          <div class="u voice live">好，顺便看看测试有没有跑过…</div>
+        </div>
+        <div class="dock">
+          <span class="orb md listening"><svg><use href="#orb"/></svg></span>
+          <div class="controls">
+            <div class="pill"><svg width="20" height="20" style="color:var(--text)"><use href="#i-plus"/></svg><span>继续这个线程</span></div>
+            <button class="round" aria-label="静音"><svg width="20" height="20"><use href="#i-mic"/></svg></button>
+            <button class="round end" aria-label="结束语音"><svg width="20" height="20"><use href="#i-x"/></svg></button>
+          </div>
+        </div>
+      </div>
+      <div class="phone-cap">② 已有线程里对话：球缩到控制行上方<br>你说的话用浅色调气泡，还没说完的更淡</div>
+    </div>
+
+    <!-- 3. Speaking while a task runs -->
+    <div>
+      <div class="phone">
+        <div class="top"><div class="circle-btn"><svg width="18" height="18"><use href="#i-back"/></svg></div><div class="title"><b>/goal 从 master 拉一个分支…</b><span>TRAE CLI · billing-api</span></div><div class="circle-btn"><svg width="18" height="18"><use href="#i-more"/></svg></div></div>
+        <div class="msgs fade-top">
+          <div class="u voice">好，顺便看看测试有没有跑过</div>
+          <div class="a voice">好，我让 TRAE 去跑测试，跑完告诉你。审批那边我先查一下状态。</div>
+          <div class="u voice">嗯，你先说审批</div>
+          <div class="a voice">数据库那张已经批了，预发环境还在等第二个审批人…</div>
+        </div>
+        <div class="dock">
+          <span class="chip"><span class="spin"></span><b>跑测试</b><span>0:42</span></span>
+          <span class="orb md speaking"><svg><use href="#orb"/></svg></span>
+          <div class="controls">
+            <div class="pill"><svg width="20" height="20" style="color:var(--text)"><use href="#i-plus"/></svg><span>继续这个线程</span></div>
+            <button class="round" aria-label="静音"><svg width="20" height="20"><use href="#i-mic"/></svg></button>
+            <button class="round end" aria-label="结束语音"><svg width="20" height="20"><use href="#i-x"/></svg></button>
+          </div>
+        </div>
+      </div>
+      <div class="phone-cap">③ 边聊边做：后台任务一行小签<br>点它展开到那个任务；球在说话时跳得更快</div>
+    </div>
+
+    <!-- 4. Waiting for approval + muted -->
+    <div>
+      <div class="phone">
+        <div class="top"><div class="circle-btn"><svg width="18" height="18"><use href="#i-back"/></svg></div><div class="title"><b>/goal 从 master 拉一个分支…</b><span>TRAE CLI · billing-api</span></div><div class="circle-btn"><svg width="18" height="18"><use href="#i-more"/></svg></div></div>
+        <div class="msgs fade-top">
+          <div class="a voice">数据库那张已经批了，预发环境还在等第二个审批人。</div>
+          <div class="a voice">测试那边要你批一个命令，我放在下面了，你看一眼。</div>
+        </div>
+        <div class="dock">
+          <span class="chip wait"><b>等你批准</b><span>npm test -- --runInBand</span><svg width="14" height="14"><use href="#i-chev"/></svg></span>
+          <span class="orb md muted"><svg><use href="#orb"/></svg></span>
+          <div class="status">已静音</div>
+          <div class="controls">
+            <div class="pill"><svg width="20" height="20" style="color:var(--text)"><use href="#i-plus"/></svg><span>继续这个线程</span></div>
+            <button class="round on" aria-label="取消静音"><svg width="20" height="20"><use href="#i-micoff"/></svg></button>
+            <button class="round end" aria-label="结束语音"><svg width="20" height="20"><use href="#i-x"/></svg></button>
+          </div>
+        </div>
+      </div>
+      <div class="phone-cap">④ 静音 + 待批准：球褪色停住，静音钮反色<br>待批准用警告色，点开就是原来的审批卡</div>
+    </div>
+
+    <!-- 5. Error -->
+    <div>
+      <div class="phone">
+        <div class="top"><div class="circle-btn"><svg width="18" height="18"><use href="#i-back"/></svg></div><div class="title"><b>/goal 从 master 拉一个分支…</b><span>TRAE CLI · billing-api</span></div><div class="circle-btn"><svg width="18" height="18"><use href="#i-more"/></svg></div></div>
+        <div class="msgs fade-top">
+          <div class="u voice">嗯，你先说审批</div>
+          <div class="a voice">数据库那张已经批了，预发环境还在等第二个</div>
+        </div>
+        <div class="dock">
+          <span class="orb md broken"><svg><use href="#orb"/></svg></span>
+          <div class="status err">语音网络连接已断开</div>
+          <div class="controls">
+            <div class="pill" style="justify-content:center;color:var(--text);font-weight:550">重新连接</div>
+            <button class="round end" aria-label="关闭"><svg width="20" height="20"><use href="#i-x"/></svg></button>
+          </div>
+        </div>
+      </div>
+      <div class="phone-cap">⑤ 出错：球变灰，原因直接写出来<br>胶囊变成“重新连接”，不自动开麦</div>
+    </div>
+
+    <!-- 6. After ending -->
+    <div>
+      <div class="phone">
+        <div class="top"><div class="circle-btn"><svg width="18" height="18"><use href="#i-back"/></svg></div><div class="title"><b>/goal 从 master 拉一个分支…</b><span>TRAE CLI · billing-api</span></div><div class="circle-btn"><svg width="18" height="18"><use href="#i-more"/></svg></div></div>
+        <div class="msgs fade-top" style="gap:10px">
+          <div class="a dim">现在主要卡在两件事：CLI 登录失效要重新认证，还有 数据库和预发环境的权限还在审批。</div>
+          <div class="fold"><span class="orb sm"><svg><use href="#orb"/></svg></span>语音 4 分 12 秒 · 7 句<svg class="chev" width="14" height="14"><use href="#i-chev"/></svg></div>
+          <div class="rule"></div>
+          <div class="a result">
+            <h4>这次语音里定下的事</h4>
+            <ul>
+              <li>数据库权限已通过；预发环境还差第二审批人，已在单子上留言催办。</li>
+              <li>测试已跑完：<b>212 通过，1 失败</b>（<code>auth.spec.ts</code> 登录过期用例）。</li>
+              <li>下一步：你重新登录 CLI，然后我再跑一次失败用例。</li>
+            </ul>
+          </div>
+          <div class="meta"><span>复制</span><span>09:46</span></div>
+        </div>
+        <div class="composer">
+          <div class="ph">继续这个线程</div>
+          <div class="row"><svg width="20" height="20"><use href="#i-plus"/></svg><svg width="20" height="20"><use href="#i-people"/></svg><span class="sp"></span><span class="entry" aria-label="开启实时语音"><svg width="18" height="18"><use href="#i-wave"/></svg></span><span class="send" style="opacity:.35"><svg width="16" height="16" style="transform:rotate(-90deg)"><use href="#i-chev"/></svg></span></div>
+        </div>
+      </div>
+      <div class="phone-cap">⑥ 结束后：逐句对话折成一行，下面是完整文字结果<br>输入框回来，入口是声波图标</div>
+    </div>
+  </div>
+
+  <h2>桌面</h2>
+  <p class="note">同一套，宽度跟正文对齐（760 内）。控制行比手机矮一点；静音和结束也能用键盘（Space 按住说话不做，M 静音，Esc 结束），鼠标悬停有提示。</p>
+  <div class="desk">
+    <div class="win">
+      <div class="side"><div class="t">新线程</div><div class="t sel">/goal 从 master 拉一个分支…</div><div class="t">写作：语音设计说明</div><div class="t">修复登录过期</div></div>
+      <div class="main">
+        <div class="msgs fade-top">
+          <div class="u voice">好，顺便看看测试有没有跑过</div>
+          <div class="a voice">好，我让 TRAE 去跑测试，跑完告诉你。审批那边我先查一下状态。</div>
+          <div class="u voice">嗯，你先说审批</div>
+          <div class="a voice">数据库那张已经批了，预发环境还在等第二个审批人。我在单子上留了言，下午还没动的话我再提醒你。</div>
+        </div>
+        <div class="dock">
+          <span class="chip"><span class="spin"></span><b>跑测试</b><span>0:42</span></span>
+          <span class="orb md speaking" style="width:64px;height:64px"><svg><use href="#orb"/></svg></span>
+          <div class="controls">
+            <div class="pill" style="height:44px"><svg width="20" height="20" style="color:var(--text)"><use href="#i-plus"/></svg><span>继续这个线程</span></div>
+            <button class="round" style="width:44px;height:44px" aria-label="静音"><svg width="18" height="18"><use href="#i-mic"/></svg></button>
+            <button class="round end" style="width:44px;height:44px" aria-label="结束语音"><svg width="18" height="18"><use href="#i-x"/></svg></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h2>球的状态</h2>
+  <p class="note">同一个球，只靠大小、速度、饱和度区分。不加光圈、不加波形条。系统开了“减少动态效果”就全部静止。</p>
+  <div class="legend">
+    <figure><span class="orb md connecting"><svg><use href="#orb"/></svg></span><figcaption>连接中<br>半透明，慢呼吸<br>下方写“正在连接…”</figcaption></figure>
+    <figure><span class="orb md listening"><svg><use href="#orb"/></svg></span><figcaption>聆听<br>跟着麦克风音量</figcaption></figure>
+    <figure><span class="orb md thinking"><svg><use href="#orb"/></svg></span><figcaption>想 / 等工具<br>云走得快，轻呼吸</figcaption></figure>
+    <figure><span class="orb md speaking"><svg><use href="#orb"/></svg></span><figcaption>回复中<br>跟着播放音量</figcaption></figure>
+    <figure><span class="orb md muted"><svg><use href="#orb"/></svg></span><figcaption>静音<br>褪色、停住</figcaption></figure>
+    <figure><span class="orb md broken"><svg><use href="#orb"/></svg></span><figcaption>出错<br>灰，原因写在下面</figcaption></figure>
+  </div>
+
+  <script>
+    for (const [id, attr] of [['theme', 'data-theme'], ['orbset', 'data-orb']]) {
+      const seg = document.getElementById(id);
+      seg.addEventListener('click', (e) => {
+        const b = e.target.closest('button'); if (!b) return;
+        document.documentElement.setAttribute(attr, b.dataset.v);
+        for (const x of seg.querySelectorAll('button')) x.setAttribute('aria-pressed', String(x === b));
+      });
+    }
+    const q = new URLSearchParams(location.search);
+    if (q.get('theme')) document.documentElement.dataset.theme = q.get('theme');
+    if (q.get('orb')) document.documentElement.dataset.orb = q.get('orb');
+  </script>
+</body>
+</html>

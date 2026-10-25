@@ -19,6 +19,8 @@ export type EventType =
   | 'message.replace'
   /** Final or interrupted voice text. Streaming speech deltas use the private voice channel. */
   | 'voice.message'
+  | 'voice.closed'
+  | 'voice.summary.error'
   | 'reasoning.delta'
   | 'tool.start'
   | 'tool.update'

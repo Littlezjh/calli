@@ -67,7 +67,7 @@ import { SchedulesPage } from './components/SchedulesPage';
 import { TodosPage } from './components/TodosPage';
 import { ActivityPage } from './components/ActivityPage';
 import { ExtensionsPage } from './components/ExtensionsPage';
-import { VoiceBar } from './components/VoiceBar';
+import { VoiceOrb, VoiceControls } from './components/VoiceOrb';
 import { useVoiceSession } from './voice-session';
 import type { ExtensionNavEntry } from './components/Sidebar';
 import type { ExtensionState } from '@rah/extension-api';
@@ -91,7 +91,7 @@ import { NoteMarks, type NoteMark } from './components/NoteMarks';
 import { Toast, type ToastState } from './components/Toast';
 import { ConnectDialog, DemoBar } from './components/ConnectDialog';
 import { DemoApi, DemoError } from './demo/DemoApi';
-import { IconCheck, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconMore, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconLanguage, IconMic, IconMicOff } from './components/icons';
+import { IconCheck, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconMore, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconLanguage, IconWaveform } from './components/icons';
 import { chooseLocale, locale, LOCALES, localeChoice, t } from './i18n';
 
 const sleep = (ms: number, signal: AbortSignal) =>
@@ -2220,30 +2220,34 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         )}
 
         {!onPage && !(host && !hostUp) && (
-        <div className="composer-slot">
-        <VoiceBar
-          session={voice.state}
-          providerLabel={voice.state.providerId && voice.state.providerId !== selected?.agent
-            ? agentLabel(voice.state.providerId) : undefined}
-          onMuteToggle={voice.toggleMute}
-          onStop={voice.stop}
-          onDismissError={voice.dismissError}
-        />
+        <div className={`composer-slot${voice.state.active || voice.state.error ? ' voice-mode' : ''}`}>
         {selectedId && <WorkSummary items={workSources} />}
+        {(voice.state.active || voice.state.error) && <VoiceOrb session={voice.state} provider={agentLabel(voice.state.providerId ?? selected?.agent ?? '')}
+          levels={voice.levels} empty={timeline.items.length === 0} awaitingApproval={Boolean(waitingOn) || teamWaiting}
+          tasks={[...(running && selected ? [{ id: selected.id, title: selected.title, since: selected.runningSince }] : []), ...(coordination?.members.filter(m => m.thread?.status === 'running').map(m => ({ id: m.id, title: m.name, since: m.thread?.runningSince })) ?? [])]}
+          onTask={id => {
+            const member = id ?? (!waitingOn ? coordination?.members.find(m => m.thread?.waiting)?.id : undefined);
+            if (member && member !== selectedId) { setAgentsStart(member); setAgentsOpen(true); }
+            else document.querySelector('.action-sheet')?.scrollIntoView({ block: 'nearest' });
+          }} />}
         {showcase ? showcase.composer(selectedId) : <>
         {selected?.coordination?.team && selected.coordination.rootId === selected.id && ['awaiting_confirm', 'needs_attention'].includes(selected.coordination.team.status) && <div className="team-task-notice">{selected.coordination.team.status === 'needs_attention' && <span>{selected.coordination.team.error}</span>}{selected.coordination.team.status === 'awaiting_confirm' && <button className="ghost" onClick={() => void api.configureCoordination(selected.id, { action: 'confirm' }).then(value => { setCoordination(value); void refreshThreads(); }).catch(handleError)}>{t('teams.confirm')}</button>}</div>}
         {!selected && draftTeam && <div className="team-text-only">{t('teams.attachments')}</div>}
-        {viewingEarlier && latestSegment ? <HandoverComposer
+        {voice.state.error ? <div className="voice-reconnect-row"><button className="voice-reconnect" onClick={() => void voice.start()}>{t('voice.reconnect')}</button><VoiceControls session={voice.state} onMute={voice.toggleMute} onStop={voice.dismissError} /></div> : viewingEarlier && latestSegment ? <HandoverComposer
           key={latestSegment.id} api={api} thread={latestSegment} sourceId={selected!.id} label={agentLabel(latestSegment.agent)} hostId={hostId}
           attachBlocked={capsOf(latestSegment.agent)?.images ? null : t('app.noImages', agentLabel(latestSegment.agent))}
           onLatest={() => pick(latestSegment.id)} onRefresh={() => { setSingleSegmentId(null); void refreshThreads(); }} onError={handleError}
           note={noteSignal?.draftKey === composerDraftKey ? noteSignal.note : null} onNotesChange={onNotesChange}
         /> : <Composer
           draftKey={composerDraftKey}
-          running={running}
+          voiceControls={voice.state.active ? <VoiceControls session={voice.state} onMute={voice.toggleMute} onStop={() => void voice.stop()} /> : undefined}
+          running={voice.state.active ? false : running}
           disabled={modeBusy || (!selected && !draftCwd)}
-          placeholder={demo ? t('app.placeholder.demo') : workMode === 'plan' && !running ? t('composerMenu.planOn') : writing && !running ? t('writing.placeholder') : selected ? (running ? t('sideChat.queuePlaceholder') : t('app.placeholder.continue')) : draftScratch ? t('app.placeholder.scratch') : t('app.placeholder.startIn', folderName(draftCwd))}
-          onSend={send}
+          placeholder={voice.state.active ? t('app.placeholder.continue') : demo ? t('app.placeholder.demo') : workMode === 'plan' && !running ? t('composerMenu.planOn') : writing && !running ? t('writing.placeholder') : selected ? (running ? t('sideChat.queuePlaceholder') : t('app.placeholder.continue')) : draftScratch ? t('app.placeholder.scratch') : t('app.placeholder.startIn', folderName(draftCwd))}
+          onSend={voice.state.active ? async (text, images, _mentions, videos = []) => {
+            try { await voice.appendText(text, images.map(img => ({ data: img.data, mimeType: img.mimeType })), await Promise.all(videos.map(async video => (await api.uploadVideo(selectedId!, video.file)).id))); }
+            catch (error) { handleError(error); throw error; }
+          } : send}
           mentionOptions={collaborationOptions}
           mentionIcon={collaborationIcon}
           collaboration={collaborationControl}
@@ -2261,7 +2265,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           planMode={!draftTeam && activeCaps?.workModes?.includes('plan') ? { active: workMode === 'plan', disabled: running || modeBusy, onChange: active => void changeWorkMode(active ? 'plan' : 'execute') } : undefined}
           left={draftTeam ? undefined : left}
           right={draftTeam ? undefined : right}
-          composerActions={canVoice && (
+          composerActions={canVoice && !voice.state.active && (
             <button
               type="button"
               className={`tool-btn composer-voice${voice.state.active ? ' active' : ''}`}
@@ -2269,7 +2273,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
               title={voice.state.active ? t('voice.end') : t('voice.start')}
               aria-label={voice.state.active ? t('voice.end') : t('voice.start')}
             >
-              {voice.state.active && voice.state.isMuted ? <IconMicOff size={16} /> : <IconMic size={16} />}
+              <IconWaveform size={16} />
             </button>
           )}
           commands={commandsByKey[commandsKey] ?? []}

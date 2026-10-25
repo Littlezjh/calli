@@ -1708,6 +1708,15 @@ export const en: Messages = {
   'work.threadCount': (n: number) => `${n} ${n === 1 ? 'thread' : 'threads'} selected`,
 
   // Realtime Voice
+  'voice.details': 'Voice details',
+  'voice.reconnect': 'Reconnect',
+  'voice.awaitingApproval': 'Awaiting approval',
+  'voice.tasks': (n: number) => `${n} ${n === 1 ? 'task' : 'tasks'}`,
+  'voice.duration': (m: number, s: number) => `${m} min ${s} sec`,
+  'voice.recap': (m: number, s: number, n: number) => `Voice ${m} min ${s} sec · ${n} ${n === 1 ? 'utterance' : 'utterances'}`,
+  'voice.summaryFailed': 'The voice summary could not start. Send a message to retry.',
+  'voice.empty': 'No transcript was retained',
+  'voice.loadFailed': 'Could not load the transcript',
   'voice.title': 'Realtime Voice',
   'voice.start': 'Start realtime voice',
   'voice.connecting': 'Connecting voice…',

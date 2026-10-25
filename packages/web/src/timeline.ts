@@ -137,7 +137,8 @@ export type Item =
    * out under it (stopped, failed), not that the user chose to leave it unanswered.
    */
   | { kind: 'input'; key: string; turnId: string; inputId: string; title: string; inputKind?: string; plan?: string; questions: import('./api').UserQuestion[]; answer: import('./api').UserInputAnswer | { cancelled: true; ended: true } | null }
-  | { kind: 'user'; handoverCollapsed?: boolean; workMode?: string; key: string; turnId: string; text: string; images: ImageRef[]; videos?: VideoRef[]; fromTerminal?: boolean; scheduled?: boolean; coordination?: CoordinationNote }
+  | { kind: 'voice-recap'; key: string; turnId: null; sessionId: string; seconds: number; count: number }
+  | { kind: 'user'; voice?: boolean; streaming?: boolean; handoverCollapsed?: boolean; workMode?: string; key: string; turnId: string; text: string; images: ImageRef[]; videos?: VideoRef[]; fromTerminal?: boolean; scheduled?: boolean; coordination?: CoordinationNote }
   /** The turn's answer: the text after everything the agent did. */
   | { kind: 'assistant'; key: string; turnId: string; text: string; done: boolean }
   /**
@@ -490,6 +491,7 @@ export function buildTimeline(events: StoredEvent[], speech: readonly VoiceTrans
         const delivered = ev.data.coordination ? coordinationNote(shown) : null;
         items.push({
           kind: 'user',
+          ...(ev.data.voiceSummary ? { handoverCollapsed: true } : {}),
           ...(ev.data.handoverCollapsed === true ? { handoverCollapsed: true } : {}),
           workMode: ev.data.workMode,
           key,
@@ -728,6 +730,10 @@ export function buildTimeline(events: StoredEvent[], speech: readonly VoiceTrans
         closeTurn(ev.ts);
         finished.set(turn, ev.data.imported || ev.data.fromTerminal ? undefined : ev.ts);
         running = false;
+        break;
+
+      case 'voice.summary.error':
+        items.push({ kind: 'error', key, turnId: null, message: t('voice.summaryFailed') });
         break;
 
       case 'turn.error':

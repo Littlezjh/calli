@@ -41,6 +41,7 @@ import {
   type Thought,
   type WorkSection,
 } from '../timeline';
+import { VoiceCloud } from './VoiceOrb';
 import { Lightbox } from './Lightbox';
 import { PlanCopyButton, PlanDownloadButton, PlanReader } from './PlanReader';
 import { ActivityIcon, IconAgents, IconCheck, IconChevron, IconClose, IconCompact, IconCopy, IconEdit, IconFile, IconFork, IconHand, IconHandover, IconList, IconQuote, IconWorktree } from './icons';
@@ -232,6 +233,7 @@ export function ThreadView({ chain = false, observeOlder = true, beforeItems, ol
   const renderItems = (list: Item[]) =>
     list.map((item) => {
       switch (item.kind) {
+        case 'voice-recap': return <VoiceRecap key={item.key} item={item} render={renderItems} />;
         case 'handover-summary': return <HandoverSummary key={item.key} item={item} />;
         case 'model-switch': return <div key={item.key} className="context-compaction handover-divider">{t('auto.switched', item.model, item.previous, t(item.reason === 'exhausted' ? 'auto.exhausted' : 'auto.near'))}</div>;
         case 'user': {
@@ -241,7 +243,7 @@ export function ThreadView({ chain = false, observeOlder = true, beforeItems, ol
           const noted = splitNotes(item.text);
           const { quote, body } = noted.notes.length ? { quote: null, body: noted.body } : splitUserQuote(item.text);
           return (
-            <div key={item.key} className="row user" data-turn={item.turnId}>
+            <div key={item.key} className={`row user${item.voice ? ' voice' : ''}${item.streaming ? ' draft' : ''}`} data-turn={item.turnId}>
               {item.images.length > 0 && (
                 <div className="sent-images">
                   {item.images.map((img) => (
@@ -270,7 +272,7 @@ export function ThreadView({ chain = false, observeOlder = true, beforeItems, ol
                   {item.scheduled && <span className="term-chip" title={t('view.fromSchedule')}>{t('view.scheduled')}</span>}
                 </div>
               )}
-              {onEdit && !item.fromTerminal && !item.scheduled && !item.coordination && (
+              {onEdit && (body || item.images.length > 0) && !item.voice && !item.fromTerminal && !item.scheduled && !item.coordination && (
                 <EditMessage
                   text={item.text}
                   imageIds={item.images.map((img) => img.id)}
@@ -403,6 +405,34 @@ export function ThreadView({ chain = false, observeOlder = true, beforeItems, ol
 }
 
 const HistoryContext = createContext<HistoryClient | undefined>(undefined);
+
+function VoiceRecap({ item, render }: { item: Extract<Item, { kind: 'voice-recap' }>; render: (items: Item[]) => ReactNode }) {
+  const client = useContext(HistoryContext);
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState<Awaited<ReturnType<Api['voiceHistory']>> | null>(null);
+  const [error, setError] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const load = async (cursor?: number) => {
+    if (!client) { setError(true); return; }
+    setLoading(true); setError(false);
+    try {
+      const next = await client.api.voiceHistory(client.threadId, item.sessionId, cursor);
+      setValue(previous => ({ ...next, events: cursor ? [...(previous?.events ?? []), ...next.events] : next.events }));
+    } catch { setError(true); }
+    finally { setLoading(false); }
+  };
+  return <div className="voice-recap">
+    <button className="voice-recap-toggle" aria-expanded={open} onClick={() => { setOpen(!open); if (!open && !value && !loading) void load(); }}>
+      <VoiceCloud /><span>{t('voice.recap', Math.floor(item.seconds / 60), item.seconds % 60, item.count)}</span><IconChevron size={14} />
+    </button>
+    {open && <div className="voice-recap-body">
+      {value && (value.events.length ? render(buildTimeline(value.events).items) : <p>{t('voice.empty')}</p>)}
+      {loading && <p role="status">{t('common.loading')}</p>}
+      {error && <p role="alert">{t('voice.loadFailed')} <button className="text-btn" onClick={() => void load(value?.nextCursor ?? undefined)}>{t('common.retry')}</button></p>}
+      {!loading && !error && value?.nextCursor && <button className="text-btn" onClick={() => void load(value.nextCursor!)}>{t('view.loadOlder')}</button>}
+    </div>}
+  </div>;
+}
 
 function HandoverSummary({ item }: { item: Extract<Item, { kind: 'handover-summary' }> }) {
   const client = useContext(HistoryContext);

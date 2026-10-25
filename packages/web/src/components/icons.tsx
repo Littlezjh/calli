@@ -75,6 +75,9 @@ export const IconPause = (p: { size?: number }) => (
     <rect x="13.5" y="5" width="3.5" height="14" rx="1.2" />
   </Svg>
 );
+export const IconWaveform = (p: { size?: number }) => (
+  <Svg {...p}><path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 10v4" /></Svg>
+);
 export const IconMic = (p: { size?: number }) => (
   <Svg {...p}>
     <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />

@@ -33,7 +33,7 @@ async function fixture(t: TestContext, supported = true) {
     available: async () => true,
     realtimeSupport: async () => { probes++; return { supported }; },
   }]]);
-  const transports: Array<{ emit: (e: VoiceSignal) => void; stops: number; disposed: Promise<void> }> = [];
+  const transports: Array<{ emit: (e: VoiceSignal) => void; stops: number; texts: string[]; disposed: Promise<void> }> = [];
   const voice = new VoiceService({ adapters, extensions, manager: {
     voiceProvider(threadId) {
       if (threadId !== 'thread') throw new HttpError(404, 'thread_not_found');
@@ -41,7 +41,7 @@ async function fixture(t: TestContext, supported = true) {
     },
     voiceTransport() {
       let done!: () => void;
-      const transport = { emit: (_e: VoiceSignal) => {}, stops: 0, disposed: new Promise<void>(resolve => { done = resolve; }) };
+      const transport = { emit: (_e: VoiceSignal) => {}, stops: 0, texts: [] as string[], disposed: new Promise<void>(resolve => { done = resolve; }) };
       transports.push(transport);
       return {
         async start(_offer, emit) {
@@ -49,6 +49,7 @@ async function fixture(t: TestContext, supported = true) {
           emit({ type: 'started' });
           emit({ type: 'sdp', sdp: 'PRIVATE_ANSWER' });
         },
+        async appendText(text) { transport.texts.push(text); },
         async stop() { transport.stops++; },
         dispose: done,
       };
@@ -71,7 +72,7 @@ async function fixture(t: TestContext, supported = true) {
     store.close();
     rmSync(dir, { recursive: true, force: true });
   });
-  return { voice, extensions, adapters, request, install, open, transports, probes: () => probes };
+  return { voice, extensions, adapters, store, request, install, open, transports, probes: () => probes };
 }
 
 test('voice HTTP authenticates before probing and blocks install without verified support', async t => {
@@ -237,4 +238,35 @@ test('missing account login is distinct from missing protocol support and never 
   assert.equal(h.transports.length, 0);
   provider.realtimeSupport = async () => ({ supported: true, login: 'ready' });
   assert.equal((await h.open()).status, 201);
+});
+
+
+test('native text endpoint checks owner, connection and bounded nonempty text', async t => {
+  const h = await fixture(t); await h.install();
+  const { id } = await (await h.open()).json();
+  const path = `voice/${id}/text`;
+  assert.equal((await h.request(path, 'POST', { text: 'hello' }, anotherOwner)).status, 404);
+  assert.equal((await h.request(path, 'POST', { text: 'hello' })).status, 409);
+  await h.request(`voice/${id}/connected`, 'POST');
+  for (const text of ['', ' ', 'x'.repeat(32769), 1]) assert.equal((await h.request(path, 'POST', { text })).status, 400);
+  assert.equal((await h.request(path, 'POST', { text: ' hello ' })).status, 200);
+  assert.deepEqual(h.transports[0].texts, ['hello']);
+  await h.request(`voice/${id}`, 'DELETE');
+  assert.equal((await h.request(path, 'POST', { text: 'late' })).status, 404);
+});
+
+
+test('transcript expansion stays thread-scoped and is absent from initial history', async t => {
+  const h = await fixture(t);
+  for (const id of ['one', 'two']) h.store.createThread({ id, agent: 'provider', cwd: '/tmp', title: id,
+    agentSessionId: null, permissionMode: 'default', model: null, effort: null });
+  h.store.appendEvent('one', null, 'voice.message', { sessionId: 'call', itemId: 'call:u', role: 'user', text: 'private speech', final: true });
+  h.store.appendEvent('one', null, 'voice.closed', { sessionId: 'call', startSeq: 1, endSeq: 1, count: 1 });
+  const initial = await (await h.request('threads/one/history')).json();
+  assert.ok(!JSON.stringify(initial).includes('private speech'));
+  const expanded = await h.request('threads/one/history/voice?session=call');
+  assert.equal(expanded.status, 200);
+  assert.equal((await expanded.json()).events[0].data.text, 'private speech');
+  assert.equal((await h.request('threads/two/history/voice?session=call')).status, 404);
+  assert.equal((await h.request('threads/one/history/voice?session=call&cursor=-1')).status, 400);
 });

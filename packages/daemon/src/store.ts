@@ -1062,6 +1062,10 @@ export class Store {
       WHERE thread_id = ? ORDER BY ts DESC, rowid DESC LIMIT 6`).all(threadId) as Array<{ role: string; text: string }>).reverse();
   }
 
+  isVoiceSummary(threadId: string, turnId: string): boolean {
+    return Boolean(this.db.prepare("SELECT 1 FROM events WHERE thread_id=? AND turn_id=? AND type='turn.started' AND json_extract(data, '$.voiceSummary') IS NOT NULL LIMIT 1").get(threadId, turnId));
+  }
+
   /** Answer text and its boundaries only; large tool arguments, output and reasoning stay on disk. */
   voiceAnswerEvents(threadId: string, turnId: string): StoredEvent[] {
     return (this.db.prepare(`SELECT thread_id, turn_id, seq, type, ts,

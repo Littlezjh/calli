@@ -63,9 +63,9 @@ test('native voice work retains approvals, survives voice stop, and drains queue
   assert.ok(!methods().includes('turn/interrupt'));
   const option = (approval.data.options as { optionId: string }[])[0].optionId;
   manager.resolveApproval(String(approval.data.approvalId), { optionId: option });
-  await until(() => events.filter(e => e.type === 'turn.done').length === 2);
-  assert.equal(events.filter(e => e.type === 'turn.started').length, 2);
-  assert.equal(methods().filter(m => m === 'turn/start').length, 1);
+  await until(() => events.filter(e => e.type === 'turn.done').length === 3);
+  assert.equal(events.filter(e => e.type === 'turn.started').length, 3);
+  assert.equal(methods().filter(m => m === 'turn/start').length, 2);
   assert.ok(signals.some(s => s.type === 'transcript'));
   const retained = events.find(e => e.type === 'voice.message');
   assert.equal(retained?.data.text, 'temporary caption');
@@ -88,7 +88,10 @@ test('typed speech retains separate speakers and canonical corrections across hi
   assert.ok(signals.some(s => s.type === 'transcript' && s.role === 'user' && !s.final && s.text === '帮我整理最新的新闻。'));
   assert.equal(events.filter(e => e.type === 'turn.started').length, 0);
   const history = await store.history.page(thread.id);
-  assert.equal(history.events.filter(e => e.type === 'voice.message').length, 4);
+  assert.equal(history.events.filter(e => e.type === 'voice.message').length, 0);
+  const recap = history.events.find(e => e.type === 'voice.closed')!;
+  assert.equal(recap.data.count, 4);
+  assert.equal(store.history.voiceText(thread.id, recap.data.sessionId).events.length, 4);
   assert.ok(!methods().includes('turn/start'));
 });
 
@@ -210,4 +213,37 @@ test('replacing an idle provider cannot reuse the previous account connection fo
   await assert.rejects(next.start('fixture-offer', () => {}), /chatgpt_login_required/);
   next.dispose();
   assert.equal(methods().length, before, 'the old account must not receive new RPCs');
+});
+
+
+test('typed voice uses appendText and does not create a normal turn for a greeting', async t => {
+  const { manager, thread, events, methods } = await setup(t);
+  const voice = manager.voiceTransport(thread.id);
+  const ready: VoiceSignal[] = [];
+  await voice.start('fixture-offer', signal => ready.push(signal));
+  await until(() => ready.some(s => s.type === 'sdp'));
+  await voice.appendText!('Hello');
+  await until(() => events.some(e => e.type === 'voice.message' && e.data.text === 'Hello'));
+  await voice.stop(); voice.dispose();
+  assert.equal(methods().filter(m => m === 'thread/realtime/appendText').length, 1);
+  assert.equal(methods().filter(m => m === 'turn/start').length, 0);
+});
+
+test('substantial speech creates one summary, repeated close and reopening do not replay it', async t => {
+  const { manager, thread, events, methods } = await setup(t);
+  const voice = manager.voiceTransport(thread.id);
+  const ready: VoiceSignal[] = [];
+  await voice.start('fixture-offer', signal => ready.push(signal));
+  await until(() => ready.some(s => s.type === 'sdp'));
+  for (let i = 0; i < 6; i++) await voice.appendText!(`Please record decision number ${i} for the next step.`);
+  await until(() => events.filter(e => e.type === 'voice.message' && e.data.final).length === 6);
+  await Promise.all([voice.stop(), voice.stop()]); voice.dispose();
+  await until(() => events.some(e => e.type === 'turn.done'));
+  assert.equal(events.filter(e => e.type === 'voice.closed').length, 1);
+  assert.equal(events.filter(e => e.type === 'turn.started' && e.data.voiceSummary).length, 1);
+  assert.equal(methods().filter(m => m === 'turn/start').length, 1);
+  const reopened = manager.voiceTransport(thread.id);
+  await reopened.start('fixture-offer', () => {});
+  await reopened.stop(); reopened.dispose();
+  assert.equal(methods().filter(m => m === 'turn/start').length, 1);
 });

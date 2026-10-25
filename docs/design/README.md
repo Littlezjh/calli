@@ -7,6 +7,8 @@
 | `desktop.jpg` | 桌面主界面：分组的侧边栏、带图片和改动卡片的对话、输入框 |
 | `menu.jpg` | 线程右键菜单（含"移到分区"子菜单）和已归档面板 |
 | `mobile.jpg` | 手机三屏：线程列表、对话与审批卡片、导入历史 |
+| `voice-mode.jpg`、`voice-mode-dark.jpg` | `voice-mode.html` 的亮色、深色截图，打不开 HTML 时看这两张 |
+| `voice-mode.html` | 实时语音：球、控制行、边聊边做、结束后的折叠与文字结果（说明见 `../voice-ui-design.md`） |
 
 ## 和实现不一样的地方
 

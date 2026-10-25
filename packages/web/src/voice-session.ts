@@ -1,10 +1,12 @@
 import { useEffect, useState, useMemo } from 'react';
-import { Api, type VoiceSnapshot, type VoiceEvent } from './api';
+import { Api, type VoiceSnapshot, type VoiceEvent, type OutgoingImage } from './api';
 import { VoiceMediaController, type VoiceMediaOptions, type VoiceMediaSnapshot, VoiceMediaException } from './voice-media';
 import { t } from './i18n';
 import type { VoiceTranscript } from './voice-timeline';
 
 export interface VoiceSessionState {
+  readonly phase: 'listening' | 'thinking' | 'speaking';
+  readonly startedAt: number | null;
   readonly active: boolean;
   readonly status: 'idle' | 'requesting' | 'connecting' | 'connected' | 'error';
   readonly sessionId: string | null;
@@ -33,6 +35,8 @@ export class VoiceSessionController {
   private readonly listeners = new Set<VoiceSessionListener>();
 
   private _state: VoiceSessionState = {
+    phase: 'listening',
+    startedAt: null,
     active: false,
     status: 'idle',
     sessionId: null,
@@ -167,6 +171,8 @@ export class VoiceSessionController {
     this.updateState({
       active: true,
       status: 'requesting',
+      startedAt: Date.now(),
+      phase: 'listening',
       threadId,
       providerId: null,
       sessionId: null,
@@ -262,6 +268,7 @@ export class VoiceSessionController {
             }
           });
         } else if (event.type === 'transcript') {
+          this.updateState({ phase: event.role === 'user' ? event.final ? 'thinking' : 'listening' : event.final ? 'listening' : 'speaking' });
           if (event.role === 'user' || event.role === 'assistant') {
             const messages = [...this._state.messages];
             const index = messages.findIndex(m => m.itemId === event.itemId);
@@ -349,6 +356,14 @@ export class VoiceSessionController {
     }
   }
 
+  levels = (): { input: number; output: number } => this.mediaController?.levels?.() ?? { input: 0, output: 0 };
+
+  async appendText(text: string, images?: OutgoingImage[], videos?: string[]): Promise<void> {
+    if (!this._state.sessionId || this._state.status !== 'connected') throw new Error(t('voice.connecting'));
+    await this.api.appendVoiceText(this._state.sessionId, text, images, videos);
+    this.updateState({ phase: 'thinking' });
+  }
+
   /** Mutes or unmutes the local microphone input track. */
   setMuted(muted: boolean): void {
     if (!this._state.active) return;
@@ -423,6 +438,8 @@ export function useVoiceSession(
   setMuted: (muted: boolean) => void;
   toggleMute: () => void;
   dismissError: () => void;
+  appendText: (text: string, images?: OutgoingImage[], videos?: string[]) => Promise<void>;
+  levels: () => { input: number; output: number };
 } {
   const controller = useMemo(() => new VoiceSessionController({ api }), [api, host]);
   const [observed, setObserved] = useState({ controller, state: controller.state });
@@ -451,5 +468,7 @@ export function useVoiceSession(
     setMuted: muted => controller.setMuted(muted),
     toggleMute: () => controller.toggleMute(),
     dismissError: () => controller.dismissError(),
+    appendText: (text, images, videos) => controller.appendText(text, images, videos),
+    levels: controller.levels,
   };
 }

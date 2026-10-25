@@ -21,6 +21,10 @@ interface Detail {
   version: number; input_seq: number | null; output_seq: number | null; diff_seq: number | null;
   end_seq: number;
 }
+const visibleVoice = (table: string) => `NOT (${table}.type='voice.message' AND EXISTS (
+  SELECT 1 FROM events closed WHERE closed.thread_id=${table}.thread_id AND closed.type='voice.closed'
+  AND ${table}.seq BETWEEN json_extract(closed.data, '$.startSeq') AND json_extract(closed.data, '$.endSeq')
+))`;
 const eventOf = (r: Row): HistoryEvent => ({ threadId: r.thread_id, turnId: r.turn_id, seq: r.seq, type: r.type, ts: r.ts, data: JSON.parse(r.data) });
 const isWork = (e: HistoryEvent) => e.type === 'history.thought' || e.type === 'context.compaction' || e.type === 'history.tool.start';
 const isBoundary = (e: HistoryEvent) => ['input.request', 'approval.request', 'plan.delta', 'plan.completed'].includes(e.type);
@@ -121,6 +125,7 @@ export class HistoryStore {
   private closed = false;
   constructor(private db: DatabaseSync) {
     db.exec(`
+      CREATE INDEX IF NOT EXISTS events_voice_closed ON events(thread_id, seq) WHERE type='voice.closed';
       CREATE TABLE IF NOT EXISTS history_rows (
         thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
         seq INTEGER NOT NULL, turn_id TEXT, type TEXT NOT NULL, ts TEXT NOT NULL, data TEXT NOT NULL,
@@ -206,6 +211,7 @@ export class HistoryStore {
       const { toolCall: _toolCall, ...summary } = data;
       view = { ...ev, data: summary };
     }
+    if (ev.type === 'turn.started' && data.voiceSummary) view = { ...ev, data: { ...data, text: '', displayText: '' } };
     this.save(view);
     this.cover(threadId, seq);
     return view;
@@ -214,7 +220,7 @@ export class HistoryStore {
     return Number((this.db.prepare('SELECT COALESCE(MAX(seq),0) AS n FROM events WHERE thread_id=?').get(thread) as any).n);
   }
   private rows(thread: string, start: number, end: number, hiddenStart = 0): HistoryEvent[] {
-    return (this.db.prepare('SELECT thread_id, turn_id, seq, type, ts, CASE WHEN seq=? AND type=\'turn.started\' THEN \'{"text":"","handoverCollapsed":true}\' ELSE data END AS data FROM history_rows WHERE thread_id=? AND seq>=? AND seq<? ORDER BY seq').all(hiddenStart, thread, start, end) as unknown as Row[]).map(eventOf);
+    return (this.db.prepare('SELECT thread_id, turn_id, seq, type, ts, CASE WHEN seq=? AND type=\'turn.started\' THEN \'{"text":"","handoverCollapsed":true}\' ELSE data END AS data FROM history_rows WHERE thread_id=? AND seq>=? AND seq<? AND ' + visibleVoice('history_rows') + ' ORDER BY seq').all(hiddenStart, thread, start, end) as unknown as Row[]).map(eventOf);
   }
   private bounds(thread: string, turn: string): { start: number; end: number } {
     const row = this.db.prepare("SELECT seq FROM events WHERE thread_id=? AND turn_id=? AND type='turn.started' ORDER BY seq LIMIT 1").get(thread, turn) as { seq: number } | undefined;
@@ -255,7 +261,7 @@ export class HistoryStore {
     // Collapse text/thinking runs before returning metadata to JS. The window reads no data column.
     const spans = this.db.prepare(`WITH ordered AS (
       SELECT thread_id, turn_id, seq, type, ts, LAG(type) OVER (ORDER BY seq) AS previous
-      FROM events WHERE thread_id=? AND seq>=? AND seq<?
+      FROM events WHERE thread_id=? AND seq>=? AND seq<? AND ${visibleVoice('events')}
     ), edges AS (
       SELECT * FROM ordered WHERE type NOT IN ('message.delta', 'reasoning.delta') OR previous IS NULL OR previous<>type
     ), spans AS (
@@ -270,6 +276,7 @@ export class HistoryStore {
       WHERE type NOT IN ('tool.update', 'tool.end') ORDER BY seq`).all(thread, start, end, end, end) as unknown as (Omit<Row, 'data'> & { until: number; end_ts?: string })[];
     const ranges = new Map(spans.map(s => [s.seq, s.until]));
     const read = this.db.prepare('SELECT data FROM events WHERE thread_id=? AND seq=?');
+    const readStart = this.db.prepare("SELECT CASE WHEN json_extract(data, '$.voiceSummary') IS NOT NULL THEN json_set(data, '$.text', '', '$.displayText', '') ELSE data END AS data FROM events WHERE thread_id=? AND seq=?");
     const readApproval = this.db.prepare("SELECT json_remove(data, '$.toolCall') AS data FROM events WHERE thread_id=? AND seq=?");
     const skeleton = spans.map(row => {
       let type = row.type;
@@ -278,7 +285,7 @@ export class HistoryStore {
       else if (type === 'reasoning.delta') { type = 'history.thought'; data.version = row.until - 1; if (row.end_ts) data.endedAt = row.end_ts; }
       else if (type === 'turn.started' && row.seq === hiddenStart) data = { text: '', handoverCollapsed: true };
       else if (type !== 'message.delta') {
-        data = JSON.parse(String((type === 'approval.request' ? readApproval : read).get(thread, row.seq)!.data));
+        data = JSON.parse(String((type === 'approval.request' ? readApproval : type === 'turn.started' ? readStart : read).get(thread, row.seq)!.data));
       }
       return { threadId: thread, turnId: row.turn_id, seq: row.seq, ts: row.ts, type, data };
     });
@@ -332,8 +339,8 @@ export class HistoryStore {
     // Voice-only conversations have no task turns. Each committed utterance is also a page
     // boundary, so opening a long call does not eagerly load its entire transcript.
     const starts = this.db.prepare(`SELECT e.seq, e.turn_id FROM events e
-      WHERE e.thread_id=? AND e.seq<? AND e.seq>? AND e.type IN ('turn.started', 'voice.message') AND (
-        e.type='turn.started' OR e.type='voice.message' AND COALESCE((
+      WHERE e.thread_id=? AND e.seq<? AND e.seq>? AND e.type IN ('turn.started', 'voice.message', 'voice.closed') AND ${visibleVoice('e')} AND (
+        e.type IN ('turn.started', 'voice.closed') OR e.type='voice.message' AND COALESCE((
           SELECT b.type FROM events b WHERE b.thread_id=e.thread_id AND b.seq<e.seq
           AND b.type IN ('turn.started', 'turn.done', 'turn.error') ORDER BY b.seq DESC LIMIT 1
         ), '')<>'turn.started')
@@ -356,8 +363,28 @@ export class HistoryStore {
       .all(thread, snapshotSeq) as { turn_id: string }[]).map(row => row.turn_id) : undefined;
     return { events, snapshotSeq, nextCursor: hasOlder ? start : null, hasOlder, turnIds };
   }
+  voiceStats(thread: string, start: number) {
+    const row = this.db.prepare(`WITH latest AS (
+      SELECT data, ROW_NUMBER() OVER (PARTITION BY json_extract(data, '$.itemId') ORDER BY seq DESC) AS position
+      FROM events WHERE thread_id=? AND type='voice.message' AND seq>=?
+    ) SELECT COUNT(*) AS count, COALESCE(SUM(CASE WHEN json_extract(data, '$.final')=1 THEN 1 ELSE 0 END),0) AS finals,
+      COALESCE(SUM(CASE WHEN json_extract(data, '$.final')=1 AND json_extract(data, '$.role')='user'
+      THEN length(trim(json_extract(data, '$.text'))) ELSE 0 END),0) AS userChars
+      FROM latest WHERE position=1 AND length(trim(json_extract(data, '$.text')))>0`).get(thread, start)!;
+    return { count: Number(row.count), finals: Number(row.finals), userChars: Number(row.userChars) };
+  }
+
+  voiceText(thread: string, session: string, cursor = 0) {
+    const closed = this.db.prepare("SELECT data FROM events WHERE thread_id=? AND type='voice.closed' AND json_extract(data, '$.sessionId')=? LIMIT 1").get(thread, session);
+    if (!closed) throw new HttpError(404, 'voice history not found');
+    const { startSeq, endSeq } = JSON.parse(String(closed.data));
+    const rows = this.db.prepare("SELECT * FROM events WHERE thread_id=? AND type='voice.message' AND seq>=? AND seq<=? AND seq>? ORDER BY seq LIMIT 65")
+      .all(thread, startSeq, endSeq, cursor) as unknown as Row[];
+    return { events: rows.slice(0, 64).map(eventOf), nextCursor: rows.length > 64 ? rows[63].seq : null };
+  }
   /** Summary turns are system activity; only expansion reads their prompt and answer. */
   summaryEvent(event: HistoryEvent): HistoryEvent {
+    if (event.type === 'turn.started' && event.data.voiceSummary) return { ...event, data: { ...event.data, text: '', displayText: '' } };
     if (!event.turnId || !['turn.started', 'turn.done', 'message.delta', 'message.replace', 'reasoning.delta', 'context.compaction', 'tool.start', 'tool.update', 'tool.end'].includes(event.type)) return event;
     const key = `${event.threadId}:${event.turnId}`;
     if (!this.summaryTargets.has(key)) {
@@ -484,7 +511,7 @@ export class HistoryStore {
       const until = Math.min(end, snapshotSeq + 1);
       events.push(...this.turnView(thread, turn, start, until, hiddenStart).filter(e => e.turnId === turn));
     }
-    const global = this.db.prepare('SELECT * FROM events WHERE thread_id=? AND seq>? AND seq<=? AND turn_id IS NULL ORDER BY seq').all(thread, after, snapshotSeq) as unknown as Row[];
+    const global = this.db.prepare('SELECT * FROM events WHERE thread_id=? AND seq>? AND seq<=? AND turn_id IS NULL AND ' + visibleVoice('events') + ' ORDER BY seq').all(thread, after, snapshotSeq) as unknown as Row[];
     events.push(...global.map(eventOf));
     events.sort((a,b) => a.seq - b.seq);
     return { events, turns, snapshotSeq };

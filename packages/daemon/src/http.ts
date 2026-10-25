@@ -354,6 +354,11 @@ export function createHttpServer(deps: HttpDeps): Server {
         return;
       }
       if (method === 'POST' && parts[2] && !parts[4]) {
+        if (parts[3] === 'text') {
+          const body = await readJson(req);
+          await voice.sessions.appendText(access, body?.text, { images: body?.images, videos: body?.videos });
+          return sendJson(res, 200, {});
+        }
         if (parts[3] === 'heartbeat') return sendJson(res, 200, voice.sessions.heartbeat(access));
         if (parts[3] === 'connected') return sendJson(res, 200, voice.sessions.mediaConnected(access));
       }
@@ -910,6 +915,7 @@ export function createHttpServer(deps: HttpDeps): Server {
         if (!parts[4] && url.searchParams.get('head') === '1') return sendJson(res, 200, { snapshotSeq: history.latest(threadId) });
         if (!parts[4]) return sendJson(res, 200, await history.page(threadId, positive(url.searchParams.get('before'), true), positive(url.searchParams.get('after'), true), url.searchParams.get('chain') === '1'));
         if (parts[4] === 'handover') return sendJson(res, 200, history.handoverInfo(threadId, url.searchParams.get('text') === '1'));
+        if (parts[4] === 'voice') return sendJson(res, 200, history.voiceText(threadId, url.searchParams.get('session') ?? '', positive(url.searchParams.get('cursor'), true)));
         const turn = url.searchParams.get('turn');
         if (!turn) throw new HttpError(400, 'turn is required');
         if (parts[4] === 'summary') return sendJson(res, 200, history.summaryText(threadId, turn, positive(url.searchParams.get('cursor'), true), positive(url.searchParams.get('version'), true)));

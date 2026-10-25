@@ -270,6 +270,13 @@ export class CodexRealtime {
     return outcome;
   }
 
+  async appendText(text: string): Promise<void> {
+    if (this.ended || this.snapshot.phase !== 'active') throw new RealtimeError('session_ended');
+    if (!text.trim() || text.length > 32768) throw new Error('Invalid voice text');
+    try { await this.rpc('thread/realtime/appendText', { threadId: this.threadId, text }); }
+    catch (error) { throw new RealtimeError(classifyRealtimeError(error)); }
+  }
+
   /** Native speakable text, distinct from quiet context and from a new task prompt. */
   async speak(text: string): Promise<void> {
     if (this.ended || !this.startSent || !LIVE_PHASES.includes(this.snapshot.phase)) throw new RealtimeError('session_ended');
@@ -561,6 +568,7 @@ export class CodexVoiceTransport implements RealtimeVoiceTransport {
   }
 
   speak(text: string): Promise<void> { return this.rt.speak(text); }
+  appendText(text: string): Promise<void> { return this.rt.appendText(text); }
 
   dispose(): void {
     if (this.disposed) return;

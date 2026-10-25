@@ -86,11 +86,12 @@ test('voice is opt-in; stopping voice preserves native approval and work on desk
         await page.screenshot({ path: join(process.env.RAH_E2E_SHOTS_DIR, `voice-idle-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
       }
       await page.getByRole('button', { name: '开启实时语音', exact: true }).click();
-      await page.getByText('实时语音中', { exact: true }).waitFor();
+      await page.locator('.voice-orb[data-phase="listening"], .voice-orb[data-phase="thinking"], .voice-orb[data-phase="speaking"]').waitFor();
       await page.getByRole('button', { name: '静音', exact: true }).click();
       assert.ok(await page.evaluate(() => window.voiceTracks.every(t => !t.enabled)));
       await page.getByRole('button', { name: '取消静音', exact: true }).click();
-      const bar = page.locator('.voice-bar');
+      assert.equal(await page.locator('.voice-composer textarea').first().getAttribute('placeholder'), '继续这个线程');
+      const bar = page.locator('.voice-controls');
       await page.locator('.action-sheet').waitFor();
       const sheet = await page.locator('.action-sheet').boundingBox();
       const bounds = await bar.boundingBox();
@@ -128,22 +129,22 @@ test('Pi keeps its conversation while a visible Codex member provides voice in a
         const title = `Pi 语音协作 ${mobile} ${colorScheme}`;
         const { page, thread } = await threadPage(context, title, 'worker', server);
         await page.getByRole('button', { name: '开启实时语音', exact: true }).click();
-        await page.getByText('实时语音中 · Codex 语音', { exact: true }).waitFor();
+        await page.getByRole('button', { name: '语音详情', exact: true }).waitFor();
         await page.getByText('已收到成员结果，将继续检查并汇总。', { exact: true }).waitFor();
         assert.equal((await (await api(server, `/api/threads/${thread.id}`)).json()).agent, 'worker');
         const team = await (await api(server, `/api/threads/${thread.id}/coordination`)).json();
         assert.equal(team.members.length, 1); assert.equal(team.members[0].voiceTarget, thread.id);
         assert.equal(team.messages.length, 2);
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
-        const bar = await page.locator('.voice-bar').boundingBox();
+        const bar = await page.locator('.voice-controls').boundingBox();
         assert.ok(bar.x >= 0 && bar.x + bar.width <= page.viewportSize().width + 1);
         if (process.env.RAH_E2E_SHOTS_DIR) {
           mkdirSync(process.env.RAH_E2E_SHOTS_DIR, { recursive: true });
           await page.screenshot({ path: join(process.env.RAH_E2E_SHOTS_DIR, `voice-pi-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
         }
-        await page.locator('.voice-bar').getByRole('button', { name: '结束语音', exact: true }).click();
+        await page.locator('.voice-controls').getByRole('button', { name: '结束语音', exact: true }).click();
         await page.waitForFunction(() => window.voiceTracks.every(t => t.readyState === 'ended'));
-        assert.equal((await (await api(server, `/api/threads/${thread.id}/coordination`)).json()).messages.length, 2);
+        assert.equal((await (await api(server, `/api/threads/${thread.id}/coordination`)).json()).messages.filter(m => m.kind === 'task').length, team.messages.filter(m => m.kind === 'task').length);
       } finally { await context.close(); }
     }
   } finally { await server.stop(); }
@@ -181,7 +182,7 @@ test('speech streams in the conversation and final Markdown survives ending and 
         if (process.env.RAH_E2E_SHOTS_DIR) {
           await page.screenshot({ path: join(process.env.RAH_E2E_SHOTS_DIR, `voice-conversation-live-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
         }
-        await page.locator('.voice-bar').getByRole('button', { name: '结束语音', exact: true }).click();
+        await page.locator('.voice-controls').getByRole('button', { name: '结束语音', exact: true }).click();
         await page.waitForFunction(() => window.voiceTracks.every(t => t.readyState === 'ended'));
         await page.getByRole('heading', { name: '科技新闻', exact: true }).waitFor();
         await page.reload();
@@ -203,10 +204,12 @@ test('speech streams in the conversation and final Markdown survives ending and 
           }
           throw error;
         }
-        assert.equal(await page.getByText('你能听到我说话吗？', { exact: true }).count(), 1);
+        assert.equal(await page.getByText('你能听到我说话吗？', { exact: true }).count(), 0);
+        await page.locator('.voice-recap-toggle').click();
+        await page.getByText('你能听到我说话吗？', { exact: true }).waitFor();
         assert.equal(await page.getByText('能，我在听，你说。', { exact: true }).count(), 1);
         assert.equal(await page.getByText('帮我整理最新的科技新闻。', { exact: true }).count(), 1);
-        assert.equal(await page.locator('.voice-bar').count(), 0);
+        assert.equal(await page.locator('.voice-controls').count(), 0);
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
         if (process.env.RAH_E2E_SHOTS_DIR) {
           await page.screenshot({ path: join(process.env.RAH_E2E_SHOTS_DIR, `voice-conversation-ended-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
@@ -227,8 +230,8 @@ test('microphone refusal is visible and disabling an extension releases media wi
     await page.getByText('麦克风权限被拒绝，请在浏览器地址栏允许麦克风访问。', { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => window.voiceTracks.length), 0);
     await page.evaluate(() => { window.voiceDeny = false; });
-    await page.getByRole('button', { name: '开启实时语音', exact: true }).click();
-    await page.getByText('实时语音中', { exact: true }).waitFor();
+    await page.getByRole('button', { name: '重新连接', exact: true }).click();
+    await page.locator('.voice-orb[data-phase="listening"], .voice-orb[data-phase="thinking"], .voice-orb[data-phase="speaking"]').waitFor();
     await page.locator('.action-sheet').waitFor();
     assert.equal((await api(daemon, '/api/extensions/voice', { method: 'PATCH', body: JSON.stringify({ enabled: false }) })).status, 200);
     await page.waitForFunction(() => window.voiceTracks.length === 1 && window.voiceTracks[0].readyState === 'ended');

@@ -473,6 +473,7 @@ class CodexSession implements AgentSession {
       },
       stop: () => transport.stop(),
       speak: text => transport.speak(text),
+      appendText: text => transport.appendText(text),
       dispose: () => {
         transport.dispose();
         if (this.voice === transport) {

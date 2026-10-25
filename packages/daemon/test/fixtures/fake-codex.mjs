@@ -157,6 +157,10 @@ const runTurn = (text, turnId, done) => {
   notify('item/started', { item: userItem, turnId });
   notify('item/completed', { item: userItem, turnId });
 
+  if (text.startsWith('[语音结束总结]')) {
+    say('## 这次语音里定下的事\n\n已根据本次对话整理。\n\n### 任务结果\n请参阅线程中的任务结果。\n\n### 下一步\n继续处理待办。');
+    done(); return;
+  }
   if (text === 'voice-final-news' || text === 'completed-only') {
     const search = { type: 'webSearch', id: 'voice-search', query: 'latest technology news' };
     notify('item/started', { turnId, item: search });
@@ -408,6 +412,11 @@ rl.on('line', (line) => {
       return out(process.env.FAKE_CODEX_NO_VOICE
         ? { id: msg.id, error: { code: -32601, message: 'unsupported' } }
         : { id: msg.id, result: { voices: { v1: [], v2: [] } } });
+    case 'thread/realtime/appendText': {
+      out({ id: msg.id, result: {} });
+      notify('thread/realtime/item/completed', { item: { type: 'transcriptSegment', id: `typed-${nextTurnSeq++}`, role: 'user', text: msg.params.text } });
+      break;
+    }
     case 'thread/realtime/start': {
       voiceInstructions = msg.params.realtimeStartInstructions ?? '';
       out({ id: msg.id, result: {} });

@@ -47,7 +47,8 @@ export interface VoiceTransport {
   start(offer: string, emit: (event: VoiceSignal) => void): Promise<void>;
   /** Speak a host-selected task summary without submitting another agent turn. */
   speak?(text: string): Promise<void>;
-  stop(): Promise<void>;
+  appendText?(text: string, attachments?: { images?: unknown; videos?: unknown }): Promise<void>;
+  stop(reason?: VoiceSnapshot['reason']): Promise<void>;
   /** Synchronous, unconditional release, including when the native stop request never settles. */
   dispose(): void;
 }
@@ -159,6 +160,14 @@ export class VoiceSessions {
     s.snapshot.mediaConnected = true;
     this.publishConnection(s);
     return { ...s.snapshot };
+  }
+
+  async appendText(access: VoiceAccess, text: unknown, attachments?: { images?: unknown; videos?: unknown }): Promise<void> {
+    const s = this.usable(access);
+    if (typeof text !== 'string' || (!text.trim() && !(Array.isArray(attachments?.images) && attachments.images.length) && !(Array.isArray(attachments?.videos) && attachments.videos.length)) || text.length > MAX_TEXT) throw new HttpError(400, 'invalid_voice_text');
+    if (s.snapshot.state !== 'connected') throw new HttpError(409, 'voice_not_connected');
+    if (!s.transport.appendText) throw new HttpError(501, 'voice_text_unavailable');
+    await s.transport.appendText(text.trim(), attachments);
   }
 
   /** End only voice, including after grants were revoked. A missing session is already stopped. */
@@ -283,7 +292,7 @@ export class VoiceSessions {
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         await Promise.race([
-          Promise.resolve().then(() => s.transport.stop()),
+          Promise.resolve().then(() => s.transport.stop(reason)),
           new Promise<void>(resolve => { timer = setTimeout(resolve, this.stopMs); }),
         ]);
       } catch { /* dispose is unconditional, even when native stop fails. */ }

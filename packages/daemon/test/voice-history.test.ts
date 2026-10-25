@@ -49,3 +49,37 @@ test('speech during a background task never splits its work projection or hides 
   assert.equal(page.events.filter(e => e.type === 'voice.message').length, 12);
   assert.equal(page.events.find(e => e.type === 'message.delta')?.data.text, '**News**\n\nFinal answer');
 });
+
+
+test('closed call history is metadata-only until scoped, paged transcript expansion', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'rah-voice-fold-'));
+  const store = new Store(dir);
+  t.after(() => { store.close(); rmSync(dir, { recursive: true, force: true }); });
+  store.createThread({ id: 'voice', agent: 'provider', cwd: dir, title: 'voice', agentSessionId: null, permissionMode: 'default', model: null, effort: null });
+  for (let i = 0; i < 70; i++) store.appendEvent('voice', null, 'voice.message', { sessionId: 'call', itemId: `call:${i}`, role: 'user', text: 'private body', final: true });
+  store.appendEvent('voice', null, 'voice.closed', { sessionId: 'call', startSeq: 1, endSeq: 70, count: 70, startedAt: '2026-01-01', endedAt: '2026-01-02' });
+  for (const read of [await store.history.page('voice'), await store.history.since('voice', 0)]) {
+    assert.equal(read.events.filter(e => e.type === 'voice.message').length, 0);
+    assert.equal(read.events.filter(e => e.type === 'voice.closed').length, 1);
+    assert.ok(!JSON.stringify(read).includes('private body'));
+  }
+  const first = store.history.voiceText('voice', 'call');
+  assert.equal(first.events.length, 64);
+  assert.equal(store.history.voiceText('voice', 'call', first.nextCursor!).events.length, 6);
+  assert.throws(() => store.history.voiceText('another-thread', 'call'), /not found/);
+});
+
+
+test('summary context remains in the source log but is omitted from the history read model', async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'rah-voice-summary-view-'));
+  const store = new Store(dir);
+  t.after(() => { store.close(); rmSync(dir, { recursive: true, force: true }); });
+  store.createThread({ id: 'voice', agent: 'provider', cwd: dir, title: 'voice', agentSessionId: null, permissionMode: 'default', model: null, effort: null });
+  store.appendEvent('voice', 'summary', 'turn.started', { voiceSummary: 'call', text: 'private context', displayText: 'private context' });
+  store.appendEvent('voice', 'summary', 'message.delta', { text: 'Written result' });
+  store.appendEvent('voice', 'summary', 'turn.done', {});
+  const page = await store.history.page('voice');
+  assert.ok(!JSON.stringify(page).includes('private context'));
+  assert.ok(JSON.stringify(page).includes('Written result'));
+  assert.equal(store.listEventsOfType('voice', 'turn.started')[0].data.text, 'private context');
+});

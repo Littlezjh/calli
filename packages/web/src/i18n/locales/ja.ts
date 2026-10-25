@@ -1706,6 +1706,15 @@ export const ja: Messages = {
   'work.threadCount': (n: number) => `${n} 件のスレッドを選択`,
 
   // Realtime Voice
+  'voice.details': '音声の詳細',
+  'voice.reconnect': '再接続',
+  'voice.awaitingApproval': '承認待ち',
+  'voice.tasks': (n: number) => `${n} 件のタスク`,
+  'voice.duration': (m: number, s: number) => `${m} 分 ${s} 秒`,
+  'voice.recap': (m: number, s: number, n: number) => `音声 ${m} 分 ${s} 秒 · ${n} 発言`,
+  'voice.summaryFailed': '音声の要約を開始できませんでした。メッセージを送って再試行してください。',
+  'voice.empty': '保存された字幕はありません',
+  'voice.loadFailed': '字幕を読み込めませんでした',
   'voice.title': 'リアルタイム音声',
   'voice.start': 'リアルタイム音声を開始',
   'voice.connecting': '音声に接続中…',

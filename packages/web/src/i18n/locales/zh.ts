@@ -1708,6 +1708,15 @@ export const zh = {
   'work.threadCount': (n: number) => `已选 ${n} 个线程`,
 
   // Realtime Voice
+  'voice.details': '语音详情',
+  'voice.reconnect': '重新连接',
+  'voice.awaitingApproval': '等你批准',
+  'voice.tasks': (n: number) => `${n} 个任务`,
+  'voice.duration': (m: number, s: number) => `${m} 分 ${s} 秒`,
+  'voice.recap': (m: number, s: number, n: number) => `语音 ${m} 分 ${s} 秒 · ${n} 句`,
+  'voice.summaryFailed': '语音书面总结未能开始，请发送文字消息重试。',
+  'voice.empty': '本次没有保留字幕',
+  'voice.loadFailed': '字幕加载失败',
   'voice.title': '实时语音',
   'voice.start': '开启实时语音',
   'voice.connecting': '正在连接语音…',

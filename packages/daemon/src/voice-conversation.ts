@@ -17,7 +17,8 @@ export interface VoiceMessage {
  * unfinished text. The namespace prevents native item ids colliding across voice sessions.
  */
 export class VoiceConversation {
-  private readonly namespace = randomUUID();
+  readonly id = randomUUID();
+  readonly startedAt = new Date().toISOString();
   private readonly entries = new Map<string, VoiceMessage>();
   private closed = false;
   private nextOrder = 0;
@@ -33,7 +34,7 @@ export class VoiceConversation {
     if (typeof signal.itemId !== 'string' || !signal.itemId || signal.itemId.length > 256
       || typeof signal.text !== 'string' || signal.text.length > 32768
       || typeof signal.final !== 'boolean') return signal;
-    const itemId = `${this.namespace}:${createHash('sha256').update(signal.itemId).digest('hex').slice(0, 32)}`;
+    const itemId = `${this.id}:${createHash('sha256').update(signal.itemId).digest('hex').slice(0, 32)}`;
     const previous = this.entries.get(itemId);
     // A canonical role cannot change in place; neither can a delta reopen a committed item.
     if (previous && (previous.role !== signal.role || previous.final && !signal.final)) {
@@ -57,6 +58,10 @@ export class VoiceConversation {
       this.entries.delete(key);
     }
     return { ...signal, itemId, at: message.at, afterSeq: message.afterSeq, order: message.order };
+  }
+
+  finalMessages(): VoiceMessage[] {
+    return [...this.entries.values()].filter(m => m.final && m.text.trim()).map(m => ({ ...m }));
   }
 
   close(): void {
