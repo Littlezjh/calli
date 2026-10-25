@@ -80,6 +80,7 @@ export async function startDaemon(env = {}, opts = {}) {
   // A fixed name reads better in screenshots than the random suffix mkdtemp adds.
   const workdir = opts.workdir ?? mkdtempSync(join(tmpdir(), 'limi-demo-'));
   if (opts.workdir) mkdirSync(opts.workdir, { recursive: true });
+  const homeDir = join(dataDir, 'home'); mkdirSync(homeDir);
   const binDir = join(dataDir, 'bin');
   mkdirSync(binDir);
   shim(binDir, 'fake-pi', 'fake-pi.mjs');
@@ -93,6 +94,7 @@ export async function startDaemon(env = {}, opts = {}) {
   const port = await freePort();
   const daemonEnv = {
     ...process.env,
+    HOME: homeDir,
     // The fake agents are shims in binDir, so that directory leads the PATH.
     PATH: `${binDir}:${process.env.PATH ?? ''}`,
     RAH_TOKEN: TOKEN,

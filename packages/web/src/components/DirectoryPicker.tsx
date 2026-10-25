@@ -8,6 +8,8 @@ import { t } from '../i18n';
 interface DirectoryPickerProps {
   api: Api;
   allowedOnly?: boolean;
+  /** A private setting may select its default without adding it to project roots. */
+  defaultDirectory?: string;
   roots: string[];
   selected: string;
   machine: string;
@@ -28,7 +30,7 @@ function explain(error: unknown): string {
   return error instanceof Error ? error.message : t('dir.unreadable');
 }
 
-export function DirectoryPicker({ api, allowedOnly = false, roots, selected, machine, onRootsChange, onManageRoots, onSelect, onClose }: DirectoryPickerProps) {
+export function DirectoryPicker({ api, allowedOnly = false, defaultDirectory, roots, selected, machine, onRootsChange, onManageRoots, onSelect, onClose }: DirectoryPickerProps) {
   // null shows configured roots; an empty path asks the daemon for its own home directory.
   const [at, setAt] = useState<string | null>(selected || null);
   const [info, setInfo] = useState<ProjectDirectoryInfo | null>(null);
@@ -70,12 +72,13 @@ export function DirectoryPicker({ api, allowedOnly = false, roots, selected, mac
     setAt(path);
     setRetry((n) => n + 1);
   };
+  const selectedDefault = Boolean(info && info.path === defaultDirectory);
   const useDirectory = async () => {
-    if (!info?.selectable || (allowedOnly && !info.allowed) || busy) return;
+    if (!info?.selectable || (allowedOnly && !info.allowed && !selectedDefault) || busy) return;
     setBusy(true);
     setError(null);
     try {
-      if (!info.allowed) {
+      if (!info.allowed && !selectedDefault) {
         try {
           onRootsChange(await api.addWorkdir(info.path));
         } catch (e) {
@@ -99,8 +102,8 @@ export function DirectoryPicker({ api, allowedOnly = false, roots, selected, mac
     <Dialog
       title={t('dir.title')}
       className="project-browser"
-      confirmLabel={busy ? t('dir.adding') : info && !info.allowed ? t('dir.addAndUse') : t('dir.use')}
-      confirmDisabled={!info?.selectable || (allowedOnly && !info.allowed) || busy}
+      confirmLabel={busy ? t('dir.adding') : info && !info.allowed && !selectedDefault ? t('dir.addAndUse') : t('dir.use')}
+      confirmDisabled={!info?.selectable || (allowedOnly && !info.allowed && !selectedDefault) || busy}
       onConfirm={() => void useDirectory()}
       onCancel={() => { if (!busy) onClose(); }}
     >
@@ -108,6 +111,7 @@ export function DirectoryPicker({ api, allowedOnly = false, roots, selected, mac
       <div className="project-browser-controls" aria-busy={busy}>
         <div className="project-browser-nav">
           <button disabled={busy} type="button" className="ghost" onClick={() => navigate(null)}>{t('dir.available')}</button>
+          {defaultDirectory && <button disabled={busy} type="button" className="ghost" onClick={() => navigate(defaultDirectory)}>{t('dir.defaultDirectory')}</button>}
           {!allowedOnly && <button disabled={busy} type="button" className="ghost" onClick={() => navigate('')}>{t('dir.browseHome')}</button>}
           {info?.parent && (!allowedOnly || roots.some(root => info.parent === root || info.parent!.startsWith(root.replace(/\/$/, '') + '/'))) && <button disabled={busy} type="button" className="ghost" onClick={() => navigate(info.parent)}>{t('dir.up')}</button>}
         </div>

@@ -312,7 +312,7 @@ export interface Section {
 }
 
 /** One entry on the plan page. `parentId` is a top-level todo or null: one level of nesting. */
-export interface PersonalSettings { directoryDisplay?: string | null; directory: string | null; agent: string | null; model: string | null }
+export interface PersonalSettings { directoryIsDefault?: boolean; defaultDirectory?: string; defaultDirectoryDisplay?: string; directoryDisplay?: string | null; directory: string | null; agent: string | null; model: string | null }
 export interface TodoNote { text: string; updatedAt: string | null; threadId: string | null; rev: number }
 export interface Wish { id: string; threadId: string; text: string; createdAt: string }
 export interface PushSettings { enabled: boolean; recipient: string; baseUrl: string; waiting: boolean; failure: boolean; notice: boolean; scheduled: boolean }

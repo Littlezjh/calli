@@ -210,20 +210,19 @@ export class Scheduler {
     if (this.following || this.stopped) return;
     this.following = true;
     try {
-      const settings = this.manager.personal.settings();
-      if (!settings.directory) return;
       for (const todo of this.store.listTodos()) {
         if (this.stopped) return;
         if (todo.done || todo.proposed || todo.followUpPaused || !todo.followUpAt || Date.parse(todo.followUpAt) > Date.now()) continue;
         const failure = this.followUpFailures.get(todo.id);
         if (failure && Date.now() < failure.retryAt) continue;
-        const linked = this.store.todoThreadIds(todo.id).map(id => this.store.getThread(id)).find(t => t && this.manager.personal.allowed(t.id));
-        if (linked?.status === 'running') continue;
-        const existing = linked && !linked.archivedAt ? linked : null;
-        let threadId = existing?.id;
+        let threadId: string | undefined;
         let created = false;
         try {
+          const linked = this.store.todoThreadIds(todo.id).map(id => this.store.getThread(id)).find(t => t && this.manager.personal.allowed(t.id));
+          if (linked?.status === 'running') continue;
+          threadId = linked && !linked.archivedAt ? linked.id : undefined;
           if (!threadId) {
+            const settings = await this.manager.personal.resolvedSettings();
             const agent = settings.agent;
             if (!agent || !this.adapters.has(agent)) throw new HttpError(503, 'personal agent unavailable');
             const thread = await this.manager.createThread({ agent, cwd: settings.directory, title: todo.text,

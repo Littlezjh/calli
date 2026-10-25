@@ -286,6 +286,7 @@ export class ThreadManager {
     this.dirs = Array.isArray(workdirs) ? new Workdirs(workdirs) : workdirs;
     this.autoHandover = new AutoHandover(store, this);
     this.personal = new PersonalService(store, this, adapters);
+    this.dirs.personalDirectory = () => this.personal.directory();
     this.skills = new SkillsManager(this.adapters);
     this.mcp = new McpManager(this.adapters, store.mcpEntries);
   }
@@ -306,9 +307,9 @@ export class ThreadManager {
     return () => this.listeners.delete(listener);
   }
 
-  /** The roots people pick projects from (not the scratch area). */
+  /** Directory browsing permissions include the personal directory, but not scratch threads. */
   get allowedWorkdirs(): string[] {
-    return this.dirs.roots();
+    return [...this.dirs.roots(), this.personal.directory()];
   }
 
   async listAgents(): Promise<AgentInfo[]> {
@@ -1622,7 +1623,7 @@ export class ThreadManager {
       throw new HttpError(400, 'a project name is a plain folder name: no slashes, not starting with a dot');
     }
     const parent = typeof input.parent === 'string' && input.parent ? resolve(input.parent) : '';
-    if (!parent || !isWithinWorkdirs(parent, this.dirs.roots())) throw new HttpError(400, 'parent is not in the allowed workdirs');
+    if (!parent || !isWithinWorkdirs(parent, this.allowedWorkdirs)) throw new HttpError(400, 'parent is not in the allowed workdirs');
     if (!isDirectory(parent)) throw new HttpError(400, 'parent does not exist');
     const path = join(parent, name);
     if (existsSync(path)) throw new HttpError(409, 'a file or folder with this name is already there', { code: 'exists' });

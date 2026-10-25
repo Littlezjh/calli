@@ -1,14 +1,27 @@
 import { randomUUID } from 'node:crypto';
-import { realpathSync, statSync } from 'node:fs';
+import { lstatSync, mkdirSync, realpathSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AgentAdapter } from './adapters/types.js';
 import { HttpError } from './errors.js';
 import type { Store, TodoPatch, TodoRecord, TodoProposal } from './store.js';
 import type { ThreadManager } from './threads.js';
 
+// Keep the default location in one place so its final component can change independently.
+const PERSONAL_DIRECTORY = ['.limi', 'personal'] as const;
+export function defaultPersonalDirectory(): string {
+  let path = realpathSync(homedir());
+  for (const part of PERSONAL_DIRECTORY) {
+    path = join(path, part);
+    try { mkdirSync(path, { mode: 0o700 }); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw new HttpError(400, 'cannot create the default personal directory'); }
+    const stat = lstatSync(path);
+    if (stat.isSymbolicLink() || !stat.isDirectory() || realpathSync(path) !== path) throw new HttpError(400, 'default personal directory must be a real directory, not a symbolic link');
+  }
+  return path;
+}
 export interface PersonalSettings { directory: string | null; agent: string | null; model: string | null }
 /** Reject only unmistakable credential formats; this is not a general secret detector. */
 export function personalText(value: unknown, limit: number, empty = false): string {
@@ -27,21 +40,43 @@ export class PersonalService {
   private readonly introduced = new Set<string>();
   socket = '';
   constructor(readonly store: Store, private readonly manager: ThreadManager, private readonly adapters: Map<string, AgentAdapter>) {}
-  settings(): PersonalSettings { return this.store.hubSetting('personal', { directory: null, agent: null, model: null }); }
-  settingsView() {
-    const settings = this.settings(), home = homedir();
-    const directoryDisplay = settings.directory === home ? '~' : settings.directory?.startsWith(home + sep) ? '~' + settings.directory.slice(home.length) : settings.directory;
-    return { ...settings, directoryDisplay };
+  private storedSettings(): PersonalSettings { return this.store.hubSetting('personal', { directory: null, agent: null, model: null }); }
+  directory(): string {
+    const configured = this.storedSettings().directory;
+    if (!configured) return defaultPersonalDirectory();
+    const defaultPath = join(realpathSync(homedir()), ...PERSONAL_DIRECTORY);
+    // Older settings may explicitly name the default or one of its children.
+    if (configured === defaultPath || configured.startsWith(defaultPath + sep)) defaultPersonalDirectory();
+    return configured;
+  }
+  settings(): PersonalSettings & { directory: string } { return { ...this.storedSettings(), directory: this.directory() }; }
+  async resolvedSettings(): Promise<PersonalSettings & { directory: string }> {
+    const settings = this.settings();
+    if (!settings.agent) {
+      const agents = (await this.manager.listAgents()).filter(agent => agent.available && !agent.hidden);
+      settings.agent = (agents.find(agent => this.adapters.get(agent.id)?.id === 'pi') ?? agents[0])?.id ?? null;
+      settings.model = null;
+    }
+    return settings;
+  }
+  async settingsView() {
+    const settings = await this.resolvedSettings(), home = realpathSync(homedir());
+    const display = (path: string | null) => path === home ? '~' : path?.startsWith(home + sep) ? '~' + path.slice(home.length) : path;
+    const defaultDirectory = defaultPersonalDirectory();
+    return { ...settings, directoryDisplay: display(settings.directory), directoryIsDefault: settings.directory === defaultDirectory,
+      defaultDirectory, defaultDirectoryDisplay: display(defaultDirectory) };
   }
   putSettings(input: Record<string, unknown>): PersonalSettings {
-    const next = { ...this.settings() };
+    const next = { ...this.storedSettings() };
     if (input.directory !== undefined) {
       if (input.directory === null || input.directory === '') next.directory = null;
       else {
         if (typeof input.directory !== 'string') throw new HttpError(400, 'directory must be a path');
         try { next.directory = realpathSync(input.directory); if (!statSync(next.directory).isDirectory()) throw new Error(); }
         catch { throw new HttpError(400, 'personal directory does not exist'); }
-        if (!this.manager.dirs.all().some(root => this.within(next.directory!, root))) throw new HttpError(400, 'personal directory must be an allowed workdir');
+        const defaultDirectory = defaultPersonalDirectory();
+        if (![...this.manager.dirs.roots(), defaultDirectory].some(root => this.within(next.directory!, root))) throw new HttpError(400, 'personal directory must be an allowed workdir or the default personal directory');
+        if (next.directory === defaultDirectory) next.directory = null;
       }
     }
     if (input.agent !== undefined) {
@@ -52,7 +87,6 @@ export class PersonalService {
       if (input.model !== null && (typeof input.model !== 'string' || input.model.length > 200)) throw new HttpError(400, 'model must be a string');
       next.model = input.model ? String(input.model) : null;
     }
-    if (next.directory && !next.agent) throw new HttpError(400, 'personal agent is required');
     this.store.saveHubSetting('personal', next);
     return next;
   }
@@ -60,7 +94,7 @@ export class PersonalService {
     const todo = this.store.getTodo(id);
     if (!todo) throw new HttpError(404, 'todo not found');
     if (todo.done || todo.proposed) throw new HttpError(409, 'accept an open plan before delegating');
-    const settings = this.settings(), adapter = settings.agent ? this.adapters.get(settings.agent) : undefined;
+    const settings = await this.resolvedSettings(), adapter = settings.agent ? this.adapters.get(settings.agent) : undefined;
     if (!settings.directory || !adapter) throw new HttpError(409, 'personal agent is not configured');
     const active = this.store.todoThreadIds(id).map(t => this.store.getThread(t)).find(t => t?.status === 'running');
     if (active) return this.manager.threadView(active.id);

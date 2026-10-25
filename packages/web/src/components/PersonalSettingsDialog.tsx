@@ -18,17 +18,19 @@ export function PersonalSettingsDialog({ api, agents, initial, onSave, onClose }
   const [modelError, setModelError] = useState('');
   const [saving, setSaving] = useState(false);
   const [retry, setRetry] = useState(0);
-  useEffect(() => { let live = true; void api.workdirs().then(v => { if (live) setRoots(v.workdirs); }).catch(e => { if (live) setError(String(e)); }); return () => { live = false; }; }, [api, retry]);
+  useEffect(() => { let live = true; void api.workdirs().then(v => { if (live) setRoots(v.workdirs); }).catch(e => { if (live) setError(String(e)); }); return () => { live = false; }; }, [api, initial.defaultDirectory, retry]);
   useEffect(() => {
     let live = true; setModels(null); setModelError('');
     if (value.agent) void api.models(value.agent).then(v => { if (live) setModels(v); }).catch(e => { if (live) setModelError(String(e)); });
     return () => { live = false; };
   }, [api, value.agent, retry]);
-  if (picking && roots) return <DirectoryPicker api={api} allowedOnly roots={roots} selected={value.directory ?? ''} machine="" onRootsChange={() => {}} onManageRoots={() => {}} onSelect={directory => setValue({ ...value, directory })} onClose={() => setPicking(false)} />;
+  const isDefault = value.directory === initial.defaultDirectory || (value.directory === initial.directory && initial.directoryIsDefault);
+  const directoryLabel = isDefault ? t('personal.defaultDirectory', initial.defaultDirectoryDisplay ?? initial.directoryDisplay ?? value.directory ?? '') : value.directory === initial.directory ? initial.directoryDisplay ?? value.directory : value.directory;
+  if (picking && roots) return <DirectoryPicker api={api} allowedOnly defaultDirectory={initial.defaultDirectory} roots={roots} selected={value.directory ?? ''} machine="" onRootsChange={() => {}} onManageRoots={() => {}} onSelect={directory => setValue({ ...value, directory })} onClose={() => setPicking(false)} />;
   return <Dialog title={t('personal.settings')} className="personal-settings" confirmLabel={t('personal.save')} confirmDisabled={saving || !value.directory || !value.agent} onCancel={() => { if (!saving) onClose(); }} onConfirm={() => {
-    setSaving(true); setError(''); void api.savePersonalSettings(value).then(onSave).catch(e => setError(String(e))).finally(() => setSaving(false));
+    setSaving(true); setError(''); void api.savePersonalSettings({ ...value, directory: isDefault ? null : value.directory }).then(onSave).catch(e => setError(String(e))).finally(() => setSaving(false));
   }}>
-    <div className="personal-setting-line"><span>{t('personal.directory')}</span><button className="context-btn personal-directory" disabled={!roots} onClick={() => setPicking(true)}><IconFolder size={16} />{value.directory || t('personal.chooseDirectory')}</button></div>
+    <div className="personal-setting-line"><span>{t('personal.directory')}</span><button className="context-btn personal-directory" disabled={!roots} onClick={() => setPicking(true)}><IconFolder size={16} />{directoryLabel || t('personal.chooseDirectory')}</button></div>
     <div className="personal-setting-line"><span>{t('personal.agent')}</span><AgentPicker api={api} agents={agents} value={value.agent ?? ''} onChange={agent => setValue({ ...value, agent, model: null })} /></div>
     <div className="personal-setting-line"><span>{t('personal.model')}</span><Popover label={t('personal.model')} triggerClassName="context-btn" disabled={!value.agent} trigger={<>{models?.find(m => m.id === value.model)?.label ?? value.model ?? t('auto.modelDefault')}<IconChevron size={12} open /></>}>
       {close => <><button className="pop-item compact" role="menuitemradio" aria-checked={!value.model} onClick={() => { setValue({ ...value, model: null }); close(); }}>{t('auto.modelDefault')}</button>

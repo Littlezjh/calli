@@ -9,7 +9,7 @@
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test test/*.test.ts"
+    "test": "tsx --import ./test/home-env.mjs --test test/*.test.ts"
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "0.89.0",

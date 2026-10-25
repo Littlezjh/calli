@@ -36,6 +36,8 @@ function tooWide(dir: string): boolean {
  */
 export class Workdirs {
   private extra: string[] = [];
+  /** The effective personal directory is allowed without becoming a listed project root. */
+  personalDirectory: (() => string) | null = null;
 
   constructor(
     /** From RAH_WORKDIRS: always allowed, never removed from the page. */
@@ -57,7 +59,7 @@ export class Workdirs {
 
   /** Every directory a thread may work in, the scratch area included. */
   all(): string[] {
-    return [...this.roots(), ...(this.scratchRoot ? [this.scratchRoot] : [])];
+    return [...this.roots(), ...(this.scratchRoot ? [this.scratchRoot] : []), ...(this.personalDirectory ? [this.personalDirectory()] : [])];
   }
 
   /** The roots offered to people: the fixed ones first, then the added ones. */
