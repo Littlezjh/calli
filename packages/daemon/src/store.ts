@@ -132,6 +132,7 @@ export interface TodoRecord {
   followUpPaused: boolean;
   rev: number;
   proposed: boolean;
+  hasNote: boolean;
   notePreview: string | null;
   noteUpdatedAt: string | null;
   id: string;
@@ -147,7 +148,7 @@ interface TodoRow {
   owner: 'me' | 'agent'; state: 'open' | 'waiting' | 'done'; waiting_on: string | null;
   due_at: string | null; follow_up_at: string | null; rev: number; proposed: number;
   follow_up_no_progress: number; follow_up_paused: number;
-  note_preview: string | null; note_updated_at: string | null;
+  has_note: number; note_preview: string | null; note_updated_at: string | null;
   id: string;
   text: string;
   done: number;
@@ -234,7 +235,7 @@ function todoNotePreview(text: string): string {
 const toTodo = (r: TodoRow): TodoRecord => ({
   owner: r.owner, state: r.state, waitingOn: r.waiting_on, dueAt: r.due_at, followUpAt: r.follow_up_at,
   followUpNoProgress: r.follow_up_no_progress, followUpPaused: r.follow_up_paused === 1,
-  rev: r.rev, proposed: r.proposed === 1, notePreview: r.note_preview, noteUpdatedAt: r.note_updated_at,
+  rev: r.rev, proposed: r.proposed === 1, hasNote: r.has_note === 1, notePreview: r.note_preview, noteUpdatedAt: r.note_updated_at,
   id: r.id,
   text: r.text,
   done: r.done === 1,
@@ -504,7 +505,7 @@ export class Store {
     `));
     if (!runColumns.some(c => c.name === 'note_before_hash')) this.db.exec('ALTER TABLE schedule_runs ADD COLUMN note_before_hash TEXT');
     const todoColumns = new Set((this.db.prepare('PRAGMA table_info(todos)').all() as Array<{ name: string }>).map(c => c.name));
-    for (const [column, definition] of Object.entries({ owner: "TEXT NOT NULL DEFAULT 'me'", state: "TEXT NOT NULL DEFAULT 'open'", waiting_on: 'TEXT', due_at: 'TEXT', follow_up_at: 'TEXT', follow_up_no_progress: 'INTEGER NOT NULL DEFAULT 0', follow_up_paused: 'INTEGER NOT NULL DEFAULT 0', rev: 'INTEGER NOT NULL DEFAULT 1', proposed: 'INTEGER NOT NULL DEFAULT 0', note_preview: 'TEXT', note_updated_at: 'TEXT' })) {
+    for (const [column, definition] of Object.entries({ owner: "TEXT NOT NULL DEFAULT 'me'", state: "TEXT NOT NULL DEFAULT 'open'", waiting_on: 'TEXT', due_at: 'TEXT', follow_up_at: 'TEXT', follow_up_no_progress: 'INTEGER NOT NULL DEFAULT 0', follow_up_paused: 'INTEGER NOT NULL DEFAULT 0', rev: 'INTEGER NOT NULL DEFAULT 1', proposed: 'INTEGER NOT NULL DEFAULT 0', has_note: 'INTEGER NOT NULL DEFAULT 0', note_preview: 'TEXT', note_updated_at: 'TEXT' })) {
       if (!todoColumns.has(column)) this.db.exec(`ALTER TABLE todos ADD COLUMN ${column} ${definition}`);
     }
     if (!todoColumns.has('state')) this.db.exec("UPDATE todos SET state = CASE WHEN done = 1 THEN 'done' ELSE 'open' END");
@@ -513,6 +514,12 @@ export class Store {
       CREATE TABLE IF NOT EXISTS todo_proposals (id TEXT PRIMARY KEY, todo_id TEXT NOT NULL REFERENCES todos(id) ON DELETE CASCADE, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS wishes (id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, text TEXT NOT NULL, created_at TEXT NOT NULL);
     `);
+    if (!todoColumns.has('has_note')) this.transaction(() => {
+      const update = this.db.prepare('UPDATE todos SET has_note = ? WHERE id = ?');
+      for (const row of this.db.prepare('SELECT todo_id, text FROM todo_notes').iterate()) {
+        update.run(Number(Boolean((row.text as string).trim())), row.todo_id);
+      }
+    });
     if (!this.hubSetting('todo_note_preview_v2', false)) this.transaction(() => {
       const update = this.db.prepare('UPDATE todos SET note_preview = ? WHERE id = ?');
       for (const row of this.db.prepare('SELECT todo_id, text FROM todo_notes').iterate()) {
@@ -951,8 +958,8 @@ export class Store {
       const changed = this.todoNote(id).text !== text;
       const now = new Date().toISOString();
       this.db.prepare('INSERT INTO todo_notes (todo_id, text, updated_at, thread_id) VALUES (?, ?, ?, ?) ON CONFLICT(todo_id) DO UPDATE SET text = excluded.text, updated_at = excluded.updated_at, thread_id = excluded.thread_id').run(id, text, now, threadId);
-      this.db.prepare('UPDATE todos SET note_preview = ?, note_updated_at = ?, follow_up_no_progress = ?, follow_up_paused = ?, rev = rev + ? WHERE id = ?')
-        .run(todoNotePreview(text), now, changed ? 0 : todo.followUpNoProgress, changed ? 0 : Number(todo.followUpPaused), bumpRev ? 1 : 0, id);
+      this.db.prepare('UPDATE todos SET has_note = ?, note_preview = ?, note_updated_at = ?, follow_up_no_progress = ?, follow_up_paused = ?, rev = rev + ? WHERE id = ?')
+        .run(Number(Boolean(text.trim())), todoNotePreview(text), now, changed ? 0 : todo.followUpNoProgress, changed ? 0 : Number(todo.followUpPaused), bumpRev ? 1 : 0, id);
       return this.getTodo(id)!;
     });
   }

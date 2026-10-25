@@ -1,3 +1,5 @@
+import { TodoDelegate, TodoThreadPicker, type DelegateRequest } from './TodoDelegate';
+import { useIsNarrow } from '../hooks';
 import { PersonalSettingsDialog } from './PersonalSettingsDialog';
 import { TodoDetails, TodoMetadata, Wishes } from './PersonalTodo';
 import {
@@ -42,7 +44,7 @@ function below(e: MouseEvent<HTMLElement>): [number, number] {
   return [rect.left, rect.bottom + 4];
 }
 
-const MAX_LINK_CHOICES = 30;
+
 
 /** Whether the done group is open, kept on this device. */
 const SHOW_DONE_KEY = 'rah.todos.showDone';
@@ -150,23 +152,25 @@ export function TodosPage({ agents, personal, personalError, onPersonalChange, o
   const [adding, setAdding] = useState('');
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [pendingDelegate, setPendingDelegate] = useState<{ id?: string; text?: string } | null>(null);
+  const [pendingDelegate, setPendingDelegate] = useState<DelegateRequest | null>(null);
+  const narrow = useIsNarrow();
+  const [linkRequest, setLinkRequest] = useState<DelegateRequest | null>(null);
   const [delegating, setDelegating] = useState(false);
   const [wishCount, setWishCount] = useState(0);
   const [wishError, setWishError] = useState('');
   const loadWishes = () => { if (api.demo) return; setWishError(''); void api.wishCount().then(v => setWishCount(v.count)).catch(e => setWishError(String(e))); };
   useEffect(loadWishes, [api, refreshKey]);
-  const toggleDetails = (id: string) => setExpanded(previous => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next; });
-  const delegate = async (request: { id?: string; text?: string }, configured = false) => {
+  const toggleDetails = (id: string) => setExpanded(previous => { const next = new Set(previous); if (next.has(id)) next.delete(id); else { if (narrow) next.clear(); next.add(id); } return next; });
+  const delegate = async (request: DelegateRequest, configured = false) => {
     if (delegating) return;
     if (!configured && personal && !personal.agent) { setPendingDelegate(request); setSettingsOpen(true); return; }
     setDelegating(true);
     let id = request.id;
     try {
       if (!id) { const created = await api.createTodo(request.text!); id = created.id; setAdding(''); onReload(); }
-      const thread = await api.delegateTodo(id); setPendingDelegate(null); onReload(); onOpenThread(thread.id);
+      const thread = await api.delegateTodo(id, request.cwd); setPendingDelegate(null); onReload(); onOpenThread(thread.id);
     } catch (e) {
-      if (e instanceof ApiError && e.status === 409 && e.message === 'personal agent is not configured') { setPendingDelegate({ id }); setSettingsOpen(true); }
+      if (e instanceof ApiError && e.status === 409 && e.message === 'personal agent is not configured') { setPendingDelegate({ ...request, id }); setSettingsOpen(true); }
       else onError(e);
     } finally { setDelegating(false); }
   };
@@ -343,7 +347,7 @@ export function TodosPage({ agents, personal, personalError, onPersonalChange, o
 
   const menuEntries = (todo: Todo): MenuEntry[] => {
     const isTop = todo.parentId === null;
-    const choices = linkableThreads(todos, todo.id, threads).slice(0, MAX_LINK_CHOICES);
+    const choices = linkableThreads(todos, todo.id, threads);
     const siblings = siblingsOf(todo);
     const at = siblings ? siblings.findIndex((t) => t.id === todo.id) : -1;
     const moves: MenuEntry[] =
@@ -376,11 +380,7 @@ export function TodosPage({ agents, personal, personalError, onPersonalChange, o
         label: t('todos.link'),
         icon: IconList,
         disabled: choices.length === 0,
-        submenu: choices.map((t) => ({
-          id: `link-${t.id}`,
-          label: t.title || t.cwd,
-          onSelect: () => void act(() => api.linkTodo(todo.id, t.id)),
-        })),
+        onSelect: () => setLinkRequest({ id: todo.id }),
       },
       'separator',
       { id: 'delete', label: t('common.delete'), icon: IconClose, danger: true, onSelect: () => setDeleting(todo) },
@@ -453,10 +453,10 @@ export function TodosPage({ agents, personal, personalError, onPersonalChange, o
           </div>
           {!api.demo && <>
             <TodoMetadata todo={todo} />
-            {todo.noteUpdatedAt && <button className="todo-details-toggle" aria-label={t('personal.details')} aria-expanded={expanded.has(todo.id)} onClick={() => toggleDetails(todo.id)}><IconFile size={14} /></button>}
+            {todo.hasNote && <button className="todo-details-toggle" aria-label={t('personal.details')} aria-expanded={expanded.has(todo.id)} onClick={() => toggleDetails(todo.id)}><IconFile size={14} /></button>}
           </>}
           <div className="todo-actions">
-            {!api.demo && !todo.done && !todo.threads.some(thread => thread.status === 'running') && <button className="todo-delegate" disabled={delegating} onClick={() => void delegate({ id: todo.id })}>{t('personal.delegate')}</button>}
+            {!api.demo && !todo.done && !todo.threads.some(thread => thread.status === 'running') && <TodoDelegate api={api} personal={personal} threads={threads} request={{ id: todo.id }} busy={delegating} onDelegate={request => void delegate(request)} onLink={setLinkRequest} />}
             <button
               type="button"
               className="row-more"
@@ -540,12 +540,21 @@ export function TodosPage({ agents, personal, personalError, onPersonalChange, o
             }}
             aria-label={t('todos.new')}
           />
-          {!api.demo && adding.trim() && <button className="primary todo-delegate-new" disabled={delegating} onClick={() => void delegate({ text: adding.trim() })}>{t('personal.delegate')}</button>}
+          {!api.demo && adding.trim() && <TodoDelegate api={api} personal={personal} threads={threads} request={{ text: adding.trim() }} draft busy={delegating} onDelegate={request => void delegate(request)} onLink={setLinkRequest} />}
         </div>
       </div>
 
       {!api.demo && <Wishes api={api} count={wishCount} threads={threads} onOpenThread={onOpenThread} />}
       {wishError && <p className="panel-error" role="alert">{wishError} <button className="ghost" onClick={loadWishes}>{t('common.retry')}</button></p>}
+      {linkRequest && <TodoThreadPicker todos={todos} threads={threads} todoId={linkRequest.id} busy={delegating} onClose={() => setLinkRequest(null)} onPick={threadId => {
+        if (delegating) return;
+        setDelegating(true);
+        void (async () => {
+          let id = linkRequest.id;
+          if (!id) { id = (await api.createTodo(linkRequest.text!)).id; setAdding(''); setLinkRequest({ id }); onReload(); }
+          await api.linkTodo(id, threadId); setLinkRequest(null); onReload();
+        })().catch(onError).finally(() => setDelegating(false));
+      }} />}
       {settingsOpen && personal && <PersonalSettingsDialog api={api} agents={agents} initial={personal} onClose={() => { setSettingsOpen(false); setPendingDelegate(null); }} onSave={value => { onPersonalChange(value); setSettingsOpen(false); if (pendingDelegate) void delegate(pendingDelegate, true); }} />}
       {board.done.length > 0 && (
         <div className="todos-done-group">

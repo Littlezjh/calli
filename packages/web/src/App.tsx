@@ -395,6 +395,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const [draftEffort, setDraftEffort] = useState<string | null>(null);
   const [draftSpeed, setDraftSpeed] = useState<string | null>(null);
   const [modelsByAgent, setModelsByAgent] = useState<Record<string, ModelOption[]>>({});
+  const modelVersions = useRef<Record<string, number>>({});
   const [commandsByKey, setCommandsByKey] = useState<Record<string, SlashCommand[]>>({});
   const [drawer, setDrawer] = useState(start === 'list');
   // On a wide screen the list can be put away for room, like Codex; remembered on this device.
@@ -870,7 +871,14 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         try {
           await api.stream<StoredEvent>(
             '/api/stream',
-            (ev) => (ev.type === 'extensions.changed' ? void reloadExtensions() : refresh()),
+            (ev) => {
+              if (ev.type === 'extensions.changed') void reloadExtensions();
+              else if (ev.type === 'agent.modelsChanged') {
+                const { agent, models } = ev.data as { agent: string; models: ModelOption[] };
+                modelVersions.current[agent] = (modelVersions.current[agent] ?? 0) + 1;
+                setModelsByAgent(previous => ({ ...previous, [agent]: models }));
+              } else refresh();
+            },
             ctrl.signal,
             undefined,
             () => threadFeed.stream(true),
@@ -1129,15 +1137,21 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const needModels = (agent: string) => {
     if (!api || modelsByAgent[agent] || modelsAsked.current.has(agent)) return;
     modelsAsked.current.add(agent);
-    api.models(agent).then((list) => setModelsByAgent((prev) => ({ ...prev, [agent]: list }))).catch(() => { modelsAsked.current.delete(agent); });
+    const version = modelVersions.current[agent] ?? 0;
+    api.models(agent).then((list) => {
+      if ((modelVersions.current[agent] ?? 0) === version) setModelsByAgent(prev => ({ ...prev, [agent]: list }));
+    }).catch(() => { modelsAsked.current.delete(agent); });
   };
 
   // Models for that agent, loaded once per agent.
   useEffect(() => {
     if (!api || !activeAgent || modelsByAgent[activeAgent]) return;
+    const version = modelVersions.current[activeAgent] ?? 0;
     api
       .models(activeAgent)
-      .then((list) => setModelsByAgent((prev) => ({ ...prev, [activeAgent]: list })))
+      .then((list) => {
+        if ((modelVersions.current[activeAgent] ?? 0) === version) setModelsByAgent(prev => ({ ...prev, [activeAgent]: list }));
+      })
       .catch(handleError);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, activeAgent]);

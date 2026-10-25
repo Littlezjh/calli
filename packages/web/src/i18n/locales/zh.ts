@@ -3,6 +3,13 @@
  * a key added here has to be added to them too. Messages with values are functions.
  */
 export const zh = {
+  "api.updateBackend": "后台还没更新到这个版本，重启 hub 后再试",
+  "personal.searchModels": "筛选模型",
+  "personal.newPrivate": "新开私人对话",
+  "personal.inProject": "在项目里开…",
+  "personal.linkExistingTitle": "关联已有对话",
+  "personal.linkExisting": "关联已有对话…",
+  "personal.chooseProjectDirectory": "选择目录…",
   "personal.settings": "私人设置",
   "personal.setup": "设置私人 agent",
   "personal.private": "私人",
@@ -25,7 +32,7 @@ export const zh = {
   "personal.dismiss": "忽略",
   "personal.agentOwned": "agent 负责",
   "personal.details": "接续说明",
-  "personal.noNote": "尚未写接续说明",
+  "personal.noNote": "还没有说明",
   "personal.paused": "已停止跟进",
   "personal.setFollowUp": "设跟进",
   "personal.change": "修改",

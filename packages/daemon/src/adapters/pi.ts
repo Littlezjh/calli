@@ -34,8 +34,9 @@ import type {
 
 const PI_EFFORTS: EffortLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 
-/** How long probe results (models, commands) are reused. They can change when the user edits pi's config. */
+/** Commands and MCP status can change when the user edits pi's config. */
 const PROBE_TTL_MS = 60_000;
+const MODEL_TTL_MS = 10 * 60_000;
 
 /** How long `pi mcp list` may take to connect every server before the probe gives up. */
 const MCP_LIST_TIMEOUT_MS = 30_000;
@@ -438,8 +439,9 @@ class PiSession implements AgentSession {
     label: string,
     env: Record<string, string>,
     ask: (s: PiSession) => Promise<T>,
+    extraArgs: string[] = [],
   ): Promise<T> {
-    const session = PiSession.spawn(command, ['--no-session'], cwd, label, env);
+    const session = PiSession.spawn(command, ['--no-session', ...extraArgs], cwd, label, env);
     try {
       return await probeWithDeadline(() => ask(session), () => session.close());
     } finally {
@@ -732,7 +734,11 @@ export class PiRpcAdapter implements AgentAdapter {
     systemPrompt: true,
   };
 
-  private modelCache: Cached<ModelOption[]> | null = null;
+  private modelCache: { at: number; value: ModelOption[] } | null = null;
+  private modelLoad: Promise<ModelOption[]> | null = null;
+  private modelRetryAt = 0;
+  onModelsChanged?: (models: ModelOption[]) => void;
+  private mcpVision: boolean | undefined;
   private mcpCache: Cached<string[]> | null = null;
   private readonly commandCache = new Map<string, Cached<SlashCommand[]>>();
 
@@ -762,63 +768,80 @@ export class PiRpcAdapter implements AgentAdapter {
    * marked, so the UI can show what "default" means and which settings apply to it.
    */
   models(refresh = false): Promise<ModelOption[]> {
-    if (refresh) this.modelCache = null;
-    return this.cached(
-      this.modelCache,
-      async () => {
-        // `pi mcp list` connects every MCP server and can take as long as the probe deadline,
-        // so it runs alongside the probe instead of inside it.
-        const mcpToolsPending = this.mcpTools();
-        const { list, current, vision } = await PiSession.probe(
-          this.command,
-          process.cwd(),
-          'pi',
-          this.env,
-          async (s) => {
-            const [list, state, commands] = await Promise.all([
-              s.request('get_available_models', {}),
-              s.request('get_state', {}),
-              s.request('get_commands', {}).catch(() => null),
-            ]);
-            const current = state?.model ? `${state.model.provider}/${state.model.id}` : null;
-            const vision = (commands?.commands ?? []).some(
-              (c: any) => String(c.name).replace(/^\//, '') === PI_VISION_EXTENSION_COMMAND && c.source === 'extension',
-            );
-            return { list, current, vision };
-          },
-        );
-        // The vision MCP is the fallback: describe_image goes through pi's own login, so prefer it.
-        const mcpTools = vision ? [] : await mcpToolsPending;
-        const visionMcp = !vision && mcpTools.some((t) => t.startsWith(`mcp__${PI_VISION_MCP_SERVER}__`));
-        return (list?.models ?? []).map((m: any): ModelOption => {
-          const id = `${m.provider}/${m.id}`;
-          const images = Array.isArray(m.input) ? m.input.includes('image') : undefined;
-          return {
-            id,
-            label: m.name ?? m.id,
-            description: m.provider,
-            efforts: piEfforts(m),
-            images,
-            ...(images === false && (vision || visionMcp) ? { imagesVia: vision ? PI_VISION_TOOL : PI_MCP_VISION_TOOL } : {}),
-            ...(id === current ? { isDefault: true } : {}),
-          };
-        });
-      },
-      (c) => {
-        this.modelCache = c;
-      },
-    );
+    if (refresh || !this.modelCache) return this.loadModels().then(models => this.withMcpVision(models));
+    if (Date.now() - this.modelCache.at >= MODEL_TTL_MS && Date.now() >= this.modelRetryAt) {
+      // A stale list remains usable while the next probe runs, including when that probe fails.
+      void this.loadModels().catch(() => {});
+    }
+    return Promise.resolve(this.withMcpVision(this.modelCache.value));
   }
 
-  /** Qualified names of every tool a connected MCP server serves, from `pi mcp list --json`. */
-  private mcpTools(): Promise<string[]> {
-    return this.cached(
-      this.mcpCache,
-      () => mcpToolNames(this.command, this.env),
-      (c) => {
-        this.mcpCache = c;
-      },
-    );
+  private loadModels(): Promise<ModelOption[]> {
+    if (this.modelLoad) return this.modelLoad;
+    // MCP connects separately and must never hold up the model picker. Preserve a known
+    // result during refresh; the native vision extension still takes precedence below.
+    void this.probeMcpVision();
+    this.modelLoad = PiSession.probe(this.command, process.cwd(), 'pi', this.env, async session => {
+      const [list, state, commands] = await Promise.all([
+        session.request('get_available_models', {}),
+        session.request('get_state', {}),
+        session.request('get_commands', {}).catch(() => null),
+      ]);
+      const current = state?.model ? `${state.model.provider}/${state.model.id}` : null;
+      const vision = (commands?.commands ?? []).some(
+        (c: any) => String(c.name).replace(/^\//, '') === PI_VISION_EXTENSION_COMMAND && c.source === 'extension',
+      );
+      return (list?.models ?? []).map((model: any): ModelOption => {
+        const id = `${model.provider}/${model.id}`;
+        const images = Array.isArray(model.input) ? model.input.includes('image') : undefined;
+        return {
+          id, label: model.name ?? model.id, description: model.provider, efforts: piEfforts(model), images,
+          ...(images === false && vision ? { imagesVia: PI_VISION_TOOL } : {}),
+          ...(id === current ? { isDefault: true } : {}),
+        };
+      });
+    }, ['--no-mcp']).then(models => {
+      const previous = this.modelCache;
+      this.modelCache = { at: Date.now(), value: models };
+      this.modelRetryAt = 0;
+      if (previous) this.onModelsChanged?.(this.withMcpVision(models));
+      return models;
+    }, error => {
+      this.modelRetryAt = Date.now() + PROBE_TTL_MS;
+      throw error;
+    }).finally(() => { this.modelLoad = null; });
+    return this.modelLoad;
+  }
+
+  private probeMcpVision(): Promise<string[]> {
+    return this.cached(this.mcpCache, async () => {
+      const tools = await mcpToolNames(this.command, this.env);
+      const supported = tools.some(t => t.startsWith(`mcp__${PI_VISION_MCP_SERVER}__`));
+      const changed = this.mcpVision !== supported;
+      this.mcpVision = supported;
+      if (changed && this.modelCache) this.onModelsChanged?.(this.withMcpVision(this.modelCache.value));
+      return tools;
+    }, cache => { this.mcpCache = cache; });
+  }
+
+  async modelForImages(model: string | null): Promise<ModelOption | undefined> {
+    await this.models();
+    const select = (models: ModelOption[]) => model === null ? models.find(m => m.isDefault) : models.find(m => m.id === model);
+    const native = select(this.modelCache!.value);
+    // Native vision and the vision extension do not depend on an MCP connection.
+    if (native?.images !== false || native.imagesVia) return native;
+    await this.probeMcpVision();
+    return select(this.withMcpVision(this.modelCache!.value));
+  }
+
+  private withMcpVision(models: ModelOption[]): ModelOption[] {
+    return models.map(model => {
+      if (model.images !== false || model.imagesVia) return model;
+      // Pending detection is unknown, not proof that the model has no image route. The live
+      // session checks native image support before sending images or their file paths.
+      if (this.mcpVision === undefined) return { ...model, images: undefined };
+      return this.mcpVision ? { ...model, imagesVia: PI_MCP_VISION_TOOL } : model;
+    });
   }
 
   /** pi's commands for a directory: extension commands, prompt templates and skills. */

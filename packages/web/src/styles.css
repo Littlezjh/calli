@@ -11231,3 +11231,11 @@ button.trace-step-head:hover { background: var(--hover); }
   .push-settings .personal-setting-line { padding: 10px 0; }
   .push-settings .push-bottom { margin-top: 12px; }
 }
+
+/* Menus inside a dialog escape its scrolling and stacking context. */
+.pop-panel.personal-models { z-index: 72; display: flex; flex-direction: column; overflow: hidden; }
+.personal-models .pop-scroll { max-height: 48dvh; min-height: 0; }
+.personal-models .pop-search { flex-shrink: 0; }
+.todo-delegate-new { border: 1px solid var(--border); background: transparent; color: var(--text); }
+.todo-thread-picker .pop-scroll { max-height: 48dvh; }
+.todo-thread-picker .dialog-actions { margin-top: 16px; }

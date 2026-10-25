@@ -693,7 +693,7 @@ export class ThreadManager {
         if (!await adapter.available()) return { ...base, checkedAt: new Date().toISOString(), state: 'missing', message: '没有找到 CLI，请检查该实例的命令和 PATH。', version: null, protocol: null, models: [] };
         const runtime = await adapter.diagnose?.().catch(() => null);
         try {
-          const models = await adapter.models(refresh);
+          const models = await this.adapterModels(adapter, refresh);
           return { ...base, ...runtime, checkedAt: new Date().toISOString(), state: models.length ? 'ready' : 'empty',
             message: models.length ? '模型读取成功。登录有效性以实际请求结果为准。' : 'CLI 可启动，但未返回可选模型。请检查原生 CLI 的登录、模型配置和套餐。', models };
         } catch (error) { return { ...base, ...runtime, checkedAt: new Date().toISOString(), ...diagnosticFailure(error), models: [] }; }
@@ -703,10 +703,22 @@ export class ThreadManager {
     return entry.value;
   }
 
+  private adapterModels(adapter: AgentAdapter, refresh = false): Promise<ModelOption[]> {
+    adapter.onModelsChanged = models => {
+      // Instance ids can differ from adapter ids; removed/replaced instances must not publish.
+      const agent = [...this.adapters].find(([, current]) => current === adapter)?.[0];
+      if (!agent) return;
+      const event: StoredEvent = { threadId: '', seq: 0, turnId: null, type: 'agent.modelsChanged',
+        ts: new Date().toISOString(), data: { agent, models } };
+      for (const listener of this.listeners) listener(event);
+    };
+    return adapter.models(refresh);
+  }
+
   async listModels(agent: string): Promise<ModelOption[]> {
     const adapter = this.adapters.get(agent);
     if (!adapter) throw new HttpError(404, `unknown agent: ${agent}`);
-    return adapter.models();
+    return this.adapterModels(adapter);
   }
 
   /** Turns of any thread, archived ones too, in which the words were said. */
@@ -1273,7 +1285,7 @@ export class ThreadManager {
   private async validateModel(agent: string, model: string): Promise<string> {
     const adapter = this.adapters.get(agent);
     if (!adapter) throw new HttpError(400, `unknown agent: ${agent}`);
-    const options: ModelOption[] = await adapter.models();
+    const options: ModelOption[] = await this.adapterModels(adapter);
     if (!options.some((o) => o.id === model)) throw new HttpError(400, `unknown model for ${agent}: ${model}`);
     return model;
   }
@@ -1294,7 +1306,7 @@ export class ThreadManager {
    * an entry with the id "default" if the agent has one, else the entry it marks as its default.
    */
   private async modelOption(adapter: AgentAdapter, model: string | null): Promise<ModelOption | undefined> {
-    const options = await adapter.models();
+    const options = await this.adapterModels(adapter);
     if (model !== null) return options.find((o) => o.id === model);
     return options.find((o) => o.id === 'default') ?? options.find((o) => o.isDefault);
   }
@@ -1881,7 +1893,8 @@ export class ThreadManager {
     if (rawImages.length > 0) {
       const adapter = this.adapters.get(thread.agent);
       if (!adapter?.capabilities.images) throw new HttpError(400, `${thread.agent} does not accept images`);
-      const option = await this.modelOption(adapter, thread.model);
+      let option = await this.modelOption(adapter, thread.model);
+      if (adapter.modelForImages) option = await adapter.modelForImages(thread.model);
       if (option?.images === false && !option.imagesVia) throw new HttpError(400, `${option.label} cannot read images; pick another model`);
       // The model lookup above can take a moment, so check again before claiming the thread.
       if (this.running.has(threadId)) throw new HttpError(409, 'a turn is already running in this thread');
@@ -1995,7 +2008,8 @@ export class ThreadManager {
   canSwitchHandoverModel(id: string): boolean { return this.adapters.get(id)?.capabilities.modelSwitch === true; }
   async handoverModel(agent: string, model?: string | null): Promise<string | undefined> {
     try {
-      const models = await this.adapters.get(agent)?.models() ?? [];
+      const adapter = this.adapters.get(agent);
+      const models = adapter ? await this.adapterModels(adapter) : [];
       return model ? models.find(m => m.id === model)?.id : models.find(m => m.isDefault)?.id;
     } catch { return model || undefined; }
   }

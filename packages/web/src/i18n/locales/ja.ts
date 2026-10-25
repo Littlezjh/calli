@@ -1,6 +1,13 @@
 import type { Messages } from './zh';
 
 export const ja: Messages = {
+  "api.updateBackend": "バックエンドがこのバージョンに更新されていません。hub を再起動してお試しください。",
+  "personal.searchModels": "モデルを絞り込む",
+  "personal.newPrivate": "プライベート会話を開始",
+  "personal.inProject": "プロジェクトで開始…",
+  "personal.linkExistingTitle": "既存の会話に関連付け",
+  "personal.linkExisting": "既存の会話に関連付け…",
+  "personal.chooseProjectDirectory": "ディレクトリを選択…",
   "personal.settings": "プライベート設定",
   "personal.setup": "プライベート agent を設定",
   "personal.private": "プライベート",
@@ -23,7 +30,7 @@ export const ja: Messages = {
   "personal.dismiss": "見送る",
   "personal.agentOwned": "agent が担当",
   "personal.details": "引き継ぎメモ",
-  "personal.noNote": "引き継ぎメモはまだありません",
+  "personal.noNote": "説明はまだありません",
   "personal.paused": "フォローアップ停止中",
   "personal.setFollowUp": "フォローアップを設定",
   "personal.change": "変更",

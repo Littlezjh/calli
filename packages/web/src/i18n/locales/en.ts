@@ -3,6 +3,13 @@ import type { Messages } from './zh';
 const plural = (n: number, one: string, other: string) => `${n} ${n === 1 ? one : other}`;
 
 export const en: Messages = {
+  "api.updateBackend": "The backend needs an update. Restart the hub and try again.",
+  "personal.searchModels": "Filter models",
+  "personal.newPrivate": "New private conversation",
+  "personal.inProject": "Start in a project…",
+  "personal.linkExistingTitle": "Link an existing conversation",
+  "personal.linkExisting": "Link an existing conversation…",
+  "personal.chooseProjectDirectory": "Choose a directory…",
   "personal.settings": "Personal settings",
   "personal.setup": "Set up personal agent",
   "personal.private": "Personal",
@@ -25,7 +32,7 @@ export const en: Messages = {
   "personal.dismiss": "Dismiss",
   "personal.agentOwned": "Agent owned",
   "personal.details": "Continuation notes",
-  "personal.noNote": "No continuation notes yet",
+  "personal.noNote": "No note yet",
   "personal.paused": "Follow-up paused",
   "personal.setFollowUp": "Set follow-up",
   "personal.change": "Change",

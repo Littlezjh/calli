@@ -4,18 +4,22 @@ if (process.argv.includes('--version')) { process.stdout.write('fixture 1.2.3\n'
 // Prompt text drives behaviour: "slow" waits until abort, "fail" ends with an error.
 import { personalFixture } from './personal.mjs';
 import { coordinationFixture } from './coordination.mjs';
-import { readFileSync, watchFile, unwatchFile } from 'node:fs';
+import { appendFileSync, readFileSync, watchFile, unwatchFile } from 'node:fs';
 import { basename } from 'node:path';
 import { createInterface } from 'node:readline';
 
 const args = process.argv.slice(2);
+const catalogState = () => process.env.FAKE_PI_CATALOG_FILE ? JSON.parse(readFileSync(process.env.FAKE_PI_CATALOG_FILE, 'utf8')) : {};
+if (process.env.FAKE_PI_PROBE_LOG) appendFileSync(process.env.FAKE_PI_PROBE_LOG, JSON.stringify({ kind: args[0] === 'mcp' ? 'mcp' : args.includes('--no-session') ? 'catalog' : 'session', noMcp: args.includes('--no-mcp') }) + '\n');
 // `pi mcp list --json` is a shell command, not an RPC session: FAKE_PI_MCP=1 reports the zai vision
 // MCP server as connected, anything else no servers at all.
 if (args[0] === 'mcp' && args[1] === 'list' && args.includes('--json')) {
+  while (catalogState().mcpHold) await new Promise(r => setTimeout(r, 10));
   const servers =
     process.env.FAKE_PI_MCP === '1'
       ? [{ name: 'zai-mcp-server', enabled: true, state: 'connected', tools: ['image_analysis', 'ui_diff_check'] }]
       : [];
+  if (process.env.FAKE_PI_PROBE_LOG) appendFileSync(process.env.FAKE_PI_PROBE_LOG, JSON.stringify({ kind: 'mcp-done' }) + '\n');
   process.stdout.write(JSON.stringify({ servers, errors: [] }) + '\n');
   process.exit(0);
 }
@@ -59,6 +63,7 @@ const MODELS = [
   { id: 'plain', provider: 'fake', name: 'Plain', reasoning: false, input: ['text'] },
   { id: 'loose', provider: 'fake', name: 'Loose', reasoning: true, input: ['text'] },
 ];
+if (process.env.FAKE_PI_MANY_MODELS === '1') MODELS.push(...Array.from({ length: 40 }, (_, i) => ({ id: `model-${i + 1}`, provider: 'fake', name: `Model ${String(i + 1).padStart(2, '0')}`, reasoning: false, input: ['text'] })));
 let currentModel = MODELS[0];
 let stateReads = 0;
 let pendingFirstOutput = null;
@@ -148,6 +153,16 @@ rl.on('line', (line) => {
     case 'get_available_models':
       // Probes must not create sessions in pi's session list.
       if (!ephemeral) return reply(null, false, 'probe ran without --no-session');
+      if (process.env.FAKE_PI_REQUIRE_NO_MCP === '1' && !args.includes('--no-mcp')) return reply(null, false, 'catalog probe must disable MCP');
+      if (process.env.FAKE_PI_CATALOG_FILE) {
+        const respond = () => {
+          const state = catalogState();
+          if (state.hold) return setTimeout(respond, 10);
+          if (state.fail) return reply(null, false, 'fixture catalog failure');
+          reply({ models: MODELS.map((model, i) => i === 0 && state.label ? { ...model, name: state.label } : model) });
+        };
+        return respond();
+      }
       return reply({ models: MODELS });
     case 'get_commands':
       if (!ephemeral) return reply(null, false, 'probe ran without --no-session');
