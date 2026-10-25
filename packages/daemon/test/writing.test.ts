@@ -10,7 +10,7 @@ import { AttachmentStore } from '../src/attachments.js';
 import { createHttpServer } from '../src/http.js';
 import { Store } from '../src/store.js';
 import { ThreadManager } from '../src/threads.js';
-import { contentHash, isEditableArticle, WRITING_STAGES, writingInstructions } from '../src/writing.js';
+import { contentHash, habitsPath, isEditableArticle, WRITING_STAGES, writingInstructions } from '../src/writing.js';
 
 // Writing mode: the stage's way of working rides along with each message, and the person may edit
 // the article under writing/ as plain text, over the version they opened only.
@@ -40,7 +40,7 @@ const echoAdapter = {
 } as unknown as AgentAdapter;
 
 const TOKEN = 'test-token-0123456789';
-let server: Server, base: string, dataDir: string, workdir: string, outside: string, manager: ThreadManager, store: Store;
+let server: Server, base: string, dataDir: string, workdir: string, outside: string, notes: string, manager: ThreadManager, store: Store;
 const api = (path: string, init: RequestInit = {}) =>
   fetch(base + path, { ...init, headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json', ...(init.headers ?? {}) } });
 
@@ -48,6 +48,8 @@ before(async () => {
   dataDir = mkdtempSync(join(tmpdir(), 'rah-writing-test-'));
   workdir = mkdtempSync(join(tmpdir(), 'rah-writing-work-'));
   outside = mkdtempSync(join(tmpdir(), 'rah-writing-outside-'));
+  notes = mkdtempSync(join(tmpdir(), 'rah-writing-notes-'));
+  process.env.LIMI_NOTES_DIR = notes;
   store = new Store(dataDir);
   manager = new ThreadManager(store, new Map([['echo', echoAdapter]]), [workdir], new AttachmentStore(dataDir));
   server = createHttpServer({ manager, token: TOKEN, webDir: null, version: 'test' });
@@ -59,7 +61,8 @@ after(async () => {
   server.close();
   await manager.shutdown();
   store.close();
-  for (const dir of [dataDir, workdir, outside]) rmSync(dir, { recursive: true, force: true });
+  for (const dir of [dataDir, workdir, outside, notes]) rmSync(dir, { recursive: true, force: true });
+  delete process.env.LIMI_NOTES_DIR;
 });
 
 async function turn(threadId: string, text: string): Promise<string> {
@@ -81,7 +84,7 @@ test('each stage has its own way of working, appended once, with an edit mention
   assert.match(texts[0], /【待补/);
   assert.match(texts[1], /〔补〕/);
   for (const text of texts) {
-    assert.match(text, /先读 writing\/写作习惯\.md/, 'every stage writes by the habits');
+    assert.ok(text.includes(`先读 ${join(notes, 'writing.md')}`), 'every stage writes by the habits in the person’s notes');
     assert.match(text, /「复盘」「总结一下」[\s\S]*〔新〕[\s\S]*请我确认/, 'a review adds habits marked new, for the person to confirm');
   }
   assert.doesNotMatch(texts[0], /被我直接改过/);
@@ -106,14 +109,10 @@ test('writing mode rides along with messages, follows the article and takes the 
   assert.equal((await (await api(`/api/threads/${id}/writing`, { method: 'PUT', body: JSON.stringify({ stage: 'nope' }) })).json()).error?.includes('stage'), true);
   let res = await api(`/api/threads/${id}/writing`, { method: 'PUT', body: JSON.stringify({ stage: 'draft' }) });
   assert.equal(res.status, 200);
-  assert.deepEqual(((await res.json()) as { writing: unknown }).writing, { stage: 'draft', file: null });
+  assert.deepEqual(((await res.json()) as { writing: unknown }).writing, { stage: 'draft', file: null, habits: join(notes, 'writing.md') });
 
   // The agent starts the article during the turn; the hub finds it when the turn ends.
   const article = join(workdir, 'writing', '思考是人类的事情.md');
-  // The habits file sits beside the articles and is never taken for one.
-  work.push(() => { mkdirSync(join(workdir, 'writing'), { recursive: true }); writeFileSync(join(workdir, 'writing', '写作习惯.md'), '# 写作习惯\n'); });
-  await turn(id, '先有习惯');
-  assert.deepEqual(store.getThread(id)!.writing, { stage: 'draft', file: null });
   work.push(() => { mkdirSync(join(workdir, 'writing'), { recursive: true }); writeFileSync(article, '# 思考是人类的事情\n\n初稿\n'); });
   const first = await turn(id, '今天写 PR 的时候');
   assert.match(first, /<limi-writing>[\s\S]*现在是初稿/);
@@ -190,4 +189,27 @@ test('saving refuses anything but an article in the thread, stale hashes and ove
   const readme = (await (await api(`/api/threads/${thread.id}/text?path=README.md`)).json()) as { editable: boolean; hash: string };
   assert.equal(readme.editable, false);
   assert.equal(readme.hash, hash('readme'), 'every whole text file has a hash');
+});
+
+test('the person’s notes open and save from any thread; nothing else outside it does', async () => {
+  const thread = (await (await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'echo', cwd: workdir, title: '习惯' }) })).json()) as { id: string };
+  const habits = habitsPath();
+  writeFileSync(habits, '# 写作习惯\n\n- 〔新〕不用「你」说教\n');
+  writeFileSync(join(notes, 'list.txt'), 'not markdown');
+  symlinkSync(join(outside, 'secret.md'), join(notes, 'escape.md'));
+  const read = (path: string) => api(`/api/threads/${thread.id}/text?path=${encodeURIComponent(path)}`);
+  const save = (path: string, body: Record<string, unknown>) =>
+    api(`/api/threads/${thread.id}/writing/text?path=${encodeURIComponent(path)}`, { method: 'PUT', body: JSON.stringify(body) });
+
+  const opened = (await (await read(habits)).json()) as { editable: boolean; hash: string; text: string };
+  assert.equal(opened.editable, true);
+  assert.match(opened.text, /〔新〕/);
+  assert.equal((await save(habits, { text: '# 写作习惯\n\n- 不用「你」说教\n', baseHash: opened.hash })).status, 200);
+  assert.equal(readFileSync(habits, 'utf8'), '# 写作习惯\n\n- 不用「你」说教\n');
+  assert.equal((await save(habits, { text: 'x', baseHash: opened.hash })).status, 409, 'an edit over a stale version is refused');
+
+  assert.equal((await read(join(notes, 'list.txt'))).status, 403, 'only Markdown among the notes');
+  assert.equal((await save(join(notes, 'escape.md'), { text: 'x', baseHash: contentHash('secret') })).status, 404, 'a link out of the notes is not one');
+  assert.equal(readFileSync(join(outside, 'secret.md'), 'utf8'), 'secret');
+  assert.equal(store.getThread(thread.id)!.writing, null, 'saving a note is not writing an article');
 });
