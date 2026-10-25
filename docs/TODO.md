@@ -437,5 +437,7 @@
 人口述观点，agent 采访、记录、补充，一稿一稿写成文章；正文是 `writing/` 下的 Markdown，人可以当纯文本直接改。设计见 [写作流程设计](writing-design.md)，草图 [design/writing-mode.html](design/writing-mode.html)。
 
 - [~] **P2** 第一版：加号菜单「写作模式」一点就开；初稿、二稿、三稿、配图、润色五个阶段，每个阶段的做法由 hub 附在消息后（`<limi-writing>`，斜杠命令不附）；每轮结束找出 `writing/` 下最新的 `.md` 作为正文。文件面板里 `writing/` 下的 `.md` 可以编辑，保存带 `baseHash`，被 agent 改过就 409 不覆盖，下一轮告诉 agent 先重读；Markdown 预览画 Mermaid、显示相对路径图片。*daemon 已做：`daemon/src/writing.ts`、`PUT/DELETE /api/threads/:id/writing`、`PUT …/writing/text`、`text` 返回 `hash`/`editable`；`test/writing.test.ts` 覆盖各阶段说明、斜杠命令、正文跟随、保存撞车、提醒一次、越权路径（含符号链接）与超限。web：加号菜单与桌面命令面板入口、`WritingBar` 阶段条（手机收成阶段名加 Popover）、文件面板纸面编辑（本机草稿、离开确认、409 提示条：载入新版本 / 仍然覆盖）、Mermaid 预览与放大、相对路径图片；`web/test/writing.test.ts`，E2E `writing.spec.mjs` 桌面与手机通过。无头 Chromium 桌面 1400×900、手机 390×844 亮暗都看过，真机未看；agent 改正文时打开着的面板不会自己刷新，保存时才发现*
-- [ ] **P2** 文件面板里选中正文加注释，写作模式下多一排快捷标签（删、待补、为什么、举个例子、留、改成…）
+- [x] **P2** 文件面板里选中正文加注释（带「文件：」行），写作正文里多一排快捷标签（删、待补、为什么、举个例子、留、改成…），手机全屏面板底部计数并回到对话发送。*E2E `writing.spec.mjs` 桌面与手机覆盖*
+- [x] **P2** v2 排版：宽面板、文章排版、【待补】〔补〕上色、Mermaid 跟主题、读写同一张纸（透明 textarea 叠高亮层，Markdown 标记调淡）、阶段收成一个胶囊；对话栏保底 440px 不被挤窄。*无头 Chromium 1280/1440/1920 桌面、390 手机亮暗看过，真机未看*
+- [x] **P2** 写作习惯：`~/.limi/notes/writing.md`，每阶段先读；说「复盘」提炼习惯标〔新〕等确认；任何线程可打开编辑，胶囊菜单有入口
 - [ ] **P3** 每一稿留快照，方便对比

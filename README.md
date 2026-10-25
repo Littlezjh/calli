@@ -39,9 +39,9 @@ Limi 不动 agent 本身的目录、配置和会话，装好即用。名字来�
 
 ![用量与诊断](docs/screenshots/usage-light.png)
 
-写作模式：在加号菜单里一点就开。你口述观点，agent 用你的原话记成初稿、标出【待补】、追问具体场景，再按二稿、三稿、配图、润色一稿一稿往下走。正文是 `writing/` 下的 Markdown，预览会画出 Mermaid 图、显示配图；你也可以直接改正文（键盘或语音输入法都行），agent 同时改过时不会覆盖你的版本。设计见 [写作流程设计](docs/writing-design.md)。
+写作模式：在加号菜单里一点就开。你口述观点，agent 用你的原话记成初稿、标出【待补】、追问具体场景，再按二稿、三稿、配图、润色一稿一稿往下走。正文是 `writing/` 下的 Markdown，按文章排版，画出 Mermaid 图、显示配图；读和写是同一张纸，可以直接改（键盘或语音输入法都行），agent 同时改过时不会覆盖你的版本。在正文里选中一句，一点「删」「待补」「为什么」「改成…」就成了给 agent 的注释。说「复盘」，agent 把你反复改的地方提炼成写作习惯，记进 `~/.limi/notes/writing.md` 等你确认，之后每篇都照着写。设计见 [写作流程设计](docs/writing-design.md)。
 
-![写作模式（亮色）：加号菜单、选阶段、正文预览、直接编辑](docs/screenshots/writing-light.png)
+![写作模式（亮色）：加号菜单、选阶段、正文、选中一句加注释](docs/screenshots/writing-light.png)
 
 ![写作模式（深色）](docs/screenshots/writing-dark.png)
 
