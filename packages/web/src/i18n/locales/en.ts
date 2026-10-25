@@ -9,6 +9,8 @@ export const en: Messages = {
   "personal.changeFollowUp": "Change follow-up",
   "personal.confirmTitle": (title: string) => `Confirm: ${title}`,
   "push.hintShort": "Get a private Lark bot message when you are needed.",
+  "personal.defaultDirectory": (path: string) => `${path} (default)`,
+  "dir.defaultDirectory": "Default directory",
   "personal.directory": "Directory",
   "personal.chooseDirectory": "Choose directory",
   "personal.agent": "Agent",

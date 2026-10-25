@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, symlinkSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, statSync, symlinkSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { DatabaseSync } from 'node:sqlite';
 import { PushService } from '../src/push.js';
@@ -16,7 +16,7 @@ import type { AgentAdapter } from '../src/adapters/types.js';
 import { PiRpcAdapter } from '../src/adapters/pi.js';
 import { ClaudeAcpAdapter } from '../src/adapters/claude.js';
 import { createHttpServer, listenPrivate } from '../src/http.js';
-import { personalServer } from '../src/personal.js';
+import { defaultPersonalDirectory, personalServer } from '../src/personal.js';
 import { BorrowingService } from '../src/borrowing.js';
 import { borrowingServer } from '../src/borrowing-server.js';
 import { Scheduler } from '../src/scheduler.js';
@@ -46,7 +46,7 @@ async function setup(options: { startError?: string; followUpMode?: string } = {
   const cli = async (args: string[], extra = {}) => JSON.parse((await exec(process.execPath, [resolve('bin/limi'), ...args], { env: { ...process.env, ...service.environment(thread.id), ...borrowing.environment(thread.id), ...extra } })).stdout);
   const api = (path: string, method = 'GET', body?: unknown) => fetch(base + path, { method, headers: { Authorization: 'Bearer test', 'Content-Type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) });
   const file = (name: string, text: string) => { const path = join(dir, name); writeFileSync(path, text); return path; };
-  return { dir, cwd, outside, store, manager, service, scheduler, thread, cli, api, file, push, log, async close() {
+  return { dir, cwd, outside, store, manager, service, adapters, scheduler, thread, cli, api, file, push, log, async close() {
     push.dispose(); scheduler.dispose(); await borrowing.dispose(); await manager.shutdown(); await new Promise<void>(r => tools.close(() => r())); await new Promise<void>(r => socket.close(() => r())); await new Promise<void>(r => server.close(() => r())); store.close(); rmSync(dir, { recursive: true, force: true });
   } };
 }
@@ -55,7 +55,8 @@ test('personal CRUD checks provided revisions, note lists remain small, writes o
   const h = await setup(); try {
     assert.equal((await (await h.api('/api/personal/settings')).json()).directory, h.cwd);
     assert.equal((await h.api('/api/personal/settings', 'PUT', { agent: 'missing' })).status, 400);
-    assert.equal((await h.api('/api/personal/settings', 'PUT', { directory: h.dir, agent: null })).status, 400);
+    assert.equal((await h.api('/api/personal/settings', 'PUT', { directory: h.cwd, agent: null })).status, 200);
+    h.service.putSettings({ agent: 'claude' });
     assert.equal((await (await h.api('/api/personal/settings', 'PUT', { model: 'small' })).json()).model, 'small');
     const scheduled = await h.scheduler.create({ agent: 'claude', prompt: 'personal-quiet', cron: '0 0 1 1 *', mode: 'new', enabled: false });
     assert.equal(scheduled.cwd, h.cwd);
@@ -431,14 +432,16 @@ test('schedule history survives the nullable schedule-id migration for one-shot 
   } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('delegating a plan uses personal settings, links before the first turn, includes its note and rejects missing setup', async () => {
+test('delegating a plan uses personal settings, links before the first turn, includes its note and rejects absent agents', async () => {
   const h = await setup();
   try {
     const todo = h.service.create({ text: 'Prepare the checklist' });
     h.service.writeNote(todo.id, { text: '## 下一步\nReview the remaining steps' });
-    h.service.putSettings({ directory: null });
+    const savedAdapters = new Map(h.adapters); h.adapters.clear();
+    h.service.putSettings({ directory: null, agent: null });
     assert.equal((await h.api(`/api/todos/${todo.id}/delegate`, 'POST', {})).status, 409);
     assert.equal((await h.api('/api/todos/missing/delegate', 'POST', {})).status, 404);
+    for (const [id, adapter] of savedAdapters) h.adapters.set(id, adapter);
     h.service.putSettings({ directory: h.cwd, agent: 'pi', model: 'fake/plain' });
     const response = await h.api(`/api/todos/${todo.id}/delegate`, 'POST', {});
     assert.equal(response.status, 201, response.status === 201 ? undefined : await response.text());
@@ -487,5 +490,96 @@ test('personal settings abbreviate only home directory boundaries for display wi
       assert.equal(h.service.settings().directory, directory);
       assert.equal(Object.hasOwn(h.service.settings(), 'directoryDisplay'), false);
     }
+  } finally { await h.close(); }
+});
+
+test('default personal directory is created privately, stays unlisted, permits only its subtree and delegates without setup', async () => {
+  const h = await setup(); try {
+    h.service.putSettings({ directory: null, agent: null });
+    const root = defaultPersonalDirectory(); rmSync(root, { recursive: true });
+    assert.equal(existsSync(root), false);
+    const settings = await (await h.api('/api/personal/settings')).json();
+    assert.equal(settings.directory, root); assert.equal(settings.directoryIsDefault, true);
+    assert.equal(settings.agent, 'pi'); assert.equal(settings.model, null);
+    assert.equal(statSync(root).mode & 0o777, 0o700);
+    chmodSync(root, 0o750); await h.api('/api/personal/settings'); assert.equal(statSync(root).mode & 0o777, 0o750);
+    assert.equal(h.manager.dirs.roots().includes(root), false);
+    assert.equal((await (await h.api('/api/config')).json()).workdirs.includes(root), false);
+    assert.equal((await h.api('/api/projects', 'POST', { parent: root, name: 'project' })).status, 201);
+    const child = join(root, 'child'); mkdirSync(child); writeFileSync(join(child, 'note.txt'), 'private note');
+    const created = await h.manager.createThread({ agent: 'pi', cwd: child });
+    assert.ok(h.service.environment(created.id)?.LIMI_TODO_KEY);
+    assert.equal((await h.api(`/api/directories?path=${encodeURIComponent(child)}`)).status, 200);
+    assert.equal((await h.api(`/api/threads/${created.id}/text?path=note.txt`)).status, 200);
+    const sibling = join(dirname(root), 'sibling'); mkdirSync(sibling, { recursive: true });
+    await assert.rejects(h.manager.createThread({ agent: 'pi', cwd: sibling }), /allowed workdirs/);
+    assert.equal((await h.api(`/api/directories?path=${encodeURIComponent(sibling)}`)).status, 403);
+    assert.equal((await h.api('/api/personal/settings', 'PUT', { directory: sibling })).status, 400);
+    symlinkSync(sibling, join(root, 'escape'));
+    await assert.rejects(h.manager.createThread({ agent: 'pi', cwd: join(root, 'escape') }), /allowed workdirs/);
+    const todo = h.service.create({ text: 'Use the default agent' });
+    const delegated = await (await h.api(`/api/todos/${todo.id}/delegate`, 'POST', {})).json();
+    assert.equal(delegated.cwd, root); assert.equal(delegated.agent, 'pi');
+    await wait(() => h.store.getThread(delegated.id)?.status !== 'running');
+    assert.ok(h.store.todoThreadIds(todo.id).includes(delegated.id));
+    const custom = await (await h.api('/api/personal/settings', 'PUT', { directory: h.cwd })).json();
+    assert.equal(custom.directoryIsDefault, false);
+    assert.equal(h.manager.dirs.all().includes(root), false, 'only the effective directory receives the implicit grant');
+    const restored = await (await h.api('/api/personal/settings', 'PUT', { directory: root })).json();
+    assert.equal(restored.directoryIsDefault, true);
+  } finally { await h.close(); }
+});
+
+test('default agent prefers any available Pi instance, falls back, and reports no usable agents', async () => {
+  const h = await setup(); try {
+    h.service.putSettings({ directory: null, agent: null, model: 'ignored-default-model' });
+    const pi = h.adapters.get('pi')!; h.adapters.delete('pi'); h.adapters.set('second-pi', pi);
+    assert.equal((await h.service.settingsView()).agent, 'second-pi');
+    pi.available = async () => false;
+    assert.equal((await h.service.settingsView()).agent, 'claude');
+    h.adapters.get('claude')!.available = async () => false;
+    assert.equal((await h.service.settingsView()).agent, null);
+    const todo = h.service.create({ text: 'No available instance' });
+    assert.equal((await h.api(`/api/todos/${todo.id}/delegate`, 'POST', {})).status, 409);
+  } finally { await h.close(); }
+});
+
+test('default directory rejects leaf and parent symlinks without creating files at their targets', async () => {
+  const h = await setup(); const root = defaultPersonalDirectory();
+  try {
+    h.service.putSettings({ directory: null });
+    rmSync(root, { recursive: true }); symlinkSync(h.outside, root);
+    const response = await h.api('/api/personal/settings'); assert.equal(response.status, 400); assert.match(await response.text(), /symbolic link/);
+    const due = h.service.create({ text: 'Blocked directory follow-up' });
+    h.service.update(due.id, { followUpAt: new Date(Date.now() - 1000).toISOString() });
+    await h.scheduler.followUps();
+    assert.equal(h.store.listTodoRuns(due.id).length, 0, 'a directory refusal stays in follow-up retry handling');
+    assert.throws(() => h.service.allowed(h.thread.id), /symbolic link/);
+    h.store.saveHubSetting('personal', { directory: root, agent: 'pi', model: null });
+    assert.throws(() => h.service.directory(), /symbolic link/, 'explicit paths in older settings cannot bypass the default guard');
+    h.service.putSettings({ directory: null });
+    rmSync(root); mkdirSync(root, { mode: 0o700 });
+    const parent = dirname(root); rmSync(parent, { recursive: true }); symlinkSync(h.outside, parent);
+    assert.equal((await h.api('/api/personal/settings')).status, 400);
+    assert.equal(existsSync(join(h.outside, root.slice(parent.length + 1))), false);
+    rmSync(parent); defaultPersonalDirectory();
+  } finally {
+    const parent = dirname(root); if (lstatSync(parent).isSymbolicLink()) rmSync(parent);
+    defaultPersonalDirectory(); await h.close();
+  }
+});
+
+test('follow-ups create threads using the effective default directory and available agent', async () => {
+  const h = await setup(); try {
+    h.service.putSettings({ directory: null, agent: null });
+    const todo = h.service.create({ text: 'Resume in the default directory' });
+    h.service.writeNote(todo.id, { text: 'Draft ready' });
+    h.service.update(todo.id, { followUpAt: new Date(Date.now() - 1000).toISOString() });
+    await h.scheduler.followUps();
+    const run = h.store.listTodoRuns(todo.id)[0]; assert.ok(run?.newThread);
+    assert.equal(h.store.getThread(run.threadId!)?.cwd, defaultPersonalDirectory());
+    assert.equal(h.store.getThread(run.threadId!)?.agent, 'pi');
+    await wait(() => h.store.getThread(run.threadId!)?.status !== 'running');
+    assert.ok(h.store.todoProposals(todo.id).some(proposal => proposal.kind === 'done'));
   } finally { await h.close(); }
 });

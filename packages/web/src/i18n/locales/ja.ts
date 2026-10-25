@@ -7,6 +7,8 @@ export const ja: Messages = {
   "personal.changeFollowUp": "フォローアップを変更",
   "personal.confirmTitle": (title: string) => `確認待ち：${title}`,
   "push.hintShort": "対応が必要なときに Lark ボットが個別にお知らせします。",
+  "personal.defaultDirectory": (path: string) => `${path}（デフォルト）`,
+  "dir.defaultDirectory": "デフォルトのディレクトリ",
   "personal.directory": "ディレクトリ",
   "personal.chooseDirectory": "ディレクトリを選択",
   "personal.agent": "Agent",

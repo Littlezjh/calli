@@ -303,8 +303,8 @@ export function createHttpServer(deps: HttpDeps): Server {
     };
 
     if (path === '/api/personal/settings') {
-      if (method === 'GET') return sendJson(res, 200, manager.personal.settingsView());
-      if (method === 'PUT') { manager.personal.putSettings(await readJson(req)); return sendJson(res, 200, manager.personal.settingsView()); }
+      if (method === 'GET') return sendJson(res, 200, await manager.personal.settingsView());
+      if (method === 'PUT') { manager.personal.putSettings(await readJson(req)); return sendJson(res, 200, await manager.personal.settingsView()); }
     }
     if (path === '/api/wishes' && method === 'GET') return sendJson(res, 200, url.searchParams.get('summary') === 'true' ? { count: manager.personal.store.wishCount() } : manager.personal.store.listWishes());
     if (parts[1] === 'todos' && parts[2] && parts[3] === 'delegate' && method === 'POST') return sendJson(res, 201, await manager.personal.delegate(parts[2]));
@@ -647,7 +647,7 @@ export function createHttpServer(deps: HttpDeps): Server {
 
     // Browse candidate project folders without widening file access or allowed working directories.
     if (method === 'GET' && path === '/api/project-directories') {
-      return sendJson(res, 200, listProjectDirectories(manager.workdirsConfig().workdirs, url.searchParams.get('path') ?? undefined));
+      return sendJson(res, 200, listProjectDirectories(manager.allowedWorkdirs, url.searchParams.get('path') ?? undefined));
     }
 
     // POST /api/workdirs { path }, DELETE /api/workdirs?path=: project roots added from the page

@@ -25,25 +25,37 @@ test('personal plans, delegation, proposals, lazy details, follow-up, wishes and
     const errors = []; page.on('pageerror', e => errors.push(e.message));
     const requests = []; page.on('request', r => requests.push(new URL(r.url()).pathname + new URL(r.url()).search));
     await openUi(page, daemon); await plans(page);
-    // A first delegation asks for setup before creating the plan, preserving the draft.
+    // Defaults are immediately usable; delegation no longer opens setup first.
+    const defaults = await json(daemon, '/api/personal/settings');
+    assert.equal(defaults.directoryIsDefault, true); assert.equal(defaults.agent, 'pi'); assert.equal(defaults.model, null);
     await page.getByLabel('新计划', { exact: true }).fill('帮我安排周末行程');
     await page.getByRole('button', { name: '交给 agent', exact: true }).click();
-    let dialog = page.getByRole('dialog', { name: '私人设置' }); await dialog.waitFor();
-    assert.equal((await json(daemon, '/api/todos')).length, 0);
-    await dialog.getByRole('button', { name: '选择目录', exact: true }).click();
+    await page.locator('.todos-page').waitFor({ state: 'detached' });
+    assert.equal(await page.getByRole('dialog', { name: '私人设置' }).count(), 0);
+    await plans(page); await page.locator('.personal-summary').click();
+    let dialog = page.getByRole('dialog', { name: '私人设置' });
+    await dialog.getByRole('button', { name: `${defaults.directoryDisplay}（默认）`, exact: true }).click();
+    await page.getByRole('button', { name: '可用目录', exact: true }).click();
+    assert.equal(await page.locator('.project-browser-folder', { hasText: defaults.directory }).count(), 0);
     await page.locator('.project-browser-folder').first().click();
     await page.getByRole('button', { name: '用这个目录', exact: true }).click();
-    await dialog.locator('.agent-btn').click();
-    await page.getByRole('menuitemradio', { name: /Pi/i }).click();
     await dialog.getByRole('button', { name: '实例默认模型', exact: true }).click();
     await page.getByRole('menuitemradio', { name: 'Plain', exact: true }).click();
     await dialog.getByRole('button', { name: '保存', exact: true }).click();
-    await page.locator('.todos-page').waitFor({ state: 'detached' });
     const saved = await json(daemon, '/api/personal/settings');
-    assert.equal(saved.directoryDisplay, '~/personal'); assert.equal(saved.directory, daemon.workdir); assert.equal(saved.agent, 'pi'); assert.equal(saved.model, 'fake/plain');
+    assert.equal(saved.directoryIsDefault, false); assert.equal(saved.directory, daemon.workdir); assert.equal(saved.model, 'fake/plain');
+    // The private picker can restore its default without adding it as a project root.
+    await page.locator('.personal-summary').click();
+    await dialog.locator('.personal-directory').click();
+    await page.getByRole('button', { name: '默认目录', exact: true }).click();
+    await page.getByRole('button', { name: '用这个目录', exact: true }).click();
+    await dialog.getByRole('button', { name: '保存', exact: true }).click();
+    assert.equal((await json(daemon, '/api/personal/settings')).directoryIsDefault, true);
+    assert.ok(!(await json(daemon, '/api/config')).workdirs.includes(defaults.directory));
     let todos = await json(daemon, '/api/todos');
     const delegated = todos.find(t => t.text === '帮我安排周末行程');
-    assert.equal(delegated.threads.length, 1); assert.equal(delegated.threads[0].model, 'fake/plain');
+    assert.equal(delegated.threads.length, 1); assert.equal(delegated.threads[0].cwd, defaults.directory);
+    await page.evaluate(id => { location.hash = `#/thread/${id}`; }, delegated.threads[0].id);
     await page.locator('.topbar-title', { hasText: delegated.text }).waitFor();
     assert.ok(await page.locator('.group-name', { hasText: '私人' }).count());
     await wait(async () => (await json(daemon, `/api/threads/${delegated.threads[0].id}`)).status !== 'running');
@@ -54,7 +66,7 @@ test('personal plans, delegation, proposals, lazy details, follow-up, wishes and
     await page.locator('.todos-page').waitFor({ state: 'detached' });
     todos = await json(daemon, '/api/todos'); assert.equal(todos.find(t => t.text === '联系房东确认日期').threads.length, 1);
     for (const text of ['周五前交报销', '确认合同修改']) await json(daemon, '/api/todos', 'POST', { text });
-    const thread = await json(daemon, '/api/threads', 'POST', { agent: 'pi', cwd: daemon.workdir, title: '报销与安排' });
+    const thread = await json(daemon, '/api/threads', 'POST', { agent: 'pi', cwd: defaults.directory, title: '报销与安排' });
     await json(daemon, `/api/threads/${thread.id}/turns`, 'POST', { text: 'personal-ui' });
     await wait(async () => (await json(daemon, `/api/threads/${thread.id}`)).status !== 'running');
     await page.evaluate(id => { location.hash = `#/thread/${id}`; }, thread.id);
@@ -113,7 +125,7 @@ test('personal plans, delegation, proposals, lazy details, follow-up, wishes and
       const screen = await ctx.newPage(); await openUi(screen, daemon); await plans(screen);
       const suffix = `${mobile ? 'mobile' : 'desktop'}-${theme}`;
       await screen.locator('.personal-summary').waitFor();
-      if (!mobile) assert.ok((await screen.locator('.personal-summary').innerText()).includes('~/personal'));
+      assert.ok((await screen.locator('.personal-summary').innerText()).includes(`${defaults.directoryDisplay}（默认）`));
       await screen.getByRole('button', { name: '顺带 1 条', exact: true }).waitFor();
       await screen.screenshot({ animations: 'disabled', path: join(shots, `plans-${suffix}.png`) });
       await screen.locator(`.todo[data-id="${noted.id}"] .todo-details-toggle`).click(); await screen.getByText('核对金额与日期', { exact: true }).waitFor();

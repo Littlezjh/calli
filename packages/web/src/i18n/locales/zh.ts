@@ -9,6 +9,8 @@ export const zh = {
   "personal.changeFollowUp": "修改跟进",
   "personal.confirmTitle": (title: string) => `待你确认：${title}`,
   "push.hintShort": "需要你时，用飞书机器人私聊你。",
+  "personal.defaultDirectory": (path: string) => `${path}（默认）`,
+  "dir.defaultDirectory": "默认目录",
   "personal.directory": "目录",
   "personal.chooseDirectory": "选择目录",
   "personal.agent": "Agent",

@@ -159,7 +159,7 @@ export function TodosPage({ agents, personal, personalError, onPersonalChange, o
   const toggleDetails = (id: string) => setExpanded(previous => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   const delegate = async (request: { id?: string; text?: string }, configured = false) => {
     if (delegating) return;
-    if (!configured && (!personal?.directory || !personal.agent)) { setPendingDelegate(request); setSettingsOpen(true); return; }
+    if (!configured && personal && !personal.agent) { setPendingDelegate(request); setSettingsOpen(true); return; }
     setDelegating(true);
     let id = request.id;
     try {
@@ -513,7 +513,7 @@ export function TodosPage({ agents, personal, personalError, onPersonalChange, o
         <h1 className="todos-title">{t('todos.title')}</h1>
         <p className="todos-hint">{t('todos.hint')}</p>
         {!api.demo && <button className="personal-summary" onClick={() => setSettingsOpen(true)} disabled={!personal}>
-          {personal?.directory && personal.agent ? <><span>{t('personal.private')}</span><span className="personal-summary-directory">{personal.directoryDisplay ?? personal.directory} · </span><span>{agents.find(agent => agent.id === personal.agent)?.label ?? personal.agent}{personal.model && ` · ${personal.model}`}</span></> : t(personal ? 'personal.setup' : 'common.loading')}<IconSettings size={14} />
+          {personal?.directory && personal.agent ? <><span>{t('personal.private')}</span><span className="personal-summary-directory">{personal.directoryIsDefault ? t('personal.defaultDirectory', personal.directoryDisplay ?? personal.directory) : personal.directoryDisplay ?? personal.directory} · </span><span>{agents.find(agent => agent.id === personal.agent)?.label ?? personal.agent}{personal.model && ` · ${personal.model}`}</span></> : t(personal ? 'personal.setup' : 'common.loading')}<IconSettings size={14} />
         </button>}
         {personalError && <p className="panel-error" role="alert">{personalError} <button className="ghost" onClick={onPersonalRetry}>{t('common.retry')}</button></p>}
       </header>
