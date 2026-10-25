@@ -7,11 +7,76 @@
 
 let loading: Promise<typeof import('mermaid').default> | null = null;
 
+/**
+ * The theme's own colours, read from the page's variables so a diagram follows the look — light,
+ * dark, whatever palette — instead of mermaid's purple defaults. Read at render time, since the
+ * look can change under a drawing that is already on screen.
+ */
+function themeVariables(): Record<string, string> {
+  const styles = getComputedStyle(document.documentElement);
+  const v = (name: string): string => styles.getPropertyValue(name).trim();
+  return {
+    background: v('--bg'),
+    fontFamily: v('--font'),
+    fontSize: '14px',
+    // Nodes: the page's quiet surfaces, its borders, its text. Nothing purple, nothing loud.
+    primaryColor: v('--surface-2'),
+    primaryBorderColor: v('--border-strong'),
+    primaryTextColor: v('--text'),
+    secondaryColor: v('--surface'),
+    secondaryBorderColor: v('--border-strong'),
+    secondaryTextColor: v('--text'),
+    tertiaryColor: v('--surface-2'),
+    tertiaryBorderColor: v('--border'),
+    tertiaryTextColor: v('--text'),
+    mainBkg: v('--surface-2'),
+    nodeBorder: v('--border-strong'),
+    nodeTextColor: v('--text'),
+    classText: v('--text'),
+    textColor: v('--text'),
+    titleColor: v('--text'),
+    lineColor: v('--muted'),
+    arrowheadColor: v('--muted'),
+    edgeLabelBackground: v('--bg'),
+    clusterBkg: v('--surface-2'),
+    clusterBorder: v('--border-strong'),
+    // Sequence diagrams: the same few colours in the roles they ask for.
+    actorBkg: v('--surface-2'),
+    actorBorder: v('--border-strong'),
+    actorTextColor: v('--text'),
+    actorLineColor: v('--border-strong'),
+    signalColor: v('--muted'),
+    signalTextColor: v('--text'),
+    labelBoxBkgColor: v('--surface'),
+    labelBoxBorderColor: v('--border-strong'),
+    labelTextColor: v('--text'),
+    loopTextColor: v('--text'),
+    noteBkgColor: v('--surface-2'),
+    noteBorderColor: v('--border-strong'),
+    noteTextColor: v('--text'),
+    activationBkgColor: v('--surface'),
+    activationBorderColor: v('--border-strong'),
+    sequenceNumberColor: v('--text'),
+    // Class diagrams' striped rows, and state diagrams' second band.
+    attributeBackgroundColorOdd: v('--surface-2'),
+    attributeBackgroundColorEven: v('--surface'),
+    altBackground: v('--surface-2'),
+    // Where mermaid wants emphasis, it gets the app's accent, not a hue of its own.
+    accentColor: v('--accent'),
+  };
+}
+
 /** Renders one diagram to the SVG markup mermaid produces, themed as the page is. */
 export async function renderMermaidDiagram(code: string, dark = document.documentElement.dataset.theme === 'dark'): Promise<string> {
   loading ??= import('mermaid').then((m) => m.default);
   const mermaid = await loading;
-  mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: dark ? 'dark' : 'default' });
+  mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: 'strict',
+    darkMode: dark,
+    theme: 'base',
+    themeVariables: themeVariables(),
+  });
   const { svg } = await mermaid.render(`mmd-${Math.random().toString(36).slice(2)}`, code);
   return svg;
 }

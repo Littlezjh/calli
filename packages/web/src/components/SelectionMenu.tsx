@@ -5,26 +5,43 @@ import { IconArrowUp, IconCopy, IconQuote, IconSideChat } from './icons';
 import { t } from '../i18n';
 
 interface Props {
-  /** A passage noted for the next message, with what the user says about it (may be empty). */
-  onNote: (quote: string, comment: string, range: Range) => void;
+  /**
+   * A passage noted for the next message, with what the user says about it (may be empty). The
+   * range is the passage's place in the conversation, when it has one: a passage picked out of a
+   * textarea (the writing page) has none. `file` is the thread-relative path it was picked out of.
+   */
+  onNote: (quote: string, comment: string, range: Range | null, file?: string) => void;
   onSideAsk: (text: string, threadId?: string) => void;
 }
 
 /** Rough size of the menu, so it can be centred on the selection without waiting for layout. */
 const MENU_WIDTH = 250;
+const TAGGED_WIDTH = 330;
 const COMMENT_WIDTH = 320;
 const MENU_HEIGHT = 42;
 /** Kept away from the viewport edges by this much. */
 const MARGIN = 8;
 
+/** The quick labels a passage in the writing body can be given with one tap. */
+const TAG_KEYS = ['delete', 'todo', 'why', 'example', 'keep'] as const;
+
 /**
  * What the browser reports as a selection worth acting on: text picked out of the thread's
- * messages, and nowhere text is being edited or another layer is lying over the thread.
+ * messages or the file panel's page, and nowhere text is being edited (the writing page is heard
+ * through its own `select` events) or another layer is lying over the thread.
  */
 function selectable(node: Node | null): boolean {
   const el = node instanceof Element ? node : node?.parentElement ?? null;
-  if (!el?.closest('.thread')) return false;
+  if (!el?.closest('.thread, .files-panel')) return false;
   return !el.closest('textarea, input, [contenteditable="true"], .side-chat, .lightbox, .dialog-scrim');
+}
+
+/** Where a selection sits, when it sits in a file: its path, and whether it is the writing body. */
+function picked(el: Element | null): { file?: string; body: boolean } {
+  return {
+    file: el?.closest('[data-note-file]')?.getAttribute('data-note-file') || undefined,
+    body: !!el?.closest('[data-writing-body]'),
+  };
 }
 
 /** How far a press may move and still count as a tap rather than a drag. */
@@ -44,21 +61,29 @@ function placeNear(rect: DOMRect, width: number): { top: number; left: number } 
 }
 
 /**
- * The menu that follows a text selection in the conversation: note it for the next message (with
- * an optional comment, like Codex), copy it, or ask about it in the side chat. The browser's own
+ * The menu that follows a text selection in the conversation or the file panel: note it for the
+ * next message (with an optional comment, like Codex), copy it, or ask about it in the side chat.
+ * A passage in the writing body first offers the quick labels of writing mode. The browser's own
  * menu (where it shows one) stays as it is.
  */
 export function SelectionMenu({ onNote, onSideAsk }: Props) {
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  // Where the selection is: in a file (its path), in the writing body (the quick labels), or neither.
+  const [pick, setPick] = useState<{ file?: string; body: boolean } | null>(null);
   // Writing a comment: the field takes the focus, which clears the selection, so the passage is
   // held here until the note is added or dropped.
   const [commenting, setCommenting] = useState(false);
   const [comment, setComment] = useState('');
   const commentingRef = useRef(false);
   commentingRef.current = commenting;
+  const pickRef = useRef<{ file?: string; body: boolean } | null>(null);
   // The selection can vanish between tapping the button and its click; text and range are taken first.
   const textRef = useRef('');
   const rangeRef = useRef<Range | null>(null);
+  // A selection inside the writing page's textarea, where the browser gives no range to follow:
+  // the passage is held from the element's own `select` event, placed by the pointer that made it.
+  const fieldRef = useRef<HTMLTextAreaElement | null>(null);
+  const pointerRef = useRef<{ x: number; y: number } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   // On a touch screen nothing goes beside the passage: the system's own menu (copy, look up,
   // translate) sits there, above or below depending on the handles, and would cover ours. And when
@@ -78,6 +103,11 @@ export function SelectionMenu({ onNote, onSideAsk }: Props) {
         if (range) setPos(placeNear(range.getBoundingClientRect(), COMMENT_WIDTH));
         return;
       }
+      // The writing page keeps its own selection (and so its menu) while it holds one; the sweep
+      // below would otherwise clear it on every selectionchange the page fires.
+      const field = fieldRef.current;
+      if (field?.isConnected && field.selectionStart !== field.selectionEnd) return;
+      fieldRef.current = null;
       const sel = document.getSelection();
       if (!sel || sel.isCollapsed || sel.rangeCount === 0) return setPos(null);
       const text = sel.toString().trim();
@@ -88,16 +118,45 @@ export function SelectionMenu({ onNote, onSideAsk }: Props) {
 
       textRef.current = text;
       rangeRef.current = range.cloneRange();
+      const where = picked(sel.anchorNode instanceof Element ? sel.anchorNode : sel.anchorNode?.parentElement ?? null);
+      pickRef.current = where;
+      setPick(where);
       // On a touch screen the menu is docked at the bottom and only needs to know it is showing.
-      setPos(touchRef.current ? { top: 0, left: 0 } : placeNear(rect, MENU_WIDTH));
+      setPos(touchRef.current ? { top: 0, left: 0 } : placeNear(rect, where.body ? TAGGED_WIDTH : MENU_WIDTH));
     };
 
+    // A textarea's selection never reaches document.getSelection(); its own `select` event tells
+    // the passage, and the pointer that just made the selection tells the place.
+    const onFieldSelect = (e: Event) => {
+      const el = e.target;
+      if (!(el instanceof HTMLTextAreaElement) || !el.closest('.files-panel')) return;
+      if (commentingRef.current) return;
+      const text = el.value.slice(el.selectionStart, el.selectionEnd).trim();
+      if (!text) return;
+      const where = picked(el);
+      textRef.current = text;
+      rangeRef.current = null;
+      fieldRef.current = el;
+      pickRef.current = where;
+      setPick(where);
+      const anchor = pointerRef.current ?? { x: el.getBoundingClientRect().left + 40, y: el.getBoundingClientRect().top + 24 };
+      setPos(touchRef.current
+        ? { top: 0, left: 0 }
+        : placeNear(new DOMRect(anchor.x, anchor.y, 0, 20), where.body ? TAGGED_WIDTH : MENU_WIDTH));
+    };
+
+    const onPointerUp = (e: PointerEvent) => void (pointerRef.current = { x: e.clientX, y: e.clientY });
+
     document.addEventListener('selectionchange', read);
+    document.addEventListener('select', onFieldSelect);
+    document.addEventListener('pointerup', onPointerUp);
     // The menu is fixed to the viewport; when the page scrolls under it, it follows the selection.
     window.addEventListener('scroll', read, true);
     window.addEventListener('resize', read);
     return () => {
       document.removeEventListener('selectionchange', read);
+      document.removeEventListener('select', onFieldSelect);
+      document.removeEventListener('pointerup', onPointerUp);
       window.removeEventListener('scroll', read, true);
       window.removeEventListener('resize', read);
     };
@@ -143,6 +202,9 @@ export function SelectionMenu({ onNote, onSideAsk }: Props) {
     setCommenting(false);
     setComment('');
     setPos(null);
+    setPick(null);
+    pickRef.current = null;
+    fieldRef.current = null;
   };
 
   if (!pos) return null;
@@ -164,12 +226,25 @@ export function SelectionMenu({ onNote, onSideAsk }: Props) {
     setCommenting(true);
   };
 
-  const addNote = () => {
-    const range = rangeRef.current;
-    if (range) onNote(textRef.current, comment.trim(), range);
+  const sendNote = (words: string) => {
+    onNote(textRef.current, words.trim(), rangeRef.current, pickRef.current?.file);
     document.getSelection()?.removeAllRanges();
     close();
   };
+
+  // The writing body's quick labels: one tap is the whole note; the last one waits for words.
+  const tagRow = pick?.body && (
+    <div className="selection-tags" role="group" aria-label={t('selection.tags')}>
+      {TAG_KEYS.map((key) => (
+        <button key={key} type="button" className="selection-tag" title={t('selection.addNote')} {...act(() => sendNote(t(`selection.tag.${key}`)))}>
+          {t(`selection.tag.${key}`)}
+        </button>
+      ))}
+      <button type="button" className="selection-tag" title={t('selection.tagChangeHint')} {...act(startComment)}>
+        {t('selection.tagChange')}
+      </button>
+    </div>
+  );
 
   if (commenting) {
     const field = (
@@ -184,65 +259,82 @@ export function SelectionMenu({ onNote, onSideAsk }: Props) {
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
               e.preventDefault();
-              addNote();
+              sendNote(comment);
             } else if (e.key === 'Escape') {
               e.preventDefault();
               close();
             }
           }}
         />
-        <button type="button" className="selection-add" aria-label={t('selection.addNote')} title={t('selection.addNoteEnter')} onClick={addNote}>
+        <button type="button" className="selection-add" aria-label={t('selection.addNote')} title={t('selection.addNoteEnter')} onClick={() => sendNote(comment)}>
           <IconArrowUp size={15} />
         </button>
       </>
     );
     if (touch) {
       return (
-        <div ref={rootRef} className="selection-menu commenting docked" role="dialog" aria-label={t('selection.addNote')}>
+        <div ref={rootRef} className={`selection-menu commenting docked${pick?.body ? ' tagged' : ''}`} role="dialog" aria-label={t('selection.addNote')}>
           <div className="selection-quote">
             <IconQuote size={13} />
             <span>{textRef.current}</span>
           </div>
+          {tagRow}
           <div className="selection-field">{field}</div>
         </div>
       );
     }
     return (
-      <div ref={rootRef} className="selection-menu commenting" style={{ top: pos.top, left: pos.left, width: COMMENT_WIDTH }} role="dialog" aria-label={t('selection.addNote')}>
-        {field}
+      <div
+        ref={rootRef}
+        className={`selection-menu commenting${pick?.body ? ' tagged' : ''}`}
+        style={{ top: pos.top, left: pos.left, width: COMMENT_WIDTH }}
+        role="dialog"
+        aria-label={t('selection.addNote')}
+      >
+        {tagRow}
+        <div className="selection-field">{field}</div>
       </div>
     );
   }
 
   return (
-    <div ref={rootRef} className={`selection-menu${touch ? ' docked' : ''}`} style={touch ? undefined : { top: pos.top, left: pos.left }} role="toolbar" aria-label={t('selection.toolbar')}>
-      <button type="button" {...act(startComment)}>
-        <IconQuote size={14} />
-        {t('selection.note')}
-      </button>
-      <button
-        type="button"
-        {...act(() => {
-          void copyText(textRef.current);
-          document.getSelection()?.removeAllRanges();
-        })}
-      >
-        <IconCopy size={14} />
-        {t('selection.copy')}
-      </button>
-      <button
-        type="button"
-        className="selection-ask"
-        {...act(() => {
-          document.getSelection()?.removeAllRanges();
-          const node = rangeRef.current?.startContainer;
-          const element = node instanceof Element ? node : node?.parentElement;
-          onSideAsk(textRef.current, element?.closest<HTMLElement>('[data-history-thread]')?.dataset.historyThread);
-        })}
-      >
-        <IconSideChat size={14} />
-        {t('selection.ask')}
-      </button>
+    <div
+      ref={rootRef}
+      className={`selection-menu${touch ? ' docked' : ''}${pick?.body ? ' tagged' : ''}`}
+      style={touch ? undefined : { top: pos.top, left: pos.left }}
+      role="toolbar"
+      aria-label={t('selection.toolbar')}
+    >
+      {tagRow}
+      <div className="selection-actions">
+        <button type="button" {...act(startComment)}>
+          <IconQuote size={14} />
+          {t('selection.note')}
+        </button>
+        <button
+          type="button"
+          {...act(() => {
+            void copyText(textRef.current);
+            document.getSelection()?.removeAllRanges();
+          })}
+        >
+          <IconCopy size={14} />
+          {t('selection.copy')}
+        </button>
+        <button
+          type="button"
+          className="selection-ask"
+          {...act(() => {
+            document.getSelection()?.removeAllRanges();
+            const node = rangeRef.current?.startContainer;
+            const element = node instanceof Element ? node : node?.parentElement;
+            onSideAsk(textRef.current, element?.closest<HTMLElement>('[data-history-thread]')?.dataset.historyThread);
+          })}
+        >
+          <IconSideChat size={14} />
+          {t('selection.ask')}
+        </button>
+      </div>
     </div>
   );
 }

@@ -1,16 +1,17 @@
 import { Children, isValidElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { Api, FolderEntry, FolderListing, TextFile } from '../api';
+import type { Api, FolderEntry, FolderListing, TextFile, WritingStage } from '../api';
+import { countWords, highlightWritingSource, isArticleFile, rehypeArticleMarks } from '../article';
 import { copyText } from '../clipboard';
 import { crumbsOf, escapeHtml, foldersTo, languageOf, parentDir, resolveRelative, sizeLabel, splitHighlighted } from '../files';
 import { pictureUrl, saveAs } from '../images';
 import { IMAGE_FILE, VIDEO_FILE } from '../paths';
 import { enlargeMermaidDiagram, renderMermaidDiagram } from '../mermaid';
-import { conflictHash, readBodyDraft, relativePicture, writeBodyDraft } from '../writing';
+import { conflictHash, readBodyDraft, relativePicture, stageLabel, writeBodyDraft } from '../writing';
 import { Dialog } from './Dialog';
 import { Lightbox } from './Lightbox';
-import { IconChevron, IconClose, IconCopy, IconDownload, IconEdit, IconFile, IconFolder, IconSearch, IconSidebar, IconWrap } from './icons';
+import { IconChevron, IconClose, IconCopy, IconDownload, IconFile, IconFolder, IconSearch, IconSidebar, IconWrap } from './icons';
 import { t } from '../i18n';
 
 /** What the panel is asked to show: a file (at a line), or with no path, the thread's folder. */
@@ -29,6 +30,13 @@ interface Props {
   target: FilesTarget;
   /** A phone: one full-screen page that switches between the file and its folder. */
   phone: boolean;
+  /** The thread's writing stage, for the line under the article's title. */
+  writingStage?: WritingStage | null;
+  /** The person's writing habits note: shown with the body's article typography, no stage. */
+  writingHabits?: string | null;
+  /** Notes picked out of this panel and waiting in the composer. On a phone the panel covers the
+   * box, so they are counted at the bottom until the writer goes back to send them. */
+  noted?: { count: number; nonce: number } | null;
   onClose: () => void;
 }
 
@@ -54,15 +62,26 @@ interface Editing {
 const WIDTH_KEY = 'rah.files.width';
 const WRAP_KEY = 'rah.files.wrap';
 const TREE_KEY = 'rah.files.tree';
-/** The panel never squeezes the conversation narrower than this. */
-const MIN_MAIN = 380;
+/** The conversation keeps at least this much of the window: its composer's bottom row — the
+ * collaboration button, the model's name — with nothing cut short. */
+const MIN_CHAT = 440;
 const MIN_WIDTH = 360;
+/** The sidebar's width while it is open; the panel is capped before the app is first laid out. */
+const SIDEBAR_W = 288;
 
 function savedWidth(): number {
   const saved = Number(localStorage.getItem(WIDTH_KEY));
   return saved > 0 ? saved : Math.round(window.innerWidth * 0.45);
 }
-const clampWidth = (w: number) => Math.max(MIN_WIDTH, Math.min(w, window.innerWidth - MIN_MAIN));
+/** What is left of the window once the conversation has its share: sidebar (folded away is gone)
+ * and all. The panel never takes more than this, not by opening a body and not by dragging. */
+function maxPanelWidth(): number {
+  const sidebar = document.querySelector('.app > .sidebar');
+  const open = sidebar ? getComputedStyle(sidebar).visibility !== 'hidden' : window.innerWidth >= 900;
+  const taken = sidebar && open ? sidebar.getBoundingClientRect().width : open ? SIDEBAR_W : 0;
+  return Math.max(MIN_WIDTH, window.innerWidth - Math.round(taken) - MIN_CHAT);
+}
+const clampWidth = (w: number) => Math.max(MIN_WIDTH, Math.min(w, maxPanelWidth()));
 
 // The highlighter is a few dozen KB; it is fetched the first time a file is shown, then kept.
 let highlighter: Promise<typeof import('../highlight')> | null = null;
@@ -73,7 +92,7 @@ const loadHighlighter = () => (highlighter ??= import('../highlight'));
  * and highlighting, and the folder tree beside it. On a computer it sits to the right of the
  * conversation; on a phone it is a page of its own, with the tree one step back from the file.
  */
-export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
+export function FilesPanel({ api, threadId, target, phone, writingStage = null, writingHabits = null, noted = null, onClose }: Props) {
   const [root, setRoot] = useState<string | null>(target.file?.root ?? null);
   const [dirs, setDirs] = useState<Map<string, FolderListing | 'loading' | 'error'>>(new Map());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -185,6 +204,11 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
           }
         }
         setShown({ state: 'text', file });
+        // The body takes the page: well over half the window with the tree folded away, until the
+        // person has dragged a width of their own. Any other file goes back to the panel's share.
+        const asArticle = isArticleFile(file) || (writingHabits !== null && file.path === writingHabits);
+        if (!localStorage.getItem(WIDTH_KEY)) setWidth(clampWidth(asArticle ? Math.max(640, Math.round(window.innerWidth * 0.55)) : Math.round(window.innerWidth * 0.45)));
+        if (asArticle) setTreeOpen(localStorage.getItem(TREE_KEY) === '1');
         // Words left unsaved here before, kept on this device: back in the editor, as they were.
         const draft = file.editable ? readBodyDraft(localStorage, threadId, file.path) : null;
         if (draft) setEditing({ text: draft.text, baseHash: draft.baseHash, saving: false, conflict: null, error: null });
@@ -192,7 +216,7 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
         setShown({ state: 'error', path, message: t('files.notFound') });
       }
     },
-    [api, threadId],
+    [api, threadId, writingHabits],
   );
 
   // Each time something is opened from outside: a file, or the folder alone.
@@ -277,13 +301,23 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
   };
   useEffect(() => {
     const onResize = () => setWidth((w) => clampWidth(w));
+    onResize();
     window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+    // The sidebar folding away or back changes what there is to take, at the same window size.
+    const sidebar = document.querySelector('.app > .sidebar');
+    const observer = sidebar && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(onResize) : null;
+    if (observer && sidebar) observer.observe(sidebar);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      observer?.disconnect();
+    };
   }, []);
 
   const textFile = shown?.state === 'text' ? shown.file : null;
   const canEdit = !!textFile?.editable && typeof textFile.hash === 'string' && textFile.text !== null;
   const dirty = !!editing && !!textFile && (editing.text !== textFile.text || editing.baseHash !== textFile.hash);
+  // Notes carry the path the agent can find the file by: relative to the thread's folder.
+  const noteFile = textFile && root && textFile.path.startsWith(`${root}/`) ? textFile.path.slice(root.length + 1) : textFile?.path;
 
   // Unsaved text is kept on this device a moment after typing stops, and whenever the page or the
   // file goes away.
@@ -362,6 +396,13 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
 
   const crumbs = root ? crumbsOf(root, phone && phoneFolder !== null ? phoneFolder || root : (filePath ?? root)) : [];
   const markdown = shown?.state === 'text' && shown.file.text !== null && languageOf(shown.file.path) === 'markdown';
+  // The body reads as an article; so does the habits note, which is not this thread's draft and so
+  // stands under no stage.
+  const bodyArticle = !!markdown && shown?.state === 'text' && isArticleFile(shown.file);
+  const article = bodyArticle || (!!markdown && shown?.state === 'text' && writingHabits !== null && shown.file.path === writingHabits);
+  const articleTitle = article
+    ? t('writing.articleMeta', bodyArticle && writingStage ? stageLabel(writingStage) : null, countWords(shown.file.text ?? '').toLocaleString())
+    : null;
   const svg = shown?.state === 'picture' && /\.svg$/i.test(shown.file.path);
 
   const filter = (
@@ -445,35 +486,28 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
         </div>
       )}
       {editing.error && <div className="writing-conflict" role="alert"><span className="writing-conflict-text">{t('writing.saveFailed', editing.error)}</span></div>}
-      <textarea
-        className="writing-editor"
-        aria-label={t('writing.body')}
-        value={editing.text}
-        autoFocus={!phone}
-        spellCheck={false}
-        onChange={(e) => {
-          const text = e.target.value;
-          setEditing((v) => v && { ...v, text });
-        }}
-        onKeyDown={(e: KeyboardEvent<HTMLTextAreaElement>) => {
-          // A tab is a character in the text, not a jump out of the page.
-          if (e.key === 'Tab' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
-            e.preventDefault();
-            const el = e.currentTarget;
-            const { selectionStart: a, selectionEnd: b } = el;
-            const text = `${el.value.slice(0, a)}\t${el.value.slice(b)}`;
-            setEditing((v) => v && { ...v, text });
-            requestAnimationFrame(() => el.setSelectionRange(a + 1, a + 1));
-          }
-        }}
-      />
+      <WritingPaper text={editing.text} path={noteFile!} autoFocus={!phone} onChange={(text) => setEditing((v) => v && { ...v, text })} />
     </div>
+  );
+
+  // Reading and writing are the same sheet of paper; this pair of buttons turns it over.
+  const readWrite = canEdit && textFile && (
+    <div className="files-seg" role="group" aria-label={t('writing.readWrite')}>
+      <button type="button" className={editing ? '' : 'on'} aria-pressed={!editing} onClick={() => editing && stopEditing()}>{t('writing.read')}</button>
+      <button type="button" className={editing ? 'on' : ''} aria-pressed={!!editing} onClick={startEditing}>{t('writing.write')}</button>
+    </div>
+  );
+  const savedState = canEdit && textFile && (
+    <span className={`writing-state${editing && dirty ? ' dirty' : ''}`} role="status">
+      {editing && dirty ? t('writing.unsaved') : t('writing.saved')}
+    </span>
   );
 
   const editActions = editing && (
     <>
-      {dirty && <span className="writing-unsaved"><span className="writing-unsaved-dot" aria-hidden="true" />{t('writing.unsaved')}</span>}
-      <button type="button" className="files-text-btn" onClick={() => stopEditing()}>{dirty ? t('writing.cancel') : t('writing.done')}</button>
+      {savedState}
+      {/* On a phone the back button is the way back to reading; the pair would only crowd it. */}
+      {!phone && readWrite}
       <button type="button" className="files-text-btn primary-btn" title={t('writing.saveHint')} disabled={editing.saving || (!dirty && !editing.conflict)} onClick={() => void save()}>
         {editing.saving ? t('writing.saving') : t('writing.save')}
       </button>
@@ -486,7 +520,7 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
   );
 
   const viewer = editor || (
-    <div className="files-viewer">
+    <div className="files-viewer" data-note-file={noteFile ?? undefined} data-writing-body={bodyArticle || undefined}>
       {!shown && (
         <div className="files-empty">
           <IconFile size={30} />
@@ -509,10 +543,20 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
         </div>
       )}
       {shown?.state === 'text' && shown.file.text !== null && markdown && !source && (
-        <div className="files-markdown markdown">
+        <div className={`files-markdown markdown${article ? ' article' : ''}`}>
           <Markdown
             remarkPlugins={[remarkGfm]}
+            rehypePlugins={article ? [rehypeArticleMarks] : []}
             components={{
+              // The title says where the piece stands: the stage, and how much is written.
+              h1: article
+                ? ({ children }) => (
+                    <>
+                      <h1>{children}</h1>
+                      <div className="article-meta">{articleTitle}</div>
+                    </>
+                  )
+                : undefined,
               a: ({ href, children }) => {
                 if (href && /^https?:\/\//i.test(href))
                   return (
@@ -552,12 +596,8 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
 
   const fileActions = filePath && (editActions || (
     <>
-      {canEdit && (
-        <button type="button" className="files-text-btn" title={t('writing.editHint')} onClick={startEditing}>
-          {!phone && <IconEdit size={14} />}
-          <span>{t('writing.edit')}</span>
-        </button>
-      )}
+      {savedState}
+      {readWrite}
       {(markdown || svg) && (
         <button type="button" className={`icon-btn files-toggle${source ? ' on' : ''}`} aria-pressed={source} title={source ? t('files.showRendered') : t('files.showSource')} onClick={() => setSource((v) => !v)}>
           <span className="files-toggle-text">{source ? t('files.preview') : t('files.source')}</span>
@@ -590,12 +630,12 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
     const folder = inFolder ? phoneFolder || root : null;
     const name = inFolder ? crumbs[crumbs.length - 1]?.name ?? t('files.files') : (filePath ?? (shown && 'path' in shown ? shown.path : '')).split('/').pop();
     return (
-      <div className="files-panel phone" role="dialog" aria-label={t('files.files')}>
+      <div className={`files-panel phone${article ? ' article' : ''}`} role="dialog" aria-label={t('files.files')}>
         <div className="files-head">
           <button
             type="button"
             className="icon-btn"
-            aria-label={inFolder && shown ? t('files.backToFile') : editing ? t('writing.done') : t('common.close')}
+            aria-label={inFolder && shown ? t('files.backToFile') : editing ? t('writing.read') : t('common.close')}
             onClick={() => (inFolder && shown ? setPhoneFolder(null) : editing ? stopEditing() : close())}
           >
             <span className="files-back">
@@ -630,13 +670,20 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
         ) : (
           viewer
         )}
+        {/* The box these notes wait in is hidden behind this full-screen page; say they are there. */}
+        {noted && noted.count > 0 && (
+          <div key={noted.nonce} className="files-noted" role="status">
+            <span className="files-noted-text">{t('files.noted', noted.count)}</span>
+            <button type="button" className="files-noted-back" onClick={close}>{t('files.backToChat')}</button>
+          </div>
+        )}
         {leaveDialog}
       </div>
     );
   }
 
   return (
-    <aside className="files-panel" style={{ width }} aria-label={t('files.files')}>
+    <aside className={`files-panel${article ? ' article' : ''}`} style={{ width }} aria-label={t('files.files')}>
       <div className="files-resize" onPointerDown={startResize} role="separator" aria-orientation="vertical" aria-label={t('common.resize')} />
       <div className="files-head">
         <nav className="files-crumbs" aria-label={t('files.path')}>
@@ -689,6 +736,51 @@ export function FilesPanel({ api, threadId, target, phone, onClose }: Props) {
       </div>
       {leaveDialog}
     </aside>
+  );
+}
+
+/**
+ * The body as one page the person writes on: a transparent-text textarea over a layer that
+ * colours the Markdown's own marks faint. Both share the article's every measure — font, size,
+ * leading, width, padding — so the page is the same sheet of paper as the preview, and the caret,
+ * wrapped lines and scrolling line up with what is seen. An input method composing shows its own
+ * text for a moment (the page turns plain) rather than typing invisible words.
+ */
+function WritingPaper({ text, path, autoFocus, onChange }: { text: string; path: string; autoFocus?: boolean; onChange: (text: string) => void }) {
+  const layer = useRef<HTMLDivElement>(null);
+  const marked = useMemo(() => highlightWritingSource(text), [text]);
+  return (
+    <div className="writing-paper" data-writing-body>
+      <div className="writing-page">
+        <div ref={layer} className="writing-paper-layer" aria-hidden="true" dangerouslySetInnerHTML={{ __html: marked }} />
+        <textarea
+          className="writing-paper-input"
+          data-note-file={path}
+          aria-label={t('writing.body')}
+          value={text}
+          autoFocus={autoFocus}
+          spellCheck={false}
+          onChange={(e) => onChange(e.target.value)}
+          onScroll={(e) => {
+            if (!layer.current) return;
+            layer.current.scrollTop = e.currentTarget.scrollTop;
+            layer.current.scrollLeft = e.currentTarget.scrollLeft;
+          }}
+          onCompositionStart={(e) => e.currentTarget.classList.add('composing')}
+          onCompositionEnd={(e) => e.currentTarget.classList.remove('composing')}
+          onKeyDown={(e: KeyboardEvent<HTMLTextAreaElement>) => {
+            // A tab is a character in the text, not a jump out of the page.
+            if (e.key === 'Tab' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+              e.preventDefault();
+              const el = e.currentTarget;
+              const { selectionStart: a, selectionEnd: b } = el;
+              onChange(`${el.value.slice(0, a)}\t${el.value.slice(b)}`);
+              requestAnimationFrame(() => el.setSelectionRange(a + 1, a + 1));
+            }
+          }}
+        />
+      </div>
+    </div>
   );
 }
 

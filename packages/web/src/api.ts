@@ -47,6 +47,9 @@ export type WritingStage = 'draft' | 'second' | 'third' | 'figures' | 'polish';
 export interface WritingState {
   stage: WritingStage;
   file: string | null;
+  /** The person's writing habits note, kept outside the thread's folder; may not exist yet.
+   * Missing from older daemons. */
+  habits?: string | null;
 }
 
 export interface WorkdirsConfig {

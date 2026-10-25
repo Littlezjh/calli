@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>写作模式 v2 · 草图</title>
+<style>
+  :root {
+    --bg: #f8f6f1; --sidebar: #f1efe9; --surface: #ffffff; --surface-2: #fbfaf7;
+    --text: #1f1e1c; --muted: #827f77; --faint: #a9a69e; --border: #e5e2da; --border-strong: #d6d2c8;
+    --hover: rgba(31,30,28,.045); --active: rgba(31,30,28,.08);
+    --accent: #1f1e1c; --accent-fg: #fff; --positive: #2f7d5b; --positive-bg: #e6f3eb;
+    --user-bg: #eceae4; --warn: #c2410c; --danger: #b42318; --danger-bg: #fdecea;
+    --shadow-pop: 0 14px 40px rgba(31,30,28,.14), 0 2px 6px rgba(31,30,28,.06);
+    --shadow-card: 0 1px 2px rgba(31,30,28,.04), 0 6px 20px rgba(31,30,28,.05);
+    --radius-pill: 999px; --radius: 12px; --radius-lg: 18px;
+    --font: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Noto Sans CJK SC', 'Microsoft YaHei', sans-serif;
+  }
+  [data-theme='dark'] {
+    --bg: #1c1b19; --sidebar: #171614; --surface: #232220; --surface-2: #211f1d;
+    --text: #ecebe7; --muted: #9a978f; --faint: #6d6a63; --border: #34322e; --border-strong: #45423d;
+    --hover: rgba(255,255,255,.05); --active: rgba(255,255,255,.09);
+    --accent: #ecebe7; --accent-fg: #1c1b19; --positive: #5cb88d; --positive-bg: #1f3329;
+    --user-bg: #2e2c29; --warn: #f0894e; --danger: #f07167; --danger-bg: #3a2220;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.6 var(--font); }
+  button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; }
+  [hidden] { display: none !important; }
+  .bar { display: flex; gap: 14px; align-items: center; padding: 12px 24px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .bar h1 { font-size: 15px; margin: 0; }
+  .seg { display: inline-flex; padding: 3px; border-radius: var(--radius-pill); background: var(--sidebar); border: 1px solid var(--border); }
+  .seg button { padding: 5px 12px; border-radius: var(--radius-pill); font-size: 12.5px; color: var(--muted); }
+  .seg button[aria-pressed=true] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-card); font-weight: 600; }
+
+  /* Desktop: sidebar | narrow chat | wide paper */
+  .desk { max-width: 1400px; height: 860px; margin: 18px auto 30px; display: grid; grid-template-rows: minmax(0,1fr);
+    grid-template-columns: 220px 400px minmax(0,1fr); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+  .side { background: var(--sidebar); border-right: 1px solid var(--border); padding: 18px 12px; }
+  .side .brand { font-weight: 650; font-size: 17px; margin: 0 10px 22px; }
+  .side .row { padding: 8px 10px; border-radius: var(--radius); font-size: 13px; color: var(--muted); }
+  .side .row.sel { background: var(--surface); color: var(--text); box-shadow: var(--shadow-card); }
+  .chat { display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--border); }
+  .top { padding: 14px 20px; border-bottom: 1px solid var(--border); font-weight: 600; }
+  .top small { display: block; font-weight: 400; color: var(--muted); font-size: 11.5px; }
+  .scroll { flex: 1; overflow: hidden; padding: 20px; font-size: 13.5px; line-height: 1.8; }
+  .me { margin-left: auto; max-width: 88%; background: var(--user-bg); border-radius: var(--radius-lg); padding: 10px 14px; margin-bottom: 16px; }
+  .ask { border-left: 2px solid var(--border-strong); padding-left: 12px; font-weight: 550; margin-top: 8px; }
+  .link { text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px; }
+
+  /* The writing chip: one quiet line, stages in a popover */
+  .chip-row { display: flex; align-items: center; gap: 8px; margin: 0 16px 8px; font-size: 12.5px; color: var(--muted); position: relative; }
+  .chip { display: inline-flex; align-items: center; gap: 7px; padding: 5px 11px 5px 9px; border-radius: var(--radius-pill);
+    border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+  .chip svg { width: 14px; height: 14px; }
+  .chip .dot { color: var(--faint); }
+  .chip .caret { color: var(--faint); font-size: 10px; }
+  .pop { position: absolute; left: 0; bottom: 36px; width: 220px; background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius-lg); box-shadow: var(--shadow-pop); padding: 6px; z-index: 3; }
+  .pop button { display: flex; width: 100%; justify-content: space-between; padding: 8px 10px; border-radius: var(--radius); font-size: 13px; text-align: left; }
+  .pop button:hover, .pop .on { background: var(--hover); }
+  .pop .on { font-weight: 600; }
+  .pop small { color: var(--muted); font-size: 11.5px; }
+  .pop hr { border: 0; height: 1px; background: var(--border); margin: 5px 8px; }
+  .composer { margin: 0 16px 16px; border: 1px solid var(--border); background: var(--surface); border-radius: 22px; padding: 12px 12px 10px 16px; box-shadow: var(--shadow-card); }
+  .composer .ph { color: var(--faint); min-height: 34px; }
+  .composer .row { display: flex; justify-content: space-between; align-items: center; }
+  .plus { width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--border); color: var(--muted); }
+  .send { width: 30px; height: 30px; border-radius: 50%; background: var(--accent); color: var(--accent-fg); }
+
+  /* The paper */
+  .paper-pane { display: flex; flex-direction: column; min-width: 0; background: var(--surface); }
+  .ptop { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-bottom: 1px solid var(--border); font-size: 12.5px; }
+  .ptop .name { flex: 1; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ptop .name b { color: var(--text); font-weight: 600; }
+  .toggle { display: inline-flex; padding: 2px; border-radius: var(--radius-pill); background: var(--sidebar); }
+  .toggle button { padding: 4px 12px; border-radius: var(--radius-pill); color: var(--muted); font-size: 12px; }
+  .toggle .on { background: var(--surface); color: var(--text); box-shadow: var(--shadow-card); font-weight: 600; }
+  .state { color: var(--muted); font-size: 12px; display: inline-flex; align-items: center; gap: 6px; }
+  .state.dirty::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
+  .icon-btn { color: var(--muted); padding: 4px 8px; border-radius: var(--radius-pill); font-size: 12px; }
+  .save { padding: 5px 14px; border-radius: var(--radius-pill); background: var(--accent); color: var(--accent-fg); font-size: 12px; font-weight: 600; }
+  .sheet { flex: 1; overflow: auto; }
+  /* One measure, one type scale for both reading and writing: switching does not move the text. */
+  .page { max-width: 680px; margin: 0 auto; padding: 48px 48px 120px; font-size: 16.5px; line-height: 1.95; letter-spacing: .01em; }
+  .page h1 { font-size: 28px; line-height: 1.4; margin: 0 0 6px; letter-spacing: -.01em; }
+  .page .meta { color: var(--faint); font-size: 13px; margin-bottom: 32px; }
+  .page h2 { font-size: 19px; margin: 36px 0 10px; }
+  .page p { margin: 0 0 18px; }
+  .todo { color: var(--warn); background: color-mix(in srgb, var(--warn) 9%, transparent); border-radius: 4px; padding: 1px 4px; font-size: .92em; }
+  .added { position: relative; padding-left: 16px; }
+  .added::before { content: ''; position: absolute; left: 0; top: .45em; bottom: .45em; width: 2px; border-radius: 2px; background: var(--positive); }
+  .added .src { display: block; color: var(--faint); font-size: 13px; line-height: 1.6; }
+  figure { margin: 26px 0 30px; }
+  figcaption { color: var(--faint); font-size: 13px; text-align: center; margin-top: 8px; }
+  .diagram svg { display: block; width: 100%; height: auto; }
+  .diagram text { font: 13px var(--font); fill: var(--text); }
+  .diagram .n { fill: var(--surface-2); stroke: var(--border-strong); }
+  .diagram .h { fill: var(--text); }
+  .diagram .ht { fill: var(--surface); font-weight: 600; }
+  .diagram .e { stroke: var(--muted); fill: none; }
+  .pic { border-radius: var(--radius); overflow: hidden; }
+  .pic img { display: block; width: 100%; }
+  /* Editing: same page, markers dimmed */
+  .src-line { white-space: pre-wrap; margin: 0 0 18px; }
+  .mk { color: var(--faint); }
+  .h1e { font-weight: 650; }
+  .h2e { font-weight: 650; }
+  .code { color: var(--muted); }
+  .caret { display: inline-block; width: 1.5px; height: 1.2em; background: var(--text); vertical-align: -.2em; animation: b 1s steps(1) infinite; }
+  @keyframes b { 50% { opacity: 0; } }
+  .conflict { margin: 0 0 24px; padding: 12px 14px; border-radius: var(--radius); background: var(--danger-bg); color: var(--danger); font-size: 13.5px; line-height: 1.6; display: flex; gap: 10px; align-items: center; }
+  .conflict span { flex: 1; }
+  .conflict button { color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 4px 12px; font-size: 12.5px; }
+
+  /* Phones */
+  .phones { display: flex; gap: 26px; flex-wrap: wrap; max-width: 1400px; margin: 0 auto 50px; padding: 0 24px; }
+  .phone { width: 340px; height: 700px; border: 1px solid var(--border-strong); border-radius: 40px; overflow: hidden; display: flex; flex-direction: column; background: var(--bg); position: relative; }
+  .phone .ptop { padding-top: 46px; background: var(--surface); }
+  .phone .page { padding: 26px 22px 60px; font-size: 16px; }
+  .phone .page h1 { font-size: 24px; }
+  .cap { text-align: center; color: var(--muted); font-size: 12px; margin-top: 8px; }
+  .phone .scroll { padding: 16px; }
+  .phone .chip-row { margin: 0 12px 8px; }
+  .phone .composer { margin: 0 12px 26px; }
+</style>
+</head>
+<body>
+<div class="bar">
+  <h1>写作模式 v2</h1>
+  <div class="seg" id="mode"><button data-v="read" aria-pressed="true">读</button><button data-v="edit" aria-pressed="false">写</button><button data-v="conflict" aria-pressed="false">撞车</button><button data-v="stage" aria-pressed="false">换阶段</button></div>
+  <div class="seg"><button id="light" aria-pressed="true">亮色</button><button id="dark" aria-pressed="false">深色</button></div>
+</div>
+
+<div class="desk">
+  <aside class="side"><div class="brand">Limi</div><div class="row sel">思考是人类的事情</div><div class="row">Agent Memory 踩过的坑</div></aside>
+  <section class="chat">
+    <div class="top">思考是人类的事情<small>Claude · ~/blog</small></div>
+    <div class="scroll">
+      <div class="me">今天好久没真正自己思考写东西了，现在很多时候是想一句话，然后让 AI 帮忙把一篇文章写出来……</div>
+      <div>记下来了，用的是你的原话，写进了 <span class="link">思考是人类的事情.md</span>。顺手改了两个同音字。<div class="ask">今天写 PR，写到哪一句的时候，你发现自己原来想的不是这样？</div></div>
+    </div>
+    <div class="chip-row">
+      <button class="chip"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 13l1-3.5L11 2.5l2.5 2.5L6.5 12z"/></svg>写作<span class="dot">·</span>二稿<span class="caret">▾</span></button>
+      <div class="pop" data-show="stage">
+        <button>初稿<small>口述，只记录</small></button>
+        <button class="on">二稿<small>补充 ✓</small></button>
+        <button>三稿<small>删</small></button>
+        <button>配图</button>
+        <button>润色<small>只改语言</small></button>
+        <hr><button>结束写作</button>
+      </div>
+    </div>
+    <div class="composer"><div class="ph">继续说，或者让 agent 补哪一段…</div><div class="row"><button class="plus">+</button><button class="send">↑</button></div></div>
+  </section>
+
+  <section class="paper-pane">
+    <div class="ptop">
+      <span class="name"><b>思考是人类的事情</b>　writing/思考是人类的事情.md</span>
+      <span class="state" data-show="read stage">已保存</span>
+      <span class="state dirty" data-show="edit conflict">未保存</span>
+      <div class="toggle"><button class="r on">读</button><button class="w">写</button></div>
+      <button class="save" data-show="edit conflict">保存</button>
+      <button class="icon-btn">⋯</button>
+    </div>
+    <div class="sheet">
+      <article class="page" data-show="read stage">
+        <h1>思考是人类的事情</h1>
+        <div class="meta">二稿 · 1,240 字</div>
+        <p>我好久没真正自己思考写东西了。现在很多时候，是想一句话，然后让 AI 帮我把一篇文章写出来。</p>
+        <p>今天写 PR 的时候不一样。我得真的去想，为什么要这样写。写完以后我有一种感觉：这个问题，我被思考过了。<span class="todo">待补：写到哪一句时发现想法变了</span></p>
+        <p class="added">Zinsser 说过，写作就是在纸上思考。写不清楚，往往是因为还没想清楚。<span class="src">William Zinsser，《Writing to Learn》</span></p>
+        <h2>AI 可以做什么</h2>
+        <p>观点得是我的，无论它多偏激。AI 可以帮我润色、帮我查东西、问我问题，让我继续想。</p>
+        <figure class="diagram">
+          <svg viewBox="0 0 560 150" role="img" aria-label="AI 在输入端加料，在输出端稀释">
+            <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="#827f77"/></marker></defs>
+            <rect class="n" x="10" y="22" width="130" height="36" rx="18"/><text x="75" y="45" text-anchor="middle">采访 · 提问</text>
+            <rect class="n" x="10" y="92" width="130" height="36" rx="18"/><text x="75" y="115" text-anchor="middle">资料 · 比喻</text>
+            <rect class="h" x="215" y="55" width="130" height="40" rx="20"/><text class="ht" x="280" y="80" text-anchor="middle">我的思考</text>
+            <rect class="n" x="420" y="55" width="130" height="40" rx="20"/><text x="485" y="80" text-anchor="middle">我的文章</text>
+            <path class="e" d="M140 40 C180 40 180 68 213 72" marker-end="url(#ar)"/><path class="e" d="M140 110 C180 110 180 82 213 78" marker-end="url(#ar)"/>
+            <path class="e" d="M345 75 L418 75" marker-end="url(#ar)"/>
+          </svg>
+          <figcaption>Mermaid 图，配色跟着主题走</figcaption>
+        </figure>
+        <figure><div class="pic"><img src="writing-mode-illustration.jpg" alt=""></div><figcaption>AI 配图</figcaption></figure>
+      </article>
+
+      <div class="page" data-show="edit conflict">
+        <div class="conflict" data-show="conflict"><span>agent 刚改过正文。你写的还在，可以先复制。</span><button>载入新版本</button><button>仍然覆盖</button></div>
+        <p class="src-line"><span class="mk"># </span><span class="h1e" style="font-size:28px;line-height:1.4">思考是人类的事情</span></p>
+        <p class="src-line">我好久没真正自己思考写东西了。现在很多时候，是想一句话，然后让 AI 帮我把一篇文章写出来。</p>
+        <p class="src-line">今天写 PR 的时候不一样。我得真的去想，为什么要这样写。其实那一刻是写到「为什么不直接复用旧接口」的时候<span class="caret"></span></p>
+        <p class="src-line"><span class="mk">〔补〕</span>Zinsser 说过，写作就是在纸上思考。写不清楚，往往是因为还没想清楚。</p>
+        <p class="src-line"><span class="mk">## </span><span class="h2e" style="font-size:19px">AI 可以做什么</span></p>
+        <p class="src-line">观点得是我的，无论它多偏激。</p>
+        <p class="src-line code"><span class="mk">```mermaid</span>
+flowchart LR
+  A[采访 · 提问] --> M((我的思考))
+  M --> C[我的文章]
+<span class="mk">```</span></p>
+        <p class="src-line"><span class="mk">![</span>书桌<span class="mk">](思考是人类的事情/desk.png)</span></p>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="phones">
+  <div><div class="phone">
+    <div class="ptop"><span class="name"><b>思考是人类的事情</b></span><span class="state">已保存</span><div class="toggle"><button class="on">读</button><button>写</button></div></div>
+    <div class="sheet"><article class="page">
+      <h1>思考是人类的事情</h1><div class="meta">二稿 · 1,240 字</div>
+      <p>今天写 PR 的时候不一样。我得真的去想，为什么要这样写。<span class="todo">待补：写到哪一句</span></p>
+      <p class="added">Zinsser 说过，写作就是在纸上思考。<span class="src">William Zinsser</span></p>
+      <figure><div class="pic"><img src="writing-mode-illustration.jpg" alt=""></div></figure>
+    </article></div>
+  </div><div class="cap">读</div></div>
+  <div><div class="phone">
+    <div class="ptop"><span class="name"><b>思考是人类的事情</b></span><span class="state dirty">未保存</span><button class="save">保存</button></div>
+    <div class="sheet"><div class="page">
+      <p class="src-line"><span class="mk"># </span><span class="h1e" style="font-size:24px">思考是人类的事情</span></p>
+      <p class="src-line">今天写 PR 的时候不一样。我得真的去想，为什么要这样写。其实那一刻是写到「为什么不直接复用旧接口」的时候<span class="caret"></span></p>
+    </div></div>
+  </div><div class="cap">写（键盘和语音输入法盖在下面）</div></div>
+  <div><div class="phone">
+    <div class="ptop" style="justify-content:space-between"><b>思考是人类的事情</b><span class="state">Claude</span></div>
+    <div class="scroll"><div>记下来了。<div class="ask">今天写 PR，写到哪一句的时候，你发现自己原来想的不是这样？</div></div></div>
+    <div class="chip-row"><button class="chip"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 13l1-3.5L11 2.5l2.5 2.5L6.5 12z"/></svg>写作<span class="dot">·</span>二稿<span class="caret">▾</span></button><span class="link">打开正文</span></div>
+    <div class="composer"><div class="ph">继续说…</div><div class="row"><button class="plus">+</button><button class="send">↑</button></div></div>
+  </div><div class="cap">对话：只剩一个小标签</div></div>
+</div>
+
+<script>
+  const show = (v) => {
+    document.querySelectorAll('#mode button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === v)));
+    document.querySelectorAll('.desk [data-show]').forEach(el => { el.hidden = !el.dataset.show.split(' ').includes(v); });
+    document.querySelector('.desk .toggle .r').classList.toggle('on', v === 'read' || v === 'stage');
+    document.querySelector('.desk .toggle .w').classList.toggle('on', v === 'edit' || v === 'conflict');
+  };
+  document.querySelectorAll('#mode button').forEach(b => b.onclick = () => show(b.dataset.v));
+  for (const m of ['light', 'dark']) document.getElementById(m).onclick = () => {
+    document.documentElement.dataset.theme = m;
+    document.getElementById('light').setAttribute('aria-pressed', String(m === 'light'));
+    document.getElementById('dark').setAttribute('aria-pressed', String(m === 'dark'));
+  };
+  show('read');
+</script>
+</body>
+</html>

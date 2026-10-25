@@ -1727,27 +1727,19 @@ html.list-open body {
 .goal-elapsed { flex: none; font-size: 12.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
 .goal-action { flex: none; }
 
-/* Writing mode's stages as a band above the input, like the goal card: one quiet line. */
-.writing-bar { display: flex; align-items: center; gap: 6px; min-height: 42px; margin: 0 0 8px; padding: 5px 8px 5px 14px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow-card); }
-.writing-label { flex: none; font-size: 13px; font-weight: 650; color: var(--text); }
-.writing-stages { display: flex; align-items: center; gap: 2px; flex: none; margin-left: 4px; }
-.writing-stage { height: 28px; padding: 0 10px; border: 0; border-radius: var(--radius-pill); background: none; color: var(--faint); font-size: 13px; transition: background 0.12s, color 0.12s; }
-.writing-stage:hover:not(:disabled):not(.current) { background: var(--hover); color: var(--text); }
-.writing-stage.current { background: var(--accent); color: var(--accent-fg); font-weight: 600; }
-.writing-stage:disabled:not(.current) { opacity: 0.6; }
-.writing-file { display: inline-flex; align-items: center; gap: 6px; min-width: 0; flex: 1; justify-content: flex-end; height: 28px; padding: 0 6px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--muted); font-size: 13px; }
-button.writing-file:hover { color: var(--text); }
-button.writing-file:hover .writing-file-name { text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--border-strong); }
-.writing-file.absent { color: var(--faint); }
-.writing-file-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.writing-end { flex: none; height: 28px; padding: 0 10px; border: 0; border-radius: var(--radius-pill); background: none; color: var(--muted); font-size: 13px; }
-.writing-end:hover:not(:disabled) { background: var(--hover); color: var(--text); }
-.writing-bar.compact { gap: 8px; padding: 4px 5px 4px 12px; }
-.writing-bar.compact .writing-file { justify-content: flex-start; padding: 0; gap: 0; font-size: 14px; color: var(--text); }
-.writing-bar.compact .writing-file.absent { color: var(--faint); }
-.writing-bar.compact .writing-label::after { content: '·'; padding: 0 6px; color: var(--faint); font-weight: 400; }
-.writing-bar.compact .pop { flex: none; }
-.writing-stage-pick { display: inline-flex; align-items: center; gap: 4px; height: 30px; padding: 0 10px 0 12px; border: 0; border-radius: var(--radius-pill); background: var(--accent); color: var(--accent-fg); font-size: 13.5px; font-weight: 600; }
+/* Writing mode's one line above the input: a quiet chip naming the stage. Everything else — the
+   stages, the body, the way out — is behind it, in the popover. */
+.writing-bar { display: flex; align-items: center; gap: 10px; min-height: 30px; margin: 0 1px 8px; }
+.writing-chip { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 9px 0 12px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface); color: var(--text); font-size: 12.5px; box-shadow: var(--shadow-card); }
+.writing-chip:hover:not(:disabled) { border-color: var(--border-strong); }
+.writing-chip:disabled { opacity: 0.55; }
+.writing-chip > svg { color: var(--muted); }
+.writing-chip-stage { font-weight: 600; }
+.writing-chip-dot { color: var(--faint); }
+.writing-chip-caret { display: inline-flex; color: var(--faint); }
+.writing-open-link { flex: none; height: 28px; padding: 0 2px; border: 0; background: none; color: var(--muted); font-size: 12.5px; text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px; }
+.writing-open-link:hover { color: var(--text); }
+.writing-pop-nobody .pop-item-label { color: var(--faint); }
 .goal-card-details { border-top: 1px solid var(--border); padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 8px; }
 .goal-full { margin: 0; font-size: 13.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
 .goal-card-details dl { display: flex; flex-wrap: wrap; gap: 4px 24px; margin: 0; }
@@ -1892,6 +1884,18 @@ button.writing-file:hover .writing-file-name { text-decoration: underline; text-
 
 .note-comment {
   color: var(--text);
+}
+
+/* The file a noted passage was picked out of: the agent's way back to it. Long paths keep their
+   end, which is the file's own name. */
+.note-file {
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
 }
 
 /* A sent message's notes: a chip above the bubble, opened in place. */
@@ -7805,6 +7809,93 @@ input.picker-search {
   padding: 20px 28px 48px;
 }
 
+/* A body under writing/ takes the page: the panel itself is the sheet of paper it sits on, so
+   turning between reading and writing never changes the ground under the text. */
+.files-panel.article {
+  background: var(--surface);
+}
+
+/* A body under writing/ reads like an article, not a code file: one measure (~680px of text), a
+   type scale of its own, room between paragraphs. The same measure the writing page uses. */
+.files-markdown.article {
+  max-width: 776px;
+  padding: 48px 48px 120px;
+  font-size: 16.5px;
+  line-height: 1.95;
+  letter-spacing: 0.01em;
+}
+
+.files-markdown.article h1 {
+  margin: 0 0 6px;
+  font-size: 28px;
+  line-height: 1.4;
+  letter-spacing: -0.01em;
+}
+
+.files-markdown.article h2 {
+  margin: 36px 0 10px;
+  font-size: 19px;
+}
+
+.files-markdown.article h3 {
+  margin: 28px 0 10px;
+  font-size: 17px;
+}
+
+.files-markdown.article p {
+  margin: 0 0 18px;
+}
+
+.article-meta {
+  margin: 0 0 32px;
+  color: var(--faint);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* The writing mode's own marks, seen as colour instead of punctuation: what waits (orange) and
+   what the agent added (a green line down the left). */
+.writing-todo {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 9%, transparent);
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-size: 0.92em;
+}
+
+.writing-added {
+  position: relative;
+  padding-left: 16px;
+}
+
+.writing-added::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.45em;
+  bottom: 0.45em;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--positive);
+}
+
+.files-panel.phone .files-markdown.article {
+  padding: 26px 22px 60px;
+  font-size: 16px;
+}
+
+.files-panel.phone .files-markdown.article h1 {
+  font-size: 24px;
+}
+
+.files-panel.phone .files-markdown.article h2 {
+  margin: 28px 0 8px;
+}
+
+.files-panel.phone .article-meta {
+  margin-bottom: 26px;
+}
+
 .files-picture {
   display: grid;
   place-items: center;
@@ -8005,20 +8096,71 @@ input.picker-search {
 .files-panel .files-text-btn.primary-btn { background: var(--accent); color: var(--accent-fg); font-weight: 600; }
 .files-panel .files-text-btn.primary-btn:hover:not(:disabled) { background: var(--accent); color: var(--accent-fg); opacity: 0.88; }
 .files-panel .files-text-btn:disabled { opacity: 0.45; }
-.writing-unsaved { display: inline-flex; align-items: center; gap: 6px; flex: none; padding: 0 6px; color: var(--muted); font-size: 12.5px; white-space: nowrap; }
-.writing-unsaved-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
+/* The file panel's head: reading and writing are one sheet of paper, turned over by this pair. */
+.files-seg { display: inline-flex; flex: none; padding: 2px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--sidebar); }
+.files-seg button { height: 24px; padding: 0 12px; border: 0; border-radius: var(--radius-pill); background: none; color: var(--muted); font-size: 12px; }
+.files-seg button:hover { color: var(--text); }
+.files-seg button.on { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: var(--shadow-card); }
+.writing-state { display: inline-flex; align-items: center; gap: 6px; flex: none; padding: 0 4px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.writing-state.dirty::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
 
-/* Editing a body: a sheet of paper, not a code editor. Body face, roomy lines, a readable measure. */
+/* Editing a body: the same sheet of paper as the preview, typed on through transparent words. */
 .files-viewer.files-editing { display: flex; flex-direction: column; overflow: hidden; background: var(--surface); }
-.writing-editor { flex: 1; display: block; width: 100%; min-height: 0; margin: 0; padding: 28px max(32px, calc((100% - 38em) / 2)) 64px; border: 0; outline: none; resize: none; background: transparent; color: var(--text); font-family: var(--font); font-size: 16px; line-height: 1.95; letter-spacing: 0.01em; tab-size: 4; overflow-y: auto; overscroll-behavior: contain; }
-.writing-editor::selection { background: var(--active); }
-.writing-conflict { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin: 12px 14px 0; padding: 9px 10px 9px 14px; border-radius: var(--radius); background: var(--danger-bg); color: var(--danger); font-size: 13px; line-height: 1.5; }
+.writing-paper { flex: 1; display: flex; justify-content: center; min-height: 0; }
+.writing-page { position: relative; display: flex; flex: 1; min-width: 0; max-width: 776px; }
+.writing-paper-layer,
+.writing-paper-input { margin: 0; padding: 48px 48px 120px; border: 0; font-family: var(--font); font-size: 16.5px; line-height: 1.95; letter-spacing: 0.01em; font-variant-ligatures: none; tab-size: 4; white-space: pre-wrap; overflow-wrap: break-word; scrollbar-gutter: stable; }
+.writing-paper-layer { position: absolute; inset: 0; overflow: hidden; color: var(--text); pointer-events: none; }
+.writing-paper-input { position: relative; display: block; flex: 1; min-width: 0; min-height: 0; width: 100%; background: transparent; color: transparent; caret-color: var(--text); outline: none; resize: none; overflow-y: auto; overscroll-behavior: contain; }
+.writing-paper-input::selection { background: var(--active); }
+/* An input method composes in the box itself: its words must be seen, so the page is plain while it does. */
+.writing-paper-input.composing { color: var(--text); }
+.w-mk { color: var(--faint); }
+.w-code { color: var(--muted); }
+.writing-conflict { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin: 12px 16px 0; padding: 9px 10px 9px 14px; border-radius: var(--radius); background: var(--danger-bg); color: var(--danger); font-size: 13px; line-height: 1.5; }
 .writing-conflict-text { flex: 1; min-width: 12em; }
 .writing-conflict-actions { display: flex; gap: 8px; flex: none; }
 .writing-conflict .btn-secondary { min-height: 30px; padding: 0 12px; border-color: transparent; background: var(--surface); color: var(--text); font-size: 13px; font-weight: 500; }
 .writing-conflict .btn-secondary:hover:not(:disabled) { background: var(--surface-2); }
-.files-panel.phone .writing-editor { padding: 18px 20px calc(48px + var(--safe-bottom)); font-size: 17px; line-height: 1.9; }
+.files-panel.phone .writing-page { max-width: none; }
+.files-panel.phone .writing-paper-layer,
+.files-panel.phone .writing-paper-input { padding: 26px 22px calc(60px + var(--safe-bottom)); font-size: 16px; }
 .files-panel.phone .writing-conflict { margin: 10px 10px 0; }
+
+/* On a phone the panel hides the composer, so notes picked out of its file are counted here until
+   the writer goes back to send them. */
+.files-noted {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 12px calc(12px + var(--safe-bottom));
+  padding: 9px 8px 9px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  color: var(--muted);
+  font-size: 13px;
+  animation: pop-in 0.15s ease-out;
+}
+
+.files-noted-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.files-noted-back {
+  flex: none;
+  height: 30px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: 12.5px;
+  font-weight: 600;
+}
 
 /* Drawings and pictures inside a Markdown file. */
 .files-diagram { cursor: zoom-in; overflow-x: auto; margin: 1em 0; padding: 16px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }

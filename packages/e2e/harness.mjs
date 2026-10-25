@@ -110,6 +110,8 @@ export async function startDaemon(env = {}, opts = {}) {
     PI_CODING_AGENT_DIR: join(dataDir, 'pi-agent'),
     RAH_AGY_HOME: join(dataDir, 'agy-home'),
     ZCODE_DATA_BASE_DIR: dataDir,
+    // The person's writing habits note lives here, not in the home directory the test machine has.
+    LIMI_NOTES_DIR: join(dataDir, 'notes'),
     // Its own socket, never the one in the home directory that a real hub on this machine holds.
     RAH_SOCKET: join(dataDir, 'daemon.sock'),
     ...env,
@@ -143,6 +145,7 @@ export async function startDaemon(env = {}, opts = {}) {
     dataDir,
     workdir,
     binDir,
+    notesDir: join(dataDir, 'notes'),
     log: () => log,
     async stop() {
       // Real agent CLIs on PATH (zcode, codex) get probed too, and may still write into dataDir

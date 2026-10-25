@@ -238,9 +238,13 @@ export interface Note {
   quote: string;
   /** Optional: a passage can go along on its own. */
   comment: string;
+  /** The thread-relative path the passage was picked out of, when it is a file's text. Parsed by
+   * the agent as the 文件： line, so the note can be found in the file without line numbers. */
+  file?: string;
 }
 
 const NOTE_HEAD = /^\[注释 (\d+)\]$/;
+const NOTE_FILE = '文件：';
 const NOTE_COMMENT = '评论：';
 
 /**
@@ -248,6 +252,7 @@ const NOTE_COMMENT = '评论：';
  * ("注释 2"):
  *
  *   [注释 1]
+ *   文件：writing/题目.md
  *   > the passage
  *   评论：what the user says about it
  *
@@ -261,7 +266,7 @@ export function withNotes(notes: Note[], body: string): string {
       .map((line) => `> ${line}`.trimEnd())
       .join('\n');
     const comment = note.comment.trim().replace(/\s*\n\s*/g, ' ');
-    return [`[注释 ${i + 1}]`, quoted, ...(comment ? [NOTE_COMMENT + comment] : [])].join('\n');
+    return [`[注释 ${i + 1}]`, ...(note.file ? [NOTE_FILE + note.file] : []), quoted, ...(comment ? [NOTE_COMMENT + comment] : [])].join('\n');
   });
   const rest = body.trim();
   return [...blocks, ...(rest ? [rest] : [])].join('\n\n');
@@ -277,11 +282,13 @@ export function splitNotes(text: string): { notes: Note[]; body: string } {
     while (i < lines.length && !lines[i].trim()) i += 1;
     if (i >= lines.length || !NOTE_HEAD.test(lines[i].trim())) break;
     i += 1;
+    let file: string | undefined;
+    if (i < lines.length && lines[i].startsWith(NOTE_FILE)) file = lines[i++].slice(NOTE_FILE.length).trim() || undefined;
     const quoted: string[] = [];
     while (i < lines.length && lines[i].startsWith('>')) quoted.push(lines[i++].replace(/^>\s?/, ''));
     let comment = '';
     if (i < lines.length && lines[i].startsWith(NOTE_COMMENT)) comment = lines[i++].slice(NOTE_COMMENT.length).trim();
-    notes.push({ quote: quoted.join('\n').trim(), comment });
+    notes.push({ quote: quoted.join('\n').trim(), comment, ...(file ? { file } : {}) });
     end = i;
   }
   if (notes.length === 0) return { notes, body: text };

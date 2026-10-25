@@ -892,6 +892,7 @@ export function Composer({
                 <div key={n.id} className="note-strip">
                   <span className="note-num">{i + 1}</span>
                   <span className="note-body">
+                    {n.file && <span className="note-file" title={n.file}>{n.file}</span>}
                     <span className="note-quote" title={n.quote}>
                       {n.quote}
                     </span>

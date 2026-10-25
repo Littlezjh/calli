@@ -809,6 +809,15 @@ test('withNotes numbers each passage, with its comment when there is one, and sp
   // Notes alone are a message too; a comment typed over several lines is kept on one.
   assert.equal(withNotes([{ quote: 'x', comment: 'a\n b' }], ''), '[注释 1]\n> x\n评论：a b');
   assert.deepEqual(splitNotes('[注释 1]\n> x'), { notes: [{ quote: 'x', comment: '' }], body: '' });
+  // A note picked out of a file carries the file's path on its own line, and it comes back too.
+  assert.equal(
+    withNotes([{ quote: '写不清楚', comment: '删', file: 'writing/思考是人类的事情.md' }], '好了'),
+    '[注释 1]\n文件：writing/思考是人类的事情.md\n> 写不清楚\n评论：删\n\n好了',
+  );
+  assert.deepEqual(splitNotes('[注释 1]\n文件：writing/思考是人类的事情.md\n> 写不清楚\n评论：删\n\n好了'), {
+    notes: [{ quote: '写不清楚', comment: '删', file: 'writing/思考是人类的事情.md' }],
+    body: '好了',
+  });
   // Anything else is left as it is, including the older single quote.
   assert.deepEqual(splitNotes('> quoted\n\nwhy?'), { notes: [], body: '> quoted\n\nwhy?' });
   assert.deepEqual(splitNotes('see [注释 1] above'), { notes: [], body: 'see [注释 1] above' });
