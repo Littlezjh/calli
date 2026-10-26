@@ -19,9 +19,9 @@ export function formatReset(window: QuotaWindow, now = new Date()): string {
   return t('quota.resets', sameDay ? hm : `${formatDate(at, { month: 'short', day: 'numeric' })} ${hm}`);
 }
 
-/** The board's rows: agents that report quota, with the one in use moved to the top. */
-export function quotaRows<T extends { id: string; capabilities: { quota: boolean } }>(agents: T[], current?: string): T[] {
-  const rows = agents.filter((a) => a.capabilities.quota);
+/** The board's rows: visible agents that report quota, with the one in use moved to the top. */
+export function quotaRows<T extends { id: string; hidden?: boolean; capabilities: { quota: boolean } }>(agents: T[], current?: string): T[] {
+  const rows = agents.filter((a) => !a.hidden && a.capabilities.quota);
   return [...rows.filter((a) => a.id === current), ...rows.filter((a) => a.id !== current)];
 }
 
