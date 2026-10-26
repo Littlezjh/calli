@@ -11255,3 +11255,20 @@ button.trace-step-head:hover { background: var(--hover); }
 .takeover-note > svg { flex: none; color: var(--text); }
 .takeover-note > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .takeover-note > .icon-btn { flex: none; }
+
+/* Independent agent accounts and native browser sign-in. */
+.agent-account-dialog, .agent-login-dialog { width: min(460px, 100%); max-height: 100%; overflow-y: auto; border-radius: var(--radius-lg); }
+.agent-account-choices { margin: 18px 0; }
+.agent-account-choices .choice-row { width: 100%; padding: 16px 12px; border: 1px solid var(--border); border-radius: var(--radius); }
+.agent-account-discover { margin: 0 0 20px; width: 100%; white-space: normal; text-align: left; font-size: 13px; color: var(--muted); }
+.agent-account-selected { display: flex; align-items: center; gap: 12px; padding: 12px 0; }
+.agent-account-dialog .dialog-field > span, .agent-login-dialog .dialog-field > span { display: block; margin-bottom: 8px; color: var(--muted); font-size: 13px; }
+.agent-account-dialog input, .agent-login-dialog input { font-size: 16px; }
+.agent-account-source { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; font-size: 13px; color: var(--muted); }
+.agent-account-source .ghost { max-width: 240px; overflow-wrap: anywhere; }
+.agent-account-note { font-size: 12px; }
+.agent-login-heading { display: flex; align-items: flex-start; gap: 12px; }
+.agent-login-heading > svg { flex: none; margin-top: 3px; color: var(--muted); }
+.agent-login-link { display: flex; align-items: center; gap: 8px; margin: 10px 0 24px; flex-wrap: wrap; }
+.agent-login-link a { display: inline-flex; align-items: center; justify-content: center; gap: 8px; text-decoration: none; padding: 10px 14px; border-radius: var(--radius-pill); }
+.agent-login-status { display: flex; align-items: center; gap: 10px; padding: 20px 0; font-size: 14px; line-height: 1.6; }

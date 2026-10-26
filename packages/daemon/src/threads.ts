@@ -281,7 +281,7 @@ export class ThreadManager {
     workdirs: string[] | Workdirs,
     private readonly attachments: AttachmentStore,
     /** What each instance is beyond its adapter: its adapter kind and linked account. */
-    private readonly agentMeta: () => Array<{ id: string; adapter?: string; account?: string; hidden?: boolean }> = () => [],
+    private readonly agentMeta: () => Array<{ id: string; adapter?: string; account?: string | null; hidden?: boolean }> = () => [],
   ) {
     this.dirs = Array.isArray(workdirs) ? new Workdirs(workdirs) : workdirs;
     this.autoHandover = new AutoHandover(store, this);
@@ -324,10 +324,10 @@ export class ThreadManager {
         label: a.label,
         icon: a.icon,
         ...(m?.adapter ? { adapter: m.adapter } : {}),
-        ...(m?.account ? { account: m.account } : {}),
+        ...(m?.account !== undefined ? { account: m.account } : {}),
         ...(m?.hidden !== undefined ? { hidden: m.hidden } : {}),
         available: await a.available(),
-        ...(a.loginCommand ? { login: 'terminal' as const } : {}),
+        ...(a.startLogin ? { login: 'wizard' as const } : a.loginCommand ? { login: 'terminal' as const } : {}),
         capabilities: a.capabilities,
       });
     }

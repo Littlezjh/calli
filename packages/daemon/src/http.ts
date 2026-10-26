@@ -460,6 +460,32 @@ export function createHttpServer(deps: HttpDeps): Server {
     }
 
     // POST /api/agents: add an instance (another CLI, another account)
+    if (method === 'POST' && path === '/api/agents/accounts') {
+      if (!registry) throw new HttpError(404, 'this daemon has no agent registry');
+      return sendJson(res, 201, await registry.createAccount(await readJson(req)));
+    }
+
+    if (parts[0] === 'api' && parts[1] === 'agents' && parts[2] && parts[3] === 'login' && !parts[5]) {
+      if (!registry) throw new HttpError(404, 'this daemon has no agent registry');
+      res.setHeader('Cache-Control', 'no-store');
+      if (method === 'POST' && !parts[4]) return sendJson(res, 201, registry.startLogin(parts[2]));
+      if (parts[4]) {
+        const login = registry.login(parts[2], parts[4]);
+        if (method === 'GET') return sendJson(res, 200, { id: parts[4], ...login.state() });
+        if (method === 'POST') {
+          const body = await readJson(req);
+          if (typeof body?.code !== 'string') throw new HttpError(400, 'a code is required');
+          login.submit(body.code.trim());
+          return sendJson(res, 200, { id: parts[4], ...login.state() });
+        }
+        if (method === 'DELETE') {
+          login.cancel();
+          res.writeHead(204).end();
+          return;
+        }
+      }
+    }
+
     if (method === 'POST' && path === '/api/agents') {
       if (!registry) throw new HttpError(404, 'this daemon has no agent registry');
       const body = await readJson(req);

@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react';
-import { ApiError, type AgentInfo, type AgentReferences, type Api } from '../api';
+import { ApiError, type AgentInfo, type AgentLogin, type AgentReferences, type Api } from '../api';
+import { AgentAccountDialog } from './AgentAccountDialog';
+import { AgentLoginDialog } from './AgentLoginDialog';
 import { t } from '../i18n';
 import { Dialog } from './Dialog';
 import { Popover } from './Popover';
@@ -35,6 +37,8 @@ const total = (references: AgentReferences): number =>
  * or take it out of the hub. Removing never touches the agent's own config, login or sessions.
  */
 export function AgentsPage({ api, agents, onAdd, onReload, onLogin }: Props) {
+  const [adding, setAdding] = useState(false);
+  const [signingIn, setSigningIn] = useState<{ agent: AgentInfo; login: AgentLogin } | null>(null);
   const [renaming, setRenaming] = useState<AgentInfo | null>(null);
   const [removing, setRemoving] = useState<{ agent: AgentInfo; references: AgentReferences } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -112,7 +116,8 @@ export function AgentsPage({ api, agents, onAdd, onReload, onLogin }: Props) {
     setError(null);
     setBusy(agent.id);
     try {
-      await onLogin(agent);
+      if (agent.login === 'wizard') setSigningIn({ agent, login: await api.startAgentLogin(agent.id) });
+      else await onLogin(agent);
     } catch (e) {
       fail(e);
     } finally {
@@ -127,7 +132,7 @@ export function AgentsPage({ api, agents, onAdd, onReload, onLogin }: Props) {
           <h1>{t('agents.title')}</h1>
           <p>{t('agents.intro')}</p>
         </div>
-        <button type="button" className="primary agents-add" onClick={onAdd}>
+        <button type="button" className="primary agents-add" onClick={() => setAdding(true)}>
           <IconPlus size={16} />
           {t('agents.add')}
         </button>
@@ -157,7 +162,7 @@ export function AgentsPage({ api, agents, onAdd, onReload, onLogin }: Props) {
                       {!agent.available && <span className="agents-unavailable">{t('agents.unavailable')}</span>}
                     </div>
                     <span className="agents-row-meta">
-                      {agent.account ?? t('agents.localAccount')}
+                      {agent.account === null ? t('agentAccount.needsLogin') : agent.account ?? t('agents.localAccount')}
                       {(agent.account || agent.id !== agent.label) && <span className="agents-row-id"> · {agent.id}</span>}
                     </span>
                   </div>
@@ -229,6 +234,9 @@ export function AgentsPage({ api, agents, onAdd, onReload, onLogin }: Props) {
           ))}
         </div>
       )}
+
+      {adding && <AgentAccountDialog api={api} agents={agents} onClose={() => setAdding(false)} onDiscover={() => { setAdding(false); onAdd(); }} onCreated={async () => { setAdding(false); try { await onReload(); } catch (e) { fail(e); } }} />}
+      {signingIn && <AgentLoginDialog api={api} agent={signingIn.agent} initial={signingIn.login} onReload={onReload} onClose={() => setSigningIn(null)} />}
 
       {renaming && (
         <Dialog

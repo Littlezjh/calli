@@ -180,6 +180,7 @@ async function main(): Promise<void> {
     rmSync(toolsPath, { force: true });
     personal.close();
     rmSync(personalPath, { force: true });
+    registry.dispose();
     await manager.shutdown();
     terminals.dispose();
     desktop.dispose();

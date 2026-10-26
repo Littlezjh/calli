@@ -325,6 +325,8 @@ export interface AgentAdapter {
     editMessage?: boolean;
     /** Whether more accounts of this agent can be linked, each as its own instance with its own login. */
     multiAccount: boolean;
+    /** Can create an independent account directory from this instance's configuration. */
+    createAccount?: boolean;
     /** Whether that copy can go on in another directory, a new worktree of the same repository. Needs fork. */
     forkInto: boolean;
     /** Whether the whole prompt the model runs with can be read from the agent's session file. */
@@ -417,6 +419,8 @@ export interface AgentAdapter {
    * account environment. Omitted where the CLI has no login step the hub can start.
    */
   loginCommand?(): string;
+  createAccount?(directory: string): Promise<Record<string, string>>;
+  startLogin?(onSuccess: (account?: string) => Promise<void>): LoginSession;
   /**
    * Copies a conversation and returns the id of the copy. With capabilities.fork. Given a turn's
    * forkRef (with capabilities.forkAt), the copy ends where that turn ended. Given `intoCwd` (with
@@ -430,6 +434,18 @@ export interface AgentAdapter {
    */
   forkBeforeSession?(agentSessionId: string, cwd: string, forkBeforeRef: string): Promise<string>;
   start(opts: StartOptions): Promise<AgentSession>;
+}
+
+export interface LoginState {
+  status: 'starting' | 'waiting' | 'submitting' | 'success' | 'error' | 'cancelled';
+  url?: string;
+  error?: 'failed' | 'expired' | 'unavailable' | 'verification';
+}
+
+export interface LoginSession {
+  state(): LoginState;
+  submit(code: string): void;
+  cancel(): void;
 }
 
 /** Preserve account environment and its PATH while exposing the runtime CLI. */

@@ -1,13 +1,15 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { delimiter, isAbsolute, join, resolve } from 'node:path';
+import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { AgyAdapter, AGY_METADATA } from './adapters/agy.js';
 import { ClaudeAcpAdapter, CLAUDE_METADATA } from './adapters/claude.js';
 import { ZcodeAdapter, ZCODE_METADATA } from './adapters/zcode.js';
 import { CodexAppServerAdapter, CODEX_METADATA } from './adapters/codex.js';
 import { PiRpcAdapter, PI_METADATA } from './adapters/pi.js';
 import { TraexAcpAdapter, TRAEX_METADATA } from './adapters/traex.js';
-import type { AgentAdapter, DiscoveredAccount } from './adapters/types.js';
+import type { AgentAdapter, DiscoveredAccount, LoginSession } from './adapters/types.js';
 import { HttpError } from './errors.js';
 
 /**
@@ -27,7 +29,7 @@ export interface AgentInstance {
   /** Merged over the daemon's environment for everything this instance spawns. */
   env?: Record<string, string>;
   /** The login this instance runs as, when it is a linked account (an email, for the picker). */
-  account?: string;
+  account?: string | null;
 }
 
 interface InstanceFile {
@@ -101,6 +103,7 @@ export interface SupportedAgent {
   label: string;
   icon?: string;
   installGuide?: string;
+  capabilities?: { createAccount: boolean };
 }
 
 export const SUPPORTED_AGENTS: SupportedAgent[] = [
@@ -175,6 +178,9 @@ export class AgentRegistry {
   private readonly instances = new Map<string, AgentInstance>();
   private readonly file: string | null;
   private readonly defaultCommands = new Map<AgentInstance['adapter'], string[]>();
+  private readonly logins = new Map<string, { id: string; session: LoginSession }>();
+  private creating: Promise<unknown> = Promise.resolve();
+  private writing: Promise<unknown> = Promise.resolve();
 
   constructor(
     instances: AgentInstance[],
@@ -182,6 +188,7 @@ export class AgentRegistry {
     file: string | null,
     /** The built-in commands, kept as a fallback after the instance that supplied one is removed. */
     builtIn: AgentInstance[] = [],
+    private readonly dataDir: string | null = file ? dirname(file) : null,
   ) {
     // The first instance of an adapter decides what an instance without a command runs.
     for (const instance of instances) {
@@ -218,7 +225,7 @@ export class AgentRegistry {
         console.warn('warning: agents.json is not valid JSON; using the built-in agents');
       }
     }
-    return new AgentRegistry(instances ?? opts.defaults, inline ? null : file, opts.defaults);
+    return new AgentRegistry(instances ?? opts.defaults, inline ? null : file, opts.defaults, opts.dataDir);
   }
 
   list(): AgentInstance[] {
@@ -233,36 +240,109 @@ export class AgentRegistry {
 
   /** Updates an instance's presentation. Its id is what threads store, so it never changes. */
   async update(id: string, patch: { label?: unknown; hidden?: unknown }): Promise<AgentInstance> {
-    const instance = this.get(id);
-    if (patch.label === undefined && patch.hidden === undefined) throw new HttpError(400, 'a label or hidden is required');
-    const next = { ...instance };
-    if (patch.label !== undefined) {
-      const label = typeof patch.label === 'string' ? patch.label.trim().slice(0, 60) : '';
-      if (!label) throw new HttpError(400, 'a label is required');
-      next.label = label;
-    }
-    if (patch.hidden !== undefined) {
-      if (typeof patch.hidden !== 'boolean') throw new HttpError(400, 'hidden must be a boolean');
-      next.hidden = patch.hidden;
-    }
-    await this.persist(this.list().map((i) => (i.id === id ? next : i)));
-    this.instances.set(id, next);
-    const adapter = this.adapters.get(id) as { label: string } | undefined;
-    if (adapter && patch.label !== undefined) adapter.label = next.label!;
-    return next;
+    return this.mutate(async () => {
+      const instance = this.get(id);
+      if (patch.label === undefined && patch.hidden === undefined) throw new HttpError(400, 'a label or hidden is required');
+      const next = { ...instance };
+      if (patch.label !== undefined) {
+        const label = typeof patch.label === 'string' ? patch.label.trim().slice(0, 60) : '';
+        if (!label) throw new HttpError(400, 'a label is required');
+        next.label = label;
+      }
+      if (patch.hidden !== undefined) {
+        if (typeof patch.hidden !== 'boolean') throw new HttpError(400, 'hidden must be a boolean');
+        next.hidden = patch.hidden;
+      }
+      await this.persist(this.list().map((i) => (i.id === id ? next : i)));
+      this.instances.set(id, next);
+      const adapter = this.adapters.get(id) as { label: string } | undefined;
+      if (adapter && patch.label !== undefined) adapter.label = next.label!;
+      return next;
+    });
   }
 
   /** Removes only the hub's registration; the agent's own files and login are left alone. */
   async remove(id: string): Promise<AgentInstance> {
-    const instance = this.get(id);
-    await this.persist(this.list().filter((i) => i.id !== id));
-    this.instances.delete(id);
-    this.adapters.delete(id);
-    return instance;
+    return this.mutate(async () => {
+      const instance = this.get(id);
+      await this.persist(this.list().filter((i) => i.id !== id));
+      this.logins.get(id)?.session.cancel();
+      this.logins.delete(id);
+      this.instances.delete(id);
+      this.adapters.delete(id);
+      return instance;
+    });
   }
 
   supported(): SupportedAgent[] {
-    return [...SUPPORTED_AGENTS];
+    return SUPPORTED_AGENTS.map(meta => ({ ...meta, capabilities: {
+      createAccount: !!buildAdapter({ id: meta.adapter, adapter: meta.adapter }, this.defaultCommands).createAccount,
+    } }));
+  }
+
+  /** Serialize allocation so simultaneous clicks cannot choose the same instance id. */
+  createAccount(input: { adapter?: unknown; sourceId?: unknown; label?: unknown }): Promise<AgentInstance> {
+    const task = this.creating.then(() => this.copyAccount(input));
+    this.creating = task.catch(() => undefined);
+    return task;
+  }
+
+  private async copyAccount(input: { adapter?: unknown; sourceId?: unknown; label?: unknown }): Promise<AgentInstance> {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new HttpError(400, 'an account configuration is required');
+    if (input.label !== undefined && typeof input.label !== 'string') throw new HttpError(400, 'label must be a string');
+    const meta = SUPPORTED_AGENTS.find(item => item.adapter === input.adapter);
+    if (!meta) throw new HttpError(400, 'unknown adapter');
+    if (!this.dataDir) throw new HttpError(400, 'account storage is not configured');
+    const source = input.sourceId !== undefined ? this.get(String(input.sourceId)) : this.list().find(item => item.adapter === meta.adapter);
+    if (source && source.adapter !== meta.adapter) throw new HttpError(400, 'source adapter does not match');
+    const adapter = source ? this.adapters.get(source.id)! : buildAdapter({ id: meta.adapter, adapter: meta.adapter }, this.defaultCommands);
+    if (!adapter.createAccount) throw new HttpError(400, 'this agent cannot create independent accounts');
+    if (!await adapter.available()) throw new HttpError(400, 'install the agent CLI first');
+    let n = 1;
+    let id: string = meta.adapter;
+    while (this.instances.has(id)) id = `${meta.adapter}-${++n}`;
+    const root = join(this.dataDir, 'agent-accounts');
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    const directory = await mkdtemp(join(root, `${id}-`));
+    try {
+      const env = await adapter.createAccount(directory);
+      return await this.add({ id, adapter: meta.adapter, label: input.label || `${meta.label}${n > 1 ? ` ${n}` : ''}`, command: source?.command, env, account: null });
+    } catch (error) {
+      await rm(directory, { recursive: true, force: true });
+      throw error;
+    }
+  }
+
+  startLogin(agent: string) {
+    this.get(agent);
+    const adapter = this.adapters.get(agent)!;
+    if (!adapter.startLogin) throw new HttpError(400, 'this agent does not support browser login');
+    const existing = this.logins.get(agent);
+    if (existing && ['starting', 'waiting', 'submitting'].includes(existing.session.state().status)) {
+      return { id: existing.id, ...existing.session.state() };
+    }
+    existing?.session.cancel();
+    const id = randomUUID();
+    const session = adapter.startLogin(account => this.mutate(async () => {
+      if (this.logins.get(agent)?.id !== id) return;
+      const next = { ...this.get(agent), account };
+      await this.persist(this.list().map(item => item.id === agent ? next : item));
+      this.instances.set(agent, next);
+    }));
+    this.logins.set(agent, { id, session });
+    return { id, ...session.state() };
+  }
+
+  login(agent: string, id: string): LoginSession {
+    this.get(agent);
+    const login = this.logins.get(agent);
+    if (!login || login.id !== id) throw new HttpError(404, 'login not found; start again');
+    return login.session;
+  }
+
+  dispose(): void {
+    for (const login of this.logins.values()) login.session.cancel();
+    this.logins.clear();
   }
 
   /**
@@ -336,36 +416,45 @@ export class AgentRegistry {
     /** The login when this instance is a linked account (an email). */
     account?: unknown;
   }): Promise<AgentInstance> {
-    const adapter = String(input.adapter ?? '');
-    if (!(adapter in ADAPTER_LABELS)) throw new HttpError(400, `unknown adapter: ${adapter}`);
-    const id = String(input.id ?? '').trim() || basenameOf(input.command);
-    if (!id) throw new HttpError(400, 'an id or a command is required');
-    if (!/^[\w.-]{1,40}$/.test(id)) throw new HttpError(400, 'ids are letters, digits, dash, dot and underscore, up to 40');
-    if (this.instances.has(id)) throw new HttpError(409, `there already is an agent called ${id}`);
-    const command = Array.isArray(input.command) && input.command.length
-      ? input.command.map(String)
-      : undefined;
-    const label = typeof input.label === 'string' && input.label.trim() ? input.label.trim().slice(0, 60) : undefined;
-    const account =
-      typeof input.account === 'string' && input.account.trim() ? input.account.trim().slice(0, 120) : undefined;
-    const env =
-      input.env && typeof input.env === 'object' && !Array.isArray(input.env)
-        ? Object.fromEntries(Object.entries(input.env as Record<string, unknown>).map(([k, v]) => [String(k), String(v)]))
+    return this.mutate(async () => {
+      const adapter = String(input.adapter ?? '');
+      if (!(adapter in ADAPTER_LABELS)) throw new HttpError(400, `unknown adapter: ${adapter}`);
+      const id = String(input.id ?? '').trim() || basenameOf(input.command);
+      if (!id) throw new HttpError(400, 'an id or a command is required');
+      if (!/^[\w.-]{1,40}$/.test(id)) throw new HttpError(400, 'ids are letters, digits, dash, dot and underscore, up to 40');
+      if (this.instances.has(id)) throw new HttpError(409, `there already is an agent called ${id}`);
+      const command = Array.isArray(input.command) && input.command.length
+        ? input.command.map(String)
         : undefined;
+      const label = typeof input.label === 'string' && input.label.trim() ? input.label.trim().slice(0, 60) : undefined;
+      const account =
+        input.account === null ? null : typeof input.account === 'string' && input.account.trim() ? input.account.trim().slice(0, 120) : undefined;
+      const env =
+        input.env && typeof input.env === 'object' && !Array.isArray(input.env)
+          ? Object.fromEntries(Object.entries(input.env as Record<string, unknown>).map(([k, v]) => [String(k), String(v)]))
+          : undefined;
 
-    const instance: AgentInstance = {
-      id,
-      adapter: adapter as AgentInstance['adapter'],
-      // Without a name it would inherit the adapter's own ("Antigravity"), which every copy of
-      // that CLI would share. The id is what the user typed or what PATH had, so it reads better.
-      label: label ?? id,
-      ...(command ? { command } : {}),
-      ...(env ? { env } : {}),
-      ...(account ? { account } : {}),
-    };
-    this.register(instance);
-    await this.persist();
-    return instance;
+      const instance: AgentInstance = {
+        id,
+        adapter: adapter as AgentInstance['adapter'],
+        // Without a name it would inherit the adapter's own ("Antigravity"), which every copy of
+        // that CLI would share. The id is what the user typed or what PATH had, so it reads better.
+        label: label ?? id,
+        ...(command ? { command } : {}),
+        ...(env ? { env } : {}),
+        ...(account !== undefined ? { account } : {}),
+      };
+      await this.persist([...this.list(), instance]);
+      this.register(instance);
+      return instance;
+    });
+  }
+
+  /** Keep disk snapshots and the live registry in the same order, including login callbacks. */
+  private mutate<T>(change: () => Promise<T>): Promise<T> {
+    const task = this.writing.then(change);
+    this.writing = task.catch(() => undefined);
+    return task;
   }
 
   private async persist(instances: AgentInstance[] = this.list()): Promise<void> {
@@ -373,7 +462,13 @@ export class AgentRegistry {
     if (!file) return;
     const body = JSON.stringify({ agents: instances }, null, 2) + '\n';
     const fs = await import('node:fs/promises');
-    await fs.writeFile(file, body, 'utf8');
+    const temporary = `${file}.${randomUUID()}.tmp`;
+    try {
+      await fs.writeFile(temporary, body, { encoding: 'utf8', mode: 0o600 });
+      await fs.rename(temporary, file);
+    } finally {
+      await fs.rm(temporary, { force: true });
+    }
   }
 
   /**

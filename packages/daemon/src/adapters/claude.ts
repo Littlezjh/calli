@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { copyClaudeAccount, startClaudeLogin } from './claude-account.js';
 import { claudeLiveUsage } from './session-usage.js';
 import type { UsageSample } from '../telemetry.js';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
@@ -132,6 +133,7 @@ export class ClaudeAcpAdapter extends AcpAdapter {
     forkAt: true,
     editMessage: true,
     multiAccount: true,
+    createAccount: true,
     // Claude Code finds a conversation from any worktree of its repository, so the copy loads there.
     forkInto: true,
     systemPrompt: true,
@@ -199,6 +201,14 @@ export class ClaudeAcpAdapter extends AcpAdapter {
   loginCommand(): string {
     const configDir = configDirectory(this.env, 'CLAUDE_CONFIG_DIR', ['.claude'], process.cwd());
     return `env CLAUDE_CONFIG_DIR=${quoteArg(configDir)} ${quoteArg(this.env.RAH_CLAUDE_BIN || claudeCli())} auth login`;
+  }
+
+  createAccount(directory: string): Promise<Record<string, string>> {
+    return copyClaudeAccount(configDirectory(this.env, 'CLAUDE_CONFIG_DIR', ['.claude'], process.cwd()), this.mcpJsonPath(), directory, this.env);
+  }
+
+  startLogin(onSuccess: (account?: string) => Promise<void>) {
+    return startClaudeLogin(this.env.RAH_CLAUDE_BIN || claudeCli(), configDirectory(this.env, 'CLAUDE_CONFIG_DIR', ['.claude'], process.cwd()), this.env, onSuccess);
   }
 
   /** "You've hit your session limit · resets 10:10am (UTC)", and the weekly and usage variants. */

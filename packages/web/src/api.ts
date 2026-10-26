@@ -466,6 +466,21 @@ export interface AgentInfo {
   };
 }
 
+export interface AgentLogin {
+  id: string;
+  status: 'starting' | 'waiting' | 'submitting' | 'success' | 'error' | 'cancelled';
+  url?: string;
+  error?: 'failed' | 'expired' | 'unavailable' | 'verification';
+}
+
+export interface SupportedAgent {
+  adapter: string;
+  label: string;
+  icon?: string;
+  installGuide?: string;
+  capabilities?: { createAccount: boolean };
+}
+
 /** One window of a plan's usage, as the agent itself reports it. */
 export interface QuotaWindow {
   /** Short chip label, such as "5H" or "7D". */
@@ -1256,7 +1271,7 @@ export class Api {
   }
 
   /** Agent adapters supported by the hub, including install instructions for missing ones. */
-  supportedAgents(): Promise<Array<{ adapter: string; label: string; icon?: string; installGuide?: string }>> {
+  supportedAgents(): Promise<SupportedAgent[]> {
     return this.request('GET', '/api/agents/supported');
   }
 
@@ -1288,6 +1303,26 @@ export class Api {
   /** Starts this instance's CLI login in a web terminal, in its own account environment. */
   loginAgentTerminal(id: string): Promise<{ terminalId: string }> {
     return this.request('POST', `/api/agents/${encodeURIComponent(id)}/login-terminal`);
+  }
+
+  createAgentAccount(input: { adapter: string; sourceId?: string; label?: string }): Promise<{ id: string }> {
+    return this.request('POST', '/api/agents/accounts', input);
+  }
+
+  startAgentLogin(agent: string): Promise<AgentLogin> {
+    return this.request('POST', `/api/agents/${encodeURIComponent(agent)}/login`);
+  }
+
+  agentLogin(agent: string, id: string): Promise<AgentLogin> {
+    return this.request('GET', `/api/agents/${encodeURIComponent(agent)}/login/${encodeURIComponent(id)}`);
+  }
+
+  submitAgentLogin(agent: string, id: string, code: string): Promise<AgentLogin> {
+    return this.request('POST', `/api/agents/${encodeURIComponent(agent)}/login/${encodeURIComponent(id)}`, { code });
+  }
+
+  cancelAgentLogin(agent: string, id: string): Promise<void> {
+    return this.request('DELETE', `/api/agents/${encodeURIComponent(agent)}/login/${encodeURIComponent(id)}`);
   }
 
   /** Commands for an agent in a directory; project-level commands differ between directories. */
