@@ -15,7 +15,7 @@ test('on another machine, a path of the API goes through the hub to the same pat
 test('each way a machine can fail says what to do about it, with the name to type', () => {
   assert.match(hostProblem('host_key', 'devbox'), /运行一次 ssh devbox/);
   assert.match(hostProblem('auth', 'me@devbox'), /ssh me@devbox 能直接进去/);
-  assert.match(hostProblem('daemon_missing', 'devbox'), /Limi 没有应答/);
+  assert.match(hostProblem('daemon_missing', 'devbox'), /Calli 没有应答/);
   assert.match(hostProblem('unreachable', 'devbox'), /连不到/);
   // Something ssh said that the hub did not recognise still gets a sentence; ssh's own words go next to it.
   assert.equal(hostProblem('ssh_failed', 'devbox'), 'ssh 没连上。');

@@ -3,6 +3,7 @@ import type { Messages } from './zh';
 const plural = (n: number, one: string, other: string) => `${n} ${n === 1 ? one : other}`;
 
 export const en: Messages = {
+  'app.name': 'Calli',
   "api.updateBackend": "The backend needs an update. Restart the hub and try again.",
   "personal.searchModels": "Filter models",
   "personal.newPrivate": "New private conversation",
@@ -59,7 +60,7 @@ export const en: Messages = {
   "push.failed": "Failed",
   "push.recipientMissing": "No recipient configured",
   "push.recipient": "Recipient",
-  "push.address": "Limi address",
+  "push.address": "Calli address",
   "push.addressHint": "Used for message links; optional",
   "push.optional": "Optional",
   "push.recent": "Recent:",
@@ -257,7 +258,7 @@ export const en: Messages = {
   'hosts.error.hostKey': (target: string) => `The hub does not know this machine's host key yet. Run ssh ${target} once on the hub's machine, confirm the fingerprint, then try again.`,
   'hosts.error.auth': (target: string) => `The hub could not log in to this machine. It must be able to log in without a password: first check that ssh ${target} gets straight in from the hub's machine.`,
   'hosts.error.unreachable': 'Could not reach this machine: the name did not resolve, the network is down, or it timed out.',
-  'hosts.error.noHub': 'Logged in, but Limi on that machine did not answer. Install and start it there; if it is already running, check that its sshd allows forwarding.',
+  'hosts.error.noHub': 'Logged in, but Calli on that machine did not answer. Install and start it there; if it is already running, check that its sshd allows forwarding.',
   'hosts.error.noForwarding': "That machine's sshd does not allow forwarded connections.",
   'hosts.error.other': 'ssh could not connect.',
 
@@ -893,7 +894,7 @@ export const en: Messages = {
   'hosts.machines': 'Machines',
   'hosts.connectingTo': (name: string) => `Connecting to ${name}…`,
   'hosts.cannotReach': (name: string) => `Cannot reach ${name}`,
-  'hosts.hint': 'Connect Limi on other machines here and manage them all from one page. The hub connects over SSH, so those machines need no open ports and no second token.',
+  'hosts.hint': 'Connect Calli on other machines here and manage them all from one page. The hub connects over SSH, so those machines need no open ports and no second token.',
   'hosts.version': (v: string) => `Version ${v}`,
   'hosts.remove': 'Remove',
   'hosts.add': 'Add machine',
@@ -903,7 +904,7 @@ export const en: Messages = {
   'hosts.addFailed': (target: string, reason: string) => `Could not add ${target}: ${reason}`,
   'hosts.candidates': 'These are in the hub\'s ~/.ssh/config. Click one to add it:',
   'hosts.addAlias': (alias: string) => `Add ${alias}`,
-  'hosts.foot': 'That machine needs Limi installed and running first (scripts/install-service.sh), and the hub\'s machine must be able to ssh in without a password.',
+  'hosts.foot': 'That machine needs Calli installed and running first (scripts/install-service.sh), and the hub\'s machine must be able to ssh in without a password.',
   'hosts.removeTitle': (name: string) => `Remove ${name}?`,
   'hosts.removeMessage': 'This only stops connecting to it from here. Threads and data on that machine stay untouched, and it can be added back later.',
 
@@ -1088,7 +1089,7 @@ export const en: Messages = {
   'obs.costOnly': 'Only records that report a cost',
   'obs.turnsErrors': 'Turns / errors',
   'obs.turnHint': 'A turn can make several model requests',
-  'obs.note': 'Counts only usage run in Limi on this machine since statistics were turned on; history and forked copies are not backfilled. TPM is token usage over the last 60 seconds. Usage reported in batches is spread over the time between two reports and marked as estimated, while totals come from the native records. Model requests still in progress may have no usage yet, and it reads 0 when idle; unknown does not mean zero.',
+  'obs.note': 'Counts only usage run in Calli on this machine since statistics were turned on; history and forked copies are not backfilled. TPM is token usage over the last 60 seconds. Usage reported in batches is spread over the time between two reports and marked as estimated, while totals come from the native records. Model requests still in progress may have no usage yet, and it reads 0 when idle; unknown does not mean zero.',
   'obs.recent': 'Recent turns',
   'obs.max100': 'up to 100 turns',
   'obs.noRows': 'No turns recorded yet. Recording starts here once a message is sent.',
@@ -1740,14 +1741,14 @@ export const en: Messages = {
   'app.terminalBusy': 'This session was just used in the terminal',
   'app.terminalBusyMessage': 'The terminal and the web page write to the same session, and taking turns between them scrambles the order. Send from here anyway?',
   'app.sendAnyway': 'Send anyway',
-  'app.install': 'Install Limi',
+  'app.install': 'Install Calli',
   'app.signOut': 'Sign out',
   'app.signOutTitle': 'Sign out?',
   'app.signOutMessage': 'The token saved on this device is cleared and you go back to the sample data.',
 
   // Extensions (Settings → Extensions)
   'extensions.title': 'Extensions',
-  'extensions.hint': 'Bring the tools around your agents into Limi. Install and turn them on here; use them in the pages they add.',
+  'extensions.hint': 'Bring the tools around your agents into Calli. Install and turn them on here; use them in the pages they add.',
   'extensions.none': 'No extensions to install yet',
   'extensions.demoNote': 'Demo: installs last until this page reloads.',
   'extensions.version': (v: string) => `Version ${v}`,
@@ -1783,7 +1784,7 @@ export const en: Messages = {
   'extensions.perm.commands.run': 'Run commands',
   'extensions.perm.commands.run.hint': 'Only the commands its manifest declares.',
   'extensions.perm.notify': 'Send reminders',
-  'extensions.perm.notify.hint': "Through Limi's reminders.",
+  'extensions.perm.notify.hint': "Through Calli's reminders.",
   'extensions.perm.transcript.read': 'Read conversations',
   'extensions.perm.transcript.read.hint': 'Messages and replies of linked threads, never reasoning.',
   'extensions.perm.toolresult.read': 'Read tool results',

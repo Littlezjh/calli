@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "Limi",
-  "short_name": "Limi",
-  "description": "Limacia · 远程 coding agent 工作台",
+  "name": "Calli",
+  "short_name": "Calli",
+  "description": "Calli · 远程 coding agent 工作台",
   "lang": "zh-CN",
   "start_url": "/",
   "scope": "/",

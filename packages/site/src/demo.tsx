@@ -55,7 +55,7 @@ function GuidedComposer({ api, id, onRestart }: { api: ShowcaseApi; id: string |
   return <div className="composer showcase-composer">
     <div className="showcase-guide">
       <span className="showcase-guide-marker">{done ? <IconCheck size={15} /> : '试一试'}</span>
-      <span>{scenario ? steps[progress] : '选择一个预置任务，看看 Limi 怎么工作。'}</span>
+      <span>{scenario ? steps[progress] : '选择一个预置任务，看看 Calli 怎么工作。'}</span>
     </div>
     {scenario ? <div className={`composer-box${progress !== 'ready' ? ' is-sent' : ''}`}>
       <label className="sr-only" htmlFor="guided-prompt">预置任务</label>
@@ -119,7 +119,7 @@ function Walkthrough() {
       composer: id => <GuidedComposer api={session.api} id={id} onRestart={restart} />,
       onInstall: () => setInstallOpen(true),
     }} />}
-    {installOpen && <Dialog title="把 Limi 用在自己的项目里" message="这里是预置任务的引导体验。安装 Limi 后，就能连接你自己的 agent、发送任务和管理会话。" confirmLabel="查看安装步骤" onConfirm={install} onCancel={() => setInstallOpen(false)} />}
+    {installOpen && <Dialog title="把 Calli 用在自己的项目里" message="这里是预置任务的引导体验。安装 Calli 后，就能连接你自己的 agent、发送任务和管理会话。" confirmLabel="查看安装步骤" onConfirm={install} onCancel={() => setInstallOpen(false)} />}
   </>;
 }
 

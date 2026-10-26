@@ -1,6 +1,6 @@
-# 一起扩展 Limi
+# 一起扩展 Calli
 
-Limi 希望用简单的界面管理更多国内外 agent，让每个人都能把好用的工具和工作方式带进来。可以先反馈一个真实问题，也可以贡献文档、适配器或插件。无需先做一个完整的平台。
+Calli 希望用简单的界面管理更多国内外 agent，让每个人都能把好用的工具和工作方式带进来。可以先反馈一个真实问题，也可以贡献文档、适配器或插件。无需先做一个完整的平台。
 
 本文介绍当前 master 已有的入口；接口仍在迭代，设计文档中列出的候选 hook 不等于已经可调用。
 
@@ -31,7 +31,7 @@ Limi 希望用简单的界面管理更多国内外 agent，让每个人都能把
 | 想做什么 | 从哪里开始 |
 | --- | --- |
 | 提一个需求、反馈手机体验 | [提交 issue](https://github.com/maxliux5/limi/issues/new)，写清操作、预期和实际结果。截图先移除账号、会话内容等私人信息 |
-| 给更多 agent 管理 skills、MCP | 参考已有资源页与适配器接口；兼容性和目录差异留在 [adapters](../packages/daemon/src/adapters)，不需要写 Limi 插件 |
+| 给更多 agent 管理 skills、MCP | 参考已有资源页与适配器接口；兼容性和目录差异留在 [adapters](../packages/daemon/src/adapters)，不需要写 Calli 插件 |
 | 接入另一个 agent | 从 [适配器接口](../packages/daemon/src/adapters/types.ts) 和现有实现开始，前端用 capabilities 表达差异 |
 | 把外部工具的进度带进会话和看板 | 参考 [ext-loopx](../packages/ext-loopx)，实现独立工作数据源 |
 | 做一个新的工作视图 | 参考 [ext-board](../packages/ext-board) 和 [ext-memory](../packages/ext-memory)，先作为内置包通过 PR 集成 |
@@ -48,7 +48,7 @@ Limi 希望用简单的界面管理更多国内外 agent，让每个人都能把
 
 ## 新视图：保持统一，也保持克制
 
-内置视图只依赖 [extension-api/web](../packages/extension-api/web.d.ts)；通过宿主拿数据、导航和组件，不直接导入 web 或 daemon 的私有实现。内置包仍需注册进目录并随 Limi 构建，不能当作普通外部包安装。
+内置视图只依赖 [extension-api/web](../packages/extension-api/web.d.ts)；通过宿主拿数据、导航和组件，不直接导入 web 或 daemon 的私有实现。内置包仍需注册进目录并随 Calli 构建，不能当作普通外部包安装。
 
 先显示概况，展开时才加载重详情；异常、未知与过期状态直接可见。复用宿主颜色、控件和手机布局，避免每个插件各画一套界面。桌面点击与键盘、手机触摸都应能访问同样的信息。
 

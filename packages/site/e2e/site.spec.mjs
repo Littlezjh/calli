@@ -225,7 +225,7 @@ test('guided navigation avoids empty pages and links installation to remote acce
     await demo.getByRole('button', { name: '配置', exact: true }).click();
     assert.equal(await demo.getByRole('menuitem', { name: '已归档', exact: true }).count(), 0);
     assert.equal(await demo.getByRole('menuitem', { name: '概览', exact: true }).count(), 0);
-    await demo.getByRole('menuitem', { name: '安装 Limi', exact: true }).click();
+    await demo.getByRole('menuitem', { name: '安装 Calli', exact: true }).click();
     await demo.getByRole('button', { name: '查看安装步骤' }).click();
     await page.locator('#install').getByText('http://127.0.0.1:8787/', { exact: true }).waitFor();
     assert.ok((await page.getByRole('link', { name: '远程访问说明' }).getAttribute('href')).endsWith('#远程访问'));

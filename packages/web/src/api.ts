@@ -1445,7 +1445,7 @@ export class Api {
     return this.request('GET', `/api/work-sources?${params}`);
   }
 
-  /** Limi extensions this daemon ships, and which are installed on its machine. */
+  /** Calli extensions this daemon ships, and which are installed on its machine. */
   memorySources(extensionId: string): Promise<import('@rah/extension-api').MemorySource[]> {
     return this.send('GET', `/api/extensions/${encodeURIComponent(extensionId)}/memory/sources`);
   }

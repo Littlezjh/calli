@@ -132,7 +132,7 @@ interface PanelProps {
 
 /**
  * The machines this hub shows besides its own. Adding one takes only what ssh calls it: the hub
- * signs in, finds the Limi running there, and keeps a connection to it.
+ * signs in, finds the Calli running there, and keeps a connection to it.
  */
 export function HostsPanel({ api, hosts, onChanged, onClose, onError }: PanelProps) {
   const [candidates, setCandidates] = useState<string[]>([]);

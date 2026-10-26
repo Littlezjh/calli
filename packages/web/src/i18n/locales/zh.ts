@@ -3,6 +3,7 @@
  * a key added here has to be added to them too. Messages with values are functions.
  */
 export const zh = {
+  'app.name': 'Calli',
   "api.updateBackend": "后台还没更新到这个版本，重启 hub 后再试",
   "personal.searchModels": "筛选模型",
   "personal.newPrivate": "新开私人对话",
@@ -59,7 +60,7 @@ export const zh = {
   "push.failed": "发送失败",
   "push.recipientMissing": "尚未设置接收人",
   "push.recipient": "接收人",
-  "push.address": "Limi 地址",
+  "push.address": "Calli 地址",
   "push.addressHint": "用于消息里的链接，可不填",
   "push.optional": "可不填",
   "push.recent": "最近：",
@@ -257,7 +258,7 @@ export const zh = {
   'hosts.error.hostKey': (target: string) => `hub 还不认识这台机器的主机密钥。在 hub 所在的机器上运行一次 ssh ${target}，确认指纹后再试。`,
   'hosts.error.auth': (target: string) => `hub 登录不上这台机器。它要不输密码就能登录：先在 hub 所在的机器上确认 ssh ${target} 能直接进去。`,
   'hosts.error.unreachable': '连不到这台机器：名字解析不了、网络不通，或者超时了。',
-  'hosts.error.noHub': '登录上了，但那台机器上的 Limi 没有应答。在那台机器上装好并启动它；已经在运行的话，检查它的 sshd 是否允许转发。',
+  'hosts.error.noHub': '登录上了，但那台机器上的 Calli 没有应答。在那台机器上装好并启动它；已经在运行的话，检查它的 sshd 是否允许转发。',
   'hosts.error.noForwarding': '那台机器的 sshd 不允许转发连接。',
   'hosts.error.other': 'ssh 没连上。',
 
@@ -893,7 +894,7 @@ export const zh = {
   'hosts.machines': '机器',
   'hosts.connectingTo': (name: string) => `正在连接 ${name}…`,
   'hosts.cannotReach': (name: string) => `连不上 ${name}`,
-  'hosts.hint': '把别的机器上的 Limi 接到这里，一个页面管多台。hub 用 SSH 连过去，那台机器不用开端口，也不用再输 token。',
+  'hosts.hint': '把别的机器上的 Calli 接到这里，一个页面管多台。hub 用 SSH 连过去，那台机器不用开端口，也不用再输 token。',
   'hosts.version': (v: string) => `版本 ${v}`,
   'hosts.remove': '移除',
   'hosts.add': '添加机器',
@@ -903,7 +904,7 @@ export const zh = {
   'hosts.addFailed': (target: string, reason: string) => `没能添加 ${target}：${reason}`,
   'hosts.candidates': 'hub 的 ~/.ssh/config 里有这些，点一下就加：',
   'hosts.addAlias': (alias: string) => `添加 ${alias}`,
-  'hosts.foot': '那台机器上要先装好并启动 Limi（scripts/install-service.sh），hub 所在的机器要能不输密码 ssh 过去。',
+  'hosts.foot': '那台机器上要先装好并启动 Calli（scripts/install-service.sh），hub 所在的机器要能不输密码 ssh 过去。',
   'hosts.removeTitle': (name: string) => `移除 ${name}？`,
   'hosts.removeMessage': '只是不再从这里连它。那台机器上的线程和数据都不会动，以后可以再加回来。',
 
@@ -1088,7 +1089,7 @@ export const zh = {
   'obs.costOnly': '仅含报告费用的记录',
   'obs.turnsErrors': '执行轮次 / 出错',
   'obs.turnHint': '一轮可能包含多次模型请求',
-  'obs.note': '仅统计这台机器启用统计后在 Limi 中执行的用量，不回填历史或分叉副本。TPM 为最近 60 秒的 token 用量；成批上报按两次报告之间的时间平摊，时间分布标为估算，总量来自原生记录。尚未完成的模型请求可能还没有用量，空闲时为 0；未知不代表零。',
+  'obs.note': '仅统计这台机器启用统计后在 Calli 中执行的用量，不回填历史或分叉副本。TPM 为最近 60 秒的 token 用量；成批上报按两次报告之间的时间平摊，时间分布标为估算，总量来自原生记录。尚未完成的模型请求可能还没有用量，空闲时为 0；未知不代表零。',
   'obs.recent': '最近执行',
   'obs.max100': '最多 100 轮',
   'obs.noRows': '还没有执行记录。发送一条消息后，这里会开始记录。',
@@ -1740,14 +1741,14 @@ export const zh = {
   'app.terminalBusy': '这个会话刚在终端里用过',
   'app.terminalBusyMessage': '终端和网页写的是同一个会话，两边轮流发会把顺序搅乱。确认要在这里继续发送吗？',
   'app.sendAnyway': '仍然发送',
-  'app.install': '安装 Limi',
+  'app.install': '安装 Calli',
   'app.signOut': '退出',
   'app.signOutTitle': '退出登录？',
   'app.signOutMessage': '这台设备上保存的 token 会被清除，回到示例数据。',
 
   // Extensions (配置 → 扩展)
   'extensions.title': '扩展',
-  'extensions.hint': '把周边工具接进 Limi。这里只管安装和启用，平时在它们加的页面里用。',
+  'extensions.hint': '把周边工具接进 Calli。这里只管安装和启用，平时在它们加的页面里用。',
   'extensions.none': '还没有可以安装的扩展',
   'extensions.demoNote': '示例模式：安装只在这个页面有效，刷新后恢复。',
   'extensions.version': (v: string) => `版本 ${v}`,
@@ -1783,7 +1784,7 @@ export const zh = {
   'extensions.perm.commands.run': '执行命令',
   'extensions.perm.commands.run.hint': '只执行清单里声明的命令。',
   'extensions.perm.notify': '发提醒',
-  'extensions.perm.notify.hint': '通过 Limi 的提醒接口发出。',
+  'extensions.perm.notify.hint': '通过 Calli 的提醒接口发出。',
   'extensions.perm.transcript.read': '读对话',
   'extensions.perm.transcript.read.hint': '关联线程的消息和回复，不含思考过程。',
   'extensions.perm.toolresult.read': '读工具结果',

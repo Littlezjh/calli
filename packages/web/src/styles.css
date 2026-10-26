@@ -761,9 +761,20 @@ html.list-open body {
 }
 
 .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
   font-size: 19px;
   font-weight: 700;
   letter-spacing: -0.02em;
+}
+
+.brand-icon {
+  display: block;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
 }
 
 .sidebar-search {

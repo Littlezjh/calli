@@ -46,7 +46,7 @@ export function addExamples(data: DemoData): Coordination {
 export function memoryExamples(): { sources: MemorySource[]; files: MemoryFile[]; documents: MemoryDocument[] } {
   const at = new Date().toISOString();
   const entries = [
-    { id: 'sample-preferences', path: 'preferences.md', kind: 'durable' as const, title: '项目偏好：简单、清楚、手机优先', excerpt: '优先使用现有组件；重要异常直接显示，详情按需展开。', text: '# 项目偏好：简单、清楚、手机优先\n\n这是一条虚构记忆，用来体验只读查看。\n\n- 优先复用现有组件，保持颜色和间距一致。\n- 重要异常直接显示，详情按需展开。\n- 界面改动同时检查桌面、手机和亮暗模式。\n\n记忆由 agent 自己维护；Limi 展示已有内容，不生成或跨 agent 同步。' },
+    { id: 'sample-preferences', path: 'preferences.md', kind: 'durable' as const, title: '项目偏好：简单、清楚、手机优先', excerpt: '优先使用现有组件；重要异常直接显示，详情按需展开。', text: '# 项目偏好：简单、清楚、手机优先\n\n这是一条虚构记忆，用来体验只读查看。\n\n- 优先复用现有组件，保持颜色和间距一致。\n- 重要异常直接显示，详情按需展开。\n- 界面改动同时检查桌面、手机和亮暗模式。\n\n记忆由 agent 自己维护；Calli 展示已有内容，不生成或跨 agent 同步。' },
     { id: 'sample-summary', path: 'summaries/theme.md', kind: 'summary' as const, title: '设置页主题改造', excerpt: '主题支持系统、浅色、深色三种选择；刷新后恢复偏好。', text: '# 设置页主题改造\n\n示例项目使用一个主题入口，统一更新页面颜色。\n\n1. 默认跟随系统。\n2. 手动选择后保存偏好。\n3. 刷新页面恢复选择。\n\n这是虚构的会话摘要。' },
     { id: 'sample-evidence', path: 'evidence/mobile-check.md', kind: 'evidence' as const, title: '手机菜单检查记录', excerpt: '检查选项是否在视口内，以及触摸选择、关闭和刷新。', text: '# 手机菜单检查记录\n\n虚构的检查记录：\n\n- 三个主题选项都能看到。\n- 选择浅色后立即更新。\n- 刷新页面后保留选择。\n\n这份示例不代表你自己的项目通过了检查。' },
   ];

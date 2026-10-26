@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="packages/web/public/limi-icon.png" alt="Limi：浅蓝背景上举着一大一小双钳的蓝色螃蟹" width="160" />
+  <img src="packages/web/public/limi-icon.png" alt="Calli：浅蓝背景上举着一大一小双钳的蓝色螃蟹" width="160" />
 </p>
 
-<h1 align="center">Limi</h1>
+<h1 align="center">Calli</h1>
 
-<p align="center">a simple way to manage agents</p>
+<p align="center">随时叫上你的 AI 伙伴。</p>
 
-Limi 是一个开源的 agent 工作台。用简单的界面管理 TRAE、zcode、Claude Code、Codex、pi、Antigravity 等国内外 agent，通过插件把好用的工具接进来。电脑和手机都能用，也欢迎每个人参与改进。
+Calli 是一个开源的 agent 工作台。用简单的界面管理 TRAE、zcode、Claude Code、Codex、pi、Antigravity 等国内外 agent，通过插件把好用的工具接进来。电脑和手机都能用，也欢迎每个人参与改进。
 
 打开网页就能：
 
@@ -17,7 +17,7 @@ Limi 是一个开源的 agent 工作台。用简单的界面管理 TRAE、zcode�
 - 用实时语音和 agent 边聊边做：说出任务交给后台，接着聊别的，结果回来再念给你听
 - 按需安装线程看板、Memory 记忆看板，或连接 LoopX 查看目标进度
 
-Limi 不动 agent 本身的目录、配置和会话，装好即用。名字来自 Limacia 海蛞蝓；图标采用一只举着大小双钳的蓝色小螃蟹，配浅蓝背景，保持简单、亲切的形象。
+Calli 不动 agent 本身的目录、配置和会话，装好即用。Calli 是自创品牌名，呼应随时叫上 AI 伙伴的感觉；图标采用一只举着大小双钳的蓝色小螃蟹，配浅蓝背景，保持简单、亲切的形象。
 
 ## 界面预览
 
@@ -71,7 +71,7 @@ Limi 不动 agent 本身的目录、配置和会话，装好即用。名字来�
 - **实时语音**（试验中，真人听说仍在验收）：用这台机器上已登录的 Codex 原生语音，不需要另配 API Key；会消耗现有额度，具体计费归属尚未核实。在任意支持协作的线程里都能开，任务可以交给当前线程的 agent（Claude Code、pi 等）去做。浏览器开麦需要 HTTPS 或 localhost，见 [语音设计](docs/voice-design.md)。
 - **LoopX**：需先安装并配置 LoopX，关联目标和线程后，在会话与看板中查看目标、待办和待决定事项。当前不提供自动推进。
 
-skills 和 MCP 属于 agent 资源，通过各自的管理页操作，与 Limi 插件分开。想接入工具、贡献一个工作视图，或者反馈使用中的问题，可以从 [参与和插件指南](docs/contributing-extensions.md) 开始。独立数据源可放在自己的仓库；当前还没有自动收录的插件市场。
+skills 和 MCP 属于 agent 资源，通过各自的管理页操作，与 Calli 插件分开。想接入工具、贡献一个工作视图，或者反馈使用中的问题，可以从 [参与和插件指南](docs/contributing-extensions.md) 开始。独立数据源可放在自己的仓库；当前还没有自动收录的插件市场。
 
 ## 快速开始
 
@@ -144,7 +144,7 @@ GitHub Pages 通过 `.github/workflows/pages.yml` 发布：推送到 `main` 后�
 
 ## 开机自启
 
-应用已更名为 Limi。为兼容已有安装，systemd 服务名、配置与数据目录、私有 socket 路径以及 `RAH_*` 环境变量沿用原标识 `remote-agent-hub`，升级时不迁移已有会话。
+应用由 Limi 更名为 Calli。`limi` 命令、`LIMI_*` 环境变量和现有仓库地址继续保留。为兼容已有安装，systemd 服务名、配置与数据目录、私有 socket 路径以及 `RAH_*` 环境变量沿用原标识 `remote-agent-hub`，升级时不迁移已有会话。
 
 ```bash
 scripts/install-service.sh              # 装成 systemd 用户服务并启动；默认读 ~/.config/remote-agent-hub/.env
@@ -206,6 +206,6 @@ npm test -w @rah/e2e -- --test-concurrency=1 test/smoke.spec.mjs
 
 ### 安装为桌面应用
 
-在 Chrome 中打开 Limi 后，可通过浏览器菜单将它安装为应用。安装名称为 Limi，图标使用蓝白配色的大小钳小螃蟹。
+在 Chrome 中打开 Calli 后，可通过浏览器菜单将它安装为应用。安装名称为 Calli，图标使用蓝白配色的大小钳小螃蟹。
 
-如果此前安装的应用仍显示 AgentHub 或默认字母图标，先尝试关闭所有应用窗口后重新打开，并接受 Chrome 提供的名称或图标更新。如果仍未更新，可卸载旧应用后从当前网页重新安装；卸载时不要勾选清除网站数据，以保留本机登录和偏好。
+如果此前安装的应用仍显示 Limi、AgentHub 或旧图标，先尝试关闭所有应用窗口后重新打开，并接受 Chrome 提供的名称或图标更新。如果仍未更新，可卸载旧应用后从当前网页重新安装；卸载时不要勾选清除网站数据，以保留本机登录和偏好。

@@ -1,6 +1,7 @@
 import type { Messages } from './zh';
 
 export const ja: Messages = {
+  'app.name': 'Calli',
   "api.updateBackend": "バックエンドがこのバージョンに更新されていません。hub を再起動してお試しください。",
   "personal.searchModels": "モデルを絞り込む",
   "personal.newPrivate": "プライベート会話を開始",
@@ -57,7 +58,7 @@ export const ja: Messages = {
   "push.failed": "送信失敗",
   "push.recipientMissing": "受信者が未設定です",
   "push.recipient": "受信者",
-  "push.address": "Limi のアドレス",
+  "push.address": "Calli のアドレス",
   "push.addressHint": "メッセージ内のリンクに使用（任意）",
   "push.optional": "任意",
   "push.recent": "最近：",
@@ -255,7 +256,7 @@ export const ja: Messages = {
   'hosts.error.hostKey': (target: string) => `hub はまだこのマシンのホスト鍵を知りません。hub のマシンで一度 ssh ${target} を実行し、フィンガープリントを確認してから再試行してください。`,
   'hosts.error.auth': (target: string) => `hub がこのマシンにログインできません。パスワードなしでログインできる必要があります。まず hub のマシンで ssh ${target} がそのまま入れるか確認してください。`,
   'hosts.error.unreachable': 'このマシンに接続できません。名前を解決できないか、ネットワークがつながらないか、タイムアウトしました。',
-  'hosts.error.noHub': 'ログインはできましたが、そのマシンの Limi が応答しません。そのマシンに Limi をインストールして起動してください。すでに動いている場合は、sshd が転送を許可しているか確認してください。',
+  'hosts.error.noHub': 'ログインはできましたが、そのマシンの Calli が応答しません。そのマシンに Calli をインストールして起動してください。すでに動いている場合は、sshd が転送を許可しているか確認してください。',
   'hosts.error.noForwarding': 'そのマシンの sshd は接続の転送を許可していません。',
   'hosts.error.other': 'ssh で接続できませんでした。',
 
@@ -891,7 +892,7 @@ export const ja: Messages = {
   'hosts.machines': 'マシン',
   'hosts.connectingTo': (name: string) => `${name} に接続中…`,
   'hosts.cannotReach': (name: string) => `${name} に接続できません`,
-  'hosts.hint': '他のマシンの Limi をここにつなぎ、1 つのページで複数台を管理します。hub は SSH で接続するので、相手のマシンでポートを開けたりトークンを入力したりする必要はありません。',
+  'hosts.hint': '他のマシンの Calli をここにつなぎ、1 つのページで複数台を管理します。hub は SSH で接続するので、相手のマシンでポートを開けたりトークンを入力したりする必要はありません。',
   'hosts.version': (v: string) => `バージョン ${v}`,
   'hosts.remove': '削除',
   'hosts.add': 'マシンを追加',
@@ -901,7 +902,7 @@ export const ja: Messages = {
   'hosts.addFailed': (target: string, reason: string) => `${target} を追加できませんでした：${reason}`,
   'hosts.candidates': 'hub の ~/.ssh/config にあるホストです。クリックで追加できます：',
   'hosts.addAlias': (alias: string) => `${alias} を追加`,
-  'hosts.foot': '相手のマシンに Limi をインストールして起動しておく必要があります（scripts/install-service.sh）。また、hub のマシンからパスワードなしで ssh できる必要があります。',
+  'hosts.foot': '相手のマシンに Calli をインストールして起動しておく必要があります（scripts/install-service.sh）。また、hub のマシンからパスワードなしで ssh できる必要があります。',
   'hosts.removeTitle': (name: string) => `${name} を削除しますか？`,
   'hosts.removeMessage': 'ここから接続しなくなるだけです。そのマシンのスレッドやデータはそのまま残り、あとで再び追加できます。',
 
@@ -1086,7 +1087,7 @@ export const ja: Messages = {
   'obs.costOnly': '費用が報告された記録のみ',
   'obs.turnsErrors': 'ターン数 / エラー',
   'obs.turnHint': '1 ターンに複数のモデルリクエストが含まれることがあります',
-  'obs.note': 'このマシンで統計を有効にしてから Limi で実行した使用量のみを集計し、過去の履歴やフォークしたコピーはさかのぼりません。TPM は直近 60 秒のトークン使用量です。まとめて報告された使用量は 2 回の報告の間で均等に割り振り、時間の分布は推定として表示します。合計はネイティブの記録によるものです。完了していないモデルリクエストにはまだ使用量がない場合があり、待機中は 0 になります。不明は 0 を意味しません。',
+  'obs.note': 'このマシンで統計を有効にしてから Calli で実行した使用量のみを集計し、過去の履歴やフォークしたコピーはさかのぼりません。TPM は直近 60 秒のトークン使用量です。まとめて報告された使用量は 2 回の報告の間で均等に割り振り、時間の分布は推定として表示します。合計はネイティブの記録によるものです。完了していないモデルリクエストにはまだ使用量がない場合があり、待機中は 0 になります。不明は 0 を意味しません。',
   'obs.recent': '最近の実行',
   'obs.max100': '最大 100 ターン',
   'obs.noRows': '実行記録はまだありません。メッセージを送ると、ここに記録されます。',
@@ -1738,14 +1739,14 @@ export const ja: Messages = {
   'app.terminalBusy': 'このセッションは直前にターミナルで使われました',
   'app.terminalBusyMessage': 'ターミナルとウェブページは同じセッションに書き込むため、交互に送ると順序が乱れます。ここから送信を続けますか？',
   'app.sendAnyway': 'それでも送信',
-  'app.install': 'Limi をインストール',
+  'app.install': 'Calli をインストール',
   'app.signOut': 'サインアウト',
   'app.signOutTitle': 'サインアウトしますか？',
   'app.signOutMessage': 'このデバイスに保存されたトークンを消去し、サンプルデータに戻ります。',
 
   // Extensions (設定 → 拡張機能)
   'extensions.title': '拡張機能',
-  'extensions.hint': 'エージェントの周りのツールを Limi に取り込みます。ここではインストールと有効化だけを行い、普段は追加されたページで使います。',
+  'extensions.hint': 'エージェントの周りのツールを Calli に取り込みます。ここではインストールと有効化だけを行い、普段は追加されたページで使います。',
   'extensions.none': 'インストールできる拡張機能はまだありません',
   'extensions.demoNote': 'デモ：インストールはこのページを再読み込みするまで有効です。',
   'extensions.version': (v: string) => `バージョン ${v}`,
@@ -1781,7 +1782,7 @@ export const ja: Messages = {
   'extensions.perm.commands.run': 'コマンドを実行',
   'extensions.perm.commands.run.hint': 'マニフェストで宣言したコマンドだけ。',
   'extensions.perm.notify': 'リマインダーを送る',
-  'extensions.perm.notify.hint': 'Limi のリマインダー機能を通して送ります。',
+  'extensions.perm.notify.hint': 'Calli のリマインダー機能を通して送ります。',
   'extensions.perm.transcript.read': '会話を読む',
   'extensions.perm.transcript.read.hint': '関連するスレッドのメッセージと返信。思考内容は含みません。',
   'extensions.perm.toolresult.read': 'ツールの結果を読む',

@@ -83,7 +83,7 @@ function Home() {
     <a className="site-skip" href="#experience" onClick={() => setStarted(true)}>{copy.skip}</a>
     <header className="site-nav">
       <nav className="site-wrap" aria-label={copy.nav}>
-        <a className="site-brand" href="#"><img src="./limi-icon.png?v=crab-1" alt="" width="32" height="32" />Limi</a>
+        <a className="site-brand" href="#"><img src="./limi-icon.png?v=crab-1" alt="" width="32" height="32" />Calli</a>
         <div className="site-links">
           <a href="#experience" onClick={() => setStarted(true)}>{copy.experience}</a>
           <a href="#collaboration">{copy.collaboration}</a>
@@ -200,7 +200,7 @@ function Home() {
         </div>
       </section>
     </main>
-    <footer className="site-footer site-wrap"><a className="site-brand" href="#"><img src="./limi-icon.png?v=crab-1" alt="" width="28" height="28" />Limi</a><span>{copy.footer}</span><div><a href={REPOSITORY} target="_blank" rel="noopener noreferrer">{copy.source}</a><a href={`${REPOSITORY}/blob/main/LICENSE`} target="_blank" rel="noopener noreferrer">{copy.license}</a></div></footer>
+    <footer className="site-footer site-wrap"><a className="site-brand" href="#"><img src="./limi-icon.png?v=crab-1" alt="" width="28" height="28" />Calli</a><span>{copy.footer}</span><div><a href={REPOSITORY} target="_blank" rel="noopener noreferrer">{copy.source}</a><a href={`${REPOSITORY}/blob/main/LICENSE`} target="_blank" rel="noopener noreferrer">{copy.license}</a></div></footer>
   </>;
 }
 
