@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="packages/web/public/limi-icon.png" alt="Limi：薄荷绿背景上的奶油白小海蛞蝓，带橙色触角和微笑" width="160" />
+  <img src="packages/web/public/limi-icon.png" alt="Limi：浅蓝背景上举着一大一小双钳的蓝色螃蟹" width="160" />
 </p>
 
 <h1 align="center">Limi</h1>
@@ -17,7 +17,7 @@ Limi 是一个开源的 agent 工作台。用简单的界面管理 TRAE、zcode�
 - 用实时语音和 agent 边聊边做：说出任务交给后台，接着聊别的，结果回来再念给你听
 - 按需安装线程看板、Memory 记忆看板，或连接 LoopX 查看目标进度
 
-Limi 不动 agent 本身的目录、配置和会话，装好即用。名字来自 Limacia 海蛞蝓，图标是一只带橙色短触角、奶油白身体的小伙伴，配上浅薄荷绿背景，希望工作台也能轻松、亲切一些。
+Limi 不动 agent 本身的目录、配置和会话，装好即用。名字来自 Limacia 海蛞蝓；图标采用一只举着大小双钳的蓝色小螃蟹，配浅蓝背景，保持简单、亲切的形象。
 
 ## 界面预览
 
@@ -206,6 +206,6 @@ npm test -w @rah/e2e -- --test-concurrency=1 test/smoke.spec.mjs
 
 ### 安装为桌面应用
 
-在 Chrome 中打开 Limi 后，可通过浏览器菜单将它安装为应用。安装名称为 Limi，图标使用 Limacia 小海蛞蝓。
+在 Chrome 中打开 Limi 后，可通过浏览器菜单将它安装为应用。安装名称为 Limi，图标使用蓝白配色的大小钳小螃蟹。
 
 如果此前安装的应用仍显示 AgentHub 或默认字母图标，先尝试关闭所有应用窗口后重新打开，并接受 Chrome 提供的名称或图标更新。如果仍未更新，可卸载旧应用后从当前网页重新安装；卸载时不要勾选清除网站数据，以保留本机登录和偏好。

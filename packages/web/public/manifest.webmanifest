@@ -11,8 +11,8 @@
   "theme_color": "#f8f6f1",
   "icons": [
     {
-      "src": "/limi-icon.png?v=3",
-      "sizes": "1254x1254",
+      "src": "/limi-icon.png?v=crab-1",
+      "sizes": "1024x1024",
       "type": "image/png",
       "purpose": "any"
     }

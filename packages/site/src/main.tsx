@@ -83,7 +83,7 @@ function Home() {
     <a className="site-skip" href="#experience" onClick={() => setStarted(true)}>{copy.skip}</a>
     <header className="site-nav">
       <nav className="site-wrap" aria-label={copy.nav}>
-        <a className="site-brand" href="#"><img src="./limi-icon.png" alt="" width="32" height="32" />Limi</a>
+        <a className="site-brand" href="#"><img src="./limi-icon.png?v=crab-1" alt="" width="32" height="32" />Limi</a>
         <div className="site-links">
           <a href="#experience" onClick={() => setStarted(true)}>{copy.experience}</a>
           <a href="#collaboration">{copy.collaboration}</a>
@@ -119,7 +119,7 @@ function Home() {
           </div>
           <div className="site-frame-area" ref={frameArea}>
             {started && <iframe key={source} ref={frame} src={source} title={copy.iframeTitle} className={ready ? 'is-ready' : ''} onError={() => setFailed(true)} />}
-            {!ready && <div className="site-frame-loading" role="status"><img src="./limi-icon.png" alt="" width="56" height="56" /><p>{failed ? copy.loadFailed : started ? copy.loading : copy.loadPrompt}</p>{(failed || !started) && <button className="site-button site-button-small" onClick={() => loadScene(active)}>{failed ? copy.reload : copy.startDemo}</button>}</div>}
+            {!ready && <div className="site-frame-loading" role="status"><img src="./limi-icon.png?v=crab-1" alt="" width="56" height="56" /><p>{failed ? copy.loadFailed : started ? copy.loading : copy.loadPrompt}</p>{(failed || !started) && <button className="site-button site-button-small" onClick={() => loadScene(active)}>{failed ? copy.reload : copy.startDemo}</button>}</div>}
           </div>
         </div>
         <p className="site-demo-note">{copy.demoNote}<span>{copy.ownProject}<a href="#install">{copy.install} <IconArrowRight size={13} /></a></span></p>
@@ -200,7 +200,7 @@ function Home() {
         </div>
       </section>
     </main>
-    <footer className="site-footer site-wrap"><a className="site-brand" href="#"><img src="./limi-icon.png" alt="" width="28" height="28" />Limi</a><span>{copy.footer}</span><div><a href={REPOSITORY} target="_blank" rel="noopener noreferrer">{copy.source}</a><a href={`${REPOSITORY}/blob/main/LICENSE`} target="_blank" rel="noopener noreferrer">{copy.license}</a></div></footer>
+    <footer className="site-footer site-wrap"><a className="site-brand" href="#"><img src="./limi-icon.png?v=crab-1" alt="" width="28" height="28" />Limi</a><span>{copy.footer}</span><div><a href={REPOSITORY} target="_blank" rel="noopener noreferrer">{copy.source}</a><a href={`${REPOSITORY}/blob/main/LICENSE`} target="_blank" rel="noopener noreferrer">{copy.license}</a></div></footer>
   </>;
 }
 
