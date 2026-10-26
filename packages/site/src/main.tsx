@@ -13,9 +13,9 @@ import './site.css';
 import { zh as copy } from '../../web/src/i18n/locales/site/zh';
 import { PLUGINS } from './plugins';
 
-const REPOSITORY = 'https://github.com/maxliux5/limi';
-const INSTALL = `git clone https://github.com/maxliux5/limi.git
-cd limi
+const REPOSITORY = 'https://github.com/maxliux5/calli';
+const INSTALL = `git clone https://github.com/maxliux5/calli.git
+cd calli
 npm install
 npm run setup
 npm run build

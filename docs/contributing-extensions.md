@@ -30,7 +30,7 @@ Calli 希望用简单的界面管理更多国内外 agent，让每个人都能�
 
 | 想做什么 | 从哪里开始 |
 | --- | --- |
-| 提一个需求、反馈手机体验 | [提交 issue](https://github.com/maxliux5/limi/issues/new)，写清操作、预期和实际结果。截图先移除账号、会话内容等私人信息 |
+| 提一个需求、反馈手机体验 | [提交 issue](https://github.com/maxliux5/calli/issues/new)，写清操作、预期和实际结果。截图先移除账号、会话内容等私人信息 |
 | 给更多 agent 管理 skills、MCP | 参考已有资源页与适配器接口；兼容性和目录差异留在 [adapters](../packages/daemon/src/adapters)，不需要写 Calli 插件 |
 | 接入另一个 agent | 从 [适配器接口](../packages/daemon/src/adapters/types.ts) 和现有实现开始，前端用 capabilities 表达差异 |
 | 把外部工具的进度带进会话和看板 | 参考 [ext-loopx](../packages/ext-loopx)，实现独立工作数据源 |

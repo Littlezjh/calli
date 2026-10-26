@@ -1,3 +1,4 @@
+import brandIcon from '../assets/calli.svg';
 import { Fragment, useEffect, useState, type MouseEvent, type ReactNode } from 'react';
 import type { AgentInfo, HostInfo, SearchHit, Section, Thread } from '../api';
 import { clockLabel } from '../timeline';
@@ -494,7 +495,7 @@ export function Sidebar({
           </label>
         ) : (
           <>
-            <span className="brand"><img className="brand-icon" src="/limi-icon.svg?v=crab-1" alt="" width="32" height="32" /><span>{t('app.name')}</span></span>
+            <span className="brand"><img className="brand-icon" src={brandIcon} alt="" width="32" height="32" /><span>{t('app.name')}</span></span>
             <span className="sidebar-top-actions">
               {onHide && (
                 <button className="round-btn sidebar-hide" aria-label={t('sidebar.hide')} title={t('sidebar.hideKey', SIDEBAR_SHORTCUT)} onClick={onHide}>
