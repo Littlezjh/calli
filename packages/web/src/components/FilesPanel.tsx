@@ -467,15 +467,17 @@ export function FilesPanel({ api, threadId, target, phone, revision, writingStag
   // React treats each renderer as a component type. Stable types keep diagrams and pictures
   // mounted while unrelated panel state changes, including a theme switch.
   const markdownComponents = useMemo<Components>(() => ({
-    // The title says where the piece stands: the stage, and how much is written.
-    h1: article
-      ? ({ children }) => (
-          <>
-            <h1>{children}</h1>
-            <div className="article-meta">{articleTitle}</div>
-          </>
-        )
-      : undefined,
+    // The title says where the piece stands: the stage, and how much is written. The key must be
+    // absent outside the article, not `undefined`: an own property with that value is taken as
+    // the component itself, and any heading would bring the whole page down.
+    ...(article && {
+      h1: ({ children }: { children?: ReactNode }) => (
+        <>
+          <h1>{children}</h1>
+          <div className="article-meta">{articleTitle}</div>
+        </>
+      ),
+    }),
     a: ({ href, children }) => {
       if (href && /^https?:\/\//i.test(href))
         return (
