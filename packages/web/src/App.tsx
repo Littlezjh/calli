@@ -1720,7 +1720,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     { id: 'status', label: t('statusPanel.status'), hint: t('app.cmd.status'), keywords: ['status', 'info'] },
     { id: 'term', label: t('term.title'), hint: t('app.cmd.term'), keywords: ['term', 'terminal', 'shell', '命令行'] },
     ...(hasDesktop ? [{ id: 'desktop', label: t('desktop.title'), hint: t('app.cmd.desktop'), keywords: ['desktop', 'vnc', 'screen', 'gui', '桌面', '屏幕'] }] : []),
-    ...(agents.some((a) => a.capabilities.quota)
+    ...(agents.some((a) => !a.hidden && a.capabilities.quota)
       ? [{ id: 'usage', label: t('app.quota'), hint: t('app.cmd.usage'), keywords: ['usage', 'quota', '额度', 'cost'] }]
       : []),
     { id: 'activity', label: t('activity.title'), hint: t('app.cmd.activity'), keywords: ['activity', 'overview', 'trace', '概览', '轨迹'] },
@@ -2474,7 +2474,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           directory={activeCwd}
           usage={selected ? timeline.usage : null}
           usageCommand={['usage', 'cost', 'session'].find((name) => (commandsByKey[commandsKey] ?? []).some((c) => c.name === name)) ?? null}
-          onOpenQuota={agents.some((a) => a.capabilities.quota) ? () => setQuotaOpen(true) : undefined}
+          onOpenQuota={agents.some((a) => !a.hidden && a.capabilities.quota) ? () => setQuotaOpen(true) : undefined}
           onRunCommand={(text) => void send(text, []).catch(() => undefined)}
           onClose={() => setStatusOpen(false)}
         />
@@ -2587,7 +2587,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
                 setDrawer(false);
               },
             },
-            ...(agents.some((a) => a.capabilities.quota)
+            ...(agents.some((a) => !a.hidden && a.capabilities.quota)
               ? [
                   {
                     id: 'quota',

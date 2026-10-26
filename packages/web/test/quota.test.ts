@@ -44,4 +44,8 @@ test('quotaRows keeps agents that report quota and puts the one in use first', (
   assert.deepEqual(ids(), ['claude', 'codex', 'traex']);
   assert.deepEqual(ids('traex'), ['traex', 'claude', 'codex']);
   assert.deepEqual(ids('plain'), ['claude', 'codex', 'traex']);
+  const hidden = agents.map(agent => ({ ...agent, hidden: agent.id === 'claude' }));
+  assert.deepEqual(quotaRows(hidden, 'claude').map(agent => agent.id), ['codex', 'traex'], 'a hidden current agent is not brought back to the board');
+  assert.deepEqual(quotaRows(hidden.map(agent => ({ ...agent, hidden: true }))), []);
+  assert.deepEqual(quotaRows(hidden.map(agent => ({ ...agent, hidden: false })), 'claude').map(agent => agent.id), ['claude', 'codex', 'traex']);
 });
