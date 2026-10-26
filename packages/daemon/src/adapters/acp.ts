@@ -21,6 +21,7 @@ import type {
   HistoryTurn,
   ModelOption,
   PermissionMode,
+  SessionHooks,
   SlashCommand,
   StartOptions,
   TurnHooks,
@@ -202,6 +203,13 @@ export class AcpSession implements AgentSession {
   private costBefore: { amount: number; currency: string } | null = null;
   controlGoal?: AgentSession['controlGoal'];
   private hooks: TurnHooks | null = null;
+  private sessionHooks?: SessionHooks;
+  /**
+   * Work the agent started between prompts, e.g. Claude Code waking up when a background task
+   * finishes. It runs as a turn of its own so the thread shows it and holds new prompts behind it.
+   */
+  private background: { id: string; hooks: TurnHooks } | null = null;
+  private backgroundTurns = 0;
   private workMode: WorkMode = 'execute';
   private permissionMode: PermissionMode = 'ask';
   onWorkMode?: (mode: WorkMode) => void;
@@ -222,6 +230,18 @@ export class AcpSession implements AgentSession {
     private configOptions: ConfigOption[] = [],
   ) {}
 
+  setSessionHooks(hooks: SessionHooks): void { this.sessionHooks = hooks; }
+
+  /** The hooks of whichever turn is running: the prompted one, or work the agent started itself. */
+  private get turnHooks(): TurnHooks | null { return this.hooks ?? this.background?.hooks ?? null; }
+
+  private finishBackground(stopReason: string): void {
+    const turn = this.background;
+    if (!turn) return;
+    this.background = null;
+    this.sessionHooks?.turnFinished(turn.id, { stopReason });
+  }
+
   /** Called by the peer for every session/update notification. */
   onUpdate(update: unknown): void {
     const modeUpdate = update as any;
@@ -237,9 +257,19 @@ export class AcpSession implements AgentSession {
       this.workMode = modeUpdate.currentModeId === 'plan' ? 'plan' : 'execute';
       this.onWorkMode?.(this.workMode);
     }
-    if (!this.hooks) return; // replay during session/load, or stray updates
     const value = update as any;
-    if (value?.sessionUpdate === 'usage_update' && typeof value.cost?.amount === 'number' && Number.isFinite(value.cost.amount) && value.cost.amount >= 0) {
+    // Output with no prompt open is the agent working on its own. A finished background task
+    // only updates its tool call; the model speaking or calling a tool starts a cycle, which
+    // always ends with a costed usage report. Hooks are set after session/load, so replay is not this.
+    if (!this.hooks && !this.background && this.sessionHooks
+      && ['agent_message_chunk', 'agent_thought_chunk', 'tool_call', 'plan'].includes(value?.sessionUpdate)) {
+      const id = `background-${++this.backgroundTurns}`;
+      this.background = { id, hooks: this.sessionHooks.turnStarted(id, { background: true }) };
+    }
+    const hooks = this.turnHooks;
+    if (!hooks) return; // replay during session/load, or stray updates
+    const costed = value?.sessionUpdate === 'usage_update' && typeof value.cost?.amount === 'number' && Number.isFinite(value.cost.amount) && value.cost.amount >= 0;
+    if (costed) {
       this.costReported = true;
       this.costReading = { amount: value.cost.amount, currency: String(value.cost.currency ?? 'USD') };
     }
@@ -248,22 +278,24 @@ export class AcpSession implements AgentSession {
       if (this.manualCompaction) return;
       ev.data.automatic ??= true;
     }
-    if (ev) this.hooks.emit(ev);
+    if (ev) hooks.emit(ev);
+    if (costed && !this.hooks) this.finishBackground('end_turn');
   }
 
   /** Called by the peer for session/request_permission. */
   async onPermission(params: any): Promise<unknown> {
-    if (!this.hooks) return { outcome: { outcome: 'cancelled' } };
+    const hooks = this.turnHooks;
+    if (!hooks) return { outcome: { outcome: 'cancelled' } };
     const plan = params?.toolCall?.rawInput?.plan;
-    if (typeof plan === 'string' && this.workMode === 'plan' && this.hooks.requestInput) {
+    if (typeof plan === 'string' && this.workMode === 'plan' && hooks.requestInput) {
       const preferred = this.permissionMode === 'ask' ? ['exit-plan-default'] : this.permissionMode === 'full_access' ? ['exit-plan-bypass'] : ['exit-plan-auto', 'exit-plan-accept-edits'];
       const option = preferred.map(id => params.options?.find((o: any) => o.optionId === id)).find(Boolean);
       if (option) {
-        const answer = await this.hooks.requestInput({ id: params.toolCall.toolCallId, title: '计划已准备好', kind: 'plan', plan, questions: [{ id: 'approval', question: '是否按此计划开始执行？', options: [{ value: option.optionId, label: '开始执行' }] }] });
+        const answer = await hooks.requestInput({ id: params.toolCall.toolCallId, title: '计划已准备好', kind: 'plan', plan, questions: [{ id: 'approval', question: '是否按此计划开始执行？', options: [{ value: option.optionId, label: '开始执行' }] }] });
         return 'answers' in answer ? { outcome: { outcome: 'selected', optionId: answer.answers.approval[0] } } : { outcome: { outcome: 'cancelled' } };
       }
     }
-    const decision: ApprovalDecision = await this.hooks.requestApproval({
+    const decision: ApprovalDecision = await hooks.requestApproval({
       title: params?.toolCall?.title ?? 'Permission requested',
       options: (params?.options ?? []).map((o: any) => ({
         optionId: o.optionId,
@@ -278,8 +310,9 @@ export class AcpSession implements AgentSession {
 
   async onElicitation(params: any): Promise<unknown> {
     const questions = params.mode === 'form' ? formQuestions(params.requestedSchema, params.message) : null;
-    if (!questions?.length || !this.hooks?.requestInput) return { action: 'cancel' };
-    const answer = await this.hooks.requestInput({ id: params.toolCallId, title: params.message || '需要你的意见', questions });
+    const hooks = this.turnHooks;
+    if (!questions?.length || !hooks?.requestInput) return { action: 'cancel' };
+    const answer = await hooks.requestInput({ id: params.toolCallId, title: params.message || '需要你的意见', questions });
     if ('cancelled' in answer) return { action: 'cancel' };
     const content = Object.fromEntries(questions.filter(q => answer.answers[q.id]?.length).map(q => {
       const a = answer.answers[q.id];
@@ -379,6 +412,8 @@ export class AcpSession implements AgentSession {
     let submitted!: () => void;
     this.submission = new Promise(resolve => { submitted = resolve; });
     let samples: UsageSample[] = [];
+    // The hub holds prompts until the agent's own work ends; if one gets through, it owns what follows.
+    this.finishBackground('end_turn');
     this.hooks = hooks;
     this.costBefore = this.costReading;
     this.costReported = false;
@@ -414,9 +449,12 @@ export class AcpSession implements AgentSession {
   async cancel(): Promise<void> {
     await this.submission;
     this.peer.notify('session/cancel', { sessionId: this.agentSessionId });
+    // An interrupted cycle may never report its cost; the turn ends with the request.
+    if (!this.hooks) this.finishBackground('cancelled');
   }
 
   async close(): Promise<void> {
+    this.finishBackground('cancelled');
     this.peer.close();
   }
 }

@@ -1518,6 +1518,7 @@ export const en: Messages = {
   'view.working': 'Working',
   'view.preparing': 'Preparing',
   'view.waitingResponse': 'Waiting for response',
+  'view.backgroundTurn': 'The agent continued on its own',
   'view.workedFor': (time: string) => `Worked for ${time}`,
   'view.processed': 'Done',
   'view.steps': (n: number) => `${n} ${n === 1 ? 'step' : 'steps'}`,

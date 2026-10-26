@@ -1518,6 +1518,7 @@ export const zh = {
   'view.working': '工作中',
   'view.preparing': '正在准备',
   'view.waitingResponse': '等待响应',
+  'view.backgroundTurn': 'agent 自行继续',
   'view.workedFor': (time: string) => `用时 ${time}`,
   'view.processed': '已处理',
   'view.steps': (n: number) => `${n} 步`,

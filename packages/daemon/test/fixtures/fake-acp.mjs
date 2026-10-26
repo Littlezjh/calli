@@ -43,6 +43,7 @@ const rl = createInterface({ input: process.stdin });
 const out = (obj) => process.stdout.write(JSON.stringify(obj) + '\n');
 const sessionId = process.env.FAKE_ACP_SESSION ?? 'acp-session-1';
 let pendingPrompt = null; // { id, cancelled }
+let backgroundWork; // the timer of work the agent started on its own
 let nextAgentRequestId = 1000;
 const awaitingInput = new Map();
 let currentMode = 'default';
@@ -217,6 +218,8 @@ rl.on('line', (line) => {
       currentModel = msg.params.modelId;
       return out({ jsonrpc: '2.0', id: msg.id, result: {} });
     case 'session/cancel':
+      // Interrupting work the agent started itself: it stops without a final cost report.
+      clearTimeout(backgroundWork);
       if (pendingPrompt) {
         out({ jsonrpc: '2.0', id: pendingPrompt.id, result: { stopReason: 'cancelled' } });
         pendingPrompt = null;
@@ -234,6 +237,21 @@ rl.on('line', (line) => {
       recordSession(traex ? 'traex' : 'claude', msg.params.sessionId);
       const blocks = msg.params.prompt;
       const text = blocks.filter((p) => p.type === 'text').map((p) => p.text).join('');
+      // Like Claude Code waking up when a background task finishes: output with no prompt open,
+      // ended by the cycle's costed usage report. `hold` keeps it running until cancelled.
+      if (text.includes('background later')) {
+        out({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });
+        backgroundWork = setTimeout(() => {
+          update({ sessionUpdate: 'tool_call', toolCallId: 'bg1', title: 'Read task output', kind: 'execute', status: 'pending', rawInput: { command: 'cat out' } });
+          if (text.includes('hold')) return;
+          backgroundWork = setTimeout(() => {
+            update({ sessionUpdate: 'tool_call_update', toolCallId: 'bg1', status: 'completed', rawOutput: 'done' });
+            update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'background done' } });
+            update({ sessionUpdate: 'usage_update', used: 1000, size: 200000, cost: { amount: 0.01, currency: 'USD' } });
+          }, 150);
+        }, 100);
+        return;
+      }
       if (text === 'speed?') {
         update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `speed:${currentSpeed}` } });
         if (process.env.FAKE_ACP_SPEED_REVOKED) { currentSpeed = 'off'; update({ sessionUpdate: 'config_option_update', configOptions: sessionInfo().configOptions }); }

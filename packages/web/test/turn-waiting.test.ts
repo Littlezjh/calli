@@ -32,3 +32,12 @@ test('a later turn does not inherit the previous turn’s output or phase', () =
   const next = { ...start, seq: 5, turnId: 'next' };
   assert.equal(waiting([start, event('message.delta', { text: 'answer' }), event('turn.done'), next])?.phase, 'preparing');
 });
+
+test('a turn the agent started on its own is marked as such and never waits', () => {
+  const own = event('turn.started', { text: '', source: 'background' });
+  assert.equal(waiting([own]), undefined);
+  const items = buildTimeline([own, event('tool.start', { id: 'tool', title: 'read' }, 2)]).items;
+  const user = items.find(i => i.kind === 'user');
+  assert.equal(user?.kind === 'user' && user.background, true);
+  assert.ok(items.some(i => i.kind === 'work'), 'its work is shown');
+});

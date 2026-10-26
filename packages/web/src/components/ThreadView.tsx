@@ -245,6 +245,12 @@ export function ThreadView({ chain = false, observeOlder = true, beforeItems, ol
         case 'model-switch': return <div key={item.key} className="context-compaction handover-divider">{t('auto.switched', item.model, item.previous, t(item.reason === 'exhausted' ? 'auto.exhausted' : 'auto.near'))}</div>;
         case 'user': {
           if (item.handoverCollapsed) return null;
+          // Nobody wrote this turn: the agent picked up work on its own, e.g. a finished background task.
+          if (item.background) return (
+            <div key={item.key} className="row turn-note" data-turn={item.turnId}>
+              <span className="work-toggle"><span className="work-label">{t('view.backgroundTurn')}</span></span>
+            </div>
+          );
           if (item.coordination) return <DeliveredNote key={item.key} turnId={item.turnId} note={item.coordination} text={item.text} />;
           // Notes (and the older single quote) ride in the message text; drawn apart here.
           const noted = splitNotes(item.text);

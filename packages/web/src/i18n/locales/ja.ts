@@ -1516,6 +1516,7 @@ export const ja: Messages = {
   'view.working': '作業中',
   'view.preparing': '準備中',
   'view.waitingResponse': '応答待ち',
+  'view.backgroundTurn': 'エージェントが自動で続行',
   'view.workedFor': (time: string) => `所要時間 ${time}`,
   'view.processed': '処理済み',
   'view.steps': (n: number) => `${n} ステップ`,

@@ -139,7 +139,7 @@ export type Item =
    */
   | { kind: 'input'; key: string; turnId: string; inputId: string; title: string; inputKind?: string; plan?: string; questions: import('./api').UserQuestion[]; answer: import('./api').UserInputAnswer | { cancelled: true; ended: true } | null }
   | { kind: 'voice-recap'; key: string; turnId: null; sessionId: string; seconds: number; count: number }
-  | { kind: 'user'; voice?: boolean; streaming?: boolean; handoverCollapsed?: boolean; workMode?: string; key: string; turnId: string; text: string; images: ImageRef[]; videos?: VideoRef[]; fromTerminal?: boolean; scheduled?: boolean; coordination?: CoordinationNote }
+  | { kind: 'user'; voice?: boolean; background?: boolean; streaming?: boolean; handoverCollapsed?: boolean; workMode?: string; key: string; turnId: string; text: string; images: ImageRef[]; videos?: VideoRef[]; fromTerminal?: boolean; scheduled?: boolean; coordination?: CoordinationNote }
   /** The turn's answer: the text after everything the agent did. */
   | { kind: 'assistant'; key: string; turnId: string; text: string; done: boolean }
   /**
@@ -485,7 +485,8 @@ export function buildTimeline(events: StoredEvent[], speech: readonly VoiceTrans
 
     switch (ev.type) {
       case 'turn.started': {
-        waiting = ev.data.imported || ev.data.fromTerminal ? null : {
+        // A turn the agent started itself begins with its own output, so there is nothing to wait for.
+        waiting = ev.data.imported || ev.data.fromTerminal || ev.data.source === 'background' ? null : {
           kind: 'waiting', key: `${key}-waiting`, turnId: turn, startedAt: ev.ts, phase: 'preparing',
         };
         // A turn that never got its ending (the daemon died under it) ends where the next begins,
@@ -510,6 +511,7 @@ export function buildTimeline(events: StoredEvent[], speech: readonly VoiceTrans
           ...(Array.isArray(ev.data.videos) && ev.data.videos.length ? { videos: ev.data.videos } : {}),
           ...(ev.data.fromTerminal ? { fromTerminal: true } : {}),
           ...(ev.data.scheduled ? { scheduled: true } : {}),
+          ...(ev.data.source === 'background' ? { background: true } : {}),
           ...(delivered ? { coordination: delivered.note } : {}),
         });
         break;

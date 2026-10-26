@@ -1674,6 +1674,39 @@ test('queue: "send now" interrupts the running turn and puts that message first'
   assert.deepEqual(ends, ['cancelled', 'end_turn', 'end_turn']);
 });
 
+test('claude: work the agent starts between prompts is a turn of its own, and messages wait behind it', async () => {
+  const thread = await newThread({ agent: 'claude' });
+  await post(`/api/threads/${thread.id}/turns`, { text: 'background later' });
+  await waitFor(async () => (await events(thread.id)).find((e) => e.type === 'turn.started' && e.data.source === 'background'));
+  assert.equal((await (await api(`/api/threads/${thread.id}`)).json() as { status: string }).status, 'running');
+  await post(`/api/threads/${thread.id}/turns`, { text: 'next', queue: true });
+  await untilIdle(thread.id);
+  await waitFor(async () => (await turnTexts(thread.id)).length === 3 ? true : null);
+  await untilIdle(thread.id);
+
+  const log = await events(thread.id);
+  assert.deepEqual(await turnTexts(thread.id), ['background later', '', 'next']);
+  const background = log.find((e) => e.type === 'turn.started' && e.data.source === 'background')!.turnId;
+  const own = log.filter((e) => e.turnId === background).map((e) => e.type);
+  assert.ok(own.includes('tool.start') && own.includes('tool.end'), 'the tool it ran is shown in its turn');
+  assert.equal(log.filter((e) => e.turnId === background && e.type === 'message.delta').map((e) => e.data.text).join(''), 'background done');
+  assert.equal(log.find((e) => e.turnId === background && e.type === 'turn.done')?.data.stopReason, 'end_turn');
+  const order = log.filter((e) => e.type === 'turn.started' || e.type === 'turn.done').map((e) => `${e.type}:${e.data.text ?? e.data.stopReason}`);
+  assert.deepEqual(order, ['turn.started:background later', 'turn.done:end_turn', 'turn.started:', 'turn.done:end_turn', 'turn.started:next', 'turn.done:end_turn']);
+});
+
+test('claude: "send now" interrupts work the agent started on its own', async () => {
+  const thread = await newThread({ agent: 'claude' });
+  await post(`/api/threads/${thread.id}/turns`, { text: 'background later hold' });
+  await waitFor(async () => (await events(thread.id)).find((e) => e.type === 'tool.start' && e.data.title === 'Read task output'));
+  const urgent = (await (await post(`/api/threads/${thread.id}/turns`, { text: 'urgent', queue: true })).json()) as { id: string };
+  assert.equal((await post(`/api/threads/${thread.id}/queue/${urgent.id}/now`)).status, 204);
+  await waitFor(async () => (await turnTexts(thread.id)).includes('urgent') ? true : null);
+  await untilIdle(thread.id);
+  const ends = (await events(thread.id)).filter((e) => e.type === 'turn.done').map((e) => e.data.stopReason);
+  assert.deepEqual(ends, ['end_turn', 'cancelled', 'end_turn']);
+});
+
 test('queue: deleting a thread drops what was waiting in it', async () => {
   const thread = await newThread({ agent: 'claude' });
   await post(`/api/threads/${thread.id}/turns`, { text: 'slow' });

@@ -2534,7 +2534,7 @@ export class ThreadManager {
       effort: (thread.effort ?? undefined) as EffortLevel | undefined,
     });
     session.setSessionHooks?.({
-      turnStarted: nativeId => {
+      turnStarted: (nativeId, opts) => {
         // An upstream delegation is a real user task; captions alone never resume collaboration.
         if (this.voiceThreads.has(thread.id)) void this.coordination?.userSpoke(thread.id);
         const turnId = randomUUID();
@@ -2546,7 +2546,7 @@ export class ThreadManager {
           turnId, cancelRequested: false, since: new Date().toISOString(),
         });
         this.store.updateThread(thread.id, { status: 'running', hubTurnAt: new Date().toISOString() }, { touch: true });
-        this.emitThreadEvent(thread.id, turnId, 'turn.started', { text: '', source: 'voice', nativeTurnId: nativeId });
+        this.emitThreadEvent(thread.id, turnId, 'turn.started', { text: '', source: opts?.background ? 'background' : 'voice', nativeTurnId: nativeId });
         return this.hooksFor(thread.id, turnId);
       },
       turnFinished: (nativeId, result) => {

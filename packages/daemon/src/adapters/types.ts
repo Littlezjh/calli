@@ -52,8 +52,11 @@ export type ApprovalDecision = { optionId: string } | { cancelled: true };
  * and they never claim the prompted-turn queue.
  */
 export interface SessionHooks {
-  /** The agent began a turn nobody prompted. Returns the hooks that turn runs with. */
-  turnStarted(nativeTurnId: string): TurnHooks;
+  /**
+   * The agent began a turn nobody prompted. Returns the hooks that turn runs with. `background`
+   * marks work the agent took up on its own, such as a finished background task, not speech.
+   */
+  turnStarted(nativeTurnId: string, opts?: { background?: boolean }): TurnHooks;
   /** That turn ended, in the adapter's own stop-reason vocabulary. */
   turnFinished(nativeTurnId: string, result: { stopReason: string; error?: string }): void;
 }
