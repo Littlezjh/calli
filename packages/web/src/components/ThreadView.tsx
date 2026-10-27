@@ -20,6 +20,7 @@ import {
   durationLabel,
   groupByTurn,
   imagePathsIn,
+  liveWorkFromEvents,
   runSummary,
   splitThinking,
   splitNotes,
@@ -1156,12 +1157,14 @@ function WorkLabel({ item }: { item: Extract<Item, { kind: 'work' }> }) {
 }
 
 function WorkGroup({ item, roots }: { item: Extract<Item, { kind: 'work' }>; roots: string[] }) {
-  // Open while the turn runs so progress is visible; collapsed once it finishes.
-  const [open, setOpen] = useState(!item.done && !item.deferred);
-  // Collapse once the turn finishes; the user can still expand it afterwards.
+  // Open while the turn runs so progress is visible. Stopped turns stay open:
+  // their interrupted thoughts are the user's history, not a completed work summary.
+  const [open, setOpen] = useState(item.stopped || (!item.done && !item.deferred));
+  // Collapse once a normal turn finishes; stopped turns keep their interrupted record visible.
   useEffect(() => {
-    if (item.done) setOpen(false);
-  }, [item.done]);
+    if (item.stopped) setOpen(true);
+    else if (item.done) setOpen(false);
+  }, [item.done, item.stopped]);
   // A turn still running when the thread is opened starts folded, its steps not yet fetched, so the
   // page draws first. Then it opens: what is going on now is what the thread was opened to see.
   useEffect(() => {
@@ -1183,9 +1186,10 @@ function WorkGroup({ item, roots }: { item: Extract<Item, { kind: 'work' }>; roo
     // more() is re-created each render; the resource state is what paces the calls.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running, open, resource.value?.nextCursor, resource.loading, resource.error]);
+  const local = useMemo(() => liveWorkFromEvents(item), [item]);
   const loaded = useMemo(() => resource.value ? buildTimeline(hydrateWork(resource.value.events, item.liveEvents ?? [], resource.value.version)).items.find((i): i is Extract<Item, { kind: 'work' }> => i.kind === 'work') : undefined, [resource.value, item.liveEvents]);
   const count = item.count ?? item.steps.length;
-  const sections = workSections(loaded?.entries ?? item.entries);
+  const sections = workSections(loaded?.entries ?? local?.entries ?? item.entries);
   return (
     <div className="row work">
       <button className="work-toggle" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
@@ -1206,7 +1210,7 @@ function WorkGroup({ item, roots }: { item: Extract<Item, { kind: 'work' }>; roo
               </div>
             ) : (
               // Only the stretch at the end of a running turn is still going on.
-              <StepRun key={section.key} run={section} live={!item.done && i === sections.length - 1} roots={roots} />
+              <StepRun key={section.key} run={section} live={!item.done && i === sections.length - 1} roots={roots} fold={!item.stopped} openThoughts={!!item.stopped} />
             ),
           )}
           {!running && <ResourceMore resource={resource} />}
@@ -1232,8 +1236,8 @@ const WorkNote = memo(function WorkNote({ text }: { text: string }) {
  * where it has got to; afterwards a single "Thought · Xs" line. Either opens up to the whole text.
  * A model can think for minutes before it acts, and that must not fill the screen.
  */
-const ThinkingBlock = memo(function ThinkingBlock({ thought, live }: { thought: Thought; live: boolean }) {
-  const [open, setOpen] = useState(false);
+const ThinkingBlock = memo(function ThinkingBlock({ thought, live, defaultOpen = false }: { thought: Thought; live: boolean; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
   const resource = useHistoryResource<HistoryDetail>('detail', thought.detail, open);
   const text = resource.value?.text !== undefined ? resource.value.text + (thought.updates ?? []).filter(e => e.seq > resource.value!.version).map(e => e.text).join('') : thought.text;
   const paragraphs = useMemo(() => splitThinking(text), [text]);
@@ -1277,7 +1281,7 @@ const RUN_FOLD_MIN = 2;
  * the calls themselves. In a run that is still going on, what is in flight stays on screen as
  * itself; only what is over is folded.
  */
-function StepRun({ run, live, roots }: { run: Extract<WorkSection, { kind: 'run' }>; live: boolean; roots: string[] }) {
+function StepRun({ run, live, roots, fold, openThoughts = false }: { run: Extract<WorkSection, { kind: 'run' }>; live: boolean; roots: string[]; fold: boolean; openThoughts?: boolean }) {
   const [open, setOpen] = useState(false);
   const last = run.entries.length - 1;
   const inFlight = (i: number) => {
@@ -1287,7 +1291,7 @@ function StepRun({ run, live, roots }: { run: Extract<WorkSection, { kind: 'run'
   const row = (i: number) => {
     const entry = run.entries[i];
     return entry.kind === 'thought' ? (
-      <ThinkingBlock key={entry.thought.key} thought={entry.thought} live={live && i === last} />
+      <ThinkingBlock key={entry.thought.key} thought={entry.thought} live={live && i === last} defaultOpen={openThoughts} />
     ) : (
       <StepRow key={entry.step.id} step={entry.step} roots={roots} />
     );
@@ -1295,7 +1299,9 @@ function StepRun({ run, live, roots }: { run: Extract<WorkSection, { kind: 'run'
   const indexes = run.entries.map((_, i) => i);
   const over = indexes.filter((i) => !inFlight(i));
   const overSteps = over.map((i) => run.entries[i]).flatMap((e) => (e.kind === 'step' ? [e.step] : []));
-  if (overSteps.length < RUN_FOLD_MIN) return <>{indexes.map(row)}</>;
+  // A stopped turn already has the outer Codex-style disclosure. Opening it should reveal the
+  // work directly instead of making interrupted thoughts and calls look as though they vanished.
+  if (!fold || overSteps.length < RUN_FOLD_MIN) return <>{indexes.map(row)}</>;
 
   const summary = runSummary(overSteps);
   return (
