@@ -1270,6 +1270,7 @@ export const ja: Messages = {
   'sidebar.hostDown': 'このマシンには現在接続できません。スレッドは接続後に表示されます。',
   'sidebar.newThread': '新しいスレッド',
   'sidebar.schedules': '定期タスク',
+  'sidebar.morePages': 'その他のページ',
   'sidebar.inConversations': '会話の内容',
   'sidebar.searching': '検索中…',
   'sidebar.notFound': '会話には見つかりませんでした。',

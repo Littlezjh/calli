@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Section, Thread } from '../src/api.js';
-import { buildActivity, buildMerged, buildSidebar, handoverGroups, markTerms, searchTerms, taggedAgents, threadAttention, type HostSource } from '../src/sidebar.js';
+import { buildActivity, buildMerged, buildSidebar, handoverGroups, markTerms, navOverflow, searchTerms, taggedAgents, threadAttention, type HostSource } from '../src/sidebar.js';
 import { threadMark } from '../src/notices.js';
 
 let clock = 0;
@@ -134,6 +134,25 @@ test('by activity: what wants attention or is at work comes first, the rest by t
   assert.deepEqual(found.groups.map((g) => [g.label, ids(g.threads)]), [['优先级', ['unread-new', 'unread-old']]]);
   assert.equal(found.count, 2);
   assert.deepEqual(buildActivity([], '', now, null), { groups: [], count: 0 });
+});
+
+test('pages beyond the first two sit behind the "more" button unless on screen or still live', () => {
+  const pages = [
+    { key: 'schedules', active: false },
+    { key: 'desktop', active: false, live: false },
+    { key: 'board', active: false },
+  ];
+  assert.deepEqual(navOverflow(pages), { shown: [], hidden: pages });
+  // The page on screen and a desktop still connected stay rows of their own, in their order.
+  assert.deepEqual(navOverflow([
+    { key: 'schedules', active: true },
+    { key: 'desktop', active: false, live: true },
+    { key: 'board', active: false },
+  ]), {
+    shown: [{ key: 'schedules', active: true }, { key: 'desktop', active: false, live: true }],
+    hidden: [{ key: 'board', active: false }],
+  });
+  assert.deepEqual(navOverflow([]), { shown: [], hidden: [] });
 });
 
 test('threads in no project sit together after the projects, unless pinned or filed in a section', () => {

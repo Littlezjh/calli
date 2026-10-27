@@ -1272,6 +1272,7 @@ export const en: Messages = {
   'sidebar.hostDown': 'This machine cannot be reached right now; its threads show up once it connects.',
   'sidebar.newThread': 'New thread',
   'sidebar.schedules': 'Schedules',
+  'sidebar.morePages': 'More pages',
   'sidebar.inConversations': 'In conversations',
   'sidebar.searching': 'Searching…',
   'sidebar.notFound': 'Nothing found in conversations.',

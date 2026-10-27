@@ -3588,6 +3588,13 @@ input.picker-search {
   background: var(--active);
 }
 
+/* The "more" button: the pages it tucks away are details, not everyday rows. */
+.side-more {
+  justify-content: center;
+  width: 38px;
+  padding: 0;
+}
+
 /* The list scrolls away under the floating buttons instead of stopping at a line above them. */
 .sidebar-float {
   position: absolute;
@@ -3656,6 +3663,10 @@ input.picker-search {
   min-height: 50px;
   border-radius: var(--radius);
   font-size: 17px;
+}
+
+.compact .side-more {
+  width: 50px;
 }
 
 .compact .group-label,

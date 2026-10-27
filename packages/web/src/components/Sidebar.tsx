@@ -5,10 +5,11 @@ import { clockLabel } from '../timeline';
 import { useLongPress, useStoredFlag, useStoredSet } from '../hooks';
 import { attentionCount, threadMark, waitingLabel } from '../notices';
 import { folderName } from '../paths';
-import { buildActivity, buildMerged, buildSidebar, handoverGroups, markTerms, projectDir, SEARCH_MIN, taggedAgents, type HostSource } from '../sidebar';
+import { buildActivity, buildMerged, buildSidebar, handoverGroups, markTerms, navOverflow, projectDir, SEARCH_MIN, taggedAgents, type HostSource } from '../sidebar';
 import { timeAgo } from '../sessions';
 import { deliveredPreview } from '../timeline';
 import { HostSwitcher } from './Hosts';
+import { Menu } from './Menu';
 import type { HostIconName } from '@calli/extension-api';
 import { HostIcon } from '../extensions/ui';
 import { AgentMark, IconBell, IconChevron, IconClock, IconClose, IconDesktop, IconEdit, IconFolder, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconSidebar } from './icons';
@@ -22,6 +23,19 @@ export interface ExtensionNavEntry {
   label: string;
   icon: HostIconName;
   active: boolean;
+  onOpen: () => void;
+}
+
+/** A page the nav lists behind its "more" button: what it is called, and a state worth a glance, like a desktop still connected while minimized. */
+interface NavPage {
+  key: string;
+  label: string;
+  icon: (p: { size?: number }) => JSX.Element;
+  active: boolean;
+  /** A state to keep visible at a glance; such a page stays a row instead of hiding behind the button. */
+  live?: boolean;
+  /** What the live state says, shown on the dot and on hover. */
+  liveLabel?: string;
   onOpen: () => void;
 }
 
@@ -163,6 +177,8 @@ export function Sidebar({
   const [teamOpen, setTeamOpen] = useState<Map<string, boolean>>(new Map());
   // The search field is put away behind a button until it is asked for.
   const [searching, setSearching] = useState(false);
+  // Where the nav's "more" pages menu opened from; null when closed.
+  const [pagesMenu, setPagesMenu] = useState<[number, number] | null>(null);
   const closeSearch = () => {
     setSearch('');
     setSearching(false);
@@ -467,6 +483,14 @@ export function Sidebar({
     </nav>
   );
 
+  // The pages after "Plans": behind a "more" button, except the one on screen or one with a state to keep an eye on.
+  const pages: NavPage[] = [
+    ...(onOpenSchedules ? [{ key: 'schedules', label: t('sidebar.schedules'), icon: IconClock, active: schedulesActive, onOpen: onOpenSchedules }] : []),
+    ...(onOpenDesktop ? [{ key: 'desktop', label: t('desktop.title'), icon: IconDesktop, active: false, live: desktopRunning, liveLabel: t('desktop.running'), onOpen: onOpenDesktop }] : []),
+    ...extensionNav.map((entry) => ({ key: entry.key, label: entry.label, icon: (p: { size?: number }) => <HostIcon name={entry.icon} size={p.size} />, active: entry.active, onOpen: entry.onOpen })),
+  ];
+  const { shown: pagesShown, hidden: pagesHidden } = navOverflow(pages);
+
   const searchInput = (
     <input
       type="search"
@@ -535,18 +559,33 @@ export function Sidebar({
             {onOpenTodos && <button className={`side-link${todosActive ? ' active' : ''}`} aria-current={todosActive ? 'page' : undefined} onClick={onOpenTodos}>
               <IconList size={compact ? 21 : 17} /> {t('todos.title')}
             </button>}
-            {onOpenSchedules && <button className={`side-link${schedulesActive ? ' active' : ''}`} aria-current={schedulesActive ? 'page' : undefined} onClick={onOpenSchedules}>
-              <IconClock size={compact ? 21 : 17} /> {t('sidebar.schedules')}
-            </button>}
-            {onOpenDesktop && <button className="side-link side-desktop" title={desktopRunning ? t('desktop.running') : undefined} onClick={onOpenDesktop}>
-              <IconDesktop size={compact ? 21 : 17} /> {t('desktop.title')}
-              {desktopRunning && <span className="side-desktop-live" role="img" aria-label={t('desktop.running')} />}
-            </button>}
-            {extensionNav.map((entry) => (
-              <button key={entry.key} className={`side-link${entry.active ? ' active' : ''}`} aria-current={entry.active ? 'page' : undefined} onClick={entry.onOpen}>
-                <HostIcon name={entry.icon} size={compact ? 21 : 17} /> {entry.label}
+            {pagesShown.map((page) => (
+              <button key={page.key} className={`side-link${page.active ? ' active' : ''}`} aria-current={page.active ? 'page' : undefined} title={page.live ? page.liveLabel : undefined} onClick={page.onOpen}>
+                <page.icon size={compact ? 21 : 17} /> {page.label}
+                {page.live && <span className="side-desktop-live" role="img" aria-label={page.liveLabel} />}
               </button>
             ))}
+            {pagesHidden.length > 0 && (
+              <button
+                className="side-link side-more"
+                aria-label={t('sidebar.morePages')}
+                title={t('sidebar.morePages')}
+                aria-haspopup="menu"
+                aria-expanded={pagesMenu !== null}
+                onClick={(e) => setPagesMenu(below(e))}
+              >
+                <IconMore size={compact ? 20 : 17} />
+              </button>
+            )}
+            {pagesMenu && (
+              <Menu
+                label={t('sidebar.morePages')}
+                x={pagesMenu[0]}
+                y={pagesMenu[1]}
+                items={pagesHidden.map((page) => ({ id: page.key, label: page.label, icon: page.icon, onSelect: page.onOpen }))}
+                onClose={() => setPagesMenu(null)}
+              />
+            )}
           </div>
         )}
         {!down && groups}

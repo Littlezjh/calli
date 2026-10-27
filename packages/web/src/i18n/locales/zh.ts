@@ -1272,6 +1272,7 @@ export const zh = {
   'sidebar.hostDown': '这台机器现在连不上，它的线程要等连上才看得到。',
   'sidebar.newThread': '新线程',
   'sidebar.schedules': '定时任务',
+  'sidebar.morePages': '更多页面',
   'sidebar.inConversations': '对话内容',
   'sidebar.searching': '正在搜索…',
   'sidebar.notFound': '对话里没有找到。',

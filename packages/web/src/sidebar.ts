@@ -20,6 +20,18 @@ export function taggedAgents(agents: Array<Pick<AgentInfo, 'icon'> & { id?: stri
   return tagged;
 }
 
+/** A page the sidebar lists behind its "more" button: whether the main area shows it now, and whether it carries a state worth a glance (a desktop still connected). */
+export interface OverflowPage {
+  active: boolean;
+  live?: boolean;
+}
+
+/** The pages after "New thread" and "Plans" sit behind a "more" button — except the one on screen, or one with a state to keep an eye on, which stays a row of its own. */
+export function navOverflow<T extends OverflowPage>(pages: T[]): { shown: T[]; hidden: T[] } {
+  const own = (p: T) => p.active || p.live === true;
+  return { shown: pages.filter(own), hidden: pages.filter((p) => !own(p)) };
+}
+
 /**
  * The directory a thread counts under. A fork in a git worktree stands in a directory of its own,
  * but it is still work on the project it was forked in, so that is where it is listed.
