@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useIsNarrow } from '../hooks';
 import { IconCheck, IconChevron } from './icons';
 
@@ -140,7 +141,8 @@ export function Menu({ label, x, y, corner = 'top-left', items, onClose }: Props
 
   if (narrow) {
     const sub = items.find((e): e is MenuItem => e !== 'separator' && e.id === openSub && Boolean(e.submenu));
-    return (
+    // On the page itself: inside the drawer, its floating buttons would stay on top of the sheet.
+    return createPortal(
       <div ref={rootRef}>
         <div className="sheet-scrim" onClick={onClose} aria-hidden="true" />
         <div className="menu-panel menu-sheet" role="menu" aria-label={sub ? sub.label : label}>
@@ -158,7 +160,8 @@ export function Menu({ label, x, y, corner = 'top-left', items, onClose }: Props
             list(items, false)
           )}
         </div>
-      </div>
+      </div>,
+      document.body,
     );
   }
 

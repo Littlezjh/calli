@@ -3588,6 +3588,21 @@ input.picker-search {
   background: var(--active);
 }
 
+/* The last link and the "more" button share one row. */
+.side-nav-row {
+  display: flex;
+  gap: 4px;
+}
+
+.side-nav-row > .side-link:not(.side-more) {
+  flex: 1;
+  min-width: 0;
+}
+
+.side-nav-row > .side-more {
+  flex: none;
+}
+
 /* The "more" button: the pages it tucks away are details, not everyday rows. */
 .side-more {
   justify-content: center;
@@ -3766,6 +3781,8 @@ input.picker-search {
 
 .compact .sidebar-float {
   padding: 36px 16px calc(16px + var(--safe-bottom));
+  /* As in Codex: the buttons float over the list, with no band behind them. */
+  background: none;
 }
 
 .compact .new-thread {

@@ -550,33 +550,41 @@ export function Sidebar({
         {down && <p className="group-empty top">{t('sidebar.hostDown')}</p>}
         {!down && !search.trim() && (
           <div className="side-nav">
-            {/* On a wide screen a new thread is the first row, like Codex; a phone keeps the floating button by the thumb. */}
-            {!compact && (
-              <button className="side-link" onClick={onNew}>
-                <IconEdit size={17} /> {t('sidebar.newThread')}
-              </button>
-            )}
-            {onOpenTodos && <button className={`side-link${todosActive ? ' active' : ''}`} aria-current={todosActive ? 'page' : undefined} onClick={onOpenTodos}>
-              <IconList size={compact ? 21 : 17} /> {t('todos.title')}
-            </button>}
-            {pagesShown.map((page) => (
-              <button key={page.key} className={`side-link${page.active ? ' active' : ''}`} aria-current={page.active ? 'page' : undefined} title={page.live ? page.liveLabel : undefined} onClick={page.onOpen}>
-                <page.icon size={compact ? 21 : 17} /> {page.label}
-                {page.live && <span className="side-desktop-live" role="img" aria-label={page.liveLabel} />}
-              </button>
-            ))}
-            {pagesHidden.length > 0 && (
-              <button
-                className="side-link side-more"
-                aria-label={t('sidebar.morePages')}
-                title={t('sidebar.morePages')}
-                aria-haspopup="menu"
-                aria-expanded={pagesMenu !== null}
-                onClick={(e) => setPagesMenu(below(e))}
-              >
-                <IconMore size={compact ? 20 : 17} />
-              </button>
-            )}
+            {(() => {
+              const links = [
+                // On a wide screen a new thread is the first row, like Codex; a phone keeps the floating button by the thumb.
+                !compact && (
+                  <button key="new" className="side-link" onClick={onNew}>
+                    <IconEdit size={17} /> {t('sidebar.newThread')}
+                  </button>
+                ),
+                onOpenTodos && <button key="todos" className={`side-link${todosActive ? ' active' : ''}`} aria-current={todosActive ? 'page' : undefined} onClick={onOpenTodos}>
+                  <IconList size={compact ? 21 : 17} /> {t('todos.title')}
+                </button>,
+                ...pagesShown.map((page) => (
+                  <button key={page.key} className={`side-link${page.active ? ' active' : ''}`} aria-current={page.active ? 'page' : undefined} title={page.live ? page.liveLabel : undefined} onClick={page.onOpen}>
+                    <page.icon size={compact ? 21 : 17} /> {page.label}
+                    {page.live && <span className="side-desktop-live" role="img" aria-label={page.liveLabel} />}
+                  </button>
+                )),
+              ].filter(Boolean);
+              if (!pagesHidden.length) return links;
+              const more = (
+                <button
+                  key="more"
+                  className="side-link side-more"
+                  aria-label={t('sidebar.morePages')}
+                  title={t('sidebar.morePages')}
+                  aria-haspopup="menu"
+                  aria-expanded={pagesMenu !== null}
+                  onClick={(e) => setPagesMenu(below(e))}
+                >
+                  <IconMore size={compact ? 20 : 17} />
+                </button>
+              );
+              // The "more" button shares the last row instead of taking one of its own.
+              return [...links.slice(0, -1), <div key="last" className="side-nav-row">{links.at(-1)}{more}</div>];
+            })()}
             {pagesMenu && (
               <Menu
                 label={t('sidebar.morePages')}
