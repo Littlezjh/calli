@@ -38,10 +38,10 @@ after(async () => {
 async function open({ phone = false, theme = 'light', path = '/', viewport, waitForDemo = true } = {}) {
   const context = await browser.newContext({ viewport: viewport ?? (phone ? { width: 390, height: 844 } : { width: 1440, height: 900 }), isMobile: phone, hasTouch: phone, colorScheme: theme });
   await context.addInitScript(() => {
-    localStorage.setItem('rah.token', 'test-existing-token');
-    localStorage.setItem('rah.drafts', '{"new":{"text":"keep this draft","notes":[],"at":1}}');
-    localStorage.setItem('rah.sidebar.activity', '1');
-    localStorage.setItem('rah.sidebar.collapsed', '["keep"]');
+    localStorage.setItem('calli.token', 'test-existing-token');
+    localStorage.setItem('calli.drafts', '{"new":{"text":"keep this draft","notes":[],"at":1}}');
+    localStorage.setItem('calli.sidebar.activity', '1');
+    localStorage.setItem('calli.sidebar.collapsed', '["keep"]');
   });
   const page = await context.newPage();
   const errors = [], calls = [], missing = [], requests = [];
@@ -92,10 +92,10 @@ for (const phone of [false, true]) for (const theme of ['light', 'dark']) {
         const scroller = document.querySelector('.main .scroller').getBoundingClientRect();
         return notice.bottom <= scroller.top + 1;
       }), true, 'the notice must not overlap the conversation');
-      assert.equal(await page.evaluate(() => localStorage.getItem('rah.token')), 'test-existing-token');
-      assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('rah.drafts')).new.text), 'keep this draft');
-      assert.equal(await page.evaluate(() => localStorage.getItem('rah.sidebar.activity')), '1');
-      assert.equal(await page.evaluate(() => localStorage.getItem('rah.sidebar.collapsed')), '["keep"]');
+      assert.equal(await page.evaluate(() => localStorage.getItem('calli.token')), 'test-existing-token');
+      assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('calli.drafts')).new.text), 'keep this draft');
+      assert.equal(await page.evaluate(() => localStorage.getItem('calli.sidebar.activity')), '1');
+      assert.equal(await page.evaluate(() => localStorage.getItem('calli.sidebar.collapsed')), '["keep"]');
       assert.deepEqual(calls, []);
       assert.deepEqual(errors, []);
       assert.deepEqual(missing, []);
@@ -134,7 +134,7 @@ for (const phone of [false, true]) for (const theme of ['light', 'dark']) {
         await menu.waitFor({ state: 'detached' });
         const expected = mode === 'system' ? theme : mode;
         await page.waitForFunction(value => document.documentElement.dataset.theme === value && document.querySelector('iframe').contentDocument.documentElement.dataset.theme === value, expected);
-        assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('limi.site.appearance')).mode), mode);
+        assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('calli.site.appearance')).mode), mode);
         if (mode === 'light') {
           await page.reload();
           await page.locator('iframe.is-ready').waitFor();
@@ -190,7 +190,7 @@ test('the offscreen walkthrough waits to load and keeps the site assets small', 
     await page.waitForTimeout(250);
     assert.equal(await page.locator('iframe').count(), 0);
     assert.equal(requests.some(url => /\/demo\/|\/assets\/demo-/.test(url)), false);
-    assert.ok((await stat(resolve(root, 'limi-icon.png'))).size < 40_000);
+    assert.ok((await stat(resolve(root, 'calli-icon.png'))).size < 40_000);
     await assert.rejects(stat(resolve(root, 'manifest.webmanifest')), { code: 'ENOENT' });
     await page.getByRole('link', { name: '立即体验' }).click();
     await page.locator('iframe.is-ready').waitFor({ timeout: 15_000 });
@@ -254,7 +254,7 @@ for (const phone of [false, true]) for (const theme of ['light', 'dark']) {
     const prefix = `${shots}/${phone ? 'phone' : 'desktop'}-${theme}`;
     const example = name => page.locator('.site-demo-tabs').getByRole('button', { name, exact: false });
     try {
-      await page.evaluate(() => localStorage.setItem('rah.ext.board.filters.v1', 'keep existing filters'));
+      await page.evaluate(() => localStorage.setItem('calli.ext.board.filters.v1', 'keep existing filters'));
       await demo.getByRole('heading', { name: '分头做事，一起交付。', exact: true }).waitFor();
       await page.locator('#collaboration').scrollIntoViewIfNeeded();
       await page.getByRole('heading', { name: '让不同 agent，一起把事做好。', exact: true }).waitFor();
@@ -298,7 +298,7 @@ for (const phone of [false, true]) for (const theme of ['light', 'dark']) {
       const frame = page.frames().find(frame => frame.url().includes('/demo/'));
       assert.equal(await frame.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
-      assert.equal(await page.evaluate(() => localStorage.getItem('rah.ext.board.filters.v1')), 'keep existing filters');
+      assert.equal(await page.evaluate(() => localStorage.getItem('calli.ext.board.filters.v1')), 'keep existing filters');
       assert.deepEqual(errors, []);
       assert.deepEqual(calls, []);
       assert.deepEqual(missing, []);
@@ -385,12 +385,12 @@ for (const phone of [false, true]) for (const theme of ['light', 'dark']) {
       await page.evaluate(() => scrollBy(0, document.querySelector('.site-demo-window').getBoundingClientRect().top - 85));
       await page.screenshot({ path: `${prefix}-countdown.png` });
       await demo.getByText('接手自 Claude Code · 额度快用完', { exact: true }).waitFor();
-      await demo.getByText(/我已通过 limi handover 读到交接摘要/).waitFor();
+      await demo.getByText(/我已通过 calli handover 读到交接摘要/).waitFor();
       await demo.locator('.showcase-handover-chain').click();
       assert.equal(await demo.locator('.handover-chain .handover-member').count(), 2);
       assert.equal(await demo.locator('.showcase-handover-marks svg').count(), 2);
       await demo.locator('.showcase-handover .scroller').evaluate(el => { el.scrollTop = el.scrollHeight; });
-      const reply = await demo.getByText(/我已通过 limi handover 读到交接摘要/).boundingBox();
+      const reply = await demo.getByText(/我已通过 calli handover 读到交接摘要/).boundingBox();
       const scroller = await demo.locator('.showcase-handover .scroller').boundingBox();
       assert.ok(reply.y >= scroller.y && reply.y + reply.height <= scroller.y + scroller.height + 1, 'successor reply stays visible with the chain expanded');
       await page.screenshot({ path: `${prefix}-result.png` });

@@ -79,7 +79,7 @@ test('a handover or imported turn is not listed as one of the user\'s asks', () 
 
 test('the brief handover points at the source and keeps progress to a few lines', () => {
   const head = handoverBrief({ threadId: 'src', from: 'Claude Code 3', cwd: '/work', worktree: { root: '/work', branch: 'feat' }, lead: true });
-  assert.match(head, /limi history src/);
+  assert.match(head, /calli history src/);
   assert.match(head, /分支 feat/);
   assert.match(head, /主控/);
   assert.doesNotMatch(handoverBrief({ threadId: 'src', from: 'pi', cwd: '/work' }), /主控/);

@@ -3,9 +3,9 @@ import { readFileSync, writeFileSync } from 'node:fs';
 
 // Deliberately use the same CLI a real agent would execute, with its injected environment.
 export function coordinationFixture(text) {
-  const body = text.split(/<limi-(?:coordination|team)>/)[0].trim();
-  if (text.includes('<limi-team>')) {
-    if (body.endsWith('TEAM_ENV')) return `limi-ready:${Boolean(process.env.LIMI_SOCKET && process.env.LIMI_KEY)}`;
+  const body = text.split(/<calli-(?:coordination|team)>/)[0].trim();
+  if (text.includes('<calli-team>')) {
+    if (body.endsWith('TEAM_ENV')) return `calli-ready:${Boolean(process.env.CALLI_TEAM_SOCKET && process.env.CALLI_TEAM_KEY)}`;
     if (body.endsWith('TEAM_FINISH')) return 'Task finished after continuation.';
     if (body.endsWith('TEAM_STOP')) return '@dev slow\n@reviewer TEAM_MULTI_REVIEW';
     if (body.endsWith('TEAM_SHORT')) return '@dev TEAM_SHORT_WORK';
@@ -36,23 +36,23 @@ export function coordinationFixture(text) {
     if (body.endsWith('TEAM_LOOP')) return '@lead Continue TEAM_BUDGET';
     if (body.endsWith('TEAM_BUDGET')) return '@dev Loop TEAM_LOOP';
   }
-  if (body.endsWith('LIMI_REPORT')) return '文档审查完成。\n\n已检查接口约定、目录分工和异常处理。建议补充重启后的恢复步骤，测试覆盖其余预期行为。';
-  if (body === 'LIMI_ENV' || body.endsWith('\nLIMI_ENV')) return `limi-ready:${Boolean(process.env.LIMI_SOCKET && process.env.LIMI_KEY)};cwd:${process.cwd()}`;
-  if (body === 'LIMI_HANDOVER_ENV') {
-    const ready = Boolean(process.env.LIMI_HANDOVER_SOCKET && process.env.LIMI_HANDOVER_KEY);
-    return `handover-ready:${ready};collaboration:${Boolean(process.env.LIMI_SOCKET && process.env.LIMI_KEY)};${ready ? execFileSync('limi', ['handover'], { encoding: 'utf8' }).trim() : ''}`;
+  if (body.endsWith('CALLI_REPORT')) return '文档审查完成。\n\n已检查接口约定、目录分工和异常处理。建议补充重启后的恢复步骤，测试覆盖其余预期行为。';
+  if (body === 'CALLI_ENV' || body.endsWith('\nCALLI_ENV')) return `calli-ready:${Boolean(process.env.CALLI_TEAM_SOCKET && process.env.CALLI_TEAM_KEY)};cwd:${process.cwd()}`;
+  if (body === 'CALLI_HANDOVER_ENV') {
+    const ready = Boolean(process.env.CALLI_HANDOVER_SOCKET && process.env.CALLI_HANDOVER_KEY);
+    return `handover-ready:${ready};collaboration:${Boolean(process.env.CALLI_TEAM_SOCKET && process.env.CALLI_TEAM_KEY)};${ready ? execFileSync('calli', ['handover'], { encoding: 'utf8' }).trim() : ''}`;
   }
-  const command = /LIMI_COMMAND:([A-Za-z0-9+/=]+)/.exec(body);
+  const command = /CALLI_COMMAND:([A-Za-z0-9+/=]+)/.exec(body);
   if (command && !body.startsWith('[协作消息')) {
     const { args, text: message = '' } = JSON.parse(Buffer.from(command[1], 'base64').toString());
-    return execFileSync('limi', args, { input: message, encoding: 'utf8' }).trim();
+    return execFileSync('calli', args, { input: message, encoding: 'utf8' }).trim();
   }
-  if (body.endsWith('LIMI_WRITE')) {
+  if (body.endsWith('CALLI_WRITE')) {
     writeFileSync('review-document.md', '# Design\n\nFirst draft.\n');
-    execFileSync('limi', ['send', 'reviewer', '--message-file', '-', '--request-id', 'review-draft'], { input: 'LIMI_REVIEW', encoding: 'utf8' });
+    execFileSync('calli', ['send', 'reviewer', '--message-file', '-', '--request-id', 'review-draft'], { input: 'CALLI_REVIEW', encoding: 'utf8' });
     return '文档初稿已写入 review-document.md，已请求审查。';
   }
-  if (body.endsWith('LIMI_REVIEW')) return `审查完成：${readFileSync('review-document.md', 'utf8').includes('First draft') ? '请补充异常处理。' : '未找到初稿。'}`;
+  if (body.endsWith('CALLI_REVIEW')) return `审查完成：${readFileSync('review-document.md', 'utf8').includes('First draft') ? '请补充异常处理。' : '未找到初稿。'}`;
   if (body.includes('请补充异常处理。') && body.startsWith('[协作消息')) {
     writeFileSync('review-document.md', '# Design\n\nFirst draft.\n\n## Errors\nReport failures.\n');
     return '已根据审查补充异常处理。';

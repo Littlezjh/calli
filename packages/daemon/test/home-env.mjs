@@ -2,6 +2,6 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-const testHome = mkdtempSync(join(tmpdir(), 'limi-test-home-'));
+const testHome = mkdtempSync(join(tmpdir(), 'calli-test-home-'));
 process.env.HOME = testHome;
 process.on('exit', () => rmSync(testHome, { recursive: true, force: true }));

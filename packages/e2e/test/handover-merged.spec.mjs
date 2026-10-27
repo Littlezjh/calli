@@ -5,7 +5,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
 
-const shots = '/tmp/rah-handover-merged-shots';
+const shots = '/tmp/calli-handover-merged-shots';
 test('three handover segments load on upward navigation, keep their action targets and send to the latest recipient', async () => {
   const hub = await startDaemon();
   let browser;

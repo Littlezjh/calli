@@ -20,7 +20,7 @@ import type { AgentAdapter } from '../src/adapters/types.js';
 const here = dirname(fileURLToPath(import.meta.url));
 const exec = promisify(execFile);
 async function setup(mode = 'success') {
-  const dir = mkdtempSync(join(tmpdir(), 'limi-web-'));
+  const dir = mkdtempSync(join(tmpdir(), 'calli-web-'));
   const cwd = join(dir, 'project'); mkdirSync(cwd);
   const adapters = new Map<string, AgentAdapter>([
     ['research-account', new CodexAppServerAdapter([process.execPath, join(here, 'fixtures/fake-codex.mjs')], { FAKE_CODEX_WEB: mode })],
@@ -28,12 +28,12 @@ async function setup(mode = 'success') {
   ]);
   const store = new Store(dir);
   const manager = new ThreadManager(store, adapters, new Workdirs([cwd], join(dir, 'dirs.json'), join(dir, 'scratch')), new AttachmentStore(dir));
-  const socket = join(dir, 'ipc/limi.sock');
+  const socket = join(dir, 'ipc/calli.sock');
   const service = new BorrowingService(store, manager, adapters, dir, socket);
   const server = borrowingServer(service); await listenPrivate(server, socket);
   const root = await manager.createThread({ agent: 'research-account', cwd });
   const env = { ...process.env, ...service.environment(root.id) };
-  const cli = async (...args: string[]) => JSON.parse((await exec(process.execPath, [join(here, '../bin/limi'), ...args], { env })).stdout);
+  const cli = async (...args: string[]) => JSON.parse((await exec(process.execPath, [join(here, '../bin/calli'), ...args], { env })).stdout);
   const call = (body: unknown) => service.command(root.id, body) as Promise<any>;
   return { dir, adapters, store, manager, service, call, cli, async close() {
     await service.dispose(); await manager.shutdown(); await new Promise<void>(r => server.close(() => r()));

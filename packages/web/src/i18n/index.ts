@@ -27,7 +27,7 @@ export const LOCALES: ReadonlyArray<{ id: Locale; name: string; tag: string }> =
 const DICTIONARIES: Record<Locale, Messages> = { zh, en, ja };
 
 /** Where the choice is kept on this device. */
-export const LOCALE_KEY = 'rah.locale';
+export const LOCALE_KEY = 'calli.locale';
 
 /** The first of the browser's languages that the hub speaks; English when it speaks none of them. */
 export function detectLocale(languages: readonly string[]): Locale {

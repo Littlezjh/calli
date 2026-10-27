@@ -20,7 +20,7 @@ const defaults = defaultInstances({
 let dir: string;
 
 before(() => {
-  dir = mkdtempSync(join(tmpdir(), 'rah-agents-'));
+  dir = mkdtempSync(join(tmpdir(), 'calli-agents-'));
 });
 
 after(() => {
@@ -45,7 +45,7 @@ test('fromEnv prefers agents.json over the defaults, and instance labels reach t
 });
 
 test('add persists to agents.json and a later fromEnv reads it back', async () => {
-  const dataDir = mkdtempSync(join(tmpdir(), 'rah-agents-env-'));
+  const dataDir = mkdtempSync(join(tmpdir(), 'calli-agents-env-'));
   const registry = AgentRegistry.fromEnv({ dataDir, env: {}, defaults });
   await registry.add({ id: 'agy2', adapter: 'agy', command: ['/opt/agy2/bin/agy2'] });
   assert.ok(registry.adapters.has('agy2'));
@@ -64,7 +64,7 @@ test('add persists to agents.json and a later fromEnv reads it back', async () =
 });
 
 test('update renames and remove drops an instance from agents.json', async () => {
-  const dataDir = mkdtempSync(join(tmpdir(), 'rah-agents-manage-'));
+  const dataDir = mkdtempSync(join(tmpdir(), 'calli-agents-manage-'));
   const registry = AgentRegistry.fromEnv({ dataDir, env: {}, defaults });
   await registry.add({ id: 'agy2', adapter: 'agy', command: ['/opt/agy2/agy2'] });
 
@@ -85,7 +85,7 @@ test('update renames and remove drops an instance from agents.json', async () =>
 });
 
 test('update persists hiding and restoring without losing instance settings or rebuilding its adapter', async () => {
-  const dataDir = mkdtempSync(join(tmpdir(), 'rah-agents-hidden-'));
+  const dataDir = mkdtempSync(join(tmpdir(), 'calli-agents-hidden-'));
   try {
     const registry = AgentRegistry.fromEnv({ dataDir, env: {}, defaults });
     const instance = await registry.add({ id: 'pi2', adapter: 'pi', label: 'Second', command: ['node', 'pi.mjs'], env: { PI_CODING_AGENT_DIR: '/tmp/pi-two' }, account: 'second@example.com' });
@@ -118,7 +118,7 @@ test('update rejects empty or invalid patches without partially changing the ins
 });
 
 test('the built-in command survives deleting the instance that supplied it', async () => {
-  const dataDir = mkdtempSync(join(tmpdir(), 'rah-agents-builtin-'));
+  const dataDir = mkdtempSync(join(tmpdir(), 'calli-agents-builtin-'));
   const registry = AgentRegistry.fromEnv({ dataDir, env: {}, defaults });
   await registry.remove('claude');
   await registry.add({ id: 'claude-2', adapter: 'claude', env: { CLAUDE_CONFIG_DIR: '/tmp/claude-two' } });
@@ -242,7 +242,7 @@ test('discover offers zcode for existing installations and add makes it availabl
 // The stub claude the account-discovery tests point the adapter at: it answers `auth status`
 // from the config directory it was given, so each directory below stands for one account.
 function fakeClaudeHome(): string {
-  const home = mkdtempSync(join(tmpdir(), 'rah-accounts-home-'));
+  const home = mkdtempSync(join(tmpdir(), 'calli-accounts-home-'));
   for (const name of ['.claude', '.claude-2', '.claude-3', '.claude-out', '.claude-broken']) {
     mkdirSync(join(home, name));
   }
@@ -271,9 +271,9 @@ function fakeClaudeBin(home: string): string {
 
 test('account discovery offers signed-in accounts no instance uses', async () => {
   const home = fakeClaudeHome();
-  const oldBin = process.env.RAH_CLAUDE_BIN;
+  const oldBin = process.env.CALLI_CLAUDE_BIN;
   const oldHome = process.env.HOME;
-  process.env.RAH_CLAUDE_BIN = fakeClaudeBin(home);
+  process.env.CALLI_CLAUDE_BIN = fakeClaudeBin(home);
   process.env.HOME = home;
   try {
     // The built-in claude has no env of its own, so it claims the default account (~/.claude);
@@ -296,8 +296,8 @@ test('account discovery offers signed-in accounts no instance uses', async () =>
       },
     ]);
   } finally {
-    if (oldBin === undefined) delete process.env.RAH_CLAUDE_BIN;
-    else process.env.RAH_CLAUDE_BIN = oldBin;
+    if (oldBin === undefined) delete process.env.CALLI_CLAUDE_BIN;
+    else process.env.CALLI_CLAUDE_BIN = oldBin;
     if (oldHome === undefined) delete process.env.HOME;
     else process.env.HOME = oldHome;
   }
@@ -305,9 +305,9 @@ test('account discovery offers signed-in accounts no instance uses', async () =>
 
 test('account discovery still sees an adapter after every instance of it is removed', async () => {
   const home = fakeClaudeHome();
-  const oldBin = process.env.RAH_CLAUDE_BIN;
+  const oldBin = process.env.CALLI_CLAUDE_BIN;
   const oldHome = process.env.HOME;
-  process.env.RAH_CLAUDE_BIN = fakeClaudeBin(home);
+  process.env.CALLI_CLAUDE_BIN = fakeClaudeBin(home);
   process.env.HOME = home;
   try {
     const registry = new AgentRegistry(defaults.filter((i) => i.adapter !== 'claude'), null, defaults);
@@ -316,8 +316,8 @@ test('account discovery still sees an adapter after every instance of it is remo
     assert.equal(found.find((a) => a.id === 'claude')?.label, 'Claude Code');
     assert.equal(found.find((a) => a.id === 'claude-3')?.label, 'Claude Code 3');
   } finally {
-    if (oldBin === undefined) delete process.env.RAH_CLAUDE_BIN;
-    else process.env.RAH_CLAUDE_BIN = oldBin;
+    if (oldBin === undefined) delete process.env.CALLI_CLAUDE_BIN;
+    else process.env.CALLI_CLAUDE_BIN = oldBin;
     if (oldHome === undefined) delete process.env.HOME;
     else process.env.HOME = oldHome;
   }
@@ -325,9 +325,9 @@ test('account discovery still sees an adapter after every instance of it is remo
 
 test('account discovery skips accounts an instance already links, and ids keep counting', async () => {
   const home = fakeClaudeHome();
-  const oldBin = process.env.RAH_CLAUDE_BIN;
+  const oldBin = process.env.CALLI_CLAUDE_BIN;
   const oldHome = process.env.HOME;
-  process.env.RAH_CLAUDE_BIN = fakeClaudeBin(home);
+  process.env.CALLI_CLAUDE_BIN = fakeClaudeBin(home);
   process.env.HOME = home;
   try {
     const instances: AgentInstance[] = [
@@ -347,8 +347,8 @@ test('account discovery skips accounts an instance already links, and ids keep c
       },
     ]);
   } finally {
-    if (oldBin === undefined) delete process.env.RAH_CLAUDE_BIN;
-    else process.env.RAH_CLAUDE_BIN = oldBin;
+    if (oldBin === undefined) delete process.env.CALLI_CLAUDE_BIN;
+    else process.env.CALLI_CLAUDE_BIN = oldBin;
     if (oldHome === undefined) delete process.env.HOME;
     else process.env.HOME = oldHome;
   }
@@ -375,7 +375,7 @@ test('supported lists all built-in adapters with labels and install guides', () 
 test('AgentRegistry.fromEnv supports an explicitly empty agents array', () => {
   const registry = AgentRegistry.fromEnv({
     dataDir: dir,
-    env: { RAH_AGENTS_JSON: JSON.stringify({ agents: [] }) },
+    env: { CALLI_AGENTS_JSON: JSON.stringify({ agents: [] }) },
     defaults,
   });
   assert.deepEqual(registry.list(), []);

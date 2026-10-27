@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
-import type { ExtensionManifest } from '@rah/extension-api';
+import type { ExtensionManifest } from '@calli/extension-api';
 import { Store } from '../src/store.js';
 import { ThreadManager } from '../src/threads.js';
 import { AttachmentStore } from '../src/attachments.js';
@@ -23,7 +23,7 @@ const manifest: ExtensionManifest = {
 };
 
 async function fixture(t: TestContext, supported = true) {
-  const dir = mkdtempSync(join(tmpdir(), 'rah-voice-http-'));
+  const dir = mkdtempSync(join(tmpdir(), 'calli-voice-http-'));
   const store = new Store(dir);
   const manager = new ThreadManager(store, new Map(), [dir], new AttachmentStore(dir));
   const extensions = new ExtensionHost({ store: store.extensions, source: manager, catalog: [manifest] });
@@ -59,7 +59,7 @@ async function fixture(t: TestContext, supported = true) {
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const request = (path: string, method = 'GET', body?: unknown, ownerId = owner, auth = 'test-token') => fetch(base + '/api/' + path, {
-    method, headers: { authorization: `Bearer ${auth}`, 'content-type': 'application/json', 'x-rah-voice-owner': ownerId },
+    method, headers: { authorization: `Bearer ${auth}`, 'content-type': 'application/json', 'x-calli-voice-owner': ownerId },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const install = () => request('extensions/voice/install', 'POST', { granted: ['voice.control'] });
@@ -72,7 +72,7 @@ async function fixture(t: TestContext, supported = true) {
     store.close();
     rmSync(dir, { recursive: true, force: true });
   });
-  return { voice, extensions, adapters, store, request, install, open, transports, probes: () => probes };
+  return { voice, extensions, adapters, store, base, request, install, open, transports, probes: () => probes };
 }
 
 test('voice HTTP authenticates before probing and blocks install without verified support', async t => {
@@ -94,6 +94,18 @@ test('voice HTTP requires explicit installation, owner header and an existing bo
   assert.equal((await h.request('voice', 'POST', { extensionId: 'other', threadId: 'thread', offer: 'sdp' })).status, 400);
   assert.equal((await h.request('voice', 'POST', { extensionId: 'voice', threadId: 'thread', offer: 'x'.repeat(65537) })).status, 400);
   assert.equal(h.transports.length, 0);
+});
+
+test('a page loaded before the rename to Calli still names its owner in the old header', async t => {
+  const h = await fixture(t);
+  await h.install();
+  const opened = await fetch(h.base + '/api/voice', {
+    method: 'POST', headers: { authorization: 'Bearer test-token', 'content-type': 'application/json', 'x-rah-voice-owner': owner },
+    body: JSON.stringify({ extensionId: 'voice', threadId: 'thread', offer: 'PRIVATE_OFFER' }),
+  });
+  assert.equal(opened.status, 201);
+  const session = await opened.json();
+  assert.equal((await h.request(`voice/${session.id}`, 'DELETE')).status, 204, 'the same owner under the new header');
 });
 
 test('voice HTTP owner isolation, negotiation, heartbeat and idempotent stop', async t => {

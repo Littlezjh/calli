@@ -24,7 +24,9 @@ export const PREVIEW_TTL_S = 30 * 60;
 /** How big a served file may be. Previews are pages and their assets, not videos. */
 const MAX_BYTES = 8 * 1024 * 1024;
 
-export const PREVIEW_COOKIE = 'rah-preview';
+export const PREVIEW_COOKIE = 'calli-preview';
+/** Its name before the rename to Calli; a grant set then still works until it expires. */
+export const LEGACY_PREVIEW_COOKIE = 'rah-preview';
 
 /** The cookie value: a grant for one thread's files, valid until it expires. */
 export function makeGrant(secret: string, threadId: string, now = Date.now()): { value: string; maxAge: number } {

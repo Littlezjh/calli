@@ -1949,8 +1949,8 @@ html.list-open body {
 }
 
 /* A noted passage in the conversation, while its note waits in the box. */
-::highlight(rah-note),
-::highlight(rah-note-pending) {
+::highlight(calli-note),
+::highlight(calli-note-pending) {
   background-color: color-mix(in srgb, var(--positive) 22%, transparent);
 }
 

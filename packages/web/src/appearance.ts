@@ -31,7 +31,7 @@ export const MODES: ReadonlyArray<{ id: Mode; name: string }> = [
 export const DEFAULT_APPEARANCE: Appearance = { mode: 'system', palette: 'paper' };
 
 /** Where the choice is kept. index.html reads the same key before the first paint. */
-export const APPEARANCE_KEY = 'rah.appearance';
+export const APPEARANCE_KEY = 'calli.appearance';
 
 /**
  * Reads a saved choice. Each half falls back on its own: a palette this build does not know would

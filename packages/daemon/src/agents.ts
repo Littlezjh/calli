@@ -214,7 +214,7 @@ export class AgentRegistry {
   }): AgentRegistry {
     const file = join(opts.dataDir, 'agents.json');
     let instances: AgentInstance[] | null = null;
-    const inline = opts.env.RAH_AGENTS_JSON;
+    const inline = opts.env.CALLI_AGENTS_JSON;
     const source = inline ?? (existsSync(file) ? readFileSync(file, 'utf8') : null);
     if (source) {
       try {

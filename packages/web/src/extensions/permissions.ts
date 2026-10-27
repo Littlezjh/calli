@@ -1,4 +1,4 @@
-import type { ExtensionState, Permission } from '@rah/extension-api';
+import type { ExtensionState, Permission } from '@calli/extension-api';
 
 /** Consent belongs to this exact manifest, including when an update removes a permission. */
 export function exactGrant(state: ExtensionState): boolean {

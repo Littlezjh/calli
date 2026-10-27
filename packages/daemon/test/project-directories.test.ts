@@ -7,7 +7,7 @@ import { HttpError } from '../src/errors.js';
 import { listProjectDirectories } from '../src/project-directories.js';
 
 test('project browsing lists folders lazily without extending workdirs, and confines symlinks', () => {
-  const root = mkdtempSync(join(tmpdir(), 'rah-project-browser-'));
+  const root = mkdtempSync(join(tmpdir(), 'calli-project-browser-'));
   const home = join(root, 'home');
   const configured = join(root, 'configured');
   const outside = join(root, 'outside');

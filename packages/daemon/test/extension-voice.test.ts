@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { ExtensionManifest, ExtensionState } from '@rah/extension-api';
+import type { ExtensionManifest, ExtensionState } from '@calli/extension-api';
 import { createExtensionVoice } from '../src/extension-voice.js';
 import { ExtensionHost } from '../src/extension-host.js';
 import { Store } from '../src/store.js';
@@ -16,7 +16,7 @@ const manifest: ExtensionManifest = { id: 'voice', version: '1.0.0', apiVersion:
 const flush = () => new Promise<void>(resolve => setImmediate(resolve));
 
 function setup(catalog = [manifest]) {
-  const dir = mkdtempSync(join(tmpdir(), 'rah-extension-voice-'));
+  const dir = mkdtempSync(join(tmpdir(), 'calli-extension-voice-'));
   const store = new Store(dir);
   const extensions = new ExtensionHost({
     store: store.extensions, catalog,

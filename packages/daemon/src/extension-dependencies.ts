@@ -3,7 +3,7 @@ import type {
   ExtensionRequirements,
   ExtensionRequirementStatus,
   KnownAgentCapability,
-} from '@rah/extension-api';
+} from '@calli/extension-api';
 
 /** All currently known agent capabilities that can be declared in `requires.agentCapabilities`. */
 export const KNOWN_AGENT_CAPABILITIES: ReadonlySet<KnownAgentCapability> = new Set<KnownAgentCapability>([

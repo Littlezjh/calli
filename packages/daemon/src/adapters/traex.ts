@@ -197,7 +197,7 @@ export class TraexAcpAdapter extends AcpAdapter {
   }
 
   async sessionLocation(agentSessionId: string | null, cwd: string) {
-    const configDir = configDirectory(this.env, 'RAH_TRAEX_HOME', ['.trae', 'cli'], cwd);
+    const configDir = configDirectory(this.env, 'CALLI_TRAEX_HOME', ['.trae', 'cli'], cwd);
     const sessionPath = await findSessionFile(join(configDir, 'sessions'), agentSessionId, 3, (name, id) => name.startsWith('rollout-') && name.endsWith(`-${id}.jsonl`));
     return { configDir, sessionPath };
   }
@@ -215,7 +215,7 @@ export class TraexAcpAdapter extends AcpAdapter {
    */
   artifactDirs(agentSessionId: string): string[] {
     if (!/^[0-9a-f-]{8,64}$/i.test(agentSessionId)) return [];
-    const home = this.env.RAH_TRAEX_HOME || process.env.RAH_TRAEX_HOME || join(homedir(), '.trae', 'cli');
+    const home = this.env.CALLI_TRAEX_HOME || process.env.CALLI_TRAEX_HOME || join(homedir(), '.trae', 'cli');
     const sessions = join(home, 'sessions');
     try {
       const years = readdirSync(sessions).filter((d) => /^\d{4}$/.test(d));

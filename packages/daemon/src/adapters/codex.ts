@@ -695,7 +695,7 @@ class CodexSession implements AgentSession {
       const turn = this.turn;
       const fail = (text: string) => ({ success: false, contentItems: [{ type: 'inputText', text }] });
       if (!turn || turn.cancelRequested || params?.threadId !== this.agentSessionId || !params?.turnId
-        || params.tool !== 'limi_computer' || params.namespace || typeof params.callId !== 'string') return fail('Unknown or inactive browser tool call.');
+        || params.tool !== 'calli_computer' || params.namespace || typeof params.callId !== 'string') return fail('Unknown or inactive browser tool call.');
       if (this.computerCalls.has(params.callId)) return fail('Duplicate browser call ID; the action was not repeated.');
       this.computerCalls.add(params.callId);
       try {
@@ -1339,7 +1339,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
     );
 
     try {
-      await peer.request('initialize', { clientInfo: { name: 'remote-agent-hub', title: 'Limi', version: '0.1.0' }, capabilities: { experimentalApi: true } });
+      await peer.request('initialize', { clientInfo: { name: 'calli', title: 'Calli', version: '0.1.0' }, capabilities: { experimentalApi: true } });
       peer.notify('initialized', {});
 
       const mode = opts.permissionMode ? CODEX_MODES[opts.permissionMode] : null;
@@ -1406,7 +1406,7 @@ export class CodexAppServerAdapter implements AgentAdapter {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const run = async () => {
-        await peer.request('initialize', { clientInfo: { name: 'remote-agent-hub', title: 'Limi', version: '0.1.0' }, capabilities: { experimentalApi: true } });
+        await peer.request('initialize', { clientInfo: { name: 'calli', title: 'Calli', version: '0.1.0' }, capabilities: { experimentalApi: true } });
         peer.notify('initialized', {});
         return job(peer);
       };

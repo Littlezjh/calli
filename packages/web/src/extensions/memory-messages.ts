@@ -1,4 +1,4 @@
-import type { MemoryMessages } from '@rah/extension-api';
+import type { MemoryMessages } from '@calli/extension-api';
 import { t } from '../i18n';
 
 export function memoryMessages(): MemoryMessages {

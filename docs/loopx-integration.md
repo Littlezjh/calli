@@ -49,4 +49,4 @@ HTTP 入口均沿用 Hub 鉴权：
 
 自动化覆盖外部安装、校验和、权限、关联撤销、进程退出/取消、升级握手失败保留旧版、回退、卸载清理、重启恢复及多目标读取。浏览器测试覆盖外部包安装与关联、会话/看板/详情和停用卸载，分别检查桌面/手机尺寸及亮暗主题，并人工查看截图。
 
-本次验收：`npm run typecheck && npm test && npm run build` 通过；单元与集成测试共 674 项通过，1 项原有真实 zcode 测试跳过。LoopX 浏览器测试 3 项和原有扩展浏览器回归 8 项通过。安装包可通过 `npm pack -w @rah/ext-loopx` 独立生成；未重启当前运行的 Hub，也未在用户的 agent 环境自动安装 LoopX。
+本次验收：`npm run typecheck && npm test && npm run build` 通过；单元与集成测试共 674 项通过，1 项原有真实 zcode 测试跳过。LoopX 浏览器测试 3 项和原有扩展浏览器回归 8 项通过。安装包可通过 `npm pack -w @calli/ext-loopx` 独立生成；未重启当前运行的 Hub，也未在用户的 agent 环境自动安装 LoopX。

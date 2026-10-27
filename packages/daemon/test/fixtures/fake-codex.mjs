@@ -211,21 +211,21 @@ const runTurn = (text, turnId, done) => {
   const collaboration = coordinationFixture(text);
   if (collaboration !== null) { say(collaboration); done(); return; }
 
-  if (process.env.FAKE_CODEX_COMPUTER && text.startsWith('Use limi_computer')) {
+  if (process.env.FAKE_CODEX_COMPUTER && text.startsWith('Use calli_computer')) {
     const mode = process.env.FAKE_CODEX_COMPUTER;
-    if (!dynamicTools.some(t => t.type === 'function' && t.name === 'limi_computer')) { say('Missing dynamic tool.'); done(); return; }
+    if (!dynamicTools.some(t => t.type === 'function' && t.name === 'calli_computer')) { say('Missing dynamic tool.'); done(); return; }
     const url = /navigating to (\S+)/.exec(text)?.[1];
     const actions = mode === 'no-evidence' ? [] : [
       { action: 'navigate', url }, { action: 'click', x: 150, y: 120 },
-      { action: 'type', text: 'Limi' }, { action: 'click', x: 100, y: 180 }, { action: 'finish' },
+      { action: 'type', text: 'Calli' }, { action: 'click', x: 100, y: 180 }, { action: 'finish' },
     ];
     void (async () => {
       for (const args of actions) {
         const id = nextServerRequestId++, callId = `computer-${id}`;
-        const item = { type: 'dynamicToolCall', id: callId, tool: 'limi_computer', arguments: args, status: 'inProgress' };
+        const item = { type: 'dynamicToolCall', id: callId, tool: 'calli_computer', arguments: args, status: 'inProgress' };
         notify('item/started', { turnId, item });
         const response = new Promise(resolve => awaitingTool.set(id, resolve));
-        out({ jsonrpc: '2.0', id, method: 'item/tool/call', params: { threadId, turnId: mode === 'wrong-turn' ? 'wrong-turn' : turnId, callId, tool: 'limi_computer', arguments: args } });
+        out({ jsonrpc: '2.0', id, method: 'item/tool/call', params: { threadId, turnId: mode === 'wrong-turn' ? 'wrong-turn' : turnId, callId, tool: 'calli_computer', arguments: args } });
         const result = await response;
         if (activeTurn !== turnId) return;
         notify('item/completed', { turnId, item: { ...item, status: result?.success ? 'completed' : 'failed', ...result } });
@@ -456,11 +456,11 @@ rl.on('line', (line) => {
           if (activeTurn !== id) return;
           let task = process.env.FAKE_CODEX_VOICE_TASK;
           if (task === 'voice-delegate') {
-            if (!voiceInstructions.includes('<limi-coordination>')) { say('Missing voice collaboration instructions'); activeTurn = null; finishTurn(id, 'completed'); return; }
-            const target = /limi send ([a-f0-9-]{36}) --message-file/.exec(voiceInstructions)?.[1];
+            if (!voiceInstructions.includes('<calli-coordination>')) { say('Missing voice collaboration instructions'); activeTurn = null; finishTurn(id, 'completed'); return; }
+            const target = /calli send ([a-f0-9-]{36}) --message-file/.exec(voiceInstructions)?.[1];
             const args = target ? ['send', target] : ['spawn', '--agent', process.env.FAKE_CODEX_VOICE_AGENT ?? 'worker', '--name', 'voice-worker'];
-            const command = { args: [...args, '--message-file', '-', '--request-id', 'voice-first'], text: process.env.FAKE_CODEX_VOICE_MESSAGE ?? 'LIMI_ENV' };
-            coordinationFixture(`LIMI_COMMAND:${Buffer.from(JSON.stringify(command)).toString('base64')}`);
+            const command = { args: [...args, '--message-file', '-', '--request-id', 'voice-first'], text: process.env.FAKE_CODEX_VOICE_MESSAGE ?? 'CALLI_ENV' };
+            coordinationFixture(`CALLI_COMMAND:${Buffer.from(JSON.stringify(command)).toString('base64')}`);
             say('已派发任务，结果会自动返回。'); activeTurn = null; finishTurn(id, 'completed'); return;
           }
           runTurn(task, id, () => {

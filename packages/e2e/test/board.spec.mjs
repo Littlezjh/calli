@@ -6,7 +6,7 @@ import { startDaemon, openUi, api, launchBrowser, repoRoot } from '../harness.mj
 
 // The board lays out conversations by what they are doing and what their agents report; the person marks them done.
 let daemon, browser;
-const shots = process.env.RAH_E2E_SHOTS_DIR;
+const shots = process.env.CALLI_E2E_SHOTS_DIR;
 const threads = {};
 
 async function json(path, init) {
@@ -22,7 +22,7 @@ async function until(check, message) {
 }
 
 before(async () => {
-  daemon = await startDaemon({ RAH_AGENTS_JSON: JSON.stringify({ agents: [
+  daemon = await startDaemon({ CALLI_AGENTS_JSON: JSON.stringify({ agents: [
     { id: 'claude', adapter: 'claude', label: 'Claude Code', command: [process.execPath, join(repoRoot, 'daemon/test/fixtures/fake-acp.mjs')] },
   ] }) });
   browser = await launchBrowser();

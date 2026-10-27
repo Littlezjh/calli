@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Limi 个人 agent · 界面草图（待审）</title>
+  <title>Calli 个人 agent · 界面草图（待审）</title>
   <style>
     /* Tokens copied from packages/web/src/styles.css (paper), so the sketch opens on its own. */
     :root {
@@ -287,13 +287,13 @@
 
   <!-- 2. Thread notice -->
   <section class="shot" id="notice">
-    <h2>② 线程里 agent 的主动通知（limi notify）</h2>
+    <h2>② 线程里 agent 的主动通知（calli notify）</h2>
     <p>一行，和终端同步、交接分隔同一级别的安静样式；铃铛图标 + 「通知你」+ 原文。线程照常标未读，开了推送就同时发飞书。</p>
     <div class="frames">
       <div class="frame desk">
         <div class="thread">
           <div class="msg-user">帮我把 10 月的报销整理好提交</div>
-          <div class="tool">运行 limi browser open … · 读取 6 张发票</div>
+          <div class="tool">运行 calli browser open … · 读取 6 张发票</div>
           <div class="msg-ai">单据整理好了，共 6 张，合计 ¥1,284.50。提交前需要你确认两张餐费的事由。</div>
           <div class="notice"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" style="margin-top:2px"><path d="M4 11V7a4 4 0 0 1 8 0v4l1 1.5H3z"/><path d="M6.5 14a1.6 1.6 0 0 0 3 0"/></svg><span><b>通知你</b>　两张餐费（10/12、10/19）需要你确认事由，确认后我再提交。</span></div>
         </div>
@@ -313,7 +313,7 @@
             <p class="sub">需要你时，用飞书机器人私聊你。只发种类、线程标题和链接，不发对话内容。</p>
             <div class="row"><div class="k">推送到飞书<small><span class="status"><span class="dot"></span>Lark CLI 已就绪 · 机器人</span></small></div><span class="switch on"></span></div>
             <div class="row"><div class="k">接收人</div><span class="field">张三（当前登录用户）</span></div>
-            <div class="row"><div class="k">Limi 地址<small>用于消息里的链接，可不填</small></div><span class="field empty">例如 http://手机能打开的地址</span></div>
+            <div class="row"><div class="k">Calli 地址<small>用于消息里的链接，可不填</small></div><span class="field empty">例如 http://手机能打开的地址</span></div>
             <div class="row"><div class="k">等你批准、回答或确认</div><span class="switch on"></span></div>
             <div class="row"><div class="k">一轮失败</div><span class="switch on"></span></div>
             <div class="row"><div class="k">agent 主动通知</div><span class="switch on"></span></div>
@@ -329,7 +329,7 @@
             <p class="sub">需要你时，用飞书机器人私聊你。只发种类、线程标题和链接。</p>
             <div class="row"><div class="k">推送到飞书<small><span class="status"><span class="dot"></span>Lark CLI 已就绪</span></small></div><span class="switch on"></span></div>
             <div class="row"><div class="k">接收人</div><span class="field">张三</span></div>
-            <div class="row"><div class="k">Limi 地址</div><span class="field empty">可不填</span></div>
+            <div class="row"><div class="k">Calli 地址</div><span class="field empty">可不填</span></div>
             <div class="row"><div class="k">等你批准、回答或确认</div><span class="switch on"></span></div>
             <div class="row"><div class="k">一轮失败</div><span class="switch on"></span></div>
             <div class="row"><div class="k">agent 主动通知</div><span class="switch on"></span></div>
@@ -384,7 +384,7 @@
     <p>纯文字，第一行是种类和线程标题；不放审批详情和对话正文。agent 主动通知会带上它写的那句话。</p>
     <div class="frames">
       <div class="lark">
-        <div class="from">Limi</div>
+        <div class="from">Calli</div>
         <div class="wrap"><div class="ava">L</div><div class="bubble">
           <b>等你批准</b> · 整理报销单据<br>pi · 10:42<br><a>打开线程</a>
         </div></div>

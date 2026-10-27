@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
-import type { DaemonExtension, Envelope, ExtensionManifest, ExtensionState } from '@rah/extension-api';
+import type { DaemonExtension, Envelope, ExtensionManifest, ExtensionState } from '@calli/extension-api';
 import { AttachmentStore } from '../src/attachments.js';
 import type { StoredEvent } from '../src/events.js';
 import { ExtensionHost, threadSummary, type HostSource } from '../src/extension-host.js';
@@ -56,7 +56,7 @@ async function serve(dir: string, catalog: ExtensionManifest[]) {
 }
 
 test('extensions install, toggle and uninstall over the API, and the state outlives a restart', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'rah-ext-'));
+  const dir = mkdtempSync(join(tmpdir(), 'calli-ext-'));
   const catalog = [manifest('board'), manifest('probe', { permissions: ['events.summary', 'notify'] })];
   try {
     let hub = await serve(dir, catalog);
@@ -126,7 +126,7 @@ test('extensions install, toggle and uninstall over the API, and the state outli
 });
 
 test('a grant made for fewer permissions does not switch on a version that asks for more', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'rah-ext-'));
+  const dir = mkdtempSync(join(tmpdir(), 'calli-ext-'));
   try {
     let hub = await serve(dir, [manifest('probe')]);
     assert.equal((await hub.api('/api/extensions/probe/install', 'POST', { granted: ['events.summary'] })).status, 200);
@@ -147,7 +147,7 @@ test('the built-in catalog is read from the extension packages, and a broken man
   assert.ok(catalog.some((m) => m.id === 'board' && m.permissions.includes('events.summary')), 'packages/ext-board/manifest.json');
   assert.ok(builtinManifestPaths().every((p) => p.endsWith('manifest.json')));
 
-  const dir = mkdtempSync(join(tmpdir(), 'rah-ext-'));
+  const dir = mkdtempSync(join(tmpdir(), 'calli-ext-'));
   try {
     writeFileSync(join(dir, 'good.json'), JSON.stringify(manifest('good')));
     writeFileSync(join(dir, 'bad.json'), '{ not json');
@@ -200,7 +200,7 @@ function probe(id: string, extra: Partial<ExtensionManifest> = {}) {
 }
 
 async function bus(opts: { queueLimit?: number } = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'rah-ext-bus-'));
+  const dir = mkdtempSync(join(tmpdir(), 'calli-ext-bus-'));
   const store = new Store(dir);
   const threads = new Map([['t1', view('t1')]]);
   const { source, emit } = fakeSource(threads);
@@ -343,7 +343,7 @@ for (const [name, previous, current] of [
   ['removing all', ['events.summary'], []],
 ] as const) {
   test(`changed grants require confirmation after ${name} permissions`, async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'rah-ext-grants-'));
+    const dir = mkdtempSync(join(tmpdir(), 'calli-ext-grants-'));
     const store = new Store(dir);
     const { source } = fakeSource(new Map([['t1', view('t1')]]));
     store.extensions.install('probe', '1.0.0', [...previous]);

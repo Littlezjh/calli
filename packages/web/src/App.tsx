@@ -72,8 +72,8 @@ import { ExtensionsPage } from './components/ExtensionsPage';
 import { VoiceOrb, VoiceControls } from './components/VoiceOrb';
 import { useVoiceSession } from './voice-session';
 import type { ExtensionNavEntry } from './components/Sidebar';
-import type { ExtensionState } from '@rah/extension-api';
-import type { ConnectionState } from '@rah/extension-api/web';
+import type { ExtensionState } from '@calli/extension-api';
+import type { ConnectionState } from '@calli/extension-api/web';
 import { ExtensionView } from './extensions/ExtensionView';
 import { threadSummaries } from './extensions/project';
 import { createThreadFeed } from './extensions/thread-feed';
@@ -160,13 +160,13 @@ function viewForHash(hash: string, connected: boolean): MainView | null {
 }
 
 /** Whether the thread list is put away on a wide screen. */
-const SIDEBAR_HIDDEN_KEY = 'rah.sidebar.hidden';
+const SIDEBAR_HIDDEN_KEY = 'calli.sidebar.hidden';
 
 /** What members of each instance start with, remembered on this device for the next team. */
-const MEMBER_DEFAULTS_KEY = 'rah.coord.defaults';
+const MEMBER_DEFAULTS_KEY = 'calli.coord.defaults';
 
 /** A plan the user chose to leave be, by thread: the proposal's key, so a reload does not ask again. */
-const PLAN_SKIP_KEY = 'rah:plan-skipped';
+const PLAN_SKIP_KEY = 'calli:plan-skipped';
 function savedMemberDefaults(key: string): Record<string, MemberDefault> {
   try {
     const saved = JSON.parse(localStorage.getItem(key) ?? '{}');
@@ -300,7 +300,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   }, [threadFeed]);
   // Every machine's threads in one list. A device setting, so it stays on as the app starts over
   // on another machine; with no other machine there is nothing to merge.
-  const [allHosts, setAllHosts] = useStoredFlag('rah.sidebar.allHosts');
+  const [allHosts, setAllHosts] = useStoredFlag('calli.sidebar.allHosts');
   const merging = allHosts && keepThreads && hosts.length > 0;
   const [elsewhere, setElsewhere] = useState<HostSource[]>([]);
   const hostsRef = useRef(hosts);
@@ -336,8 +336,8 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     return () => { alive = false; clearInterval(timer); };
   }, [merging, token, hostId, hostsKey]);
   // Folders last chosen for members on each machine, offered first next time.
-  const recentRemoteDirs = (host: string): string[] => { try { return JSON.parse(localStorage.getItem(`rah.collab.dirs.${host}`) ?? '[]'); } catch { return []; } };
-  const rememberRemoteDir = (host: string, cwd: string) => localStorage.setItem(`rah.collab.dirs.${host}`, JSON.stringify([cwd, ...recentRemoteDirs(host).filter((d) => d !== cwd)].slice(0, 5)));
+  const recentRemoteDirs = (host: string): string[] => { try { return JSON.parse(localStorage.getItem(`calli.collab.dirs.${host}`) ?? '[]'); } catch { return []; } };
+  const rememberRemoteDir = (host: string, cwd: string) => localStorage.setItem(`calli.collab.dirs.${host}`, JSON.stringify([cwd, ...recentRemoteDirs(host).filter((d) => d !== cwd)].slice(0, 5)));
   const [remotePick, setRemotePick] = useState<{ host: string; api: Api; machine: string; roots: string[]; selected: string; choose: (cwd: string) => void } | null>(null);
   // Instances on the other machines, for a collaboration led from this hub: each with that machine's folders.
   const [remoteAgents, setRemoteAgents] = useState<Array<AgentInfo & { host: string; directories: string[] }>>([]);
@@ -436,7 +436,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const [confirmSignOut, setConfirmSignOut] = useState(false);
   /** Where the settings menu opened from, while it is open. */
   const [settingsAt, setSettingsAt] = useState<{ x: number; y: number } | null>(null);
-  const [appearance, setAppearance, theme] = useAppearance(showcase ? 'limi.showcase.appearance' : undefined, showcase ? { mode: showcase.theme, palette: 'paper' } : undefined);
+  const [appearance, setAppearance, theme] = useAppearance(showcase ? 'calli.showcase.appearance' : undefined, showcase ? { mode: showcase.theme, palette: 'paper' } : undefined);
   const [appearanceOpen, setAppearanceOpen] = useState(false);
   // An error belongs to the thread (or new-thread page) it happened in, so other threads stay clean.
   // The closure keeps the thread that was open when the failing request started.
@@ -815,7 +815,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         setDraftAgent(first?.id ?? '');
         if (first) setDraftPermission(startingPermission(first.capabilities));
         if (!demo) {
-          const dismissed = localStorage.getItem('rah_onboard_dismissed') === '1';
+          const dismissed = localStorage.getItem('calli_onboard_dismissed') === '1';
           const needsOnboard = a.length === 0 || a.filter((x) => x.available).length === 0;
           if (!dismissed && needsOnboard) {
             setOnboardStep('ask');
@@ -1704,12 +1704,12 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       api.discoverAgents().then(setDiscovered).catch(() => undefined);
       api.discoverAccounts().then(setAccounts).catch(() => undefined);
     }
-    localStorage.setItem('rah_onboard_dismissed', '1');
+    localStorage.setItem('calli_onboard_dismissed', '1');
     setOnboardOpen(false);
   };
 
   const handleOnboardLater = () => {
-    localStorage.setItem('rah_onboard_dismissed', '1');
+    localStorage.setItem('calli_onboard_dismissed', '1');
     setOnboardOpen(false);
   };
 
@@ -1998,7 +1998,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       <aside className="sidebar">
         <Sidebar
           personalDirectory={personal?.directory}
-          storagePrefix={showcase ? 'limi.showcase.sidebar' : undefined}
+          storagePrefix={showcase ? 'calli.showcase.sidebar' : undefined}
           showEmptySections={!showcase}
           threads={threads.filter((t) => !t.coordination || t.coordination.rootId === t.id || !threads.some((r) => r.id === t.coordination!.rootId))}
           members={teamMembers}

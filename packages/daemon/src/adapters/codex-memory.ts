@@ -1,7 +1,7 @@
 import { constants } from 'node:fs';
 import { lstat, open, opendir, realpath } from 'node:fs/promises';
 import { basename, join, resolve, sep } from 'node:path';
-import type { MemoryDocument, MemoryFile, MemoryIndex, MemoryKind } from '@rah/extension-api';
+import type { MemoryDocument, MemoryFile, MemoryIndex, MemoryKind } from '@calli/extension-api';
 import { HttpError } from '../errors.js';
 import type { MemoryReader } from './types.js';
 

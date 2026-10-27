@@ -47,9 +47,9 @@ test('touching collaboration keeps the empty composer mounted when taps do not f
           await tap(panel.locator('.coord-picker-head button'));
           await page.waitForTimeout(100);
           assert.ok(await panel.locator('.coord-setup').isVisible(), 'settings remain usable with the same focus behaviour');
-          if (process.env.RAH_E2E_SHOTS_DIR) {
-            mkdirSync(process.env.RAH_E2E_SHOTS_DIR, { recursive: true });
-            await page.screenshot({ path: join(process.env.RAH_E2E_SHOTS_DIR, `collab-${mobile ? 'phone' : 'desktop'}-${colorScheme}-${running ? 'running' : 'idle'}.png`) });
+          if (process.env.CALLI_E2E_SHOTS_DIR) {
+            mkdirSync(process.env.CALLI_E2E_SHOTS_DIR, { recursive: true });
+            await page.screenshot({ path: join(process.env.CALLI_E2E_SHOTS_DIR, `collab-${mobile ? 'phone' : 'desktop'}-${colorScheme}-${running ? 'running' : 'idle'}.png`) });
           }
           if (mobile) await page.locator('.pop-scrim').tap({ position: { x: 10, y: 10 } });
           else await page.keyboard.press('Escape');

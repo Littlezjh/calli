@@ -1,6 +1,6 @@
 import type { PlanQuota } from './api';
 
-const KEY = 'rah.quota.v1';
+const KEY = 'calli.quota.v1';
 const MAX_READINGS = 100;
 
 /** Only successful readings are stored; their original timestamps stay visible while refreshing. */

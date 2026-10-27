@@ -9,7 +9,7 @@ import { buildActivity, buildMerged, buildSidebar, handoverGroups, markTerms, pr
 import { timeAgo } from '../sessions';
 import { deliveredPreview } from '../timeline';
 import { HostSwitcher } from './Hosts';
-import type { HostIconName } from '@rah/extension-api';
+import type { HostIconName } from '@calli/extension-api';
 import { HostIcon } from '../extensions/ui';
 import { AgentMark, IconBell, IconChevron, IconClock, IconClose, IconDesktop, IconEdit, IconFolder, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconSidebar } from './icons';
 import { t } from '../i18n';
@@ -110,7 +110,7 @@ export const SIDEBAR_SHORTCUT = typeof navigator !== 'undefined' && /Mac|iPhone|
 
 export function Sidebar({
   personalDirectory,
-  storagePrefix = 'rah.sidebar',
+  storagePrefix = 'calli.sidebar',
   showEmptySections = true,
   threads,
   members,

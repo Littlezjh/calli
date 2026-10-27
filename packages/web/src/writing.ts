@@ -50,7 +50,7 @@ export interface BodyDraft {
   at: number;
 }
 
-export const BODY_DRAFTS_KEY = 'rah.writing.drafts';
+export const BODY_DRAFTS_KEY = 'calli.writing.drafts';
 /** Bodies are long; a few of them are plenty. */
 export const MAX_BODY_DRAFTS = 10;
 

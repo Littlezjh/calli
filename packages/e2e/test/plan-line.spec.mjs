@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { startDaemon, openUi, api, launchBrowser, repoRoot } from '../harness.mjs';
 
 test('the agent plan folds to one quiet line and opens to the whole list', { timeout: 120000 }, async () => {
-  const daemon = await startDaemon({ RAH_AGENTS_JSON: JSON.stringify({ agents: [{ id: 'codex', adapter: 'codex', command: [process.execPath, join(repoRoot, 'daemon/test/fixtures/fake-codex.mjs')] }] }) });
-  const shots = process.env.RAH_E2E_SHOTS_DIR;
+  const daemon = await startDaemon({ CALLI_AGENTS_JSON: JSON.stringify({ agents: [{ id: 'codex', adapter: 'codex', command: [process.execPath, join(repoRoot, 'daemon/test/fixtures/fake-codex.mjs')] }] }) });
+  const shots = process.env.CALLI_E2E_SHOTS_DIR;
   if (shots) mkdirSync(shots, { recursive: true });
   let browser;
   try {

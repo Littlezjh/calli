@@ -24,7 +24,7 @@ import { sessionEnvironment } from '../src/adapters/types.js';
 const exec = promisify(execFile);
 const wait = async (fn: () => boolean | Promise<boolean>) => { for (let i = 0; i < 500; i++) { if (await fn()) return; await new Promise(r => setTimeout(r, 20)); } throw new Error('timed out'); };
 async function setup(options: { startError?: string; followUpMode?: string; clarifyDelegate?: boolean } = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'limi-personal-'));
+  const dir = mkdtempSync(join(tmpdir(), 'calli-personal-'));
   const cwd = join(dir, 'personal'), outside = join(dir, 'elsewhere'); mkdirSync(cwd); mkdirSync(outside);
   const store = new Store(dir);
   const log = join(dir, 'lark-log'), config = join(dir, 'lark-config'); writeFileSync(log, ''); writeFileSync(config, '{}');
@@ -43,7 +43,7 @@ async function setup(options: { startError?: string; followUpMode?: string; clar
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const thread = await manager.createThread({ agent: 'claude', cwd });
-  const cli = async (args: string[], extra = {}) => JSON.parse((await exec(process.execPath, [resolve('bin/limi'), ...args], { env: { ...process.env, ...service.environment(thread.id), ...borrowing.environment(thread.id), ...extra } })).stdout);
+  const cli = async (args: string[], extra = {}) => JSON.parse((await exec(process.execPath, [resolve('bin/calli'), ...args], { env: { ...process.env, ...service.environment(thread.id), ...borrowing.environment(thread.id), ...extra } })).stdout);
   const api = (path: string, method = 'GET', body?: unknown) => fetch(base + path, { method, headers: { Authorization: 'Bearer test', 'Content-Type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) });
   const file = (name: string, text: string) => { const path = join(dir, name); writeFileSync(path, text); return path; };
   return { dir, cwd, outside, store, manager, service, adapters, scheduler, thread, cli, api, file, push, log, async close() {
@@ -83,7 +83,7 @@ test('personal CRUD checks provided revisions, note lists remain small, writes o
   } finally { await h.close(); }
 });
 test('todo note previews prefer next steps, skip headings and backfill existing notes without changing revisions', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'limi-note-preview-'));
+  const dir = mkdtempSync(join(tmpdir(), 'calli-note-preview-'));
   let store = new Store(dir);
   try {
     const cases = [
@@ -202,7 +202,7 @@ test('normal and failed follow-ups count too, while changed notes from either ac
 });
 
 test('follow-up streaks and pauses survive reopening the store and each run is counted once', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'limi-follow-up-streak-'));
+  const dir = mkdtempSync(join(tmpdir(), 'calli-follow-up-streak-'));
   let store = new Store(dir);
   try {
     const todo = store.createTodo('streak', 'Persistent streak', null);
@@ -232,11 +232,11 @@ test('real personal CLI uses scoped credentials, denies symlink escape and stale
     assert.equal(todo.proposed, true); assert.equal(h.store.getThread(h.thread.id)?.unread, true);
     assert.equal((await h.cli(['todo', 'show', todo.id])).proposals[0].kind, 'add');
     await assert.rejects(h.cli(['todo', 'update', todo.id, '--rev', String(todo.rev), '--state', 'done']), /propose-done/);
-    await assert.rejects(h.cli(['todo'], { LIMI_TODO_KEY: 'wrong' }), /credentials/);
+    await assert.rejects(h.cli(['todo'], { CALLI_TODO_KEY: 'wrong' }), /credentials/);
     const outside = await h.manager.createThread({ agent: 'claude', cwd: h.outside }); assert.equal(h.service.environment(outside.id), undefined);
     const escape = join(h.cwd, 'escape'); symlinkSync(h.outside, escape);
     const escaped = await h.manager.createThread({ agent: 'claude', cwd: escape }); assert.equal(h.service.environment(escaped.id), undefined);
-    const env = sessionEnvironment({ LIMI_TODO_KEY: 'parent', LIMI_TODO_SOCKET: 'parent' }); assert.equal(env.LIMI_TODO_KEY, undefined);
+    const env = sessionEnvironment({ CALLI_TODO_KEY: 'parent', CALLI_TODO_SOCKET: 'parent' }); assert.equal(env.CALLI_TODO_KEY, undefined);
     h.service.putSettings({ directory: h.outside }); await assert.rejects(h.cli(['todo']), /personal directory/);
   } finally { await h.close(); }
 });
@@ -246,7 +246,7 @@ test('shell-only fake agent creates, writes, follows up in a fresh thread, propo
     await h.manager.startTurn(h.thread.id, { text: 'personal-start' });
     await wait(() => h.manager.threadView(h.thread.id).status !== 'running');
     const todo = h.store.listTodos()[0]; assert.ok(todo.proposed); assert.ok(todo.followUpAt);
-    const events = h.store.listEventsOfType(h.thread.id, 'turn.started'); assert.match(String(events[0].data.text), /由 Limi 附加/);
+    const events = h.store.listEventsOfType(h.thread.id, 'turn.started'); assert.match(String(events[0].data.text), /由 Calli 附加/);
     assert.equal(h.service.instructions(h.thread.id, 'next'), 'next');
     assert.match(h.service.context(h.thread.id), /Draft ready/);
     const suggestion = h.store.todoProposals(todo.id)[0];
@@ -352,7 +352,7 @@ for (const archived of [false, true]) test(`follow-up startup rejections back of
 });
 
 test('legacy todos migrate to me with state consistent with done', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'limi-todo-migration-'));
+  const dir = mkdtempSync(join(tmpdir(), 'calli-todo-migration-'));
   const old = new DatabaseSync(join(dir, 'hub.db'));
   old.exec("CREATE TABLE todos (id TEXT PRIMARY KEY, text TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0, parent_id TEXT, position REAL NOT NULL, created_at TEXT NOT NULL, done_at TEXT); INSERT INTO todos VALUES ('old', 'Legacy', 1, NULL, 1, '2026-01-01', '2026-01-02');"); old.close();
   const store = new Store(dir);
@@ -407,7 +407,7 @@ for (const automatic of [false, true]) test(`${automatic ? 'automatic' : 'manual
     assert.equal(h.store.todoThreadIds(created.id)[0], successor);
     await wait(() => h.store.getThread(successor)?.status !== 'running');
     const start = h.store.listEventsOfType(successor, 'turn.started')[0];
-    assert.match(String(start.data.text), /<limi-todo>由 Limi 附加/);
+    assert.match(String(start.data.text), /<calli-todo>由 Calli 附加/);
     const proposal = h.store.todoProposals(created.id).find(p => p.kind === 'done')!;
     assert.ok(proposal); assert.equal(proposal.threadId, successor); assert.equal(h.store.todoNote(created.id).threadId, successor);
     h.store.updateTodo(created.id, { followUpAt: new Date(Date.now() - 1000).toISOString() });
@@ -421,7 +421,7 @@ for (const automatic of [false, true]) test(`${automatic ? 'automatic' : 'manual
 });
 
 test('schedule history survives the nullable schedule-id migration for one-shot todo runs', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'limi-run-migration-'));
+  const dir = mkdtempSync(join(tmpdir(), 'calli-run-migration-'));
   let store = new Store(dir);
   try {
     store.createSchedule({ id: 'schedule', name: 'Existing', agent: 'fixture', cwd: dir, prompt: 'test', cron: '0 0 * * *', mode: 'new', threadId: null,
@@ -456,7 +456,7 @@ test('delegating a plan uses personal settings, links before the first turn, inc
     const prompt = events.find(e => e.type === 'turn.started');
     assert.match(String(prompt?.data.text), /Prepare the checklist/);
     assert.match(String(prompt?.data.text), /Review the remaining steps/);
-    assert.ok(h.service.environment(thread.id)?.LIMI_TODO_KEY);
+    assert.ok(h.service.environment(thread.id)?.CALLI_TODO_KEY);
     h.service.update(todo.id, { done: true });
     assert.equal((await h.api(`/api/todos/${todo.id}/delegate`, 'POST', {})).status, 409);
   } finally { await h.close(); }
@@ -511,7 +511,7 @@ test('default personal directory is created privately, stays unlisted, permits o
     assert.equal((await h.api('/api/projects', 'POST', { parent: root, name: 'project' })).status, 201);
     const child = join(root, 'child'); mkdirSync(child); writeFileSync(join(child, 'note.txt'), 'private note');
     const created = await h.manager.createThread({ agent: 'pi', cwd: child });
-    assert.ok(h.service.environment(created.id)?.LIMI_TODO_KEY);
+    assert.ok(h.service.environment(created.id)?.CALLI_TODO_KEY);
     assert.equal((await h.api(`/api/directories?path=${encodeURIComponent(child)}`)).status, 200);
     assert.equal((await h.api(`/api/threads/${created.id}/text?path=note.txt`)).status, 200);
     const sibling = join(dirname(root), 'sibling'); mkdirSync(sibling, { recursive: true });
@@ -589,7 +589,7 @@ test('follow-ups create threads using the effective default directory and availa
 
 test('delegation accepts allowed projects without personal credentials and rejects outside or symlink paths', async () => {
   const h = await setup();
-  const forbidden = mkdtempSync(join(tmpdir(), 'limi-forbidden-'));
+  const forbidden = mkdtempSync(join(tmpdir(), 'calli-forbidden-'));
   try {
     const todo = h.service.create({ text: 'Review project changes' });
     h.service.writeNote(todo.id, { text: '## 下一步\nCheck the project checklist' });
@@ -608,7 +608,7 @@ test('delegation accepts allowed projects without personal credentials and rejec
     await wait(() => h.store.getThread(thread.id)?.status !== 'running');
     const prompt = String(h.store.listEvents(thread.id).find(e => e.type === 'turn.started')?.data.text);
     assert.match(prompt, /Review project changes/); assert.match(prompt, /Check the project checklist/);
-    assert.doesNotMatch(prompt, /limi todo/);
+    assert.doesNotMatch(prompt, /calli todo/);
   } finally { await h.close(); rmSync(forbidden, { recursive: true, force: true }); }
 });
 
@@ -641,14 +641,14 @@ for (const personal of [true, false]) for (const scenario of [
     assert.match(prompt, /不可逆操作（提交、付款、发消息、删除、推送代码）.*先停下来问人/);
     assert.match(prompt, scenario.note ? /列出本项目所用框架的三条架构变化/ : /接续说明：\n尚未写入。/);
     if (personal) {
-      assert.match(prompt, /limi todo update .*--state waiting --waiting-on "等你说明目标" --note-file FILE/);
+      assert.match(prompt, /calli todo update .*--state waiting --waiting-on "等你说明目标" --note-file FILE/);
       assert.match(prompt, /「## 欠谁什么」写已知部分/);
       assert.match(prompt, /「## 下一步」写「等回答后……」/);
-      assert.match(prompt, /limi notify.*然后结束本轮/);
-      assert.match(prompt, /limi todo propose-done/);
+      assert.match(prompt, /calli notify.*然后结束本轮/);
+      assert.match(prompt, /calli todo propose-done/);
     } else {
       assert.match(prompt, /只在回复中提问并结束本轮/);
-      assert.doesNotMatch(prompt, /limi todo/);
+      assert.doesNotMatch(prompt, /calli todo/);
       assert.equal(h.service.environment(thread.id), undefined);
     }
   } finally { await h.close(); }
@@ -667,7 +667,7 @@ test('real todo CLI marks self in list and show without exposing linked thread h
     const unlinked = h.service.create({ text: 'An unrelated item' });
     h.store.linkTodoThread(unlinked.id, other.id);
     assert.deepEqual((await h.cli(['todo', 'show', unlinked.id])).threads, [{ id: other.id, self: false }]);
-    const help = (await exec(process.execPath, [resolve('bin/limi'), 'todo', '--help'])).stdout;
+    const help = (await exec(process.execPath, [resolve('bin/calli'), 'todo', '--help'])).stdout;
     assert.match(help, /self: true marks the current thread/);
     assert.match(help, /work from the todo and its note, not their history; handover\/history are only for a handover chain/);
   } finally { await h.close(); }
@@ -759,7 +759,7 @@ test('personal agents list and read recent threads, link items to them, delete w
     assert.equal(status.threadId, summary.id); assert.equal(status.running, false); assert.equal(status.days, 7);
     assert.equal(h.store.getThread(summary.id)?.unread, false);
     const prompt = String(h.store.listEvents(summary.id).find(ev => ev.type === 'turn.started')?.data.text);
-    for (const command of ['limi threads --since', 'limi threads show', 'limi todo add --owner me --parent', '--thread', 'limi quiet']) assert.ok(prompt.includes(command), command);
+    for (const command of ['calli threads --since', 'calli threads show', 'calli todo add --owner me --parent', '--thread', 'calli quiet']) assert.ok(prompt.includes(command), command);
     const heading = h.store.listTodos().find(t => t.text === '今日 TODO 10-25')!;
     assert.ok(heading); assert.equal(heading.proposed, false);
     const items = () => h.store.listTodos().filter(t => t.parentId === heading.id);

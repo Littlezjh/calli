@@ -20,7 +20,7 @@ import type { VoiceSignal } from '../src/voice-sessions.js';
 import { ExtensionHost } from '../src/extension-host.js';
 import { VoiceService } from '../src/voice-service.js';
 import type { AddressInfo } from 'node:net';
-import type { ExtensionManifest } from '@rah/extension-api';
+import type { ExtensionManifest } from '@calli/extension-api';
 
 const fixture = (name: string) => [process.execPath, fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url))];
 const until = async (predicate: () => boolean) => {
@@ -29,7 +29,7 @@ const until = async (predicate: () => boolean) => {
 };
 
 async function setup(t: TestContext, target = 'worker', env: Record<string, string> = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'limi-voice-team-'));
+  const dir = mkdtempSync(join(tmpdir(), 'calli-voice-team-'));
   const log = join(dir, 'rpc.jsonl');
   const adapters = new Map<string, AgentAdapter>([
     ['speaker', new CodexAppServerAdapter(fixture('fake-codex.mjs'), { FAKE_CODEX_RPC_LOG: log,
@@ -42,7 +42,7 @@ async function setup(t: TestContext, target = 'worker', env: Record<string, stri
   ]);
   const store = new Store(dir);
   const manager = new ThreadManager(store, adapters, [dir], new AttachmentStore(dir));
-  const socket = join(dir, 'limi.sock');
+  const socket = join(dir, 'calli.sock');
   const team = new CoordinationManager(store, manager, socket);
   const ipc = coordinationServer(team); await listenPrivate(ipc, socket);
   t.after(async () => {
@@ -69,10 +69,10 @@ test('native voice prepares collaboration, delegates to Pi and relays its asynch
   assert.equal(state.members[0].thread!.agent, 'worker');
   assert.equal(state.messages.filter(m => m.kind === 'message').length, 1);
   assert.equal(state.messages.filter(m => m.kind === 'result').length, 1);
-  assert.match(state.messages.find(m => m.kind === 'message')!.result, /limi-ready:true/);
+  assert.match(state.messages.find(m => m.kind === 'message')!.result, /calli-ready:true/);
   assert.equal(signals.filter(s => s.type === 'transcript' && s.text.includes('已收到成员结果')).length, 1);
   const request = h.calls().find(c => c.method === 'thread/realtime/start');
-  assert.match(request.params.realtimeStartInstructions, /limi spawn/);
+  assert.match(request.params.realtimeStartInstructions, /calli spawn/);
   assert.equal(request.params.clientManagedHandoffs, true);
   assert.equal(h.calls().filter(c => c.method === 'thread/realtime/appendSpeech').length, 2);
   assert.equal(h.calls().filter(c => c.method === 'turn/start').length, 1, 'only the result starts a prompted lead turn');
@@ -103,7 +103,7 @@ for (const target of ['worker', 'reviewer', 'terminal', 'alternate', 'z-worker']
     assert.equal(h.store.listEventsOfType(h.thread.id, 'voice.message').filter(e => e.data.role === 'assistant').length, 2);
     const instructions = h.calls().find(c => c.method === 'thread/realtime/start').params.realtimeStartInstructions;
     assert.match(instructions, /existing conversation/);
-    assert.match(instructions, new RegExp(`limi send ${h.thread.id}`));
+    assert.match(instructions, new RegExp(`calli send ${h.thread.id}`));
     await assert.rejects(h.team.command(coordinator.id, { op: 'spawn', name: 'unexpected', agent: target, text: 'x', requestId: 'bad' }), /绑定/);
     await voice.stop(); voice.dispose();
     const reopened = h.open(); t.after(() => reopened.voice.dispose()); await reopened.start();
@@ -151,7 +151,7 @@ test('voice HTTP chooses the native provider for an existing text target and kee
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/`;
   const request = (path: string, method: string, body?: unknown, owner = 'voice-browser-test-aaaaaaaa') => fetch(base + path, {
-    method, headers: { authorization: 'Bearer test-token', 'content-type': 'application/json', 'x-rah-voice-owner': owner },
+    method, headers: { authorization: 'Bearer test-token', 'content-type': 'application/json', 'x-calli-voice-owner': owner },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   t.after(async () => { await voice.dispose(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); extensions.dispose(); });

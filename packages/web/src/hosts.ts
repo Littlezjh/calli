@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Api, type HostFailure, type HostInfo } from './api';
 import { t } from './i18n';
 
-const HOST_KEY = 'rah.host';
+const HOST_KEY = 'calli.host';
 
 /** The machine this device was last looking at; null is the hub's own. */
 export function loadHost(): string | null {

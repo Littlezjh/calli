@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="packages/web/public/limi-icon.png" alt="Calli：浅蓝背景上举着一大一小双钳的蓝色螃蟹" width="160" />
+  <img src="packages/web/public/calli-icon.png" alt="Calli：浅蓝背景上举着一大一小双钳的蓝色螃蟹" width="160" />
 </p>
 
 <h1 align="center">Calli</h1>
@@ -39,7 +39,7 @@ Calli 不动 agent 本身的目录、配置和会话，装好即用。Calli 是�
 
 ![用量与诊断](docs/screenshots/usage-light.png)
 
-写作模式：在加号菜单里一点就开。你口述观点，agent 用你的原话记成初稿、标出【待补】、追问具体场景，再按二稿、三稿、配图、润色一稿一稿往下走。正文是 `writing/` 下的 Markdown，按文章排版，画出 Mermaid 图、显示配图；读和写是同一张纸，可以直接改（键盘或语音输入法都行），agent 同时改过时不会覆盖你的版本。在正文里选中一句，一点「删」「待补」「为什么」「改成…」就成了给 agent 的注释。说「复盘」，agent 把你反复改的地方提炼成写作习惯，记进 `~/.limi/notes/writing.md` 等你确认，之后每篇都照着写。设计见 [写作流程设计](docs/writing-design.md)。
+写作模式：在加号菜单里一点就开。你口述观点，agent 用你的原话记成初稿、标出【待补】、追问具体场景，再按二稿、三稿、配图、润色一稿一稿往下走。正文是 `writing/` 下的 Markdown，按文章排版，画出 Mermaid 图、显示配图；读和写是同一张纸，可以直接改（键盘或语音输入法都行），agent 同时改过时不会覆盖你的版本。在正文里选中一句，一点「删」「待补」「为什么」「改成…」就成了给 agent 的注释。说「复盘」，agent 把你反复改的地方提炼成写作习惯，记进 `~/.calli/notes/writing.md` 等你确认，之后每篇都照着写。设计见 [写作流程设计](docs/writing-design.md)。
 
 ![写作模式（亮色）：加号菜单、选阶段、正文、选中一句加注释](docs/screenshots/writing-light.png)
 
@@ -79,21 +79,21 @@ skills 和 MCP 属于 agent 资源，通过各自的管理页操作，与 Calli 
 
 ```bash
 npm install
-npm run setup               # 生成 .env 和随机 RAH_TOKEN，并打印出来
+npm run setup               # 生成 .env 和随机 CALLI_TOKEN，并打印出来
 npm run build
-RAH_ENV_FILE=../../.env npm start -w @rah/daemon    # 默认监听 127.0.0.1:8787
+CALLI_ENV_FILE=../../.env npm start -w @calli/daemon    # 默认监听 127.0.0.1:8787
 ```
 
-打开 `http://127.0.0.1:8787/`。没有连接时先显示一套示例数据，可以随便点开看；点「连接 hub」粘贴 `npm run setup` 打印的 token 即可。要让 agent 在哪些目录工作，编辑 `.env` 里的 `RAH_WORKDIRS`。
+打开 `http://127.0.0.1:8787/`。没有连接时先显示一套示例数据，可以随便点开看；点「连接 hub」粘贴 `npm run setup` 打印的 token 即可。要让 agent 在哪些目录工作，编辑 `.env` 里的 `CALLI_WORKDIRS`。
 
 开发时可以分开启动：
 
 ```bash
-RAH_ENV_FILE=../../.env npm run dev:daemon   # 后端
+CALLI_ENV_FILE=../../.env npm run dev:daemon   # 后端
 npm run dev:web                              # Vite，http://127.0.0.1:5173，/api 代理到后端
 ```
 
-daemon 在 `packages/daemon` 目录里运行，所以用 `RAH_ENV_FILE` 指向根目录的 `.env`。没有设置 `RAH_ENV_FILE` 时，读取的是当前目录下的 `.env`。
+daemon 在 `packages/daemon` 目录里运行，所以用 `CALLI_ENV_FILE` 指向根目录的 `.env`。没有设置 `CALLI_ENV_FILE` 时，读取的是当前目录下的 `.env`。
 
 ## 产品官网与引导体验
 
@@ -119,7 +119,7 @@ GitHub Pages 通过 `.github/workflows/pages.yml` 发布：推送到 `main` 后�
 ## 远程访问
 
 - 默认只监听 `127.0.0.1`。
-- 远程使用时，通过 VPN 访问。把 `RAH_HOST` 设为 VPN 网卡的地址，不要设为 `0.0.0.0`。
+- 远程使用时，通过 VPN 访问。把 `CALLI_HOST` 设为 VPN 网卡的地址，不要设为 `0.0.0.0`。
 - 使用 HTTP + token。VPN 已加密传输，项目不额外处理证书。
 - 注意：`http://<IP>` 不是安全上下文，因此 PWA 的离线缓存和"添加到主屏幕"不可用，网页里的"拷贝"按钮需要降级处理。
 
@@ -137,24 +137,35 @@ GitHub Pages 通过 `.github/workflows/pages.yml` 发布：推送到 `main` 后�
 
 | 配置 | 默认与用途 |
 | --- | --- |
-| `RAH_SOCKET` | 默认 `~/.local/state/remote-agent-hub/daemon.sock`；`off` 关闭私有监听。自定义路径用于隔离实例，当前远端发现只支持默认路径 |
-| `RAH_SSH_BIN` | 默认 PATH 中的 `ssh`，用于主 hub 连接其他机器 |
+| `CALLI_SOCKET` | 默认 `~/.local/state/calli/daemon.sock`；`off` 关闭私有监听。自定义路径用于隔离实例，当前远端发现只支持默认路径 |
+| `CALLI_SSH_BIN` | 默认 PATH 中的 `ssh`，用于主 hub 连接其他机器 |
 
 私有 socket 依赖文件权限和 SSH 认证，免 token。主 hub 的 token 因此能操作所有已添加的机器。移除机器只断开连接，远端线程继续保留。连不上时，机器面板会显示原因；常见原因是服务环境缺少 SSH 凭据、未知主机密钥、目标 daemon 没启动或 sshd 不允许 Unix socket 转发。架构与限制见 [多机管理设计](docs/multi-host-design.md)。
 
 ## 开机自启
 
-应用由 Limi 更名为 Calli。`limi` 命令、`LIMI_*` 环境变量和现有仓库地址继续保留。为兼容已有安装，systemd 服务名、配置与数据目录、私有 socket 路径以及 `RAH_*` 环境变量沿用原标识 `remote-agent-hub`，升级时不迁移已有会话。
-
 ```bash
-scripts/install-service.sh              # 装成 systemd 用户服务并启动；默认读 ~/.config/remote-agent-hub/.env
+scripts/install-service.sh              # 装成 systemd 用户服务并启动；默认读 ~/.config/calli/.env
 scripts/install-service.sh --remove     # 停止并移除
-journalctl --user -u remote-agent-hub -f
+journalctl --user -u calli -f
 ```
 
 服务通过登录 shell 启动，所以 agent 能拿到你在 shell 配置里设置的 API key。不登录也要在开机时启动，需要执行一次 `loginctl enable-linger $USER`。
 
-更新代码后用 `scripts/restart.sh` 重启：先构建，构建失败就不动正在跑的服务；再等所有线程跑完这一轮，然后重启并检查健康状态。`--force` 不等，正在跑的那一轮会以错误结束。在 hub 的线程里由 agent 调用时，脚本会在后台等，等包括它自己在内的所有线程都空闲后再重启，日志在 `~/.local/state/remote-agent-hub/restart.log`。
+更新代码后用 `scripts/restart.sh` 重启：先构建，构建失败就不动正在跑的服务；再等所有线程跑完这一轮，然后重启并检查健康状态。`--force` 不等，正在跑的那一轮会以错误结束。在 hub 的线程里由 agent 调用时，脚本会在后台等，等包括它自己在内的所有线程都空闲后再重启，日志在 `~/.local/state/calli/restart.log`。
+
+### 从 Limi 升级
+
+应用由 Limi（更早叫 remote-agent-hub）更名为 Calli。旧名字都还认：`limi` 命令是 `calli` 的别名；`RAH_*`、`LIMI_*` 环境变量按对应的 `CALLI_*` 读取（`LIMI_SOCKET`、`LIMI_KEY` 对应 `CALLI_TEAM_SOCKET`、`CALLI_TEAM_KEY`），同时设置时以新名字为准；只有旧目录 `~/.local/state/remote-agent-hub`、`~/.limi` 时继续用旧目录；浏览器里保存的 token、草稿和偏好在第一次打开新版时复制到新名字下。
+
+升级后照常用 `scripts/restart.sh` 重启也行，它会把旧服务指向改名后的 workspace。想把服务和目录也换成新名字，就运行：
+
+```bash
+scripts/migrate-name.sh --dry-run   # 只列出会改什么
+scripts/migrate-name.sh             # 构建，等线程空闲后切换，服务停几秒
+```
+
+脚本把服务 `remote-agent-hub` 改名为 `calli`，名为 `remote-agent-hub-*` 的附属服务改成 `calli-*`；把 `~/.config/remote-agent-hub` 和附属服务的目录移到新名字下，旧路径留一个指向新目录的链接；把 `.env` 里的键改成 `CALLI_*`，值不变，token 也不变。数据目录 `~/.local/state/remote-agent-hub` 和 `~/.limi` 不移动：线程在里面工作，agent 可能按所在目录找回会话。这两个目录保留原名，另建 `~/.local/state/calli` 链接到数据目录。新服务 30 秒内没有通过健康检查，脚本就把一切恢复原样，用这次的构建启动旧服务；备份在 `~/.local/state/remote-agent-hub/migrate-backup`。
 
 ## 发布前检查
 
@@ -162,7 +173,7 @@ journalctl --user -u remote-agent-hub -f
 npm run check:publish
 ```
 
-扫描会被发布的文件，查找你的用户名、主机名、家目录路径、内网 IP、长密钥、邮箱地址。公司名、项目名这类私人词放在仓库外的 `~/.config/remote-agent-hub/publish-denylist`（每行一个），也会一起检查。
+扫描会被发布的文件，查找你的用户名、主机名、家目录路径、内网 IP、长密钥、邮箱地址。公司名、项目名这类私人词放在仓库外的 `~/.config/calli/publish-denylist`（每行一个），也会一起检查。
 
 ## 目录结构
 
@@ -183,22 +194,22 @@ npm run test:e2e   # 统一构建一次，再运行浏览器 E2E（最多并行 
 
 测试不需要真实的模型账号：适配器测试使用 `packages/daemon/test/fixtures` 里的假 agent 进程。
 
-E2E 需要本机有 Playwright Chromium 或系统 Chrome。根目录的 `npm run test:e2e` 和 `npm test -w @rah/e2e` 共用入口，构建失败就停止；测试进程只消费构建产物，不再自行构建。`npm test` 也会验证这个入口的构建次数、执行顺序、并发上限和失败退出行为，不启动浏览器。
+E2E 需要本机有 Playwright Chromium 或系统 Chrome。根目录的 `npm run test:e2e` 和 `npm test -w @calli/e2e` 共用入口，构建失败就停止；测试进程只消费构建产物，不再自行构建。`npm test` 也会验证这个入口的构建次数、执行顺序、并发上限和失败退出行为，不启动浏览器。
 
 只跑部分 E2E 时，文件路径相对于 `packages/e2e`，Node 测试参数放在文件路径前，带值参数使用 `--参数=值`：
 
 ```bash
 npm run test:e2e -- test/smoke.spec.mjs test/appearance.spec.mjs
-npm test -w @rah/e2e -- --test-concurrency=1 test/smoke.spec.mjs
+npm test -w @calli/e2e -- --test-concurrency=1 test/smoke.spec.mjs
 ```
 
 需要复用已构建产物时，先单独运行一次 `npm run build`，再用 `node --test --test-concurrency=2 packages/e2e/test/*.spec.mjs`。截图脚本 `packages/e2e/shots.mjs` 和 `packages/e2e/overview-shots.mjs` 同样需要先构建。直接运行测试或截图脚本不会触发隐式构建；产物缺失时会提示先构建。以上限制针对单次 E2E 命令，不要同时启动多条 E2E 命令。
 
 ## 安全
 
-- HTTP 监听上的 API 需要 `Authorization: Bearer <RAH_TOKEN>`，`/api/health` 除外；仅本机用户能访问的私有 Unix socket 免 token，由文件权限和 SSH 认证保护。
+- HTTP 监听上的 API 需要 `Authorization: Bearer <CALLI_TOKEN>`，`/api/health` 除外；仅本机用户能访问的私有 Unix socket 免 token，由文件权限和 SSH 认证保护。
 - daemon 等同于远程 shell。只把它暴露在可信网络（VPN）中。
-- 工作目录必须在 `RAH_WORKDIRS` 白名单内。
+- 工作目录必须在 `CALLI_WORKDIRS` 白名单内。
 
 ## 许可证
 

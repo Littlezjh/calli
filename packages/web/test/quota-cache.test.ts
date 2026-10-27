@@ -76,7 +76,7 @@ test('invalid saved quota is ignored and blocked storage still allows in-memory 
   const data = storage(t);
   for (const value of ['not json', '[]', JSON.stringify({ '/api/agents/one/quota': { checkedAt: 'invalid', windows: [] } }),
     JSON.stringify({ '/api/agents/one/quota': { ...quota(), windows: [{ label: '5H', usedPercent: '42' }] } })]) {
-    data.set('rah.quota.v1', value);
+    data.set('calli.quota.v1', value);
     assert.equal(new Api('test-token').cachedAgentQuota('one'), null);
   }
   Object.defineProperty(globalThis, 'localStorage', { configurable: true, get: () => { throw new Error('disabled'); } });

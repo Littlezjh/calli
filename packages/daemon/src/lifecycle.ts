@@ -3,7 +3,7 @@
  * waiting for a person": scheduled tasks, collaboration and the extension host. The cases are the
  * table in docs/extensions-design.md, in the section on unified event semantics.
  */
-import type { Attention, TurnOrigin, TurnOutcome } from '@rah/extension-api';
+import type { Attention, TurnOrigin, TurnOutcome } from '@calli/extension-api';
 import type { StoredEvent } from './events.js';
 import type { ThreadView } from './threads.js';
 

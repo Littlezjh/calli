@@ -1,4 +1,4 @@
-import type { MemoryDocument, MemoryIndex } from '@rah/extension-api';
+import type { MemoryDocument, MemoryIndex } from '@calli/extension-api';
 import type { ImageInput } from '../attachments.js';
 import type { EmittedEvent } from '../events.js';
 import type { GoalControl, GoalSnapshot } from './native-goal.js';
@@ -252,14 +252,14 @@ export interface DiscoveredAccount {
 }
 
 export interface StartOptions {
-  /** Native capability requested for an isolated Limi tool job, absent on ordinary threads. */
+  /** Native capability requested for an isolated Calli tool job, absent on ordinary threads. */
   borrowedTool?: string;
   workMode?: WorkMode;
   onWorkMode?: (mode: WorkMode) => void;
   onSpeed?: (speed: string) => void;
   /** The native goal changed, or was cleared with null. */
   onGoal?: (goal: GoalSnapshot | null) => void;
-  /** Ephemeral limi connection context. Never persisted in agent configuration. */
+  /** Ephemeral calli connection context. Never persisted in agent configuration. */
   coordinationEnv?: Record<string, string>;
   cwd: string;
   /** Agent-side session id to resume, if the thread already has one. */
@@ -279,7 +279,7 @@ export interface MemoryReader {
 }
 
 export interface AgentAdapter {
-  /** Optional task capabilities exposed through Limi's on-demand CLI. */
+  /** Optional task capabilities exposed through Calli's on-demand CLI. */
   readonly borrowedTools?: readonly import('./borrowed-tools.js').BorrowedTool[];
   readonly id: string;
   readonly label: string;
@@ -292,7 +292,7 @@ export interface AgentAdapter {
     memory?: boolean;
     workModes?: readonly WorkMode[];
     speed?: boolean;
-    /** Accepts runtime-only limi CLI connection context. */
+    /** Accepts runtime-only calli CLI connection context. */
     coordination?: boolean;
     /** Changing model preserves the native conversation, including through a resumed process. */
     modelSwitch?: boolean;
@@ -456,11 +456,11 @@ export function sessionEnvironment(base: Record<string, string>, context?: Recor
   // A daemon launched from another agent must never lend that agent's scoped credentials
   // to a new session. Undefined also masks inherited keys in adapters that merge env again.
   const env: NodeJS.ProcessEnv = {
-    ...process.env, ...base, LIMI_SOCKET: undefined, LIMI_KEY: undefined, LIMI_BIN_DIR: undefined,
-    LIMI_HANDOVER_SOCKET: undefined, LIMI_HANDOVER_KEY: undefined,
-    LIMI_TODO_SOCKET: undefined, LIMI_TODO_KEY: undefined,
-    LIMI_TOOLS_SOCKET: undefined, LIMI_TOOLS_KEY: undefined, LIMI_TOKEN: undefined, RAH_TOKEN: undefined, ...context,
+    ...process.env, ...base, CALLI_TEAM_SOCKET: undefined, CALLI_TEAM_KEY: undefined, CALLI_BIN_DIR: undefined,
+    CALLI_HANDOVER_SOCKET: undefined, CALLI_HANDOVER_KEY: undefined,
+    CALLI_TODO_SOCKET: undefined, CALLI_TODO_KEY: undefined,
+    CALLI_TOOLS_SOCKET: undefined, CALLI_TOOLS_KEY: undefined, CALLI_TOKEN: undefined, ...context,
   };
-  if (context?.LIMI_BIN_DIR) env.PATH = `${context.LIMI_BIN_DIR}${process.platform === 'win32' ? ';' : ':'}${base.PATH ?? process.env.PATH ?? ''}`;
+  if (context?.CALLI_BIN_DIR) env.PATH = `${context.CALLI_BIN_DIR}${process.platform === 'win32' ? ';' : ':'}${base.PATH ?? process.env.PATH ?? ''}`;
   return env;
 }

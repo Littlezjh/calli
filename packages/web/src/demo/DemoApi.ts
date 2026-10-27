@@ -1,4 +1,4 @@
-import type { ExtensionManifest, ExtensionState, Permission } from '@rah/extension-api';
+import type { ExtensionManifest, ExtensionState, Permission } from '@calli/extension-api';
 import { Api, ApiError, type FolderListing, type SearchHit, type TextFile, type Thread, type VideoRef } from '../api';
 import { BUILTIN_MANIFESTS } from '../extensions/catalog';
 import type { DemoData } from './data';

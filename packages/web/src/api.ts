@@ -1,4 +1,4 @@
-import type { ExtensionState, Permission, ExtensionPackagePreview, ExtensionConfiguration, ExtensionDetection, WorkProjection, ProgressReport } from '@rah/extension-api';
+import type { ExtensionState, Permission, ExtensionPackagePreview, ExtensionConfiguration, ExtensionDetection, WorkProjection, ProgressReport } from '@calli/extension-api';
 export type WorkMode = 'execute' | 'plan';
 export interface UserQuestion { id: string; question: string; header?: string; options: Array<{ value: string; label: string; description?: string }>; multiple?: boolean; freeText?: boolean; required?: boolean }
 export type UserInputAnswer = { answers: Record<string, string[]> } | { cancelled: true };
@@ -643,7 +643,7 @@ export function hostPath(host: string, path: string): string {
   return path.startsWith('/api/') ? `/api/hosts/${encodeURIComponent(host)}/proxy/${path.slice('/api/'.length)}` : path;
 }
 
-const TOKEN_KEY = 'rah.token';
+const TOKEN_KEY = 'calli.token';
 
 /** Token lives in localStorage on this device only. Storage can be blocked, so every access is guarded. */
 export function loadToken(): string {
@@ -693,7 +693,7 @@ export type VoiceEvent =
       role?: 'user' | 'assistant'; at?: string; afterSeq?: number; order?: number };
 
 /**
- * Random UUID per browser tab session, sent in X-RAH-Voice-Owner header.
+ * Random UUID per browser tab session, sent in X-Calli-Voice-Owner header.
  * Generated in memory; never saved to storage and never exposed to extensions.
  */
 const TAB_VOICE_OWNER =
@@ -1446,13 +1446,13 @@ export class Api {
   }
 
   /** Calli extensions this daemon ships, and which are installed on its machine. */
-  memorySources(extensionId: string): Promise<import('@rah/extension-api').MemorySource[]> {
+  memorySources(extensionId: string): Promise<import('@calli/extension-api').MemorySource[]> {
     return this.send('GET', `/api/extensions/${encodeURIComponent(extensionId)}/memory/sources`);
   }
-  memoryList(extensionId: string, sourceId: string): Promise<import('@rah/extension-api').MemoryIndex> {
+  memoryList(extensionId: string, sourceId: string): Promise<import('@calli/extension-api').MemoryIndex> {
     return this.send('GET', `/api/extensions/${encodeURIComponent(extensionId)}/memory/${encodeURIComponent(sourceId)}/files`);
   }
-  memoryRead(extensionId: string, sourceId: string, fileId: string): Promise<import('@rah/extension-api').MemoryDocument> {
+  memoryRead(extensionId: string, sourceId: string, fileId: string): Promise<import('@calli/extension-api').MemoryDocument> {
     return this.send('GET', `/api/extensions/${encodeURIComponent(extensionId)}/memory/${encodeURIComponent(sourceId)}/document?id=${encodeURIComponent(fileId)}`);
   }
 
@@ -1600,7 +1600,7 @@ export class Api {
   // ---------------------------------------------------------------- Realtime Voice
 
   private voiceHeaders(extra: Record<string, string> = {}): Record<string, string> {
-    return this.headers({ 'X-RAH-Voice-Owner': TAB_VOICE_OWNER, ...extra });
+    return this.headers({ 'X-Calli-Voice-Owner': TAB_VOICE_OWNER, ...extra });
   }
 
   protected async sendVoice<T>(method: string, url: string, body?: unknown): Promise<T> {
@@ -1651,7 +1651,7 @@ export class Api {
 
   /**
    * Opens an SSE stream for voice session events using fetch so the Authorization
-   * and X-RAH-Voice-Owner headers are passed.
+   * and X-Calli-Voice-Owner headers are passed.
    */
   async streamVoiceEvents(sessionId: string, onEvent: (ev: VoiceEvent) => void, signal: AbortSignal): Promise<void> {
     const res = await fetch(this.url(`/api/voice/${encodeURIComponent(sessionId)}/events`), {

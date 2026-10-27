@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
 
 let root, hub, remote, browser, page;
-const envFor = (home) => ({ HOME: home, CLAUDE_CONFIG_DIR: join(home, '.claude'), CODEX_HOME: join(home, '.codex'), PI_CODING_AGENT_DIR: join(home, '.pi/agent'), RAH_AGY_HOME: join(home, '.agy') });
+const envFor = (home) => ({ HOME: home, CLAUDE_CONFIG_DIR: join(home, '.claude'), CODEX_HOME: join(home, '.codex'), PI_CODING_AGENT_DIR: join(home, '.pi/agent'), CALLI_AGY_HOME: join(home, '.agy') });
 
 function seedLocal(home) {
   writeFileSync(join(home, '.claude.json'), JSON.stringify({ numStartups: 42, mcpServers: { botmux: { command: 'botmux', args: ['--stdio'], env: { TOKEN: 't' } } } }, null, 2));
@@ -20,23 +20,23 @@ function seedRemote(home) {
 }
 
 before(async () => {
-  root = mkdtempSync(join(tmpdir(), 'rah-mcp-e2e-'));
+  root = mkdtempSync(join(tmpdir(), 'calli-mcp-e2e-'));
   const localHome = join(root, 'local');
   const remoteHome = join(root, 'remote');
   mkdirSync(localHome, { recursive: true });
   mkdirSync(remoteHome, { recursive: true });
   seedLocal(localHome);
   seedRemote(remoteHome);
-  remote = await startDaemon({ ...envFor(remoteHome), RAH_SOCKET: join(remoteHome, '.local/state/remote-agent-hub/daemon.sock') });
+  remote = await startDaemon({ ...envFor(remoteHome), CALLI_SOCKET: join(remoteHome, '.local/state/calli/daemon.sock') });
   const machines = join(root, 'machines.json');
   writeFileSync(machines, JSON.stringify({ devbox: { home: remoteHome } }));
-  hub = await startDaemon({ ...envFor(localHome), RAH_SSH_BIN: 'fake-ssh', FAKE_SSH_HOSTS: machines });
+  hub = await startDaemon({ ...envFor(localHome), CALLI_SSH_BIN: 'fake-ssh', FAKE_SSH_HOSTS: machines });
   const added = await api(hub, '/api/hosts', { method: 'POST', body: JSON.stringify({ target: 'devbox', label: '开发机' }) });
   assert.equal(added.status, 201);
   browser = await launchBrowser();
   page = await browser.newPage({ viewport: { width: 1440, height: 960 } });
   page.on('pageerror', (err) => console.error('browser error:', err));
-  await page.addInitScript((token) => localStorage.setItem('rah.token', token), hub.token);
+  await page.addInitScript((token) => localStorage.setItem('calli.token', token), hub.token);
   await openUi(page, hub);
   await openMcp(page);
 });
@@ -137,12 +137,12 @@ test('a manual registration can be installed anywhere', async () => {
 });
 
 test('desktop and phone, light and dark fit the viewport with readable dialogs', async () => {
-  const shots = process.env.RAH_MCP_SHOTS;
+  const shots = process.env.CALLI_MCP_SHOTS;
   if (shots) mkdirSync(shots, { recursive: true });
   for (const phone of [false, true]) for (const theme of ['light', 'dark']) {
     const ctx = await browser.newContext({ viewport: phone ? { width: 390, height: 844 } : { width: 1440, height: 960 }, isMobile: phone, hasTouch: phone, colorScheme: theme });
     const p = await ctx.newPage();
-    await p.addInitScript((token) => localStorage.setItem('rah.token', token), hub.token);
+    await p.addInitScript((token) => localStorage.setItem('calli.token', token), hub.token);
     await openUi(p, hub);
     await openMcp(p, phone, shots ? join(shots, `${phone ? 'phone' : 'desktop'}-${theme}-menu.png`) : undefined);
     await p.waitForTimeout(300);

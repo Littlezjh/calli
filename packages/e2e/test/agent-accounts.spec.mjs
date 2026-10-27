@@ -7,12 +7,12 @@ import { fileURLToPath } from 'node:url';
 import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
 
 test('independent account creation and code login on desktop and phone, light and dark', { timeout: 120_000 }, async () => {
-  const source = mkdtempSync(join(tmpdir(), 'rah-e2e-account-source-'));
+  const source = mkdtempSync(join(tmpdir(), 'calli-e2e-account-source-'));
   writeFileSync(join(source, 'CLAUDE.md'), 'Shared instructions');
   writeFileSync(join(source, '.credentials.json'), 'existing account');
   const fixture = fileURLToPath(new URL('../../daemon/test/fixtures/fake-claude-auth.mjs', import.meta.url));
   const daemon = await startDaemon({
-    RAH_AGENTS_JSON: JSON.stringify({ agents: [{ id: 'claude', adapter: 'claude', command: ['fake-claude'], env: { CLAUDE_CONFIG_DIR: source, RAH_CLAUDE_BIN: fixture } }] }),
+    CALLI_AGENTS_JSON: JSON.stringify({ agents: [{ id: 'claude', adapter: 'claude', command: ['fake-claude'], env: { CLAUDE_CONFIG_DIR: source, CALLI_CLAUDE_BIN: fixture } }] }),
   });
   let browser;
   try {
@@ -20,15 +20,15 @@ test('independent account creation and code login on desktop and phone, light an
     for (const mobile of [false, true]) for (const colorScheme of ['light', 'dark']) {
       const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 1000 }, isMobile: mobile, hasTouch: mobile, colorScheme });
       try {
-        await context.addInitScript(() => localStorage.setItem('rah_onboard_dismissed', '1'));
+        await context.addInitScript(() => localStorage.setItem('calli_onboard_dismissed', '1'));
         const page = await context.newPage();
         const errors = [];
         page.on('pageerror', error => errors.push(String(error)));
         const mode = `${mobile ? 'phone' : 'desktop'}-${colorScheme}`;
         const shot = async name => {
-          if (!process.env.RAH_E2E_SHOTS_DIR) return;
-          mkdirSync(process.env.RAH_E2E_SHOTS_DIR, { recursive: true });
-          await page.screenshot({ path: join(process.env.RAH_E2E_SHOTS_DIR, `accounts-${mode}-${name}.png`) });
+          if (!process.env.CALLI_E2E_SHOTS_DIR) return;
+          mkdirSync(process.env.CALLI_E2E_SHOTS_DIR, { recursive: true });
+          await page.screenshot({ path: join(process.env.CALLI_E2E_SHOTS_DIR, `accounts-${mode}-${name}.png`) });
         };
         await openUi(page, daemon);
         await page.evaluate(() => { location.hash = '#/agents'; });

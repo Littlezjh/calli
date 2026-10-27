@@ -1,5 +1,5 @@
 /** How threads are arranged in the sidebar. Pure, so it can be tested directly. */
-import type { Attention } from '@rah/extension-api';
+import type { Attention } from '@calli/extension-api';
 import type { AgentInfo, Section, Thread } from './api';
 import { folderName } from './paths';
 import { t } from './i18n';

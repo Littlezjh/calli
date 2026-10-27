@@ -1,5 +1,5 @@
 {
-  "name": "@rah/ext-voice",
+  "name": "@calli/ext-voice",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@rah/extension-api": "*"
+    "@calli/extension-api": "*"
   },
   "peerDependencies": {
     "react": "^18.3.1"

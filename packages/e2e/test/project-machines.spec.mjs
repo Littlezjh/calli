@@ -7,7 +7,7 @@ import { startDaemon, openUi, api, launchBrowser, repoRoot } from '../harness.mj
 
 let root, hub, remote, browser, localCode, remoteCode;
 before(async () => {
-  root = mkdtempSync(join(tmpdir(), 'rah-project-machines-'));
+  root = mkdtempSync(join(tmpdir(), 'calli-project-machines-'));
   const remoteHome = join(root, 'remote-home');
   mkdirSync(remoteHome);
   localCode = join(root, 'local', 'code');
@@ -19,10 +19,10 @@ before(async () => {
     symlinkSync(real, alias);
   }
   const agents = JSON.stringify({ agents: [{ id: 'pi', adapter: 'pi', command: [process.execPath, join(repoRoot, 'daemon/test/fixtures/fake-pi.mjs')] }] });
-  remote = await startDaemon({ HOME: remoteHome, RAH_WORKDIRS: remoteCode, RAH_SOCKET: join(remoteHome, '.local/state/remote-agent-hub/daemon.sock'), RAH_AGENTS_JSON: agents });
+  remote = await startDaemon({ HOME: remoteHome, CALLI_WORKDIRS: remoteCode, CALLI_SOCKET: join(remoteHome, '.local/state/calli/daemon.sock'), CALLI_AGENTS_JSON: agents });
   const machines = join(root, 'machines.json');
   writeFileSync(machines, JSON.stringify({ devbox: { home: remoteHome } }));
-  hub = await startDaemon({ RAH_WORKDIRS: localCode, RAH_SSH_BIN: 'fake-ssh', FAKE_SSH_HOSTS: machines, RAH_AGENTS_JSON: agents });
+  hub = await startDaemon({ CALLI_WORKDIRS: localCode, CALLI_SSH_BIN: 'fake-ssh', FAKE_SSH_HOSTS: machines, CALLI_AGENTS_JSON: agents });
   assert.equal((await api(hub, '/api/hosts', { method: 'POST', body: JSON.stringify({ target: 'devbox', label: 'devbox' }) })).status, 201);
   for (const [daemon, code, name] of [[hub, localCode, '本机项目'], [remote, remoteCode, '远端项目']]) {
     mkdirSync(join(code, name));
@@ -35,9 +35,9 @@ after(async () => {
   if (root) rmSync(root, { recursive: true, force: true });
 });
 async function shot(page, name) {
-  if (!process.env.RAH_E2E_SHOTS_DIR) return;
-  mkdirSync(process.env.RAH_E2E_SHOTS_DIR, { recursive: true });
-  await page.screenshot({ path: join(process.env.RAH_E2E_SHOTS_DIR, `${name}.png`) });
+  if (!process.env.CALLI_E2E_SHOTS_DIR) return;
+  mkdirSync(process.env.CALLI_E2E_SHOTS_DIR, { recursive: true });
+  await page.screenshot({ path: join(process.env.CALLI_E2E_SHOTS_DIR, `${name}.png`) });
 }
 async function projects(page, cwd) {
   await page.locator('.composer').getByTitle(cwd, { exact: true }).click();
@@ -71,7 +71,7 @@ for (const mobile of [false, true]) for (const colorScheme of ['light', 'dark'])
       await shot(page, `projects-local-${tag}`);
       await page.keyboard.press('Escape');
       await page.locator('.composer textarea').fill('只在本机的草稿');
-      await page.waitForFunction(() => localStorage.getItem('rah.drafts')?.includes('只在本机的草稿'));
+      await page.waitForFunction(() => localStorage.getItem('calli.drafts')?.includes('只在本机的草稿'));
       menu = await machines(page);
       assert.equal(await menu.getByRole('menuitemradio', { checked: true }).count(), 1);
       await fits(page, menu);

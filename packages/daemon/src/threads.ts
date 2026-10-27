@@ -1969,7 +1969,7 @@ export class ThreadManager {
   /**
    * The handover summary: what the agent wrote in its handover turn, or — when the turn failed or
    * none was run — one the hub synthesizes from the event log, which holds the whole process.
-   * `brief` is for a successor the hub starts itself: it can read the source with `limi`, so it gets
+   * `brief` is for a successor the hub starts itself: it can read the source with `calli`, so it gets
    * where to look and a few lines of progress. Without it the text stands alone, to copy anywhere.
    */
   async handoverSummary(
@@ -2699,7 +2699,7 @@ export class ThreadManager {
   private emitThreadEvent(threadId: string, turnId: string | null, type: EventType, data: Record<string, unknown>): void {
     if (type === 'turn.done' && turnId && this.quietTurns.has(turnId) && data.stopReason !== 'cancelled') data = { ...data, quiet: true };
     if (type === 'turn.started') {
-      if (!data.control && String(data.text ?? '').includes('<limi-todo>')) this.personal.started(threadId);
+      if (!data.control && /<(?:calli|limi)-todo>/.test(String(data.text ?? ''))) this.personal.started(threadId);
       const agent = this.store.getThread(threadId)?.agent;
       const account = this.agentMeta().find(m => m.id === agent)?.account;
       if (account) data = { ...data, linkedAccount: account };

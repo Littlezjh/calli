@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { ExtensionConfiguration as Configuration, ExtensionState, WorkBinding } from '@rah/extension-api';
+import type { ExtensionConfiguration as Configuration, ExtensionState, WorkBinding } from '@calli/extension-api';
 import type { Api, Thread } from '../api';
 import { Dialog } from './Dialog';
 import { Popover } from './Popover';

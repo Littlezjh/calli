@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import type { MemoryDocument, MemoryIndex, MemoryKind, MemorySource } from '@rah/extension-api';
-import type { ExtensionViewProps } from '@rah/extension-api/web';
+import type { MemoryDocument, MemoryIndex, MemoryKind, MemorySource } from '@calli/extension-api';
+import type { ExtensionViewProps } from '@calli/extension-api/web';
 
 const KINDS: MemoryKind[] = ['summary', 'durable', 'evidence', 'raw', 'skill', 'other'];
 

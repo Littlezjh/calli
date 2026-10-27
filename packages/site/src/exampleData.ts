@@ -1,4 +1,4 @@
-import type { MemoryDocument, MemoryFile, MemorySource } from '@rah/extension-api';
+import type { MemoryDocument, MemoryFile, MemorySource } from '@calli/extension-api';
 import type { Coordination, Thread } from '../../web/src/api';
 import type { DemoData } from '../../web/src/demo/data';
 import type { StoredEvent } from '../../web/src/timeline';

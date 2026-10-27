@@ -60,7 +60,7 @@ export interface Contributions {
   composerActions?: ComposerActionContribution[];
 }
 
-/** Built-in views ship with Limi; optional work sources are installed separately. */
+/** Built-in views ship with Calli; optional work sources are installed separately. */
 export type ExtensionSource = 'builtin' | 'external';
 
 export interface ExtensionSetting {

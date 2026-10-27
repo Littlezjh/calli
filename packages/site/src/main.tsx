@@ -1,3 +1,4 @@
+import '../../web/src/storage-migration';
 import './zh';
 import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -19,7 +20,7 @@ cd calli
 npm install
 npm run setup
 npm run build
-RAH_ENV_FILE=../../.env npm start -w @rah/daemon`;
+CALLI_ENV_FILE=../../.env npm start -w @calli/daemon`;
 const agents = [
   { name: 'TRAE CLI', icon: TRAE_ICON }, { name: 'zcode', icon: ZCODE_ICON },
   { name: 'Codex', icon: CODEX_ICON }, { name: 'Claude Code', icon: CLAUDE_ICON },
@@ -27,7 +28,7 @@ const agents = [
 ];
 
 function Home() {
-  const [appearance, setAppearance, theme] = useAppearance('limi.site.appearance');
+  const [appearance, setAppearance, theme] = useAppearance('calli.site.appearance');
   const frame = useRef<HTMLIFrameElement>(null);
   const frameArea = useRef<HTMLDivElement>(null);
   const [started, setStarted] = useState(false);
@@ -37,7 +38,7 @@ function Home() {
   const [failed, setFailed] = useState(false);
   const [copyStatus, setCopyStatus] = useState<'copy' | 'copied' | 'copyFailed'>('copy');
   const copyTimer = useRef<ReturnType<typeof setTimeout>>();
-  const sendTheme = () => frame.current?.contentWindow?.postMessage({ type: 'limi:theme', theme }, location.origin);
+  const sendTheme = () => frame.current?.contentWindow?.postMessage({ type: 'calli:theme', theme }, location.origin);
   useEffect(() => {
     if (started || !frameArea.current) return;
     if (!('IntersectionObserver' in window)) { setStarted(true); return; }
@@ -50,10 +51,10 @@ function Home() {
   useEffect(() => {
     const receive = (event: MessageEvent) => {
       if (event.origin !== location.origin || event.source !== frame.current?.contentWindow) return;
-      if (event.data?.type === 'limi:ready') { sendTheme(); setReady(true); setFailed(false); }
-      if (event.data?.type === 'limi:scene' && EXAMPLES.some(s => s.id === event.data.scene)) setActive(event.data.scene);
-      if (event.data?.type === 'limi:focus') frame.current?.scrollIntoView({ block: 'center' });
-      if (event.data?.type === 'limi:install') document.getElementById('install')?.scrollIntoView({ behavior: 'smooth' });
+      if (event.data?.type === 'calli:ready') { sendTheme(); setReady(true); setFailed(false); }
+      if (event.data?.type === 'calli:scene' && EXAMPLES.some(s => s.id === event.data.scene)) setActive(event.data.scene);
+      if (event.data?.type === 'calli:focus') frame.current?.scrollIntoView({ block: 'center' });
+      if (event.data?.type === 'calli:install') document.getElementById('install')?.scrollIntoView({ behavior: 'smooth' });
     };
     window.addEventListener('message', receive);
     sendTheme();
@@ -83,7 +84,7 @@ function Home() {
     <a className="site-skip" href="#experience" onClick={() => setStarted(true)}>{copy.skip}</a>
     <header className="site-nav">
       <nav className="site-wrap" aria-label={copy.nav}>
-        <a className="site-brand" href="#"><img src="./limi-icon.png?v=crab-1" alt="" width="32" height="32" />Calli</a>
+        <a className="site-brand" href="#"><img src="./calli-icon.png?v=crab-1" alt="" width="32" height="32" />Calli</a>
         <div className="site-links">
           <a href="#experience" onClick={() => setStarted(true)}>{copy.experience}</a>
           <a href="#collaboration">{copy.collaboration}</a>
@@ -119,7 +120,7 @@ function Home() {
           </div>
           <div className="site-frame-area" ref={frameArea}>
             {started && <iframe key={source} ref={frame} src={source} title={copy.iframeTitle} className={ready ? 'is-ready' : ''} onError={() => setFailed(true)} />}
-            {!ready && <div className="site-frame-loading" role="status"><img src="./limi-icon.png?v=crab-1" alt="" width="56" height="56" /><p>{failed ? copy.loadFailed : started ? copy.loading : copy.loadPrompt}</p>{(failed || !started) && <button className="site-button site-button-small" onClick={() => loadScene(active)}>{failed ? copy.reload : copy.startDemo}</button>}</div>}
+            {!ready && <div className="site-frame-loading" role="status"><img src="./calli-icon.png?v=crab-1" alt="" width="56" height="56" /><p>{failed ? copy.loadFailed : started ? copy.loading : copy.loadPrompt}</p>{(failed || !started) && <button className="site-button site-button-small" onClick={() => loadScene(active)}>{failed ? copy.reload : copy.startDemo}</button>}</div>}
           </div>
         </div>
         <p className="site-demo-note">{copy.demoNote}<span>{copy.ownProject}<a href="#install">{copy.install} <IconArrowRight size={13} /></a></span></p>
@@ -200,7 +201,7 @@ function Home() {
         </div>
       </section>
     </main>
-    <footer className="site-footer site-wrap"><a className="site-brand" href="#"><img src="./limi-icon.png?v=crab-1" alt="" width="28" height="28" />Calli</a><span>{copy.footer}</span><div><a href={REPOSITORY} target="_blank" rel="noopener noreferrer">{copy.source}</a><a href={`${REPOSITORY}/blob/main/LICENSE`} target="_blank" rel="noopener noreferrer">{copy.license}</a></div></footer>
+    <footer className="site-footer site-wrap"><a className="site-brand" href="#"><img src="./calli-icon.png?v=crab-1" alt="" width="28" height="28" />Calli</a><span>{copy.footer}</span><div><a href={REPOSITORY} target="_blank" rel="noopener noreferrer">{copy.source}</a><a href={`${REPOSITORY}/blob/main/LICENSE`} target="_blank" rel="noopener noreferrer">{copy.license}</a></div></footer>
   </>;
 }
 

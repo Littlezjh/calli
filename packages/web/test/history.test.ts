@@ -12,7 +12,7 @@ const visible = (items: Item[]) => items.map(i => i.kind === 'work' ? { kind: i.
   : i.kind === 'changes' ? { kind: i.kind, added: i.added, removed: i.removed, files: i.files.map(f => ({ path: f.path, added: f.added, removed: f.removed })) } : i);
 
 test('projected completed histories have the same visible answers, boundaries, status and file counts', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'rah-view-'));
+  const dir = mkdtempSync(join(tmpdir(), 'calli-view-'));
   const store = new Store(dir);
   store.createThread({ id: 'th', agent: 'pi', cwd: dir, title: 'test', permissionMode: 'default', model: null, effort: null });
   const add = (turn: string, type: EventType, data: Record<string, unknown>) => store.appendEvent('th', turn, type, data);
@@ -60,7 +60,7 @@ test('reconnect replaces existing turns without deleting earlier pages or a newe
 
 
 test('running history stays summarized while complete live events hydrate old and new tools locally', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'rah-live-'));
+  const dir = mkdtempSync(join(tmpdir(), 'calli-live-'));
   const store = new Store(dir);
   store.createThread({ id: 'th', agent: 'pi', cwd: dir, title: 'test', permissionMode: 'default', model: null, effort: null });
   const add = (type: EventType, data: Record<string, unknown>) => store.appendEvent('th', 'turn', type, data);
@@ -98,7 +98,7 @@ test('running history stays summarized while complete live events hydrate old an
 
 
 test('reconnect preserves received tool payloads but does not override missed newer output', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'rah-reconnect-'));
+  const dir = mkdtempSync(join(tmpdir(), 'calli-reconnect-'));
   const store = new Store(dir);
   store.createThread({ id: 'th', agent: 'pi', cwd: dir, title: 'test', permissionMode: 'default', model: null, effort: null });
   const add = (type: EventType, data: Record<string, unknown>) => store.appendEvent('th', 'turn', type, data);

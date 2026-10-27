@@ -1,29 +1,29 @@
 import { readFileSync } from 'node:fs';
-import { transport } from './limi-tools.mjs';
-export const personalHelp = `limi todo
-limi todo show ID
-limi todo delegate ID
-limi todo add --owner agent|me --text-file FILE|- [--parent ID] [--due TIME] [--thread THREAD_ID ...]
-limi todo update ID --rev N [--state open|waiting|done] [--waiting-on TEXT] [--due TIME] [--follow-up TIME] [--note-file FILE|-] [--thread THREAD_ID ...] [--unlink THREAD_ID ...]
-limi todo delete ID --rev N
-limi todo propose-done ID --rev N --evidence-file FILE|-
-limi threads [--since TIME] [--limit N]
-limi threads show THREAD_ID [--before TURN_CURSOR] [--turns N]
-limi threads show THREAD_ID --turn TURN_ID [--offset N --snapshot SEQ]
-limi wish --text-file FILE|-
-limi quiet
-limi review on|off|status
-limi review next TIME
+import { transport } from './calli-tools.mjs';
+export const personalHelp = `calli todo
+calli todo show ID
+calli todo delegate ID
+calli todo add --owner agent|me --text-file FILE|- [--parent ID] [--due TIME] [--thread THREAD_ID ...]
+calli todo update ID --rev N [--state open|waiting|done] [--waiting-on TEXT] [--due TIME] [--follow-up TIME] [--note-file FILE|-] [--thread THREAD_ID ...] [--unlink THREAD_ID ...]
+calli todo delete ID --rev N
+calli todo propose-done ID --rev N --evidence-file FILE|-
+calli threads [--since TIME] [--limit N]
+calli threads show THREAD_ID [--before TURN_CURSOR] [--turns N]
+calli threads show THREAD_ID --turn TURN_ID [--offset N --snapshot SEQ]
+calli wish --text-file FILE|-
+calli quiet
+calli review on|off|status
+calli review next TIME
 Review next accepts 30 minutes to 3 days from now; the result reports nextReviewAt and adjustment reasons: quiet_hours, daily_limit, idle_backoff.
 Reviews only ask; delegate only after the person explicitly says to start.
-todo, threads, review and wish use LIMI_TODO_SOCKET / LIMI_TODO_KEY, only in the personal directory.
-quiet uses LIMI_TOOLS_SOCKET / LIMI_TOOLS_KEY in any thread.
+todo, threads, review and wish use CALLI_TODO_SOCKET / CALLI_TODO_KEY, only in the personal directory.
+quiet uses CALLI_TOOLS_SOCKET / CALLI_TOOLS_KEY in any thread.
 In linked threads, self: true marks the current thread. Other linked threads are records only: work from the todo and its note, not their history; handover/history are only for a handover chain.
 Read before writing: stale rev returns 409. For me commitments use propose-done; only the person can mark them done.
 --thread links existing threads (repeat it for several); a me item that links threads other than the current one is written directly, otherwise it is a suggestion the person confirms.
 delete removes one item; delete its sub-items first. Finished me items are not deleted.
 threads lists threads with turns since TIME (default: local midnight six days ago), newest first: title, status, done, progress line, first and last ask, end of the last answer, linked todos.
-threads show pages one thread's history like limi history; read only what a summary needs.
+threads show pages one thread's history like calli history; read only what a summary needs.
 After changing a todo, update its continuation note before ending the turn (maximum 4000 Unicode characters).
 Note sections: ## 欠谁什么 / ## 定了什么（包括否决的路线和原因） / ## 做到哪（已完成的、可能仍在执行的，比如已提交但未确认的表单） / ## 下一步
 Do not store credentials in notes. TIME is ISO 8601; missing timezone means daemon local time. An empty TIME clears it.
@@ -54,7 +54,7 @@ export async function personalMain(args) {
     input[fields[key]] = key.endsWith('-file') ? readFileSync(value === '-' ? 0 : value, 'utf8') : key === '--rev' ? Number(value) : value;
   }
   if (command === 'add' && (!seen.has('--owner') || !seen.has('--text-file')) || command === 'wish' && !seen.has('--text-file') || ['update', 'delete', 'propose-done'].includes(command) && !seen.has('--rev') || command === 'propose-done' && !seen.has('--evidence-file')) throw new Error(personalHelp);
-  if (group === 'quiet' && (!process.env.LIMI_TOOLS_SOCKET || !process.env.LIMI_TOOLS_KEY)) throw new Error('quiet requires thread-scoped credentials');
+  if (group === 'quiet' && (!process.env.CALLI_TOOLS_SOCKET || !process.env.CALLI_TOOLS_KEY)) throw new Error('quiet requires thread-scoped credentials');
   console.log(JSON.stringify(await transport('/command', input, false, group !== 'quiet')));
 }
 

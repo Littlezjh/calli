@@ -16,7 +16,7 @@ import { Workdirs } from '../src/workdirs.js';
 const fixture = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-acp.mjs');
 
 test('handover GET assembles exact Claude instance and session coordinates without spending a turn', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'rah-handover-api-'));
+  const root = mkdtempSync(join(tmpdir(), 'calli-handover-api-'));
   const cwd = join(root, 'project');
   mkdirSync(cwd);
   const accounts = [join(root, 'account-one'), join(root, 'account-two')];
@@ -88,7 +88,7 @@ test('handover GET assembles exact Claude instance and session coordinates witho
 
 
 test('handover-thread creates an unsent conversation in the same worktree, including scratch and external checkouts', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'rah-handover-start-'));
+  const root = mkdtempSync(join(tmpdir(), 'calli-handover-start-'));
   const cwd = join(root, 'project');
   const scratch = join(root, 'scratch');
   mkdirSync(cwd);
@@ -173,7 +173,7 @@ test('handover-thread creates an unsent conversation in the same worktree, inclu
 });
 
 test('a turn that fails because the plan ran out is marked so another agent can take over', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'rah-plan-exhausted-'));
+  const root = mkdtempSync(join(tmpdir(), 'calli-plan-exhausted-'));
   const cwd = join(root, 'project');
   mkdirSync(cwd);
   const registry = new AgentRegistry([{ id: 'claude', adapter: 'claude', label: 'Claude Code', command: [process.execPath, fixture], env: { CLAUDE_CONFIG_DIR: join(root, 'claude'), FAKE_SESSION_ROOT: join(root, 'claude') } }], null);
@@ -199,7 +199,7 @@ test('a turn that fails because the plan ran out is marked so another agent can 
 });
 
 test('merged-history HTTP reads omit handover text until explicitly expanded, and require authentication', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'rah-handover-history-'));
+  const root = mkdtempSync(join(tmpdir(), 'calli-handover-history-'));
   const store = new Store(root);
   const registry = new AgentRegistry([{ id: 'pi', adapter: 'pi', command: [process.execPath, fixture] }], null);
   const manager = new ThreadManager(store, registry.adapters, new Workdirs([root], null), new AttachmentStore(root));
@@ -246,7 +246,7 @@ test('merged-history HTTP reads omit handover text until explicitly expanded, an
 
 
 test('manual handovers always branch without stopping work, automatic handovers continue, and resumed sources separate', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'rah-handover-mode-'));
+  const root = mkdtempSync(join(tmpdir(), 'calli-handover-mode-'));
   const store = new Store(root);
   const registry = new AgentRegistry(['source', 'next'].map(id => ({ id, adapter: 'claude', command: [process.execPath, fixture] })), null);
   const manager = new ThreadManager(store, registry.adapters, new Workdirs([root], null), new AttachmentStore(root));

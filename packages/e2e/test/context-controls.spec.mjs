@@ -9,7 +9,7 @@ let browser;
 before(async () => {
   daemon = await startDaemon({
     FAKE_CODEX_WEEKLY_ONLY: '1', FAKE_CODEX_NO_EFFORT_MODEL: '1',
-    RAH_AGENTS_JSON: JSON.stringify({ agents: ['claude', 'codex', 'pi'].map((id) => ({
+    CALLI_AGENTS_JSON: JSON.stringify({ agents: ['claude', 'codex', 'pi'].map((id) => ({
       id, adapter: id, command: [process.execPath, join(repoRoot, 'daemon/test/fixtures', `fake-${id === 'claude' ? 'acp' : id}.mjs`)],
     })) }),
   });
@@ -43,9 +43,9 @@ async function select(page, thread, mobile = false) {
 }
 async function shot(page, name) {
   await page.waitForTimeout(350);
-  if (!process.env.RAH_E2E_SHOTS_DIR) return;
-  mkdirSync(process.env.RAH_E2E_SHOTS_DIR, { recursive: true });
-  await page.screenshot({ path: join(process.env.RAH_E2E_SHOTS_DIR, `${name}.png`) });
+  if (!process.env.CALLI_E2E_SHOTS_DIR) return;
+  mkdirSync(process.env.CALLI_E2E_SHOTS_DIR, { recursive: true });
+  await page.screenshot({ path: join(process.env.CALLI_E2E_SHOTS_DIR, `${name}.png`) });
 }
 async function fits(page, locator) {
   const bounds = await locator.boundingBox();

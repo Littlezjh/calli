@@ -7,7 +7,7 @@ import { WorkSummary } from './work';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useEffect, useState, type ComponentProps } from 'react';
-import type { PopoverOptionProps, PopoverProps, WebHostUi } from '@rah/extension-api/web';
+import type { PopoverOptionProps, PopoverProps, WebHostUi } from '@calli/extension-api/web';
 import type { AgentInfo } from '../api';
 import { Popover } from '../components/Popover';
 import {

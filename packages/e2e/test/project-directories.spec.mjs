@@ -7,20 +7,20 @@ import { startDaemon, openUi, api, launchBrowser, repoRoot } from '../harness.mj
 
 let root, remoteHome, remote, hub, browser;
 before(async () => {
-  root = mkdtempSync(join(tmpdir(), 'rah-e2e-projects-'));
+  root = mkdtempSync(join(tmpdir(), 'calli-e2e-projects-'));
   remoteHome = join(root, 'remote-home');
   const localHome = join(root, 'local-home');
   mkdirSync(remoteHome);
   mkdirSync(localHome);
   mkdirSync(join(localHome, 'local-only'));
-  const socket = join(remoteHome, '.local/state/remote-agent-hub/daemon.sock');
+  const socket = join(remoteHome, '.local/state/calli/daemon.sock');
   remote = await startDaemon({
-    HOME: remoteHome, RAH_SOCKET: socket, FAKE_CODEX_RPC_LOG: join(root, 'codex-rpc.jsonl'),
-    RAH_AGENTS_JSON: JSON.stringify({ agents: [{ id: 'codex', adapter: 'codex', command: [process.execPath, join(repoRoot, 'daemon/test/fixtures/fake-codex.mjs')] }] }),
+    HOME: remoteHome, CALLI_SOCKET: socket, FAKE_CODEX_RPC_LOG: join(root, 'codex-rpc.jsonl'),
+    CALLI_AGENTS_JSON: JSON.stringify({ agents: [{ id: 'codex', adapter: 'codex', command: [process.execPath, join(repoRoot, 'daemon/test/fixtures/fake-codex.mjs')] }] }),
   });
   const machines = join(root, 'machines.json');
   writeFileSync(machines, JSON.stringify({ devbox: { home: remoteHome } }));
-  hub = await startDaemon({ HOME: localHome, RAH_SSH_BIN: 'fake-ssh', FAKE_SSH_HOSTS: machines });
+  hub = await startDaemon({ HOME: localHome, CALLI_SSH_BIN: 'fake-ssh', FAKE_SSH_HOSTS: machines });
   const added = await api(hub, '/api/hosts', { method: 'POST', body: JSON.stringify({ target: 'devbox', label: '开发机' }) });
   assert.equal(added.status, 201);
   browser = await launchBrowser();
@@ -39,7 +39,7 @@ async function openPicker(page) {
 }
 async function newPage(mobile = false, colorScheme = 'light') {
   const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1400, height: 900 }, isMobile: mobile, hasTouch: mobile, colorScheme });
-  await context.addInitScript(() => localStorage.setItem('rah.host', 'devbox'));
+  await context.addInitScript(() => localStorage.setItem('calli.host', 'devbox'));
   const page = await context.newPage();
   page.setDefaultTimeout(8000);
   await openUi(page, hub);
@@ -88,9 +88,9 @@ for (const mobile of [false, true]) for (const colorScheme of ['light', 'dark'])
       await dialog.getByRole('button', { name: '添加并使用', exact: true }).waitFor();
       const bounds = await dialog.boundingBox();
       assert.ok(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= page.viewportSize().width + 1 && bounds.y + bounds.height <= page.viewportSize().height + 1);
-      if (process.env.RAH_E2E_SHOTS_DIR) {
-        mkdirSync(process.env.RAH_E2E_SHOTS_DIR, { recursive: true });
-        await page.screenshot({ path: join(process.env.RAH_E2E_SHOTS_DIR, `projects-${tag}.png`) });
+      if (process.env.CALLI_E2E_SHOTS_DIR) {
+        mkdirSync(process.env.CALLI_E2E_SHOTS_DIR, { recursive: true });
+        await page.screenshot({ path: join(process.env.CALLI_E2E_SHOTS_DIR, `projects-${tag}.png`) });
       }
       await dialog.getByRole('button', { name: '添加并使用', exact: true }).click();
       await dialog.waitFor({ state: 'detached' });

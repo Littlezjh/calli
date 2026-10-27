@@ -6,7 +6,7 @@ import { startDaemon, openUi, api, launchBrowser, repoRoot } from '../harness.mj
 
 test('hidden accounts disappear from quota and are not queried; restoring brings them back', { timeout: 120_000 }, async () => {
   const command = [process.execPath, join(repoRoot, 'daemon/test/fixtures/fake-codex.mjs')];
-  const daemon = await startDaemon({ RAH_AGENTS_JSON: JSON.stringify({ agents: [
+  const daemon = await startDaemon({ CALLI_AGENTS_JSON: JSON.stringify({ agents: [
     { id: 'primary', adapter: 'codex', label: 'Primary', command },
     { id: 'backup', adapter: 'codex', label: 'Backup', command },
   ] }) });
@@ -43,9 +43,9 @@ test('hidden accounts disappear from quota and are not queried; restoring brings
         await board.getByRole('button', { name: '全部刷新', exact: true }).click();
         await refresh;
         assert.equal(requests.includes('/api/agents/primary/quota'), false, 'refresh all does not query hidden accounts');
-        if (process.env.RAH_E2E_SHOTS_DIR) {
-          mkdirSync(process.env.RAH_E2E_SHOTS_DIR, { recursive: true });
-          await page.screenshot({ path: join(process.env.RAH_E2E_SHOTS_DIR, `quota-hidden-${phone ? 'phone' : 'desktop'}-${theme}.png`), animations: 'disabled' });
+        if (process.env.CALLI_E2E_SHOTS_DIR) {
+          mkdirSync(process.env.CALLI_E2E_SHOTS_DIR, { recursive: true });
+          await page.screenshot({ path: join(process.env.CALLI_E2E_SHOTS_DIR, `quota-hidden-${phone ? 'phone' : 'desktop'}-${theme}.png`), animations: 'disabled' });
         }
         await board.getByRole('button', { name: '关闭', exact: true }).click();
         await toggle('Primary', false);

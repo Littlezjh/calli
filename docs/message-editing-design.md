@@ -171,14 +171,14 @@ Hub 需要显式保存当前版本与原生 session 的对应关系、修改前�
 - pi：已有 RPC fork 从用户 entry 之前创建副本，需补出目标 entry 的统一引用，验证首轮及压缩后的历史边界。
 - Claude：已有 ACP 分叉点是最后保留的消息，需要验证前一轮边界；首轮无前一条时不能假定可得到等价空前缀。SDK 的截断恢复参数不等于 ACP 已暴露原地回退。
 - TraeX：本机 app-server schema 也有 `beforeTurnId`、`thread/revert` 与 `thread/rollback`；可优先验证 app-server 的前缀 fork，不再仅按 ACP 的前一条消息推断。
-- zcode：本机新协议源码已有原地编辑和纯对话 fork，但当前 Limi 使用旧协议。旧 `session/fork` 可能恢复文件，不直接接入；必须选对纯对话路径并验证消息边界和运行偏好。
+- zcode：本机新协议源码已有原地编辑和纯对话 fork，但当前 Calli 使用旧协议。旧 `session/fork` 可能恢复文件，不直接接入；必须选对纯对话路径并验证消息边界和运行偏好。
 - agy：终端有 fork/rewind，当前 headless 协议未核实可调用的控制入口；未验证前不展示已发送消息编辑。排队编辑继续保留。
 
 以上是待验证接入路径，不是这些 agent 的新增支持承诺。
 
 ### 本机其他 agent 的能力核对
 
-| Agent 与核对版本 | 回退当前会话 | 分叉到目标前缀 | Limi 当前接入的缺口 |
+| Agent 与核对版本 | 回退当前会话 | 分叉到目标前缀 | Calli 当前接入的缺口 |
 |---|---|---|---|
 | Claude Code 2.1.299；ACP 0.89.0，内含 SDK 0.3.293 | 终端 `/rewind` 有只恢复对话的选项；SDK `resumeSessionAt` 提供截断恢复，但 ACP 的 SDK 配置透传明确拒绝该选项，未找到通用原地回退 RPC | ACP `session/fork` 实际调用 SDK `forkSession({ upToMessageId })`，保留边界消息（inclusive） | 中间消息可研究使用前一轮完整边界；首轮没有之前的边界，需要独立验证，不能直接传空值当空会话 |
 | pi 1.1.0 | `/tree` 与 SDK `navigateTree` 能在同一 session 内切分支；当前 RPC 命令枚举没有对应导航/回退命令 | RPC `fork(entryId)` 从用户 entry **之前**复制，返回原输入；RPC `clone` 复制当前分支 | 目标 entry 统一映射、图片/注释恢复、压缩前历史与当前版本绑定需要补齐；不必切换整个适配器到 SDK |

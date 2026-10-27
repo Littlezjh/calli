@@ -1,7 +1,7 @@
 import { personalServer } from './personal.js';
 import { PushService } from './push.js';
 import { CoordinationManager, coordinationServer } from './coordination.js';
-import { loadConfig, loadDotEnv } from './config.js';
+import { adoptLegacyEnv, loadConfig, loadDotEnv } from './config.js';
 import { ExtensionHost } from './extension-host.js';
 import { loadCatalog } from './extensions.js';
 import { loadSupportedExternalCatalog } from './external-extensions.js';
@@ -25,10 +25,12 @@ import { join } from 'node:path';
 export const VERSION = '0.1.0';
 
 async function main(): Promise<void> {
+  adoptLegacyEnv();
   loadDotEnv();
+  adoptLegacyEnv();
   const config = loadConfig();
 
-  // Empty RAH_WORKDIRS means "only the directory the daemon was started in".
+  // Empty CALLI_WORKDIRS means "only the directory the daemon was started in".
   const workdirs = config.workdirs.length > 0 ? config.workdirs : [process.cwd()];
 
   // Agent instances come from agents.json (or the built-in defaults): one adapter each, so the
@@ -59,7 +61,7 @@ async function main(): Promise<void> {
   // turns the first one is still streaming, and the log would hold events after their turn's
   // ending. Seen once when two daemons overlapped; the view then showed a working box that never
   // stopped counting.
-  const coordinationPath = join(config.dataDir, 'coordination', 'limi.sock');
+  const coordinationPath = join(config.dataDir, 'coordination', 'calli.sock');
   if (await socketHeld(coordinationPath)) throw new Error('another daemon is already serving this data directory; not starting a second one');
 
   const store = new Store(config.dataDir);
@@ -69,7 +71,7 @@ async function main(): Promise<void> {
   const manager = new ThreadManager(store, adapters, dirs, new AttachmentStore(config.dataDir), () => registry.list());
   manager.recoverInterrupted();
   const push = new PushService(store, manager);
-  const personalPath = join(config.dataDir, 'personal', 'limi.sock');
+  const personalPath = join(config.dataDir, 'personal', 'calli.sock');
   manager.personal.socket = personalPath;
   const personal = personalServer(manager.personal);
   if (!await listenPrivate(personal, personalPath)) throw new Error('Personal socket is already in use');
@@ -78,7 +80,7 @@ async function main(): Promise<void> {
   const coordination = new CoordinationManager(store, manager, coordinationPath);
   const collaborationServer = coordinationServer(coordination);
   if (!await listenPrivate(collaborationServer, coordinationPath)) throw new Error('Collaboration socket is already in use');
-  const toolsPath = join(config.dataDir, 'tools', 'limi.sock');
+  const toolsPath = join(config.dataDir, 'tools', 'calli.sock');
   const borrowing = new BorrowingService(store, manager, adapters, config.dataDir, toolsPath);
   const toolsServer = borrowingServer(borrowing);
   if (!await listenPrivate(toolsServer, toolsPath)) throw new Error('Tool socket is already in use');
@@ -116,8 +118,8 @@ async function main(): Promise<void> {
   // Catch-up runs need all thread-scoped sockets and runtime services to be ready.
   scheduler.start();
   // Previews are served on a port of their own: the iframe needs an origin separate from the app
-  // (see preview.ts). One port past the app's is the default; RAH_PREVIEW_PORT picks another.
-  const previewPort = Number(process.env.RAH_PREVIEW_PORT) || config.port + 1;
+  // (see preview.ts). One port past the app's is the default; CALLI_PREVIEW_PORT picks another.
+  const previewPort = Number(process.env.CALLI_PREVIEW_PORT) || config.port + 1;
   const server = createHttpServer({ manager, push, registry, terminals, desktop, hosts, scheduler, extensions, voice, token: config.token, webDir: config.webDir, version: VERSION, previewPort });
   // Same requests, other origin: preview frames load from here so their pages cannot reach the
   // app, while their own CSS and scripts load same-origin. Without the port, previews say so.
@@ -139,7 +141,7 @@ async function main(): Promise<void> {
   }
 
   server.listen(config.port, config.host, () => {
-    console.log(`Limi daemon ${VERSION} listening on http://${config.host}:${config.port}`);
+    console.log(`Calli daemon ${VERSION} listening on http://${config.host}:${config.port}`);
     console.log(`workdirs: ${dirs.roots().join(', ')}`);
     if (config.host === '0.0.0.0' || config.host === '::') {
       console.warn('warning: listening on all interfaces. Bind to the VPN address instead.');

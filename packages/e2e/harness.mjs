@@ -59,7 +59,7 @@ const alive = (pid) => {
   }
 };
 
-/** Wraps a fixture script in an executable shell shim, so `RAH_*_BIN` can point at a plain name. */
+/** Wraps a fixture script in an executable shell shim, so `CALLI_*_BIN` can point at a plain name. */
 function shim(dir, name, script) {
   const path = join(dir, name);
   writeFileSync(path, `#!/bin/sh\nexec "${process.execPath}" "${join(fixtures, script)}" "$@"\n`, { mode: 0o755 });
@@ -68,7 +68,7 @@ function shim(dir, name, script) {
 
 /**
  * One daemon with its own data dir, workdir and fake agents. Returns the base URL plus handles.
- * `env` is merged into the daemon's environment (extra RAH_* switches, fake-agent switches).
+ * `env` is merged into the daemon's environment (extra CALLI_* switches, fake-agent switches).
  */
 export async function startDaemon(env = {}, opts = {}) {
   for (const artifact of ['daemon/dist/index.js', 'web/dist/index.html']) {
@@ -76,9 +76,9 @@ export async function startDaemon(env = {}, opts = {}) {
       throw new Error(`Missing ${artifact}. Run npm run test:e2e, or npm run build before running tests directly.`);
     }
   }
-  const dataDir = mkdtempSync(join(tmpdir(), 'rah-e2e-data-'));
+  const dataDir = mkdtempSync(join(tmpdir(), 'calli-e2e-data-'));
   // A fixed name reads better in screenshots than the random suffix mkdtemp adds.
-  const workdir = opts.workdir ?? mkdtempSync(join(tmpdir(), 'limi-demo-'));
+  const workdir = opts.workdir ?? mkdtempSync(join(tmpdir(), 'calli-demo-'));
   if (opts.workdir) mkdirSync(opts.workdir, { recursive: true });
   const homeDir = join(dataDir, 'home'); mkdirSync(homeDir);
   const binDir = join(dataDir, 'bin');
@@ -86,10 +86,10 @@ export async function startDaemon(env = {}, opts = {}) {
   shim(binDir, 'fake-pi', 'fake-pi.mjs');
   shim(binDir, 'fake-claude', 'fake-acp.mjs');
   shim(binDir, 'fake-agy', 'fake-agy.mjs');
-  // For the tests of other machines: `RAH_SSH_BIN: 'fake-ssh'` makes directories stand in for them.
+  // For the tests of other machines: `CALLI_SSH_BIN: 'fake-ssh'` makes directories stand in for them.
   shim(binDir, 'fake-ssh', 'fake-ssh.mjs');
   // An extra CLI for the discovery tests: looks like another copy of agy on PATH.
-  if (env.RAH_E2E_DISCOVER_AGY2 === '1') shim(binDir, 'agy2', 'fake-agy.mjs');
+  if (env.CALLI_E2E_DISCOVER_AGY2 === '1') shim(binDir, 'agy2', 'fake-agy.mjs');
 
   const port = await freePort();
   const daemonEnv = {
@@ -97,23 +97,23 @@ export async function startDaemon(env = {}, opts = {}) {
     HOME: homeDir,
     // The fake agents are shims in binDir, so that directory leads the PATH.
     PATH: `${binDir}:${process.env.PATH ?? ''}`,
-    RAH_TOKEN: TOKEN,
-    RAH_HOST: '127.0.0.1',
-    RAH_PORT: String(port),
-    RAH_DATA_DIR: dataDir,
-    RAH_WORKDIRS: workdir,
+    CALLI_TOKEN: TOKEN,
+    CALLI_HOST: '127.0.0.1',
+    CALLI_PORT: String(port),
+    CALLI_DATA_DIR: dataDir,
+    CALLI_WORKDIRS: workdir,
     // Serve this repo's own build, never a dist inherited from the ambient environment.
-    RAH_WEB_DIR: join(repoRoot, 'web', 'dist'),
-    RAH_PI_BIN: 'fake-pi',
-    RAH_CLAUDE_ACP_BIN: 'fake-claude',
-    RAH_AGY_BIN: 'fake-agy',
+    CALLI_WEB_DIR: join(repoRoot, 'web', 'dist'),
+    CALLI_PI_BIN: 'fake-pi',
+    CALLI_CLAUDE_ACP_BIN: 'fake-claude',
+    CALLI_AGY_BIN: 'fake-agy',
     PI_CODING_AGENT_DIR: join(dataDir, 'pi-agent'),
-    RAH_AGY_HOME: join(dataDir, 'agy-home'),
+    CALLI_AGY_HOME: join(dataDir, 'agy-home'),
     ZCODE_DATA_BASE_DIR: dataDir,
     // The person's writing habits note lives here, not in the home directory the test machine has.
-    LIMI_NOTES_DIR: join(dataDir, 'notes'),
+    CALLI_NOTES_DIR: join(dataDir, 'notes'),
     // Its own socket, never the one in the home directory that a real hub on this machine holds.
-    RAH_SOCKET: join(dataDir, 'daemon.sock'),
+    CALLI_SOCKET: join(dataDir, 'daemon.sock'),
     ...env,
   };
   const child = spawn(process.execPath, [join(repoRoot, 'daemon', 'dist', 'index.js')], {

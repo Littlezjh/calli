@@ -19,7 +19,7 @@ after(async () => {
 /** A page already signed in, in a browser that asks for `locale`. */
 async function signedIn(locale) {
   const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 }, locale });
-  await ctx.addInitScript((token) => localStorage.setItem('rah.token', token), daemon.token);
+  await ctx.addInitScript((token) => localStorage.setItem('calli.token', token), daemon.token);
   const page = await ctx.newPage();
   await page.goto(daemon.base + '/');
   await page.locator('.sidebar-inner').waitFor({ state: 'attached', timeout: 15_000 });
@@ -79,6 +79,6 @@ test('a language picked in the menu applies everywhere and outlives a reload', a
   // Following the system again forgets the choice: this browser asks for Chinese.
   await choose(page, '設定', '言語', 'システムに合わせる');
   assert.equal(await lang(page), 'zh-CN');
-  assert.equal(await page.evaluate(() => localStorage.getItem('rah.locale')), null);
+  assert.equal(await page.evaluate(() => localStorage.getItem('calli.locale')), null);
   await ctx.close();
 });

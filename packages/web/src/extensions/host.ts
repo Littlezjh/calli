@@ -4,8 +4,8 @@
  * list, refreshed from /api/stream). Native memory is queried separately through a permissioned
  * facade; views never see the token or the raw Api.
  */
-import type { ExtensionState, ThreadSummary, WorkProjection } from '@rah/extension-api';
-import type { AgentInfo as HostAgentInfo, ConnectionState, WebHost, WebHostStorage, WebHostUi } from '@rah/extension-api/web';
+import type { ExtensionState, ThreadSummary, WorkProjection } from '@calli/extension-api';
+import type { AgentInfo as HostAgentInfo, ConnectionState, WebHost, WebHostStorage, WebHostUi } from '@calli/extension-api/web';
 import type { AgentInfo } from '../api';
 import type { Api } from '../api';
 import { memoryMessages } from './memory-messages';
@@ -29,9 +29,9 @@ export interface LiveHost {
   update(next: HostInputs): void;
 }
 
-/** Per device, under `rah.ext.<id>.`, so one extension cannot read or clobber another's keys. */
+/** Per device, under `calli.ext.<id>.`, so one extension cannot read or clobber another's keys. */
 export function extensionStorage(extensionId: string, store: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null = typeof localStorage === 'undefined' ? null : localStorage): WebHostStorage {
-  const prefix = `rah.ext.${extensionId}.`;
+  const prefix = `calli.ext.${extensionId}.`;
   return {
     get(key) {
       try {

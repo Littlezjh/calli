@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { collectTags, parseTitleTags } from '../src/tags';
 import { emptyFilters, matchesFilters, parseFilters } from '../src/columns';
-import type { ThreadSummary } from '@rah/extension-api';
+import type { ThreadSummary } from '@calli/extension-api';
 
 test('extracts only consecutive leading prefixes and preserves a tag-only title', () => {
   assert.deepEqual(parseTitleTags('[周报]看看最新的看板'), { title: '看看最新的看板', tags: ['周报'] });

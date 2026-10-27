@@ -138,7 +138,7 @@ CREATE TABLE annotations (
 ```
 
 ### 文件上传安全检查清单
-- [ ] 路径白名单验证（只允许 `RAH_WORKDIRS`）
+- [ ] 路径白名单验证（只允许 `CALLI_WORKDIRS`）
 - [ ] 符号链接检测（避免无限循环）
 - [ ] 文件大小限制（建议 100 MB）
 - [ ] 目录深度限制（maxDepth = 5）

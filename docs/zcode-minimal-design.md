@@ -2,7 +2,7 @@
 
 ## 范围
 
-不修改 zcode 源码、不安装定制 CLI、不改用户全局配置。limi 启动原版 `zcode app-server`，通过已有协议关闭记忆、限制工具与工作流。
+不修改 zcode 源码、不安装定制 CLI、不改用户全局配置。calli 启动原版 `zcode app-server`，通过已有协议关闭记忆、限制工具与工作流。
 
 精简不是无状态：保留原生会话历史、恢复、模型选择、思考档位、取消、压缩。自动跨会话记忆与会话历史分开。旧历史已经包含的记忆文字不会被删除。
 
@@ -47,7 +47,7 @@ Skills、插件、Hooks、MCP 自动加载与原生子代理模块并没有被�
 
 项目 `zcode.json`、`.zcode/config.json` 的优先级可能高于用户配置，需检查项目是否重新开启。以上设置控制功能使用，不承诺完全跳过目录扫描或内部模块初始化。自动 checkpoint/rewind 暂无本次已验证的关闭方式，不宣称已关闭。
 
-当前交付仅影响 limi 会话，没有自动写入此全局配置。终端直接 `zcode --resume` 不继承 limi 的偏好请求和工具白名单。
+当前交付仅影响 calli 会话，没有自动写入此全局配置。终端直接 `zcode --resume` 不继承 calli 的偏好请求和工具白名单。
 
 ## 接入方式
 
@@ -74,7 +74,7 @@ Skills、插件、Hooks、MCP 自动加载与原生子代理模块并没有被�
 ## 协议与实现
 
 ```text
-limi adapter → 原版 zcode app-server
+calli adapter → 原版 zcode app-server
   → provider/updateAccountConfig（有已登录个人 Coding Plan 时）
   → create/resume + 工具/工作流设置
   ← requestRuntimePreferences → memoryEnabled=false
@@ -89,8 +89,8 @@ zcode 帧不含标准 JSON-RPC 的 jsonrpc 字段，因此使用 `adapters/zcode
 
 - 假 agent：创建/恢复参数、记忆偏好、旧协议拒绝、活跃目标拒绝、模型探测、流式、工具、审批选项校验、取消、压缩、提交失败及崩溃。
 - Plan 回归：同会话切换 plan/build、提问答案回传、批准或反馈、原生模式事件同步、排队消息保留模式；真实 CLI + 本地模拟模型验证计划模式禁止写文件、AskUserQuestion 请求用户输入、ExitPlanMode 批准后切回执行。
-- 账号回归：BigModel / Z.ai 模型同步、选择、恢复、实际请求鉴权，凭据轮换、退出与切换账号，错误供应商/会话拒绝，配置不变、日志无凭据，以及缓存目录歧义。真实本机个人 Coding Plan 已返回 GLM-5.3、GLM-5.3-Flash，两个模型均在隔离测试会话完成实际回复，并验证恢复后切换模型及设置强度。真实账号的 Chromium 桌面/手机、亮色/深色已验证模型列表和选择；只读 UI 复验：`RAH_ZCODE_REAL_BIN=zcode node --test packages/e2e/test/zcode-account-real.spec.mjs`。
-- 未修改的真实 zcode 0.16.9 + 本地模拟 OpenAI API：模型发现、新建、恢复、流式回复、压缩和模型工具列表；在项目配置显式开启记忆、预置 MEMORY.md 标记时，请求中无该标记、文件不变且无额外记忆提取请求。复验命令：`RAH_ZCODE_REAL_BIN=zcode npx tsx --test packages/daemon/test/zcode-real.test.ts`。
+- 账号回归：BigModel / Z.ai 模型同步、选择、恢复、实际请求鉴权，凭据轮换、退出与切换账号，错误供应商/会话拒绝，配置不变、日志无凭据，以及缓存目录歧义。真实本机个人 Coding Plan 已返回 GLM-5.3、GLM-5.3-Flash，两个模型均在隔离测试会话完成实际回复，并验证恢复后切换模型及设置强度。真实账号的 Chromium 桌面/手机、亮色/深色已验证模型列表和选择；只读 UI 复验：`CALLI_ZCODE_REAL_BIN=zcode node --test packages/e2e/test/zcode-account-real.spec.mjs`。
+- 未修改的真实 zcode 0.16.9 + 本地模拟 OpenAI API：模型发现、新建、恢复、流式回复、压缩和模型工具列表；在项目配置显式开启记忆、预置 MEMORY.md 标记时，请求中无该标记、文件不变且无额外记忆提取请求。复验命令：`CALLI_ZCODE_REAL_BIN=zcode npx tsx --test packages/daemon/test/zcode-real.test.ts`。
 - 图片回归：假 agent 校验本地/内联附件与命令拒绝；真实 CLI + 本地模拟 API 验证图文、纯图和两种附件的图片字节到达上游；`zcode-images.spec.mjs` 验证浏览器上传与发送、纯图消息、文本模型拒绝，覆盖桌面/手机 × 亮/暗。
 - Chromium：桌面 1440×1000、手机 390×844，亮色与深色；四张截图实际查看。
 - `npm run typecheck && npm test && npm run build`。构建保留仓库已有的大 bundle 提示。

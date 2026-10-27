@@ -5,10 +5,10 @@ import { join } from 'node:path';
 export function personalFixture(text) {
   const command = text.split('\n')[0];
   const clarification = process.env.FAKE_PERSONAL_DELEGATE_CLARIFY === '1' && command.startsWith('这是一件新交给你的事，不是交接');
-  const review = process.env.FAKE_PERSONAL_REVIEW && (command === '由 Limi 发起的私人事项盘点。' || command.startsWith('开始 '));
-  if (!review && !clarification && !['personal-ui', 'personal-start', 'personal-notify', 'personal-quiet', 'personal-wish', '由 Limi 发起的事项跟进。', '由 Limi 发起的近期总结。', '# 交接信息'].includes(command)) return null;
+  const review = process.env.FAKE_PERSONAL_REVIEW && (command === '由 Calli 发起的私人事项盘点。' || command.startsWith('开始 '));
+  if (!review && !clarification && !['personal-ui', 'personal-start', 'personal-notify', 'personal-quiet', 'personal-wish', '由 Calli 发起的事项跟进。', '由 Calli 发起的近期总结。', '# 交接信息'].includes(command)) return null;
   if (command === '# 交接信息' && !text.includes('## 关联事项与接续说明')) return null;
-  const cli = (args, input = '') => JSON.parse(execFileSync(process.execPath, [join(process.env.LIMI_BIN_DIR, 'limi'), ...args], { input, encoding: 'utf8' }));
+  const cli = (args, input = '') => JSON.parse(execFileSync(process.execPath, [join(process.env.CALLI_BIN_DIR, 'calli'), ...args], { input, encoding: 'utf8' }));
   if (review) {
     if (command.startsWith('开始 ')) return JSON.stringify(cli(['todo', 'delegate', command.slice('开始 '.length)]));
     if (process.env.FAKE_PERSONAL_REVIEW === 'quiet') { cli(['quiet']); return 'Nothing needs attention.'; }
@@ -22,7 +22,7 @@ export function personalFixture(text) {
     const todo = cli(['todo', 'show', id]);
     if (todo.note.text.trim()) throw new Error('clarification fixture expects no continuation note');
     if (todo.threads.filter(thread => thread.self).length !== 1) throw new Error('current work thread must be marked self');
-    for (const instruction of ['1～3 个具体问题', '默认选项', 'waiting', '等你说明目标', 'limi notify', '然后结束本轮', '不要翻本地会话文件']) {
+    for (const instruction of ['1～3 个具体问题', '默认选项', 'waiting', '等你说明目标', 'calli notify', '然后结束本轮', '不要翻本地会话文件']) {
       if (!text.includes(instruction)) throw new Error(`missing clarification instruction: ${instruction}`);
     }
     cli(['todo', 'update', id, '--rev', String(todo.rev), '--state', 'waiting', '--waiting-on', '等你说明目标', '--note-file', '-'],
@@ -30,9 +30,9 @@ export function personalFixture(text) {
     cli(['notify', '--text-file', '-'], `「${todo.text}」需要你回答目标和交付形式后再推进。`);
     return '1. 你更关心哪一类架构变化？建议默认：当前项目使用的 Agent 框架。\n2. 希望我交付什么？建议默认：一页变化摘要和对当前项目的影响。';
   }
-  if (command === '由 Limi 发起的近期总结。') {
+  if (command === '由 Calli 发起的近期总结。') {
     // Follows the summary prompt with the generic commands only, grouping threads by directory.
-    const since = text.match(/limi threads --since ([0-9T:.Z+-]+)/)[1];
+    const since = text.match(/calli threads --since ([0-9T:.Z+-]+)/)[1];
     const heading = text.match(/文字是「([^」]+)」的事项/)[1];
     const recent = cli(['threads', '--since', since]).threads.filter(thread => !thread.self);
     if (recent[0]) cli(['threads', 'show', recent[0].id, '--turns', '1']);
@@ -78,7 +78,7 @@ export function personalFixture(text) {
   const list = cli(['todo']);
   const id = list.find(item => text.includes(item.id))?.id;
   const todo = cli(['todo', 'show', id]);
-  if (command === '由 Limi 发起的事项跟进。' && process.env.FAKE_PERSONAL_FOLLOW_UP_MODE_FILE) {
+  if (command === '由 Calli 发起的事项跟进。' && process.env.FAKE_PERSONAL_FOLLOW_UP_MODE_FILE) {
     const mode = readFileSync(process.env.FAKE_PERSONAL_FOLLOW_UP_MODE_FILE, 'utf8').trim();
     cli(['todo', 'update', id, '--rev', String(todo.rev), '--follow-up', new Date(Date.now() + 3600000).toISOString(),
       ...(mode === 'progress' ? ['--note-file', '-'] : [])], `${todo.note.text}\nProgress made`);

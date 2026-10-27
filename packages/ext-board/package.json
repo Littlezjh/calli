@@ -1,5 +1,5 @@
 {
-  "name": "@rah/ext-board",
+  "name": "@calli/ext-board",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -12,7 +12,7 @@
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
-    "@rah/extension-api": "*"
+    "@calli/extension-api": "*"
   },
   "peerDependencies": {
     "react": "^18.3.1"

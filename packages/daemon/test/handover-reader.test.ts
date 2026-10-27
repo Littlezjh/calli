@@ -15,9 +15,9 @@ import { ThreadManager } from '../src/threads.js';
 import { sessionEnvironment } from '../src/adapters/types.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const cli = join(here, '../bin/limi');
+const cli = join(here, '../bin/calli');
 async function setup() {
-  const dir = mkdtempSync(join(tmpdir(), 'rah-handover-reader-'));
+  const dir = mkdtempSync(join(tmpdir(), 'calli-handover-reader-'));
   const registry = new AgentRegistry(['pi', 'claude', 'codex', 'agy', 'traex', 'zcode'].map(adapter => ({
     id: adapter, adapter, label: adapter,
     command: [process.execPath, join(here, 'fixtures', `fake-${['claude', 'traex'].includes(adapter) ? 'acp' : adapter}.mjs`)],
@@ -25,7 +25,7 @@ async function setup() {
   })), null);
   const store = new Store(join(dir, 'data'));
   const manager = new ThreadManager(store, registry.adapters, [dir], new AttachmentStore(dir));
-  const socket = join(dir, 'ipc', 'limi.sock');
+  const socket = join(dir, 'ipc', 'calli.sock');
   const coordination = new CoordinationManager(store, manager, socket);
   const server = coordinationServer(coordination);
   await listenPrivate(server, socket);
@@ -82,8 +82,8 @@ test('handover CLI reads ancestors without collaboration, pages safely and rejec
     }
     const before = h.store.listEvents(source.id, 0, -1);
     const env = h.coordination.environment(last.id)!;
-    assert.equal(env.LIMI_SOCKET, undefined);
-    assert.equal(env.LIMI_KEY, undefined);
+    assert.equal(env.CALLI_TEAM_SOCKET, undefined);
+    assert.equal(env.CALLI_TEAM_KEY, undefined);
     assert.equal(h.coordination.metadata(last.id), undefined);
     assert.equal(h.coordination.environment(unrelated.id), undefined);
     const overview = await runCli(['handover'], env);
@@ -137,27 +137,27 @@ test('handover CLI reads ancestors without collaboration, pages safely and rejec
     }
     assert.equal(await post(h.socket, '/handover', 'wrong', { op: 'handover' }), 401);
     for (const op of ['send', 'spawn', 'stop', 'team', 'agents']) {
-      assert.equal(await post(h.socket, '/handover', env.LIMI_HANDOVER_KEY, { op }), 403);
-      assert.equal(await post(h.socket, '/command', env.LIMI_HANDOVER_KEY, { op }), 401);
+      assert.equal(await post(h.socket, '/handover', env.CALLI_HANDOVER_KEY, { op }), 403);
+      assert.equal(await post(h.socket, '/command', env.CALLI_HANDOVER_KEY, { op }), 401);
     }
     assert.deepEqual(h.store.listEvents(source.id, 0, -1), before, 'reads do not append events');
     const summary = await h.manager.handoverSummary(source.id, null);
     assert.ok('summary' in summary);
     assert.match(summary.summary, /来源 Session ID：source-session/);
     assert.match(summary.summary, /来源简介：source task/);
-    assert.match(summary.summary, /limi history /);
+    assert.match(summary.summary, /calli history /);
     assert.match(summary.summary, /以下命令只在 hub 里新建的接手会话中可用/);
     const explanation = summary.summary.split('## 只读查阅来源历史\n\n')[1].split('\n\n## 接手要求')[0];
     assert.equal(explanation.split('\n').length, 4);
     assert.match(explanation, /nextCursor 和 command/);
     assert.doesNotMatch(explanation, /--before|--turns|--turn |--offset|--snapshot/);
     t.diagnostic(`Handover explanation: ${JSON.stringify(explanation)}`);
-    assert.doesNotMatch(summary.summary, new RegExp(env.LIMI_HANDOVER_KEY));
+    assert.doesNotMatch(summary.summary, new RegExp(env.CALLI_HANDOVER_KEY));
     h.store.deleteThread(source.id);
     assert.equal((await runCli(['handover'], env)).value.missingSource.sourceId, source.id);
     assert.equal((await runCli(['history', source.id], env)).code, 1);
     h.store.deleteThread(last.id);
-    assert.equal(await post(h.socket, '/handover', env.LIMI_HANDOVER_KEY, { op: 'handover' }), 403);
+    assert.equal(await post(h.socket, '/handover', env.CALLI_HANDOVER_KEY, { op: 'handover' }), 403);
   } finally { await h.close(); }
 });
 
@@ -289,13 +289,13 @@ test('round previews cap answers at 4000 characters and list only the latest 30 
   } finally { await h.close(); }
 });
 
-test('all adapters inject handover credentials and run limi in their fake agent without enabling collaboration', async () => {
+test('all adapters inject handover credentials and run calli in their fake agent without enabling collaboration', async () => {
   const h = await setup();
   try {
     const source = await h.manager.createThread({ agent: 'pi', cwd: h.dir });
     for (const agent of ['pi', 'claude', 'codex', 'agy', 'traex', 'zcode']) {
       const next = await h.manager.createHandoverThread(source.id, agent);
-      await h.manager.startTurn(next.id, { text: 'LIMI_HANDOVER_ENV' });
+      await h.manager.startTurn(next.id, { text: 'CALLI_HANDOVER_ENV' });
       await waitIdle(h.manager, next.id);
       const events = h.store.listEvents(next.id, 0, -1);
       assert.equal(events.some(e => e.type === 'turn.error'), false, `${agent}: ${JSON.stringify(events.filter(e => e.type === 'turn.error'))}`);
@@ -308,13 +308,13 @@ test('all adapters inject handover credentials and run limi in their fake agent 
     const combined = await h.manager.createHandoverThread(source.id, 'pi');
     await h.coordination.enable(combined.id);
     const env = h.coordination.environment(combined.id)!;
-    assert.ok(env.LIMI_KEY && env.LIMI_HANDOVER_KEY);
-    assert.notEqual(env.LIMI_KEY, env.LIMI_HANDOVER_KEY);
-    assert.equal(await post(h.socket, '/handover', env.LIMI_KEY, { op: 'handover' }), 401);
-    assert.equal(await post(h.socket, '/command', env.LIMI_HANDOVER_KEY, { op: 'status' }), 401);
+    assert.ok(env.CALLI_TEAM_KEY && env.CALLI_HANDOVER_KEY);
+    assert.notEqual(env.CALLI_TEAM_KEY, env.CALLI_HANDOVER_KEY);
+    assert.equal(await post(h.socket, '/handover', env.CALLI_TEAM_KEY, { op: 'handover' }), 401);
+    assert.equal(await post(h.socket, '/command', env.CALLI_HANDOVER_KEY, { op: 'status' }), 401);
     assert.equal((await runCli(['handover'], env)).code, 0);
-    const normal = sessionEnvironment({ LIMI_HANDOVER_KEY: 'inherited-key', LIMI_HANDOVER_SOCKET: 'inherited-socket' });
-    assert.equal(normal.LIMI_HANDOVER_KEY, undefined);
-    assert.equal(normal.LIMI_HANDOVER_SOCKET, undefined);
+    const normal = sessionEnvironment({ CALLI_HANDOVER_KEY: 'inherited-key', CALLI_HANDOVER_SOCKET: 'inherited-socket' });
+    assert.equal(normal.CALLI_HANDOVER_KEY, undefined);
+    assert.equal(normal.CALLI_HANDOVER_SOCKET, undefined);
   } finally { await h.close(); }
 });

@@ -1,6 +1,6 @@
 import type { Api } from '../api';
 import { Component, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import type { WebExtensionModule } from '@rah/extension-api/web';
+import type { WebExtensionModule } from '@calli/extension-api/web';
 import { useIsNarrow } from '../hooks';
 import { t } from '../i18n';
 import { BUILTIN_MODULES } from './catalog';

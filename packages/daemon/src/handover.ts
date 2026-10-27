@@ -32,8 +32,8 @@ export function handoverContext(info: {
     '## 只读查阅来源历史', '',
     '以下命令只在 hub 里新建的接手会话中可用。',
     `- 来源 Session ID：${info.sessionId ?? '尚未创建'}；来源简介：${info.title ?? '未命名任务'}（进度见交接摘要）。`,
-    '- `limi handover`：查看本线程及逐级来源的会话信息。',
-    `- \`limi history ${info.threadId}\`：查看历史；翻页和全文续读按返回的 nextCursor 和 command 继续，参数见 \`limi --help\`。`,
+    '- `calli handover`：查看本线程及逐级来源的会话信息。',
+    `- \`calli history ${info.threadId}\`：查看历史；翻页和全文续读按返回的 nextCursor 和 command 继续，参数见 \`calli --help\`。`,
     '', '## 接手要求', '',
     '请直接接着完成任务，将命令执行和文件操作的工作目录设为上面的 cwd。原线程使用 worktree 时，沿用同一个 worktree、当前分支及未提交改动，不要切回主仓库或另建 worktree。',
     '动手前先核对现状：用 `git status`、`git diff` 和最近的提交确认工作区，与交接摘要对照。原 agent 可能在一轮中途被切断，摘要可能不全，也可能有改到一半的文件。',
@@ -155,7 +155,7 @@ export function synthesizeHandover(events: StoredEvent[], opts: { title: string;
 }
 
 /**
- * The short handover for a successor the hub starts itself. It can read the source with `limi`,
+ * The short handover for a successor the hub starts itself. It can read the source with `calli`,
  * so it gets where to look and how, plus a few lines of where things stood, not a retelling.
  */
 export function handoverBrief(info: {
@@ -171,16 +171,16 @@ export function handoverBrief(info: {
   return [
     '# 接手',
     '',
-    `你接手 ${info.from} 在 hub 线程 ${info.threadId} 里的任务，看不到原对话。需要时自己读（找不到 limi 就用 "$LIMI_BIN_DIR/limi"）：`,
-    '- `limi handover`：来源会话信息',
-    `- \`limi history ${info.threadId}\`：按轮读问答和工具调用，按返回的 command 翻页`,
+    `你接手 ${info.from} 在 hub 线程 ${info.threadId} 里的任务，看不到原对话。需要时自己读（找不到 calli 就用 "$CALLI_BIN_DIR/calli"）：`,
+    '- `calli handover`：来源会话信息',
+    `- \`calli history ${info.threadId}\`：按轮读问答和工具调用，按返回的 command 翻页`,
     '',
     `工作目录 ${place}。沿用它和未提交的改动，先用 git status、git diff 对齐现状再继续。`,
-    ...(info.lead ? ['', '你现在是本次协作的主控：成员的结果会投给你，用 `limi status` 查看成员和未交回的任务。'] : []),
+    ...(info.lead ? ['', '你现在是本次协作的主控：成员的结果会投给你，用 `calli status` 查看成员和未交回的任务。'] : []),
   ].join('\n');
 }
 
-/** A few lines of where the thread stood, for the brief handover. The rest is in `limi history`. */
+/** A few lines of where the thread stood, for the brief handover. The rest is in `calli history`. */
 export function synthesizeBrief(events: StoredEvent[]): string {
   const { asks, lastFailed, lastAnswer, why, plan, files } = logFacts(events);
   // A failed last ask is carried over word for word after the brief; it is not repeated here.

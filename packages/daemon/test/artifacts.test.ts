@@ -32,7 +32,7 @@ test('mentions do not grant path prefixes, web URLs, relative paths or double-de
 });
 
 test('a named file resolves anywhere, but links beneath a temp folder are refused', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'rah-referenced-'));
+  const dir = mkdtempSync(join(tmpdir(), 'calli-referenced-'));
   try {
     const file = join(dir, 'notes.txt');
     writeFileSync(file, 'notes');

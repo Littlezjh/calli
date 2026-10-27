@@ -244,7 +244,7 @@ rl.on('line', (line) => {
         return;
       }
       // A file gate lets team tests keep a reviewer working across pause/continue without timing races.
-      if (cmd.message.split('<limi-team>')[0].trim().endsWith('TEAM_REVIEW_WAIT')) {
+      if (cmd.message.split('<calli-team>')[0].trim().endsWith('TEAM_REVIEW_WAIT')) {
         reply({ disposition: 'started' });
         out({ type: 'agent_start' });
         running = true;

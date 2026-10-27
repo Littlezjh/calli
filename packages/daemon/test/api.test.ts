@@ -49,14 +49,14 @@ async function waitFor<T>(fn: () => Promise<T | null | undefined>, timeoutMs = 1
 }
 
 before(async () => {
-  dataDir = mkdtempSync(join(tmpdir(), 'rah-test-data-'));
+  dataDir = mkdtempSync(join(tmpdir(), 'calli-test-data-'));
   // The fake ACP agent appends the ids it is asked to delete to this file.
   process.env.FAKE_ACP_DELETE_LOG = join(dataDir, 'acp-deleted.log');
   // Sessions the fake agents claim to have already. Tests fill these in; they start out empty.
   process.env.FAKE_ACP_SESSIONS_FILE = join(dataDir, 'acp-sessions.json');
   process.env.PI_CODING_AGENT_DIR = join(dataDir, 'pi-agent');
-  process.env.RAH_AGY_HOME = join(dataDir, 'agy-home');
-  workdir = mkdtempSync(join(tmpdir(), 'rah-test-work-'));
+  process.env.CALLI_AGY_HOME = join(dataDir, 'agy-home');
+  workdir = mkdtempSync(join(tmpdir(), 'calli-test-work-'));
   const adapters = new Map<string, AgentAdapter>();
   adapters.set('claude', new ClaudeAcpAdapter([process.execPath, join(here, 'fixtures', 'fake-acp.mjs')]));
   adapters.set('pi', new PiRpcAdapter([process.execPath, join(here, 'fixtures', 'fake-pi.mjs')]));
@@ -85,7 +85,7 @@ test('tokenMatches compares in constant time and rejects wrong or missing tokens
 });
 
 test('static files: hashed assets cache immutably, everything else revalidates', async () => {
-  const webDir = mkdtempSync(join(tmpdir(), 'rah-test-web-'));
+  const webDir = mkdtempSync(join(tmpdir(), 'calli-test-web-'));
   mkdirSync(join(webDir, 'assets'));
   writeFileSync(join(webDir, 'index.html'), '<!doctype html><script type="module" src="/assets/index-abc123.js"></script>');
   writeFileSync(join(webDir, 'assets', 'index-abc123.js'), 'console.log(1)');
@@ -167,7 +167,7 @@ test('project roots can be added and removed from the page, within limits, and a
   type Config = { workdirs: string[]; roots: Array<{ path: string; removable: boolean }> };
   const add = (path: unknown) => api('/api/workdirs', { method: 'POST', body: JSON.stringify({ path }) });
   const remove = (path: string) => api(`/api/workdirs?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
-  const other = mkdtempSync(join(tmpdir(), 'rah-test-root-'));
+  const other = mkdtempSync(join(tmpdir(), 'calli-test-root-'));
   try {
     // Before it is added, nothing can start there.
     assert.equal((await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: other }) })).status, 400);
@@ -904,7 +904,7 @@ test('import: Codex reads just the chosen session and rechecks its directory and
 });
 
 test('import: sessions the agent already has are listed, and only those in allowed directories', async () => {
-  const outside = mkdtempSync(join(tmpdir(), 'rah-test-outside-'));
+  const outside = mkdtempSync(join(tmpdir(), 'calli-test-outside-'));
   try {
     writeFileSync(
       process.env.FAKE_ACP_SESSIONS_FILE!,
@@ -1255,8 +1255,8 @@ test('new thread in a worktree: offered for a git directory, made under .worktre
   const name = thread.id.slice(0, 8);
   const root = join(repo, '.worktrees', name);
   assert.equal(thread.cwd, join(root, 'web'));
-  assert.deepEqual(thread.worktree, { root, branch: `rah/${name}`, of: join(repo, 'web'), ofReal: realpathSync(join(repo, 'web')) });
-  assert.equal(git(root, 'symbolic-ref', '--short', 'HEAD'), `rah/${name}`);
+  assert.deepEqual(thread.worktree, { root, branch: `calli/${name}`, of: join(repo, 'web'), ofReal: realpathSync(join(repo, 'web')) });
+  assert.equal(git(root, 'symbolic-ref', '--short', 'HEAD'), `calli/${name}`);
   assert.equal(readFileSync(join(root, 'draft.md'), 'utf8'), 'work in progress\n', 'uncommitted work comes along, as with a fork');
   assert.equal(git(repo, 'status', '--porcelain'), '?? draft.md', 'the repository itself is as it was');
 
@@ -1311,7 +1311,7 @@ test('fork into a worktree: a checkout and a branch of its own, the uncommitted 
   const name = copy.id.slice(0, 8);
   const root = join(repo, '.worktrees', name);
   assert.equal(copy.cwd, root);
-  assert.deepEqual(copy.worktree, { root, branch: `rah/${name}`, of: repo, ofReal: realpathSync(repo) });
+  assert.deepEqual(copy.worktree, { root, branch: `calli/${name}`, of: repo, ofReal: realpathSync(repo) });
   assert.equal(copy.forkedFrom, thread.id);
   // The agent made the copy for that directory.
   assert.equal(copy.agentSessionId, `${source.agentSessionId}-fork-in-${name}`);
@@ -1319,10 +1319,10 @@ test('fork into a worktree: a checkout and a branch of its own, the uncommitted 
   assert.equal(readFileSync(join(root, 'README.md'), 'utf8'), 'edited by the agent\n');
   assert.equal(readFileSync(join(root, 'notes.md'), 'utf8'), 'new\n');
   assert.equal(existsSync(join(root, 'node_modules')), false);
-  assert.equal(git(root, 'symbolic-ref', '--short', 'HEAD'), `rah/${name}`);
+  assert.equal(git(root, 'symbolic-ref', '--short', 'HEAD'), `calli/${name}`);
   assert.equal(git(repo, 'status', '--porcelain'), 'M README.md\n?? notes.md');
   // The log ends with the note the page draws its line from, and it names the branch.
-  assert.deepEqual((await events(copy.id)).at(-1)!.data, { forkedFrom: thread.id, worktree: { branch: `rah/${name}` } });
+  assert.deepEqual((await events(copy.id)).at(-1)!.data, { forkedFrom: thread.id, worktree: { branch: `calli/${name}` } });
 
   // The copy runs there.
   await api(`/api/threads/${copy.id}/turns`, { method: 'POST', body: JSON.stringify({ text: 'in the worktree' }) });
@@ -1356,7 +1356,7 @@ test('fork into a worktree: a checkout and a branch of its own, the uncommitted 
   assert.equal((await api(`/api/threads/${copy.id}`)).status, 200, 'nothing was deleted');
   assert.equal((await remove(copy.id, '?worktree=1&force=1')).status, 204);
   assert.equal(existsSync(root), false);
-  assert.equal(git(repo, 'branch', '--list', `rah/${name}`), '');
+  assert.equal(git(repo, 'branch', '--list', `calli/${name}`), '');
 
   // A clean worktree needs no second confirmation; commits only its branch has count as work.
   git(third.cwd, 'add', '.');
@@ -1364,7 +1364,7 @@ test('fork into a worktree: a checkout and a branch of its own, the uncommitted 
   const unmerged = await remove(third.id, '?worktree=1');
   assert.deepEqual([unmerged.status, ((await unmerged.json()) as any).commits], [409, 1]);
   git(repo, 'stash', '--include-untracked', '--quiet');
-  git(repo, 'merge', '--quiet', `rah/${third.id.slice(0, 8)}`);
+  git(repo, 'merge', '--quiet', `calli/${third.id.slice(0, 8)}`);
   assert.equal((await remove(third.id, '?worktree=1')).status, 204);
   assert.equal(existsSync(third.cwd), false);
 
@@ -1399,7 +1399,7 @@ test('fork into a worktree: a checkout and a branch of its own, the uncommitted 
   const trees = git(repo, 'worktree', 'list').split('\n').length;
   assert.equal((await forkInto(stuck.id)).status, 502);
   assert.equal(git(repo, 'worktree', 'list').split('\n').length, trees);
-  assert.equal(git(repo, 'branch', '--list', 'rah/*').split('\n').filter(Boolean).length, trees - 1);
+  assert.equal(git(repo, 'branch', '--list', 'calli/*').split('\n').filter(Boolean).length, trees - 1);
 
   const agents = (await (await api('/api/agents')).json()) as Array<{ id: string; capabilities: { forkInto: boolean } }>;
   assert.deepEqual(agents.map((a) => [a.id, a.capabilities.forkInto]).sort(), [['agy', false], ['claude', true], ['pi', true]]);
@@ -1833,7 +1833,7 @@ test('files: an image in the thread directory is served; anything else, or anywh
 });
 
 test('files: files outside the thread are readable once this thread’s completed answers name them', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'rah-artifacts-'));
+  const dir = mkdtempSync(join(tmpdir(), 'calli-artifacts-'));
   const thread = await newThread({ agent: 'claude' });
   const other = await newThread({ agent: 'pi' });
   const path = join(dir, '截图 (1).png');
@@ -1893,7 +1893,7 @@ test('files: files outside the thread are readable once this thread’s complete
 });
 
 test("files: an agent's own folder for the session is served too, and only that session's", async () => {
-  const brain = join(process.env.RAH_AGY_HOME!, 'brain');
+  const brain = join(process.env.CALLI_AGY_HOME!, 'brain');
   mkdirSync(join(brain, 'abcdef12-0001'), { recursive: true });
   mkdirSync(join(brain, 'abcdef12-0002'), { recursive: true });
   writeFileSync(join(brain, 'abcdef12-0001', 'made.png'), Buffer.from(PNG, 'base64'));
@@ -2291,9 +2291,9 @@ test('agents: instances beyond the built-ins are listed, and PATH discovery offe
   mkdirSync(join(home, '.claude-2'), { recursive: true });
   const claudeBin = join(home, 'claude');
   writeFileSync(claudeBin, '#!/bin/sh\necho \'{"loggedIn":true,"email":"second@example.com"}\'\n', { mode: 0o755 });
-  const oldBin = process.env.RAH_CLAUDE_BIN;
+  const oldBin = process.env.CALLI_CLAUDE_BIN;
   const oldHome = process.env.HOME;
-  process.env.RAH_CLAUDE_BIN = claudeBin;
+  process.env.CALLI_CLAUDE_BIN = claudeBin;
   process.env.HOME = home;
   try {
     const accounts = (await (await regApi('/api/agents/accounts/discover')).json()) as Array<{
@@ -2318,8 +2318,8 @@ test('agents: instances beyond the built-ins are listed, and PATH discovery offe
     const empty = (await (await regApi('/api/agents/accounts/discover')).json()) as unknown[];
     assert.deepEqual(empty, []);
   } finally {
-    if (oldBin === undefined) delete process.env.RAH_CLAUDE_BIN;
-    else process.env.RAH_CLAUDE_BIN = oldBin;
+    if (oldBin === undefined) delete process.env.CALLI_CLAUDE_BIN;
+    else process.env.CALLI_CLAUDE_BIN = oldBin;
     if (oldHome === undefined) delete process.env.HOME;
     else process.env.HOME = oldHome;
   }
@@ -2328,7 +2328,7 @@ test('agents: instances beyond the built-ins are listed, and PATH discovery offe
 });
 
 test('agents: rename, hide, restore and removal leave a used instance in place', async () => {
-  const data = mkdtempSync(join(tmpdir(), 'rah-agents-manage-api-'));
+  const data = mkdtempSync(join(tmpdir(), 'calli-agents-manage-api-'));
   const ownStore = new Store(data);
   const registry = new AgentRegistry(defaultInstances({
     claudeCommand: [process.execPath, join(here, 'fixtures', 'fake-acp.mjs')],

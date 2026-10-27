@@ -37,7 +37,7 @@ const COPY_WINDOW_MS = 3000;
 const DOUBLE_TAP_MS = 300;
 /** On the touchpad, the view follows the pointer to keep it this far inside the edge. */
 const FOLLOW_MARGIN = 48;
-const ROTATE_HINT_KEY = 'rah.desktop.rotateHint';
+const ROTATE_HINT_KEY = 'calli.desktop.rotateHint';
 
 const rotateHintSeen = () => {
   try {
@@ -55,7 +55,7 @@ const keysym = (ch: string): number => {
 };
 
 /** The VNC password is kept on this device, per machine, like the token. Storage may be blocked. */
-const passwordKey = (host: string | null) => `rah.vnc.${host ?? 'local'}`;
+const passwordKey = (host: string | null) => `calli.vnc.${host ?? 'local'}`;
 function loadPassword(host: string | null): string | null {
   try {
     return localStorage.getItem(passwordKey(host));

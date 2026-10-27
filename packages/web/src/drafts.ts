@@ -27,7 +27,7 @@ function readSending(value: unknown): Sending | undefined {
   return { text: v.text, after: typeof v.after === 'string' ? v.after : null };
 }
 
-export const DRAFTS_KEY = 'rah.drafts';
+export const DRAFTS_KEY = 'calli.drafts';
 
 /** Enough for every thread in use; drafts left in threads long gone make room for new ones. */
 export const MAX_DRAFTS = 50;

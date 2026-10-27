@@ -48,8 +48,8 @@ function below(e: MouseEvent<HTMLElement>): [number, number] {
 
 
 /** Whether the done group is open, kept on this device. */
-const SHOW_DONE_KEY = 'rah.todos.showDone';
-const SUMMARY_DAYS_KEY = 'rah.todos.summaryDays';
+const SHOW_DONE_KEY = 'calli.todos.showDone';
+const SUMMARY_DAYS_KEY = 'calli.todos.summaryDays';
 const SUMMARY_RANGES = [1, 3, 7, 14];
 
 function readSummaryDays(): number {

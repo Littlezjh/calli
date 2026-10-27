@@ -69,7 +69,7 @@ for (const phone of [false, true]) for (const colorScheme of ['light', 'dark']) 
       await box.fill('@');
       await list.waitFor();
       assert.ok(await page.getByRole('option', { name: /claude/i }).first().locator('svg').count());
-      const shots = '/tmp/limi-coordination-shots'; mkdirSync(shots, { recursive: true });
+      const shots = '/tmp/calli-coordination-shots'; mkdirSync(shots, { recursive: true });
       await page.screenshot({ path: `${shots}/${phone ? 'phone' : 'desktop'}-${colorScheme}-menu.png` });
       await page.getByRole('option', { name: /claude/i }).first().click();
       // The agent gets a line of its own, and the caret is there for its task; Enter goes back to the message.
@@ -114,8 +114,8 @@ for (const phone of [false, true]) for (const colorScheme of ['light', 'dark']) 
       await page.locator('.row.user .bubble', { hasText: '只看异常处理' }).waitFor();
 
       // The fixture invokes the actual injected CLI, creating a normal member thread.
-      const directive = Buffer.from(JSON.stringify({ args: ['spawn', '--agent', 'claude', '--name', '文档审查', '--message-file', '-', '--request-id', 'review'], text: '检查接口与异常处理 LIMI_REPORT' })).toString('base64');
-      await post(`/api/threads/${root.id}/turns`, { text: `LIMI_COMMAND:${directive}` });
+      const directive = Buffer.from(JSON.stringify({ args: ['spawn', '--agent', 'claude', '--name', '文档审查', '--message-file', '-', '--request-id', 'review'], text: '检查接口与异常处理 CALLI_REPORT' })).toString('base64');
+      await post(`/api/threads/${root.id}/turns`, { text: `CALLI_COMMAND:${directive}` });
       await box.fill('保留这段主线程草稿');
       await page.getByRole('button', { name: '查看智能体', exact: true }).click();
       const panel = page.getByRole('region', { name: '智能体面板' });

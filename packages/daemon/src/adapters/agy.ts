@@ -589,7 +589,7 @@ export class AgyAdapter implements AgentAdapter {
   }
 
   async sessionLocation(agentSessionId: string | null, cwd: string) {
-    const configDir = configDirectory(this.env, 'RAH_AGY_HOME', ['.gemini', 'antigravity-cli'], cwd);
+    const configDir = configDirectory(this.env, 'CALLI_AGY_HOME', ['.gemini', 'antigravity-cli'], cwd);
     const safeId = agentSessionId && /^[a-z0-9_-]+$/i.test(agentSessionId) ? agentSessionId : null;
     const sessionPath = safeId
       ? await findSessionFile(join(configDir, 'brain', safeId, '.system_generated', 'logs'), safeId, 0, (name) => name === 'transcript.jsonl')
@@ -601,7 +601,7 @@ export class AgyAdapter implements AgentAdapter {
     // agy's own skills live under its CLI home; it also reads the shared `~/.agents/skills`.
     // Synced skills go to its own dir, so what lands there is only agy's business.
     return [
-      { path: join(configDirectory(this.env, 'RAH_AGY_HOME', ['.gemini', 'antigravity-cli'], process.cwd()), 'skills'), scope: 'personal' },
+      { path: join(configDirectory(this.env, 'CALLI_AGY_HOME', ['.gemini', 'antigravity-cli'], process.cwd()), 'skills'), scope: 'personal' },
       { path: join(this.env.HOME ?? process.env.HOME ?? homedir(), '.agents', 'skills'), scope: 'shared' },
     ];
   }
@@ -609,7 +609,7 @@ export class AgyAdapter implements AgentAdapter {
   /** agy saves what it generates (images, among other things) in a folder of its own per conversation. */
   artifactDirs(agentSessionId: string): string[] {
     if (!/^[0-9a-f-]{8,64}$/i.test(agentSessionId)) return [];
-    const home = this.env.RAH_AGY_HOME || process.env.RAH_AGY_HOME || join(homedir(), '.gemini', 'antigravity-cli');
+    const home = this.env.CALLI_AGY_HOME || process.env.CALLI_AGY_HOME || join(homedir(), '.gemini', 'antigravity-cli');
     return [join(home, 'brain', agentSessionId)];
   }
 

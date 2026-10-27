@@ -567,7 +567,7 @@ export class Store {
   /** The MCP registry: business line and purpose notes, plus manually registered servers. */
   readonly mcpEntries: McpRegistry;
 
-  /** Which Limi extensions are installed on this machine, and the permissions confirmed for them. */
+  /** Which Calli extensions are installed on this machine, and the permissions confirmed for them. */
   readonly extensions: ExtensionStore;
 
   /** Where each open turn began, so its answer is read from there and not from the thread's start. */

@@ -20,7 +20,7 @@ async function until(check: () => boolean) {
   }
 }
 async function setup(t: TestContext, env: Record<string, string> = {}) {
-  const directory = mkdtempSync(join(tmpdir(), 'rah-voice-production-'));
+  const directory = mkdtempSync(join(tmpdir(), 'calli-voice-production-'));
   const log = join(directory, 'rpc.jsonl');
   const adapter = new CodexAppServerAdapter([process.execPath, fileURLToPath(new URL('./fixtures/fake-codex.mjs', import.meta.url))], {
     ...env, FAKE_CODEX_RPC_LOG: log,
