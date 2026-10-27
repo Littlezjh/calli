@@ -298,6 +298,16 @@ const runTurn = (text, turnId, done) => {
     notify('item/reasoning/summaryTextDelta', { turnId, itemId: id, summaryIndex: 0, delta: 'thinking ' });
     notify('item/reasoning/summaryTextDelta', { turnId, itemId: id, summaryIndex: 0, delta: 'hard' });
   }
+  if (text.includes('modelqueue')) {
+    notify('queue/status', { turnId, state: 'queued', operation: null, position: null, message: null });
+    notify('queue/status', {
+      turnId,
+      state: 'waiting',
+      operation: null,
+      position: 330,
+      message: 'Too many current requests. Your queue position is 330. Please wait for a while.',
+    });
+  }
   if (text.includes('longplan')) {
     notify('turn/plan/updated', { turnId, plan: [
       { step: 'Confirm the query entry point, the production filters and the current skill names', status: 'completed' },

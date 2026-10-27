@@ -431,7 +431,7 @@ export function buildTimeline(events: StoredEvent[], speech: readonly VoiceTrans
       if (endedAt) work.endedAt = endedAt;
     }
     const last = works.at(-1);
-    if (last && !answer) {
+    if (last && !answer && !last.stopped) {
       // A turn whose last act was a tool call still said something: its last remark is the answer.
       const noteAt = last.entries.map((e) => e.kind).lastIndexOf('note');
       if (noteAt >= 0) {
@@ -568,7 +568,7 @@ export function buildTimeline(events: StoredEvent[], speech: readonly VoiceTrans
 
       case 'turn.phase':
         if (waiting && waiting.turnId === turn) {
-          waiting.phase = ['session_ready', 'prompt_sent', 'model_request'].includes(ev.data.phase) ? 'response' : 'preparing';
+          waiting.phase = ['session_ready', 'prompt_sent', 'model_request', 'model_queue'].includes(ev.data.phase) ? 'response' : 'preparing';
         }
         break;
 
@@ -729,7 +729,11 @@ export function buildTimeline(events: StoredEvent[], speech: readonly VoiceTrans
       case 'turn.done':
         if (ev.data.stopReason === 'cancelled') {
           stopped.add(turn);
-          if (open.work) open.work.stopped = true;
+          if (open.answer?.text.trim()) {
+            // A stopped turn has no final answer. Text produced before the stop is process
+            // output, so keep it under the stopped work disclosure instead of a copyable answer.
+            workBlock(key, ev.ts).stopped = true;
+          } else if (open.work) open.work.stopped = true;
           else {
             const line: Item = { kind: 'stopped', key, turnId: turn, startedAt: open.startedAt || ev.ts, endedAt: ev.ts, timed: !imported.has(turn) };
             // Above whatever the agent had said, where a work block would stand.
@@ -1007,6 +1011,23 @@ export function workSections(entries: WorkEntry[]): WorkSection[] {
     if (entry.kind === 'step') run.steps.push(entry.step);
   }
   return out;
+}
+
+/** Rebuild the work rows already received live while the lazy historical detail is loading. */
+export function liveWorkFromEvents(item: Extract<Item, { kind: 'work' }>): Extract<Item, { kind: 'work' }> | undefined {
+  const live = item.liveEvents ?? [];
+  if (!live.length) return undefined;
+  const first = live.reduce((n, event) => Math.min(n, event.seq), Number.POSITIVE_INFINITY);
+  const started: StoredEvent = {
+    threadId: live[0]?.threadId ?? '',
+    turnId: item.turnId,
+    seq: Number.isFinite(first) ? first - 1 : 0,
+    type: 'turn.started',
+    ts: item.startedAt,
+    data: { text: '' },
+  };
+  const events = live.some(event => event.type === 'turn.started') ? live : [started, ...live];
+  return buildTimeline([...events].sort((a, b) => a.seq - b.seq)).items.find((it): it is Extract<Item, { kind: 'work' }> => it.kind === 'work');
 }
 
 /** The kinds of call a summary counts apart, in the order it names them. Anything else is "a tool". */

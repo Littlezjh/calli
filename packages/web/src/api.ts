@@ -216,6 +216,8 @@ export interface Thread {
   waitingReason?: 'approval' | 'question' | 'plan' | null;
   /** Messages sent while a turn was running; they go out as turns finish. */
   queued: QueuedMessage[];
+  /** The upstream model-provider queue for the running turn. Missing from older daemons. */
+  modelQueue?: ModelQueue | null;
   /** When the running turn started. Missing from older daemons, null while nothing runs. */
   runningSince?: string | null;
   /** Shell command that continues this conversation in a terminal. Null before the first message. */
@@ -305,6 +307,14 @@ export interface QueuedMessage {
   /** How many pictures go with it. */
   images: number;
   videos?: number;
+}
+
+export interface ModelQueue {
+  state: string;
+  position: number | null;
+  operation?: string | null;
+  message?: string | null;
+  updatedAt: string;
 }
 
 export interface VideoRef { id: string; name: string; mimeType: string; size: number }

@@ -556,6 +556,18 @@ class CodexSession implements AgentSession {
       case 'item/plan/delta':
         this.emit({ type: 'plan.delta', data: { id: params.itemId, text: params.delta } });
         break;
+      case 'queue/status':
+        this.emit({
+          type: 'turn.phase',
+          data: {
+            phase: 'model_queue',
+            state: typeof params?.state === 'string' ? params.state : 'queued',
+            operation: typeof params?.operation === 'string' ? params.operation : null,
+            position: typeof params?.position === 'number' && Number.isFinite(params.position) ? params.position : null,
+            message: typeof params?.message === 'string' ? params.message : null,
+          },
+        });
+        break;
       case 'turn/started':
         if (!this.turn && !this.hooks && this.sessionHooks && params?.turn?.id) {
           const id = String(params.turn.id);
