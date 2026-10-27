@@ -69,6 +69,10 @@ const asMessage = (text: string, notes: Note[]) => (notes.length ? withNotes(not
 /** How long a send may take before the button says it is still going. */
 const SLOW_SEND_MS = 400;
 
+/** Safari may report composition as ended on the Enter keydown that still belongs to the IME. */
+export const isImeComposing = (event: Pick<KeyboardEvent<HTMLElement>, 'nativeEvent'>): boolean =>
+  event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229;
+
 let noteSeq = 0;
 const noteId = () => `note-${Date.now()}-${++noteSeq}`;
 
@@ -685,7 +689,7 @@ export function Composer({
   };
 
   const menuKeyDown = (e: KeyboardEvent<HTMLTextAreaElement | HTMLInputElement>): boolean => {
-    if (menuOpen && !e.nativeEvent.isComposing) {
+    if (menuOpen && !isImeComposing(e)) {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
         const step = e.key === 'ArrowDown' ? 1 : -1;
@@ -712,7 +716,7 @@ export function Composer({
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (mentionOpen && !e.nativeEvent.isComposing) {
+    if (mentionOpen && !isImeComposing(e)) {
       if (e.key === 'Escape') { e.preventDefault(); setMentionDismissed(true); return; }
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); setMentionActive(i => (i + (e.key === 'ArrowDown' ? 1 : -1) + mentionRows.length) % mentionRows.length); return; }
       if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); chooseMention(mentionRows[mentionActive] ?? mentionRows[0]); return; }
@@ -720,7 +724,7 @@ export function Composer({
     if (menuKeyDown(e)) return;
     // Desktop: Enter sends, Shift+Enter inserts a newline. Touch keyboards get the send button instead.
     const fine = typeof window !== 'undefined' && window.matchMedia?.('(pointer: fine)').matches;
-    if (fine && e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+    if (fine && e.key === 'Enter' && !e.shiftKey && !isImeComposing(e)) {
       e.preventDefault();
       void submit();
     }
@@ -985,7 +989,7 @@ export function Composer({
                     onChange={(e) => { const task = e.target.value; setMentions(prev => prev.map(v => v === m ? { ...v, task } : v)); }}
                     onKeyDown={(e) => {
                       // Enter leaves the line for the message; a task is one line of intent, not an essay.
-                      if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); ref.current?.focus(); }
+                      if (e.key === 'Enter' && !e.shiftKey && !isImeComposing(e)) { e.preventDefault(); ref.current?.focus(); }
                     }}
                   />
                   {m.kind === 'agent' && mentionExtra?.(m)}
