@@ -2055,7 +2055,6 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           onOpenElsewhere={onHost && ((id, thread) => onHost(id, { thread }))}
           onHide={compact ? undefined : toggleSidebar}
           onThreadMenu={threadActions.openThreadMenu}
-          onThreadPin={(thread) => threadActions.run('pin', thread)}
           onSectionMenu={threadActions.openSectionMenu}
           onNewSection={threadActions.newSection}
           onOpenTodos={showcase ? undefined : openTodos}
