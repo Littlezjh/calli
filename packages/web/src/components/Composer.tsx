@@ -624,29 +624,31 @@ export function Composer({
     document.addEventListener('pointercancel', fold, true);
     leaving.current = off;
   };
-  // A touch on the box itself never folds it. Touch browsers (Safari above all) may drop the
-  // focus to the page for a moment during the tap; folding then would pull the tapped button
-  // away before its click. The press ends with the click, or shortly after the finger lifts.
+  // A touch on the box itself never folds it. Safari moves the focus at the click, not the
+  // press, and a button cannot hold it, so the focus ends up on the page. Folding then would pull
+  // the button, and the menu it opened, away. The box stays whole until a tap lands outside it.
+  // The press ends with the click, or shortly after the finger lifts.
   const boxRef = useRef<HTMLDivElement>(null);
   const boxPress = useRef<number | null>(null);
   const endBoxPress = () => {
     if (boxPress.current === null) return;
     window.clearTimeout(boxPress.current);
     boxPress.current = null;
-    if (!boxRef.current?.contains(document.activeElement)) leave();
   };
   useEffect(() => {
     const down = (e: PointerEvent) => {
       pressing.current = true;
-      // Focus can be lost without a blur (its element went away); a tap elsewhere settles it.
-      if (boxPress.current === null && e.target instanceof Node && !boxRef.current?.contains(e.target)
-        && !boxRef.current?.contains(document.activeElement)) leave();
+      // With the focus left on the page (see above) there is no blur to fold on; a tap elsewhere is.
+      if (e.target instanceof Node && !boxRef.current?.contains(e.target)) {
+        endBoxPress();
+        if (!boxRef.current?.contains(document.activeElement)) leave();
+      }
     };
     const up = () => {
       pressing.current = false;
       if (boxPress.current !== null) {
         window.clearTimeout(boxPress.current);
-        boxPress.current = window.setTimeout(endBoxPress, 400);
+        boxPress.current = window.setTimeout(endBoxPress, 1000);
       }
     };
     document.addEventListener('pointerdown', down, true);
@@ -843,13 +845,8 @@ export function Composer({
             if (boxPress.current !== null) window.clearTimeout(boxPress.current);
             boxPress.current = window.setTimeout(endBoxPress, 1500);
           }}
-          onClickCapture={(e) => {
-            // The tapped button takes the focus once its click has landed, so the box stays whole
-            // while its menu is open and folds on the next tap outside.
-            if (boxPress.current === null || !(e.target instanceof Element)) return;
-            const button = e.target.closest('button');
-            if (button && !button.disabled && !button.contains(document.activeElement)) button.focus({ preventScroll: true });
-            window.setTimeout(endBoxPress, 0);
+          onClickCapture={() => {
+            if (boxPress.current !== null) window.setTimeout(endBoxPress, 0);
           }}
           onFocus={() => {
             leaving.current?.();
