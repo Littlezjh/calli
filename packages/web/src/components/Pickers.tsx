@@ -245,7 +245,6 @@ function ModelControl({ models, model, efforts, effort, onModel, onEffort, onSav
   const selected = draftEffort && levels.includes(draftEffort) ? draftEffort : null;
   const shown = preview === undefined ? selected : preview;
   const currentEffort = effort && effortsForModel(models, model, efforts).includes(effort) ? effort : null;
-  const dirty = draftModel !== model || selected !== currentEffort || Boolean(onSpeed && draftSpeed !== (speed ?? null));
   const pickModel = (next: string | null) => {
     setDraftModel(next);
     if (draftEffort && !effortsForModel(models, next, efforts).includes(draftEffort)) setDraftEffort(null);
@@ -254,7 +253,6 @@ function ModelControl({ models, model, efforts, effort, onModel, onEffort, onSav
     setShowModels(false);
   };
   const save = () => {
-    if (!dirty) return;
     if (onSave) onSave({ model: draftModel, effort: selected, ...(onSpeed ? { speed: draftSpeed } : {}) });
     else {
       if (draftModel !== model) onModel(draftModel);
@@ -263,7 +261,7 @@ function ModelControl({ models, model, efforts, effort, onModel, onEffort, onSav
     }
     onClose?.();
   };
-  const saveButton = <button type="button" className="icon-btn model-save" aria-label={t('actions.save')} title={t('actions.save')} aria-disabled={!dirty} onClick={save}><IconSave size={17} /></button>;
+  const saveButton = <button type="button" className="icon-btn model-save" aria-label={t('actions.save')} title={t('actions.save')} onClick={save}><IconSave size={17} /></button>;
   return showModels ? (
     <>
       <div className="model-list-head">

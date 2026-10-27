@@ -8855,13 +8855,6 @@ input.picker-search {
   display: flex;
   margin-left: auto;
 }
-.model-save[aria-disabled='true'] {
-  cursor: default;
-  opacity: 0.4;
-}
-.model-save[aria-disabled='true']:hover {
-  background: transparent;
-}
 .effort-reset:disabled { opacity: 0.4; }
 
 .effort-slider {

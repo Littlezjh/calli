@@ -1973,10 +1973,13 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         }}
         onEffort={(v) => (selected ? updateSelected({ effort: v }) : setDraftEffort(v))}
         onSave={(v) => {
-          if (selected) return updateSelected({ model: v.model, effort: v.effort, ...(activeCaps?.speed ? { speed: v.speed ?? null } : {}) });
-          setDraftModel(v.model);
-          setDraftEffort(v.effort);
-          if (activeCaps?.speed) setDraftSpeed(v.speed ?? null);
+          if (selected) updateSelected({ model: v.model, effort: v.effort, ...(activeCaps?.speed ? { speed: v.speed ?? null } : {}) });
+          else {
+            setDraftModel(v.model);
+            setDraftEffort(v.effort);
+            if (activeCaps?.speed) setDraftSpeed(v.speed ?? null);
+          }
+          setToast({ message: t('writing.saved') });
         }}
       />
 
