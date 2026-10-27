@@ -195,6 +195,7 @@ function MemberModel({ agent, models, value, permission, onNeed, onChange, onPer
       // An effort the newly picked model does not take goes back to the default with it.
       onModel={(model) => onChange({ ...value, model, effort: value.effort && effortsForModel(models, model, efforts).includes(value.effort) ? value.effort : null })}
       onEffort={(effort) => onChange({ ...value, effort })}
+      onSave={({ model, effort }) => onChange({ ...value, model, effort })}
     />
   </>);
 }
@@ -1955,22 +1956,28 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         compactDisabled={(selected.queued?.length ?? 0) >= MAX_QUEUED}
       />}
       <ModelPicker
-      models={models}
-      model={model}
-      efforts={effortLevels}
-      effort={effort}
-      speed={speed}
-      onSpeed={activeCaps?.speed ? v => selected ? updateSelected({ speed: v }) : setDraftSpeed(v) : undefined}
-      onDiagnose={() => openObservability('diagnostics', activeAgent)}
-      openSignal={modelSignal}
-      onOpen={() => refreshActiveModels(true)}
-      onModel={(v) => {
-        if (selected) return updateSelected({ model: v }); // the daemon drops an effort the new model lacks
-        setDraftModel(v);
-        if (draftSpeed && !speedsForModel(models, v).some(s => s.id === draftSpeed)) setDraftSpeed(null);
-        if (draftEffort && !effortsForModel(models, v, effortLevels).includes(draftEffort)) setDraftEffort(null);
-      }}
-      onEffort={(v) => (selected ? updateSelected({ effort: v }) : setDraftEffort(v))}
+        models={models}
+        model={model}
+        efforts={effortLevels}
+        effort={effort}
+        speed={speed}
+        onSpeed={activeCaps?.speed ? v => selected ? updateSelected({ speed: v }) : setDraftSpeed(v) : undefined}
+        onDiagnose={() => openObservability('diagnostics', activeAgent)}
+        openSignal={modelSignal}
+        onOpen={() => refreshActiveModels(true)}
+        onModel={(v) => {
+          if (selected) return updateSelected({ model: v }); // the daemon drops an effort the new model lacks
+          setDraftModel(v);
+          if (draftSpeed && !speedsForModel(models, v).some(s => s.id === draftSpeed)) setDraftSpeed(null);
+          if (draftEffort && !effortsForModel(models, v, effortLevels).includes(draftEffort)) setDraftEffort(null);
+        }}
+        onEffort={(v) => (selected ? updateSelected({ effort: v }) : setDraftEffort(v))}
+        onSave={(v) => {
+          if (selected) return updateSelected({ model: v.model, effort: v.effort, ...(activeCaps?.speed ? { speed: v.speed ?? null } : {}) });
+          setDraftModel(v.model);
+          setDraftEffort(v.effort);
+          if (activeCaps?.speed) setDraftSpeed(v.speed ?? null);
+        }}
       />
 
     </>

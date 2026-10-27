@@ -95,6 +95,7 @@ interface ModelProps {
   onSpeed?: (speed: string | null) => void;
   onModel: (model: string | null) => void;
   onEffort: (effort: string | null) => void;
+  onSave?: (value: { model: string | null; effort: string | null; speed?: string | null }) => void;
   /** Refreshes live model metadata when the menu is actually opened. */
   onOpen?: () => void;
   /** Opens the panel when this number changes. */
@@ -203,7 +204,7 @@ export function ModelPicker(props: ModelProps) {
         triggerTitle={chosen || t('pickers.modelAndEffortDefault')}
         trigger={<><IconBolt size={14} />{chosen && <span>{chosen}</span>}</>}
       >
-        {() => (models.length === 0 && efforts.length === 0 ? <p className="member-model-empty">{t('pickers.nothingToChoose')}</p> : <ModelControl {...props} />)}
+        {(close) => (models.length === 0 && efforts.length === 0 ? <p className="member-model-empty">{t('pickers.nothingToChoose')}</p> : <ModelControl {...props} onClose={close} />)}
       </Popover>
     );
   }
@@ -224,22 +225,44 @@ export function ModelPicker(props: ModelProps) {
         {!narrow && <IconChevron size={13} open />}
       </>}
     >
-      {() => <ModelControl {...props} />}
+      {(close) => <ModelControl {...props} onClose={close} />}
     </Popover>
   );
 }
 
-function ModelControl({ models, model, efforts, effort, onModel, onEffort, speed, onSpeed }: ModelProps) {
-  const levels = effortsForModel(models, model, efforts);
-  const speeds = onSpeed ? speedsForModel(models, model) : [];
+function ModelControl({ models, model, efforts, effort, onModel, onEffort, onSave, speed, onSpeed, onClose }: ModelProps & { onClose?: () => void }) {
+  const [draftModel, setDraftModel] = useState(model);
+  const [draftEffort, setDraftEffort] = useState(effort);
+  const [draftSpeed, setDraftSpeed] = useState(speed ?? null);
+  const levels = effortsForModel(models, draftModel, efforts);
+  const speeds = onSpeed ? speedsForModel(models, draftModel) : [];
   const fastSpeed = speeds.find(isFastSpeed);
   const standardSpeed = speeds.find(s => s.id === 'default');
   const canAccelerate = Boolean(fastSpeed && standardSpeed);
-  const accelerated = speeds.some(s => s.id === speed && isFastSpeed(s));
+  const accelerated = speeds.some(s => s.id === draftSpeed && isFastSpeed(s));
   const [showModels, setShowModels] = useState(levels.length === 0 && !canAccelerate);
   const [preview, setPreview] = useState<string | null | undefined>(undefined);
-  const selected = effort && levels.includes(effort) ? effort : null;
+  const selected = draftEffort && levels.includes(draftEffort) ? draftEffort : null;
   const shown = preview === undefined ? selected : preview;
+  const currentEffort = effort && effortsForModel(models, model, efforts).includes(effort) ? effort : null;
+  const dirty = draftModel !== model || selected !== currentEffort || Boolean(onSpeed && draftSpeed !== (speed ?? null));
+  const pickModel = (next: string | null) => {
+    setDraftModel(next);
+    if (draftEffort && !effortsForModel(models, next, efforts).includes(draftEffort)) setDraftEffort(null);
+    if (draftSpeed && !speedsForModel(models, next).some(s => s.id === draftSpeed)) setDraftSpeed(null);
+    setPreview(undefined);
+    setShowModels(false);
+  };
+  const save = () => {
+    if (onSave) onSave({ model: draftModel, effort: selected, ...(onSpeed ? { speed: draftSpeed } : {}) });
+    else {
+      if (draftModel !== model) onModel(draftModel);
+      if (selected !== currentEffort) onEffort(selected);
+      if (onSpeed && draftSpeed !== (speed ?? null)) onSpeed(draftSpeed);
+    }
+    onClose?.();
+  };
+  const actions = <div className="model-control-actions"><button type="button" className="primary model-save" disabled={!dirty} onClick={save}>{t('actions.save')}</button></div>;
   return showModels ? (
     <>
       <div className="model-list-head">
@@ -248,13 +271,14 @@ function ModelControl({ models, model, efforts, effort, onModel, onEffort, speed
       </div>
       <div className="pop-scroll">
         {modelRows(models).map((row) => (
-          <button key={row.value ?? 'default'} type="button" role="menuitemradio" aria-checked={row.value === (model === AGENT_DEFAULT ? null : model)} className="pop-item compact"
-            onClick={() => { onModel(row.value); setPreview(undefined); setShowModels(false); }}>
+          <button key={row.value ?? 'default'} type="button" role="menuitemradio" aria-checked={row.value === (draftModel === AGENT_DEFAULT ? null : draftModel)} className="pop-item compact"
+            onClick={() => pickModel(row.value)}>
             <span className="pop-item-text"><span className="pop-item-label">{row.label}</span><span className="pop-item-hint">{row.hint}</span></span>
-            {row.value === (model === AGENT_DEFAULT ? null : model) && <span className="pop-item-check"><IconCheck size={16} /></span>}
+            {row.value === (draftModel === AGENT_DEFAULT ? null : draftModel) && <span className="pop-item-check"><IconCheck size={16} /></span>}
           </button>
         ))}
       </div>
+      {actions}
     </>
   ) : (
     <div className="effort-card">
@@ -264,19 +288,20 @@ function ModelControl({ models, model, efforts, effort, onModel, onEffort, speed
           className="model-speed-toggle"
           aria-label={accelerated ? t('pickers.accelOff') : t('pickers.accelOn')}
           aria-pressed={accelerated}
-          title={accelerated ? t('pickers.accelOffHint') : t('pickers.accelOnHint', speed == null)}
-          onClick={() => onSpeed?.(accelerated ? standardSpeed.id : fastSpeed.id)}
+          title={accelerated ? t('pickers.accelOffHint') : t('pickers.accelOnHint', draftSpeed == null)}
+          onClick={() => setDraftSpeed(accelerated ? standardSpeed.id : fastSpeed.id)}
         ><IconBolt size={19} /></button> : <span aria-hidden="true" />}
         <div className="effort-card-heading">
           <div className="effort-value" aria-live="polite">{levels.length ? (shown ? (EFFORT_LABELS[shown] ?? shown) : t('pickers.default')) : t('pickers.noEffort')}</div>
-          <button type="button" className="effort-model" disabled={models.length === 0} onClick={() => setShowModels(true)} aria-label={t('pickers.switchModel', modelName(models, model))}>
-            <span>{modelName(models, model)}</span><IconChevron size={13} />
+          <button type="button" className="effort-model" disabled={models.length === 0} onClick={() => setShowModels(true)} aria-label={t('pickers.switchModel', modelName(models, draftModel))}>
+            <span>{modelName(models, draftModel)}</span><IconChevron size={13} />
           </button>
         </div>
-        <button type="button" className="icon-btn effort-reset" aria-label={t('pickers.resetEffort')} title={t('pickers.resetEffort')} disabled={selected === null} onClick={() => onEffort(null)}><IconRefresh size={18} /></button>
+        <button type="button" className="icon-btn effort-reset" aria-label={t('pickers.resetEffort')} title={t('pickers.resetEffort')} disabled={selected === null} onClick={() => setDraftEffort(null)}><IconRefresh size={18} /></button>
       </div>
-      {levels.length > 0 ? <EffortSlider key={`${model ?? 'default'}:${levels.join(',')}`} levels={levels} value={selected} onChange={onEffort} onPreview={setPreview} />
+      {levels.length > 0 ? <EffortSlider key={`${draftModel ?? 'default'}:${levels.join(',')}`} levels={levels} value={selected} onChange={setDraftEffort} onPreview={setPreview} />
         : <div className="pop-note">{t('pickers.modelNoEffort')}</div>}
+      {actions}
     </div>
   );
 }

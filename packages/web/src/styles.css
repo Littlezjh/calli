@@ -8770,6 +8770,17 @@ input.picker-search {
   padding: 9px 8px 10px;
 }
 
+.model-control-actions {
+  display: flex;
+  justify-content: stretch;
+  padding: 8px 8px 0;
+  border-top: 1px solid var(--border);
+}
+
+.model-save {
+  width: 100%;
+}
+
 .effort-card-head {
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr) 30px;
