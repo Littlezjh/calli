@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { isFastSpeed, type AgentInfo, type Api, type ModelOption } from '../api';
 import { usageSummary, type Usage } from '../timeline';
 import { EFFORT_LABELS, PERMISSION_LABELS, PERMISSION_ORDER, permissionHint } from '../permissions';
-import { AgentMark, IconBolt, IconEffortGauge, IconCompress, IconRefresh, IconCheck, IconChevron, IconFolder, IconHand, IconPlus, IconShield, IconShieldAlert, IconSparkle, IconWorktree } from './icons';
+import { AgentMark, IconBolt, IconEffortGauge, IconCompress, IconRefresh, IconSave, IconCheck, IconChevron, IconFolder, IconHand, IconPlus, IconShield, IconShieldAlert, IconSparkle, IconWorktree } from './icons';
 import { Popover } from './Popover';
 import { EffortSlider } from './EffortSlider';
 import { AgentQuota } from './AgentQuota';
@@ -254,6 +254,7 @@ function ModelControl({ models, model, efforts, effort, onModel, onEffort, onSav
     setShowModels(false);
   };
   const save = () => {
+    if (!dirty) return;
     if (onSave) onSave({ model: draftModel, effort: selected, ...(onSpeed ? { speed: draftSpeed } : {}) });
     else {
       if (draftModel !== model) onModel(draftModel);
@@ -262,12 +263,13 @@ function ModelControl({ models, model, efforts, effort, onModel, onEffort, onSav
     }
     onClose?.();
   };
-  const actions = <div className="model-control-actions"><button type="button" className="primary model-save" disabled={!dirty} onClick={save}>{t('actions.save')}</button></div>;
+  const saveButton = <button type="button" className="icon-btn model-save" aria-label={t('actions.save')} title={t('actions.save')} aria-disabled={!dirty} onClick={save}><IconSave size={17} /></button>;
   return showModels ? (
     <>
       <div className="model-list-head">
         {(levels.length > 0 || canAccelerate) && <button type="button" className="icon-btn model-back" aria-label={t('pickers.backToEffort')} onClick={() => setShowModels(false)}><IconChevron size={16} /></button>}
         <span>{t('pickers.chooseModel')}</span>
+        <span className="model-list-actions">{saveButton}</span>
       </div>
       <div className="pop-scroll">
         {modelRows(models).map((row) => (
@@ -278,7 +280,6 @@ function ModelControl({ models, model, efforts, effort, onModel, onEffort, onSav
           </button>
         ))}
       </div>
-      {actions}
     </>
   ) : (
     <div className="effort-card">
@@ -297,11 +298,13 @@ function ModelControl({ models, model, efforts, effort, onModel, onEffort, onSav
             <span>{modelName(models, draftModel)}</span><IconChevron size={13} />
           </button>
         </div>
-        <button type="button" className="icon-btn effort-reset" aria-label={t('pickers.resetEffort')} title={t('pickers.resetEffort')} disabled={selected === null} onClick={() => setDraftEffort(null)}><IconRefresh size={18} /></button>
+        <div className="effort-card-actions">
+          {saveButton}
+          <button type="button" className="icon-btn effort-reset" aria-label={t('pickers.resetEffort')} title={t('pickers.resetEffort')} disabled={selected === null} onClick={() => setDraftEffort(null)}><IconRefresh size={18} /></button>
+        </div>
       </div>
       {levels.length > 0 ? <EffortSlider key={`${draftModel ?? 'default'}:${levels.join(',')}`} levels={levels} value={selected} onChange={setDraftEffort} onPreview={setPreview} />
         : <div className="pop-note">{t('pickers.modelNoEffort')}</div>}
-      {actions}
     </div>
   );
 }
