@@ -209,12 +209,6 @@ export const IconCheck = (p: { size?: number }) => (
     <path d="M5 12.5l4.5 4.5L19 7.5" />
   </Svg>
 );
-export const IconSave = (p: { size?: number }) => (
-  <Svg {...p}>
-    <path d="M5 3.5h12l2 2v15H5z" />
-    <path d="M8 3.5v6h8v-6M8 20.5v-7h8v7" />
-  </Svg>
-);
 export const IconPin = (p: { size?: number }) => (
   <Svg {...p}>
     <path d="M9 4h6l-1 6 3 3H7l3-3zM12 13v7" />

@@ -8772,7 +8772,7 @@ input.picker-search {
 
 .effort-card-head {
   display: grid;
-  grid-template-columns: 30px minmax(0, 1fr) auto;
+  grid-template-columns: 30px minmax(0, 1fr) 30px;
   align-items: start;
   gap: 4px;
   margin-bottom: 22px;
@@ -8846,15 +8846,6 @@ input.picker-search {
 
 .effort-model svg { flex-shrink: 0; }
 .effort-model:hover { background: var(--hover); color: var(--text); }
-.effort-card-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-.model-list-actions {
-  display: flex;
-  margin-left: auto;
-}
 .effort-reset:disabled { opacity: 0.4; }
 
 .effort-slider {
@@ -8949,8 +8940,8 @@ input.picker-search {
   .model-control-trigger { gap: 4px; padding-inline: 6px; }
   .model-control-panel { width: auto; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
   .effort-card { padding: 10px 12px 12px; }
-  .effort-card-head { grid-template-columns: 40px minmax(0, 1fr) auto; margin-bottom: 24px; }
-  .model-speed-toggle, .model-save, .effort-reset { width: 40px; height: 40px; }
+  .effort-card-head { grid-template-columns: 40px minmax(0, 1fr) 40px; margin-bottom: 24px; }
+  .model-speed-toggle, .effort-reset { width: 40px; height: 40px; }
   .effort-slider { height: 38px; }
   .effort-thumb { width: 30px; height: 30px; }
   .effort-rail { inset-inline: 19px; }

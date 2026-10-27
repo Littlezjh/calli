@@ -195,7 +195,6 @@ function MemberModel({ agent, models, value, permission, onNeed, onChange, onPer
       // An effort the newly picked model does not take goes back to the default with it.
       onModel={(model) => onChange({ ...value, model, effort: value.effort && effortsForModel(models, model, efforts).includes(value.effort) ? value.effort : null })}
       onEffort={(effort) => onChange({ ...value, effort })}
-      onSave={({ model, effort }) => onChange({ ...value, model, effort })}
     />
   </>);
 }
@@ -1972,15 +1971,6 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           if (draftEffort && !effortsForModel(models, v, effortLevels).includes(draftEffort)) setDraftEffort(null);
         }}
         onEffort={(v) => (selected ? updateSelected({ effort: v }) : setDraftEffort(v))}
-        onSave={(v) => {
-          if (selected) updateSelected({ model: v.model, effort: v.effort, ...(activeCaps?.speed ? { speed: v.speed ?? null } : {}) });
-          else {
-            setDraftModel(v.model);
-            setDraftEffort(v.effort);
-            if (activeCaps?.speed) setDraftSpeed(v.speed ?? null);
-          }
-          setToast({ message: t('writing.saved') });
-        }}
       />
 
     </>
