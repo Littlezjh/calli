@@ -2420,6 +2420,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           attachNote={imagesNote(models, model)}
           onError={setError}
           queued={selected?.queued ?? []}
+          modelQueue={selected?.modelQueue ?? null}
           onRemoveQueued={removeQueued}
           onEditQueued={editQueued}
           onSendQueuedNow={sendQueuedNow}

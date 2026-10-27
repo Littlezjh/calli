@@ -568,7 +568,7 @@ export function buildTimeline(events: StoredEvent[], speech: readonly VoiceTrans
 
       case 'turn.phase':
         if (waiting && waiting.turnId === turn) {
-          waiting.phase = ['session_ready', 'prompt_sent', 'model_request'].includes(ev.data.phase) ? 'response' : 'preparing';
+          waiting.phase = ['session_ready', 'prompt_sent', 'model_request', 'model_queue'].includes(ev.data.phase) ? 'response' : 'preparing';
         }
         break;
 

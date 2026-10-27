@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
-import { ApiError, MAX_QUEUED, type AgentMention, type OutgoingImage, type QueuedMessage, type SlashCommand } from '../api';
+import { ApiError, MAX_QUEUED, type AgentMention, type ModelQueue, type OutgoingImage, type QueuedMessage, type SlashCommand } from '../api';
 import { commandDraft, searchCommands, slashQuery, type HubAction, type MenuRow } from '../commands';
 import { useIsNarrow, useIsTouch } from '../hooks';
 import { readDrafts, writeDraft, type Sending } from '../drafts';
@@ -172,6 +172,8 @@ interface Props {
   onError: (message: string) => void;
   /** Messages sent while a turn was running, waiting to go out. */
   queued: QueuedMessage[];
+  /** The native model queue for the running turn, such as Trae's live queue position. */
+  modelQueue?: ModelQueue | null;
   onRemoveQueued: (id: string) => void;
   /** Takes a waiting message out of the queue and returns it, to be edited in the box. */
   onEditQueued: (id: string) => Promise<{ text: string; images: OutgoingImage[]; videos?: PreparedVideo[]; mentions?: AgentMention[] }>;
@@ -232,6 +234,7 @@ export function Composer({
   attachNote,
   onError,
   queued,
+  modelQueue = null,
   onRemoveQueued,
   onEditQueued,
   onSendQueuedNow,
@@ -641,11 +644,17 @@ export function Composer({
       leaving.current?.();
     };
   }, []);
-  const collapsed = !voiceControls && narrow && !header && !hasContent && queued.length === 0 && preparing === 0 && !focused;
+  const collapsed = !voiceControls && narrow && !header && !hasContent && queued.length === 0 && !modelQueue && preparing === 0 && !focused;
   const goalControl = text.trim() === '/goal' ? 'show' : text.trim() === '/goal pause' ? 'pause' : text.trim() === '/goal clear' ? 'clear' : null;
   const immediate = !!goalControl && !!goal?.controls.includes(goalControl) && !images.length && !videos.length && !notes.length && !mentions.length;
   const queueFull = running && !immediate && queued.length >= MAX_QUEUED;
   const canSend = hasContent && !busy && !menuBusy && !disabled && preparing === 0 && !queueFull;
+  const modelQueueNotice = modelQueue
+    ? {
+        text: modelQueue.position === null ? t('composer.modelQueueWaiting') : t('composer.modelQueuePosition', modelQueue.position),
+        message: modelQueue.message,
+      }
+    : null;
 
   const submit = async () => {
     if (!canSend) return;
@@ -850,6 +859,15 @@ export function Composer({
           onDrop={onDrop}
         >
           {header && <div className="composer-context">{header}</div>}
+
+          {modelQueueNotice && (
+            <div className="queue model-queue" aria-label={t('composer.modelQueue')} aria-live="polite">
+              <div className="queue-item model-queue-item">
+                <span className="queue-badge">{t('composer.modelQueue')}</span>
+                <span className="queue-text model-queue-text" title={modelQueueNotice.message ?? modelQueueNotice.text}>{modelQueueNotice.text}</span>
+              </div>
+            </div>
+          )}
 
           {queued.length > 0 && (
             <div className="queue" aria-label={t('composer.queued')}>
