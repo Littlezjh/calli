@@ -187,6 +187,7 @@ docs/             计划与界面说明
 
 ```bash
 scripts/init.sh   # 装依赖、构建，起一个用假 agent 的临时 hub 并跑一轮冒烟测试；加 --check 跑完即停
+scripts/demo.sh   # 起一个浏览器可打开的体验 hub：假 agent，绑定所有网卡，打印地址和 token；用 stop 子命令停止并清理
 npm test          # daemon 与 web 的全部单元测试和 API 测试
 npm run typecheck
 npm run test:e2e   # 统一构建一次，再运行浏览器 E2E（最多并行 2 个测试文件）

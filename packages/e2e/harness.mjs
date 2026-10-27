@@ -124,7 +124,9 @@ export async function startDaemon(env = {}, opts = {}) {
   child.stdout.on('data', (c) => (log += c));
   child.stderr.on('data', (c) => (log += c));
 
-  const base = `http://127.0.0.1:${port}`;
+  // A wildcard bind still answers on the loopback; a named host does not, so poll the one asked for.
+  const bound = daemonEnv.CALLI_HOST || '127.0.0.1';
+  const base = `http://${bound === '0.0.0.0' || bound === '::' ? '127.0.0.1' : bound}:${port}`;
   const deadline = Date.now() + 20_000;
   for (;;) {
     try {
