@@ -32,6 +32,13 @@ interface Props {
 
 const EDGE = 8;
 
+/** Fingers on the screen right now. A sheet opened by a long press appears under one of them. */
+let fingers = 0;
+if (typeof document !== 'undefined') {
+  const count = (e: TouchEvent) => { fingers = e.touches.length; };
+  for (const type of ['touchstart', 'touchend', 'touchcancel'] as const) document.addEventListener(type, count, { capture: true, passive: true });
+}
+
 /**
  * A menu with icons, separators and one level of submenus.
  * Wide screens: a floating panel at the pointer, with submenus opening beside their row.
@@ -43,6 +50,20 @@ export function Menu({ label, x, y, corner = 'top-left', items, onClose }: Props
   const panelRef = useRef<HTMLDivElement>(null);
   const [openSub, setOpenSub] = useState<string | null>(null);
   const [pos, setPos] = useState({ left: x, top: y, flip: false, ready: false });
+  // A sheet opened under a finger (a long press) ignores that finger: lifting it must not pick
+  // the row that slid in beneath it, nor close the sheet. It listens once every finger is up.
+  const [armed, setArmed] = useState(() => fingers === 0);
+  useEffect(() => {
+    if (armed) return;
+    const up = (e: TouchEvent) => {
+      if (e.touches.length) return;
+      e.preventDefault(); // no click for the lifted finger
+      window.setTimeout(() => setArmed(true), 0);
+    };
+    document.addEventListener('touchend', up, true);
+    document.addEventListener('touchcancel', up, true);
+    return () => { document.removeEventListener('touchend', up, true); document.removeEventListener('touchcancel', up, true); };
+  }, [armed]);
 
   // Keep the panel on screen: measure it, then move it back inside the viewport if needed.
   useLayoutEffect(() => {
@@ -143,7 +164,7 @@ export function Menu({ label, x, y, corner = 'top-left', items, onClose }: Props
     const sub = items.find((e): e is MenuItem => e !== 'separator' && e.id === openSub && Boolean(e.submenu));
     // On the page itself: inside the drawer, its floating buttons would stay on top of the sheet.
     return createPortal(
-      <div ref={rootRef}>
+      <div ref={rootRef} className={armed ? undefined : 'sheet-unarmed'}>
         <div className="sheet-scrim" onClick={onClose} aria-hidden="true" />
         <div className="menu-panel menu-sheet" role="menu" aria-label={sub ? sub.label : label}>
           {sub ? (

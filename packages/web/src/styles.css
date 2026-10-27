@@ -3916,6 +3916,18 @@ input.picker-search {
   animation: sheet-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
+/* Opened by a long press: no text selection or callout under the finger, which is ignored until lifted. */
+.menu-sheet {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.sheet-unarmed .sheet-scrim,
+.sheet-unarmed .menu-sheet {
+  pointer-events: none;
+}
+
 .menu-sheet .menu-row {
   min-height: 46px;
   padding: 0 12px;
