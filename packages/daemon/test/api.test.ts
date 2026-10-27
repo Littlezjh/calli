@@ -787,6 +787,12 @@ test('filing, pinning or renaming a thread does not move it up the recent list',
   assert.deepEqual(await order(), [newer.id, older.id]);
   await patchThread(older.id, { title: 'renamed', model: 'big' });
   assert.deepEqual(await order(), [newer.id, older.id], 'settings and renames keep the order');
+  const pinned = await patchThread(older.id, { pinned: true });
+  assert.equal(pinned.body.pinned, true);
+  assert.deepEqual(await order(), [older.id, newer.id], 'pinning moves the thread into the pinned group');
+  const unpinned = await patchThread(older.id, { pinned: false });
+  assert.equal(unpinned.body.pinned, false);
+  assert.deepEqual(await order(), [newer.id, older.id], 'unpinning restores the recent-list order');
   // A new message does move it up.
   await api(`/api/threads/${older.id}/turns`, { method: 'POST', body: JSON.stringify({ text: 'again' }) });
   assert.deepEqual(await order(), [older.id, newer.id]);

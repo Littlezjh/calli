@@ -44,6 +44,7 @@ interface Props {
   /** Starts a new thread with a directory or section pre-filled, from a group's "+". */
   onNewIn: (opts: { cwd?: string; sectionId?: string; scratch?: boolean }) => void;
   onThreadMenu: (thread: Thread, x: number, y: number) => void;
+  onThreadPin: (thread: Thread) => void;
   onSectionMenu: (section: Section, x: number, y: number) => void;
   onNewSection: () => void;
   onOpenTodos?: () => void;
@@ -121,6 +122,7 @@ export function Sidebar({
   onNew,
   onNewIn,
   onThreadMenu,
+  onThreadPin,
   onSectionMenu,
   onNewSection,
   onOpenTodos,
@@ -247,9 +249,23 @@ export function Sidebar({
         </span>
       </button>
       {!open && (
-        <button className="row-more" aria-label={t('sidebar.more', thread.title)} onClick={(e) => onThreadMenu(thread, ...below(e))}>
-          <IconMore size={16} />
-        </button>
+        thread.pinned ? (
+          <button
+            className="row-more row-pin"
+            aria-label={t('actions.unpin')}
+            title={t('actions.unpin')}
+            onClick={(e) => {
+              e.stopPropagation();
+              onThreadPin(thread);
+            }}
+          >
+            <IconPin size={16} />
+          </button>
+        ) : (
+          <button className="row-more" aria-label={t('sidebar.more', thread.title)} onClick={(e) => onThreadMenu(thread, ...below(e))}>
+            <IconMore size={16} />
+          </button>
+        )
       )}
     </div>
     );
