@@ -2,7 +2,7 @@ import brandIcon from '../assets/calli.svg';
 import { Fragment, useEffect, useState, type MouseEvent, type ReactNode } from 'react';
 import type { AgentInfo, HostInfo, SearchHit, Section, Thread } from '../api';
 import { clockLabel } from '../timeline';
-import { useLongPress, useStoredFlag, useStoredSet } from '../hooks';
+import { useInTitlebar, useLongPress, useStoredFlag, useStoredSet } from '../hooks';
 import { attentionCount, threadMark, waitingLabel } from '../notices';
 import { folderName } from '../paths';
 import { buildActivity, buildMerged, buildSidebar, handoverGroups, markTerms, navOverflow, projectDir, SEARCH_MIN, taggedAgents, type HostSource } from '../sidebar';
@@ -185,6 +185,7 @@ export function Sidebar({
   };
   // A long press on a row is the phone's right click.
   const longPress = useLongPress<Thread>(onThreadMenu);
+  const inTitlebar = useInTitlebar() && !compact;
   const [collapsed, toggle] = useStoredSet(`${storagePrefix}.collapsed`);
   // The other way to read the list: by what is going on, not by where a thread is filed. Like Codex's activity view.
   const [byActivity, setByActivity] = useStoredFlag(`${storagePrefix}.activity`);
@@ -506,8 +507,17 @@ export function Sidebar({
     />
   );
 
+  const hideButton = onHide && (
+    <button className={`${inTitlebar ? 'icon-btn' : 'round-btn'} sidebar-hide`} aria-label={t('sidebar.hide')} title={t('sidebar.hideKey', SIDEBAR_SHORTCUT)} onClick={onHide}>
+      <IconSidebar size={16} />
+    </button>
+  );
+
   return (
     <div className={`sidebar-inner${compact ? ' compact' : ''}`}>
+      {/* In the window's title bar, as in Codex: beside the system's buttons only the list's own
+          toggle; the rest of the strip drags the window, and the name and its buttons sit below. */}
+      {inTitlebar && <div className="sidebar-titlebar">{hideButton}</div>}
       <div className="sidebar-top">
         {searching ? (
           <label className="sidebar-search-box">
@@ -521,11 +531,7 @@ export function Sidebar({
           <>
             <span className="brand"><img className="brand-icon" src={brandIcon} alt="" width="32" height="32" /><span>{t('app.name')}</span></span>
             <span className="sidebar-top-actions">
-              {onHide && (
-                <button className="round-btn sidebar-hide" aria-label={t('sidebar.hide')} title={t('sidebar.hideKey', SIDEBAR_SHORTCUT)} onClick={onHide}>
-                  <IconSidebar size={16} />
-                </button>
-              )}
+              {!inTitlebar && hideButton}
               <button
                 className={`round-btn activity-btn${byActivity ? ' on' : ''}`}
                 aria-label={t('sidebar.byActivity')}

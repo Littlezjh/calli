@@ -463,11 +463,6 @@ button:disabled {
 }
 
 @media (display-mode: window-controls-overlay) {
-  /* Beside the system buttons there is room for the mark and the buttons, not the name too. */
-  .sidebar-top .brand > span {
-    display: none;
-  }
-
   :root {
     --titlebar-left: env(titlebar-area-x, 0px);
     --titlebar-right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
@@ -493,8 +488,7 @@ button:disabled {
 
 .topbar button,
 .topbar input,
-.topbar a,
-.sidebar-top button {
+.topbar a {
   -webkit-app-region: no-drag;
   app-region: no-drag;
 }
@@ -885,10 +879,25 @@ html.list-open body {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  min-height: var(--titlebar-row, 44px);
-  padding: 0 12px 4px max(20px, calc(var(--titlebar-left) + 6px));
+  min-height: 44px;
+  padding: 0 12px 4px 20px;
+}
+
+/* The sidebar's part of the window's title bar: the list toggle after the system's buttons. */
+.sidebar-titlebar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  height: var(--titlebar-row, 40px);
+  padding-left: calc(var(--titlebar-left) + 2px);
   -webkit-app-region: drag;
   app-region: drag;
+}
+
+.sidebar-titlebar button {
+  color: var(--muted);
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
 }
 
 .sidebar-top-actions {
