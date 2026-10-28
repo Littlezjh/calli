@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { agentGroups, effortsForModel, imagesBlocked, modelLoadPercent, modelName, modelRows } from '../src/components/Pickers.js';
+import { agentGroups, effortsForModel, imagesBlocked, modelLoadLabel, modelLoadPercent, modelName, modelRows } from '../src/components/Pickers.js';
 import { isFastSpeed, type AgentInfo } from '../src/api.js';
 
 test('the new-thread picker omits hidden single instances and accounts before grouping', () => {
@@ -51,6 +51,7 @@ test('model load follows the selected model and the agent default alias', () => 
   assert.equal(modelLoadPercent(models, 'small'), 0, 'zero is a reported load, not missing data');
   assert.equal(modelLoadPercent(models, 'quiet'), undefined);
   assert.equal(modelLoadPercent(models, 'gone'), undefined);
+  assert.equal(modelLoadLabel(100), '负载100%');
 });
 
 test('the agent default is folded into one row, so there is no duplicate default', () => {

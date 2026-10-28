@@ -1195,6 +1195,7 @@ export const ja: Messages = {
   'pickers.defaultEffort': '既定の強さ',
   'pickers.backToEffort': '思考の強さに戻る',
   'pickers.chooseModel': 'モデルを選ぶ',
+  'pickers.modelLoad': (percent: number) => `负载${percent}%`,
   'pickers.accelOff': '高速化をオフ',
   'pickers.accelOn': '高速化をオン',
   'pickers.accelOffHint': '高速化をオフにして標準の速度に戻す',

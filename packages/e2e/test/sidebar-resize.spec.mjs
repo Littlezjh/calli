@@ -29,6 +29,7 @@ test('desktop sidebar drag resizes, persists, and stays off the phone layout', a
     await page.reload();
     assert.equal(Math.round((await sidebar.boundingBox()).width), 428, 'the dragged width survives a reload');
     await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForFunction(() => window.matchMedia('(max-width: 899px)').matches && !document.querySelector('.sidebar-resize-handle'));
     assert.equal(await page.locator('.sidebar-resize-handle').count(), 0, 'the phone drawer has no resize handle');
     await context.close();
   } finally {

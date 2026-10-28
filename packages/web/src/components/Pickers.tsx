@@ -136,6 +136,10 @@ export function modelLoadPercent(models: ModelOption[], id: string | null): numb
   return resolveModel(models, id)?.loadPercent;
 }
 
+export function modelLoadLabel(percent: number): string {
+  return t('pickers.modelLoad', percent);
+}
+
 /** Why pictures cannot be sent with this model, or null when they can. */
 export function imagesBlocked(models: ModelOption[], id: string | null): string | null {
   const option = resolveModel(models, id);
@@ -195,8 +199,6 @@ export function ModelPicker(props: ModelProps) {
   }
   const levels = effortsForModel(models, model, efforts);
   const shownEffort = effort && levels.includes(effort) ? effort : null;
-  const loadPercent = modelLoadPercent(models, model);
-  const loadLabel = loadPercent === undefined ? null : t('quota.load', loadPercent);
   if (quietFor !== undefined) {
     const chosen = [model ? modelName(models, model) : '', shownEffort ? (EFFORT_LABELS[shownEffort] ?? shownEffort) : ''].filter(Boolean).join(' · ');
     return (
@@ -214,7 +216,7 @@ export function ModelPicker(props: ModelProps) {
       </Popover>
     );
   }
-  const summary = [modelName(models, model), loadLabel, shownEffort ? (EFFORT_LABELS[shownEffort] ?? shownEffort) : t('pickers.defaultEffort')].filter(Boolean).join(' · ');
+  const summary = [modelName(models, model), shownEffort ? (EFFORT_LABELS[shownEffort] ?? shownEffort) : t('pickers.defaultEffort')].filter(Boolean).join(' · ');
   return (
     <Popover
       label={t('pickers.modelAndEffort')}
@@ -228,7 +230,6 @@ export function ModelPicker(props: ModelProps) {
       trigger={<>
         {/* A phone has room for the dial alone; the card it opens names the model. */}
         {!(narrow && levels.length > 0) && <span className="model-trigger-name">{modelName(models, model)}</span>}
-        {!(narrow && levels.length > 0) && loadPercent !== undefined && <ModelLoad percent={loadPercent} />}
         {levels.length > 0 && <span className="model-trigger-gauge"><IconEffortGauge size={narrow ? 20 : 17} level={shownEffort ? (levels.indexOf(shownEffort) + 1) / levels.length : null} /></span>}
         {!narrow && <IconChevron size={13} open />}
       </>}
@@ -279,7 +280,7 @@ function ModelControl({ models, model, efforts, effort, onModel, onEffort, speed
         ><IconBolt size={19} /></button> : <span aria-hidden="true" />}
         <div className="effort-card-heading">
           <div className="effort-value" aria-live="polite">{levels.length ? (shown ? (EFFORT_LABELS[shown] ?? shown) : t('pickers.default')) : t('pickers.noEffort')}</div>
-          <button type="button" className="effort-model" disabled={models.length === 0} onClick={() => setShowModels(true)} aria-label={t('pickers.switchModel', [modelName(models, model), loadPercent === undefined ? '' : t('quota.load', loadPercent)].filter(Boolean).join(' · '))}>
+          <button type="button" className="effort-model" disabled={models.length === 0} onClick={() => setShowModels(true)} aria-label={t('pickers.switchModel', [modelName(models, model), loadPercent === undefined ? '' : modelLoadLabel(loadPercent)].filter(Boolean).join(' · '))}>
             <span className="effort-model-name">{modelName(models, model)}</span>{loadPercent !== undefined && <ModelLoad percent={loadPercent} />}<IconChevron size={13} />
           </button>
         </div>
@@ -293,8 +294,8 @@ function ModelControl({ models, model, efforts, effort, onModel, onEffort, speed
 
 /** A short live hint beside a model name; normal load stays quiet, overload is called out. */
 function ModelLoad({ percent }: { percent: number }) {
-  const label = t('quota.load', percent);
-  return <span className={`model-inline-load${percent >= 100 ? ' high' : ''}`} title={label} aria-hidden="true">{percent}%</span>;
+  const label = modelLoadLabel(percent);
+  return <span className={`model-inline-load${percent >= 100 ? ' high' : ''}`} title={label} aria-hidden="true">{label}</span>;
 }
 
 /** Which agent a new thread uses. Existing threads show the agent as plain text instead. */

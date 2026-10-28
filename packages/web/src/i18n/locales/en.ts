@@ -1197,6 +1197,7 @@ export const en: Messages = {
   'pickers.defaultEffort': 'Default effort',
   'pickers.backToEffort': 'Back to thinking effort',
   'pickers.chooseModel': 'Choose model',
+  'pickers.modelLoad': (percent: number) => `负载${percent}%`,
   'pickers.accelOff': 'Turn off fast mode',
   'pickers.accelOn': 'Turn on fast mode',
   'pickers.accelOffHint': 'Turn off fast mode and go back to standard speed',
