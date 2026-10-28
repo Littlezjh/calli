@@ -704,9 +704,13 @@ button:disabled {
   }
 
   .quick-switch {
+    --quick-switch-bottom: calc(176px + var(--safe-bottom));
+    --quick-switch-button-size: 44px;
+    --quick-switch-panel-gap: 10px;
     position: absolute;
+    display: flex;
     right: calc(14px + env(safe-area-inset-right));
-    bottom: calc(176px + var(--safe-bottom));
+    bottom: var(--quick-switch-bottom);
     z-index: 62;
     pointer-events: none;
   }
@@ -715,8 +719,8 @@ button:disabled {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 44px;
-    height: 44px;
+    width: var(--quick-switch-button-size);
+    height: var(--quick-switch-button-size);
     padding: 0;
     border: 1px solid color-mix(in srgb, var(--border-strong) 70%, transparent);
     border-radius: 50%;
@@ -747,11 +751,17 @@ button:disabled {
   .quick-switch-panel {
     position: absolute;
     right: 0;
-    bottom: calc(100% + 10px);
+    bottom: calc(100% + var(--quick-switch-panel-gap));
     width: min(286px, calc(100vw - 54px - env(safe-area-inset-left)));
-    max-height: min(72vh, 620px);
+    /* visualViewport height follows keyboard resizing; subtract the trigger offsets and topbar
+       clearance so the panel stays in the visible app even when the browser pans it. */
+    max-height: min(620px, max(0px, calc(
+      var(--vvh, 100dvh) - var(--quick-switch-bottom) - var(--quick-switch-button-size)
+      - var(--quick-switch-panel-gap) - 60px - env(safe-area-inset-top) - 12px
+    )));
     padding: 7px;
     overflow-y: auto;
+    overscroll-behavior-y: contain;
     border: 1px solid var(--border);
     border-radius: 16px;
     background: color-mix(in srgb, var(--surface) 94%, transparent);
