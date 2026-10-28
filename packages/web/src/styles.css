@@ -706,7 +706,7 @@ button:disabled {
   .quick-switch {
     position: absolute;
     right: calc(14px + env(safe-area-inset-right));
-    bottom: calc(118px + var(--safe-bottom));
+    bottom: calc(176px + var(--safe-bottom));
     z-index: 62;
     pointer-events: none;
   }
