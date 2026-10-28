@@ -482,6 +482,7 @@ export const ja: Messages = {
 
   // Turn ruler
   'ruler.jump': (n: number) => `${n} 番目のターンへ移動`,
+  'ruler.position': (n: number, total: number) => `全 ${total} ターン中 ${n} 番目`,
   'ruler.image': '（画像）',
 
   // Choosing a collaborator

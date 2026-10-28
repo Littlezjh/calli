@@ -484,6 +484,7 @@ export const zh = {
 
   // Turn ruler
   'ruler.jump': (n: number) => `跳到第 ${n} 轮`,
+  'ruler.position': (n: number, total: number) => `第 ${n} 轮，共 ${total} 轮`,
   'ruler.image': '（图片）',
 
   // Choosing a collaborator

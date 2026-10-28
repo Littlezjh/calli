@@ -1499,6 +1499,43 @@ html.list-open body {
   z-index: 5;
 }
 
+/* The window of ticks: it takes the pointer for hovering and dragging. Its ends fade out when
+   there are turns beyond them. */
+.ruler-track {
+  position: absolute;
+  left: 0;
+  width: 34px;
+  pointer-events: auto;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.ruler-track.dragging {
+  cursor: ns-resize;
+}
+
+.ruler-track.more-above {
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 48px);
+  mask-image: linear-gradient(to bottom, transparent, #000 48px);
+}
+
+.ruler-track.more-below {
+  -webkit-mask-image: linear-gradient(to top, transparent, #000 48px);
+  mask-image: linear-gradient(to top, transparent, #000 48px);
+}
+
+.ruler-track.more-above.more-below {
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 48px, #000 calc(100% - 48px), transparent);
+  mask-image: linear-gradient(to bottom, transparent, #000 48px, #000 calc(100% - 48px), transparent);
+}
+
+.ruler-pop-n {
+  margin-top: 6px;
+  color: var(--faint);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Each tick is a full-pitch hit area; the visible dash is its ::before, left-aligned and growing
    rightwards. Its length (--w) comes from the fisheye around the hovered tick. */
 .turn-ruler .tick {

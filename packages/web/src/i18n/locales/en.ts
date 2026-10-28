@@ -484,6 +484,7 @@ export const en: Messages = {
 
   // Turn ruler
   'ruler.jump': (n: number) => `Jump to turn ${n}`,
+  'ruler.position': (n: number, total: number) => `Turn ${n} of ${total}`,
   'ruler.image': '(image)',
 
   // Choosing a collaborator
