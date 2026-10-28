@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { ApiError, MAX_QUEUED, type AgentMention, type ModelQueue, type OutgoingImage, type QueuedMessage, type SlashCommand } from '../api';
 import { commandDraft, searchCommands, slashQuery, type HubAction, type MenuRow } from '../commands';
@@ -68,6 +68,10 @@ const asMessage = (text: string, notes: Note[]) => (notes.length ? withNotes(not
 
 /** How long a send may take before the button says it is still going. */
 const SLOW_SEND_MS = 400;
+/** How far a finger can drift and still count as tapping the mobile send button. */
+const SEND_TAP_SLOP = 12;
+/** Mobile browsers may deliver the compatibility click after pointerup; keep it from sending twice. */
+const SEND_CLICK_SUPPRESS_MS = 500;
 
 /** Safari may report composition as ended on the Enter keydown that still belongs to the IME. */
 export const isImeComposing = (event: Pick<KeyboardEvent<HTMLElement>, 'nativeEvent'>): boolean =>
@@ -673,6 +677,8 @@ export function Composer({
   const immediate = !!goalControl && !!goal?.controls.includes(goalControl) && !images.length && !videos.length && !notes.length && !mentions.length;
   const queueFull = running && !immediate && queued.length >= MAX_QUEUED;
   const canSend = hasContent && !busy && !menuBusy && !disabled && preparing === 0 && !queueFull;
+  const sendPress = useRef<{ pointerId: number; x: number; y: number; moved: boolean } | null>(null);
+  const suppressSendClick = useRef(false);
   const modelQueueNotice = modelQueue
     ? {
         text: modelQueue.position === null ? t('composer.modelQueueWaiting') : t('composer.modelQueuePosition', modelQueue.position),
@@ -718,6 +724,38 @@ export function Composer({
       sendingRef.current = false;
       setBusy(false);
       ref.current?.focus();
+    }
+  };
+  const endSendPress = (button: HTMLButtonElement, pointerId: number) => {
+    if (button.hasPointerCapture(pointerId)) button.releasePointerCapture(pointerId);
+    sendPress.current = null;
+    window.setTimeout(() => { suppressSendClick.current = false; }, SEND_CLICK_SUPPRESS_MS);
+  };
+  const sendPointerDown = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    if (e.pointerType === 'mouse' || !canSend) return;
+    // On phones, letting the button take focus can make the keyboard close and swallow the click.
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    suppressSendClick.current = true;
+    sendPress.current = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, moved: false };
+  };
+  const sendPointerMove = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    const press = sendPress.current;
+    if (!press || press.pointerId !== e.pointerId) return;
+    if (Math.hypot(e.clientX - press.x, e.clientY - press.y) > SEND_TAP_SLOP) press.moved = true;
+  };
+  const sendPointerUp = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    const press = sendPress.current;
+    if (!press || press.pointerId !== e.pointerId) return;
+    e.preventDefault();
+    const target = document.elementFromPoint(e.clientX, e.clientY);
+    endSendPress(e.currentTarget, e.pointerId);
+    if (!press.moved && target && e.currentTarget.contains(target)) void submit();
+  };
+  const sendPointerCancel = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    if (sendPress.current?.pointerId === e.pointerId) {
+      suppressSendClick.current = false;
+      endSendPress(e.currentTarget, e.pointerId);
     }
   };
 
@@ -1098,7 +1136,18 @@ export function Composer({
             {(voiceControls ? hasContent : !running || hasContent) && (
               <button
                 className={`send-btn${slow ? ' sending' : ''}`}
-                onClick={() => void submit()}
+                onPointerDown={sendPointerDown}
+                onPointerMove={sendPointerMove}
+                onPointerUp={sendPointerUp}
+                onPointerCancel={sendPointerCancel}
+                onClick={(e) => {
+                  if (suppressSendClick.current) {
+                    suppressSendClick.current = false;
+                    e.preventDefault();
+                    return;
+                  }
+                  void submit();
+                }}
                 disabled={!canSend}
                 aria-label={slow ? t('composer.sending') : taker ? t('composer.takeoverSend', taker.label) : running && !immediate ? t('composer.queueSend') : t('common.send')}
                 title={slow ? t('composer.sendingEllipsis') : taker ? t('composer.takeoverSend', taker.label) : queueFull ? t('composer.queueMax', MAX_QUEUED) : running ? immediate ? t('composer.goalNow') : t('composer.afterTurn') : undefined}
