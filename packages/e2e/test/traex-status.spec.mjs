@@ -25,6 +25,11 @@ test('TRAE model load and weekly quota appear in existing controls in both theme
       await page.locator('.composer .context-btn').first().click();
       await page.getByRole('menuitemradio', { name: /^TRAE CLI/ }).click();
       await page.locator('.model-control-trigger').click();
+      const inlineLoad = page.locator('.effort-model .model-inline-load');
+      await inlineLoad.waitFor();
+      assert.equal(await inlineLoad.innerText(), '184%');
+      assert.equal(await inlineLoad.getAttribute('title'), '负载 184%');
+      assert.equal(await page.locator('.model-control-trigger .model-inline-load').count(), phone ? 0 : 1);
       await page.getByRole('button', { name: /^切换模型，当前/ }).click();
       await page.getByText(/模型负载 184%.*每周额度剩余 99%/).waitFor();
       assert.equal(await page.getByText(/模型负载 0%/).count(), 1);

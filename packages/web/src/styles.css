@@ -8971,6 +8971,18 @@ input.picker-search {
   color: var(--text);
 }
 
+.model-inline-load {
+  flex-shrink: 0;
+  color: var(--faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.model-inline-load.high {
+  color: var(--danger);
+}
+
 .model-trigger-gauge {
   display: inline-flex;
   flex-shrink: 0;
@@ -9072,7 +9084,7 @@ input.picker-search {
   cursor: pointer;
 }
 
-.effort-model span {
+.effort-model-name {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
