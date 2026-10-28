@@ -32,6 +32,9 @@ interface Props {
 
 const EDGE = 8;
 
+/** How long after the finger that opened a sheet lifts before the sheet takes taps. */
+const ARM_DELAY_MS = 400;
+
 /** Fingers on the screen right now. A sheet opened by a long press appears under one of them. */
 let fingers = 0;
 if (typeof document !== 'undefined') {
@@ -51,18 +54,32 @@ export function Menu({ label, x, y, corner = 'top-left', items, onClose }: Props
   const [openSub, setOpenSub] = useState<string | null>(null);
   const [pos, setPos] = useState({ left: x, top: y, flip: false, ready: false });
   // A sheet opened under a finger (a long press) ignores that finger: lifting it must not pick
-  // the row that slid in beneath it, nor close the sheet. It listens once every finger is up.
+  // the row that slid in beneath it, nor close the sheet. Safari sends the lifted finger's mouse
+  // press and click a moment later, wherever it now is, so those are swallowed too, and the sheet
+  // listens only a little after every finger is up.
   const [armed, setArmed] = useState(() => fingers === 0);
   useEffect(() => {
     if (armed) return;
+    let timer: number | undefined;
+    const swallow = (e: Event) => {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    };
     const up = (e: TouchEvent) => {
       if (e.touches.length) return;
-      e.preventDefault(); // no click for the lifted finger
-      window.setTimeout(() => setArmed(true), 0);
+      if (e.cancelable) e.preventDefault();
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => setArmed(true), ARM_DELAY_MS);
     };
-    document.addEventListener('touchend', up, true);
-    document.addEventListener('touchcancel', up, true);
-    return () => { document.removeEventListener('touchend', up, true); document.removeEventListener('touchcancel', up, true); };
+    const touch = ['touchend', 'touchcancel'] as const;
+    const mouse = ['mousedown', 'mouseup', 'click'] as const;
+    for (const type of touch) document.addEventListener(type, up, true);
+    for (const type of mouse) document.addEventListener(type, swallow, true);
+    return () => {
+      window.clearTimeout(timer);
+      for (const type of touch) document.removeEventListener(type, up, true);
+      for (const type of mouse) document.removeEventListener(type, swallow, true);
+    };
   }, [armed]);
 
   // Keep the panel on screen: measure it, then move it back inside the viewport if needed.

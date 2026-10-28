@@ -3923,7 +3923,7 @@ input.picker-search {
   user-select: none;
 }
 
-.sheet-unarmed .sheet-scrim,
+/* No row lights up under the resting finger; the scrim still catches it, so nothing behind does. */
 .sheet-unarmed .menu-sheet {
   pointer-events: none;
 }
