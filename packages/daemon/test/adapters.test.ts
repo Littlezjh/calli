@@ -550,11 +550,13 @@ test('a copy can be made for another directory, each agent in its own way', asyn
     assert.equal(await pi.forkSession('hist-p', here, 'e2', tree), 'hist-p-in-abcd1234-fork-e2');
     assert.deepEqual((await pi.loadHistory('hist-p-in-abcd1234-fork-e2', tree)).map((t) => t.text), ['run the tests']);
 
-    // TRAE CLI takes Claude's fork point and, like Claude, is asked for the copy from where it will run.
+    // TRAE CLI uses its app-server turn ids for history and fork, matching the protocol that runs
+    // live turns so an active writer does not block a history-boundary fork.
     const traex = new TraexAcpAdapter([process.execPath, fakeAcp], { FAKE_ACP_FLAVOR: 'traex' });
+    assert.deepEqual((await traex.loadHistory('hist-x', here)).map((t) => t.forkRef), ['turn-1', 'turn-2']);
     assert.equal(await traex.forkSession('hist-x', here, undefined, tree), 'hist-x-fork-in-abcd1234');
-    assert.equal(await traex.forkSession('hist-x', here, 'm1b', tree), 'hist-x-fork-at-m1b-in-abcd1234');
-    assert.equal(await traex.forkSession('hist-x', here, 'm1b'), 'hist-x-fork-at-m1b');
+    assert.equal(await traex.forkSession('hist-x', here, 'turn-1', tree), 'hist-x-fork-at-turn-1-in-abcd1234');
+    assert.equal(await traex.forkSession('hist-x', here, 'turn-1'), 'hist-x-fork-at-turn-1');
 
     // Codex is told where the copy will work; resuming says it again.
     const codex = new CodexAppServerAdapter([process.execPath, fakeCodex]);

@@ -1187,6 +1187,24 @@ test('fork at a turn: the copy ends where that turn ended, on the hub and on the
 
   assert.equal((await forkAt(thread.id, 'no-such-turn')).status, 404);
 
+  // While a new turn is still running, a finished history boundary is safe to copy; the unfinished
+  // current turn is not.
+  const running = (await (await api(`/api/threads/${thread.id}/turns`, { method: 'POST', body: JSON.stringify({ text: 'slow while forking' }) })).json()) as { turnId: string };
+  await waitFor(async () => {
+    const t = (await (await api(`/api/threads/${thread.id}`)).json()) as { status: string };
+    return t.status === 'running' ? t : null;
+  });
+  const historyFork = await forkAt(thread.id, first.turnId!);
+  assert.equal(historyFork.status, 201);
+  assert.equal(((await historyFork.json()) as Record<string, any>).agentSessionId, 'hist-forkat-fork-e2');
+  assert.equal((await api(`/api/threads/${thread.id}/fork`, { method: 'POST' })).status, 409);
+  assert.equal((await forkAt(thread.id, running.turnId)).status, 409);
+  await api(`/api/threads/${thread.id}/cancel`, { method: 'POST' });
+  await waitFor(async () => {
+    const t = (await (await api(`/api/threads/${thread.id}`)).json()) as { status: string };
+    return t.status === 'idle' ? t : null;
+  });
+
   // A turn the user stopped is no place to end a copy, wherever it stands.
   const stopping = await newThread({ agent: 'pi' });
   await ask(stopping.id, 'first');
