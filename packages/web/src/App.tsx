@@ -5,7 +5,7 @@ import { HostIcon } from './extensions/ui';
 import { historyPage, mergeHistory, watchHistory } from './history';
 import type { WorkMode, WritingStage } from './api';
 import { HandoverTrail } from './components/HandoverTrail';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import type { Theme } from './appearance';
 import {
   Api,
@@ -78,7 +78,7 @@ import { ExtensionView } from './extensions/ExtensionView';
 import { threadSummaries } from './extensions/project';
 import { createThreadFeed } from './extensions/thread-feed';
 import { cachedThreads, rememberThreads } from './thread-cache';
-import type { HostSource } from './sidebar';
+import { clampSidebarWidth, savedSidebarWidth, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, type HostSource } from './sidebar';
 import { enabledViews, extensionHash, looksLikeExtensionRoute, resolveExtensionRoute } from './extensions/routes';
 import { AgentPicker, type DiscoveredAccount, type DiscoveredAgent, effortsForModel, imagesBlocked, imagesNote, modelName, speedsForModel, ModelPicker, PermissionPicker, UsageMeter, WorkspacePicker } from './components/Pickers';
 import { Sidebar, SIDEBAR_SHORTCUT } from './components/Sidebar';
@@ -161,6 +161,9 @@ function viewForHash(hash: string, connected: boolean): MainView | null {
 
 /** Whether the thread list is put away on a wide screen. */
 const SIDEBAR_HIDDEN_KEY = 'rah.sidebar.hidden';
+/** The width a person last dragged the desktop thread list to. */
+const SIDEBAR_WIDTH_KEY = 'rah.sidebar.width';
+const SIDEBAR_KEYBOARD_STEP = 16;
 
 /** What members of each instance start with, remembered on this device for the next team. */
 const MEMBER_DEFAULTS_KEY = 'rah.coord.defaults';
@@ -398,6 +401,60 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const modelVersions = useRef<Record<string, number>>({});
   const [commandsByKey, setCommandsByKey] = useState<Record<string, SlashCommand[]>>({});
   const [drawer, setDrawer] = useState(start === 'list');
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    if (showcase) return savedSidebarWidth(null);
+    try {
+      return savedSidebarWidth(window.localStorage.getItem(SIDEBAR_WIDTH_KEY));
+    } catch {
+      return savedSidebarWidth(null);
+    }
+  });
+  const [sidebarDrag, setSidebarDrag] = useState<{ pointerId: number; startX: number; startWidth: number } | null>(null);
+  const rememberSidebarWidth = useCallback((width: number) => {
+    if (showcase) return;
+    try {
+      window.localStorage.setItem(SIDEBAR_WIDTH_KEY, String(width));
+    } catch {
+      // The resize still applies for this page when storage is unavailable.
+    }
+  }, [showcase]);
+  const startSidebarResize = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setSidebarDrag({ pointerId: e.pointerId, startX: e.clientX, startWidth: sidebarWidth });
+  }, [sidebarWidth]);
+  const moveSidebarResize = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!sidebarDrag || e.pointerId !== sidebarDrag.pointerId) return;
+    e.preventDefault();
+    setSidebarWidth(clampSidebarWidth(sidebarDrag.startWidth + e.clientX - sidebarDrag.startX));
+  }, [sidebarDrag]);
+  const finishSidebarResize = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!sidebarDrag || e.pointerId !== sidebarDrag.pointerId) return;
+    const width = clampSidebarWidth(sidebarDrag.startWidth + e.clientX - sidebarDrag.startX);
+    setSidebarWidth(width);
+    rememberSidebarWidth(width);
+    setSidebarDrag(null);
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+  }, [rememberSidebarWidth, sidebarDrag]);
+  const cancelSidebarResize = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!sidebarDrag || e.pointerId !== sidebarDrag.pointerId) return;
+    rememberSidebarWidth(sidebarWidth);
+    setSidebarDrag(null);
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+  }, [rememberSidebarWidth, sidebarDrag, sidebarWidth]);
+  const resizeSidebarFromKey = useCallback((e: ReactKeyboardEvent<HTMLDivElement>) => {
+    const next = e.key === 'ArrowLeft' ? sidebarWidth - SIDEBAR_KEYBOARD_STEP
+      : e.key === 'ArrowRight' ? sidebarWidth + SIDEBAR_KEYBOARD_STEP
+        : e.key === 'Home' ? SIDEBAR_MIN_WIDTH
+          : e.key === 'End' ? SIDEBAR_MAX_WIDTH
+            : null;
+    if (next === null) return;
+    e.preventDefault();
+    const width = clampSidebarWidth(next);
+    setSidebarWidth(width);
+    rememberSidebarWidth(width);
+  }, [rememberSidebarWidth, sidebarWidth]);
   // On a wide screen the list can be put away for room, like Codex; remembered on this device.
   const [sidebarHidden, setSidebarHidden] = useState(() => {
     if (showcase) return false;
@@ -1977,7 +2034,10 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   );
 
   return (
-    <div className={`app${listOpen ? ' drawer-open' : ''}${sidebarHidden && !compact ? ' sidebar-hidden' : ''}`}>
+    <div
+      className={`app${listOpen ? ' drawer-open' : ''}${sidebarHidden && !compact ? ' sidebar-hidden' : ''}${sidebarDrag ? ' sidebar-resizing' : ''}`}
+      style={{ '--sidebar-w': `${sidebarWidth}px` } as CSSProperties}
+    >
       {remotePick && (
         <DirectoryPicker
           api={remotePick.api}
@@ -2067,6 +2127,24 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           notice={demo && compact ? showcase ? showcase.notice(selectedId, extWant) : <DemoBar compact onConnect={askToConnect} /> : undefined}
         />
       </aside>
+      {!compact && !sidebarHidden && (
+        <div
+          className="sidebar-resize-handle"
+          role="separator"
+          aria-label={t('sidebar.resize')}
+          aria-orientation="vertical"
+          aria-valuemin={SIDEBAR_MIN_WIDTH}
+          aria-valuemax={SIDEBAR_MAX_WIDTH}
+          aria-valuenow={sidebarWidth}
+          tabIndex={0}
+          title={t('sidebar.resize')}
+          onPointerDown={startSidebarResize}
+          onPointerMove={moveSidebarResize}
+          onPointerUp={finishSidebarResize}
+          onPointerCancel={cancelSidebarResize}
+          onKeyDown={resizeSidebarFromKey}
+        />
+      )}
 
       <main className="main" ref={mainRef}>
         <header className="topbar">

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { agentGroups, effortsForModel, imagesBlocked, modelName, modelRows } from '../src/components/Pickers.js';
+import { agentGroups, effortsForModel, imagesBlocked, modelLoadLabel, modelLoadPercent, modelName, modelRows } from '../src/components/Pickers.js';
 import { isFastSpeed, type AgentInfo } from '../src/api.js';
 
 test('the new-thread picker omits hidden single instances and accounts before grouping', () => {
@@ -65,6 +65,22 @@ test('effort levels follow the model, with the agent default looked up under its
   assert.deepEqual(effortsForModel(models, 'tiny', agentWide), [], 'a model can have no effort setting');
   assert.deepEqual(effortsForModel(models, 'unknown', agentWide), agentWide, 'missing info falls back');
   assert.deepEqual(effortsForModel([], null, agentWide), agentWide);
+});
+
+test('model load follows the selected model and the agent default alias', () => {
+  const models = [
+    { id: 'default', label: 'Default', description: 'Opus 5.5', loadPercent: 42 },
+    { id: 'old', label: 'Opus 4.6', loadPercent: 108 },
+    { id: 'quiet', label: 'Haiku 4.5' },
+  ];
+  assert.equal(modelLoadPercent(models, null), 42);
+  assert.equal(modelLoadPercent(models, 'old'), 108);
+  assert.equal(modelLoadPercent(models, 'quiet'), undefined);
+  assert.equal(modelLoadPercent(models, 'missing'), undefined);
+});
+
+test('model load badge includes the literal load label', () => {
+  assert.equal(modelLoadLabel(100), '负载100%');
 });
 
 test('an agent that flags its default model (pi) gets the same treatment as one with a "default" alias', () => {

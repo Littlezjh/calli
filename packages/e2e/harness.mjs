@@ -176,11 +176,13 @@ function inChinese(browser) {
   return browser;
 }
 
-/** Finds a Chromium the installed playwright-core can drive: the cache, then a system Chrome. */
+/** Finds a Chromium the installed playwright-core can drive: the cache, then a system browser. */
 export function launchBrowser() {
   const home = process.env.HOME ?? '';
   const candidates = [
     `${home}/.cache/ms-playwright/chromium-1243/chrome-linux64/chrome`,
+    '/usr/bin/chromium',
+    '/usr/lib/chromium/chromium',
     '/usr/bin/google-chrome',
     '/usr/bin/google-chrome-stable',
   ];

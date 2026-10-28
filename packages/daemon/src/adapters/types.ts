@@ -188,6 +188,8 @@ export interface ModelOption {
   label: string;
   /** Short note from the agent, such as the concrete version behind an alias. */
   description?: string;
+  /** How busy this model is right now; above 100 means overloaded. */
+  loadPercent?: number;
   /**
    * Thinking effort levels this model accepts. An empty list means the model has no effort setting.
    * Left out when the agent does not say, in which case the agent-wide list applies.

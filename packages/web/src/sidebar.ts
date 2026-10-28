@@ -4,6 +4,22 @@ import type { AgentInfo, Section, Thread } from './api';
 import { folderName } from './paths';
 import { t } from './i18n';
 
+/** Desktop sidebar bounds keep the thread list useful without squeezing the conversation away. */
+export const SIDEBAR_MIN_WIDTH = 240;
+export const SIDEBAR_DEFAULT_WIDTH = 288;
+export const SIDEBAR_MAX_WIDTH = 520;
+
+export function clampSidebarWidth(width: number): number {
+  return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(width)));
+}
+
+/** Invalid or missing saved values fall back to the layout's original width. */
+export function savedSidebarWidth(value: string | null): number {
+  if (value === null) return SIDEBAR_DEFAULT_WIDTH;
+  const width = Number(value);
+  return Number.isFinite(width) ? clampSidebarWidth(width) : SIDEBAR_DEFAULT_WIDTH;
+}
+
 /**
  * Which agents need their name next to their mark: a mark several agents share is only
  * ambiguous for the agents after its first one, which is the original built-in.
