@@ -186,6 +186,30 @@ test('CLI preserves plain-text errors from old servers or proxies in both transp
     rmSync(dir, { recursive: true, force: true });
   }
 });
+test('a finished task leaves the thread list for the archive; its result stays downloadable', async () => {
+  const h = await setup();
+  try {
+    const started = await h.run('archived');
+    const job = await h.done(started.id);
+    assert.equal(job.state, 'succeeded');
+    await wait(() => Boolean(h.store.getThread(job.threadId)?.archivedAt));
+    assert.equal(h.store.getThread(h.root.id)?.archivedAt, null, 'the caller\'s own thread stays');
+    const fetched = await h.runCli(['jobs', 'fetch', job.id, job.artifacts[0].id, '--output', join(h.cwd, 'after-archive.png')]);
+    assert.equal(fetched.sha256, job.artifacts[0].sha256);
+  } finally { await h.close(); }
+});
+
+test('a cancelled task is archived once its turn has stopped', async () => {
+  const h = await setup('slow');
+  try {
+    const job = await h.run('cancel-archive');
+    await wait(() => h.store.toolJobs.get(job.id)?.state === 'running');
+    await h.call({ op: 'jobs.cancel', id: job.id });
+    const threadId = h.store.toolJobs.get(job.id)!.threadId!;
+    await wait(() => Boolean(h.store.getThread(threadId)?.archivedAt));
+  } finally { await h.close(); }
+});
+
 test('cancellation works before dispatch and during generation; wait timeout does not cancel', async () => {
   const h = await setup('slow');
   try {

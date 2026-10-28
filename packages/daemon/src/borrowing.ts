@@ -55,7 +55,7 @@ export class BorrowingService {
     manager.borrowing = this;
     for (const job of store.toolJobs.list()) {
       if (job.threadId) this.byThread.set(job.threadId, job.id);
-      if (!active(job)) continue;
+      if (!active(job)) { if (job.threadId) this.retire(job.threadId); continue; }
       const events = job.threadId ? store.listEvents(job.threadId, 0, -1) : [];
       const end = events.reverse().find(e => e.turnId === job.turnId && turnOutcome(e));
       if (end) this.finish(job, end);
@@ -299,6 +299,23 @@ export class BorrowingService {
   private save(job: ToolJob): void {
     job.updatedAt = new Date().toISOString();
     this.store.toolJobs.save(job);
+    if (!active(job) && job.threadId) this.retire(job.threadId);
+  }
+
+  /**
+   * A finished task's thread goes to the archive: it is one agent's errand for another, not a
+   * conversation of the person's, so it stays out of the list but can still be looked up there.
+   * Its turn may still be winding down when the job settles; archiving waits for it.
+   */
+  private retire(threadId: string, tries = 0): void {
+    if (this.stopped) return;
+    const thread = this.store.getThread(threadId);
+    if (!thread || thread.archivedAt) return;
+    void this.manager.updateThread(threadId, { archived: true }).catch(() => {
+      if (tries >= 40) return;
+      const timer = setTimeout(() => this.retire(threadId, tries + 1), 250);
+      timer.unref?.();
+    });
   }
   private fail(job: ToolJob, code: string, message: string, state: 'failed' | 'cancelled' | 'interrupted' = 'failed'): void {
     job.state = state; job.error = { code, message }; this.save(job);
