@@ -542,43 +542,22 @@ button:disabled {
   cursor: pointer;
 }
 
-.place-tag {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  max-width: 100%;
-  height: 26px;
-  padding: 0 10px 0 8px;
-  border: 0;
-  border-radius: var(--radius-pill);
-  background: var(--hover);
-  color: var(--muted);
-  font: inherit;
-  font-size: 12.5px;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.place-tag:hover,
-.place-tag[aria-expanded='true'] {
-  background: var(--active);
-  color: var(--text);
-}
-
-.place-tag svg {
+/* Where the thread runs: a quiet icon before the title; hover names the project, a click opens the rest. */
+.topbar-heading > .pop:has(> .place-icon) {
   flex: none;
 }
 
-.place-tag-name,
-.place-tag-extra {
-  overflow: hidden;
-  text-overflow: ellipsis;
+.place-icon {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  margin-right: -4px;
+  color: var(--muted);
 }
 
-.place-tag-extra::before {
-  content: '·';
-  margin-right: 6px;
+.place-icon:hover,
+.place-icon[aria-expanded='true'] {
+  color: var(--text);
 }
 
 .place-panel {

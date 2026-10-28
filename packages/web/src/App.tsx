@@ -2102,6 +2102,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           <div className="topbar-heading">
             {/* Every page names itself here, the way a thread does: the bar is never left blank. */}
             {/* On a phone there is no room for the tag: the title itself opens where the thread runs. */}
+            {placeShown && !compact && <ThreadPlace thread={selected!} agent={agentLabel(selected!.agent)} host={host?.label} />}
             {compact && placeShown ? (
               <ThreadPlace thread={selected!} agent={agentLabel(selected!.agent)} host={host?.label} title={selected!.title} />
             ) : (
@@ -2114,7 +2115,6 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
                 {agentLabel(selected!.agent)} · {t('app.leadThread', leadTitle)}
               </button>
             )}
-            {placeShown && !compact && <ThreadPlace thread={selected!} agent={agentLabel(selected!.agent)} host={host?.label} />}
           </div>
           {selected && (
             <div className="topbar-actions">
