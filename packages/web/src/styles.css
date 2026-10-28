@@ -486,6 +486,13 @@ button:disabled {
   padding-left: calc(12px + var(--titlebar-left));
 }
 
+/* In the window's title bar the row is one band, the list's colour, as in Codex; the conversation
+   starts below its hairline. */
+.in-titlebar .topbar {
+  border-bottom: 1px solid var(--border);
+  background: var(--sidebar);
+}
+
 .topbar button,
 .topbar input,
 .topbar a {

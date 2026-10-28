@@ -25,7 +25,7 @@ import {
 } from './api';
 import type { HubAction } from './commands';
 import { buildProjectOptions } from './projects';
-import { useAppearance, useIsCompact, useListSwipe, useStoredFlag } from './hooks';
+import { useAppearance, useInTitlebar, useIsCompact, useListSwipe, useStoredFlag } from './hooks';
 import { useHosts } from './hosts';
 import type { PreparedImage } from './images';
 import { restoreVideos, type PreparedVideo } from './videos';
@@ -420,6 +420,10 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   }, []);
   // On a phone the thread list is a page of its own; `drawer` slides the conversation off to show it.
   const compact = useIsCompact();
+  // The installed app draws into the window's title bar (see the stylesheet): that row is one band
+  // of the list's colour, as in Codex, and the theme colour, which the window paints behind its own
+  // buttons there, says the same.
+  const inTitlebar = useInTitlebar() && !compact;
   // ⇧⌘S (Ctrl+Shift+S elsewhere), Codex's key for it. Only where there is a sidebar to put away.
   useEffect(() => {
     if (compact) return;
@@ -1064,12 +1068,13 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   useEffect(() => {
     const root = document.documentElement;
     root.classList.toggle('list-open', listOpen);
+    root.classList.toggle('in-titlebar', inTitlebar);
     // The keyboard belongs to the conversation; it goes down when the conversation moves aside.
     if (listOpen && document.activeElement instanceof HTMLElement) document.activeElement.blur();
     // Read again whenever the look changes: by then the new palette is on the page.
-    const colour = getComputedStyle(root).getPropertyValue(listOpen ? '--sidebar' : '--bg').trim();
+    const colour = getComputedStyle(root).getPropertyValue(listOpen || inTitlebar ? '--sidebar' : '--bg').trim();
     if (colour) document.querySelector('meta[name="theme-color"]')?.setAttribute('content', colour);
-  }, [listOpen, theme, appearance.palette]);
+  }, [listOpen, inTitlebar, theme, appearance.palette]);
 
   // A scroll hands the position over to the user only when their hand caused it. Scroll events
   // also come from the pin itself, from the keyboard resizing the page and from content changing
