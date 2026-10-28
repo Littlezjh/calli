@@ -1286,6 +1286,8 @@ export const ja: Messages = {
   'sidebar.me': '自分：',
   'sidebar.reply': '返信：',
   'sidebar.settings': '設定',
+  'quickSwitch.handle': 'セッションをすばやく切り替え',
+  'quickSwitch.sessions': '最近のセッション',
 
   // Skills
   'skills.view': '説明を見る',

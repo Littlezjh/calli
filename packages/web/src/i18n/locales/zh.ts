@@ -1288,6 +1288,8 @@ export const zh = {
   'sidebar.me': '我：',
   'sidebar.reply': '回复：',
   'sidebar.settings': '配置',
+  'quickSwitch.handle': '快速切换会话',
+  'quickSwitch.sessions': '最近会话',
 
   // Skills
   'skills.view': '查看说明',
