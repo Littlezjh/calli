@@ -4,12 +4,14 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../../daemon/src/store';
-import { buildTimeline, hydrateHistoryFiles, type Item } from '../src/timeline';
+import { buildTimeline, hydrateHistoryFiles, liveWorkFromEvents, type Item } from '../src/timeline';
 import { hydrateWork, mergeHistory } from '../src/history';
 import type { EventType } from '../../daemon/src/events';
 
 const visible = (items: Item[]) => items.map(i => i.kind === 'work' ? { kind: i.kind, key: i.key, count: i.count ?? i.steps.length, done: i.done, stopped: i.stopped, startedAt: i.startedAt, endedAt: i.endedAt }
   : i.kind === 'changes' ? { kind: i.kind, added: i.added, removed: i.removed, files: i.files.map(f => ({ path: f.path, added: f.added, removed: f.removed })) } : i);
+const thoughts = (item: Extract<Item, { kind: 'work' }> | undefined) =>
+  item?.entries.filter(e => e.kind === 'thought').map(e => e.thought.text) ?? [];
 
 test('projected completed histories have the same visible answers, boundaries, status and file counts', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'calli-view-'));
@@ -47,6 +49,10 @@ test('projected completed histories have the same visible answers, boundaries, s
       const loaded = detail.items.find(i => i.kind === 'work');
       const original = raw.items.find(i => i.kind === 'work' && i.key === `e${work.seq}`);
       assert.equal(loaded?.kind === 'work' && loaded.steps.length, original?.kind === 'work' && original.steps.length);
+      assert.deepEqual(thoughts(loaded?.kind === 'work' ? loaded : undefined), thoughts(original?.kind === 'work' ? original : undefined));
+      if (work.turnId === 'cancelled') {
+        assert.equal(loaded?.kind === 'work' && loaded.stopped, true);
+      }
     }
   } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
 });
@@ -56,6 +62,31 @@ test('reconnect replaces existing turns without deleting earlier pages or a newe
   const events = [event(1,'old'), event(4,'a'), event(8,'new')];
   const reset = { ...event(7,''), type: 'history.reset', data: { turns: ['a'], events: [event(2,'a'),event(7,'a')] } };
   assert.deepEqual(mergeHistory(events,[reset]).map(e => e.seq), [1,2,7,8]);
+});
+
+test('reset keeps already received work visible while lazy details reload', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rah-reset-live-'));
+  const store = new Store(dir);
+  store.createThread({ id: 'th', agent: 'pi', cwd: dir, title: 'test', permissionMode: 'default', model: null, effort: null });
+  const add = (type: EventType, data: Record<string, unknown>) => store.appendEvent('th', 'turn', type, data);
+  try {
+    add('turn.started', { text: 'question' });
+    add('reasoning.delta', { text: 'thinking ' });
+    add('reasoning.delta', { text: 'hard' });
+    add('tool.start', { id: 'run', kind: 'execute', title: 'npm test', input: { command: 'npm test' } });
+    add('tool.end', { id: 'run', status: 'completed', output: '12 passed' });
+    const received = store.listEvents('th');
+    add('turn.done', { stopReason: 'cancelled' });
+    const snapshot = await store.history.since('th', 0);
+    const merged = mergeHistory(received, [{ threadId: 'th', turnId: null, type: 'history.reset', ts: '', seq: snapshot.snapshotSeq, data: snapshot }]);
+    const work = buildTimeline(merged).items.find((i): i is Extract<Item, { kind: 'work' }> => i.kind === 'work')!;
+    assert.equal(work.stopped, true);
+    assert.ok(work.liveEvents?.some(e => e.type === 'reasoning.delta'), 'the reset carries received thoughts as live events');
+    const local = liveWorkFromEvents(work)!;
+    assert.deepEqual(thoughts(local), ['thinking hard']);
+    assert.equal(local.steps.length, 1);
+    assert.equal(local.steps[0].output, '12 passed');
+  } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
 

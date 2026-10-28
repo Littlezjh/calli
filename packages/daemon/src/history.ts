@@ -282,7 +282,12 @@ export class HistoryStore {
       let type = row.type;
       let data: Record<string, any> = {};
       if (type === 'tool.start') { type = 'history.tool.start'; data.id = String(row.seq); if (row.end_ts) data.endedAt = row.end_ts; }
-      else if (type === 'reasoning.delta') { type = 'history.thought'; data.version = row.until - 1; if (row.end_ts) data.endedAt = row.end_ts; }
+      else if (type === 'reasoning.delta') {
+        type = 'history.thought';
+        data = { id: row.seq, text: '', version: row.until - 1, startedAt: row.ts };
+        if (row.end_ts) data.endedAt = row.end_ts;
+        data.detail = { turnId: row.turn_id, id: row.seq, version: data.version };
+      }
       else if (type === 'turn.started' && row.seq === hiddenStart) data = { text: '', handoverCollapsed: true };
       else if (type !== 'message.delta') {
         data = JSON.parse(String((type === 'approval.request' ? readApproval : type === 'turn.started' ? readStart : read).get(thread, row.seq)!.data));
@@ -537,7 +542,8 @@ export class HistoryStore {
       } else list.push(e);
     }
     const next = cursor + 100;
-    return { events: [rows.find(e => e.type === 'turn.started')!, ...list.slice(cursor, next)], files: (partition.summary.find(e => e.type === 'history.work' && e.seq === block)?.data.files ?? []) as unknown[], version: end - 1, nextCursor: next < list.length ? next : null };
+    const terminal = rows.find(e => e.type === 'turn.done' || e.type === 'turn.error');
+    return { events: [rows.find(e => e.type === 'turn.started')!, ...list.slice(cursor, next), ...(terminal ? [terminal] : [])], files: (partition.summary.find(e => e.type === 'history.work' && e.seq === block)?.data.files ?? []) as unknown[], version: end - 1, nextCursor: next < list.length ? next : null };
   }
   async detail(thread: string, turn: string, id: number, offset = 0, expectedVersion?: number, path?: string): Promise<Record<string, unknown>> {
     const { start, end } = this.bounds(thread, turn);

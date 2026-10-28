@@ -95,6 +95,8 @@ interface ModelProps {
   onSpeed?: (speed: string | null) => void;
   onModel: (model: string | null) => void;
   onEffort: (effort: string | null) => void;
+  /** Refreshes live model metadata when the menu is actually opened. */
+  onOpen?: () => void;
   /** Opens the panel when this number changes. */
   openSignal?: number;
   /**
@@ -175,6 +177,7 @@ export function ModelPicker(props: ModelProps) {
       <Popover
         label={t('statusPanel.model')}
         openSignal={openSignal}
+        onOpen={props.onOpen}
         align="end"
         triggerClassName="tool-btn model-control-trigger"
         triggerLabel={t('pickers.modelNoneLabel')}
@@ -192,6 +195,7 @@ export function ModelPicker(props: ModelProps) {
     return (
       <Popover
         label={t('pickers.modelAndEffort')}
+        onOpen={props.onOpen}
         align="end"
         panelClassName="model-control-panel"
         triggerClassName={`member-model${chosen ? ' set' : ''}`}
@@ -207,6 +211,7 @@ export function ModelPicker(props: ModelProps) {
     <Popover
       label={t('pickers.modelAndEffort')}
       openSignal={openSignal}
+      onOpen={props.onOpen}
       align="end"
       panelClassName="model-control-panel"
       triggerClassName={`tool-btn model-control-trigger${narrow && levels.length > 0 ? ' dial-only' : ''}`}

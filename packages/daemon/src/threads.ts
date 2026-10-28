@@ -64,6 +64,16 @@ export interface ForkOptions {
   };
 }
 
+export interface ModelQueueView {
+  state: string;
+  position: number | null;
+  operation?: string | null;
+  message?: string | null;
+  updatedAt: string;
+}
+
+type ModelQueueState = ModelQueueView & { turnId: string };
+
 /** A thread as the API returns it: the stored record plus values worked out from it. */
 export type ThreadView = Omit<ThreadRecord, 'worktree' | 'handover' | 'writing'> & {
   /** Writing mode, with where the person's writing habits are kept. */
@@ -88,6 +98,8 @@ export type ThreadView = Omit<ThreadRecord, 'worktree' | 'handover' | 'writing'>
   waitingReason: 'approval' | 'question' | 'plan' | null;
   /** Messages sent while a turn was running. They go out, in order, as turns finish. */
   queued: Array<{ id: string; text: string; images: number; videos: number; targets?: string[]; error?: string }>;
+  /** The upstream model-provider queue reported by the native runtime, if this turn is waiting there. */
+  modelQueue?: ModelQueueView | null;
   /** Turns the terminal added to this session since the hub last wrote to it. */
   terminalActivity: boolean;
   /** When the running turn started; null while nothing runs. */
@@ -267,6 +279,8 @@ export class ThreadManager {
   private readonly syncing = new Set<string>();
   /** Messages waiting for the running turn of their thread to finish. Kept in memory only. */
   private readonly queues = new Map<string, QueuedTurn[]>();
+  /** Latest provider queue position per thread. Kept in memory; it is only meaningful while a turn runs. */
+  private readonly modelQueues = new Map<string, ModelQueueState>();
 
   /** Where threads may work; directories can be added from the page while the hub runs. */
   readonly dirs: Workdirs;
@@ -768,7 +782,15 @@ export class ThreadManager {
     }
     const scratch = this.dirs.scratchRoot !== null && isWithinWorkdirs(thread.cwd, [this.dirs.scratchRoot]);
     const runningSince = this.running.get(thread.id)?.since ?? null;
-    return { ...thread, writing: thread.writing ? { ...thread.writing, habits: habitsPath() } : null, handover: thread.handover ? { ...thread.handover, mode: this.store.handoverMode(thread)!, automatic: thread.handover.mode === 'continue' } : null, autoHandover: this.autoHandover.view(thread.id), worktree, resumeCommand, cwdReal, waiting, waitingReason, queued, terminalActivity, scratch, runningSince, coordination: this.coordination?.metadata(thread.id) };
+    const modelQueueState = this.modelQueues.get(thread.id);
+    const modelQueue = modelQueueState ? {
+      state: modelQueueState.state,
+      position: modelQueueState.position,
+      ...(modelQueueState.operation !== undefined ? { operation: modelQueueState.operation } : {}),
+      ...(modelQueueState.message !== undefined ? { message: modelQueueState.message } : {}),
+      updatedAt: modelQueueState.updatedAt,
+    } : null;
+    return { ...thread, writing: thread.writing ? { ...thread.writing, habits: habitsPath() } : null, handover: thread.handover ? { ...thread.handover, mode: this.store.handoverMode(thread)!, automatic: thread.handover.mode === 'continue' } : null, autoHandover: this.autoHandover.view(thread.id), worktree, resumeCommand, cwdReal, waiting, waitingReason, queued, modelQueue, terminalActivity, scratch, runningSince, coordination: this.coordination?.metadata(thread.id) };
   }
 
   /**
@@ -1278,6 +1300,7 @@ export class ThreadManager {
     }
     this.emitThreadEvent(id, null, 'thread.updated', {});
     this.queues.delete(id);
+    this.modelQueues.delete(id);
     this.goals.delete(id);
     this.store.deleteThread(id);
     this.attachments.removeThread(id);
@@ -1918,6 +1941,7 @@ export class ThreadManager {
           if (now) this.store.setThreadWriting(threadId, { stage: now.stage, file: now.file });
         }
         this.running.set(threadId, { turnId, cancelRequested: false, since: new Date().toISOString() });
+        this.modelQueues.delete(threadId);
         this.store.updateThread(threadId, { status: 'running', workMode: thread.workMode ?? 'execute', hubTurnAt: new Date().toISOString() }, { touch: true });
         if (thread.title === 'New thread' && !input.voiceSummary) {
           const title = askedText(rawText).split('\n')[0].slice(0, 60) || (storedVideos.length ? '视频' : '图片');
@@ -2280,6 +2304,7 @@ export class ThreadManager {
       this.reportTurns.delete(turnId);
       if (!this.nativeTurns.get(thread.id)?.size) this.inputs.cancel(thread.id, undefined, true);
       if (this.running.get(thread.id)?.turnId === turnId) this.running.delete(thread.id);
+      this.clearModelQueue(thread.id, turnId);
       const nativeTurn = this.nativeTurns.get(thread.id)?.values().next().value;
       if (nativeTurn && !this.running.has(thread.id)) {
         this.running.set(thread.id, { turnId: nativeTurn, cancelRequested: false, since: new Date().toISOString() });
@@ -2565,6 +2590,7 @@ export class ThreadManager {
           result.stopReason === 'error' ? { message: result.error ?? 'agent error' } : { stopReason: result.stopReason });
         if (this.running.get(thread.id)?.turnId === turnId) {
           this.running.delete(thread.id);
+          this.clearModelQueue(thread.id, turnId);
           this.inputs.cancel(thread.id, undefined, true);
           for (const [id, approval] of this.approvals) if (approval.threadId === thread.id) this.resolveApproval(id, { cancelled: true });
           this.store.updateThread(thread.id, { status: result.stopReason === 'error' ? 'error' : 'idle', ...(result.stopReason !== 'cancelled' && (result.stopReason === 'error' || !this.quietTurns.has(turnId)) ? { unread: true } : {}) }, { touch: true });
@@ -2591,6 +2617,29 @@ export class ThreadManager {
     this.sessions.delete(threadId);
     this.sessionAdapters.delete(threadId);
     if (s) await s.close().catch(() => undefined);
+  }
+
+  private updateModelQueue(threadId: string, turnId: string, data: Record<string, unknown>): boolean {
+    if (data.phase !== 'model_queue') return false;
+    const state = typeof data.state === 'string' && data.state ? data.state : 'queued';
+    if (state === 'ready' || state === 'done' || state === 'completed') return this.clearModelQueue(threadId, turnId);
+    const position = typeof data.position === 'number' && Number.isFinite(data.position) && data.position >= 0 ? data.position : null;
+    this.modelQueues.set(threadId, {
+      turnId,
+      state,
+      position,
+      operation: typeof data.operation === 'string' ? data.operation : data.operation === null ? null : undefined,
+      message: typeof data.message === 'string' ? data.message : data.message === null ? null : undefined,
+      updatedAt: new Date().toISOString(),
+    });
+    return true;
+  }
+
+  private clearModelQueue(threadId: string, turnId?: string): boolean {
+    const current = this.modelQueues.get(threadId);
+    if (!current || turnId && current.turnId !== turnId) return false;
+    this.modelQueues.delete(threadId);
+    return true;
   }
 
   /** Keeps the goal view and tells subscribers; the clock lives in the view, not in events. */
@@ -2663,7 +2712,9 @@ export class ThreadManager {
           ev = { ...ev, data: { ...ev.data, elapsedMs: now - started, sincePreviousPhaseMs: now - previousPhase } };
           previousPhase = now;
         }
+        const modelQueueChanged = ev.type === 'turn.phase' && this.updateModelQueue(threadId, turnId, ev.data);
         this.emitThreadEvent(threadId, turnId, ev.type, ev.data);
+        if (modelQueueChanged && this.store.getThread(threadId)) this.emitThreadEvent(threadId, null, 'thread.updated', {});
         // A finished plan ends plan mode: what is said next, a go-ahead or a change to the plan, is
         // a normal turn. The session takes the mode back on before that turn (ensureSession).
         if (ev.type === 'plan.completed' && this.store.getThread(threadId)?.workMode === 'plan') {

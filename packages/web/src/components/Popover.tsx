@@ -15,6 +15,8 @@ interface Props {
   disabled?: boolean;
   /** Opens the panel each time this number changes, so something else can trigger it. */
   openSignal?: number;
+  /** Called once when the panel opens, whether by click or by an open signal. */
+  onOpen?: () => void;
   children: (close: () => void) => ReactNode;
 }
 
@@ -33,10 +35,12 @@ export function Popover({
   placement = 'above',
   disabled,
   openSignal,
+  onOpen,
   children,
 }: Props) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const wasOpen = useRef(false);
 
   const panelRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<CSSProperties>({});
@@ -61,6 +65,11 @@ export function Popover({
   useEffect(() => {
     if (openSignal) setOpen(true);
   }, [openSignal]);
+
+  useEffect(() => {
+    if (open && !wasOpen.current) onOpen?.();
+    wasOpen.current = open;
+  }, [open, onOpen]);
 
   useEffect(() => {
     if (!open) return;

@@ -1137,6 +1137,20 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const activeAgent = selected?.agent ?? draftAgent;
   const activeCwd = selected?.cwd ?? draftCwd;
   const commandsKey = `${activeAgent}\n${activeCwd}`;
+  const lastFocusModelRefresh = useRef<{ agent: string; at: number } | null>(null);
+  const refreshActiveModels = useCallback((force = false) => {
+    if (!api || !activeAgent || document.hidden) return;
+    const now = Date.now();
+    if (!force && lastFocusModelRefresh.current?.agent === activeAgent && now - lastFocusModelRefresh.current.at < 1000) return;
+    lastFocusModelRefresh.current = { agent: activeAgent, at: now };
+    const version = modelVersions.current[activeAgent] ?? 0;
+    void api
+      .models(activeAgent)
+      .then((list) => {
+        if ((modelVersions.current[activeAgent] ?? 0) === version) setModelsByAgent(prev => ({ ...prev, [activeAgent]: list }));
+      })
+      .catch(() => undefined);
+  }, [api, activeAgent]);
 
   // Models of an agent other than the thread's own, for choosing what its members start with.
   const modelsAsked = useRef(new Set<string>());
@@ -1161,6 +1175,18 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       .catch(handleError);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, activeAgent]);
+
+  // Model load is a live hint; refresh when the user comes back to the page.
+  useEffect(() => {
+    const onFocus = () => refreshActiveModels();
+    const onVisible = () => { if (!document.hidden) refreshActiveModels(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [refreshActiveModels]);
 
   // Slash commands depend on the directory (projects add their own). Claude only announces them
   // once a session has started, so the list is re-read whenever a turn finishes as well.
@@ -1945,6 +1971,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       onSpeed={activeCaps?.speed ? v => selected ? updateSelected({ speed: v }) : setDraftSpeed(v) : undefined}
       onDiagnose={() => openObservability('diagnostics', activeAgent)}
       openSignal={modelSignal}
+      onOpen={() => refreshActiveModels(true)}
       onModel={(v) => {
         if (selected) return updateSelected({ model: v }); // the daemon drops an effort the new model lacks
         setDraftModel(v);
@@ -2400,6 +2427,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           attachNote={imagesNote(models, model)}
           onError={setError}
           queued={selected?.queued ?? []}
+          modelQueue={selected?.modelQueue ?? null}
           onRemoveQueued={removeQueued}
           onEditQueued={editQueued}
           onSendQueuedNow={sendQueuedNow}

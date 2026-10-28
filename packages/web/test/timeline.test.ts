@@ -829,13 +829,14 @@ test('a stopped turn says so, keeps what was said, and offers nothing to copy or
     // Stopped at once: only the line.
     ev('turn.started', { text: '你好' }, 't1', '2026-10-10T00:00:00.000Z'),
     ev('turn.done', { stopReason: 'cancelled' }, 't1', '2026-10-10T00:00:00.400Z'),
-    // Stopped mid-answer: the line above the words so far.
+    // Stopped mid-answer: the words so far are process output, not a final answer.
     ev('turn.started', { text: 'hhh' }, 't2', '2026-10-10T00:00:01.000Z'),
     ev('message.delta', { text: '半句' }, 't2', '2026-10-10T00:00:02.000Z'),
     ev('turn.done', { stopReason: 'cancelled' }, 't2', '2026-10-10T00:00:04.000Z'),
-    // Stopped while working: the work block says it.
+    // Stopped while working: the work block says it and keeps the latest process note.
     ev('turn.started', { text: 'run' }, 't3', '2026-10-10T00:00:05.000Z'),
     ev('tool.start', { id: 'a', title: 'ls', kind: 'execute', status: 'in_progress' }, 't3', '2026-10-10T00:00:06.000Z'),
+    ev('message.delta', { text: '还在处理' }, 't3', '2026-10-10T00:00:06.500Z'),
     ev('turn.done', { stopReason: 'cancelled' }, 't3', '2026-10-10T00:00:07.000Z'),
     // A turn that finished as usual still gets its row.
     ev('turn.started', { text: 'again' }, 't4', '2026-10-10T00:00:08.000Z'),
@@ -844,11 +845,15 @@ test('a stopped turn says so, keeps what was said, and offers nothing to copy or
   ]);
   assert.deepEqual(
     tl.items.map((i) => i.kind),
-    ['user', 'stopped', 'user', 'stopped', 'assistant', 'user', 'work', 'user', 'assistant', 'actions'],
+    ['user', 'stopped', 'user', 'work', 'user', 'work', 'user', 'assistant', 'actions'],
   );
-  const work = tl.items[6];
+  const noteOnly = tl.items[3];
+  assert.equal(noteOnly.kind === 'work' && noteOnly.stopped, true);
+  assert.ok(noteOnly.kind === 'work' && noteOnly.entries.some(e => e.kind === 'note' && e.text === '半句'));
+  const work = tl.items[5];
   assert.equal(work.kind === 'work' && work.stopped, true);
-  assert.equal(tl.items[4].kind === 'assistant' && tl.items[4].text, '半句');
+  assert.ok(work.kind === 'work' && work.entries.some(e => e.kind === 'note' && e.text === '还在处理'));
+  assert.ok(!tl.items.some(i => i.kind === 'assistant' && (i.text === '半句' || i.text === '还在处理')));
   assert.equal(tl.items.filter((i) => i.kind === 'actions').length, 1);
 });
 
