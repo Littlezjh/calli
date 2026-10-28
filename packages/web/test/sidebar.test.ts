@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Section, Thread } from '../src/api.js';
-import { buildActivity, buildMerged, buildSidebar, handoverGroups, markTerms, navOverflow, searchTerms, taggedAgents, threadAttention, type HostSource } from '../src/sidebar.js';
+import { buildActivity, buildMerged, buildSidebar, clampSidebarWidth, handoverGroups, markTerms, navOverflow, savedSidebarWidth, searchTerms, SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, taggedAgents, threadAttention, type HostSource } from '../src/sidebar.js';
 import { threadMark } from '../src/notices.js';
 
 let clock = 0;
@@ -40,6 +40,16 @@ const sections: Section[] = [
   { id: 's1', name: '支付重构', position: 1 },
 ];
 const ids = (list: Thread[]) => list.map((t) => t.id);
+
+test('the desktop sidebar width is rounded, bounded and restored safely', () => {
+  assert.equal(clampSidebarWidth(180), SIDEBAR_MIN_WIDTH);
+  assert.equal(clampSidebarWidth(360.6), 361);
+  assert.equal(clampSidebarWidth(900), SIDEBAR_MAX_WIDTH);
+  assert.equal(savedSidebarWidth(null), SIDEBAR_DEFAULT_WIDTH);
+  assert.equal(savedSidebarWidth('not-a-width'), SIDEBAR_DEFAULT_WIDTH);
+  assert.equal(savedSidebarWidth('420'), 420);
+  assert.equal(savedSidebarWidth('999'), SIDEBAR_MAX_WIDTH);
+});
 
 test('each thread appears once: pinned first, then its section, then its project', () => {
   const model = buildSidebar(

@@ -1273,6 +1273,7 @@ export const en: Messages = {
   'sidebar.closeSearch': 'Close search',
   'sidebar.hide': 'Hide sidebar',
   'sidebar.hideKey': (key: string) => `Hide sidebar (${key})`,
+  'sidebar.resize': 'Drag to resize sidebar',
   'sidebar.byActivity': 'View by activity',
   'sidebar.byProject': 'Back to viewing by project',
   'sidebar.byActivityCount': (n: number) => `View by activity (${n} ${n === 1 ? 'thread has' : 'threads have'} news)`,

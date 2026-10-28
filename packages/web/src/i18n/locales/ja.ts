@@ -1271,6 +1271,7 @@ export const ja: Messages = {
   'sidebar.closeSearch': '検索を閉じる',
   'sidebar.hide': 'サイドバーを隠す',
   'sidebar.hideKey': (key: string) => `サイドバーを隠す（${key}）`,
+  'sidebar.resize': 'ドラッグしてサイドバーの幅を変更',
   'sidebar.byActivity': 'アクティビティ順に表示',
   'sidebar.byProject': 'プロジェクト別の表示に戻る',
   'sidebar.byActivityCount': (n: number) => `アクティビティ順に表示（${n} 件のスレッドに動きがあります）`,

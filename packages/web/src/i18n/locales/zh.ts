@@ -1273,6 +1273,7 @@ export const zh = {
   'sidebar.closeSearch': '关闭搜索',
   'sidebar.hide': '隐藏侧边栏',
   'sidebar.hideKey': (key: string) => `隐藏侧边栏（${key}）`,
+  'sidebar.resize': '拖动调整侧边栏宽度',
   'sidebar.byActivity': '按活动查看',
   'sidebar.byProject': '回到按项目查看',
   'sidebar.byActivityCount': (n: number) => `按活动查看（${n} 个线程有新动静）`,
