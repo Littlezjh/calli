@@ -167,14 +167,17 @@ export class TraexAcpAdapter extends AcpAdapter {
     return models.map((model) => {
       const execution = model.id === 'default' ? executionModels.find(m => m.isDefault) : executionModels.find(m => m.id === model.id);
       if (execution?.speeds?.length) model = { ...model, speeds: execution.speeds };
-      // Keep ACP's model ids and defaults intact, even when CLI display names differ.
-      if (model.id === 'default') return model;
-      const live = status.find((s) => s.configName === model.id || s.name === model.id || s.name === model.label);
+      // The ACP default is an alias. Match its concrete app-server model or descriptive target,
+      // while keeping the alias description intact so the UI can still name that target.
+      const live = status.find((s) => s.configName === model.id || s.name === model.id || s.name === model.label
+        || (model.id === 'default' && (s.configName === execution?.id || s.name === execution?.id || s.name === execution?.label || s.name === model.description)));
       if (!live) return model;
+      const load = live.loadPercent !== undefined ? { loadPercent: live.loadPercent } : {};
+      if (model.id === 'default') return { ...model, ...load };
       const hints: string[] = [];
       if (live.loadPercent !== undefined) hints.push(`模型负载 ${live.loadPercent}%`);
       if (live.quota) hints.push(`每周额度剩余 ${100 - live.quota.usedPercent}%`);
-      return { ...model, description: [...hints, model.description].filter(Boolean).join(' · ') || undefined };
+      return { ...model, ...load, description: [...hints, model.description].filter(Boolean).join(' · ') || undefined };
     });
   }
 
