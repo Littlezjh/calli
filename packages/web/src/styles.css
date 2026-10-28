@@ -454,20 +454,62 @@ button:disabled {
   background: var(--bg);
 }
 
+/* Installed on a desktop, the window's title bar is the app's own (window-controls-overlay): the
+   top row moves up into it, clear of the system's buttons on either side, and drags the window.
+   Elsewhere these are zero and the row keeps its own height. */
+:root {
+  --titlebar-left: 0px;
+  --titlebar-right: 0px;
+}
+
+@media (display-mode: window-controls-overlay) {
+  /* Beside the system buttons there is room for the mark and the buttons, not the name too. */
+  .sidebar-top .brand > span {
+    display: none;
+  }
+
+  :root {
+    --titlebar-left: env(titlebar-area-x, 0px);
+    --titlebar-right: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
+    --titlebar-row: max(40px, env(titlebar-area-height, 40px));
+    --sidebar-top-pad: 0px;
+  }
+}
+
 .topbar {
   flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 8px;
-  height: calc(52px + env(safe-area-inset-top));
-  padding: env(safe-area-inset-top) 12px 0;
+  height: var(--titlebar-row, calc(52px + env(safe-area-inset-top)));
+  padding: env(safe-area-inset-top) calc(12px + var(--titlebar-right)) 0 12px;
+  -webkit-app-region: drag;
+  app-region: drag;
 }
 
+.sidebar-hidden .topbar {
+  padding-left: calc(12px + var(--titlebar-left));
+}
+
+.topbar button,
+.topbar input,
+.topbar a,
+.sidebar-top button {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+/* One line: the title, then where the thread runs. */
 .topbar-heading {
   display: flex;
   flex: 1;
-  flex-direction: column;
-  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.topbar-heading > * {
+  flex: 0 1 auto;
   min-width: 0;
 }
 
@@ -480,9 +522,102 @@ button:disabled {
 }
 
 .topbar-title {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
   letter-spacing: -0.005em;
+}
+
+/* On a phone the title opens where the thread runs. */
+.topbar-title-btn {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-family: inherit;
+  font-size: 15px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.place-tag {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  height: 26px;
+  padding: 0 10px 0 8px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--hover);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.place-tag:hover,
+.place-tag[aria-expanded='true'] {
+  background: var(--active);
+  color: var(--text);
+}
+
+.place-tag svg {
+  flex: none;
+}
+
+.place-tag-name,
+.place-tag-extra {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.place-tag-extra::before {
+  content: '·';
+  margin-right: 6px;
+}
+
+.place-panel {
+  min-width: 320px;
+  max-width: min(480px, calc(100vw - 32px));
+}
+
+.place-row {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 3px 4px 3px 10px;
+  border-radius: var(--radius-sm);
+}
+
+.place-row:hover {
+  background: var(--hover);
+}
+
+.place-label {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.place-value {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.place-value.mono {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.place-copy {
+  width: 28px;
+  height: 28px;
+  color: var(--muted);
 }
 
 .topbar-sub {
@@ -742,7 +877,7 @@ html.list-open body {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  padding: calc(12px + env(safe-area-inset-top)) 0 0;
+  padding: var(--sidebar-top-pad, calc(12px + env(safe-area-inset-top))) 0 0;
 }
 
 .sidebar-top {
@@ -750,8 +885,10 @@ html.list-open body {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  min-height: 44px;
-  padding: 0 12px 4px 20px;
+  min-height: var(--titlebar-row, 44px);
+  padding: 0 12px 4px max(20px, calc(var(--titlebar-left) + 6px));
+  -webkit-app-region: drag;
+  app-region: drag;
 }
 
 .sidebar-top-actions {
@@ -6407,8 +6544,12 @@ input.picker-search {
   }
 
   .topbar {
-    height: 58px;
-    padding: 0 24px;
+    height: var(--titlebar-row, 58px);
+    padding: 0 calc(24px + var(--titlebar-right)) 0 24px;
+  }
+
+  .sidebar-hidden .topbar {
+    padding-left: calc(24px + var(--titlebar-left));
   }
 
   .topbar-heading {
@@ -6416,8 +6557,8 @@ input.picker-search {
   }
 
   .topbar-title {
-    font-size: 15.5px;
-    font-weight: 650;
+    font-size: 15px;
+    font-weight: 600;
   }
 
   .scroller {

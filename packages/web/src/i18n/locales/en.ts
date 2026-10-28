@@ -633,6 +633,12 @@ export const en: Messages = {
   'common.retry': 'Retry',
   'common.copied': 'Copied',
   'common.copy': 'Copy',
+  'place.details': 'Where this thread runs',
+  'place.directory': 'Directory',
+  'place.branch': 'Branch',
+  'place.machine': 'Machine',
+  'place.agent': 'Agent',
+  'place.resume': 'Resume',
   'common.download': 'Download',
   'common.noMatch': 'No matches.',
 

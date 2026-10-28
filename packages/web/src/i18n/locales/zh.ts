@@ -633,6 +633,12 @@ export const zh = {
   'common.retry': '重试',
   'common.copied': '已复制',
   'common.copy': '复制',
+  'place.details': '线程所在位置',
+  'place.directory': '目录',
+  'place.branch': '分支',
+  'place.machine': '机器',
+  'place.agent': 'Agent',
+  'place.resume': '恢复命令',
   'common.download': '下载',
   'common.noMatch': '没有匹配的结果。',
 

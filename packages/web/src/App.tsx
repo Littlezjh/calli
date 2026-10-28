@@ -31,6 +31,7 @@ import type { PreparedImage } from './images';
 import { restoreVideos, type PreparedVideo } from './videos';
 import { attentionCount, pageTitle, threadNotices } from './notices';
 import { folderName } from './paths';
+import { ThreadPlace } from './components/ThreadPlace';
 import { PERMISSION_LABELS, PERMISSION_ORDER, permissionHint, startingPermission } from './permissions';
 import { buildTimeline, toMarkdown, turnPreviews, type StoredEvent } from './timeline';
 import { newerBuildAvailable } from './version';
@@ -1913,6 +1914,8 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const teamShown = Boolean(selected?.coordination && (selected.coordination.rootId !== selected.id || selected.coordination.children > 0) && !onPage && hostUp);
   // A member's own thread: it was sent from the lead's, which is where its way back goes.
   const atMember = Boolean(teamShown && selected!.coordination!.rootId !== selected!.id);
+  // Where the thread runs, beside its title; a page or a team task names itself instead.
+  const placeShown = Boolean(selected && !viewTitle && !(host && !hostUp) && !selected.coordination?.team && !atMember);
   const leadTitle = atMember ? threads.find((v) => v.id === selected!.coordination!.rootId)?.title ?? '' : '';
   const teamNote = teamWaiting ? t('app.teamWaiting') : teamRunning ? t('team.running', teamRunning) : selected?.coordination?.paused ? t('team.paused') : '';
 
@@ -2066,7 +2069,12 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           )}
           <div className="topbar-heading">
             {/* Every page names itself here, the way a thread does: the bar is never left blank. */}
-            <div className="topbar-title">{host && !hostUp ? host.label : viewTitle ?? (selected ? selected.title : t('sidebar.newThread'))}</div>
+            {/* On a phone there is no room for the tag: the title itself opens where the thread runs. */}
+            {compact && placeShown ? (
+              <ThreadPlace thread={selected!} agent={agentLabel(selected!.agent)} host={host?.label} title={selected!.title} />
+            ) : (
+              <div className="topbar-title">{host && !hostUp ? host.label : viewTitle ?? (selected ? selected.title : t('sidebar.newThread'))}</div>
+            )}
             {selected?.coordination?.team && <div className={`team-task-status${['awaiting_confirm', 'needs_attention'].includes(selected.coordination.team.status) ? ' attention' : ''}`}><span className="team-task-name">{selected.coordination.team.name}</span><span> · {t(`teams.${selected.coordination.team.status}`)}</span></div>}
             {!selected && host && hostUp && <div className="topbar-sub">{host.label}</div>}
             {atMember && (
@@ -2074,13 +2082,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
                 {agentLabel(selected!.agent)} · {t('app.leadThread', leadTitle)}
               </button>
             )}
-            {selected && !selected.coordination?.team && !atMember && (
-              <div className="topbar-sub" title={selected.cwd}>
-                {agentLabel(selected.agent)} ·{' '}
-                {selected.scratch ? t('projects.none') : selected.worktree ? `${folderName(selected.worktree.of)} · ${selected.worktree.branch}` : folderName(selected.cwd)}
-                {host && ` · ${host.label}`}
-              </div>
-            )}
+            {placeShown && !compact && <ThreadPlace thread={selected!} agent={agentLabel(selected!.agent)} host={host?.label} />}
           </div>
           {selected && (
             <div className="topbar-actions">

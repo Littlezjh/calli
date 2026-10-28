@@ -631,6 +631,12 @@ export const ja: Messages = {
   'common.retry': '再試行',
   'common.copied': 'コピーしました',
   'common.copy': 'コピー',
+  'place.details': 'スレッドの実行場所',
+  'place.directory': 'ディレクトリ',
+  'place.branch': 'ブランチ',
+  'place.machine': 'マシン',
+  'place.agent': 'エージェント',
+  'place.resume': '再開コマンド',
   'common.download': 'ダウンロード',
   'common.noMatch': '一致する項目はありません。',
 
