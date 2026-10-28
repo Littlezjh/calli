@@ -679,6 +679,17 @@ export function Composer({
   const canSend = hasContent && !busy && !menuBusy && !disabled && preparing === 0 && !queueFull;
   const sendPress = useRef<{ pointerId: number; x: number; y: number; moved: boolean } | null>(null);
   const suppressSendClick = useRef(false);
+  const sendClickReset = useRef<number | null>(null);
+  const composing = useRef(false);
+  const pendingImeSend = useRef(false);
+  const imeSendTask = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (sendClickReset.current !== null) window.clearTimeout(sendClickReset.current);
+    if (imeSendTask.current !== null) window.clearTimeout(imeSendTask.current);
+    sendClickReset.current = imeSendTask.current = null;
+    sendPress.current = null;
+    suppressSendClick.current = composing.current = pendingImeSend.current = false;
+  }, [draftKey]);
   const modelQueueNotice = modelQueue
     ? {
         text: modelQueue.position === null ? t('composer.modelQueueWaiting') : t('composer.modelQueuePosition', modelQueue.position),
@@ -687,7 +698,13 @@ export function Composer({
     : null;
 
   const submit = async () => {
-    if (!canSend) return;
+    if (!canSend || sendingRef.current || pendingImeSend.current) return;
+    if (composing.current) {
+      // Keep this tap: blur asks the native IME to commit, and compositionend resumes the send.
+      pendingImeSend.current = true;
+      ref.current?.blur();
+      return;
+    }
     if (attachmentsBlocked && (images.length || videos.length)) return onError(attachmentsBlocked);
     if (images.length && attachBlocked) return onError(attachBlocked);
     if (taker && (images.length || videos.length)) return onError(t('composer.takeoverAttachments'));
@@ -704,15 +721,17 @@ export function Composer({
       if (taker) await takeover!.go(taker.id, [message, taker.task?.trim()].filter(Boolean).join('\n\n'));
       else await onSend(message, images, mentions, videos);
       setMentions([]);
-      // Forgotten at once, not when the box next saves itself: a reload right now must not bring it back.
+      // Forget the sent draft at once, but retain words committed while its request was pending.
+      const remainingText = draftRef.current.text === text ? '' : draftRef.current.text;
       if (sentFrom !== undefined) keepDraft(sentFrom, null);
+      if (remainingText && keyRef.current !== undefined) keepDraft(keyRef.current, { text: remainingText, notes: [], images: [] });
       inFlight.current = null;
       setNotes([]);
       images.forEach((img) => URL.revokeObjectURL(img.previewUrl));
       videos.forEach(video => URL.revokeObjectURL(video.previewUrl));
       setVideos([]);
       setImages([]);
-      setText('');
+      setText(current => current === text ? '' : current);
     } catch {
       // The caller shows the error; keep the draft and the pictures so nothing is lost. The mark
       // stays too: a send can fail on this side (the page being reloaded, the answer lost on a bad
@@ -726,12 +745,35 @@ export function Composer({
       ref.current?.focus();
     }
   };
+  const submitRef = useRef(submit);
+  submitRef.current = submit;
+  const compositionEnd = () => {
+    composing.current = false;
+    if (!pendingImeSend.current) return;
+    if (imeSendTask.current !== null) window.clearTimeout(imeSendTask.current);
+    // Some IMEs emit their final input after compositionend. Read the committed DOM value and
+    // latest submit in the next task; compositionend, rather than elapsed time, permits sending.
+    imeSendTask.current = window.setTimeout(() => {
+      imeSendTask.current = null;
+      if (composing.current || !pendingImeSend.current || !ref.current) return;
+      pendingImeSend.current = false;
+      const committedText = ref.current.value;
+      flushSync(() => setText(committedText));
+      void submitRef.current();
+    }, 0);
+  };
   const endSendPress = (button: HTMLButtonElement, pointerId: number) => {
     if (button.hasPointerCapture(pointerId)) button.releasePointerCapture(pointerId);
     sendPress.current = null;
-    window.setTimeout(() => { suppressSendClick.current = false; }, SEND_CLICK_SUPPRESS_MS);
+    sendClickReset.current = window.setTimeout(() => {
+      sendClickReset.current = null;
+      suppressSendClick.current = false;
+    }, SEND_CLICK_SUPPRESS_MS);
   };
   const sendPointerDown = (e: ReactPointerEvent<HTMLButtonElement>) => {
+    if (sendClickReset.current !== null) window.clearTimeout(sendClickReset.current);
+    sendClickReset.current = null;
+    suppressSendClick.current = false;
     if (e.pointerType === 'mouse' || !canSend) return;
     // On phones, letting the button take focus can make the keyboard close and swallow the click.
     e.preventDefault();
@@ -754,7 +796,6 @@ export function Composer({
   };
   const sendPointerCancel = (e: ReactPointerEvent<HTMLButtonElement>) => {
     if (sendPress.current?.pointerId === e.pointerId) {
-      suppressSendClick.current = false;
       endSendPress(e.currentTarget, e.pointerId);
     }
   };
@@ -1034,6 +1075,8 @@ export function Composer({
             value={text}
             placeholder={dragOver ? t('composer.drop') : collapsed && running ? t('composer.appendOne') : placeholder}
             onChange={(e) => { setText(e.target.value); readSelection(e.target); }}
+            onCompositionStart={() => { composing.current = true; }}
+            onCompositionEnd={compositionEnd}
             onSelect={(e) => readSelection(e.currentTarget)}
             onKeyDown={onKeyDown}
             onPaste={onPaste}
@@ -1141,8 +1184,8 @@ export function Composer({
                 onPointerUp={sendPointerUp}
                 onPointerCancel={sendPointerCancel}
                 onClick={(e) => {
-                  if (suppressSendClick.current) {
-                    suppressSendClick.current = false;
+                  // Keyboard and assistive activation have no pointer click count.
+                  if (e.detail !== 0 && suppressSendClick.current) {
                     e.preventDefault();
                     return;
                   }
