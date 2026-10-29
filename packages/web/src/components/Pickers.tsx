@@ -131,6 +131,15 @@ export function modelName(models: ModelOption[], id: string | null): string {
   return models.find((m) => m.id === id)?.label ?? id;
 }
 
+/** Current load for the selected model, including an agent-owned default alias. */
+export function modelLoadPercent(models: ModelOption[], id: string | null): number | undefined {
+  return resolveModel(models, id)?.loadPercent;
+}
+
+export function modelLoadLabel(percent: number): string {
+  return t('pickers.modelLoad', percent);
+}
+
 /** Why pictures cannot be sent with this model, or null when they can. */
 export function imagesBlocked(models: ModelOption[], id: string | null): string | null {
   const option = resolveModel(models, id);
@@ -207,6 +216,7 @@ export function ModelPicker(props: ModelProps) {
       </Popover>
     );
   }
+  const summary = [modelName(models, model), shownEffort ? (EFFORT_LABELS[shownEffort] ?? shownEffort) : t('pickers.defaultEffort')].filter(Boolean).join(' · ');
   return (
     <Popover
       label={t('pickers.modelAndEffort')}
@@ -215,8 +225,8 @@ export function ModelPicker(props: ModelProps) {
       align="end"
       panelClassName="model-control-panel"
       triggerClassName={`tool-btn model-control-trigger${narrow && levels.length > 0 ? ' dial-only' : ''}`}
-      triggerTitle={`${modelName(models, model)} · ${shownEffort ? (EFFORT_LABELS[shownEffort] ?? shownEffort) : t('pickers.defaultEffort')}`}
-      triggerLabel={t('pickers.modelAndEffortIs', `${modelName(models, model)} · ${shownEffort ? (EFFORT_LABELS[shownEffort] ?? shownEffort) : t('pickers.defaultEffort')}`)}
+      triggerTitle={summary}
+      triggerLabel={t('pickers.modelAndEffortIs', summary)}
       trigger={<>
         {/* A phone has room for the dial alone; the card it opens names the model. */}
         {!(narrow && levels.length > 0) && <span className="model-trigger-name">{modelName(models, model)}</span>}
@@ -231,6 +241,7 @@ export function ModelPicker(props: ModelProps) {
 
 function ModelControl({ models, model, efforts, effort, onModel, onEffort, speed, onSpeed }: ModelProps) {
   const levels = effortsForModel(models, model, efforts);
+  const loadPercent = modelLoadPercent(models, model);
   const speeds = onSpeed ? speedsForModel(models, model) : [];
   const fastSpeed = speeds.find(isFastSpeed);
   const standardSpeed = speeds.find(s => s.id === 'default');
@@ -269,8 +280,8 @@ function ModelControl({ models, model, efforts, effort, onModel, onEffort, speed
         ><IconBolt size={19} /></button> : <span aria-hidden="true" />}
         <div className="effort-card-heading">
           <div className="effort-value" aria-live="polite">{levels.length ? (shown ? (EFFORT_LABELS[shown] ?? shown) : t('pickers.default')) : t('pickers.noEffort')}</div>
-          <button type="button" className="effort-model" disabled={models.length === 0} onClick={() => setShowModels(true)} aria-label={t('pickers.switchModel', modelName(models, model))}>
-            <span>{modelName(models, model)}</span><IconChevron size={13} />
+          <button type="button" className="effort-model" disabled={models.length === 0} onClick={() => setShowModels(true)} aria-label={t('pickers.switchModel', [modelName(models, model), loadPercent === undefined ? '' : modelLoadLabel(loadPercent)].filter(Boolean).join(' · '))}>
+            <span className="effort-model-name">{modelName(models, model)}</span>{loadPercent !== undefined && <ModelLoad percent={loadPercent} />}<IconChevron size={13} />
           </button>
         </div>
         <button type="button" className="icon-btn effort-reset" aria-label={t('pickers.resetEffort')} title={t('pickers.resetEffort')} disabled={selected === null} onClick={() => onEffort(null)}><IconRefresh size={18} /></button>
@@ -279,6 +290,12 @@ function ModelControl({ models, model, efforts, effort, onModel, onEffort, speed
         : <div className="pop-note">{t('pickers.modelNoEffort')}</div>}
     </div>
   );
+}
+
+/** A short live hint beside a model name; normal load stays quiet, overload is called out. */
+function ModelLoad({ percent }: { percent: number }) {
+  const label = modelLoadLabel(percent);
+  return <span className={`model-inline-load${percent >= 100 ? ' high' : ''}`} title={label} aria-hidden="true">{label}</span>;
 }
 
 /** Which agent a new thread uses. Existing threads show the agent as plain text instead. */
