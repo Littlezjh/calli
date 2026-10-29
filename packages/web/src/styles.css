@@ -2909,11 +2909,14 @@ html.list-open body {
   background: var(--active);
 }
 
-/* Noting a passage: the menu becomes a field for an optional comment. */
+/* Noting a passage: the menu becomes the passage with a field for an optional comment under it,
+   so the field says what it is about wherever it has floated to. */
 .selection-menu.commenting {
-  align-items: center;
-  padding: 4px 4px 4px 12px;
-  border-radius: 999px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 8px 6px 6px 12px;
+  border-radius: var(--radius-lg);
 }
 
 .selection-comment {

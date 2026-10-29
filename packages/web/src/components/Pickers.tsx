@@ -201,6 +201,8 @@ export function ModelPicker(props: ModelProps) {
   const shownEffort = effort && levels.includes(effort) ? effort : null;
   if (quietFor !== undefined) {
     const chosen = [model ? modelName(models, model) : '', shownEffort ? (EFFORT_LABELS[shownEffort] ?? shownEffort) : ''].filter(Boolean).join(' · ');
+    // Named even when nothing was chosen: the default model's name, quieter than a choice.
+    const shown = chosen || modelName(models, null);
     return (
       <Popover
         label={t('pickers.modelAndEffort')}
@@ -211,7 +213,7 @@ export function ModelPicker(props: ModelProps) {
         triggerLabel={t('pickers.modelAndEffortFor', quietFor)}
         triggerTitle={chosen || t('pickers.modelAndEffortDefault')}
         // The main model button's dial, filled to the effort: the lightning bolt means fast mode.
-        trigger={<><IconEffortGauge size={14} level={shownEffort ? (levels.indexOf(shownEffort) + 1) / levels.length : null} />{chosen && <span>{chosen}</span>}</>}
+        trigger={<><IconEffortGauge size={14} level={shownEffort ? (levels.indexOf(shownEffort) + 1) / levels.length : null} /><span>{shown}</span></>}
       >
         {() => (models.length === 0 && efforts.length === 0 ? <p className="member-model-empty">{t('pickers.nothingToChoose')}</p> : <ModelControl {...props} />)}
       </Popover>

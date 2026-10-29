@@ -19,6 +19,8 @@ const MENU_WIDTH = 250;
 const TAGGED_WIDTH = 330;
 const COMMENT_WIDTH = 320;
 const MENU_HEIGHT = 42;
+/** The comment card with the passage above the field, for the same purpose. */
+const COMMENT_HEIGHT = 96;
 /** Kept away from the viewport edges by this much. */
 const MARGIN = 8;
 
@@ -52,10 +54,10 @@ const TAP_SLOP = 10;
  * The rect is on the screen; the menu is placed within the app's box, which a phone keyboard can
  * have moved down the page.
  */
-function placeNear(rect: DOMRect, width: number): { top: number; left: number } {
+function placeNear(rect: DOMRect, width: number, height = MENU_HEIGHT): { top: number; left: number } {
   const left = Math.min(Math.max(rect.left + rect.width / 2 - width / 2, MARGIN), window.innerWidth - width - MARGIN);
-  const above = rect.top - MENU_HEIGHT - 12;
-  const top = above >= MARGIN ? above : Math.min(rect.bottom + 12, window.innerHeight - MENU_HEIGHT - MARGIN);
+  const above = rect.top - height - 12;
+  const top = above >= MARGIN ? above : Math.min(rect.bottom + 12, window.innerHeight - height - MARGIN);
   const box = document.querySelector('.app')?.getBoundingClientRect();
   return { top: top - (box?.top ?? 0), left: left - (box?.left ?? 0) };
 }
@@ -100,7 +102,7 @@ export function SelectionMenu({ onNote, onSideAsk }: Props) {
         if (touchRef.current) return;
         // The passage scrolls with the page; the field follows it.
         const range = rangeRef.current;
-        if (range) setPos(placeNear(range.getBoundingClientRect(), COMMENT_WIDTH));
+        if (range) setPos(placeNear(range.getBoundingClientRect(), COMMENT_WIDTH, COMMENT_HEIGHT));
         return;
       }
       // The writing page keeps its own selection (and so its menu) while it holds one; the sweep
@@ -222,7 +224,7 @@ export function SelectionMenu({ onNote, onSideAsk }: Props) {
 
   const startComment = () => {
     const range = rangeRef.current;
-    if (range && !touch) setPos(placeNear(range.getBoundingClientRect(), COMMENT_WIDTH));
+    if (range && !touch) setPos(placeNear(range.getBoundingClientRect(), COMMENT_WIDTH, COMMENT_HEIGHT));
     setCommenting(true);
   };
 
@@ -291,6 +293,13 @@ export function SelectionMenu({ onNote, onSideAsk }: Props) {
         role="dialog"
         aria-label={t('selection.addNote')}
       >
+        {/* The passage above the field: browsers without the Highlight API (Firefox, Safari) show
+            no mark on the text once the field takes the focus, and even where they do, the card
+            should say what it is about on its own. */}
+        <div className="selection-quote">
+          <IconQuote size={13} />
+          <span>{textRef.current}</span>
+        </div>
         {tagRow}
         <div className="selection-field">{field}</div>
       </div>
