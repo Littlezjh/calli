@@ -57,6 +57,8 @@ test('cleanTitle keeps the first line, without labels, quotes and marks, emoji i
   assert.equal(cleanTitle('# 标题'), '标题', 'a heading marker goes');
   assert.equal(cleanTitle('`标题`'), '标题', 'inline code marks go');
   assert.equal(cleanTitle('标题。'), '标题', 'a sentence-ending mark goes');
+  assert.equal(cleanTitle('为什么登录超时？'), '为什么登录超时？', 'a question keeps its mark');
+  assert.equal(cleanTitle('Fix **A** and **B**'), 'Fix **A** and **B**', 'bold inside the title is left alone');
   assert.equal([...cleanTitle('长'.repeat(80))].length, 40);
   const joined = cleanTitle('👨‍👩‍👧‍👦'.repeat(41));
   assert.ok(!joined.endsWith('\u200D'), 'the cut leaves no emoji half');
@@ -181,6 +183,8 @@ test('a naming agent that does not answer in time is stopped, and the title stay
     assert.equal(h.manager.listThreads().length, 0, 'the question never showed in the list');
     assert.equal((h.manager as unknown as { sessions: Map<string, unknown> }).sessions.size, 0, 'a stopped question closes its agent process');
     assert.equal(readdirSync(join(h.dir, 'scratch')).length, 0, 'and takes its scratch folder with it');
+    const asked = h.manager.listThreads({ archived: true })[0];
+    assert.equal(h.store.listEventsOfType(asked.id, 'turn.error').length, 0, 'a timeout is a cancelled turn, not a failed one');
   } finally { await h.close(); }
 });
 
@@ -205,6 +209,9 @@ test('a naming that waited behind another does not send the conversation once th
     await wait(() => Boolean(asking()));
     const queued = await h.manager.createThread({ agent: 'claude', cwd: h.cwd });
     await h.send(queued.id, '登录总是超时');
+    // Precondition: the queued naming really is waiting in the chain, so what follows tests the
+    // recheck inside run(), not the checks notify() itself makes.
+    assert.ok((h.autotitle as unknown as { waiting: Set<string> }).waiting.has(queued.id));
     h.extensions.setEnabled(AUTOTITLE_ID, false);
     await h.manager.cancelTurn(asking()!.id);
     await wait(() => h.manager.listThreads({ archived: true }).every(t => t.status !== 'running'));

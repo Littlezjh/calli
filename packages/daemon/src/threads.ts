@@ -760,19 +760,26 @@ export class ThreadManager {
     this.backgroundThreads.add(thread.id);
     let turnId: string | null = null;
     let stop: (() => void) | null = null;
+    let timedOut = false;
     try {
       const ended = new Promise<StoredEvent>((resolve, reject) => {
+        // On timeout the turn is cancelled and its recorded end — `cancelled`, not a session error —
+        // is awaited before the process is dropped in the finally below. The safety timer answers
+        // if the agent never records anything at all.
+        const timeoutMs = opts.timeoutMs ?? 120_000;
         const timer = setTimeout(() => {
+          timedOut = true;
           void this.cancelTurn(thread.id).catch(() => undefined);
-          reject(new HttpError(504, 'the agent took too long to answer'));
-        }, opts.timeoutMs ?? 120_000);
+        }, timeoutMs);
         timer.unref?.();
+        const safety = setTimeout(() => reject(new HttpError(504, 'the agent took too long to answer')), timeoutMs + 10_000);
+        safety.unref?.();
         const unsubscribe = this.subscribe(ev => {
           if (ev.threadId !== thread.id) return;
           if (ev.type === 'approval.request' || ev.type === 'input.request') void this.cancelTurn(thread.id).catch(() => undefined);
           if (turnId && ev.turnId === turnId && turnOutcome(ev)) resolve(ev);
         });
-        stop = () => { clearTimeout(timer); unsubscribe(); };
+        stop = () => { clearTimeout(timer); clearTimeout(safety); unsubscribe(); };
       });
       const started = await this.startTurn(thread.id, { text });
       if (!('turnId' in started) || !started.turnId) throw new HttpError(500, 'the question was not sent');
@@ -781,6 +788,7 @@ export class ThreadManager {
       const done = this.store.listTurnEvents(thread.id, turnId).find(e => turnOutcome(e));
       const end = done ?? await ended;
       const outcome = turnOutcome(end)!;
+      if (timedOut) throw new HttpError(504, 'the agent took too long to answer');
       if (outcome.outcome !== 'ok') throw new HttpError(502, outcome.message ?? `the agent's turn ended: ${outcome.outcome}`);
       return turnAnswer(this.store.listEvents(thread.id, 0, -1), turnId).trim();
     } finally {

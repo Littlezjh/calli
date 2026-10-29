@@ -135,7 +135,7 @@ export function createWebHost(
         return () => void connectionListeners.delete(listener);
       },
     },
-    agents: (): HostAgentInfo[] => inputs.agents.map((a) => ({ id: a.id, label: a.label, available: a.available })),
+    agents: (): HostAgentInfo[] => inputs.agents.map((a) => ({ id: a.id, label: a.label, available: a.available, ...(a.capabilities?.permissionModes ? { permissionModes: a.capabilities.permissionModes } : {}) })),
     navigate: { openThread: (id) => deps.openThread(id) },
     locale,
     storage: deps.storage ?? extensionStorage(extensionId),

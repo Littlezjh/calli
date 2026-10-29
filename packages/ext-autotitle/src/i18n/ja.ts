@@ -5,6 +5,7 @@ export const ja: typeof zh = {
   agent: 'タイトルを付けるエージェント',
   chooseAgent: 'エージェントを選択',
   noAgent: 'まだ選ばれていません。選ぶと付け始めます',
+  noAsk: 'このエージェントには「確認してから」モードがなく、命名中にツールを自分で使うことがあります',
   model: 'モデル',
   defaultModel: 'デフォルトのモデル',
   when: 'タイミング',

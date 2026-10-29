@@ -48,11 +48,11 @@ export function cleanTitle(answer: string): string {
   const unlabelled = line.replace(/^(?:标题|題名|タイトル|title)\s*[:：]\s*/i, '');
   const stripped = unlabelled
     .replace(/^#{1,6}\s*/, '')                    // a heading marker
-    .replace(/\*\*(.+)\*\*$/, '$1')            // bold, before the quotes it wraps
+    .replace(/^\*\*(.+)\*\*$/, '$1')            // bold wrapping the whole title, before the quotes
     .replace(/^`+(.+?)`+$/, '$1')                // inline code, the same
     .replace(/^[「『“"'‘《【]+/, '')
     .replace(/[」』”"'’》】]+$/, '')
-    .replace(/[。．.！？!?…、，,]+$/, '');       // the rules ask for none; agents add them anyway
+    .replace(/[。．.…、，,]+$/, '');       // endings a title does not need; questions may keep theirs
   // Graphemes, not code points: a cut must not take an emoji apart.
   const graphemes = typeof Intl !== 'undefined' && 'Segmenter' in Intl
     ? [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(stripped)].map(s => s.segment)

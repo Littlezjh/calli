@@ -21,6 +21,8 @@ export interface AgentInfo {
   id: string;
   label: string;
   available: boolean;
+  /** The permission modes the agent offers, when known: one without `ask` cannot be held to answering only. */
+  permissionModes?: string[];
 }
 
 export interface Unsubscribe {

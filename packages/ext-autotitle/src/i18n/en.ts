@@ -5,6 +5,7 @@ export const en: typeof zh = {
   agent: 'Naming agent',
   chooseAgent: 'Choose an agent',
   noAgent: 'None yet. Naming starts once you choose one.',
+  noAsk: 'This agent has no ask-first mode; while naming it may run tools on its own',
   model: 'Model',
   defaultModel: 'Default model',
   when: 'When to name',

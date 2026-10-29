@@ -95,6 +95,9 @@ export function AutoTitleView({ host }: ExtensionViewProps) {
           )}
         </div>
         {!picked && <p className="autotitle-note">{t(locale, 'noAgent')}</p>}
+        {picked?.permissionModes && !picked.permissionModes.includes('ask') && (
+          <p className="autotitle-note">{t(locale, 'noAsk')}</p>
+        )}
       </section>
 
       <section className="autotitle-section">

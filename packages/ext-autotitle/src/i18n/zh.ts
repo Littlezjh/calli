@@ -3,6 +3,7 @@ export const zh = {
   agent: '取名的 agent',
   chooseAgent: '选择 agent',
   noAgent: '还没选，选好后才会开始取名',
+  noAsk: '这个 agent 没有「先问再做」模式，取名时可能自行调用工具',
   model: '模型',
   defaultModel: '默认模型',
   when: '什么时候取名',
