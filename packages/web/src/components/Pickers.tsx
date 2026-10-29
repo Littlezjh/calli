@@ -210,7 +210,8 @@ export function ModelPicker(props: ModelProps) {
         triggerClassName={`member-model${chosen ? ' set' : ''}`}
         triggerLabel={t('pickers.modelAndEffortFor', quietFor)}
         triggerTitle={chosen || t('pickers.modelAndEffortDefault')}
-        trigger={<><IconBolt size={14} />{chosen && <span>{chosen}</span>}</>}
+        // The main model button's dial, filled to the effort: the lightning bolt means fast mode.
+        trigger={<><IconEffortGauge size={14} level={shownEffort ? (levels.indexOf(shownEffort) + 1) / levels.length : null} />{chosen && <span>{chosen}</span>}</>}
       >
         {() => (models.length === 0 && efforts.length === 0 ? <p className="member-model-empty">{t('pickers.nothingToChoose')}</p> : <ModelControl {...props} />)}
       </Popover>
