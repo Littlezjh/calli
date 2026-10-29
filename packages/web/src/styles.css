@@ -682,6 +682,131 @@ button:disabled {
       visibility 0s 0.32s;
   }
 
+  .quick-switch {
+    --quick-switch-bottom: calc(176px + var(--safe-bottom));
+    --quick-switch-button-size: 44px;
+    --quick-switch-panel-gap: 10px;
+    position: absolute;
+    display: flex;
+    right: calc(14px + env(safe-area-inset-right));
+    bottom: var(--quick-switch-bottom);
+    z-index: 62;
+    pointer-events: none;
+  }
+
+  .quick-switch-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--quick-switch-button-size);
+    height: var(--quick-switch-button-size);
+    padding: 0;
+    border: 1px solid color-mix(in srgb, var(--border-strong) 70%, transparent);
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--surface) 92%, transparent);
+    color: var(--text);
+    box-shadow: var(--shadow-pop);
+    pointer-events: auto;
+    touch-action: none;
+    -webkit-backdrop-filter: blur(18px);
+    backdrop-filter: blur(18px);
+    transition:
+      transform 0.14s ease,
+      background 0.14s ease,
+      border-color 0.14s ease;
+  }
+
+  .quick-switch-button > svg {
+    color: var(--muted);
+  }
+
+  .quick-switch.open .quick-switch-button,
+  .quick-switch-button:active {
+    transform: scale(0.97);
+    border-color: var(--accent);
+    background: var(--surface);
+  }
+
+  .quick-switch-panel {
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + var(--quick-switch-panel-gap));
+    width: min(286px, calc(100vw - 54px - env(safe-area-inset-left)));
+    /* visualViewport height follows keyboard resizing; subtract the trigger offsets and topbar
+       clearance so the panel stays in the visible app even when the browser pans it. */
+    max-height: min(620px, max(0px, calc(
+      var(--vvh, 100dvh) - var(--quick-switch-bottom) - var(--quick-switch-button-size)
+      - var(--quick-switch-panel-gap) - 60px - env(safe-area-inset-top) - 12px
+    )));
+    padding: 7px;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: color-mix(in srgb, var(--surface) 94%, transparent);
+    box-shadow: var(--shadow-pop);
+    pointer-events: auto;
+    -webkit-backdrop-filter: blur(18px);
+    backdrop-filter: blur(18px);
+  }
+
+  .quick-switch-card {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 100%;
+    min-height: 46px;
+    padding: 7px 9px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text);
+    text-align: left;
+  }
+
+  .quick-switch-card + .quick-switch-card {
+    margin-top: 2px;
+  }
+
+  .quick-switch-card.current {
+    background: var(--hover);
+  }
+
+  .quick-switch-card.target {
+    background: var(--accent-soft);
+    color: var(--accent-fg);
+  }
+
+  .quick-switch-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 14px;
+    font-weight: 650;
+    line-height: 1.2;
+  }
+
+  .quick-switch-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    color: var(--muted);
+    font-size: 11.5px;
+    line-height: 1.2;
+  }
+
+  .quick-switch-card.target .quick-switch-meta {
+    color: color-mix(in srgb, var(--accent-fg) 78%, var(--muted));
+  }
+
+  .quick-switch-meta span:not(.dot):not(.agent-mark) {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   /* The bar floats: round buttons on the page, and the thread fades out under it instead of
      being cut off at a line. It is raised only here: on a wide screen the turn ruler reaches up
      beside the title and must stay on top. */
