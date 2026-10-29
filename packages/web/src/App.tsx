@@ -1367,8 +1367,10 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     void refreshThreads(); // the server decides the order
   };
 
+  const autotitleExt = extensions?.find((e) => e.manifest.id === 'autotitle');
   const threadActions = useThreadActions({
     api,
+    autotitle: Boolean(autotitleExt?.source === 'builtin' && autotitleExt.installed && autotitleExt.enabled),
     agents,
     sections,
     todos,

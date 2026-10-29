@@ -1417,6 +1417,9 @@ export const ja: Messages = {
   'actions.copyFailed': 'コピーに失敗しました。テキストを選択して手動でコピーしてください',
   'actions.terminal': 'ターミナルを開く',
   'actions.rename': '名前を変更',
+  'actions.autotitle': 'タイトルを付け直す',
+  'actions.autotitling': 'タイトルを考え中…',
+  'actions.autotitled': (title: string) => `タイトルを付けました：${title}`,
   'actions.unpin': 'ピン留めを外す',
   'actions.pin': 'ピン留め',
   'actions.markRead': '既読にする',
@@ -1804,6 +1807,10 @@ export const ja: Messages = {
   'extensions.perm.task.control.hint': '許可したスレッドに、見える形でメッセージを送ります。',
   'extensions.perm.voice.control': 'リアルタイム音声を使う',
   'extensions.perm.voice.control.hint': '選択したスレッドで音声会話を開始・終了します。操作を代理で承認することはありません。',
+  'extensions.perm.threads.rename': 'スレッド名を変更',
+  'extensions.perm.threads.rename.hint': 'Calli に表示される名前だけを変え、エージェント自身のセッションには触れません。',
+  'extensions.perm.agents.ask': 'エージェントに依頼',
+  'extensions.perm.agents.ask.hint': '会話の冒頭を選んだエージェントに送ります。専用のスレッドで行い、終わるとアーカイブします。',
 
   // Odds and ends
   'api.noVideos': '現在のサービスはまだ動画に対応していません。サービスを更新してから再試行してください。',

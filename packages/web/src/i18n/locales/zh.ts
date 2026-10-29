@@ -1419,6 +1419,9 @@ export const zh = {
   'actions.copyFailed': '复制失败，请手动选中文字复制',
   'actions.terminal': '打开终端',
   'actions.rename': '重命名',
+  'actions.autotitle': '重新取名',
+  'actions.autotitling': '正在取名…',
+  'actions.autotitled': (title: string) => `已取名：${title}`,
   'actions.unpin': '取消置顶',
   'actions.pin': '置顶',
   'actions.markRead': '标记为已读',
@@ -1806,6 +1809,10 @@ export const zh = {
   'extensions.perm.task.control.hint': '在你授权的线程里发可见的消息。',
   'extensions.perm.voice.control': '使用实时语音',
   'extensions.perm.voice.control.hint': '在你选择的线程开启和结束语音会话，不代替你批准操作。',
+  'extensions.perm.threads.rename': '修改线程标题',
+  'extensions.perm.threads.rename.hint': '只改 Calli 里显示的标题，不动 agent 自己的会话。',
+  'extensions.perm.agents.ask': '调用 agent',
+  'extensions.perm.agents.ask.hint': '把对话开头发给你选的 agent 回答，在单独的线程里进行，完成后归档。',
 
   // Odds and ends
   'api.noVideos': '当前服务尚不支持视频，请更新服务后重试',

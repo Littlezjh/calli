@@ -372,6 +372,21 @@ export class ExtensionHost {
     for (const l of this.listeners) l();
   }
 
+  /** Whether the extension is installed, enabled and holds this permission now. */
+  allows(extensionId: string, permission: Permission): boolean {
+    try { this.require(extensionId, permission); return true; } catch { return false; }
+  }
+
+  /** A built-in extension's manifest, if it ships with Calli. */
+  builtin(id: string): ExtensionManifest | undefined {
+    return this.catalog.find((m) => m.id === id);
+  }
+
+  /** Throws a 403 unless the extension is installed, enabled and holds this permission. */
+  demand(extensionId: string, permission: Permission): void {
+    this.require(extensionId, permission);
+  }
+
   private require(extensionId: string, permission: Permission): void {
     const record = this.store.get(extensionId);
     const manifest = this.catalog.find((m) => m.id === extensionId);

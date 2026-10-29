@@ -237,6 +237,14 @@ rl.on('line', (line) => {
       recordSession(traex ? 'traex' : 'claude', msg.params.sessionId);
       const blocks = msg.params.prompt;
       const text = blocks.filter((p) => p.type === 'text').map((p) => p.text).join('');
+      // A naming request from 自动取名: a title wrapped the way real agents sometimes answer, with an
+      // emoji only when the rules ask for one. `slow name` keeps it waiting until cancelled.
+      if (text.includes('给下面这段对话起一个线程标题')) {
+        if (text.includes('slow name')) { pendingPrompt = { id: msg.id }; return; }
+        const title = `${text.includes('emoji') ? '🐛 ' : ''}修复登录超时`;
+        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `标题：「${title}」\n` } });
+        return out({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });
+      }
       // Like Claude Code waking up when a background task finishes: output with no prompt open,
       // ended by the cycle's costed usage report. `hold` keeps it running until cancelled.
       if (text.includes('background later')) {

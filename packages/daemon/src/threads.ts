@@ -265,6 +265,8 @@ export class ThreadManager {
   private readonly changingModes = new Set<string>();
   /** Turns that asked the agent for a `[进度]` line, read back when they end. */
   private readonly reportTurns = new Set<string>();
+  /** Archived threads asking an agent one question (askOnce): they may run, and get nothing added. */
+  private readonly backgroundThreads = new Set<string>();
   /** Whether an enabled extension holds `progress.report`. Wired by the daemon's entry point. */
   progressWanted: () => boolean = () => false;
   private readonly approvals = new Map<string, PendingApproval>();
@@ -739,6 +741,68 @@ export class ThreadManager {
   search(query: unknown): SearchHit[] {
     return typeof query === 'string' ? this.store.searchText(query.slice(0, 200)) : [];
   }
+
+  /**
+   * One question to an agent, answered in a thread of its own that is archived from the start: it
+   * never shows in the list, and the asking thread's agent and session are not touched. The answer
+   * comes back as plain text. A turn that asks for an approval or a reply is stopped, since nobody
+   * is there to give one; so is one that takes longer than `timeoutMs`.
+   */
+  async askOnce(agent: string, text: string, opts: { model?: string | null; title?: string; timeoutMs?: number } = {}): Promise<string> {
+    const adapter = this.adapters.get(agent);
+    if (!adapter) throw new HttpError(400, `unknown agent: ${agent}`);
+    const modes = adapter.capabilities.permissionModes;
+    const thread = await this.createThread({
+      agent, cwd: '', scratch: true, title: opts.title ?? 'Calli', model: opts.model ?? null,
+      permissionMode: modes.includes('ask') ? 'ask' : modes[0],
+    });
+    await this.updateThread(thread.id, { archived: true });
+    this.backgroundThreads.add(thread.id);
+    let turnId: string | null = null;
+    let stop: (() => void) | null = null;
+    try {
+      const ended = new Promise<StoredEvent>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          void this.cancelTurn(thread.id).catch(() => undefined);
+          reject(new HttpError(504, 'the agent took too long to answer'));
+        }, opts.timeoutMs ?? 120_000);
+        timer.unref?.();
+        const unsubscribe = this.subscribe(ev => {
+          if (ev.threadId !== thread.id) return;
+          if (ev.type === 'approval.request' || ev.type === 'input.request') void this.cancelTurn(thread.id).catch(() => undefined);
+          if (turnId && ev.turnId === turnId && turnOutcome(ev)) resolve(ev);
+        });
+        stop = () => { clearTimeout(timer); unsubscribe(); };
+      });
+      const started = await this.startTurn(thread.id, { text });
+      if (!('turnId' in started) || !started.turnId) throw new HttpError(500, 'the question was not sent');
+      turnId = started.turnId;
+      // The turn may have ended before its id was known here.
+      const done = this.store.listTurnEvents(thread.id, turnId).find(e => turnOutcome(e));
+      const end = done ?? await ended;
+      const outcome = turnOutcome(end)!;
+      if (outcome.outcome !== 'ok') throw new HttpError(502, outcome.message ?? `the agent's turn ended: ${outcome.outcome}`);
+      return turnAnswer(this.store.listEvents(thread.id, 0, -1), turnId).trim();
+    } finally {
+      (stop as (() => void) | null)?.();
+      this.backgroundThreads.delete(thread.id);
+    }
+  }
+
+  /** A title an extension gave the thread. Marked as such, so a later automatic pass may revise it. */
+  autoRename(id: string, title: string): ThreadView {
+    const clean = title.trim();
+    if (!clean) throw new HttpError(400, 'empty title');
+    this.getThread(id);
+    this.store.updateThread(id, { title: clean });
+    this.store.setTitleBy(id, 'auto');
+    this.emitThreadEvent(id, null, 'thread.updated', {});
+    return this.threadView(id);
+  }
+
+
+  /** Who set the thread's title; see Store.titleBy. */
+  titleBy(id: string) { return this.store.titleBy(id); }
 
   listThreads(opts: { archived?: boolean } = {}): ThreadView[] {
     return this.store.listThreads(opts).map((t) => this.view(t));
@@ -1218,6 +1282,8 @@ export class ThreadManager {
       await this.applyLive(thread, 'speed', s => s.setSpeed?.(patch.speed as string | null) ?? Promise.resolve(false));
     }
     this.store.updateThread(id, patch as any);
+    // The person named it: nothing renames it for them again.
+    if (patch.title !== undefined && patch.title !== thread.title) this.store.setTitleBy(id, 'user');
     this.emitThreadEvent(id, null, 'thread.updated', {});
     return this.threadView(id);
   }
@@ -1863,7 +1929,7 @@ export class ThreadManager {
     const videoIds = storedVideos.map(v => v.id);
     if (storedVideos.length && /^\/\S+/.test(rawText)) throw new HttpError(400, '视频请随普通消息发送，不能附在斜杠命令后');
     if (!rawText && rawImages.length === 0 && !storedVideos.length) throw new HttpError(400, 'text is empty');
-    if (thread.archivedAt) throw new HttpError(409, 'this thread is archived; restore it first');
+    if (thread.archivedAt && !this.backgroundThreads.has(threadId)) throw new HttpError(409, 'this thread is archived; restore it first');
     if (this.running.has(threadId) || this.autoHandover.held(threadId) && !input.handover && !input.autoContinuation || !fromQueue && this.queues.get(threadId)?.some(q => !q.error)) {
       const goalAction = originalText === '/goal' ? 'show' : originalText === '/goal pause' ? 'pause' : originalText === '/goal clear' ? 'clear' : null;
       const adapter = this.adapters.get(thread.agent);
@@ -1907,12 +1973,14 @@ export class ThreadManager {
     // Slash commands have their own argument grammar; hidden instructions become unwanted arguments.
     const slashCommand = /^\/\S+/.test(rawText);
     const coordinated = slashCommand ? rawText : rawText ? (this.coordination?.instructions(input.handoverFrom ?? threadId, rawText) ?? rawText) : '';
-    const discoverable = slashCommand || !rawText ? coordinated : this.personal.instructions(threadId, this.borrowing?.instructions(threadId, coordinated) ?? coordinated);
+    // A background question goes as asked: no hints, tools or progress request around it.
+    const bare = this.backgroundThreads.has(threadId);
+    const discoverable = slashCommand || !rawText || bare ? coordinated : this.personal.instructions(threadId, this.borrowing?.instructions(threadId, coordinated) ?? coordinated);
     // With the board's consent, the agent is asked to say where the work stands; read back at the end.
     // Writing mode's way of working for its stage; an edit the person made is mentioned once.
     const writing = !slashCommand && rawText ? thread.writing : null;
     const written = writing ? writingInstructions(discoverable, writing) : discoverable;
-    const askProgress = !slashCommand && Boolean(rawText) && this.progressWanted();
+    const askProgress = !bare && !slashCommand && Boolean(rawText) && this.progressWanted();
     const text = askProgress ? progressInstructions(written) : written;
 
     if (rawImages.length > 0) {
@@ -1946,6 +2014,7 @@ export class ThreadManager {
         if (thread.title === 'New thread' && !input.voiceSummary) {
           const title = askedText(rawText).split('\n')[0].slice(0, 60) || (storedVideos.length ? '视频' : '图片');
           this.store.updateThread(threadId, { title });
+          this.store.setTitleBy(threadId, 'default');
         }
         this.emitThreadEvent(threadId, turnId, 'turn.started', {
           text: promptText,
@@ -2538,7 +2607,7 @@ export class ThreadManager {
     if (!adapter) throw new Error(`unknown agent: ${thread.agent}`);
     const session = await adapter.start({
       borrowedTool: this.borrowing?.toolForThread(thread.id),
-      coordinationEnv: { ...this.coordination?.environment(thread.id), ...this.borrowing?.environment(thread.id), ...this.personal.environment(thread.id) },
+      coordinationEnv: this.backgroundThreads.has(thread.id) ? {} : { ...this.coordination?.environment(thread.id), ...this.borrowing?.environment(thread.id), ...this.personal.environment(thread.id) },
       cwd: thread.cwd,
       resumeId: thread.agentSessionId ?? undefined,
       permissionMode: thread.permissionMode as PermissionMode,

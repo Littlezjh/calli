@@ -5,7 +5,7 @@ import { folderName } from '../paths';
 import { ChoiceDialog, Dialog } from './Dialog';
 import { HandoverDialog } from './HandoverDialog';
 import { Menu, type MenuEntry } from './Menu';
-import { IconArchive, IconCheck, IconCopy, IconDot, IconEdit, IconFork, IconHand, IconList, IconPin, IconPlus, IconTerminal, IconTrash, IconWorktree } from './icons';
+import { IconArchive, IconCheck, IconCopy, IconDot, IconEdit, IconFork, IconHand, IconList, IconPin, IconPlus, IconSparkle, IconTerminal, IconTrash, IconWorktree } from './icons';
 import type { ToastState } from './Toast';
 import { formatList, t } from '../i18n';
 
@@ -32,6 +32,8 @@ interface Deps {
   toast: (t: ToastState | null) => void;
   /** The whole conversation as Markdown, for the copy menu. */
   markdownOf: (thread: Thread) => Promise<string>;
+  /** The auto-titles extension is installed and on: threads get "name it again". */
+  autotitle?: boolean;
 }
 
 type MenuState = { x: number; y: number } & ({ thread: Thread } | { section: Section });
@@ -64,7 +66,21 @@ export function forkBlocked(thread: Thread): string | null {
  * the archive and the slash menu, so an action behaves the same wherever it is started.
  */
 export function useThreadActions(deps: Deps) {
-  const { api, agents, sections, todos, onTodosChange, onThreadChange, onThreadRemove, onThreadOpen, onMarkedUnread, onSectionsChange, onOpenTerminal, onError, toast, markdownOf } = deps;
+  const { api, agents, sections, todos, onTodosChange, onThreadChange, onThreadRemove, onThreadOpen, onMarkedUnread, onSectionsChange, onOpenTerminal, onError, toast, markdownOf, autotitle } = deps;
+
+  // The agent chosen in the auto-titles settings names the thread now, by the person's rules.
+  const autoName = async (thread: Thread) => {
+    if (!api) return;
+    toast({ message: t('actions.autotitling'), busy: true });
+    try {
+      const { title } = await api.autotitle(thread.id);
+      onThreadChange({ ...thread, title });
+      toast({ message: t('actions.autotitled', title) });
+    } catch (e) {
+      toast(null);
+      onError(e);
+    }
+  };
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [dialog, setDialog] = useState<DialogState | null>(null);
 
@@ -146,6 +162,7 @@ export function useThreadActions(deps: Deps) {
     return [
       { id: 'terminal', label: t('actions.terminal'), icon: IconTerminal, onSelect: onOpenTerminal },
       { id: 'rename', label: t('actions.rename'), icon: IconEdit, onSelect: () => run('rename', thread) },
+      ...(autotitle ? [{ id: 'autotitle', label: t('actions.autotitle'), icon: IconSparkle, onSelect: () => void autoName(thread) }] : []),
       { id: 'pin', label: thread.pinned ? t('actions.unpin') : t('actions.pin'), icon: IconPin, onSelect: () => run('pin', thread) },
       {
         id: 'unread',

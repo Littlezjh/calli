@@ -22,6 +22,8 @@ const MAX_OUTPUT_CHARS = 128 * 1024;
 const OUTPUT_HEAD_CHARS = 96 * 1024;
 const OUTPUT_TAIL_CHARS = 32 * 1024;
 
+export type TitleBy = 'default' | 'user' | 'auto';
+
 export interface ThreadRecord {
   id: string;
   agent: string;
@@ -410,6 +412,8 @@ export class Store {
     // Migration: terminal-activity tracking (turns the terminal added, hub turns).
     if (!cols.some((c) => c.name === 'hub_turn_at')) this.db.exec('ALTER TABLE threads ADD COLUMN hub_turn_at TEXT');
     if (!cols.some((c) => c.name === 'external_at')) this.db.exec('ALTER TABLE threads ADD COLUMN external_at TEXT');
+    // Migration: who set the title (see titleBy). NULL for threads from before, which no one renames.
+    if (!cols.some((c) => c.name === 'title_by')) this.db.exec('ALTER TABLE threads ADD COLUMN title_by TEXT');
     // Migration: the sidebar's preview line, the newest thing the user asked.
     if (!cols.some((c) => c.name === 'preview')) this.db.exec('ALTER TABLE threads ADD COLUMN preview TEXT');
     // Migration: the board's done mark and the agent's progress line, as JSON.
@@ -865,6 +869,20 @@ export class Store {
         next.speed ?? null,
         id,
       );
+  }
+
+  /**
+   * Who set a thread's title: `default` (the hub, from the first message), `user` (renamed by the
+   * person) or `auto` (an extension). Null for threads from before this was kept.
+   */
+  titleBy(id: string): TitleBy | null {
+    const row = this.db.prepare('SELECT title_by FROM threads WHERE id = ?').get(id) as { title_by: string | null } | undefined;
+    const by = row?.title_by;
+    return by === 'default' || by === 'user' || by === 'auto' ? by : null;
+  }
+
+  setTitleBy(id: string, by: TitleBy): void {
+    this.db.prepare('UPDATE threads SET title_by = ? WHERE id = ?').run(by, id);
   }
 
   listSections(): SectionRecord[] {

@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@novnc/novnc": "^1.7.0",
+    "@calli/ext-autotitle": "*",
     "@calli/ext-board": "*",
     "@calli/ext-memory": "*",
     "@calli/ext-voice": "*",

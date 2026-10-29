@@ -4,6 +4,7 @@ import { CoordinationManager, coordinationServer } from './coordination.js';
 import { adoptLegacyEnv, loadConfig, loadDotEnv } from './config.js';
 import { ExtensionHost } from './extension-host.js';
 import { loadCatalog } from './extensions.js';
+import { AUTOTITLE_ID, AutoTitle } from './autotitle.js';
 import { loadSupportedExternalCatalog } from './external-extensions.js';
 import { Desktop, parseDesktopSetting } from './desktop.js';
 import { createHttpServer, listenPrivate, socketHeld } from './http.js';
@@ -95,6 +96,10 @@ async function main(): Promise<void> {
     adapters,
     turnStart: (threadId, turnId) => store.listEventsOfType(threadId, 'turn.started').find((e) => e.turnId === turnId),
   });
+  // 自动取名 has a daemon side: it hears turns end and asks the chosen agent for a title.
+  const autotitleManifest = extensions.builtin(AUTOTITLE_ID);
+  const autotitle = autotitleManifest ? new AutoTitle(autotitleManifest, manager, store, extensions) : undefined;
+  if (autotitle) extensions.register(autotitle);
   extensions.start();
   const voice = new VoiceService({ adapters, extensions, manager });
   voice.start();
@@ -120,7 +125,7 @@ async function main(): Promise<void> {
   // Previews are served on a port of their own: the iframe needs an origin separate from the app
   // (see preview.ts). One port past the app's is the default; CALLI_PREVIEW_PORT picks another.
   const previewPort = Number(process.env.CALLI_PREVIEW_PORT) || config.port + 1;
-  const server = createHttpServer({ manager, push, registry, terminals, desktop, hosts, scheduler, extensions, voice, token: config.token, webDir: config.webDir, version: VERSION, previewPort });
+  const server = createHttpServer({ manager, push, registry, terminals, desktop, hosts, scheduler, extensions, voice, autotitle, token: config.token, webDir: config.webDir, version: VERSION, previewPort });
   // Same requests, other origin: preview frames load from here so their pages cannot reach the
   // app, while their own CSS and scripts load same-origin. Without the port, previews say so.
   const preview = createHttpServer({ manager, registry, terminals, hosts, scheduler, extensions, token: config.token, webDir: null, version: VERSION, previewPort });

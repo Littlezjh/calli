@@ -107,8 +107,38 @@ export interface WebHostRealtime {
   subscribe(listener: (session: WebHostRealtimeSession | null) => void): Unsubscribe;
 }
 
+/** 自动取名's settings, as the hub keeps them. */
+export interface AutoTitleSettings {
+  /** The agent instance that names threads; null until the person picks one. */
+  agent: string | null;
+  /** Its model; null for the agent's default. */
+  model: string | null;
+  /** The person's naming rules, sent as written. */
+  rules: string;
+  /** Name when the first message is sent, or once the first turn has its answer. */
+  trigger: 'sent' | 'finished';
+  /** Name once more after the third turn, while the title is still an automatic one. */
+  again: boolean;
+}
+
+export interface AutoTitleStatus {
+  last: { threadId: string; title: string; at: string } | null;
+  error: { threadId: string; message: string; at: string } | null;
+}
+
+/** Only for the built-in 自动取名 extension; others get nothing here. */
+export interface WebHostAutotitle {
+  load(): Promise<{ settings: AutoTitleSettings; status: AutoTitleStatus; defaultRules: string }>;
+  save(patch: Partial<AutoTitleSettings>): Promise<AutoTitleSettings>;
+  /** The title the rules give a thread now, without renaming it. */
+  preview(threadId: string): Promise<{ title: string }>;
+  /** The models an agent instance offers, for choosing which one names. */
+  models(agentId: string): Promise<{ id: string; label: string }[]>;
+}
+
 export interface WebHost {
   extensionId: string;
+  autotitle?: WebHostAutotitle;
   threads: WebHostThreads;
   workSources: { snapshot(): WorkProjection[]; subscribe(listener: (items: WorkProjection[]) => void): Unsubscribe };
   memory: WebHostMemory;

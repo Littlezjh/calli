@@ -97,6 +97,8 @@ export const PERMISSIONS: ReadonlySet<Permission> = new Set<Permission>([
   'toolresult.read',
   'task.control',
   'voice.control',
+  'threads.rename',
+  'agents.ask',
 ]);
 
 /** Routes the hub's own pages use; an extension's alias may not take one. */
@@ -107,7 +109,7 @@ const ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
  * The manifests of the extensions that ship with Calli, by package directory under packages/.
  * Resolved from this file, so the source run (src/) and the build (dist/) find the same files.
  */
-const BUILTIN_PACKAGES = ['ext-board', 'ext-memory', 'ext-voice'];
+const BUILTIN_PACKAGES = ['ext-board', 'ext-memory', 'ext-voice', 'ext-autotitle'];
 
 export function builtinManifestPaths(): string[] {
   return BUILTIN_PACKAGES.map((dir) => fileURLToPath(new URL(`../../${dir}/manifest.json`, import.meta.url)));

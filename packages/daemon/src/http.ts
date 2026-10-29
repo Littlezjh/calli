@@ -1,4 +1,5 @@
 import type { PushService } from './push.js';
+import { DEFAULT_RULES } from './autotitle.js';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { createReadStream, existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
@@ -38,6 +39,8 @@ export interface HttpDeps {
   scheduler?: Scheduler;
   /** Calli extensions on this machine. Optional so tests can run without them. */
   extensions?: ExtensionHost;
+  /** The built-in 自动取名 extension's daemon side, when it ships. */
+  autotitle?: import('./autotitle.js').AutoTitle;
   /** Host-owned native voice; absent on deployments that do not provide it. */
   voice?: VoiceService;
   /**
@@ -268,7 +271,7 @@ function serveDownload(
 }
 
 export function createHttpServer(deps: HttpDeps): Server {
-  const { manager, registry, terminals, desktop, hosts, scheduler, extensions, voice, trusted, token, webDir, version } = deps;
+  const { manager, registry, terminals, desktop, hosts, scheduler, extensions, voice, trusted, token, webDir, version, autotitle } = deps;
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? '/', 'http://localhost');
@@ -648,6 +651,16 @@ export function createHttpServer(deps: HttpDeps): Server {
       }
       // GET /api/extensions
       if (method === 'GET' && !parts[2]) return sendJson(res, 200, extensions.list());
+      // 自动取名: its settings, and a dry run of its rules on one thread.
+      if (autotitle && parts[2] === 'autotitle' && parts[3] === 'settings' && !parts[4]) {
+        if (method === 'GET') return sendJson(res, 200, { settings: autotitle.settings(), status: autotitle.status(), defaultRules: DEFAULT_RULES });
+        if (method === 'PUT') { extensions.demand('autotitle', 'events.summary'); return sendJson(res, 200, autotitle.configure(await readJson(req))); }
+      }
+      if (autotitle && method === 'POST' && parts[2] === 'autotitle' && parts[3] === 'preview' && !parts[4]) {
+        const body = await readJson(req);
+        if (typeof body?.threadId !== 'string') throw new HttpError(400, 'threadId missing');
+        return sendJson(res, 200, await autotitle.name(body.threadId, { apply: false }));
+      }
       // Only the installed extension with a current grant may inspect native memory.
       if (method === 'GET' && parts[2] && parts[3] === 'memory') {
         if (parts[4] === 'sources' && !parts[5]) return sendJson(res, 200, await extensions.memorySources(parts[2]));
@@ -1062,6 +1075,11 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (method === 'POST' && sub === 'handover-thread') {
         const body = await readJson(req);
         return sendJson(res, 201, await manager.createHandoverThread(threadId, body.agent, body.model, body.mode));
+      }
+      // POST /api/threads/:id/autotitle: the person's 「重新取名」, through the 自动取名 extension.
+      if (method === 'POST' && sub === 'autotitle') {
+        if (!autotitle) throw new HttpError(501, '此 daemon 没有自动取名扩展');
+        return sendJson(res, 200, await autotitle.name(threadId, { apply: true }));
       }
       if (method === 'POST' && sub === 'takeover') {
         const body = await readJson(req);

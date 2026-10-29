@@ -54,7 +54,7 @@ export function extensionStorage(extensionId: string, store: Pick<Storage, 'getI
 export function createWebHost(
   extensionId: string,
   initial: HostInputs,
-  deps: { api?: Pick<Api, 'memorySources' | 'memoryList' | 'memoryRead'>; openThread: (id: string) => void; setThreadDone?: (id: string, done: boolean) => Promise<void>; ui: (agents: () => AgentInfo[]) => WebHostUi; storage?: WebHostStorage; onError?: (error: unknown) => void },
+  deps: { api?: Pick<Api, 'memorySources' | 'memoryList' | 'memoryRead'> & Partial<Pick<Api, 'autotitleSettings' | 'saveAutotitleSettings' | 'previewAutotitle' | 'models'>>; openThread: (id: string) => void; setThreadDone?: (id: string, done: boolean) => Promise<void>; ui: (agents: () => AgentInfo[]) => WebHostUi; storage?: WebHostStorage; onError?: (error: unknown) => void },
 ): LiveHost {
   let inputs = initial;
   const allowed = (value: HostInputs) => value.extension?.manifest.id === extensionId && hasPermission(value.extension, 'events.summary');
@@ -83,8 +83,18 @@ export function createWebHost(
     return value;
   }
 
+  const autotitleApi = deps.api;
   const host: Omit<WebHost, 'narrow'> = {
     extensionId,
+    // Only the built-in auto-titles extension gets its settings; the hub checks its grant again.
+    ...(extensionId === 'autotitle' && autotitleApi?.autotitleSettings ? {
+      autotitle: {
+        load: () => autotitleApi.autotitleSettings!(),
+        save: (patch) => autotitleApi.saveAutotitleSettings!(patch),
+        preview: (threadId) => autotitleApi.previewAutotitle!(threadId),
+        models: async (agentId) => (await autotitleApi.models!(agentId)).map(m => ({ id: m.id, label: m.label })),
+      },
+    } : {}),
     memory: {
       sources: () => memoryRequest(() => deps.api!.memorySources(extensionId)),
       list: (sourceId) => memoryRequest(() => deps.api!.memoryList(extensionId, sourceId)),

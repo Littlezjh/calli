@@ -1419,6 +1419,9 @@ export const en: Messages = {
   'actions.copyFailed': 'Copying failed; select the text and copy it by hand',
   'actions.terminal': 'Open terminal',
   'actions.rename': 'Rename',
+  'actions.autotitle': 'Name it again',
+  'actions.autotitling': 'Naming…',
+  'actions.autotitled': (title: string) => `Named: ${title}`,
   'actions.unpin': 'Unpin',
   'actions.pin': 'Pin',
   'actions.markRead': 'Mark as read',
@@ -1806,6 +1809,10 @@ export const en: Messages = {
   'extensions.perm.task.control.hint': 'Visible messages in threads you allow.',
   'extensions.perm.voice.control': 'Use realtime voice',
   'extensions.perm.voice.control.hint': 'Start and end voice sessions in your selected thread, without approving actions for you.',
+  'extensions.perm.threads.rename': 'Rename threads',
+  'extensions.perm.threads.rename.hint': 'Changes only the title shown in Calli, never the agent’s own session.',
+  'extensions.perm.agents.ask': 'Ask an agent',
+  'extensions.perm.agents.ask.hint': 'Sends the start of a conversation to the agent you choose, in a thread of its own that is archived when done.',
 
   // Odds and ends
   'api.noVideos': 'This service does not support videos yet. Update it and try again.',
