@@ -33,7 +33,7 @@ import { findFiles, listDir, readText, type Listing, type TextFile } from './bro
 import { referencedFile } from './artifacts.js';
 import { imagePathNote, MAX_IMAGES, sniffImageType, sniffSvg, type AttachmentStore, type StoredAttachment, type StoredVideo } from './attachments.js';
 import { HttpError } from './errors.js';
-import { handoverBrief, handoverContext, handoverPrompt, synthesizeBrief, synthesizeHandover, turnMessage } from './handover.js';
+import { handoverBrief, handoverPrompt, synthesizeBrief, turnMessage } from './handover.js';
 import { McpManager } from './mcp.js';
 import { SkillsManager } from './skills.js';
 import { isWithinWorkdirs, Workdirs } from './workdirs.js';
@@ -2081,8 +2081,7 @@ export class ThreadManager {
   async handoverSummary(
     threadId: string,
     turnId: string | null,
-    target?: string,
-    brief = false,
+    opts: { carryFailed?: boolean } = {},
   ): Promise<{ pending: true } | { summary: string; source: 'agent' | 'log' }> {
     const thread = this.threadView(threadId);
     const events = this.listEventsSince(threadId, 0);
@@ -2091,22 +2090,10 @@ export class ThreadManager {
     const worktree = checkout && !samePath(checkout.top, checkout.main)
       ? { root: checkout.top, branch: checkout.branch, main: checkout.main }
       : thread.worktree ? { root: thread.worktree.root, branch: thread.worktree.branch, main: thread.worktree.of } : null;
-    const location = brief ? undefined : await adapter?.sessionLocation?.(thread.agentSessionId, thread.cwd);
-    const context = (brief
-      ? handoverBrief({ threadId, from: adapter?.label ?? thread.agent, cwd: thread.cwd, worktree, lead: this.coordination?.leads(threadId) })
-      : handoverContext({
-        threadId,
-        title: thread.title,
-        agentId: thread.agent,
-        agentLabel: adapter?.label ?? thread.agent,
-        adapter: adapter?.id ?? '未知',
-        cwd: thread.cwd,
-        cwdReal: thread.cwdReal,
-        worktree,
-        sessionId: thread.agentSessionId,
-        ...location,
-        resumeCommand: location?.resumeCommand ? `cd ${shellQuote(thread.cwd)} && ${location.resumeCommand}` : thread.resumeCommand,
-      })) + this.personal.context(threadId);
+    // The brief of the auto handover: the successor reads the source itself with `calli`, so it gets
+    // where to look and how, plus a few lines of where things stood — not a retelling.
+    const context = handoverBrief({ threadId, from: adapter?.label ?? thread.agent, cwd: thread.cwd, worktree, lead: this.coordination?.leads(threadId) })
+      + this.personal.context(threadId);
     if (turnId) {
       const turnEvents = events.filter((e) => e.turnId === turnId);
       if (turnEvents.length === 0) throw new HttpError(404, 'no such turn');
@@ -2114,10 +2101,14 @@ export class ThreadManager {
       const written = turnMessage(turnEvents).trim();
       if (written && !turnEvents.some(e => e.type === 'turn.error' || e.type === 'turn.done' && e.data.stopReason === 'cancelled')) return { summary: `${context}\n\n${written}`, source: 'agent' };
     }
-    if (brief) return { summary: [context, synthesizeBrief(events)].filter(Boolean).join('\n\n'), source: 'log' };
-    const successor = (target ? this.adapters.get(target)?.label ?? target : '另一个 agent');
-    const from = this.adapters.get(thread.agent)?.label ?? thread.agent;
-    return { summary: `${context}\n\n${synthesizeHandover(events, { title: thread.title, from, target: successor })}`, source: 'log' };
+    // The brief's 最近的要求 steps over a failed last ask (the auto path carries it word for word
+    // after the text); without this section a handover written on a failed thread would lose it.
+    const lastTurn = this.store.listTurns(threadId).at(-1)?.turnId ?? null;
+    const failedTurn = lastTurn && this.store.listTurnEvents(threadId, lastTurn).some(e => e.type === 'turn.error') ? lastTurn : null;
+    const retryStart = failedTurn ? this.store.listTurnEvents(threadId, failedTurn).find(e => e.type === 'turn.started') : undefined;
+    const retry = opts.carryFailed && retryStart ? String(retryStart.data.displayText ?? retryStart.data.text ?? '') : '';
+    const brief = [context, synthesizeBrief(events)].filter(Boolean).join('\n\n');
+    return { summary: retry ? `${brief}\n\n## 继续未完成的这一轮\n\n${retry}` : brief, source: 'log' };
   }
 
   hasAgent(id: string): boolean { return this.adapters.has(id); }
@@ -2158,9 +2149,9 @@ export class ThreadManager {
         summaryTurn = null;
       }
     }
-    const result = await this.handoverSummary(id, summaryTurn, target, true);
+    const result = await this.handoverSummary(id, summaryTurn);
     if ('summary' in result) return result.summary;
-    const fallback = await this.handoverSummary(id, null, target, true);
+    const fallback = await this.handoverSummary(id, null);
     if ('summary' in fallback) return fallback.summary;
     throw new HttpError(409, 'handover summary unavailable');
   }
@@ -2195,7 +2186,7 @@ export class ThreadManager {
     // The turn that failed is carried over, so the successor picks up the ask that was cut off.
     const last = this.store.listTurns(id).at(-1)?.turnId ?? null;
     const failed = last && this.store.listTurnEvents(id, last).some(e => e.type === 'turn.error') ? last : null;
-    const result = await this.handoverSummary(id, null, agent, true);
+    const result = await this.handoverSummary(id, null);
     if (!('summary' in result)) throw new HttpError(409, 'handover summary unavailable');
     return this.executeAutoHandover(id, { agent, ...(model ? { model } : {}) }, result.summary, failed, note?.trim());
   }

@@ -1103,7 +1103,9 @@ export function createHttpServer(deps: HttpDeps): Server {
         return sendJson(
           res,
           200,
-          await manager.handoverSummary(threadId, url.searchParams.get('turn'), url.searchParams.get('target') ?? undefined),
+          // The clean brief of the auto handover: where to look with `calli`, a few lines of progress,
+          // and the interrupted ask when the thread ends on a failure.
+          await manager.handoverSummary(threadId, url.searchParams.get('turn'), { carryFailed: true }),
         );
       }
 

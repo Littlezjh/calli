@@ -2652,11 +2652,10 @@ test('handover: the agent writes the summary; the log stands in when it cannot',
   assert.match(written.summary, /hi there/);
   assert.match(written.summary, /Antigravity/, 'the prompt names the successor by its label');
 
-  // Without the turn: the hub synthesizes from the log, quoting the user's asks.
+  // Without the turn: the hub synthesizes from the log, the brief carrying the last real ask.
   const synthesized = (await (await api(`/api/threads/${thread.id}/handover?turn=&target=agy`)).json()) as { summary: string; source: string };
   assert.equal(synthesized.source, 'log');
-  assert.match(synthesized.summary, /1\. hello/);
-  assert.match(synthesized.summary, /Antigravity/);
+  assert.match(synthesized.summary, /最近的要求：hello/);
   // The hub-injected handover turn is not one of the asks.
   assert.doesNotMatch(synthesized.summary, /请写一份交接摘要/);
 });

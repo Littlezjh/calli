@@ -1,56 +1,10 @@
 import { replaceMessageTail, type StoredEvent } from './events.js';
 
-/** Authoritative session coordinates, prepended regardless of how the progress summary was written. */
-export function handoverContext(info: {
-  threadId: string;
-  title?: string;
-  agentId: string;
-  agentLabel: string;
-  adapter: string;
-  cwd: string;
-  cwdReal: string;
-  worktree?: { root: string; branch: string | null; main: string } | null;
-  sessionId: string | null;
-  configDir?: string;
-  sessionPath?: string | null;
-  resumeCommand: string | null;
-}): string {
-  const lines = [
-    '# 交接信息', '',
-    `- Agent 实例：${info.agentLabel}（实例 ID：${info.agentId}；类型：${info.adapter}）`,
-    `- 项目工作目录（cwd）：${info.cwd}`,
-    ...(info.cwdReal !== info.cwd ? [`- 工作目录真实路径：${info.cwdReal}`] : []),
-    ...(info.worktree ? [
-      `- 当前 worktree：${info.worktree.root}`,
-      `- 当前分支：${info.worktree.branch ?? '游离 HEAD'}`,
-      `- 主仓库（仅供定位）：${info.worktree.main}`,
-    ] : []),
-    `- Agent 配置/数据目录：${info.configDir ?? '未能确定'}`,
-    `- Session ID：${info.sessionId ?? '尚未创建（还没有 agent 会话）'}`,
-    `- Session 文件地址：${info.sessionPath ?? (info.sessionId ? '未找到实际会话文件；请使用上面的实例与 Session ID 定位' : '尚未创建')}`,
-    `- Hub 线程 ID：${info.threadId}`, '',
-    '## 只读查阅来源历史', '',
-    '以下命令只在 hub 里新建的接手会话中可用。',
-    `- 来源 Session ID：${info.sessionId ?? '尚未创建'}；来源简介：${info.title ?? '未命名任务'}（进度见交接摘要）。`,
-    '- `calli handover`：查看本线程及逐级来源的会话信息。',
-    `- \`calli history ${info.threadId}\`：查看历史；翻页和全文续读按返回的 nextCursor 和 command 继续，参数见 \`calli --help\`。`,
-    '', '## 接手要求', '',
-    '请直接接着完成任务，将命令执行和文件操作的工作目录设为上面的 cwd。原线程使用 worktree 时，沿用同一个 worktree、当前分支及未提交改动，不要切回主仓库或另建 worktree。',
-    '动手前先核对现状：用 `git status`、`git diff` 和最近的提交确认工作区，与交接摘要对照。原 agent 可能在一轮中途被切断，摘要可能不全，也可能有改到一半的文件。',
-    '再跑项目自带的初始化或检查命令（如 `init.sh`，或 README、AGENTS.md 里写的测试命令），确认现状能跑。发现坏的先修好，再接着做摘要里的下一步。',
-    '使用你自己的 agent 会话继续工作；上面的原 agent 实例、配置目录和 Session ID 用于只读查阅原始历史。不要要求用户重新配置工作目录或手动新开会话。',
-    '多个同类 agent 使用各自的配置/数据目录，读取历史时请按实例和 Session ID 定位。',
-  ];
-  if (info.resumeCommand) lines.push('', '## 原 agent 的恢复命令（仅供参考，接手无需执行）', '', info.resumeCommand);
-  return lines.join('\n');
-}
-
 /**
- * Handing a thread's task to another agent: the current agent writes a summary for its successor
- * while it still can (it knows its own context best), and when that is no longer possible — the
- * quota ran out, the agent is gone — the hub writes one from the event log, which holds every
- * turn, tool call and diff anyway. The summary is text for a person to give to a successor;
- * the hub does not create that thread or leave files behind.
+ * Handing a thread's task to another agent: the successor gets a brief that points at the source —
+ * `calli handover` and `calli history` read it inside the hub — plus a few lines of where things
+ * stood, either written by the outgoing agent while it still could, or assembled by the hub from
+ * the event log, which holds every turn, tool call and diff anyway.
  */
 
 /** The prompt the current agent is asked to answer in its own session. */
@@ -121,37 +75,6 @@ function logFacts(events: StoredEvent[]) {
     plan: (plan?.data.entries ?? []) as Array<Record<string, unknown>>,
     files: changedFiles(events),
   };
-}
-
-/**
- * The summary the hub writes itself, from nothing but the event log. Sections the log cannot
- * answer are left out rather than guessed at; the successor is told to check the repository.
- */
-export function synthesizeHandover(events: StoredEvent[], opts: { title: string; from: string; target: string }): string {
-  const { asks, lastAnswer, why, plan, files } = logFacts(events);
-  const lines: string[] = [`# 交接摘要（hub 从过程记录合成）`, '', `- 原线程：${opts.title}（${opts.from}）`, `- 接手：${opts.target}`, ''];
-
-  if (asks.length) {
-    lines.push('## 用户的要求');
-    const shown = asks.slice(0, 5).map((a, i) => `${i + 1}. ${trunc(a, 300)}`);
-    if (asks.length > 5) shown.push(`……共 ${asks.length} 轮，完整要求见原线程。`);
-    lines.push(...shown, '');
-  }
-  if (files.length) {
-    lines.push('## 改过的文件');
-    lines.push(...files.slice(0, 30).map((f) => `- ${f}`), '');
-  }
-  if (plan.length) {
-    lines.push('## 计划清单（最后一次更新）');
-    lines.push(...plan.map((en) => `- [${en.status === 'completed' ? 'x' : ' '}] ${trunc(String(en.content ?? ''), 160)}`), '');
-  }
-  if (lastAnswer) {
-    lines.push('## 最后的回答');
-    lines.push(`> ${trunc(lastAnswer, 800).replace(/\n/g, '\n> ')}`, '');
-  }
-  if (why) lines.push('## 中断原因', why, '');
-  lines.push('> 这份摘要由 hub 从过程记录自动合成，可能不全，也不知道哪些改动验证过。接手后先用 git status 和 git log 对齐现状，跑一遍项目的检查。');
-  return lines.join('\n');
 }
 
 /**

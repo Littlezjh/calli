@@ -36,8 +36,10 @@ test('handover GET assembles exact Claude instance and session coordinates witho
       const created = await api('/api/threads', {agent:`claude-${i+1}`,cwd,title:'同名 Claude 的交接'});
       const thread = await created.json() as {id:string};
       const empty = await (await api(`/api/threads/${thread.id}/handover`)).json() as {summary:string};
-      assert.match(empty.summary,/尚未创建/);
-      assert.ok(empty.summary.includes(accounts[i]));
+      // The clean brief of the auto handover: no coordinates to leak, just where to look.
+      assert.match(empty.summary,/# 接手/);
+      assert.ok(empty.summary.includes(cwd), 'the working directory is in it');
+      assert.ok(empty.summary.includes(`calli history ${thread.id}`));
       assert.equal((await api(`/api/threads/${thread.id}/turns`, {text:'继续完成测试'})).status,202);
       let ready = false;
       for (let n=0;n<100;n++) {
@@ -49,16 +51,15 @@ test('handover GET assembles exact Claude instance and session coordinates witho
       const session = join(accounts[i], 'projects', cwd.replace(/[^a-zA-Z0-9]/g,'-'), 'shared-session-id.jsonl');
       const fileBefore = readFileSync(session,'utf8');
       const result = await (await api(`/api/threads/${thread.id}/handover`)).json() as {summary:string};
-      for (const value of [`实例 ID：claude-${i+1}`, `项目工作目录（cwd）：${cwd}`, `Agent 配置/数据目录：${accounts[i]}`, `Session ID：shared-session-id`, `Session 文件地址：${session}`, 'CLAUDE_CONFIG_DIR=', '继续完成测试']) assert.ok(result.summary.includes(value), value);
-      assert.ok(!result.summary.includes(accounts[1-i]));
-      assert.doesNotMatch(result.summary,/never-copy-this|ANTHROPIC_API_KEY|FAKE_SESSION_ROOT/);
+      for (const value of ['# 接手', `calli history ${thread.id}`, '继续完成测试', '## 进度（hub 从记录整理，可能不全）']) assert.ok(result.summary.includes(value), value);
+      assert.doesNotMatch(result.summary,/never-copy-this|ANTHROPIC_API_KEY|FAKE_SESSION_ROOT|account-/, 'neither account\u2019s coordinates or secrets appear');
       assert.deepEqual(manager.listEventsSince(thread.id,0),eventsBefore);
       assert.equal(readFileSync(session,'utf8'),fileBefore);
       if (i === 1) {
         await api(`/api/threads/${thread.id}/turns`, {text:'slow'});
         const running = await api(`/api/threads/${thread.id}/handover`);
         assert.equal(running.status,200,'works while the source is running');
-        assert.ok((await running.json() as {summary:string}).summary.includes('实例 ID：claude-2'));
+        assert.ok((await running.json() as {summary:string}).summary.includes(`calli history ${thread.id}`));
       }
     }
     // An existing worktree may predate the hub and have no hub worktree metadata.
@@ -73,7 +74,9 @@ test('handover GET assembles exact Claude instance and session coordinates witho
     assert.equal(created.status,201);
     const thread = await created.json() as {id:string};
     const summary = await (await api(`/api/threads/${thread.id}/handover`)).json() as {summary:string};
-    for (const value of [`项目工作目录（cwd）：${subdir}`,`当前 worktree：${tree}`,'当前分支：existing',`主仓库（仅供定位）：${cwd}`,'沿用同一个 worktree','不要要求用户重新配置工作目录或手动新开会话']) assert.ok(summary.summary.includes(value),value);
+    // The brief carries the working place as one line, worktree and branch included.
+    assert.ok(summary.summary.includes(`工作目录 ${subdir}（worktree ${tree}，分支 existing）`), summary.summary);
+    assert.match(summary.summary, /沿用它和未提交的改动/);
     assert.equal(git(['branch','--show-current']).toString().trim() === 'existing',false,'the main checkout was not switched');
     assert.equal((await fetch(base+'/api/threads/nope/handover')).status,401);
     assert.equal((await api('/api/threads/nope/handover')).status,404);
