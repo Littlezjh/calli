@@ -115,6 +115,9 @@ export class PushService {
     }
     if (!end && !['approval.request', 'input.request', 'agent.notice'].includes(ev.type)) return;
     const started = ev.turnId ? this.store.listEventsOfType(ev.threadId, 'turn.started').find(e => e.turnId === ev.turnId) : undefined;
+    // A background question (askOnce) has nobody to answer it and the manager cancels it, so its
+    // approvals, notices and failures are not news. Follow-ups on an archived thread still are.
+    if (started?.data.background) return;
     const origin = turnOrigin(started ?? { data: ev.data });
     if (origin.imported || origin.fromTerminal || origin.control || ev.data.imported || ev.data.fromTerminal || end?.imported || end?.fromTerminal) return;
     const settings = this.settings();

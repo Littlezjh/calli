@@ -653,7 +653,7 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (method === 'GET' && !parts[2]) return sendJson(res, 200, extensions.list());
       // 自动取名: its settings, and a dry run of its rules on one thread.
       if (autotitle && parts[2] === 'autotitle' && parts[3] === 'settings' && !parts[4]) {
-        if (method === 'GET') return sendJson(res, 200, { settings: autotitle.settings(), status: autotitle.status(), defaultRules: DEFAULT_RULES });
+        if (method === 'GET') { extensions.demand('autotitle', 'events.summary'); return sendJson(res, 200, { settings: autotitle.settings(), status: autotitle.status(), defaultRules: DEFAULT_RULES }); }
         if (method === 'PUT') { extensions.demand('autotitle', 'events.summary'); return sendJson(res, 200, autotitle.configure(await readJson(req))); }
       }
       if (autotitle && method === 'POST' && parts[2] === 'autotitle' && parts[3] === 'preview' && !parts[4]) {

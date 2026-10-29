@@ -10,7 +10,7 @@ import { turnAnswer, type CoordinationManager, type CoordinationSetup } from './
 import { parseProgress, progressInstructions } from './progress-report.js';
 import { habitsPath, isEditableArticle, isWritingStage, newestArticle, noteFile, saveArticle, writingInstructions, type WritingState } from './writing.js';
 import { randomUUID } from 'node:crypto';
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import {
   EFFORT_LEVELS,
@@ -786,6 +786,10 @@ export class ThreadManager {
     } finally {
       (stop as (() => void) | null)?.();
       this.backgroundThreads.delete(thread.id);
+      // The answer is read from the store: the agent process and its scratch folder can go now, so
+      // one question does not leave a resident process behind.
+      await this.dropSession(thread.id);
+      if (this.dirs.scratchRoot && thread.cwd.startsWith(this.dirs.scratchRoot + sep)) rmSync(thread.cwd, { recursive: true, force: true });
     }
   }
 
@@ -2018,6 +2022,7 @@ export class ThreadManager {
         }
         this.emitThreadEvent(threadId, turnId, 'turn.started', {
           text: promptText,
+          ...(bare ? { background: true } : {}),
           ...(input.voiceSummary ? { voiceSummary: input.voiceSummary } : {}),
           speed: thread.speed,
           workMode: thread.workMode ?? 'execute',

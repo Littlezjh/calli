@@ -127,6 +127,18 @@ test('real notify CLI authenticates its own thread, enforces Unicode length, acc
   } finally { await h.close(); }
 });
 
+test('a background question neither waits nor fails out loud', async () => {
+  const h = await setup(); try {
+    h.push.putSettings({ enabled: true, waiting: true, failure: true });
+    h.emit('turn.started', { background: true });
+    h.emit('approval.request', { approvalId: 'a' });
+    h.emit('input.request', { inputId: 'i' });
+    h.emit('turn.error', { message: 'the naming agent hung' });
+    await new Promise(r => setTimeout(r, 150));
+    assert.equal(h.sent().length, 0, 'nothing a background turn does is pushed');
+  } finally { await h.close(); }
+});
+
 test('category switches, quiet completion and imported waiting do not enqueue; notices use explicit agent attribution', async () => {
   const h = await setup(); try {
     h.push.putSettings({ enabled: true, waiting: false, failure: false, notice: false, scheduled: false });

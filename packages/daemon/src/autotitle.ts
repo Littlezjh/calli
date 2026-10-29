@@ -42,17 +42,28 @@ const EXCERPT = 1500;
 const MAX_TITLE = 40;
 const MAX_RULES = 2000;
 
-/** The first line of what the agent said, without quotes or a "标题：" label, at most MAX_TITLE characters. */
+/** The first line of what the agent said, without labels, quotes and marks, at most MAX_TITLE characters. */
 export function cleanTitle(answer: string): string {
   const line = answer.split('\n').map(l => l.trim()).find(Boolean) ?? '';
   const unlabelled = line.replace(/^(?:标题|題名|タイトル|title)\s*[:：]\s*/i, '');
-  const unquoted = unlabelled.replace(/^[「『“"'‘《【]+/, '').replace(/[」』”"'’》】]+$/, '').replace(/^\*\*(.*)\*\*$/, '$1').trim();
-  return [...unquoted].slice(0, MAX_TITLE).join('').trim();
+  const stripped = unlabelled
+    .replace(/^#{1,6}\s*/, '')                    // a heading marker
+    .replace(/\*\*(.+)\*\*$/, '$1')            // bold, before the quotes it wraps
+    .replace(/^`+(.+?)`+$/, '$1')                // inline code, the same
+    .replace(/^[「『“"'‘《【]+/, '')
+    .replace(/[」』”"'’》】]+$/, '')
+    .replace(/[。．.！？!?…、，,]+$/, '');       // the rules ask for none; agents add them anyway
+  // Graphemes, not code points: a cut must not take an emoji apart.
+  const graphemes = typeof Intl !== 'undefined' && 'Segmenter' in Intl
+    ? [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(stripped)].map(s => s.segment)
+    : [...stripped];
+  return graphemes.slice(0, MAX_TITLE).join('').trim();
 }
 
 /** What the naming agent is asked. The person's rules go in as written; the last line is the hub's own. */
 export function namingPrompt(rules: string, question: string, answer: string | null): string {
-  const cut = (text: string) => (text.length > EXCERPT ? `${text.slice(0, EXCERPT)}…` : text);
+  // Code points, not UTF-16 units: a cut must not take an emoji apart.
+  const cut = (text: string) => (text.length > EXCERPT ? `${[...text].slice(0, EXCERPT).join('')}…` : text);
   return [
     '给下面这段对话起一个线程标题。',
     '',
@@ -132,7 +143,8 @@ export class AutoTitle implements DaemonExtension {
     if (event.hook === 'turn.started') wanted = settings.trigger === 'sent' && index === 1;
     else if (turn.outcome === 'ok') wanted = (settings.trigger === 'finished' && index === 1) || (settings.again && index === 3);
     if (!wanted || !this.renamable(turn.threadId, index === 3)) return;
-    void this.queue(turn.threadId, true).catch(() => undefined);
+    // On send the answer is still streaming: name from the message alone, as that setting says.
+    void this.queue(turn.threadId, true, true, null, event.hook === 'turn.finished').catch(() => undefined);
   }
 
   /**
@@ -155,31 +167,42 @@ export class AutoTitle implements DaemonExtension {
   async name(threadId: string, opts: { apply: boolean }): Promise<{ title: string }> {
     if (!this.allowed()) throw new HttpError(403, '自动取名扩展未安装、已停用或缺少权限');
     if (!this.settings().agent) throw new HttpError(409, '先在自动取名的设置里选一个取名用的 agent');
-    return this.queue(threadId, false, opts.apply);
+    // What the title is when the person asks: if they rename it while the agent thinks, theirs stays.
+    const before = (() => { try { return { title: this.manager.threadView(threadId).title }; } catch { return null; } })();
+    return this.queue(threadId, false, opts.apply, before, true);
   }
 
-  private queue(threadId: string, automatic: boolean, apply = true): Promise<{ title: string }> {
+  private queue(threadId: string, automatic: boolean, apply = true, before: { title: string } | null = null, answer = true): Promise<{ title: string }> {
     if (automatic && this.waiting.has(threadId)) return Promise.resolve({ title: '' });
     if (automatic) this.waiting.add(threadId);
-    const run = this.chain.then(() => this.run(threadId, automatic, apply));
+    const run = this.chain.then(() => this.run(threadId, automatic, apply, before, answer));
     this.chain = run.catch(() => undefined).finally(() => { if (automatic) this.waiting.delete(threadId); });
     return run;
   }
 
-  private async run(threadId: string, automatic: boolean, apply: boolean): Promise<{ title: string }> {
+  private async run(threadId: string, automatic: boolean, apply: boolean, before: { title: string } | null, answer: boolean): Promise<{ title: string }> {
+    // Checked again here, not only when the turn ended: namings queue behind each other, and the
+    // grant or the chosen agent may have been taken away while this one waited.
     const settings = this.settings();
+    if (!this.allowed() || !settings.agent) {
+      if (automatic) return { title: '' };
+      if (!this.allowed()) throw new HttpError(403, '自动取名扩展未安装、已停用或缺少权限');
+      throw new HttpError(409, '先在自动取名的设置里选一个取名用的 agent');
+    }
     const first = this.userTurns(threadId)[0];
     if (!first) throw new HttpError(409, '这个线程还没有对话');
-    const answer = turnAnswer(this.store.listEvents(threadId, 0, -1), first.turnId).trim() || null;
+    // On send the answer is still streaming; a finished turn, the second pass and a manual ask see it.
+    const firstAnswer = answer ? turnAnswer(this.store.listEvents(threadId, 0, -1), first.turnId).trim() || null : null;
     try {
-      const reply = await this.manager.askOnce(settings.agent!, namingPrompt(settings.rules, first.text, answer), {
-        model: settings.model, title: `${this.manifest.name.zh} · ${threadId.slice(0, 8)}`,
+      const reply = await this.manager.askOnce(settings.agent!, namingPrompt(settings.rules, first.text, firstAnswer), {
+        model: settings.model, title: `${this.manifest.name.zh} · ${threadId.slice(0, 8)}`, timeoutMs: 60_000,
       });
       const title = cleanTitle(reply);
       if (!title) throw new HttpError(502, '取名的 agent 没有给出标题');
       if (apply) {
-        // The person may have renamed it while the agent was thinking.
+        // The person may have renamed it while the agent was thinking: theirs stays, on both paths.
         if (automatic && !this.renamable(threadId, true)) return { title };
+        if (!automatic && before && this.manager.titleBy(threadId) === 'user' && this.manager.threadView(threadId).title !== before.title) return { title };
         this.manager.autoRename(threadId, title);
         this.store.saveHubSetting('autotitle.status', { ...this.status(), last: { threadId, title, at: new Date().toISOString() } });
       }

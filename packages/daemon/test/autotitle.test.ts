@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -49,11 +49,18 @@ async function setup(opts: { install?: boolean } = {}) {
   } };
 }
 
-test('cleanTitle keeps the first line, without labels and quotes, emoji included, at most 40 characters', () => {
+test('cleanTitle keeps the first line, without labels, quotes and marks, emoji included, at most 40 characters', () => {
   assert.equal(cleanTitle('标题：「🐛 修复登录超时」\n解释'), '🐛 修复登录超时');
   assert.equal(cleanTitle('\n\n"Fix the login timeout"'), 'Fix the login timeout');
   assert.equal(cleanTitle('**整理周报**'), '整理周报');
+  assert.equal(cleanTitle('**「标题」**'), '标题', 'bold is stripped before the quotes it wraps');
+  assert.equal(cleanTitle('# 标题'), '标题', 'a heading marker goes');
+  assert.equal(cleanTitle('`标题`'), '标题', 'inline code marks go');
+  assert.equal(cleanTitle('标题。'), '标题', 'a sentence-ending mark goes');
   assert.equal([...cleanTitle('长'.repeat(80))].length, 40);
+  const joined = cleanTitle('👨‍👩‍👧‍👦'.repeat(41));
+  assert.ok(!joined.endsWith('\u200D'), 'the cut leaves no emoji half');
+  assert.equal(joined.length, 40 * '👨‍👩‍👧‍👦'.length, 'whole joined emoji only');
   assert.equal(cleanTitle('   '), '');
 });
 
@@ -64,6 +71,8 @@ test('the naming request carries the rules as written, the conversation start, a
   assert.match(prompt, /回复：因为 token 过期了/);
   assert.ok(prompt.length < 2200, 'long messages are cut');
   assert.match(prompt.trim().split('\n').at(-1)!, /只输出标题本身/);
+  const emoji = namingPrompt('', '🐛'.repeat(1600), null);
+  assert.equal((emoji.match(/🐛/g) ?? []).length, 1500, 'the cut does not take an emoji apart');
 });
 
 test('after the first turn the chosen agent names the thread by the rules; the question leaves no thread in the list', async () => {
@@ -116,11 +125,13 @@ test('a title the person set is never renamed, and the second pass only revises 
 test('naming on send uses only the message; nothing happens without a chosen agent or the extension', async () => {
   const off = await setup({ install: false });
   try {
-    await off.autotitle.configure({ agent: 'claude' });
     const thread = await off.manager.createThread({ agent: 'claude', cwd: off.cwd });
     await off.send(thread.id, '登录总是超时');
     await new Promise(r => setTimeout(r, 300));
     assert.equal(off.manager.threadView(thread.id).title, '登录总是超时', 'not installed: left alone');
+    assert.equal((await off.api('/api/extensions/autotitle/settings')).status, 403, 'GET settings needs the grant');
+    assert.equal((await off.api('/api/extensions/autotitle/settings', 'PUT', { agent: 'claude' })).status, 403);
+    assert.equal((await off.api('/api/extensions/autotitle/preview', 'POST', { threadId: thread.id })).status, 403);
     assert.equal((await off.api(`/api/threads/${thread.id}/autotitle`, 'POST')).status, 403);
   } finally { await off.close(); }
 
@@ -137,6 +148,8 @@ test('naming on send uses only the message; nothing happens without a chosen age
     await h.manager.startTurn(early.id, { text: 'slow 登录总是超时' });
     await wait(() => h.manager.threadView(early.id).title === '修复登录超时');
     assert.equal(h.manager.threadView(early.id).status, 'running', 'named while its first turn still runs');
+    const asked = h.manager.listThreads({ archived: true })[0];
+    assert.doesNotMatch(String(h.store.listEventsOfType(asked.id, 'turn.started')[0].data.text), /回复：/, 'on send, the answer is not sent');
     await h.manager.cancelTurn(early.id);
   } finally { await h.close(); }
 });
@@ -166,5 +179,56 @@ test('a naming agent that does not answer in time is stopped, and the title stay
     await assert.rejects(h.manager.askOnce('claude', '给下面这段对话起一个线程标题。slow name', { timeoutMs: 300 }), /too long/);
     await wait(() => h.manager.listThreads({ archived: true }).every(t => t.status !== 'running'));
     assert.equal(h.manager.listThreads().length, 0, 'the question never showed in the list');
+    assert.equal((h.manager as unknown as { sessions: Map<string, unknown> }).sessions.size, 0, 'a stopped question closes its agent process');
+    assert.equal(readdirSync(join(h.dir, 'scratch')).length, 0, 'and takes its scratch folder with it');
+  } finally { await h.close(); }
+});
+
+test('a background question leaves no live session and no scratch folder behind', async () => {
+  const h = await setup();
+  try {
+    const answer = await h.manager.askOnce('claude', '给下面这段对话起一个线程标题。', { title: '一问' });
+    assert.match(answer, /修复登录超时/);
+    assert.equal((h.manager as unknown as { sessions: Map<string, unknown> }).sessions.size, 0, 'the agent process is closed after the answer');
+    assert.equal(readdirSync(join(h.dir, 'scratch')).length, 0, 'its scratch folder is removed');
+  } finally { await h.close(); }
+});
+
+test('a naming that waited behind another does not send the conversation once the grant is gone', async () => {
+  const h = await setup();
+  try {
+    await h.api('/api/extensions/autotitle/settings', 'PUT', { agent: 'claude', trigger: 'sent' });
+    // The hung thread's naming blocks the chain; the second thread's naming queues behind it.
+    const hung = await h.manager.createThread({ agent: 'claude', cwd: h.cwd });
+    await h.manager.startTurn(hung.id, { text: 'slow name 登录总是超时' });
+    const asking = () => h.manager.listThreads({ archived: true }).find(t => t.status === 'running');
+    await wait(() => Boolean(asking()));
+    const queued = await h.manager.createThread({ agent: 'claude', cwd: h.cwd });
+    await h.send(queued.id, '登录总是超时');
+    h.extensions.setEnabled(AUTOTITLE_ID, false);
+    await h.manager.cancelTurn(asking()!.id);
+    await wait(() => h.manager.listThreads({ archived: true }).every(t => t.status !== 'running'));
+    await new Promise(r => setTimeout(r, 300));
+    assert.equal(h.manager.threadView(queued.id).title, '登录总是超时', 'the queued naming asked nothing');
+    assert.equal(h.manager.listThreads({ archived: true }).length, 1, 'only the hung naming opened a thread');
+    assert.equal((await h.api(`/api/threads/${queued.id}/autotitle`, 'POST')).status, 403, 'manual renaming refuses without the grant');
+    await h.manager.cancelTurn(hung.id).catch(() => undefined);
+  } finally { await h.close(); }
+});
+
+test('「重新取名」 does not overwrite a title the person set while the agent was thinking', async () => {
+  const h = await setup();
+  try {
+    await h.api('/api/extensions/autotitle/settings', 'PUT', { agent: 'claude', rules: '- later name' });
+    const thread = await h.manager.createThread({ agent: 'claude', cwd: h.cwd });
+    await h.send(thread.id, '登录总是超时');
+    const naming = h.api(`/api/threads/${thread.id}/autotitle`, 'POST');
+    // The automatic naming from the send runs first; the manual one runs behind it. Wait for the
+    // manual one to be underway (a second background thread) before the person renames.
+    await wait(() => h.manager.listThreads({ archived: true }).length === 2 && h.manager.listThreads({ archived: true }).some(t => t.status === 'running'));
+    await h.manager.updateThread(thread.id, { title: '我想叫这个' });
+    assert.equal((await naming).status, 200);
+    assert.equal(h.manager.threadView(thread.id).title, '我想叫这个', 'the person\u2019s title stands');
+    assert.equal(h.manager.titleBy(thread.id), 'user');
   } finally { await h.close(); }
 });
