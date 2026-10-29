@@ -1,5 +1,5 @@
 /** What extensions see of a thread. Pure, so it can be tested directly. */
-import type { ThreadSummary } from '@rah/extension-api';
+import type { ThreadSummary } from '@calli/extension-api';
 import type { Thread } from '../api';
 import { projectDir, threadAttention } from '../sidebar';
 

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import type { AttentionKind, ProgressStage, ThreadSummary } from '@rah/extension-api';
+import type { AttentionKind, ProgressStage, ThreadSummary } from '@calli/extension-api';
 import { buildColumns, cardFor, DONE_WINDOW_MS, emptyFilters, firstColumn, parseFilters, projectName, REVIEW_WINDOW_MS, showStaleWarning } from '../src/columns';
 import { t } from '../src/i18n';
 import manifest from '../manifest.json';

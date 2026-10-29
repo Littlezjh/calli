@@ -39,6 +39,21 @@ test('a chosen model shows its own label, and an unknown id shows as-is', () => 
   assert.equal(modelName(claude, 'gone-model'), 'gone-model');
 });
 
+test('model load follows the selected model and the agent default alias', () => {
+  const models = [
+    { id: 'default', label: 'Default', description: 'GPT Big', loadPercent: 184 },
+    { id: 'big', label: 'GPT Big', loadPercent: 184 },
+    { id: 'small', label: 'GPT Small', loadPercent: 0 },
+    { id: 'quiet', label: 'Quiet' },
+  ];
+  assert.equal(modelLoadPercent(models, null), 184);
+  assert.equal(modelLoadPercent(models, 'big'), 184);
+  assert.equal(modelLoadPercent(models, 'small'), 0, 'zero is a reported load, not missing data');
+  assert.equal(modelLoadPercent(models, 'quiet'), undefined);
+  assert.equal(modelLoadPercent(models, 'gone'), undefined);
+  assert.equal(modelLoadLabel(100), '负载100%');
+});
+
 test('the agent default is folded into one row, so there is no duplicate default', () => {
   const rows = modelRows(claude);
   assert.deepEqual(rows.map((r) => r.value), [null, 'opus', 'haiku']);

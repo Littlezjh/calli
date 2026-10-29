@@ -3,16 +3,16 @@ import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 
-export const help = `limi notify --text-file FILE|-
-limi tools search [QUERY] [--json]
-limi tools skill
-limi tools describe TOOL [--json]
-limi tools run TOOL --input-file FILE|- --request-id KEY [--json]
-limi jobs get|wait|cancel JOB [--timeout SECONDS] [--json]
-limi jobs fetch JOB ARTIFACT_ID_OR_NAME --output FILE [--json]
-limi browser [AGENT_BROWSER_ARGS...]   (see: limi tools describe limi/browser)
-Inside Limi, thread-scoped credentials are provided automatically.
-Outside Limi, set LIMI_URL and LIMI_TOKEN. Output is JSON; fetch never overwrites a file.`;
+export const help = `calli notify --text-file FILE|-
+calli tools search [QUERY] [--json]
+calli tools skill
+calli tools describe TOOL [--json]
+calli tools run TOOL --input-file FILE|- --request-id KEY [--json]
+calli jobs get|wait|cancel JOB [--timeout SECONDS] [--json]
+calli jobs fetch JOB ARTIFACT_ID_OR_NAME --output FILE [--json]
+calli browser [AGENT_BROWSER_ARGS...]   (see: calli tools describe calli/browser)
+Inside Calli, thread-scoped credentials are provided automatically.
+Outside Calli, set CALLI_URL and CALLI_TOKEN. Output is JSON; fetch never overwrites a file.`;
 
 function responseError(text, status) {
   try {
@@ -23,10 +23,10 @@ function responseError(text, status) {
 }
 
 export async function transport(path, body, binary = false, personal = false) {
-  const socketPath = personal ? process.env.LIMI_TODO_SOCKET : process.env.LIMI_TOOLS_SOCKET;
-  const key = personal ? process.env.LIMI_TODO_KEY : process.env.LIMI_TOOLS_KEY;
+  const socketPath = personal ? process.env.CALLI_TODO_SOCKET : process.env.CALLI_TOOLS_SOCKET;
+  const key = personal ? process.env.CALLI_TODO_KEY : process.env.CALLI_TOOLS_KEY;
   if (socketPath || key) {
-    if (!socketPath || !key) throw new Error('Incomplete Limi tool credentials; start a new Limi session.');
+    if (!socketPath || !key) throw new Error('Incomplete Calli tool credentials; start a new Calli session.');
     return new Promise((resolve, reject) => {
       const payload = body ? JSON.stringify(body) : undefined;
       const req = request({ socketPath, path, method: body ? 'POST' : 'GET',
@@ -51,10 +51,10 @@ export async function transport(path, body, binary = false, personal = false) {
       req.end(payload);
     });
   }
-  if (personal) throw new Error('Personal commands require a new thread in the personal directory; see limi todo --help.');
-  const base = process.env.LIMI_URL;
-  const token = process.env.LIMI_TOKEN;
-  if (!base || !token) throw new Error('Run inside a new Limi agent session, or set LIMI_URL and LIMI_TOKEN.');
+  if (personal) throw new Error('Personal commands require a new thread in the personal directory; see calli todo --help.');
+  const base = process.env.CALLI_URL;
+  const token = process.env.CALLI_TOKEN;
+  if (!base || !token) throw new Error('Run inside a new Calli agent session, or set CALLI_URL and CALLI_TOKEN.');
   const apiPath = path === '/command' ? '/api/tools/command' : path.replace('/artifacts/', '/api/tool-artifacts/');
   const res = await fetch(new URL(apiPath, base), {
     method: body ? 'POST' : 'GET', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -65,22 +65,22 @@ export async function transport(path, body, binary = false, personal = false) {
 }
 
 /**
- * `limi browser ARGS` is `agent-browser ARGS` against the person's own browser: Limi starts it when
+ * `calli browser ARGS` is `agent-browser ARGS` against the person's own browser: Calli starts it when
  * needed and says where it listens; the commands themselves are agent-browser's, passed through.
  */
 export async function browserMain(args) {
   const browser = await transport('/command', { op: 'browser.ensure' });
   if (!args.length) { console.log(JSON.stringify(browser)); return 0; }
-  const executable = process.env.LIMI_AGENT_BROWSER || browser.agentBrowser || 'agent-browser';
+  const executable = process.env.CALLI_AGENT_BROWSER || browser.agentBrowser || 'agent-browser';
   const env = { ...process.env, AGENT_BROWSER_CDP: String(browser.port) };
   // Page text is marked as untrusted data, and the helper daemon does not linger once unused.
   env.AGENT_BROWSER_CONTENT_BOUNDARIES ??= '1';
   env.AGENT_BROWSER_IDLE_TIMEOUT_MS ??= '600000';
-  env.AGENT_BROWSER_SESSION ??= 'limi';
+  env.AGENT_BROWSER_SESSION ??= 'calli';
   return new Promise((resolve, reject) => {
     const child = spawn(executable, args, { stdio: 'inherit', env });
     child.on('error', err => reject(err.code === 'ENOENT'
-      ? new Error('这台机器还没装 agent-browser。先告诉用户，征得同意后运行 npm install -g agent-browser（约 115 MB），装好即可使用，不用重启 Limi；也可以设置 LIMI_AGENT_BROWSER 指向已有的可执行文件。') : err));
+      ? new Error('这台机器还没装 agent-browser。先告诉用户，征得同意后运行 npm install -g agent-browser（约 115 MB），装好即可使用，不用重启 Calli；也可以设置 CALLI_AGENT_BROWSER 指向已有的可执行文件。') : err));
     child.on('exit', (code, signal) => resolve(code ?? (signal ? 1 : 0)));
   });
 }
@@ -104,7 +104,7 @@ export async function toolsMain(args) {
   const call = body => transport('/command', body);
   let result;
   if (group === 'tools' && command === 'skill') {
-    check(0, 0); result = { name: 'limi-tools', content: readFileSync(new URL('../../../skills/limi-tools/SKILL.md', import.meta.url), 'utf8') };
+    check(0, 0); result = { name: 'calli-tools', content: readFileSync(new URL('../../../skills/calli-tools/SKILL.md', import.meta.url), 'utf8') };
   } else if (group === 'tools' && command === 'search') {
     check(0, 1); result = await call({ op: 'tools.search', query: positional[0] ?? '' });
   } else if (group === 'tools' && command === 'describe') {
@@ -142,8 +142,8 @@ export async function toolsMain(args) {
 }
 
 export async function notifyMain(args) {
-  if (args.length !== 2 || args[0] !== '--text-file' || !args[1]) throw new Error('Use limi notify --text-file FILE|-');
-  if (!process.env.LIMI_TOOLS_SOCKET || !process.env.LIMI_TOOLS_KEY) throw new Error('notify requires thread-scoped credentials');
+  if (args.length !== 2 || args[0] !== '--text-file' || !args[1]) throw new Error('Use calli notify --text-file FILE|-');
+  if (!process.env.CALLI_TOOLS_SOCKET || !process.env.CALLI_TOOLS_KEY) throw new Error('notify requires thread-scoped credentials');
   const text = readFileSync(args[1] === '-' ? 0 : args[1], 'utf8');
   console.log(JSON.stringify(await transport('/command', { op: 'notify', text })));
 }

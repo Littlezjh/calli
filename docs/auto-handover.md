@@ -42,7 +42,7 @@ Claude/Codex 原有匹配保留。不把普通 429、磁盘 quota exceeded 或�
 
 `packages/daemon/test/auto-handover.test.ts` 覆盖新接口校验/持久化、三层优先级、轮后刷新、不使用未知/陈旧数据、原 agent 摘要、摘要失败、耗尽兜底、队列迁移、取消/恢复再触发、模型切换与失败轮重试、无目标停止、禁止回接、不同成员会话独立去重、协作身份迁移、主控迁移及真实格式错误的适配器识别。
 
-`packages/e2e/test/auto-handover.spec.mjs` 使用真实 daemon、假 agent 和真实无头 Chromium，验证主动交接完整路径、同实例换模型且刷新后分隔仍在、取消、耗尽兜底、跳过未连接/高额度实例、设置保存、桌面拖动/手机点按排序、会话覆盖、协作开关优先级，以及主控通过真实 `limi spawn/send` 在成员交接前后派发消息。
+`packages/e2e/test/auto-handover.spec.mjs` 使用真实 daemon、假 agent 和真实无头 Chromium，验证主动交接完整路径、同实例换模型且刷新后分隔仍在、取消、耗尽兜底、跳过未连接/高额度实例、设置保存、桌面拖动/手机点按排序、会话覆盖、协作开关优先级，以及主控通过真实 `calli spawn/send` 在成员交接前后派发消息。
 
 浏览器检查覆盖 1440×960 桌面、390×844 手机尺寸，亮色与深色。截图保存在 `packages/e2e/shots/auto-handover/`，不纳入 Git。未测实体手机、真实账号耗尽/恢复、真实服务端的配额窗口更新延迟，也未把 zcode 未核实错误纳入识别范围。
 

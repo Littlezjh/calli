@@ -1,3 +1,4 @@
+import '../../web/src/storage-migration';
 import './zh';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -29,7 +30,7 @@ function Notice({ id, view, onInstall }: { id: string | null; view?: string; onI
   const example = EXAMPLES.find(s => view ? s.route === view : s.threadId === id);
   useEffect(() => {
     const scene = example?.id;
-    if (scene) parentMessage({ type: 'limi:scene', scene });
+    if (scene) parentMessage({ type: 'calli:scene', scene });
   }, [example?.id]);
   return <div className="demo-bar showcase-notice" role="note">
     <span><strong>引导体验</strong> · 本地模拟{view && example && <span className="showcase-view-hint">{example.hint}</span>}</span>
@@ -85,16 +86,16 @@ function Walkthrough() {
   const [theme, setTheme] = useState<Theme>(() => document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
   const [installOpen, setInstallOpen] = useState(false);
   useEffect(() => {
-    if (installOpen) parentMessage({ type: 'limi:focus' });
+    if (installOpen) parentMessage({ type: 'calli:focus' });
   }, [installOpen]);
   useEffect(() => () => session.api.dispose(), [session.api]);
   useEffect(() => {
     const receive = (event: MessageEvent) => {
       if (event.origin !== location.origin || event.source !== window.parent || window.parent === window) return;
-      if (event.data?.type === 'limi:theme' && ['light', 'dark'].includes(event.data.theme)) setTheme(event.data.theme);
+      if (event.data?.type === 'calli:theme' && ['light', 'dark'].includes(event.data.theme)) setTheme(event.data.theme);
     };
     window.addEventListener('message', receive);
-    parentMessage({ type: 'limi:ready' });
+    parentMessage({ type: 'calli:ready' });
     return () => window.removeEventListener('message', receive);
   }, []);
   const restart = (threadId: string) => {
@@ -104,7 +105,7 @@ function Walkthrough() {
   const install = () => {
     setInstallOpen(false);
     if (window.parent === window) window.location.assign('../#install');
-    else parentMessage({ type: 'limi:install' });
+    else parentMessage({ type: 'calli:install' });
   };
   return <>
     {new URLSearchParams(location.search).get('scene') === 'handover' ? <HandoverDemo theme={theme} onInstall={() => setInstallOpen(true)} /> : <App key={session.key} token="" onToken={() => {}} showcase={{

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { ExtensionManifest, ExtensionState, ThreadSummary } from '@rah/extension-api';
+import type { ExtensionManifest, ExtensionState, ThreadSummary } from '@calli/extension-api';
 import type { Thread } from '../src/api';
 import { DemoApi } from '../src/demo/DemoApi';
 import { demoData } from '../src/demo/data';
@@ -118,7 +118,7 @@ test('the web host tells views about real changes only, and keeps their storage 
   const store = { getItem: (k: string) => kept.get(k) ?? null, setItem: (k: string, v: string) => void kept.set(k, v), removeItem: (k: string) => void kept.delete(k) };
   const mine = extensionStorage('board', store);
   mine.set('filters', '{"project":"x"}');
-  assert.deepEqual([...kept.keys()], ['rah.ext.board.filters']);
+  assert.deepEqual([...kept.keys()], ['calli.ext.board.filters']);
   assert.equal(mine.get('filters'), '{"project":"x"}');
   assert.equal(extensionStorage('other', store).get('filters'), null);
   mine.set('filters', null);
@@ -237,7 +237,7 @@ test('memory host never queries without installation and drops results after rev
   const m: ExtensionManifest = { ...memoryManifest, permissions: [...memoryManifest.permissions] };
   const input = (installed: boolean, enabled = installed): HostInputs => ({ ...authorizedInputs(), extension: state(m, installed, enabled) });
   let reads = 0;
-  let deliver!: (value: import('@rah/extension-api').MemoryDocument) => void;
+  let deliver!: (value: import('@calli/extension-api').MemoryDocument) => void;
   const live = createWebHost('memory', input(false), {
     openThread: () => {}, ui: () => ({}) as never,
     api: {

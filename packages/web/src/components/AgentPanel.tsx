@@ -9,7 +9,7 @@ import { AgentMark, IconAgents, IconChevron, IconClose, IconEdit, IconExternal, 
 import { t } from '../i18n';
 
 /** The width the user dragged the panel to, on a wide screen. Unset, the panel keeps its own. */
-const WIDTH_KEY = 'rah.agents.width';
+const WIDTH_KEY = 'calli.agents.width';
 const MIN_WIDTH = 320;
 /** What the conversation beside the panel is always left with. */
 const MIN_MAIN = 380;
@@ -154,13 +154,13 @@ export function AgentPanel({ api, memberApi, team, agents, leadAgent, memberMode
   }, []);
   useEffect(() => {
     if (!phone) return;
-    history.pushState({ limiAgents: true }, '');
+    history.pushState({ calliAgents: true }, '');
     const pop = () => {
-      if (latest.current.memberId) { setMemberId(null); history.pushState({ limiAgents: true }, ''); }
+      if (latest.current.memberId) { setMemberId(null); history.pushState({ calliAgents: true }, ''); }
       else latest.current.onClose();
     };
     window.addEventListener('popstate', pop);
-    return () => { window.removeEventListener('popstate', pop); if (history.state?.limiAgents) history.back(); };
+    return () => { window.removeEventListener('popstate', pop); if (history.state?.calliAgents) history.back(); };
   }, [phone]);
   const historyCursor = useRef<number | null>(null);
   const olderRequest = useRef<object | null>(null);
@@ -233,7 +233,7 @@ export function AgentPanel({ api, memberApi, team, agents, leadAgent, memberMode
         {team.members.map(m => <button className="agent-member" key={m.id} onClick={() => setMemberId(m.id)}>
           <div className="agent-member-line"><strong>{m.name}{m.thread?.handover && <span className="auto-member-mark" role="img" aria-label={t('auto.transferred')} title={t('auto.transferred')}><IconHandover size={13} /></span>}</strong><span className={m.thread?.waiting ? 'coord-attention' : ''}>{memberStatus(m)}</span></div>
           <div className="coord-caption">{m.thread?.agent}{m.hostLabel ? ` · ${m.hostLabel}` : ''} · {m.thread?.cwd.split('/').slice(-2).join('/')}</div>
-          <p>{m.latest?.result?.split(/<limi-(?:coordination|team)>/)[0].slice(-160) || m.latest?.text.slice(0, 160) || t('team.waitingTask')}</p>
+          <p>{m.latest?.result?.split(/<(?:calli|limi)-(?:coordination|team)>/)[0].slice(-160) || m.latest?.text.slice(0, 160) || t('team.waitingTask')}</p>
           {m.thread?.unread && <span className="coord-unread">{t('team.newOutput')}</span>}
         </button>)}
       </> : thread ? <ThreadView historyApi={threadApi} historyThreadId={thread.id} items={timeline.items} roots={[thread.cwd, thread.cwdReal]} loadImage={id => threadApi.attachment(thread.id, id)} loadFile={path => threadApi.threadFile(thread.id, path)} hasOlder={older} loadingOlder={loadingOlder} onLoadOlder={() => void loadOlder()} /> : <div className="agent-panel-empty">{t('team.childGone')}</div>}

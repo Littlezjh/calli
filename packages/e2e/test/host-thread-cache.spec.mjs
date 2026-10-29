@@ -7,19 +7,19 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
 
-const SOCKET_IN_HOME = '.local/state/remote-agent-hub/daemon.sock';
+const SOCKET_IN_HOME = '.local/state/calli/daemon.sock';
 
 test('switching machines shows the remembered list at once and never an empty one', { timeout: 150000 }, async () => {
-  const root = mkdtempSync(join(tmpdir(), 'rah-e2e-host-cache-'));
+  const root = mkdtempSync(join(tmpdir(), 'calli-e2e-host-cache-'));
   const nodeHome = join(root, 'devbox');
   mkdirSync(nodeHome);
-  const node = await startDaemon({ RAH_SOCKET: join(nodeHome, SOCKET_IN_HOME) });
+  const node = await startDaemon({ CALLI_SOCKET: join(nodeHome, SOCKET_IN_HOME) });
   const hubHome = join(root, 'hub-home');
   mkdirSync(join(hubHome, '.ssh'), { recursive: true });
   writeFileSync(join(hubHome, '.ssh', 'config'), 'Host devbox\n  HostName 192.0.2.10\n');
   const machines = join(root, 'machines.json');
   writeFileSync(machines, JSON.stringify({ devbox: { home: nodeHome } }));
-  const hub = await startDaemon({ HOME: hubHome, RAH_SSH_BIN: 'fake-ssh', FAKE_SSH_HOSTS: machines });
+  const hub = await startDaemon({ HOME: hubHome, CALLI_SSH_BIN: 'fake-ssh', FAKE_SSH_HOSTS: machines });
   let browser;
   try {
     await api(node, '/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: node.workdir, title: '开发机上的线程' }) });

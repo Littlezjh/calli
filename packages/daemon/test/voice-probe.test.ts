@@ -9,7 +9,7 @@ import { probeVoice } from '../../../scripts/codex-voice-probe.mjs';
 const fixture = fileURLToPath(new URL('./fixtures/fake-codex-voice.mjs', import.meta.url));
 
 async function probe(scenario: string, connect = true) {
-  const dir = await mkdtemp(join(tmpdir(), 'rah-voice-test-'));
+  const dir = await mkdtemp(join(tmpdir(), 'calli-voice-test-'));
   const log = join(dir, 'requests.jsonl');
   try {
     const result = await probeVoice({

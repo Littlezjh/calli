@@ -7,20 +7,20 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
 
-const SOCKET_IN_HOME = '.local/state/remote-agent-hub/daemon.sock';
+const SOCKET_IN_HOME = '.local/state/calli/daemon.sock';
 
 test('the merged list shows every machine, opens a thread on its own machine, and says when one is gone', { timeout: 240000 }, async () => {
-  const root = mkdtempSync(join(tmpdir(), 'rah-e2e-merged-'));
+  const root = mkdtempSync(join(tmpdir(), 'calli-e2e-merged-'));
   const nodeHome = join(root, 'devbox');
   mkdirSync(nodeHome);
-  const node = await startDaemon({ RAH_SOCKET: join(nodeHome, SOCKET_IN_HOME) });
+  const node = await startDaemon({ CALLI_SOCKET: join(nodeHome, SOCKET_IN_HOME) });
   const hubHome = join(root, 'hub-home');
   mkdirSync(join(hubHome, '.ssh'), { recursive: true });
   writeFileSync(join(hubHome, '.ssh', 'config'), 'Host devbox\n  HostName 192.0.2.10\n');
   const machines = join(root, 'machines.json');
   writeFileSync(machines, JSON.stringify({ devbox: { home: nodeHome } }));
-  const hub = await startDaemon({ HOME: hubHome, RAH_SSH_BIN: 'fake-ssh', FAKE_SSH_HOSTS: machines });
-  const shots = process.env.RAH_E2E_SHOTS_DIR;
+  const hub = await startDaemon({ HOME: hubHome, CALLI_SSH_BIN: 'fake-ssh', FAKE_SSH_HOSTS: machines });
+  const shots = process.env.CALLI_E2E_SHOTS_DIR;
   if (shots) mkdirSync(shots, { recursive: true });
   let browser;
   let nodeUp = true;
@@ -59,7 +59,7 @@ test('the merged list shows every machine, opens a thread on its own machine, an
         // Opening a thread elsewhere goes to that machine, the list still merged.
         await row(page, '开发机上的线程').locator('.thread-item').click();
         await page.locator('.topbar-sub').filter({ hasText: /devbox/ }).waitFor({ timeout: 15_000 });
-        assert.equal(await page.evaluate(() => localStorage.getItem('rah.host')), devboxId, 'the page is on devbox now');
+        assert.equal(await page.evaluate(() => localStorage.getItem('calli.host')), devboxId, 'the page is on devbox now');
         if (mobile) await page.locator('.menu-btn').click();
         await page.getByRole('tab', { name: '全部', selected: true }).waitFor();
         assert.equal(await row(page, '开发机上的线程').locator('.row-more').count(), 1, 'on its own machine the thread has its menu again');

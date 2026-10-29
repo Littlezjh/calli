@@ -1,6 +1,6 @@
 import { ExtensionConfiguration } from './ExtensionConfiguration';
 import { useState } from 'react';
-import type { ExtensionState, Permission, ExtensionPackagePreview } from '@rah/extension-api';
+import type { ExtensionState, Permission, ExtensionPackagePreview } from '@calli/extension-api';
 import type { Api, Thread } from '../api';
 import { locale, t, type MessageKey } from '../i18n';
 import { HostIcon } from '../extensions/ui';

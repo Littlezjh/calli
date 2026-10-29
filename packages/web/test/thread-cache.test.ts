@@ -31,7 +31,7 @@ test('each machine keeps its own last list, in memory whole and in storage the m
   const many = Array.from({ length: 250 }, (_, i) => thread(`t${i}`, i % 60));
   rememberThreads('big', many, '2026-10-21T05:03:00Z');
   assert.equal(cachedThreads('big')?.threads.length, 250, 'this page keeps the whole list');
-  const saved = JSON.parse(data.get('rah.threads.v1')!);
+  const saved = JSON.parse(data.get('calli.threads.v1')!);
   assert.equal(saved.big.threads.length, 200, 'storage keeps the most recent');
   assert.ok(saved.big.threads.every((x: Thread) => x.updatedAt >= '2026-10-21T05:10'));
 });
@@ -40,10 +40,10 @@ test('a list survives a reload, and another hub or signing out clears it', t => 
   storage(t);
   saveToken('first');
   rememberThreads(null, [thread('a', 1)], '2026-10-21T05:01:00Z');
-  localStorage.setItem('rah.threads.v1', localStorage.getItem('rah.threads.v1')!);
+  localStorage.setItem('calli.threads.v1', localStorage.getItem('calli.threads.v1')!);
   assert.deepEqual(cachedThreads(null)?.threads.map(x => x.id), ['a']);
   saveToken('second');
   assert.equal(cachedThreads(null), null);
-  localStorage.setItem('rah.threads.v1', 'not json');
+  localStorage.setItem('calli.threads.v1', 'not json');
   assert.equal(cachedThreads(null), null, 'a broken store reads as nothing');
 });

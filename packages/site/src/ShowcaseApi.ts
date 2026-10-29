@@ -1,5 +1,5 @@
 import { ApiError, type Coordination, type Thread, type UserInputAnswer } from '../../web/src/api';
-import type { ExtensionState } from '@rah/extension-api';
+import type { ExtensionState } from '@calli/extension-api';
 import { BUILTIN_MANIFESTS } from '../../web/src/extensions/catalog';
 import { DemoApi, DemoError } from '../../web/src/demo/DemoApi';
 import { demoData, type DemoData } from '../../web/src/demo/data';

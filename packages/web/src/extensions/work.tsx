@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { ExtensionState, WorkProjection } from '@rah/extension-api';
+import type { ExtensionState, WorkProjection } from '@calli/extension-api';
 import type { Api } from '../api';
 import { locale, t, formatDateTime } from '../i18n';
 import { PanelDialog } from '../components/Dialog';

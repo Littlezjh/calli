@@ -13,7 +13,7 @@ import { refuse, type Desktop } from './desktop.js';
 import { HttpError } from './errors.js';
 import type { ExtensionHost } from './extension-host.js';
 import type { HostRegistry } from './hosts.js';
-import { checkGrant, cookieValue, makeGrant, PREVIEW_COOKIE, readPreviewFile } from './preview.js';
+import { checkGrant, cookieValue, LEGACY_PREVIEW_COOKIE, makeGrant, PREVIEW_COOKIE, readPreviewFile } from './preview.js';
 import type { Scheduler } from './scheduler.js';
 import type { TerminalEvent, TerminalManager } from './terminals.js';
 import type { ThreadManager } from './threads.js';
@@ -36,7 +36,7 @@ export interface HttpDeps {
   hosts?: HostRegistry;
   /** Scheduled tasks. Optional so tests can run without one. */
   scheduler?: Scheduler;
-  /** Limi extensions on this machine. Optional so tests can run without them. */
+  /** Calli extensions on this machine. Optional so tests can run without them. */
   extensions?: ExtensionHost;
   /** Host-owned native voice; absent on deployments that do not provide it. */
   voice?: VoiceService;
@@ -371,7 +371,8 @@ export function createHttpServer(deps: HttpDeps): Server {
         return sendJson(res, 200, { providers: await voice.refresh() });
       }
       // Separate browser ownership from the shared Hub bearer. Never accept it from a URL or body.
-      const ownerId = req.headers['x-rah-voice-owner'];
+      // Pages loaded before the rename to Calli still send the old header.
+      const ownerId = req.headers['x-calli-voice-owner'] ?? req.headers['x-rah-voice-owner'];
       if (typeof ownerId !== 'string' || !/^[a-zA-Z0-9_-]{20,128}$/.test(ownerId)) {
         throw new HttpError(400, 'voice_owner_required');
       }
@@ -622,7 +623,7 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (consumer && !extensions?.list().some(s => s.manifest.id === consumer && s.enabled && s.granted.includes('worksource.read'))) throw new HttpError(403, 'work_source_permission_required');
       return sendJson(res, 200, result);
     }
-    // Limi extensions: the built-in catalog and what is installed on this machine.
+    // Calli extensions: the built-in catalog and what is installed on this machine.
     if (parts[1] === 'extensions') {
       if (!extensions) throw new HttpError(501, '此 daemon 未启用扩展');
       if (method === 'GET' && !parts[2]) await voice?.refresh();
@@ -1221,7 +1222,7 @@ export function createHttpServer(deps: HttpDeps): Server {
             }
           })
           .join('/');
-        checkGrant(token, threadId, cookieValue(req.headers.cookie, PREVIEW_COOKIE));
+        checkGrant(token, threadId, cookieValue(req.headers.cookie, PREVIEW_COOKIE) ?? cookieValue(req.headers.cookie, LEGACY_PREVIEW_COOKIE));
         const { real } = manager.threadFile(threadId, rel);
         const { body, contentType } = readPreviewFile(real);
         res.writeHead(200, {

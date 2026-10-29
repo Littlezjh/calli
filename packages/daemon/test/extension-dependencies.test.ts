@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { DaemonExtension, Envelope, ExtensionManifest } from '@rah/extension-api';
+import type { DaemonExtension, Envelope, ExtensionManifest } from '@calli/extension-api';
 import { ExtensionHost } from '../src/extension-host.js';
 import { createHttpServer } from '../src/http.js';
 import { checkManifest } from '../src/extensions.js';
@@ -31,7 +31,7 @@ const manifest = (id: string, extra: Partial<ExtensionManifest> = {}): Extension
 });
 
 function mockHost(catalog: ExtensionManifest[], capabilityResolver?: () => readonly ProviderCapabilitySnapshot[] | null | undefined) {
-  const dir = mkdtempSync(join(tmpdir(), 'rah-ext-deps-'));
+  const dir = mkdtempSync(join(tmpdir(), 'calli-ext-deps-'));
   const store = new Store(dir);
   const manager = new ThreadManager(store, new Map(), [dir], new AttachmentStore(dir));
   const extensions = new ExtensionHost({

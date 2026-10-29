@@ -10,7 +10,7 @@ let browser;
 
 before(async () => {
   daemon = await startDaemon({
-    RAH_AGENTS_JSON: JSON.stringify({ agents: ['claude', 'codex', 'pi'].map((id) => ({
+    CALLI_AGENTS_JSON: JSON.stringify({ agents: ['claude', 'codex', 'pi'].map((id) => ({
       id, adapter: id, command: [process.execPath, join(repoRoot, 'daemon', 'test', 'fixtures', `fake-${id === 'claude' ? 'acp' : id}.mjs`)],
     })) }),
   });
@@ -73,9 +73,9 @@ test('Codex shows current context on desktop and phone in both themes, including
         await page.waitForTimeout(450);
         const bounds = await page.locator('.pop-panel').boundingBox();
         assert.ok(bounds && bounds.y >= 0 && bounds.y + bounds.height <= page.viewportSize().height + 1);
-        if (process.env.RAH_E2E_SHOTS_DIR) {
-          mkdirSync(process.env.RAH_E2E_SHOTS_DIR, { recursive: true });
-          await page.screenshot({ path: join(process.env.RAH_E2E_SHOTS_DIR, `context-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
+        if (process.env.CALLI_E2E_SHOTS_DIR) {
+          mkdirSync(process.env.CALLI_E2E_SHOTS_DIR, { recursive: true });
+          await page.screenshot({ path: join(process.env.CALLI_E2E_SHOTS_DIR, `context-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
         }
         await openUi(page, daemon);
         await selectThread(page, thread, mobile);

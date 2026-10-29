@@ -1,3 +1,4 @@
+import './storage-migration';
 import { StrictMode, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App, type AppStart } from './App';

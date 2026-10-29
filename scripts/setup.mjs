@@ -22,15 +22,16 @@ if (!existsSync(envPath)) {
 }
 
 let lines = readFileSync(envPath, 'utf8').split('\n');
-const at = lines.findIndex((l) => /^RAH_TOKEN=/.test(l));
-const current = at >= 0 ? lines[at].slice('RAH_TOKEN='.length).trim() : '';
+// RAH_TOKEN is its name from before the rename to Calli; a token set then is kept as it is.
+const at = lines.findIndex((l) => /^(CALLI|RAH)_TOKEN=/.test(l));
+const current = at >= 0 ? lines[at].slice(lines[at].indexOf('=') + 1).trim() : '';
 if (current) {
-  console.log('RAH_TOKEN is already set. To see it:');
-  console.log(`  grep '^RAH_TOKEN=' ${envPath}`);
+  console.log('The access token is already set. To see it:');
+  console.log(`  grep -E '^(CALLI|RAH)_TOKEN=' ${envPath}`);
 } else {
   const token = randomBytes(24).toString('hex');
-  if (at >= 0) lines[at] = `RAH_TOKEN=${token}`;
-  else lines.push(`RAH_TOKEN=${token}`);
+  if (at >= 0) lines[at] = `CALLI_TOKEN=${token}`;
+  else lines.push(`CALLI_TOKEN=${token}`);
   writeFileSync(envPath, lines.join('\n'));
   console.log('Generated a random access token:');
   console.log(`  ${token}`);
@@ -40,4 +41,4 @@ if (current) {
 console.log(`
 Next:
   npm run build
-  RAH_ENV_FILE=../../.env npm start -w @rah/daemon   # from the repo root`);
+  CALLI_ENV_FILE=../../.env npm start -w @calli/daemon   # from the repo root`);

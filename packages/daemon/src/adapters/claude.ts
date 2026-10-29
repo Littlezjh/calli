@@ -200,7 +200,7 @@ export class ClaudeAcpAdapter extends AcpAdapter {
   /** Sign in again in the same config directory this instance already uses. */
   loginCommand(): string {
     const configDir = configDirectory(this.env, 'CLAUDE_CONFIG_DIR', ['.claude'], process.cwd());
-    return `env CLAUDE_CONFIG_DIR=${quoteArg(configDir)} ${quoteArg(this.env.RAH_CLAUDE_BIN || claudeCli())} auth login`;
+    return `env CLAUDE_CONFIG_DIR=${quoteArg(configDir)} ${quoteArg(this.env.CALLI_CLAUDE_BIN || claudeCli())} auth login`;
   }
 
   createAccount(directory: string): Promise<Record<string, string>> {
@@ -208,7 +208,7 @@ export class ClaudeAcpAdapter extends AcpAdapter {
   }
 
   startLogin(onSuccess: (account?: string) => Promise<void>) {
-    return startClaudeLogin(this.env.RAH_CLAUDE_BIN || claudeCli(), configDirectory(this.env, 'CLAUDE_CONFIG_DIR', ['.claude'], process.cwd()), this.env, onSuccess);
+    return startClaudeLogin(this.env.CALLI_CLAUDE_BIN || claudeCli(), configDirectory(this.env, 'CLAUDE_CONFIG_DIR', ['.claude'], process.cwd()), this.env, onSuccess);
   }
 
   /** "You've hit your session limit · resets 10:10am (UTC)", and the weekly and usage variants. */
@@ -223,7 +223,7 @@ export class ClaudeAcpAdapter extends AcpAdapter {
     return {
       configDir,
       sessionPath,
-      ...(agentSessionId ? { resumeCommand: `env CLAUDE_CONFIG_DIR=${quoteArg(configDir)} ${quoteArg(this.env.RAH_CLAUDE_BIN || claudeCli())} --resume ${quoteArg(agentSessionId)}` } : {}),
+      ...(agentSessionId ? { resumeCommand: `env CLAUDE_CONFIG_DIR=${quoteArg(configDir)} ${quoteArg(this.env.CALLI_CLAUDE_BIN || claudeCli())} --resume ${quoteArg(agentSessionId)}` } : {}),
     };
   }
 
@@ -324,7 +324,7 @@ export class ClaudeAcpAdapter extends AcpAdapter {
 
 /** The claude CLI used for local one-shot runs: quota reads and account discovery. */
 function claudeCli(): string {
-  return process.env.RAH_CLAUDE_BIN ?? process.env.RAH_CLAUDE_QUOTA_BIN ?? 'claude';
+  return process.env.CALLI_CLAUDE_BIN ?? process.env.CALLI_CLAUDE_QUOTA_BIN ?? 'claude';
 }
 
 const CLAUDE_PLANS: Record<string, string> = { free: 'Free', pro: 'Pro', max: 'Max', team: 'Team', enterprise: 'Enterprise' };

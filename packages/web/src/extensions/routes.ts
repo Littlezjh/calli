@@ -1,5 +1,5 @@
 /** Where extension views live in the address bar. Pure, so it can be tested directly. */
-import type { ExtensionState, ViewContribution } from '@rah/extension-api';
+import type { ExtensionState, ViewContribution } from '@calli/extension-api';
 
 export interface ExtensionViewRef {
   extensionId: string;

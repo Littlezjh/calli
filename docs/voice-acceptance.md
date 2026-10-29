@@ -51,7 +51,7 @@
 ## 自动化覆盖（更新至 2026-10-23）
 
 - `voice-production.test.ts`：真实子进程假 Codex、自主任务审批、任务在语音结束后继续、文字队列、会话交接、账号实例替换和不干净关闭后的隔离。
-- `voice-coordination.test.ts`：实际协作 IPC 和 `limi` 命令，假 Codex 委托 Pi，以及 Pi / Claude Code / agy / TRAE / ZCode 原生会话保留；固定目标、request-id 去重、成员复用、结果不循环、审批播报、结束后不播报及 HTTP owner 隔离。
+- `voice-coordination.test.ts`：实际协作 IPC 和 `calli` 命令，假 Codex 委托 Pi，以及 Pi / Claude Code / agy / TRAE / ZCode 原生会话保留；固定目标、request-id 去重、成员复用、结果不循环、审批播报、结束后不播报及 HTTP owner 隔离。
 - `codex-realtime.test.ts`：协调上下文、显式结果播报、长度限制、停止后拒绝回传，不将结果再次作为任务 prompt。
 - `voice-http.test.ts`：安装门禁、登录与协议状态区分、owner 鉴权、私有 SSE、撤权和提供者变更。
 - `voice-session-integration.test.ts`：旧请求迟到、错误保留、字幕增量/定稿/新句及内存上限。

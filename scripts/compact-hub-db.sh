@@ -8,24 +8,30 @@
 # It schedules a detached job (a systemd transient unit, outside the daemon's cgroup so the stop
 # cannot kill it) that waits for the one-time migration to finish, waits until every thread is
 # idle, then stops the service, vacuums, starts it and checks health. Log:
-# $XDG_STATE_HOME/remote-agent-hub/compact.log
+# $XDG_STATE_HOME/calli/compact.log
 #
 #   scripts/compact-hub-db.sh        vacuum an already-stopped hub's db directly
 set -euo pipefail
 
-NAME=remote-agent-hub
+NAME=calli
+# The service's name before the rename to Calli; an installation not moved yet still runs it.
+if ! systemctl --user cat "$NAME" >/dev/null 2>&1 && systemctl --user cat remote-agent-hub >/dev/null 2>&1; then
+  NAME=remote-agent-hub
+fi
 REPO="$(cd "$(dirname "$0")/.." && pwd -P)"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/$NAME"
 LOG="$STATE_DIR/compact.log"
-ENV_FILE="$(systemctl --user show -p Environment --value "$NAME" | tr ' ' '\n' | sed -n 's/^RAH_ENV_FILE=//p')"
+ENV_FILE="$(systemctl --user show -p Environment --value "$NAME" | tr ' ' '\n' | sed -nE 's/^(CALLI|RAH)_ENV_FILE=//p' | head -1)"
 ENV_FILE="${ENV_FILE:-$HOME/.config/$NAME/.env}"
-env_get() { sed -n "s/^$1=//p" "$ENV_FILE" 2>/dev/null | tail -1 | sed -E "s/^['\"]|['\"]$//g"; }
-HOST="$(env_get RAH_HOST)"; HOST="${HOST:-127.0.0.1}"
-PORT="$(env_get RAH_PORT)"; PORT="${PORT:-8787}"
-TOKEN="$(env_get RAH_TOKEN)"
+env_raw() { sed -n "s/^$1=//p" "$ENV_FILE" 2>/dev/null | tail -1 | sed -E "s/^['\"]|['\"]$//g"; }
+# CALLI_<name>, else RAH_<name> from before the rename.
+env_get() { local v; v="$(env_raw "CALLI_$1")"; [ -n "$v" ] || v="$(env_raw "RAH_$1")"; echo "$v"; }
+HOST="$(env_get HOST)"; HOST="${HOST:-127.0.0.1}"
+PORT="$(env_get PORT)"; PORT="${PORT:-8787}"
+TOKEN="$(env_get TOKEN)"
 case "$HOST" in 0.0.0.0 | ::) HOST=127.0.0.1 ;; esac
 BASE="http://$HOST:$PORT"
-DATA_DIR="$(env_get RAH_DATA_DIR)"; DATA_DIR="${DATA_DIR:-$STATE_DIR/data}"
+DATA_DIR="$(env_get DATA_DIR)"; DATA_DIR="${DATA_DIR:-$STATE_DIR/data}"
 DB="$DATA_DIR/hub.db"
 NODE="$(command -v node)"
 
@@ -46,14 +52,14 @@ if [ "${1:-}" != "--apply" ]; then
 fi
 
 systemctl --user cat "$NAME" >/dev/null 2>&1 || { echo "No $NAME service." >&2; exit 1; }
-if systemctl --user cat rah-compact >/dev/null 2>&1; then
-  echo "A compact job is already scheduled (unit rah-compact). Log: $LOG"
+if systemctl --user cat calli-compact >/dev/null 2>&1; then
+  echo "A compact job is already scheduled (unit calli-compact). Log: $LOG"
   exit 0
 fi
 mkdir -p "$STATE_DIR"
 
 # The job runs as its own transient unit: stopping the daemon must not kill the vacuum.
-systemd-run --user --unit=rah-compact --collect \
+systemd-run --user --unit=calli-compact --collect \
   env REPO="$REPO" NAME="$NAME" BASE="$BASE" TOKEN="$TOKEN" DB="$DB" LOG="$LOG" NODE="$NODE" \
   "$NODE" -e '
     const { execFileSync, spawnSync } = require("child_process");

@@ -25,7 +25,7 @@ after(async () => {
   await daemon?.stop();
 });
 
-const savedToken = () => page.evaluate(() => localStorage.getItem('rah.token'));
+const savedToken = () => page.evaluate(() => localStorage.getItem('calli.token'));
 const dialog = () => page.getByRole('dialog', { name: '连接到 hub' });
 
 test('without a token the page opens on the demo, and asks the daemon nothing', async () => {
@@ -77,7 +77,7 @@ test('the right token connects, and the demo is gone', async () => {
 });
 
 test('a token that stops working goes back to the demo with the dialog saying why', async () => {
-  await page.evaluate(() => localStorage.setItem('rah.token', 'an-old-token-0123456789'));
+  await page.evaluate(() => localStorage.setItem('calli.token', 'an-old-token-0123456789'));
   await page.reload();
   await dialog().getByText('token 无效或已过期').waitFor({ timeout: 15_000 });
   assert.equal(await savedToken(), null);

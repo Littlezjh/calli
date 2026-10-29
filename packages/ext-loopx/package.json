@@ -1,9 +1,9 @@
 {
-  "name": "@rah/ext-loopx",
+  "name": "@calli/ext-loopx",
   "version": "0.1.0",
   "type": "module",
   "license": "MIT",
-  "description": "Optional LoopX work source for Limi",
+  "description": "Optional LoopX work source for Calli",
   "files": [
     "manifest.json",
     "src/*.mjs",

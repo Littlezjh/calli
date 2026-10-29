@@ -29,26 +29,55 @@ export interface Config {
   socket: string | null;
   /** argv that starts OpenSSH, for reaching the daemons of other machines. */
   sshCommand: string[];
-  /** RAH_DESKTOP_VNC as given: unset looks for a VNC server here, `off` turns the desktop off. */
+  /** CALLI_DESKTOP_VNC as given: unset looks for a VNC server here, `off` turns the desktop off. */
   desktopVnc: string | undefined;
-  /** Chrome profile of the person's own browser: `LIMI_BROWSER_PROFILE`, else under the data directory. */
+  /** Chrome profile of the person's own browser: `CALLI_BROWSER_PROFILE`, else under the data directory. */
   browserProfile: string;
-  /** `LIMI_BROWSER_DISPLAY`: the X display to show it on; unset follows the VNC desktop, `off` turns it off. */
+  /** `CALLI_BROWSER_DISPLAY`: the X display to show it on; unset follows the VNC desktop, `off` turns it off. */
   browserDisplay: string | undefined;
 }
 
 /**
- * Where a daemon's socket is, under the home directory, unless RAH_SOCKET says otherwise. A hub
+ * Where a daemon's socket is, under the home directory, unless CALLI_SOCKET says otherwise. A hub
  * looks for it there on a machine it is given, so it is a fixed place and not an XDG one: the
  * environment of an `ssh host command` is not the one the daemon was started in.
  */
-export const SOCKET_IN_HOME = '.local/state/remote-agent-hub/daemon.sock';
+export const SOCKET_IN_HOME = '.local/state/calli/daemon.sock';
+/** Where the socket was before the rename to Calli. Installations that kept that directory still use it. */
+export const LEGACY_SOCKET_IN_HOME = '.local/state/remote-agent-hub/daemon.sock';
+
+/** The new place, unless only the place from before the rename exists. Nothing is moved. */
+export function renamedPath(current: string, legacy: string): string {
+  return !existsSync(current) && existsSync(legacy) ? legacy : current;
+}
+
+/** The directory under the home directory for notes and personal data: `~/.calli`, or `~/.limi` from before. */
+export function homeDirectory(home = process.env.HOME || homedir()): string {
+  return renamedPath(join(home, '.calli'), join(home, '.limi'));
+}
+
+/** Variables from before the rename whose new name is not the prefix swapped. */
+const RENAMED: Record<string, string> = { LIMI_SOCKET: 'CALLI_TEAM_SOCKET', LIMI_KEY: 'CALLI_TEAM_KEY' };
+
+/**
+ * Accepts the `RAH_*` and `LIMI_*` names from before the rename: each one sets its `CALLI_*` name,
+ * unless that is set already, and is then dropped, so no session or child inherits it under a name
+ * nothing masks. Run it before and after loading `.env`, which may use either.
+ */
+export function adoptLegacyEnv(env: NodeJS.ProcessEnv = process.env): void {
+  for (const [key, value] of Object.entries(env)) {
+    const name = RENAMED[key] ?? (/^(RAH|LIMI)_/.test(key) ? key.replace(/^(RAH|LIMI)_/, 'CALLI_') : null);
+    if (!name) continue;
+    if (value !== undefined && env[name] === undefined) env[name] = value;
+    delete env[key];
+  }
+}
 
 /**
  * Loads `.env` from the current directory if it exists, without overriding
  * variables that are already set in the environment.
  */
-export function loadDotEnv(file = process.env.RAH_ENV_FILE ?? '.env'): void {
+export function loadDotEnv(file = process.env.CALLI_ENV_FILE ?? '.env'): void {
   const path = resolve(file);
   if (!existsSync(path)) return;
   for (const raw of readFileSync(path, 'utf8').split('\n')) {
@@ -83,33 +112,36 @@ function splitList(value: string | undefined): string[] {
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const token = env.RAH_TOKEN ?? '';
+  const token = env.CALLI_TOKEN ?? '';
   if (token.length < 16) {
-    throw new Error('RAH_TOKEN is missing or shorter than 16 characters. Set it in .env (see .env.example).');
+    throw new Error('CALLI_TOKEN is missing or shorter than 16 characters. Set it in .env (see .env.example).');
   }
 
-  const dataDir = resolve(env.RAH_DATA_DIR || './data');
+  const dataDir = resolve(env.CALLI_DATA_DIR || './data');
 
-  const workdirs = splitList(env.RAH_WORKDIRS).map((d) => (isAbsolute(d) ? d : resolve(d)));
+  const workdirs = splitList(env.CALLI_WORKDIRS).map((d) => (isAbsolute(d) ? d : resolve(d)));
 
-  const claudeCommand = env.RAH_CLAUDE_ACP_BIN ? [env.RAH_CLAUDE_ACP_BIN] : defaultClaudeCommand();
-  const piCommand = [env.RAH_PI_BIN || 'pi'];
-  const agyCommand = [env.RAH_AGY_BIN || 'agy'];
-  const traexCommand = [env.RAH_TRAEX_BIN || 'traex', 'acp', 'serve'];
-  const codexCommand = [env.RAH_CODEX_BIN || 'codex', 'app-server'];
-  const termShell = env.RAH_TERM_SHELL || null;
+  const claudeCommand = env.CALLI_CLAUDE_ACP_BIN ? [env.CALLI_CLAUDE_ACP_BIN] : defaultClaudeCommand();
+  const piCommand = [env.CALLI_PI_BIN || 'pi'];
+  const agyCommand = [env.CALLI_AGY_BIN || 'agy'];
+  const traexCommand = [env.CALLI_TRAEX_BIN || 'traex', 'acp', 'serve'];
+  const codexCommand = [env.CALLI_CODEX_BIN || 'codex', 'app-server'];
+  const termShell = env.CALLI_TERM_SHELL || null;
 
-  // Serve the built UI from the sibling web package when it exists; RAH_WEB_DIR overrides.
+  // Serve the built UI from the sibling web package when it exists; CALLI_WEB_DIR overrides.
   const bundledWebDir = fileURLToPath(new URL('../../web/dist', import.meta.url));
-  const webDirEnv = env.RAH_WEB_DIR;
+  const webDirEnv = env.CALLI_WEB_DIR;
   const webDir = webDirEnv ? resolve(webDirEnv) : existsSync(bundledWebDir) ? bundledWebDir : null;
 
-  const socketEnv = env.RAH_SOCKET?.trim();
-  const socket = socketEnv === 'off' ? null : socketEnv ? resolve(socketEnv) : join(env.HOME || homedir(), SOCKET_IN_HOME);
+  const socketEnv = env.CALLI_SOCKET?.trim();
+  const home = env.HOME || homedir();
+  // The socket's directory decides, not the socket: it is missing whenever the daemon is stopped.
+  const stateDir = renamedPath(join(home, dirname(SOCKET_IN_HOME)), join(home, dirname(LEGACY_SOCKET_IN_HOME)));
+  const socket = socketEnv === 'off' ? null : socketEnv ? resolve(socketEnv) : join(stateDir, 'daemon.sock');
 
   return {
-    host: env.RAH_HOST || '127.0.0.1',
-    port: Number(env.RAH_PORT || 8787),
+    host: env.CALLI_HOST || '127.0.0.1',
+    port: Number(env.CALLI_PORT || 8787),
     token,
     dataDir,
     workdirs,
@@ -121,9 +153,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     termShell,
     webDir,
     socket,
-    sshCommand: [env.RAH_SSH_BIN || 'ssh'],
-    desktopVnc: env.RAH_DESKTOP_VNC,
-    browserProfile: env.LIMI_BROWSER_PROFILE ? resolve(env.LIMI_BROWSER_PROFILE) : join(dataDir, 'browser', 'profile'),
-    browserDisplay: env.LIMI_BROWSER_DISPLAY?.trim() || undefined,
+    sshCommand: [env.CALLI_SSH_BIN || 'ssh'],
+    desktopVnc: env.CALLI_DESKTOP_VNC,
+    browserProfile: env.CALLI_BROWSER_PROFILE ? resolve(env.CALLI_BROWSER_PROFILE) : join(dataDir, 'browser', 'profile'),
+    browserDisplay: env.CALLI_BROWSER_DISPLAY?.trim() || undefined,
   };
 }

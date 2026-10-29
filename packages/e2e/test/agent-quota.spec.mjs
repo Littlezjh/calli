@@ -7,7 +7,7 @@ import { startDaemon, openUi, launchBrowser, repoRoot } from '../harness.mjs';
 let daemon, browser;
 before(async () => {
   const command = [process.execPath, join(repoRoot, 'daemon/test/fixtures/fake-codex.mjs')];
-  daemon = await startDaemon({ RAH_AGENTS_JSON: JSON.stringify({ agents: [
+  daemon = await startDaemon({ CALLI_AGENTS_JSON: JSON.stringify({ agents: [
     { id: 'codex', adapter: 'codex', label: 'Codex', account: 'primary@example.com', command },
     { id: 'codex2', adapter: 'codex', label: 'Codex 2', account: 'secondary@example.com', command, env: { FAKE_CODEX_WEEKLY_ONLY: '1' } },
     { id: 'pi', adapter: 'pi', command: ['fake-pi'] },
@@ -26,9 +26,9 @@ const account = (page, name) => page.locator('.agent-picker-row').filter({ has: 
 const summary = row => row.locator('.agent-quota-summary');
 const remaining = row => row.getByRole('meter').evaluateAll(nodes => nodes.map(n => n.getAttribute('aria-valuenow')));
 async function shot(page, name) {
-  if (!process.env.RAH_E2E_SHOTS_DIR) return;
-  mkdirSync(process.env.RAH_E2E_SHOTS_DIR, { recursive: true });
-  await page.screenshot({ path: join(process.env.RAH_E2E_SHOTS_DIR, `${name}.png`) });
+  if (!process.env.CALLI_E2E_SHOTS_DIR) return;
+  mkdirSync(process.env.CALLI_E2E_SHOTS_DIR, { recursive: true });
+  await page.screenshot({ path: join(process.env.CALLI_E2E_SHOTS_DIR, `${name}.png`) });
 }
 async function fits(page) {
   const panel = page.locator('.agent-picker-panel');
@@ -142,7 +142,7 @@ test('cached quota survives reload and failed reads; unknown, empty and exhauste
     await fits(page);
     await page.keyboard.press('Escape');
     await page.keyboard.press('Escape');
-    await page.evaluate(() => localStorage.removeItem('rah.quota.v1'));
+    await page.evaluate(() => localStorage.removeItem('calli.quota.v1'));
     await page.reload();
     await page.unroute('**/api/agents/*/quota');
     await page.route('**/api/agents/*/quota', route => route.fulfill({ status: 503, json: { error: 'unavailable' } }));
@@ -160,14 +160,14 @@ test('narrow summaries keep exhaustion visible and expose every omitted pool on 
       const page = await context.newPage();
       page.setDefaultTimeout(10_000);
       // Connect in the harness language before switching the application locale.
-      await page.addInitScript(() => localStorage.setItem('rah.locale', 'zh'));
+      await page.addInitScript(() => localStorage.setItem('calli.locale', 'zh'));
       await openUi(page, daemon);
       await context.route('**/api/agents/*/quota', route => route.fulfill({ json: {
         windows: Array.from({ length: 8 }, (_, i) => ({ label: i % 2 ? '7D' : '5H', scope: `Pool ${i + 1}`, usedPercent: i === 7 ? 100 : 10 })),
         checkedAt: new Date().toISOString(),
       } }));
       // Set the language after the init script, then reload without resetting it.
-      await page.evaluate(value => localStorage.setItem('rah.locale', value), locale.split('-')[0]);
+      await page.evaluate(value => localStorage.setItem('calli.locale', value), locale.split('-')[0]);
       // init scripts run on reload, so use a fresh page sharing the authenticated context.
       const translated = await context.newPage();
       await translated.goto(daemon.base);

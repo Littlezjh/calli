@@ -23,6 +23,11 @@ export function useIsTouch(): boolean {
   return useMediaQuery('(hover: none)');
 }
 
+/** True when the installed app draws into the window's title bar (window-controls-overlay). */
+export function useInTitlebar(): boolean {
+  return useMediaQuery('(display-mode: window-controls-overlay)');
+}
+
 /** True where the thread list is a layer under the conversation, not a column beside it. The stylesheet draws the line at the same width. */
 export function useIsCompact(): boolean {
   return !useMediaQuery('(min-width: 900px)');

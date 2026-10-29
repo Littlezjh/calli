@@ -131,8 +131,8 @@ const scheduleBody = {
 };
 
 before(async () => {
-  dataDir = mkdtempSync(join(tmpdir(), 'rah-sched-test-'));
-  workroot = mkdtempSync(join(tmpdir(), 'rah-sched-work-'));
+  dataDir = mkdtempSync(join(tmpdir(), 'calli-sched-test-'));
+  workroot = mkdtempSync(join(tmpdir(), 'calli-sched-work-'));
   store = new Store(dataDir);
   manager = new ThreadManager(store, new Map([['stub', stubAdapter]]), [workroot], new AttachmentStore(dataDir));
   scheduler = new Scheduler(store, manager, new Map([['stub', stubAdapter]]));

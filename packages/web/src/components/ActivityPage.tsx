@@ -12,7 +12,7 @@ interface Props {
   onError: (e: unknown) => void;
 }
 
-const DAYS_KEY = 'rah.activity.days';
+const DAYS_KEY = 'calli.activity.days';
 const RANGES = [7, 14, 30];
 
 function readRange(): number {

@@ -1,5 +1,5 @@
 /** How threads are arranged in the sidebar. Pure, so it can be tested directly. */
-import type { Attention } from '@rah/extension-api';
+import type { Attention } from '@calli/extension-api';
 import type { AgentInfo, Section, Thread } from './api';
 import { folderName } from './paths';
 import { t } from './i18n';
@@ -34,6 +34,18 @@ export function taggedAgents(agents: Array<Pick<AgentInfo, 'icon'> & { id?: stri
     else if (id && id !== first) tagged.add(id);
   }
   return tagged;
+}
+
+/** A page the sidebar lists behind its "more" button: whether the main area shows it now, and whether it carries a state worth a glance (a desktop still connected). */
+export interface OverflowPage {
+  active: boolean;
+  live?: boolean;
+}
+
+/** The pages after "New thread" and "Plans" sit behind a "more" button — except the one on screen, or one with a state to keep an eye on, which stays a row of its own. */
+export function navOverflow<T extends OverflowPage>(pages: T[]): { shown: T[]; hidden: T[] } {
+  const own = (p: T) => p.active || p.live === true;
+  return { shown: pages.filter(own), hidden: pages.filter((p) => !own(p)) };
 }
 
 /**

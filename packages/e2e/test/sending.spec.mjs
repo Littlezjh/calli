@@ -60,7 +60,7 @@ const box = (page) =>
   page.evaluate(() => ({
     notes: document.querySelectorAll('.composer .note-strip').length,
     pictures: document.querySelectorAll('.composer .attachment img').length,
-    stored: Object.keys(JSON.parse(localStorage.getItem('rah.drafts') ?? '{}')).length,
+    stored: Object.keys(JSON.parse(localStorage.getItem('calli.drafts') ?? '{}')).length,
   }));
 
 test('reloaded while the answer to a send was still on its way back: the message is not a draft again', async () => {

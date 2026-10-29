@@ -62,9 +62,9 @@ interface Editing {
   error: string | null;
 }
 
-const WIDTH_KEY = 'rah.files.width';
-const WRAP_KEY = 'rah.files.wrap';
-const TREE_KEY = 'rah.files.tree';
+const WIDTH_KEY = 'calli.files.width';
+const WRAP_KEY = 'calli.files.wrap';
+const TREE_KEY = 'calli.files.tree';
 /** The conversation keeps at least this much of the window: its composer's bottom row — the
  * collaboration button, the model's name — with nothing cut short. */
 const MIN_CHAT = 440;

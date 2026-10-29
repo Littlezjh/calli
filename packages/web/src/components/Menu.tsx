@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useIsNarrow } from '../hooks';
 import { IconCheck, IconChevron } from './icons';
 
@@ -31,6 +32,16 @@ interface Props {
 
 const EDGE = 8;
 
+/** How long after the finger that opened a sheet lifts before the sheet takes taps. */
+const ARM_DELAY_MS = 400;
+
+/** Fingers on the screen right now. A sheet opened by a long press appears under one of them. */
+let fingers = 0;
+if (typeof document !== 'undefined') {
+  const count = (e: TouchEvent) => { fingers = e.touches.length; };
+  for (const type of ['touchstart', 'touchend', 'touchcancel'] as const) document.addEventListener(type, count, { capture: true, passive: true });
+}
+
 /**
  * A menu with icons, separators and one level of submenus.
  * Wide screens: a floating panel at the pointer, with submenus opening beside their row.
@@ -42,6 +53,34 @@ export function Menu({ label, x, y, corner = 'top-left', items, onClose }: Props
   const panelRef = useRef<HTMLDivElement>(null);
   const [openSub, setOpenSub] = useState<string | null>(null);
   const [pos, setPos] = useState({ left: x, top: y, flip: false, ready: false });
+  // A sheet opened under a finger (a long press) ignores that finger: lifting it must not pick
+  // the row that slid in beneath it, nor close the sheet. Safari sends the lifted finger's mouse
+  // press and click a moment later, wherever it now is, so those are swallowed too, and the sheet
+  // listens only a little after every finger is up.
+  const [armed, setArmed] = useState(() => fingers === 0);
+  useEffect(() => {
+    if (armed) return;
+    let timer: number | undefined;
+    const swallow = (e: Event) => {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    };
+    const up = (e: TouchEvent) => {
+      if (e.touches.length) return;
+      if (e.cancelable) e.preventDefault();
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => setArmed(true), ARM_DELAY_MS);
+    };
+    const touch = ['touchend', 'touchcancel'] as const;
+    const mouse = ['mousedown', 'mouseup', 'click'] as const;
+    for (const type of touch) document.addEventListener(type, up, true);
+    for (const type of mouse) document.addEventListener(type, swallow, true);
+    return () => {
+      window.clearTimeout(timer);
+      for (const type of touch) document.removeEventListener(type, up, true);
+      for (const type of mouse) document.removeEventListener(type, swallow, true);
+    };
+  }, [armed]);
 
   // Keep the panel on screen: measure it, then move it back inside the viewport if needed.
   useLayoutEffect(() => {
@@ -140,8 +179,9 @@ export function Menu({ label, x, y, corner = 'top-left', items, onClose }: Props
 
   if (narrow) {
     const sub = items.find((e): e is MenuItem => e !== 'separator' && e.id === openSub && Boolean(e.submenu));
-    return (
-      <div ref={rootRef}>
+    // On the page itself: inside the drawer, its floating buttons would stay on top of the sheet.
+    return createPortal(
+      <div ref={rootRef} className={armed ? undefined : 'sheet-unarmed'}>
         <div className="sheet-scrim" onClick={onClose} aria-hidden="true" />
         <div className="menu-panel menu-sheet" role="menu" aria-label={sub ? sub.label : label}>
           {sub ? (
@@ -158,7 +198,8 @@ export function Menu({ label, x, y, corner = 'top-left', items, onClose }: Props
             list(items, false)
           )}
         </div>
-      </div>
+      </div>,
+      document.body,
     );
   }
 

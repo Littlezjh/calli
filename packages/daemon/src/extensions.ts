@@ -1,11 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { DatabaseSync } from 'node:sqlite';
-import type { ExtensionManifest, Permission } from '@rah/extension-api';
+import type { ExtensionManifest, Permission } from '@calli/extension-api';
 import { checkExtensionRequirements } from './extension-dependencies.js';
 
 /**
- * Limi extensions on this machine: which ones ship with Limi (the catalog), and which of them the
+ * Calli extensions on this machine: which ones ship with Calli (the catalog), and which of them the
  * user installed here, with the permissions they confirmed. See docs/extensions-design.md.
  * v1 only knows built-in extensions; their code ships with the hub, so installing one stores a
  * decision, it fetches nothing.
@@ -104,7 +104,7 @@ const CORE_ROUTES = new Set(['#/todos', '#/schedules', '#/activity', '#/skills',
 const ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
 
 /**
- * The manifests of the extensions that ship with Limi, by package directory under packages/.
+ * The manifests of the extensions that ship with Calli, by package directory under packages/.
  * Resolved from this file, so the source run (src/) and the build (dist/) find the same files.
  */
 const BUILTIN_PACKAGES = ['ext-board', 'ext-memory', 'ext-voice'];

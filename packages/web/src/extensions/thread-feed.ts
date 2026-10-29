@@ -1,4 +1,4 @@
-import type { ConnectionState } from '@rah/extension-api/web';
+import type { ConnectionState } from '@calli/extension-api/web';
 import type { Api, Thread } from '../api';
 
 /** A live stream is useful only with a successful, current snapshot. Retries never replay events. */

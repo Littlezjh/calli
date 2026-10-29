@@ -7,7 +7,7 @@ import { startDaemon, openUi, api, launchBrowser, repoRoot } from '../harness.mj
 let daemon;
 let browser;
 before(async () => {
-  daemon = await startDaemon({ RAH_AGENTS_JSON: JSON.stringify({ agents: [
+  daemon = await startDaemon({ CALLI_AGENTS_JSON: JSON.stringify({ agents: [
     { id: 'zcode', adapter: 'zcode', command: [process.execPath, join(repoRoot, 'daemon/test/fixtures/fake-zcode.mjs')], env: { FAKE_ZCODE_CONTEXT: '1' } },
     { id: 'zcode-unknown', adapter: 'zcode', command: [process.execPath, join(repoRoot, 'daemon/test/fixtures/fake-zcode.mjs')] },
   ] }) });
@@ -47,10 +47,10 @@ test('zcode context and compression work with measured or unknown usage on deskt
       await page.locator('.usage:visible').click();
       await page.getByText(measured ? '上下文已用 48k / 128k' : '暂未获取上下文用量，下一次响应后更新。', { exact: true }).waitFor();
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
-      if (process.env.RAH_E2E_SHOTS_DIR) {
-        mkdirSync(process.env.RAH_E2E_SHOTS_DIR, { recursive: true });
+      if (process.env.CALLI_E2E_SHOTS_DIR) {
+        mkdirSync(process.env.CALLI_E2E_SHOTS_DIR, { recursive: true });
         await page.waitForTimeout(300);
-        await page.screenshot({ path: join(process.env.RAH_E2E_SHOTS_DIR, `zcode-context-${mobile ? 'phone' : 'desktop'}-${colorScheme}-${measured ? 'measured' : 'unknown'}.png`) });
+        await page.screenshot({ path: join(process.env.CALLI_E2E_SHOTS_DIR, `zcode-context-${mobile ? 'phone' : 'desktop'}-${colorScheme}-${measured ? 'measured' : 'unknown'}.png`) });
       }
       await page.getByRole('button', { name: '压缩 精简较早的对话，释放上下文', exact: true }).click();
       await page.getByText('已压缩', { exact: true }).waitFor();

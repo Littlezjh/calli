@@ -1,5 +1,5 @@
 {
-  "name": "@rah/daemon",
+  "name": "@calli/daemon",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -19,7 +19,7 @@
     "ws": "^8.22.0"
   },
   "devDependencies": {
-    "@rah/extension-api": "*",
+    "@calli/extension-api": "*",
     "@types/node": "^22.10.0",
     "@types/ws": "^8.18.2",
     "tsx": "^4.19.0",

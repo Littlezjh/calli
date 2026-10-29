@@ -1,4 +1,4 @@
-import type { Locale } from '@rah/extension-api/web';
+import type { Locale } from '@calli/extension-api/web';
 import { zh } from './zh';
 import { en } from './en';
 import { ja } from './ja';

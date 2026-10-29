@@ -1,6 +1,6 @@
 import { useEffect, useId, useState, type KeyboardEvent } from 'react';
-import type { WorkProjection } from '@rah/extension-api';
-import type { ExtensionViewProps, WebHost } from '@rah/extension-api/web';
+import type { WorkProjection } from '@calli/extension-api';
+import type { ExtensionViewProps, WebHost } from '@calli/extension-api/web';
 import { buildColumns, COLUMN_IDS, emptyFilters, firstColumn, parseFilters, projectName, showStaleWarning, type BoardCard, type BoardFilters, type ColumnId } from './columns';
 import { t } from './i18n';
 import { collectTags, parseTitleTags } from './tags';

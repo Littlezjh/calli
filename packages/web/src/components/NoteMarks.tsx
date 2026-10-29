@@ -7,8 +7,8 @@ export interface NoteMark {
   range: Range;
 }
 
-/** The highlight registered with the browser for noted passages; styled with ::highlight(rah-note). */
-const HIGHLIGHT = 'rah-note';
+/** The highlight registered with the browser for noted passages; styled with ::highlight(calli-note). */
+const HIGHLIGHT = 'calli-note';
 
 interface Spot {
   id: string;

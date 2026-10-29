@@ -5,7 +5,7 @@ import { connect } from 'node:net';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import type { Duplex } from 'node:stream';
-import { SOCKET_IN_HOME } from './config.js';
+import { LEGACY_SOCKET_IN_HOME, SOCKET_IN_HOME } from './config.js';
 import { HttpError } from './errors.js';
 
 /**
@@ -78,12 +78,13 @@ const TUNNEL_OPTIONS = ['-o', 'ExitOnForwardFailure=yes', '-o', 'ServerAliveInte
 
 // Both run through whatever login shell the account has, so they hand a quoted script to sh.
 /** Says where the daemon's socket is on that machine, and whether a daemon is there. */
-const PROBE_COMMAND = `sh -c 's="$HOME/${SOCKET_IN_HOME}"; if [ -S "$s" ]; then echo "rah-probe ok $s"; else echo "rah-probe missing $s"; fi'`;
+/** The new place first, then the one from before the rename, where a daemon not yet updated listens. */
+const PROBE_COMMAND = `sh -c 'for s in "$HOME/${SOCKET_IN_HOME}" "$HOME/${LEGACY_SOCKET_IN_HOME}"; do if [ -S "$s" ]; then echo "calli-probe ok $s"; exit 0; fi; done; echo "calli-probe missing $HOME/${SOCKET_IN_HOME}"'`;
 /**
  * What a tunnel's session runs: a line once it is up, then nothing until its input closes. The
  * input is a pipe from this process, so a hub that dies takes its tunnels with it.
  */
-const TUNNEL_COMMAND = `sh -c 'echo rah-tunnel ready; exec cat >/dev/null'`;
+const TUNNEL_COMMAND = `sh -c 'echo calli-tunnel ready; exec cat >/dev/null'`;
 
 /** An alias or user@host. Never an option: it must not start with a dash. */
 const TARGET = /^[A-Za-z0-9_][A-Za-z0-9._@:-]{0,254}$/;
@@ -231,9 +232,9 @@ class HostLink {
       child.kill();
     }, READY_TIMEOUT_MS);
     child.stdout?.on('data', (chunk: Buffer) => {
-      if (stdout.includes('rah-tunnel ready')) return;
+      if (stdout.includes('calli-tunnel ready')) return;
       stdout += chunk.toString('utf8');
-      if (stdout.includes('rah-tunnel ready') && this.child === child) {
+      if (stdout.includes('calli-tunnel ready') && this.child === child) {
         if (this.ready) clearTimeout(this.ready);
         void this.check();
         this.poll = setInterval(() => void this.check(), this.opts.healthMs);
@@ -551,7 +552,7 @@ export class HostRegistry {
   }
 
   private open(entry: HostEntry): HostLink {
-    this.tunnelDir ??= mkdtempSync(join(tmpdir(), 'rah-hosts-'));
+    this.tunnelDir ??= mkdtempSync(join(tmpdir(), 'calli-hosts-'));
     const link = new HostLink(entry, join(this.tunnelDir, `${entry.id}.sock`), { ssh: this.ssh, retryMs: this.retryMs, healthMs: this.healthMs });
     this.links.set(entry.id, link);
     link.connect();
@@ -575,7 +576,7 @@ export class HostRegistry {
       child.on('exit', (status) => {
         clearTimeout(timer);
         // A login shell may print things of its own first; the answer is the line that starts with the mark.
-        const [, state, socket] = /^rah-probe (ok|missing) (\/.*)$/m.exec(stdout) ?? [];
+        const [, state, socket] = /^calli-probe (ok|missing) (\/.*)$/m.exec(stdout) ?? [];
         if (state === 'ok') return resolve(socket);
         if (state === 'missing') return reject(new HttpError(502, 'no daemon is listening on that machine', { code: 'daemon_missing', socket }));
         const failure = status === null ? { code: 'unreachable', error: 'ssh did not answer in time' } : sshFailure(stderr);

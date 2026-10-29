@@ -24,7 +24,7 @@ const wait = async (check: () => boolean, timeout = 10000) => {
   while (!check()) { if (Date.now() > until) throw new Error('timed out'); await new Promise(r => setTimeout(r, 20)); }
 };
 async function setup() {
-  const dir = mkdtempSync(join(tmpdir(), 'limi-team-'));
+  const dir = mkdtempSync(join(tmpdir(), 'calli-team-'));
   const cwd = join(dir, 'project'); mkdirSync(cwd);
   const other = join(dir, 'other'); mkdirSync(other);
   const adapters = new Map<string, AgentAdapter>([
@@ -36,7 +36,7 @@ async function setup() {
   ]);
   const store = new Store(dir);
   const manager = new ThreadManager(store, adapters, [cwd, other], new AttachmentStore(dir));
-  const socket = join(dir, 'ipc', 'limi.sock');
+  const socket = join(dir, 'ipc', 'calli.sock');
   const team = new CoordinationManager(store, manager, socket);
   const local = coordinationServer(team); await listenPrivate(local, socket);
   const server = createHttpServer({ manager, token: 'test-token', webDir: null, version: 'test' });
@@ -73,7 +73,7 @@ test('coordination preserves slash commands and their arguments while enriching 
       await h.manager.startTurn(thread.id, { text: 'hello' });
       await wait(() => h.manager.threadView(thread.id).status !== 'running');
       const started = h.store.listEvents(thread.id, 0, -1).filter(e => e.type === 'turn.started').at(-1)!;
-      assert.match(String(started.data.text), /<limi-coordination>/);
+      assert.match(String(started.data.text), /<calli-coordination>/);
       assert.equal(started.data.displayText, 'hello');
     }
   } finally { await h.close(); }
@@ -85,10 +85,10 @@ test('each advertised adapter passes the runtime environment to its fixture', as
     for (const agent of ['pi', 'claude', 'codex', 'agy', 'traex']) {
       const thread = await h.manager.createThread({ agent, cwd: h.cwd });
       await h.team.enable(thread.id);
-      await h.manager.startTurn(thread.id, { text: 'LIMI_ENV' });
+      await h.manager.startTurn(thread.id, { text: 'CALLI_ENV' });
       await wait(() => h.manager.threadView(thread.id).status !== 'running');
       const answer = h.store.listEvents(thread.id, 0, -1).filter(e => e.type === 'message.delta').map(e => e.data.text).join('');
-      assert.match(answer, /limi-ready:true/, agent);
+      assert.match(answer, /calli-ready:true/, agent);
     }
   } finally { await h.close(); }
 });
@@ -98,12 +98,12 @@ test('coordination API enables an idle session and CLI resolves its scoped runti
   try {
     assert.equal((await h.api(`/api/threads/${h.root.id}/coordination`, {}, 'wrong')).status, 401);
     assert.equal((await h.api(`/api/threads/${h.root.id}/coordination`, {})).status, 200);
-    await h.manager.startTurn(h.root.id, { text: 'LIMI_ENV' });
+    await h.manager.startTurn(h.root.id, { text: 'CALLI_ENV' });
     await wait(() => h.manager.threadView(h.root.id).status === 'idle');
     const answer = h.store.listEvents(h.root.id, 0, -1).filter(e => e.type === 'message.delta').map(e => e.data.text).join('');
-    assert.match(answer, /limi-ready:true/);
+    assert.match(answer, /calli-ready:true/);
     const directive = Buffer.from(JSON.stringify({ args: ['spawn', '--agent', 'claude', '--name', 'cli-worker', '--message-file', '-', '--request-id', 'cli-create'], text: 'hello' })).toString('base64');
-    await h.manager.startTurn(h.root.id, { text: `LIMI_COMMAND:${directive}` });
+    await h.manager.startTurn(h.root.id, { text: `CALLI_COMMAND:${directive}` });
     await wait(() => h.team.view(h.root.id)?.members.length === 1);
     assert.equal(h.team.view(h.root.id)!.members[0].thread!.cwd, h.cwd);
     assert.equal(h.manager.threadView(h.root.id).coordination!.children, 1);
@@ -118,20 +118,20 @@ test('Codex writes a file, Claude reviews it, and peer feedback resumes the orig
     await wait(() => h.team.view(h.root.id)!.members[0].latest?.state === 'returned');
     // A member's line in the sidebar says what it came back with; the lead's carries no such line.
     const first = h.team.view(h.root.id)!.members[0];
-    assert.equal(h.manager.threadView(first.id).coordination!.doing, first.latest!.result.split('<limi-coordination>')[0].trim().slice(0, 200));
+    assert.equal(h.manager.threadView(first.id).coordination!.doing, first.latest!.result.split('<calli-coordination>')[0].trim().slice(0, 200));
     assert.ok(h.manager.threadView(first.id).coordination!.doing);
     assert.equal(h.manager.threadView(h.root.id).coordination!.doing, undefined);
-    await h.team.command(h.root.id, spawn('writer', 'codex', 'LIMI_WRITE'));
+    await h.team.command(h.root.id, spawn('writer', 'codex', 'CALLI_WRITE'));
     await wait(() => {
       try { return readFileSync(join(h.cwd, 'review-document.md'), 'utf8').includes('## Errors'); } catch { return false; }
     });
     const state = h.team.view(h.root.id)!;
     const writer = state.members.find(m => m.name === 'writer')!;
     const reviewer = state.members.find(m => m.name === 'reviewer')!;
-    assert.ok(state.messages.some(d => d.from === writer.id && d.to === reviewer.id && d.text === 'LIMI_REVIEW'));
+    assert.ok(state.messages.some(d => d.from === writer.id && d.to === reviewer.id && d.text === 'CALLI_REVIEW'));
     assert.ok(state.messages.some(d => d.from === reviewer.id && d.to === writer.id && d.kind === 'result'));
     // Every result names the message it answers, so a reader can hang it under that message.
-    const asked = state.messages.find(d => d.from === writer.id && d.to === reviewer.id && d.text === 'LIMI_REVIEW')!;
+    const asked = state.messages.find(d => d.from === writer.id && d.to === reviewer.id && d.text === 'CALLI_REVIEW')!;
     assert.equal(state.messages.find(d => d.from === reviewer.id && d.to === writer.id && d.kind === 'result')!.replyTo, asked.id);
     assert.equal(asked.replyTo, null);
     await wait(() => h.manager.threadView(writer.id).status === 'idle');
@@ -417,8 +417,8 @@ test('running unconfigured threads queue collaboration without refreshing until 
     const event = h.store.listEvents(h.root.id, 0, -1).find(e => e.type === 'turn.started' && String(e.data.text).includes('一起分析'))!;
     assert.equal(String(event.data.text).split('[指定协作对象]').length - 1, 1);
     assert.match(String(event.data.text), /只给建议/);
-    await h.manager.startTurn(h.root.id, { text: 'LIMI_ENV' });
-    await wait(() => h.store.listEvents(h.root.id, 0, -1).some(e => e.type === 'message.delta' && String(e.data.text).includes('limi-ready:true')));
+    await h.manager.startTurn(h.root.id, { text: 'CALLI_ENV' });
+    await wait(() => h.store.listEvents(h.root.id, 0, -1).some(e => e.type === 'message.delta' && String(e.data.text).includes('calli-ready:true')));
   } finally { await h.close(); }
 });
 
@@ -517,7 +517,7 @@ test('natural completion enables queued collaboration without cancelling the act
 
 /** Another machine: a daemon of its own, reached the way the hub's tunnels reach one. */
 async function otherMachine() {
-  const dir = mkdtempSync(join(tmpdir(), 'limi-remote-'));
+  const dir = mkdtempSync(join(tmpdir(), 'calli-remote-'));
   const cwd = join(dir, 'far-project'); mkdirSync(cwd);
   const store = new Store(dir);
   const manager = new ThreadManager(store, new Map<string, AgentAdapter>([['pi', new PiRpcAdapter([process.execPath, join(fixtures, 'fake-pi.mjs')])]]), [cwd], new AttachmentStore(dir));

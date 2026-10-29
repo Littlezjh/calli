@@ -27,7 +27,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Check website
-        run: npm run typecheck -w @rah/site && npm test -w @rah/site
+        run: npm run typecheck -w @calli/site && npm test -w @calli/site
       - name: Build website
         run: npm run build:site
       - name: Configure Pages

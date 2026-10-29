@@ -2,14 +2,15 @@ import brandIcon from '../assets/calli.svg';
 import { Fragment, useEffect, useState, type MouseEvent, type ReactNode } from 'react';
 import type { AgentInfo, HostInfo, SearchHit, Section, Thread } from '../api';
 import { clockLabel } from '../timeline';
-import { useLongPress, useStoredFlag, useStoredSet } from '../hooks';
+import { useInTitlebar, useLongPress, useStoredFlag, useStoredSet } from '../hooks';
 import { attentionCount, threadMark, waitingLabel } from '../notices';
 import { folderName } from '../paths';
-import { buildActivity, buildMerged, buildSidebar, handoverGroups, markTerms, projectDir, SEARCH_MIN, taggedAgents, type HostSource } from '../sidebar';
+import { buildActivity, buildMerged, buildSidebar, handoverGroups, markTerms, navOverflow, projectDir, SEARCH_MIN, taggedAgents, type HostSource } from '../sidebar';
 import { timeAgo } from '../sessions';
 import { deliveredPreview } from '../timeline';
 import { HostSwitcher } from './Hosts';
-import type { HostIconName } from '@rah/extension-api';
+import { Menu } from './Menu';
+import type { HostIconName } from '@calli/extension-api';
 import { HostIcon } from '../extensions/ui';
 import { AgentMark, IconBell, IconChevron, IconClock, IconClose, IconDesktop, IconEdit, IconFolder, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconSidebar } from './icons';
 import { t } from '../i18n';
@@ -22,6 +23,19 @@ export interface ExtensionNavEntry {
   label: string;
   icon: HostIconName;
   active: boolean;
+  onOpen: () => void;
+}
+
+/** A page the nav lists behind its "more" button: what it is called, and a state worth a glance, like a desktop still connected while minimized. */
+interface NavPage {
+  key: string;
+  label: string;
+  icon: (p: { size?: number }) => JSX.Element;
+  active: boolean;
+  /** A state to keep visible at a glance; such a page stays a row instead of hiding behind the button. */
+  live?: boolean;
+  /** What the live state says, shown on the dot and on hover. */
+  liveLabel?: string;
   onOpen: () => void;
 }
 
@@ -110,7 +124,7 @@ export const SIDEBAR_SHORTCUT = typeof navigator !== 'undefined' && /Mac|iPhone|
 
 export function Sidebar({
   personalDirectory,
-  storagePrefix = 'rah.sidebar',
+  storagePrefix = 'calli.sidebar',
   showEmptySections = true,
   threads,
   members,
@@ -163,12 +177,15 @@ export function Sidebar({
   const [teamOpen, setTeamOpen] = useState<Map<string, boolean>>(new Map());
   // The search field is put away behind a button until it is asked for.
   const [searching, setSearching] = useState(false);
+  // Where the nav's "more" pages menu opened from; null when closed.
+  const [pagesMenu, setPagesMenu] = useState<[number, number] | null>(null);
   const closeSearch = () => {
     setSearch('');
     setSearching(false);
   };
   // A long press on a row is the phone's right click.
   const longPress = useLongPress<Thread>(onThreadMenu);
+  const inTitlebar = useInTitlebar() && !compact;
   const [collapsed, toggle] = useStoredSet(`${storagePrefix}.collapsed`);
   // The other way to read the list: by what is going on, not by where a thread is filed. Like Codex's activity view.
   const [byActivity, setByActivity] = useStoredFlag(`${storagePrefix}.activity`);
@@ -467,6 +484,14 @@ export function Sidebar({
     </nav>
   );
 
+  // The pages after "Plans": behind a "more" button, except the one on screen or one with a state to keep an eye on.
+  const pages: NavPage[] = [
+    ...(onOpenSchedules ? [{ key: 'schedules', label: t('sidebar.schedules'), icon: IconClock, active: schedulesActive, onOpen: onOpenSchedules }] : []),
+    ...(onOpenDesktop ? [{ key: 'desktop', label: t('desktop.title'), icon: IconDesktop, active: false, live: desktopRunning, liveLabel: t('desktop.running'), onOpen: onOpenDesktop }] : []),
+    ...extensionNav.map((entry) => ({ key: entry.key, label: entry.label, icon: (p: { size?: number }) => <HostIcon name={entry.icon} size={p.size} />, active: entry.active, onOpen: entry.onOpen })),
+  ];
+  const { shown: pagesShown, hidden: pagesHidden } = navOverflow(pages);
+
   const searchInput = (
     <input
       type="search"
@@ -482,8 +507,17 @@ export function Sidebar({
     />
   );
 
+  const hideButton = onHide && (
+    <button className={`${inTitlebar ? 'icon-btn' : 'round-btn'} sidebar-hide`} aria-label={t('sidebar.hide')} title={t('sidebar.hideKey', SIDEBAR_SHORTCUT)} onClick={onHide}>
+      <IconSidebar size={16} />
+    </button>
+  );
+
   return (
     <div className={`sidebar-inner${compact ? ' compact' : ''}`}>
+      {/* In the window's title bar, as in Codex: beside the system's buttons only the list's own
+          toggle; the rest of the strip drags the window, and the name and its buttons sit below. */}
+      {inTitlebar && <div className="sidebar-titlebar">{hideButton}</div>}
       <div className="sidebar-top">
         {searching ? (
           <label className="sidebar-search-box">
@@ -497,11 +531,7 @@ export function Sidebar({
           <>
             <span className="brand"><img className="brand-icon" src={brandIcon} alt="" width="32" height="32" /><span>{t('app.name')}</span></span>
             <span className="sidebar-top-actions">
-              {onHide && (
-                <button className="round-btn sidebar-hide" aria-label={t('sidebar.hide')} title={t('sidebar.hideKey', SIDEBAR_SHORTCUT)} onClick={onHide}>
-                  <IconSidebar size={16} />
-                </button>
-              )}
+              {!inTitlebar && hideButton}
               <button
                 className={`round-btn activity-btn${byActivity ? ' on' : ''}`}
                 aria-label={t('sidebar.byActivity')}
@@ -526,27 +556,50 @@ export function Sidebar({
         {down && <p className="group-empty top">{t('sidebar.hostDown')}</p>}
         {!down && !search.trim() && (
           <div className="side-nav">
-            {/* On a wide screen a new thread is the first row, like Codex; a phone keeps the floating button by the thumb. */}
-            {!compact && (
-              <button className="side-link" onClick={onNew}>
-                <IconEdit size={17} /> {t('sidebar.newThread')}
-              </button>
+            {(() => {
+              const links = [
+                // On a wide screen a new thread is the first row, like Codex; a phone keeps the floating button by the thumb.
+                !compact && (
+                  <button key="new" className="side-link" onClick={onNew}>
+                    <IconEdit size={17} /> {t('sidebar.newThread')}
+                  </button>
+                ),
+                onOpenTodos && <button key="todos" className={`side-link${todosActive ? ' active' : ''}`} aria-current={todosActive ? 'page' : undefined} onClick={onOpenTodos}>
+                  <IconList size={compact ? 21 : 17} /> {t('todos.title')}
+                </button>,
+                ...pagesShown.map((page) => (
+                  <button key={page.key} className={`side-link${page.active ? ' active' : ''}`} aria-current={page.active ? 'page' : undefined} title={page.live ? page.liveLabel : undefined} onClick={page.onOpen}>
+                    <page.icon size={compact ? 21 : 17} /> {page.label}
+                    {page.live && <span className="side-desktop-live" role="img" aria-label={page.liveLabel} />}
+                  </button>
+                )),
+              ].filter(Boolean);
+              if (!pagesHidden.length) return links;
+              const more = (
+                <button
+                  key="more"
+                  className="side-link side-more"
+                  aria-label={t('sidebar.morePages')}
+                  title={t('sidebar.morePages')}
+                  aria-haspopup="menu"
+                  aria-expanded={pagesMenu !== null}
+                  onClick={(e) => setPagesMenu(below(e))}
+                >
+                  <IconMore size={compact ? 20 : 17} />
+                </button>
+              );
+              // The "more" button shares the last row instead of taking one of its own.
+              return [...links.slice(0, -1), <div key="last" className="side-nav-row">{links.at(-1)}{more}</div>];
+            })()}
+            {pagesMenu && (
+              <Menu
+                label={t('sidebar.morePages')}
+                x={pagesMenu[0]}
+                y={pagesMenu[1]}
+                items={pagesHidden.map((page) => ({ id: page.key, label: page.label, icon: page.icon, onSelect: page.onOpen }))}
+                onClose={() => setPagesMenu(null)}
+              />
             )}
-            {onOpenTodos && <button className={`side-link${todosActive ? ' active' : ''}`} aria-current={todosActive ? 'page' : undefined} onClick={onOpenTodos}>
-              <IconList size={compact ? 21 : 17} /> {t('todos.title')}
-            </button>}
-            {onOpenSchedules && <button className={`side-link${schedulesActive ? ' active' : ''}`} aria-current={schedulesActive ? 'page' : undefined} onClick={onOpenSchedules}>
-              <IconClock size={compact ? 21 : 17} /> {t('sidebar.schedules')}
-            </button>}
-            {onOpenDesktop && <button className="side-link side-desktop" title={desktopRunning ? t('desktop.running') : undefined} onClick={onOpenDesktop}>
-              <IconDesktop size={compact ? 21 : 17} /> {t('desktop.title')}
-              {desktopRunning && <span className="side-desktop-live" role="img" aria-label={t('desktop.running')} />}
-            </button>}
-            {extensionNav.map((entry) => (
-              <button key={entry.key} className={`side-link${entry.active ? ' active' : ''}`} aria-current={entry.active ? 'page' : undefined} onClick={entry.onOpen}>
-                <HostIcon name={entry.icon} size={compact ? 21 : 17} /> {entry.label}
-              </button>
-            ))}
           </div>
         )}
         {!down && groups}

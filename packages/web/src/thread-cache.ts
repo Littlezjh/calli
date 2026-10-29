@@ -1,6 +1,6 @@
 import type { Thread } from './api';
 
-const KEY = 'rah.threads.v1';
+const KEY = 'calli.threads.v1';
 /** Enough to fill the sidebar at once; the live list replaces it a moment later anyway. */
 const MAX_STORED = 200;
 const MAX_HOSTS = 8;

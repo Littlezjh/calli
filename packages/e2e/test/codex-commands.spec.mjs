@@ -7,7 +7,7 @@ import { startDaemon, openUi, api, launchBrowser, repoRoot } from '../harness.mj
 let daemon;
 let browser;
 before(async () => {
-  daemon = await startDaemon({ RAH_AGENTS_JSON: JSON.stringify({ agents: ['claude', 'codex'].map((id) => ({
+  daemon = await startDaemon({ CALLI_AGENTS_JSON: JSON.stringify({ agents: ['claude', 'codex'].map((id) => ({
     id, adapter: id, command: [process.execPath, join(repoRoot, 'daemon/test/fixtures', `fake-${id === 'claude' ? 'acp' : id}.mjs`)],
   })) }) });
   browser = await launchBrowser();
@@ -46,9 +46,9 @@ test('Codex quota, commands and skills work on desktop and phone in both themes'
         await page.waitForTimeout(400);
         const bounds = await panel.boundingBox();
         assert.ok(bounds && bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= page.viewportSize().width + 1 && bounds.y + bounds.height <= page.viewportSize().height + 1);
-        if (process.env.RAH_E2E_SHOTS_DIR) {
-          mkdirSync(process.env.RAH_E2E_SHOTS_DIR, { recursive: true });
-          await page.screenshot({ path: join(process.env.RAH_E2E_SHOTS_DIR, `codex-quota-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
+        if (process.env.CALLI_E2E_SHOTS_DIR) {
+          mkdirSync(process.env.CALLI_E2E_SHOTS_DIR, { recursive: true });
+          await page.screenshot({ path: join(process.env.CALLI_E2E_SHOTS_DIR, `codex-quota-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
         }
         await panel.getByRole('button', { name: '关闭' }).click();
         await input.fill('/review 检查错误处理');
@@ -57,7 +57,7 @@ test('Codex quota, commands and skills work on desktop and phone in both themes'
         await input.fill('/inspect');
         await page.getByRole('option', { name: /\/inspect/ }).waitFor();
         await page.waitForTimeout(400);
-        if (process.env.RAH_E2E_SHOTS_DIR) await page.screenshot({ path: join(process.env.RAH_E2E_SHOTS_DIR, `codex-skill-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
+        if (process.env.CALLI_E2E_SHOTS_DIR) await page.screenshot({ path: join(process.env.CALLI_E2E_SHOTS_DIR, `codex-skill-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
         await input.press('Enter');
         await page.getByRole('button', { name: '发送', exact: true }).click();
         await page.getByText(/skills:inspect@/).waitFor();

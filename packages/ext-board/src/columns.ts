@@ -1,6 +1,6 @@
-import type { AttentionKind, ThreadSummary } from '@rah/extension-api';
+import type { AttentionKind, ThreadSummary } from '@calli/extension-api';
 import { parseTitleTags, validTag } from './tags';
-import type { ConnectionState } from '@rah/extension-api/web';
+import type { ConnectionState } from '@calli/extension-api/web';
 
 export function showStaleWarning(state: ConnectionState, observedAt: string | null): boolean {
   return state !== 'live' && observedAt !== null;

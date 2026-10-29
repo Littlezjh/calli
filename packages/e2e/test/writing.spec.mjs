@@ -6,8 +6,8 @@ import { deflateSync } from 'node:zlib';
 import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
 
 let daemon, browser;
-const shots = process.env.RAH_E2E_SHOTS_DIR;
-const prefix = process.env.RAH_E2E_SHOTS_PREFIX ?? 'writing';
+const shots = process.env.CALLI_E2E_SHOTS_DIR;
+const prefix = process.env.CALLI_E2E_SHOTS_PREFIX ?? 'writing';
 before(async () => {
   daemon = await startDaemon();
   browser = await launchBrowser();
@@ -477,7 +477,7 @@ test('late saves preserve newer typing and cannot change another file; preview r
 
     await panel.getByRole('button', { name: '关闭文件', exact: true }).click();
     writeFileSync(file, BODY + '\n```mermaid\nflowchart LR\n A["【待补：例子】"] --> B\n```\n');
-    assert.equal(await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('rah.writing.drafts') ?? '{}')).length), 0, 'background saves clear only their saved draft');
+    assert.equal(await page.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('calli.writing.drafts') ?? '{}')).length), 0, 'background saves clear only their saved draft');
     await openBody();
     await page.waitForFunction(() => document.querySelectorAll('.files-diagram svg').length === 2);
     const first = await panel.locator('.files-diagram').first().innerHTML();

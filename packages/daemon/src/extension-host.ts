@@ -5,7 +5,7 @@ import {
 } from './extension-dependencies.js';
 import { ExternalExtensions } from './external-extensions.js';
 import type { AgentAdapter, MemoryReader } from './adapters/types.js';
-import type { MemorySource } from '@rah/extension-api';
+import type { MemorySource } from '@calli/extension-api';
 import { createHash, randomUUID } from 'node:crypto';
 import type {
   DaemonExtension,
@@ -18,7 +18,7 @@ import type {
   ThreadSummary,
   TurnSummary,
   WaitSummary,
-} from '@rah/extension-api';
+} from '@calli/extension-api';
 import type { StoredEvent } from './events.js';
 import { HttpError } from './errors.js';
 import { exactGrant, type ExtensionRecord, type ExtensionStore } from './extensions.js';
@@ -28,7 +28,7 @@ import type { ThreadView } from './threads.js';
 /**
  * The daemon side of the extension host: install state, and the notification bus in-process
  * extensions listen on. Raw events never reach an extension. Each one is projected onto the
- * whitelisted summaries of @rah/extension-api first, so message text, images, tool calls, answers,
+ * whitelisted summaries of @calli/extension-api first, so message text, images, tool calls, answers,
  * `preview` and queued text stay behind. Delivery is asynchronous and in order; a queue that runs
  * over is dropped and replaced by `host.resync`, and nothing is written to disk.
  */
@@ -44,7 +44,7 @@ export interface ExtensionHostOptions {
   adapters?: ReadonlyMap<string, AgentAdapter>;
   store: ExtensionStore;
   source: HostSource;
-  /** Extensions that ship with Limi (see extensions.ts, loadCatalog). */
+  /** Extensions that ship with Calli (see extensions.ts, loadCatalog). */
   catalog: ExtensionManifest[];
   /** A turn's `turn.started`, for turns that began before the host was listening. */
   turnStart?: (threadId: string, turnId: string) => StoredEvent | undefined;

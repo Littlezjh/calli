@@ -10,7 +10,7 @@ const e2ePackage = JSON.parse(readFileSync(new URL('./package.json', import.meta
 
 // Exercise the real npm entry points in a tiny repository, without Vite or browsers.
 function fixture(t) {
-  const root = mkdtempSync(join(tmpdir(), 'rah-e2e-runner-'));
+  const root = mkdtempSync(join(tmpdir(), 'calli-e2e-runner-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const e2e = join(root, 'packages/e2e');
   mkdirSync(join(e2e, 'test'), { recursive: true });
@@ -84,7 +84,7 @@ test('workspace E2E entry forwards file selection and Node flags, rebuilding on 
   const repo = fixture(t);
   for (let i = 0; i < 2; i++) {
     const result = repo.run([
-      'test', '-w', '@rah/e2e', '--', '--test-name-pattern=^selected', 'test/two.spec.mjs',
+      'test', '-w', '@calli/e2e', '--', '--test-name-pattern=^selected', 'test/two.spec.mjs',
     ], { RUNNER_FILTER: '1' });
     assert.equal(result.status, 0, result.stdout + result.stderr);
   }

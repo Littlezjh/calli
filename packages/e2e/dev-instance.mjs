@@ -4,12 +4,17 @@
  *
  *   node packages/e2e/dev-instance.mjs           start, smoke test, keep running until Ctrl-C
  *   node packages/e2e/dev-instance.mjs --check   start, smoke test, stop
+ *   node packages/e2e/dev-instance.mjs --host 0.0.0.0   bind where a browser can reach it
  *
  * Expects a build; scripts/init.sh builds first.
  */
+import { networkInterfaces } from 'node:os';
 import { startDaemon, api } from './harness.mjs';
 
-const check = process.argv.includes('--check');
+const args = process.argv.slice(2);
+const check = args.includes('--check');
+const hostIndex = args.indexOf('--host');
+const host = hostIndex >= 0 ? args[hostIndex + 1] : undefined;
 
 async function smoke(daemon) {
   const agents = await (await api(daemon, '/api/agents')).json();
@@ -37,7 +42,7 @@ async function smoke(daemon) {
   }
 }
 
-const daemon = await startDaemon();
+const daemon = await startDaemon(host ? { CALLI_HOST: host } : {});
 let stopping = false;
 async function stop(code) {
   if (stopping) return;
@@ -56,10 +61,21 @@ try {
 }
 
 console.log(`Smoke test passed.
-  URL      ${daemon.base}/
+  URL      ${urls(daemon, host).map((u) => `${u}/`).join('   ')}
   Token    ${daemon.token}
   PID      ${daemon.pid} (daemon), ${process.pid} (this script)
   Data     ${daemon.dataDir}
   Workdir  ${daemon.workdir}`);
 if (check) await stop(0);
 else console.log(`Running. Stop with Ctrl-C, or: kill ${process.pid}  (cleans up the daemon and its temp dirs)`);
+
+/** The addresses a browser can open: the one asked for, or every interface when asked for all. */
+function urls(daemon, host) {
+  const port = daemon.base.split(':').pop();
+  const listed = host && host !== '127.0.0.1' && host !== 'localhost'
+    ? host === '0.0.0.0' || host === '::'
+      ? Object.values(networkInterfaces()).flat().filter((a) => a && a.family === 'IPv4' && !a.internal).map((a) => a.address)
+      : [host]
+    : ['127.0.0.1'];
+  return (listed.length ? listed : ['127.0.0.1']).map((a) => `http://${a}:${port}`);
+}

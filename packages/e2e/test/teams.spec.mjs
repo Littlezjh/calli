@@ -4,7 +4,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
 
 let daemon, browser;
-const shots = '/tmp/limi-team-shots';
+const shots = '/tmp/calli-team-shots';
 before(async () => {
   daemon = await startDaemon();
   mkdirSync(shots, { recursive: true });
@@ -19,7 +19,7 @@ for (const phone of [false, true]) for (const theme of ['light', 'dark']) test(`
   const page = await context.newPage();
   const errors = []; page.on('pageerror', e => errors.push(e.message));
   try {
-    await page.addInitScript(theme => localStorage.setItem('rah.appearance', JSON.stringify({ mode: theme, palette: 'paper' })), theme);
+    await page.addInitScript(theme => localStorage.setItem('calli.appearance', JSON.stringify({ mode: theme, palette: 'paper' })), theme);
     await openUi(page, daemon);
     if (!phone) {
       await page.getByRole('button', { name: '配置', exact: true }).click();

@@ -631,9 +631,33 @@ export function Composer({
     document.addEventListener('pointercancel', fold, true);
     leaving.current = off;
   };
+  // A touch on the box itself never folds it. Safari moves the focus at the click, not the
+  // press, and a button cannot hold it, so the focus ends up on the page. Folding then would pull
+  // the button, and the menu it opened, away. The box stays whole until a tap lands outside it.
+  // The press ends with the click, or shortly after the finger lifts.
+  const boxRef = useRef<HTMLDivElement>(null);
+  const boxPress = useRef<number | null>(null);
+  const endBoxPress = () => {
+    if (boxPress.current === null) return;
+    window.clearTimeout(boxPress.current);
+    boxPress.current = null;
+  };
   useEffect(() => {
-    const down = () => { pressing.current = true; };
-    const up = () => { pressing.current = false; };
+    const down = (e: PointerEvent) => {
+      pressing.current = true;
+      // With the focus left on the page (see above) there is no blur to fold on; a tap elsewhere is.
+      if (e.target instanceof Node && !boxRef.current?.contains(e.target)) {
+        endBoxPress();
+        if (!boxRef.current?.contains(document.activeElement)) leave();
+      }
+    };
+    const up = () => {
+      pressing.current = false;
+      if (boxPress.current !== null) {
+        window.clearTimeout(boxPress.current);
+        boxPress.current = window.setTimeout(endBoxPress, 1000);
+      }
+    };
     document.addEventListener('pointerdown', down, true);
     document.addEventListener('pointerup', up);
     document.addEventListener('pointercancel', up);
@@ -827,16 +851,15 @@ export function Composer({
         </div>}
         {goalState && goal?.live && <GoalCard goal={goalState} running={running} actions={goal.actions} controls={goal.controls} onAction={chooseGoal} />}
         <div
+          ref={boxRef}
           className={`composer-box${dragOver ? ' drag-over' : ''}${collapsed ? ' collapsed' : ''}`}
           onPointerDownCapture={(e) => {
-            // Touch browsers may blur the field without focusing the tapped button. Keep focus
-            // inside the box so folding cannot unmount its trigger or newly opened menu.
-            if (e.pointerType === 'mouse' || !(e.target instanceof Element)) return;
-            const button = e.target.closest('button');
-            if (button && !button.disabled) {
-              e.preventDefault();
-              button.focus({ preventScroll: true });
-            }
+            if (e.pointerType === 'mouse') return;
+            if (boxPress.current !== null) window.clearTimeout(boxPress.current);
+            boxPress.current = window.setTimeout(endBoxPress, 1500);
+          }}
+          onClickCapture={() => {
+            if (boxPress.current !== null) window.setTimeout(endBoxPress, 0);
           }}
           onFocus={() => {
             leaving.current?.();
@@ -846,7 +869,7 @@ export function Composer({
           onBlur={(e) => {
             // A tap on a button in the box moves the focus to it; the box stays whole so the
             // change of shape cannot pull the button out from under the finger.
-            if (!e.currentTarget.contains(e.relatedTarget)) leave();
+            if (!e.currentTarget.contains(e.relatedTarget) && boxPress.current === null) leave();
           }}
           onDragOver={(e) => {
             if (!hasFiles(e)) return;

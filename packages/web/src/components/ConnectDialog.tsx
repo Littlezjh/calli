@@ -59,7 +59,7 @@ export function ConnectDialog({ reason, onConnected, onCancel }: Props) {
               setValue(e.target.value);
               setError(null);
             }}
-            placeholder="RAH_TOKEN"
+            placeholder="CALLI_TOKEN"
             aria-label={t('connect.token')}
             aria-invalid={error ? true : undefined}
             disabled={busy}

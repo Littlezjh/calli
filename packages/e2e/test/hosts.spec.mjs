@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
 
-const SOCKET_IN_HOME = '.local/state/remote-agent-hub/daemon.sock';
+const SOCKET_IN_HOME = '.local/state/calli/daemon.sock';
 
 let root;
 let nodeSocket;
@@ -17,11 +17,11 @@ let browser;
 let page;
 
 before(async () => {
-  root = mkdtempSync(join(tmpdir(), 'rah-e2e-hosts-'));
+  root = mkdtempSync(join(tmpdir(), 'calli-e2e-hosts-'));
   const nodeHome = join(root, 'devbox');
   mkdirSync(nodeHome);
   nodeSocket = join(nodeHome, SOCKET_IN_HOME);
-  node = await startDaemon({ RAH_SOCKET: nodeSocket, RAH_TERM_SHELL: '/bin/sh' });
+  node = await startDaemon({ CALLI_SOCKET: nodeSocket, CALLI_TERM_SHELL: '/bin/sh' });
 
   // The hub user's ssh config, and which of its names lead anywhere.
   const hubHome = join(root, 'hub-home');
@@ -29,7 +29,7 @@ before(async () => {
   writeFileSync(join(hubHome, '.ssh', 'config'), 'Host devbox\n  HostName 192.0.2.10\nHost buildbox\n  HostName 192.0.2.11\nHost *\n  User me\n');
   const machines = join(root, 'machines.json');
   writeFileSync(machines, JSON.stringify({ devbox: { home: nodeHome }, buildbox: { fail: 'me@buildbox: Permission denied (publickey).' } }));
-  hub = await startDaemon({ HOME: hubHome, RAH_SSH_BIN: 'fake-ssh', FAKE_SSH_HOSTS: machines });
+  hub = await startDaemon({ HOME: hubHome, CALLI_SSH_BIN: 'fake-ssh', FAKE_SSH_HOSTS: machines });
 
   await api(node, '/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: node.workdir, title: '开发机上的线程' }) });
   await api(hub, '/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: hub.workdir, title: '本机的线程' }) });
@@ -196,7 +196,7 @@ test('handover creates and persists a draft only on the selected remote machine'
   assert.equal(created.length,1);assert.equal(created[0].cwd,node.workdir);assert.equal(created[0].agentSessionId,null);
   assert.equal((await (await api(hub,'/api/threads')).json()).length,beforeLocal.length);
   const key=`host:devbox:${created[0].id}`;
-  assert.equal(await page.evaluate(key=>JSON.parse(localStorage.getItem('rah.drafts'))[key].text,key),summary);
+  assert.equal(await page.evaluate(key=>JSON.parse(localStorage.getItem('calli.drafts'))[key].text,key),summary);
   await page.getByRole('tab',{name:'本机'}).click();
   await page.locator('.sidebar .thread-title',{hasText:'本机的线程'}).waitFor();
   assert.equal(await page.locator('.composer textarea').inputValue(),'');
@@ -212,14 +212,14 @@ test('a machine that drops says so in place of its threads, and is back after a 
 
   const down = page.locator('.host-down');
   await down.getByText('连不上 devbox').waitFor({ timeout: 30_000 });
-  assert.match(await down.innerText(), /Limi 没有应答/);
+  assert.match(await down.innerText(), /Calli 没有应答/);
   assert.equal(await page.locator('.composer').count(), 0, 'nothing can be sent to a machine that is not there');
   assert.equal(await page.locator('.sidebar .thread-row').count(), 0, 'and its threads are not made to look gone');
   await page.getByText('这台机器现在连不上').waitFor();
   // The hub's own machine is still a click away.
   assert.equal(await page.getByRole('tab', { name: '本机' }).count(), 1);
 
-  node = await startDaemon({ RAH_SOCKET: nodeSocket });
+  node = await startDaemon({ CALLI_SOCKET: nodeSocket });
   await api(node, '/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: node.workdir, title: '回来以后的线程' }) });
   await down.getByRole('button', { name: '重试' }).click();
   await page.getByText('回来以后的线程').waitFor({ timeout: 20_000 });

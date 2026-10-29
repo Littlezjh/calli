@@ -25,6 +25,10 @@ export function Dialog({ title, message, input, options = [], confirmLabel, dang
   const [value, setValue] = useState(input?.initial ?? '');
   const [checked, setChecked] = useState<boolean[]>(() => options.map(() => false));
   const inputRef = useRef<HTMLInputElement>(null);
+  // Only a click that both starts and ends outside counts: a text selection dragged past the edge
+  // ends on the scrim too. A dialog with typing in it closes only by its buttons or Escape; a click
+  // outside, say to clear the selection, goes back to the field instead of losing the text.
+  const pressedOutside = useRef(false);
 
   useEffect(() => {
     // Only select on opening; streaming updates can replace the callbacks while editing.
@@ -47,7 +51,15 @@ export function Dialog({ title, message, input, options = [], confirmLabel, dang
   };
 
   return (
-    <div className="dialog-scrim" onClick={onCancel}>
+    <div
+      className="dialog-scrim"
+      onPointerDown={(e) => { pressedOutside.current = e.target === e.currentTarget; }}
+      onClick={(e) => {
+        if (e.target !== e.currentTarget || !pressedOutside.current) return;
+        if (input) inputRef.current?.focus();
+        else onCancel();
+      }}
+    >
       <div
         className={`dialog ${className}`}
         role="dialog"

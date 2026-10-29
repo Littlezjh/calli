@@ -312,7 +312,7 @@ rl.on('line', (line) => {
       // With the board's consent a turn is asked for a `[进度]` line; "report 待验收 …" writes one.
       const progress = /^report (进行中|待验收|需要你)\s*(.*)/.exec(text.split('\n')[0]);
       if (progress) {
-        const asked = text.includes('<limi-progress>');
+        const asked = text.includes('<calli-progress>');
         update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: asked ? `已处理。\n\n[进度] ${progress[1]}：${progress[2]}` : '已处理。' } });
         out({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });
         return;
@@ -331,7 +331,7 @@ rl.on('line', (line) => {
         return;
       }
       if (text.split('\n')[0] === 'borrow-image') {
-        const cli = (...args) => JSON.parse(execFileSync(process.execPath, [join(process.env.LIMI_BIN_DIR, 'limi'), ...args], {
+        const cli = (...args) => JSON.parse(execFileSync(process.execPath, [join(process.env.CALLI_BIN_DIR, 'calli'), ...args], {
           input: JSON.stringify({ prompt: 'a paper fox' }), encoding: 'utf8',
         }));
         const tool = cli('tools', 'search', '生图')[0];

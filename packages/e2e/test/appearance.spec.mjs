@@ -102,7 +102,7 @@ test('the look is on the page before the app starts', async () => {
 });
 
 test('a palette this build does not know falls back to the default', async () => {
-  await page.evaluate(() => localStorage.setItem('rah.appearance', JSON.stringify({ mode: 'dark', palette: 'from-the-future' })));
+  await page.evaluate(() => localStorage.setItem('calli.appearance', JSON.stringify({ mode: 'dark', palette: 'from-the-future' })));
   await page.reload();
   await page.locator('.sidebar').getByRole('button', { name: '新线程', exact: true }).waitFor({ timeout: 10_000 });
   assert.deepEqual(await look(), { theme: 'dark', palette: 'paper', bg: '#1b1a18', meta: '#1b1a18' });

@@ -38,7 +38,7 @@ SSH 只负责把 HTTP 和 SSE 转过去。agent、工作目录、图片、线程
 3. 打开「配置 → 机器」，选 SSH 配置里的别名，或输入别名 / `user@host`。
 4. hub 经 SSH 探测目标用户家目录下的 socket，拿到绝对路径后建立隧道，再请求 `/api/health` 确认 daemon 有应答。
 
-默认 socket 是 `~/.local/state/remote-agent-hub/daemon.sock`，刻意不随 `XDG_STATE_HOME` 变化：SSH 登录命令和服务启动环境可能不同。`RAH_SOCKET=off` 关闭监听；自定义路径可用于隔离测试，但当前添加流程只发现默认路径。`RAH_SSH_BIN` 可覆盖主 hub 使用的 SSH 命令。
+默认 socket 是 `~/.local/state/calli/daemon.sock`，刻意不随 `XDG_STATE_HOME` 变化：SSH 登录命令和服务启动环境可能不同。`CALLI_SOCKET=off` 关闭监听；自定义路径可用于隔离测试，但当前添加流程只发现默认路径。`CALLI_SSH_BIN` 可覆盖主 hub 使用的 SSH 命令。
 
 机器记录存在数据目录的 `hosts.json`，权限 `0600`，只有 ID、显示名、SSH 目标与 socket 路径，没有密钥。候选列表读取 `~/.ssh/config` 的明确别名及 `Include` 文件，跳过通配别名；实际连接参数由 OpenSSH 解释。
 
@@ -59,7 +59,7 @@ SSH 只负责把 HTTP 和 SSE 转过去。agent、工作目录、图片、线程
 
 | 失败码 | 含义与处理 |
 | --- | --- |
-| `no_ssh` | hub 没有 SSH 命令，安装或配置 `RAH_SSH_BIN` |
+| `no_ssh` | hub 没有 SSH 命令，安装或配置 `CALLI_SSH_BIN` |
 | `host_key` | 主机密钥未知或变化，先在 hub 上手动连接并核实 |
 | `auth` | 无法免交互登录，检查 daemon 运行用户的 SSH 凭据 |
 | `unreachable` | DNS、网络或超时问题 |
@@ -88,7 +88,7 @@ OpenSSH 对 socket 无人监听和部分转发禁令会给出相同错误，不�
 
 - 没有其他机器时不显示切换条；添加后在线程列表顶部显示「本机」和已登记机器。
 - 切换机器时重新挂载 App，API 前缀、线程、agent、目录、额度、计划、终端一起切换。手机切换后仍停在线程列表。
-- 当前机器保存在设备的 `rah.host`；当前机器被移除后回到本机。
+- 当前机器保存在设备的 `calli.host`；当前机器被移除后回到本机。
 - 对话顶栏副标题显示机器名；草稿按机器和线程隔离，本机保留原有草稿键。
 - 离线时主区显示原因和「重试」，隐藏输入框；列表提示等待连接，不把空列表解释成线程已删除。尚未缓存离线线程。
 - 「配置 → 机器」提供添加、失败说明、重试、移除确认。第一期没有重命名与跨机器汇总。

@@ -22,7 +22,7 @@ import { turnAnswer } from '../src/coordination.js';
 import type { ToolJob } from '../src/tool-jobs.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const cli = join(here, '../bin/limi');
+const cli = join(here, '../bin/calli');
 const exec = promisify(execFile);
 const wait = async (check: () => boolean, timeout = 15000) => {
   const until = Date.now() + timeout;
@@ -30,7 +30,7 @@ const wait = async (check: () => boolean, timeout = 15000) => {
 };
 
 async function setup(mode = 'success') {
-  const dir = mkdtempSync(join(tmpdir(), 'limi-tools-'));
+  const dir = mkdtempSync(join(tmpdir(), 'calli-tools-'));
   const cwd = join(dir, 'project'); mkdirSync(cwd);
   const outside = join(cwd, 'private.png');
   writeFileSync(outside, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX2kAAAAASUVORK5CYII=', 'base64'));
@@ -41,7 +41,7 @@ async function setup(mode = 'success') {
   ]);
   const store = new Store(dir);
   const manager = new ThreadManager(store, adapters, new Workdirs([cwd], join(dir, 'dirs.json'), join(dir, 'scratch')), new AttachmentStore(dir));
-  const socket = join(dir, 'ipc/limi.sock');
+  const socket = join(dir, 'ipc/calli.sock');
   const service = new BorrowingService(store, manager, adapters, dir, socket);
   const local = borrowingServer(service); await listenPrivate(local, socket);
   const server = createHttpServer({ manager, token: 'test-token', webDir: null, version: 'test' });
@@ -81,7 +81,7 @@ test('Claude ACP process borrows native image generation through the scoped CLI,
     assert.equal(entry.data.displayText, 'borrow-image');
     assert.ok(String(entry.data.text).length < 180, 'only the short discovery hint is introduced');
     assert.equal(h.service.instructions(h.root.id, 'next request'), 'next request', 'do not repeat the hint');
-    assert.equal((await h.runCli(['tools', 'skill'])).name, 'limi-tools');
+    assert.equal((await h.runCli(['tools', 'skill'])).name, 'calli-tools');
     const job = JSON.parse(turnAnswer(events, started.turnId));
     assert.equal(job.state, 'succeeded');
     assert.equal(h.manager.getThread(job.threadId).agent, 'art-account');
@@ -160,7 +160,7 @@ test('missing stored artifacts produce useful JSON errors over socket and HTTP w
     rmSync(h.service.artifact(h.root.id, job.id, artifact.id).path);
     const args = ['jobs', 'fetch', job.id, artifact.id, '--output', join(h.cwd, 'missing.png')];
     await assert.rejects(h.runCli(args), /artifact file unavailable/);
-    await assert.rejects(h.runCli(args, { LIMI_TOOLS_SOCKET: '', LIMI_TOOLS_KEY: '', LIMI_URL: h.base, LIMI_TOKEN: 'test-token' }), /artifact file unavailable/);
+    await assert.rejects(h.runCli(args, { CALLI_TOOLS_SOCKET: '', CALLI_TOOLS_KEY: '', CALLI_URL: h.base, CALLI_TOKEN: 'test-token' }), /artifact file unavailable/);
     const response = await fetch(`${h.base}/api/tool-artifacts/${job.id}/${artifact.id}`, { headers: { Authorization: 'Bearer test-token' } });
     assert.equal(response.status, 404);
     assert.deepEqual(await response.json(), { error: 'artifact file unavailable' });
@@ -168,7 +168,7 @@ test('missing stored artifacts produce useful JSON errors over socket and HTTP w
 });
 
 test('CLI preserves plain-text errors from old servers or proxies in both transports', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'limi-error-'));
+  const dir = mkdtempSync(join(tmpdir(), 'calli-error-'));
   const socket = join(dir, 'error.sock');
   const local = createServer((_req, res) => res.writeHead(502).end('upstream unavailable'));
   const http = createServer((_req, res) => res.writeHead(502).end('upstream unavailable'));
@@ -176,8 +176,8 @@ test('CLI preserves plain-text errors from old servers or proxies in both transp
   await new Promise<void>(r => http.listen(0, '127.0.0.1', r));
   try {
     for (const env of [
-      { LIMI_TOOLS_SOCKET: socket, LIMI_TOOLS_KEY: 'test' },
-      { LIMI_TOOLS_SOCKET: '', LIMI_TOOLS_KEY: '', LIMI_URL: `http://127.0.0.1:${(http.address() as AddressInfo).port}`, LIMI_TOKEN: 'test' },
+      { CALLI_TOOLS_SOCKET: socket, CALLI_TOOLS_KEY: 'test' },
+      { CALLI_TOOLS_SOCKET: '', CALLI_TOOLS_KEY: '', CALLI_URL: `http://127.0.0.1:${(http.address() as AddressInfo).port}`, CALLI_TOKEN: 'test' },
     ]) {
       await assert.rejects(exec(process.execPath, [cli, 'tools', 'search'], { env: { ...process.env, ...env } }), /upstream unavailable/);
     }
@@ -209,7 +209,7 @@ test('HTTP requires bearer auth and external CLI uses the same command/artifact 
     assert.equal((await h.api({ op: 'missing' })).status, 400);
     assert.equal((await h.api({ op: 'tools.run', tool: 'art-account/image.generate', input: {}, requestId: 'bad' })).status, 400);
     const input = join(h.cwd, 'request.json'); writeFileSync(input, '{"prompt":"a fox"}');
-    const external = { LIMI_TOOLS_SOCKET: '', LIMI_TOOLS_KEY: '', LIMI_URL: h.base, LIMI_TOKEN: 'test-token' };
+    const external = { CALLI_TOOLS_SOCKET: '', CALLI_TOOLS_KEY: '', CALLI_URL: h.base, CALLI_TOKEN: 'test-token' };
     const job = await h.runCli(['tools', 'run', 'art-account/image.generate', '--input-file', input, '--request-id', 'outside'], external);
     const finished = await h.done(job.id).catch(() => h.service.command('operator', { op: 'jobs.get', id: job.id })) as any;
     assert.equal(finished.state, 'succeeded');
@@ -241,10 +241,10 @@ test('restart retains results and request IDs, marks unfinished jobs interrupted
 });
 
 test('runtime environments discard inherited scopes and administrator tokens', () => {
-  const env = sessionEnvironment({ LIMI_TOOLS_KEY: 'parent', LIMI_TOOLS_SOCKET: 'parent', LIMI_TOKEN: 'admin', RAH_TOKEN: 'admin' },
-    { LIMI_TOOLS_KEY: 'child', LIMI_TOOLS_SOCKET: 'child', LIMI_BIN_DIR: '/example/bin' });
-  assert.equal(env.LIMI_TOOLS_KEY, 'child');
-  assert.equal(env.LIMI_TOKEN, undefined);
-  assert.equal(env.RAH_TOKEN, undefined);
+  const env = sessionEnvironment({ CALLI_TOOLS_KEY: 'parent', CALLI_TOOLS_SOCKET: 'parent', CALLI_TOKEN: 'admin', CALLI_TOKEN: 'admin' },
+    { CALLI_TOOLS_KEY: 'child', CALLI_TOOLS_SOCKET: 'child', CALLI_BIN_DIR: '/example/bin' });
+  assert.equal(env.CALLI_TOOLS_KEY, 'child');
+  assert.equal(env.CALLI_TOKEN, undefined);
+  assert.equal(env.CALLI_TOKEN, undefined);
   assert.ok(env.PATH?.startsWith('/example/bin:'));
 });

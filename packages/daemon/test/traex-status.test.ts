@@ -28,7 +28,7 @@ test('TRAE metadata keeps overload distinct from weekly quota and tolerates miss
 });
 
 test('TRAE enriches ACP models, retains defaults, refreshes metadata and reports quota', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'rah-traex-status-'));
+  const root = mkdtempSync(join(tmpdir(), 'calli-traex-status-'));
   try {
     const file = join(root, 'models.json');
     const seed = (load: number, used: number) => writeFileSync(file, JSON.stringify([{ name: 'Big 1.0', config_name: 'big', _meta: { trae: { load: { percent: load }, weeklyQuota: { applies: true, usedPercent: used } } } }]));
@@ -38,18 +38,23 @@ test('TRAE enriches ACP models, retains defaults, refreshes metadata and reports
     assert.deepEqual(models.map((m) => m.id), ['default', 'big', 'small', 'broken']);
     assert.equal(models[0].description, 'Big 1.0');
     assert.equal(models[0].isDefault, true);
+    assert.equal(models[0].loadPercent, 184, 'the default alias carries its concrete model load');
+    assert.equal(models[1].loadPercent, 184);
     assert.match(models[1].description!, /模型负载 184%.*每周额度剩余 99%/);
     assert.equal(adapter.capabilities.quota, true);
     assert.equal((await adapter.fetchQuota()).windows[0].usedPercent, 1);
     assert.equal((await adapter.fetchQuota()).windows[0].loadPercent, 184);
     seed(23, 10);
-    assert.match((await adapter.models())[1].description!, /模型负载 23%.*每周额度剩余 90%/);
+    const refreshed = await adapter.models();
+    assert.equal(refreshed[0].loadPercent, 23);
+    assert.equal(refreshed[1].loadPercent, 23);
+    assert.match(refreshed[1].description!, /模型负载 23%.*每周额度剩余 90%/);
     assert.equal((await adapter.fetchQuota()).windows[0].usedPercent, 10);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test('TRAE quota windows carry their own model\'s load, and none when the CLI reports none', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'rah-traex-load-'));
+  const root = mkdtempSync(join(tmpdir(), 'calli-traex-load-'));
   try {
     const file = join(root, 'models.json');
     const weeklyQuota = { applies: true, usedPercent: 5 };

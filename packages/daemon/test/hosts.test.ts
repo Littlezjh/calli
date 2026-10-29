@@ -9,7 +9,7 @@ import type { AddressInfo } from 'node:net';
 import { PiRpcAdapter } from '../src/adapters/pi.js';
 import type { AgentAdapter } from '../src/adapters/types.js';
 import { AttachmentStore } from '../src/attachments.js';
-import { SOCKET_IN_HOME } from '../src/config.js';
+import { LEGACY_SOCKET_IN_HOME, SOCKET_IN_HOME } from '../src/config.js';
 import WebSocket from 'ws';
 import { Desktop } from '../src/desktop.js';
 import { createHttpServer, listenPrivate, socketHeld } from '../src/http.js';
@@ -76,7 +76,7 @@ const listHosts = async () => (await (await hubApi('/api/hosts')).json()) as Hos
 const hostNamed = async (id: string) => (await listHosts()).find((h) => h.id === id);
 
 before(async () => {
-  root = mkdtempSync(join(tmpdir(), 'rah-hosts-test-'));
+  root = mkdtempSync(join(tmpdir(), 'calli-hosts-test-'));
   process.env.PI_CODING_AGENT_DIR = join(root, 'pi-agent');
   node = makeManager('node');
   hub = makeManager('hub');
@@ -95,6 +95,7 @@ before(async () => {
     devbox: { home: nodeHome },
     'me@devbox': { home: nodeHome },
     bare: { home: join(root, 'bare') },
+    legacy: { home: join(root, 'legacy') },
     locked: { fail: 'me@locked: Permission denied (publickey,gssapi-with-mic).' },
     stranger: { fail: 'Host key verification failed.' },
   };
@@ -384,4 +385,20 @@ test('machines are kept across a restart, and removing one closes its connection
       return true;
     }
   });
+});
+
+test('a machine whose daemon predates the rename to Calli is found at the old socket path', async () => {
+  const server = createHttpServer({ manager: node.manager, desktop: nodeDesktop, trusted: true, token: 'never-asked-0123456789', webDir: null, version: 'legacy-test' });
+  const socket = join(root, 'legacy', LEGACY_SOCKET_IN_HOME);
+  assert.equal(await listenPrivate(server, socket), true);
+  try {
+    const res = await hubApi('/api/hosts', { method: 'POST', body: JSON.stringify({ target: 'legacy' }) });
+    assert.equal(res.status, 201);
+    assert.equal(((await res.json()) as HostInfo).version, 'legacy-test');
+    assert.equal(JSON.parse(readFileSync(join(root, 'hub-data', 'hosts.json'), 'utf8')).hosts.find((h: { id: string }) => h.id === 'legacy').socket, socket);
+    assert.equal((await hubApi('/api/hosts/legacy', { method: 'DELETE' })).status, 204);
+  } finally {
+    server.close();
+    server.closeAllConnections();
+  }
 });

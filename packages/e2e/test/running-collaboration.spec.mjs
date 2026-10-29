@@ -4,7 +4,7 @@ import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
 
-const shots = process.env.RAH_E2E_SHOTS_DIR ?? '/tmp/rah-board-collaboration-shots';
+const shots = process.env.CALLI_E2E_SHOTS_DIR ?? '/tmp/calli-board-collaboration-shots';
 test('running unconfigured collaboration queues and restores target tasks in all layouts', { timeout: 90000 }, async () => {
   const daemon = await startDaemon();
   const browser = await launchBrowser();

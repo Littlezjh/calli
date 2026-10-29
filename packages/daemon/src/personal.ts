@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { lstatSync, mkdirSync, realpathSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { homeDirectory } from './config.js';
 import { fileURLToPath } from 'node:url';
 import type { AgentAdapter } from './adapters/types.js';
 import { isWithinWorkdirs } from './workdirs.js';
@@ -13,10 +14,11 @@ import type { ThreadManager } from './threads.js';
 import { SummaryService } from './summary.js';
 
 // Keep the default location in one place so its final component can change independently.
-const PERSONAL_DIRECTORY = ['.limi', 'personal'] as const;
+// `~/.calli/personal`, or `~/.limi/personal` where only the directory from before the rename exists.
+const personalDirectory = () => [basename(homeDirectory(realpathSync(homedir()))), 'personal'];
 export function defaultPersonalDirectory(): string {
   let path = realpathSync(homedir());
-  for (const part of PERSONAL_DIRECTORY) {
+  for (const part of personalDirectory()) {
     path = join(path, part);
     try { mkdirSync(path, { mode: 0o700 }); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw new HttpError(400, 'cannot create the default personal directory'); }
@@ -42,15 +44,15 @@ const time = (value: unknown): string | null => {
 function delegationPrompt(todo: TodoRecord, note: string, personal: boolean): string {
   const clarify = '只有目标笼统、看不出要交付什么时，这一轮才只做澄清：在回复中用 1～3 个具体问题问人，每个问题给出你建议的默认选项，不要自己猜着开工。';
   const workflow = personal
-    ? `先用 limi todo show ${todo.id} 读取事项与最新 rev。${clarify}
-澄清时用 limi todo update ${todo.id} --rev N --state waiting --waiting-on "等你说明目标" --note-file FILE，把事项设为等待，并写一版接续说明：用「## 欠谁什么」写已知部分，「## 定了什么」「## 做到哪」只写已知事实，「## 下一步」写「等回答后……」。
-再用 limi notify --text-file FILE 发一句话提醒人来回答，然后结束本轮。人回复后再按回答推进。
-目标清楚时直接推进：有接续说明就按说明的「下一步」推进；没有说明也直接推进，并在结束前写第一版接续说明，已有说明则更新。需要人确认完成时用 limi todo propose-done。`
+    ? `先用 calli todo show ${todo.id} 读取事项与最新 rev。${clarify}
+澄清时用 calli todo update ${todo.id} --rev N --state waiting --waiting-on "等你说明目标" --note-file FILE，把事项设为等待，并写一版接续说明：用「## 欠谁什么」写已知部分，「## 定了什么」「## 做到哪」只写已知事实，「## 下一步」写「等回答后……」。
+再用 calli notify --text-file FILE 发一句话提醒人来回答，然后结束本轮。人回复后再按回答推进。
+目标清楚时直接推进：有接续说明就按说明的「下一步」推进；没有说明也直接推进，并在结束前写第一版接续说明，已有说明则更新。需要人确认完成时用 calli todo propose-done。`
     : `${clarify}
 本线程没有事项管理凭证：需要澄清时只在回复中提问并结束本轮，人回复后再按回答推进。
 目标清楚时直接推进：有接续说明就按说明的「下一步」推进；没有说明也直接推进，并在结束前于回复中写进展和第一版接续说明，已有说明则更新。需要人确认完成时向人提议确认。`;
   return `这是一件新交给你的事，不是交接；这个线程就是它的工作线程，没有更早的对话需要读。
-由 Limi 交给你的事项。
+由 Calli 交给你的事项。
 事项：${todo.text}
 ID：${todo.id}；状态：${todo.state}；归属：${todo.owner}
 接续说明：
@@ -75,7 +77,7 @@ export class PersonalService {
   directory(): string {
     const configured = this.storedSettings().directory;
     if (!configured) return defaultPersonalDirectory();
-    const defaultPath = join(realpathSync(homedir()), ...PERSONAL_DIRECTORY);
+    const defaultPath = join(realpathSync(homedir()), ...personalDirectory());
     // Older settings may explicitly name the default or one of its children.
     if (configured === defaultPath || configured.startsWith(defaultPath + sep)) defaultPersonalDirectory();
     return configured;
@@ -162,7 +164,7 @@ export class PersonalService {
     if (!this.socket || !this.allowed(threadId)) return undefined;
     let key = this.credentials.get(threadId);
     if (!key) { key = randomUUID(); this.credentials.set(threadId, key); }
-    return { LIMI_TODO_SOCKET: this.socket, LIMI_TODO_KEY: key, LIMI_BIN_DIR: resolve(dirname(fileURLToPath(import.meta.url)), '../bin') };
+    return { CALLI_TODO_SOCKET: this.socket, CALLI_TODO_KEY: key, CALLI_BIN_DIR: resolve(dirname(fileURLToPath(import.meta.url)), '../bin') };
   }
   caller(key: string): string {
     for (const [id, secret] of this.credentials) if (key === secret) { this.require(id); return id; }
@@ -170,7 +172,7 @@ export class PersonalService {
   }
   instructions(threadId: string, text: string): string {
     if (!this.allowed(threadId) || this.introduced.has(threadId)) return text;
-    return `${text}\n\n<limi-todo>由 Limi 附加：事项和跟进用 limi todo，用法 limi todo --help。改了事项的这一轮结束前，请写接续说明。</limi-todo>`;
+    return `${text}\n\n<calli-todo>由 Calli 附加：事项和跟进用 calli todo，用法 calli todo --help。改了事项的这一轮结束前，请写接续说明。</calli-todo>`;
   }
   started(threadId: string) { if (this.allowed(threadId)) this.introduced.add(threadId); }
   note(id: string) {
@@ -202,7 +204,7 @@ export class PersonalService {
   private threadList(value: unknown, name: string): string[] {
     if (value === undefined) return [];
     if (!Array.isArray(value) || value.length > 20 || value.some(id => typeof id !== 'string')) throw new HttpError(400, `${name} must list at most 20 thread IDs`);
-    for (const id of value) if (!this.store.getThread(id)) throw new HttpError(404, `thread ${id} not found; use IDs from limi threads`);
+    for (const id of value) if (!this.store.getThread(id)) throw new HttpError(404, `thread ${id} not found; use IDs from calli threads`);
     return [...new Set(value as string[])];
   }
   /** The agent's own thread is linked as a work record, except when it names the threads that did the work, or only summarizes. */
@@ -241,7 +243,7 @@ export class PersonalService {
     if (actor) this.require(actor);
     const current = this.store.checkTodoRev(id, input.rev === undefined && !actor ? this.store.getTodo(id)?.rev : input.rev), patch = this.patch(input);
     if (actor && patch.owner !== undefined && patch.owner !== current.owner) throw new HttpError(403, 'agents cannot change ownership');
-    if (actor && current.owner === 'me' && (patch.done === true || patch.state === 'done' || patch.owner === 'agent')) throw new HttpError(403, 'use limi todo propose-done for your personal commitments');
+    if (actor && current.owner === 'me' && (patch.done === true || patch.state === 'done' || patch.owner === 'agent')) throw new HttpError(403, 'use calli todo propose-done for your personal commitments');
     if ((patch.state ?? current.state) === 'waiting' && !(patch.waitingOn ?? current.waitingOn)) throw new HttpError(400, 'waitingOn is required for waiting');
     const note = input.note !== undefined ? personalText(input.note, 4000, true) : undefined;
     const links = actor ? this.threadList(input.threads, 'threads') : [], unlinks = actor ? this.threadList(input.unlink, 'unlink') : [];
@@ -344,7 +346,7 @@ export class PersonalService {
       case 'threads': return this.summary.threads(input, owner);
       case 'threads.show': return this.summary.show(input);
       case 'wish': { const id = randomUUID(); this.store.saveWish(id, owner, personalText(input.text, 500)); return { id }; }
-      default: throw new HttpError(400, 'unknown personal command; see limi todo --help');
+      default: throw new HttpError(400, 'unknown personal command; see calli todo --help');
     }
   }
 }

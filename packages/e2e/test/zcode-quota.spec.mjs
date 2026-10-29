@@ -9,7 +9,7 @@ test('zcode quota appears in the shared board on desktop and phone, light and da
   const provider = await fakeZcodeQuota();
   let daemon, browser;
   try {
-    daemon = await startDaemon({ ZCODE_BIGMODEL_USAGE_API_KEY: 'fixture-key', ZCODE_BIGMODEL_USAGE_QUOTA_URL: provider.url, RAH_AGENTS_JSON: JSON.stringify({ agents: [{ id: 'zcode', adapter: 'zcode', command: [process.execPath, join(repoRoot, 'daemon/test/fixtures/fake-zcode.mjs')] }] }) });
+    daemon = await startDaemon({ ZCODE_BIGMODEL_USAGE_API_KEY: 'fixture-key', ZCODE_BIGMODEL_USAGE_QUOTA_URL: provider.url, CALLI_AGENTS_JSON: JSON.stringify({ agents: [{ id: 'zcode', adapter: 'zcode', command: [process.execPath, join(repoRoot, 'daemon/test/fixtures/fake-zcode.mjs')] }] }) });
     browser = await launchBrowser();
     for (const mobile of [false, true]) for (const colorScheme of ['light', 'dark']) {
       const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 1000 }, isMobile: mobile, hasTouch: mobile, colorScheme });
@@ -28,9 +28,9 @@ test('zcode quota appears in the shared board on desktop and phone, light and da
         assert.deepEqual(await row.locator('.quota-percent').allTextContents(), ['88%', '2%']);
         assert.deepEqual(await row.locator('.quota-cell.low .quota-percent').allTextContents(), ['2%']);
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
-        if (process.env.RAH_E2E_SHOTS_DIR) {
-          mkdirSync(process.env.RAH_E2E_SHOTS_DIR, { recursive: true });
-          await page.screenshot({ path: join(process.env.RAH_E2E_SHOTS_DIR, `quota-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
+        if (process.env.CALLI_E2E_SHOTS_DIR) {
+          mkdirSync(process.env.CALLI_E2E_SHOTS_DIR, { recursive: true });
+          await page.screenshot({ path: join(process.env.CALLI_E2E_SHOTS_DIR, `quota-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
         }
       } finally { await context.close(); }
     }
@@ -41,7 +41,7 @@ test('quota reopens immediately, survives page reload and retains the last readi
   const provider = await fakeZcodeQuota();
   let daemon, browser;
   try {
-    daemon = await startDaemon({ ZCODE_BIGMODEL_USAGE_API_KEY: 'fixture-key', ZCODE_BIGMODEL_USAGE_QUOTA_URL: provider.url, RAH_AGENTS_JSON: JSON.stringify({ agents: [{ id: 'zcode', adapter: 'zcode', command: [process.execPath, join(repoRoot, 'daemon/test/fixtures/fake-zcode.mjs')] }] }) });
+    daemon = await startDaemon({ ZCODE_BIGMODEL_USAGE_API_KEY: 'fixture-key', ZCODE_BIGMODEL_USAGE_QUOTA_URL: provider.url, CALLI_AGENTS_JSON: JSON.stringify({ agents: [{ id: 'zcode', adapter: 'zcode', command: [process.execPath, join(repoRoot, 'daemon/test/fixtures/fake-zcode.mjs')] }] }) });
     browser = await launchBrowser();
     for (const mobile of [false, true]) for (const colorScheme of ['light', 'dark']) {
       const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 1000 }, isMobile: mobile, hasTouch: mobile, colorScheme });
@@ -81,9 +81,9 @@ test('quota reopens immediately, survives page reload and retains the last readi
         await row.getByText('2%', { exact: true }).waitFor();
         await row.getByRole('status').filter({ hasText: '更新中' }).waitFor();
         assert.equal(await row.getByText('正在查询额度…', { exact: true }).count(), 0);
-        if (process.env.RAH_E2E_SHOTS_DIR) {
-          mkdirSync(process.env.RAH_E2E_SHOTS_DIR, { recursive: true });
-          await page.screenshot({ animations: 'disabled', path: join(process.env.RAH_E2E_SHOTS_DIR, `quota-cached-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
+        if (process.env.CALLI_E2E_SHOTS_DIR) {
+          mkdirSync(process.env.CALLI_E2E_SHOTS_DIR, { recursive: true });
+          await page.screenshot({ animations: 'disabled', path: join(process.env.CALLI_E2E_SHOTS_DIR, `quota-cached-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
         }
         // Reopening while a read is pending must share it, and the remounted row must receive it.
         await close();
@@ -103,7 +103,7 @@ test('quota reopens immediately, survives page reload and retains the last readi
         await row.getByRole('status').filter({ hasText: '刷新失败' }).waitFor();
         assert.ok(await row.getByText('36%', { exact: true }).isVisible());
         assert.equal(calls, 2, 'reporting an error must not start another request');
-        if (process.env.RAH_E2E_SHOTS_DIR) await page.screenshot({ animations: 'disabled', path: join(process.env.RAH_E2E_SHOTS_DIR, `quota-stale-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
+        if (process.env.CALLI_E2E_SHOTS_DIR) await page.screenshot({ animations: 'disabled', path: join(process.env.CALLI_E2E_SHOTS_DIR, `quota-stale-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
         pending = gate();
         await panel.getByRole('button', { name: '全部刷新', exact: true }).click();
         assert.match(await pending.seen, /refresh=1/);

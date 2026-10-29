@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { startDaemon, openUi, launchBrowser } from '../harness.mjs';
 
 test('the quota board shows each account plan beside its name', { timeout: 180000 }, async () => {
-  const home = mkdtempSync(join(tmpdir(), 'rah-quota-plan-'));
+  const home = mkdtempSync(join(tmpdir(), 'calli-quota-plan-'));
   let daemon, browser;
   try {
     const fixtures = fileURLToPath(new URL('../../daemon/test/fixtures/', import.meta.url));
@@ -18,9 +18,9 @@ test('the quota board shows each account plan beside its name', { timeout: 18000
     // A Max 20x login; its tokens must never reach the page.
     mkdirSync(join(home, '.claude'));
     writeFileSync(join(home, '.claude', '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'sk-secret-access', subscriptionType: 'max', rateLimitTier: 'default_claude_max_20x' } }));
-    daemon = await startDaemon({ RAH_CODEX_BIN: fakeCodex, RAH_CLAUDE_QUOTA_BIN: join(fixtures, 'fake-claude-usage.sh'), HOME: home, CLAUDE_CONFIG_DIR: join(home, '.claude'), CODEX_HOME: join(home, '.codex') });
+    daemon = await startDaemon({ CALLI_CODEX_BIN: fakeCodex, CALLI_CLAUDE_QUOTA_BIN: join(fixtures, 'fake-claude-usage.sh'), HOME: home, CLAUDE_CONFIG_DIR: join(home, '.claude'), CODEX_HOME: join(home, '.codex') });
     browser = await launchBrowser();
-    const shots = process.env.RAH_E2E_SHOTS_DIR;
+    const shots = process.env.CALLI_E2E_SHOTS_DIR;
     if (shots) mkdirSync(shots, { recursive: true });
     for (const phone of [false, true]) for (const theme of ['light', 'dark']) {
       const context = await browser.newContext({ viewport: phone ? { width: 390, height: 844 } : { width: 1440, height: 960 }, isMobile: phone, hasTouch: phone, colorScheme: theme });

@@ -19,13 +19,13 @@ test('handover groups and bidirectional navigation on desktop and phone in both 
     const label = (id) => agents.find((a) => a.id === id)?.label ?? id;
     const passed = ['pi', 'claude', 'agy'].map(label).join(' → ');
     browser = await launchBrowser();
-    mkdirSync('/tmp/rah-handover-shots', { recursive: true });
+    mkdirSync('/tmp/calli-handover-shots', { recursive: true });
     for (const phone of [false, true]) for (const theme of ['light', 'dark']) {
       const context = await browser.newContext({ viewport: phone ? { width: 390, height: 844 } : { width: 1440, height: 960 }, isMobile: phone, hasTouch: phone, colorScheme: theme });
       const page = await context.newPage();
       const errors = [];
       page.on('pageerror', (e) => errors.push(e.message));
-      await page.addInitScript((token) => localStorage.setItem('rah.token', token), hub.token);
+      await page.addInitScript((token) => localStorage.setItem('calli.token', token), hub.token);
       await openUi(page, hub);
       if (phone) await page.getByRole('button', { name: '打开线程列表', exact: true }).click();
       await page.locator('.handover-group').waitFor();
@@ -48,13 +48,13 @@ test('handover groups and bidirectional navigation on desktop and phone in both 
       assert.ok(offsets.every(offset => offset <= 0.5), `chain line crosses dot centers: ${offsets}`);
       await page.locator('.handover-member .handover-member-time').first().waitFor();
       await page.waitForTimeout(250);
-      await page.screenshot({ path: `/tmp/rah-handover-shots/${phone ? 'phone' : 'desktop'}-${theme}-sidebar.png` });
+      await page.screenshot({ path: `/tmp/calli-handover-shots/${phone ? 'phone' : 'desktop'}-${theme}-sidebar.png` });
       await page.locator('.handover-group > .thread-row .thread-item').click();
       await page.getByRole('button', { name: `接手自 ${label('claude')} · 交接记录`, exact: true }).waitFor();
       await page.locator('.handover-link').click();
       await page.getByRole('menu', { name: '交接记录' }).waitFor();
       await page.waitForTimeout(250);
-      await page.screenshot({ path: `/tmp/rah-handover-shots/${phone ? 'phone' : 'desktop'}-${theme}-trail.png` });
+      await page.screenshot({ path: `/tmp/calli-handover-shots/${phone ? 'phone' : 'desktop'}-${theme}-trail.png` });
       await page.locator('.handover-entry').filter({ hasText: '原始会话' }).click();
       await page.getByRole('button', { name: /已交接给.*交接记录/ }).waitFor();
       await page.locator('.handover-link').click();
@@ -79,14 +79,14 @@ test('a turn stopped by a plan that ran out offers another agent, which takes ov
     const source = await res.json();
     await api(hub, `/api/threads/${source.id}/turns`, { method: 'POST', body: JSON.stringify({ text: 'out of plan' }) });
     browser = await launchBrowser();
-    mkdirSync('/tmp/rah-handover-shots', { recursive: true });
+    mkdirSync('/tmp/calli-handover-shots', { recursive: true });
     // The takeover goes last: after it, the sidebar's top row for this task is the successor.
     for (const phone of [true, false]) for (const theme of ['light', 'dark']) {
       const context = await browser.newContext({ viewport: phone ? { width: 390, height: 844 } : { width: 1440, height: 960 }, isMobile: phone, hasTouch: phone, colorScheme: theme });
       const page = await context.newPage();
       const errors = [];
       page.on('pageerror', (e) => errors.push(e.message));
-      await page.addInitScript((token) => localStorage.setItem('rah.token', token), hub.token);
+      await page.addInitScript((token) => localStorage.setItem('calli.token', token), hub.token);
       await openUi(page, hub);
       if (phone) await page.getByRole('button', { name: '打开线程列表', exact: true }).click();
       await page.locator('.thread-item').filter({ hasText: '额度用完的任务' }).first().click();
@@ -95,7 +95,7 @@ test('a turn stopped by a plan that ran out offers another agent, which takes ov
       assert.match(await page.locator('.error-box').innerText(), /额度用完了/);
       assert.match(await go.innerText(), /交给 .+ 接手/);
       await page.waitForTimeout(400);
-      await page.screenshot({ path: `/tmp/rah-handover-shots/${phone ? 'phone' : 'desktop'}-${theme}-exhausted.png` });
+      await page.screenshot({ path: `/tmp/calli-handover-shots/${phone ? 'phone' : 'desktop'}-${theme}-exhausted.png` });
       if (phone || theme === 'light') { await context.close(); continue; }
       const [takeover] = await Promise.all([page.waitForResponse(r => r.url().endsWith('/handover-thread') && r.request().method() === 'POST'), go.click()]);
       assert.equal(takeover.request().postDataJSON().mode, 'continue');

@@ -8,10 +8,14 @@
 #
 # Run from inside the hub (by an agent in one of its threads), it cannot wait in the foreground:
 # its own turn would never finish. It schedules the restart in the background instead, for when
-# every turn, including the caller's, has ended. Log: $XDG_STATE_HOME/remote-agent-hub/restart.log
+# every turn, including the caller's, has ended. Log: $XDG_STATE_HOME/calli/restart.log
 set -euo pipefail
 
-NAME=remote-agent-hub
+NAME=calli
+# The service's name before the rename to Calli; an installation not moved yet still runs it.
+if ! systemctl --user cat "$NAME" >/dev/null 2>&1 && systemctl --user cat remote-agent-hub >/dev/null 2>&1; then
+  NAME=remote-agent-hub
+fi
 REPO="$(cd "$(dirname "$0")/.." && pwd -P)"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/$NAME"
 LOG="$STATE_DIR/restart.log"
@@ -38,12 +42,14 @@ SERVICE_DIR="$(systemctl --user show -p WorkingDirectory --value "$NAME")"
 [ "$(realpath "$SERVICE_DIR")" = "$REPO" ] \
   || die "The service runs $SERVICE_DIR, not $REPO. Restart it from there."
 
-ENV_FILE="$(systemctl --user show -p Environment --value "$NAME" | tr ' ' '\n' | sed -n 's/^RAH_ENV_FILE=//p')"
+ENV_FILE="$(systemctl --user show -p Environment --value "$NAME" | tr ' ' '\n' | sed -nE 's/^(CALLI|RAH)_ENV_FILE=//p' | head -1)"
 ENV_FILE="${ENV_FILE:-$HOME/.config/$NAME/.env}"
-env_get() { sed -n "s/^$1=//p" "$ENV_FILE" 2>/dev/null | tail -1 | sed -E "s/^['\"]|['\"]$//g"; }
-HOST="$(env_get RAH_HOST)"; HOST="${HOST:-127.0.0.1}"
-PORT="$(env_get RAH_PORT)"; PORT="${PORT:-8787}"
-TOKEN="$(env_get RAH_TOKEN)"
+env_raw() { sed -n "s/^$1=//p" "$ENV_FILE" 2>/dev/null | tail -1 | sed -E "s/^['\"]|['\"]$//g"; }
+# CALLI_<name>, else RAH_<name> from before the rename.
+env_get() { local v; v="$(env_raw "CALLI_$1")"; [ -n "$v" ] || v="$(env_raw "RAH_$1")"; echo "$v"; }
+HOST="$(env_get HOST)"; HOST="${HOST:-127.0.0.1}"
+PORT="$(env_get PORT)"; PORT="${PORT:-8787}"
+TOKEN="$(env_get TOKEN)"
 case "$HOST" in 0.0.0.0 | ::) HOST=127.0.0.1 ;; esac
 BASE="http://$HOST:$PORT"
 
@@ -121,8 +127,22 @@ if [ "$BACKGROUND" = 1 ]; then
 fi
 
 if [ "$BUILD" = 1 ]; then
+  # The workspaces were renamed with the app (@rah/* to @calli/*); their links come from npm install.
+  if [ ! -e "$REPO/node_modules/@calli/extension-api" ]; then
+    say "Linking the renamed workspaces."
+    (cd "$REPO" && npm install --no-audit --no-fund >/dev/null) || die "npm install failed; the running hub was left alone."
+  fi
   say "Building."
   (cd "$REPO" && npm run build >/dev/null) || die "Build failed; the running hub was left alone."
+fi
+
+# A service installed before the rename starts `npm start -w @rah/daemon`, a workspace that is
+# gone. Point it at the new one; scripts/migrate-name.sh moves the rest when you choose to.
+UNIT_FILE="$(systemctl --user show -p FragmentPath --value "$NAME")"
+if [ -n "$UNIT_FILE" ] && grep -q '@rah/daemon' "$UNIT_FILE"; then
+  say "Pointing $NAME at the renamed workspace @calli/daemon."
+  sed -i 's#@rah/daemon#@calli/daemon#' "$UNIT_FILE"
+  systemctl --user daemon-reload
 fi
 
 if inside_hub; then

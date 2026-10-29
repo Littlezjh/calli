@@ -9,7 +9,7 @@ test('desktop sidebar drag resizes, persists, and stays off the phone layout', a
     browser = await launchBrowser();
     const context = await browser.newContext({ viewport: { width: 1200, height: 800 } });
     const page = await context.newPage();
-    await page.addInitScript((token) => localStorage.setItem('rah.token', token), daemon.token);
+    await page.addInitScript((token) => localStorage.setItem('calli.token', token), daemon.token);
     await openUi(page, daemon);
 
     const sidebar = page.locator('.sidebar');
@@ -24,7 +24,7 @@ test('desktop sidebar drag resizes, persists, and stays off the phone layout', a
 
     assert.equal(Math.round((await sidebar.boundingBox()).width), 428);
     assert.equal(await handle.getAttribute('aria-valuenow'), '428');
-    assert.equal(await page.evaluate(() => localStorage.getItem('rah.sidebar.width')), '428');
+    assert.equal(await page.evaluate(() => localStorage.getItem('calli.sidebar.width')), '428');
 
     await page.reload();
     assert.equal(Math.round((await sidebar.boundingBox()).width), 428, 'the dragged width survives a reload');

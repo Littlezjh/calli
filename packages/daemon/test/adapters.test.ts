@@ -467,7 +467,7 @@ test('summarisePiSession reads id and directory from the header and picks a titl
 });
 
 test('PiRpcAdapter: sessions are discovered from pi\'s session files, newest first', async () => {
-  const agentDir = mkdtemp(join(osTmpdir(), 'rah-pi-agent-'));
+  const agentDir = mkdtemp(join(osTmpdir(), 'calli-pi-agent-'));
   const previous = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = agentDir;
   try {
@@ -532,7 +532,7 @@ test('both agents list, replay and fork sessions through their own means', async
 
 test('a copy can be made for another directory, each agent in its own way', async () => {
   // Where the hub puts a worktree: `<repository>/.worktrees/<name>`.
-  const tree = join(mkdtempSync(join(tmpdir(), 'rah-test-into-')), '.worktrees', 'abcd1234');
+  const tree = join(mkdtempSync(join(tmpdir(), 'calli-test-into-')), '.worktrees', 'abcd1234');
   mkdirSync(tree, { recursive: true });
   try {
     // Claude is asked for the copy from where it will run.
@@ -903,7 +903,7 @@ test('TraexAcpAdapter: the model list is taken as reported, with the current pic
 });
 
 test('TraexAcpAdapter: sessions are deleted through the CLI, not the protocol', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'rah-traex-del-'));
+  const dir = mkdtempSync(join(tmpdir(), 'calli-traex-del-'));
   const log = join(dir, 'deleted.log');
   // The full form of the command, as the daemon configures it; the adapter strips "acp serve".
   const adapter = new TraexAcpAdapter([process.execPath, fakeAcp, 'acp', 'serve'], { ...traexEnv, FAKE_ACP_DELETE_LOG: log });
@@ -913,11 +913,11 @@ test('TraexAcpAdapter: sessions are deleted through the CLI, not the protocol', 
 });
 
 test('TraexAcpAdapter: artifactDirs finds the session folder under .trae/cli/sessions', () => {
-  const home = mkdtempSync(join(tmpdir(), 'rah-traex-home-'));
+  const home = mkdtempSync(join(tmpdir(), 'calli-traex-home-'));
   const id = '01a1255b-b666-7820-8ae3-0842196c13b4';
   const artifacts = join(home, 'sessions', '2026', '10', '10', `rollout-2026-10-10T10-28-49-${id}.artifacts`);
   mkdirSync(artifacts, { recursive: true });
-  const adapter = new TraexAcpAdapter([process.execPath, fakeAcp], { RAH_TRAEX_HOME: home });
+  const adapter = new TraexAcpAdapter([process.execPath, fakeAcp], { CALLI_TRAEX_HOME: home });
   assert.deepEqual(adapter.artifactDirs!(id), [artifacts]);
   assert.deepEqual(adapter.artifactDirs!('not an id'), [], 'junk ids are not looked up');
   rmSync(home, { recursive: true, force: true });
@@ -1355,7 +1355,7 @@ test('CodexAppServerAdapter: listing, history, forking and deleting go through o
 });
 
 test('CodexAppServerAdapter: index-only listing shares requests and keeps sessions beyond page 50', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'rah-codex-index-'));
+  const dir = mkdtempSync(join(tmpdir(), 'calli-codex-index-'));
   const file = join(dir, 'sessions.json');
   const log = join(dir, 'rpc.jsonl');
   try {

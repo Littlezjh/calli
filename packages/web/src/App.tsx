@@ -25,12 +25,13 @@ import {
 } from './api';
 import type { HubAction } from './commands';
 import { buildProjectOptions } from './projects';
-import { useAppearance, useIsCompact, useListSwipe, useStoredFlag } from './hooks';
+import { useAppearance, useInTitlebar, useIsCompact, useListSwipe, useStoredFlag } from './hooks';
 import { useHosts } from './hosts';
 import type { PreparedImage } from './images';
 import { restoreVideos, type PreparedVideo } from './videos';
 import { attentionCount, pageTitle, threadNotices } from './notices';
 import { folderName } from './paths';
+import { ThreadPlace } from './components/ThreadPlace';
 import { PERMISSION_LABELS, PERMISSION_ORDER, permissionHint, startingPermission } from './permissions';
 import { buildTimeline, toMarkdown, turnPreviews, type StoredEvent } from './timeline';
 import { newerBuildAvailable } from './version';
@@ -72,8 +73,8 @@ import { ExtensionsPage } from './components/ExtensionsPage';
 import { VoiceOrb, VoiceControls } from './components/VoiceOrb';
 import { useVoiceSession } from './voice-session';
 import type { ExtensionNavEntry } from './components/Sidebar';
-import type { ExtensionState } from '@rah/extension-api';
-import type { ConnectionState } from '@rah/extension-api/web';
+import type { ExtensionState } from '@calli/extension-api';
+import type { ConnectionState } from '@calli/extension-api/web';
 import { ExtensionView } from './extensions/ExtensionView';
 import { threadSummaries } from './extensions/project';
 import { createThreadFeed } from './extensions/thread-feed';
@@ -160,16 +161,16 @@ function viewForHash(hash: string, connected: boolean): MainView | null {
 }
 
 /** Whether the thread list is put away on a wide screen. */
-const SIDEBAR_HIDDEN_KEY = 'rah.sidebar.hidden';
+const SIDEBAR_HIDDEN_KEY = 'calli.sidebar.hidden';
 /** The width a person last dragged the desktop thread list to. */
-const SIDEBAR_WIDTH_KEY = 'rah.sidebar.width';
+const SIDEBAR_WIDTH_KEY = 'calli.sidebar.width';
 const SIDEBAR_KEYBOARD_STEP = 16;
 
 /** What members of each instance start with, remembered on this device for the next team. */
-const MEMBER_DEFAULTS_KEY = 'rah.coord.defaults';
+const MEMBER_DEFAULTS_KEY = 'calli.coord.defaults';
 
 /** A plan the user chose to leave be, by thread: the proposal's key, so a reload does not ask again. */
-const PLAN_SKIP_KEY = 'rah:plan-skipped';
+const PLAN_SKIP_KEY = 'calli:plan-skipped';
 function savedMemberDefaults(key: string): Record<string, MemberDefault> {
   try {
     const saved = JSON.parse(localStorage.getItem(key) ?? '{}');
@@ -303,7 +304,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   }, [threadFeed]);
   // Every machine's threads in one list. A device setting, so it stays on as the app starts over
   // on another machine; with no other machine there is nothing to merge.
-  const [allHosts, setAllHosts] = useStoredFlag('rah.sidebar.allHosts');
+  const [allHosts, setAllHosts] = useStoredFlag('calli.sidebar.allHosts');
   const merging = allHosts && keepThreads && hosts.length > 0;
   const [elsewhere, setElsewhere] = useState<HostSource[]>([]);
   const hostsRef = useRef(hosts);
@@ -339,8 +340,8 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     return () => { alive = false; clearInterval(timer); };
   }, [merging, token, hostId, hostsKey]);
   // Folders last chosen for members on each machine, offered first next time.
-  const recentRemoteDirs = (host: string): string[] => { try { return JSON.parse(localStorage.getItem(`rah.collab.dirs.${host}`) ?? '[]'); } catch { return []; } };
-  const rememberRemoteDir = (host: string, cwd: string) => localStorage.setItem(`rah.collab.dirs.${host}`, JSON.stringify([cwd, ...recentRemoteDirs(host).filter((d) => d !== cwd)].slice(0, 5)));
+  const recentRemoteDirs = (host: string): string[] => { try { return JSON.parse(localStorage.getItem(`calli.collab.dirs.${host}`) ?? '[]'); } catch { return []; } };
+  const rememberRemoteDir = (host: string, cwd: string) => localStorage.setItem(`calli.collab.dirs.${host}`, JSON.stringify([cwd, ...recentRemoteDirs(host).filter((d) => d !== cwd)].slice(0, 5)));
   const [remotePick, setRemotePick] = useState<{ host: string; api: Api; machine: string; roots: string[]; selected: string; choose: (cwd: string) => void } | null>(null);
   // Instances on the other machines, for a collaboration led from this hub: each with that machine's folders.
   const [remoteAgents, setRemoteAgents] = useState<Array<AgentInfo & { host: string; directories: string[] }>>([]);
@@ -476,6 +477,10 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   }, []);
   // On a phone the thread list is a page of its own; `drawer` slides the conversation off to show it.
   const compact = useIsCompact();
+  // The installed app draws into the window's title bar (see the stylesheet): that row is one band
+  // of the list's colour, as in Codex, and the theme colour, which the window paints behind its own
+  // buttons there, says the same.
+  const inTitlebar = useInTitlebar() && !compact;
   // ⇧⌘S (Ctrl+Shift+S elsewhere), Codex's key for it. Only where there is a sidebar to put away.
   useEffect(() => {
     if (compact) return;
@@ -493,7 +498,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const [confirmSignOut, setConfirmSignOut] = useState(false);
   /** Where the settings menu opened from, while it is open. */
   const [settingsAt, setSettingsAt] = useState<{ x: number; y: number } | null>(null);
-  const [appearance, setAppearance, theme] = useAppearance(showcase ? 'limi.showcase.appearance' : undefined, showcase ? { mode: showcase.theme, palette: 'paper' } : undefined);
+  const [appearance, setAppearance, theme] = useAppearance(showcase ? 'calli.showcase.appearance' : undefined, showcase ? { mode: showcase.theme, palette: 'paper' } : undefined);
   const [appearanceOpen, setAppearanceOpen] = useState(false);
   // An error belongs to the thread (or new-thread page) it happened in, so other threads stay clean.
   // The closure keeps the thread that was open when the failing request started.
@@ -872,7 +877,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         setDraftAgent(first?.id ?? '');
         if (first) setDraftPermission(startingPermission(first.capabilities));
         if (!demo) {
-          const dismissed = localStorage.getItem('rah_onboard_dismissed') === '1';
+          const dismissed = localStorage.getItem('calli_onboard_dismissed') === '1';
           const needsOnboard = a.length === 0 || a.filter((x) => x.available).length === 0;
           if (!dismissed && needsOnboard) {
             setOnboardStep('ask');
@@ -1120,12 +1125,13 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   useEffect(() => {
     const root = document.documentElement;
     root.classList.toggle('list-open', listOpen);
+    root.classList.toggle('in-titlebar', inTitlebar);
     // The keyboard belongs to the conversation; it goes down when the conversation moves aside.
     if (listOpen && document.activeElement instanceof HTMLElement) document.activeElement.blur();
     // Read again whenever the look changes: by then the new palette is on the page.
-    const colour = getComputedStyle(root).getPropertyValue(listOpen ? '--sidebar' : '--bg').trim();
+    const colour = getComputedStyle(root).getPropertyValue(listOpen || inTitlebar ? '--sidebar' : '--bg').trim();
     if (colour) document.querySelector('meta[name="theme-color"]')?.setAttribute('content', colour);
-  }, [listOpen, theme, appearance.palette]);
+  }, [listOpen, inTitlebar, theme, appearance.palette]);
 
   // A scroll hands the position over to the user only when their hand caused it. Scroll events
   // also come from the pin itself, from the keyboard resizing the page and from content changing
@@ -1787,12 +1793,12 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       api.discoverAgents().then(setDiscovered).catch(() => undefined);
       api.discoverAccounts().then(setAccounts).catch(() => undefined);
     }
-    localStorage.setItem('rah_onboard_dismissed', '1');
+    localStorage.setItem('calli_onboard_dismissed', '1');
     setOnboardOpen(false);
   };
 
   const handleOnboardLater = () => {
-    localStorage.setItem('rah_onboard_dismissed', '1');
+    localStorage.setItem('calli_onboard_dismissed', '1');
     setOnboardOpen(false);
   };
 
@@ -1996,6 +2002,8 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const teamShown = Boolean(selected?.coordination && (selected.coordination.rootId !== selected.id || selected.coordination.children > 0) && !onPage && hostUp);
   // A member's own thread: it was sent from the lead's, which is where its way back goes.
   const atMember = Boolean(teamShown && selected!.coordination!.rootId !== selected!.id);
+  // Where the thread runs, beside its title; a page or a team task names itself instead.
+  const placeShown = Boolean(selected && !viewTitle && !(host && !hostUp) && !selected.coordination?.team && !atMember);
   const leadTitle = atMember ? threads.find((v) => v.id === selected!.coordination!.rootId)?.title ?? '' : '';
   const teamNote = teamWaiting ? t('app.teamWaiting') : teamRunning ? t('team.running', teamRunning) : selected?.coordination?.paused ? t('team.paused') : '';
 
@@ -2085,7 +2093,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       <aside className="sidebar">
         <Sidebar
           personalDirectory={personal?.directory}
-          storagePrefix={showcase ? 'limi.showcase.sidebar' : undefined}
+          storagePrefix={showcase ? 'calli.showcase.sidebar' : undefined}
           showEmptySections={!showcase}
           threads={threads.filter((t) => !t.coordination || t.coordination.rootId === t.id || !threads.some((r) => r.id === t.coordination!.rootId))}
           members={teamMembers}
@@ -2171,7 +2179,12 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           )}
           <div className="topbar-heading">
             {/* Every page names itself here, the way a thread does: the bar is never left blank. */}
-            <div className="topbar-title">{host && !hostUp ? host.label : viewTitle ?? (selected ? selected.title : t('sidebar.newThread'))}</div>
+            {/* On a phone there is no room for the tag: the title itself opens where the thread runs. */}
+            {compact && placeShown ? (
+              <ThreadPlace thread={selected!} agent={agentLabel(selected!.agent)} host={host?.label} title={selected!.title} />
+            ) : (
+              <div className="topbar-title">{host && !hostUp ? host.label : viewTitle ?? (selected ? selected.title : t('sidebar.newThread'))}</div>
+            )}
             {selected?.coordination?.team && <div className={`team-task-status${['awaiting_confirm', 'needs_attention'].includes(selected.coordination.team.status) ? ' attention' : ''}`}><span className="team-task-name">{selected.coordination.team.name}</span><span> · {t(`teams.${selected.coordination.team.status}`)}</span></div>}
             {!selected && host && hostUp && <div className="topbar-sub">{host.label}</div>}
             {atMember && (
@@ -2179,13 +2192,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
                 {agentLabel(selected!.agent)} · {t('app.leadThread', leadTitle)}
               </button>
             )}
-            {selected && !selected.coordination?.team && !atMember && (
-              <div className="topbar-sub" title={selected.cwd}>
-                {agentLabel(selected.agent)} ·{' '}
-                {selected.scratch ? t('projects.none') : selected.worktree ? `${folderName(selected.worktree.of)} · ${selected.worktree.branch}` : folderName(selected.cwd)}
-                {host && ` · ${host.label}`}
-              </div>
-            )}
+            {placeShown && !compact && <ThreadPlace thread={selected!} agent={agentLabel(selected!.agent)} host={host?.label} />}
           </div>
           {selected && (
             <div className="topbar-actions">

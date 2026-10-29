@@ -1,4 +1,4 @@
-# Limi — 功能对标与补齐计划
+# Calli — 功能对标与补齐计划
 
 > 基于 pi-web、Codex 的功能对标分析，列出当前缺失的必备功能及实施方案。
 
@@ -10,7 +10,7 @@
 
 **必备功能：**
 
-| 功能 | pi-web 实现 | remote-agent-hub 现状 | 优先级 |
+| 功能 | pi-web 实现 | calli 现状 | 优先级 |
 |---|---|---|---|
 | **文件管理** | 文件浏览器、拖拽上传、项目文件树 | ❌ 无 | P1 |
 | **Session 管理** | 按项目分组、resume、rename、export、delete | ✅ 部分（无UI） | P1 |
@@ -25,7 +25,7 @@
 
 **关键特性：**
 
-| 功能 | Codex 实现 | remote-agent-hub 现状 | 优先级 |
+| 功能 | Codex 实现 | calli 现状 | 优先级 |
 |---|---|---|---|
 | **Session 持久化** | 自动保存、唯一 session ID | ✅ 有（SQLite） | ✅ 完成 |
 | **分组展示** | 按项目分组、置顶、标签 | ❌ 仅项目分组，无置顶/标签 | P1 |
@@ -117,7 +117,7 @@ CREATE INDEX idx_threads_pinned_updated ON threads(pinned DESC, updatedAt DESC);
 ### 2.3 子目录导航与选择（P1 - 依赖文件树）
 
 **问题描述**
-- 新建 Thread 时，只能选择 `RAH_WORKDIRS` 中配置的顶级目录
+- 新建 Thread 时，只能选择 `CALLI_WORKDIRS` 中配置的顶级目录
 - 不能选择 `/projects/foo/src` 这样的子目录
 
 **补齐方案**
@@ -274,7 +274,7 @@ GET /api/threads/{id}/export?format=markdown|json|zip
 
 ## 7. 技术债与注意事项
 
-1. **文件权限**：上传的文件需遵守 `RAH_WORKDIRS` 白名单，不能上传到工作目录外。
+1. **文件权限**：上传的文件需遵守 `CALLI_WORKDIRS` 白名单，不能上传到工作目录外。
 2. **符号链接处理**：列出目录树时需检测符号链接，避免无限递归。
 3. **大文件处理**：上传文件大小需限制（建议 100MB），分块上传待 P3。
 4. **性能**：目录树递归可能较慢，考虑限制深度（如 maxDepth=5）或添加缓存。
