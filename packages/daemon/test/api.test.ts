@@ -2180,6 +2180,83 @@ test('sync: turns the terminal added appear, are marked, and warn until the hub 
   }
 });
 
+test('sync: a web turn started while agent history loads is not imported while still running', async () => {
+  const thread = await newThread({ agent: 'pi', cwd: workdir });
+  await post(`/api/threads/${thread.id}/turns`, { text: 'hello before sync' });
+  await untilIdle(thread.id);
+
+  const pi = (manager as unknown as { adapters: Map<string, AgentAdapter> }).adapters.get('pi')!;
+  const originalLoadHistory = pi.loadHistory!.bind(pi);
+  let markHistoryRead!: () => void;
+  let releaseHistory!: () => void;
+  const historyRead = new Promise<void>((resolve) => { markHistoryRead = resolve; });
+  const historyGate = new Promise<void>((resolve) => { releaseHistory = resolve; });
+  pi.loadHistory = async () => {
+    markHistoryRead();
+    await historyGate;
+    return [
+      { text: 'hello before sync', images: [], events: [] },
+      { text: 'slow web turn during sync', images: [], events: [] },
+    ];
+  };
+
+  try {
+    const syncing = api(`/api/threads/${thread.id}/sync`, { method: 'POST' });
+    await historyRead;
+    await post(`/api/threads/${thread.id}/turns`, { text: 'slow web turn during sync' });
+    await waitFor(async () => ((await viewOf(thread.id)).status === 'running' ? true : null));
+    releaseHistory();
+
+    const response = await syncing;
+    assert.equal(response.status, 200);
+    assert.equal(((await response.json()) as { added: number }).added, 0);
+    assert.deepEqual((await events(thread.id)).filter((event) => event.data.fromTerminal === true), []);
+  } finally {
+    releaseHistory();
+    pi.loadHistory = originalLoadHistory;
+    await api(`/api/threads/${thread.id}/cancel`, { method: 'POST' });
+    await untilIdle(thread.id);
+  }
+});
+
+test('sync: a web turn completed while agent history loads is matched against fresh hub history', async () => {
+  const thread = await newThread({ agent: 'pi', cwd: workdir });
+  await post(`/api/threads/${thread.id}/turns`, { text: 'hello before completed sync' });
+  await untilIdle(thread.id);
+
+  const pi = (manager as unknown as { adapters: Map<string, AgentAdapter> }).adapters.get('pi')!;
+  const originalLoadHistory = pi.loadHistory!.bind(pi);
+  let markHistoryRead!: () => void;
+  let releaseHistory!: () => void;
+  const historyRead = new Promise<void>((resolve) => { markHistoryRead = resolve; });
+  const historyGate = new Promise<void>((resolve) => { releaseHistory = resolve; });
+  pi.loadHistory = async () => {
+    markHistoryRead();
+    await historyGate;
+    return [
+      { text: 'hello before completed sync', images: [], events: [] },
+      { text: 'completed web turn during sync', images: [], events: [] },
+    ];
+  };
+
+  try {
+    const syncing = api(`/api/threads/${thread.id}/sync`, { method: 'POST' });
+    await historyRead;
+    await post(`/api/threads/${thread.id}/turns`, { text: 'completed web turn during sync' });
+    await untilIdle(thread.id);
+    releaseHistory();
+
+    const response = await syncing;
+    assert.equal(response.status, 200);
+    assert.equal(((await response.json()) as { added: number }).added, 0);
+    assert.deepEqual((await events(thread.id)).filter((event) => event.data.fromTerminal === true), []);
+    assert.deepEqual(await turnTexts(thread.id), ['hello before completed sync', 'completed web turn during sync']);
+  } finally {
+    releaseHistory();
+    pi.loadHistory = originalLoadHistory;
+  }
+});
+
 test('sync: a hub turn the agent never recorded is skipped, not treated as divergence', async () => {
   const messagesFile = join(dataDir, 'pi-terminal-messages-2.json');
   process.env.FAKE_PI_MESSAGES_FILE = messagesFile;
