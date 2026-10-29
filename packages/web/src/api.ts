@@ -1458,7 +1458,7 @@ export class Api {
   }
 
   /** Calli extensions this daemon ships, and which are installed on its machine. */
-  autotitleSettings(): Promise<{ settings: import('@calli/extension-api/web').AutoTitleSettings; status: import('@calli/extension-api/web').AutoTitleStatus; defaultRules: string }> {
+  autotitleSettings(): Promise<{ settings: import('@calli/extension-api/web').AutoTitleSettings; status: import('@calli/extension-api/web').AutoTitleStatus; pass: import('@calli/extension-api/web').AutoTitlePass | null; defaultRules: string }> {
     return this.send('GET', '/api/extensions/autotitle/settings');
   }
   saveAutotitleSettings(patch: Partial<import('@calli/extension-api/web').AutoTitleSettings>): Promise<import('@calli/extension-api/web').AutoTitleSettings> {
@@ -1466,6 +1466,9 @@ export class Api {
   }
   previewAutotitle(threadId: string): Promise<{ title: string }> {
     return this.send('POST', '/api/extensions/autotitle/preview', { threadId });
+  }
+  organizeAutotitle(): Promise<{ queued: number }> {
+    return this.send('POST', '/api/extensions/autotitle/organize');
   }
   /** The person's "name it again": the auto-titles extension names the thread now. */
   autotitle(threadId: string): Promise<{ title: string }> {

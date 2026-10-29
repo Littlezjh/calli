@@ -239,3 +239,31 @@ test('「重新取名」 does not overwrite a title the person set while the age
     assert.equal(h.manager.titleBy(thread.id), 'user');
   } finally { await h.close(); }
 });
+
+test('「整理现有线程」 names the backlog, one title the person set stays, a second click while running is refused', async () => {
+  const h = await setup();
+  try {
+    await h.api('/api/extensions/autotitle/settings', 'PUT', { agent: 'claude' });
+    const old1 = await h.manager.createThread({ agent: 'claude', cwd: h.cwd });
+    await h.send(old1.id, '登录总是超时');
+    const old2 = await h.manager.createThread({ agent: 'claude', cwd: h.cwd });
+    await h.send(old2.id, '注册收不到验证码');
+    const mine = await h.manager.createThread({ agent: 'claude', cwd: h.cwd });
+    await h.send(mine.id, '第三件事');
+    await wait(() => h.manager.titleBy(old1.id) === 'auto');
+    await h.manager.updateThread(mine.id, { title: '我的名字' });
+    // Threads from before title_by was kept: the backlog the pass is for. The person's own title keeps its mark.
+    (h.store as unknown as { db: { prepare: (q: string) => { run: (v: string) => unknown } } }).db.prepare('UPDATE threads SET title_by = NULL WHERE id != ?').run(mine.id);
+
+    const first = await (await h.api('/api/extensions/autotitle/organize', 'POST')).json() as { queued: number };
+    assert.equal(first.queued, 2, 'the default-titled pair, not the person\u2019s own');
+    assert.equal((await h.api('/api/extensions/autotitle/organize', 'POST')).status, 409, 'a pass already runs');
+    await wait(() => h.autotitle.passState() === null, 20000);
+    assert.equal(h.manager.threadView(old1.id).title, '修复登录超时');
+    assert.equal(h.manager.titleBy(old1.id), 'auto');
+    assert.equal(h.manager.threadView(old2.id).title, '修复登录超时');
+    assert.equal(h.manager.threadView(mine.id).title, '我的名字', 'the person\u2019s title is never touched');
+    const again = await (await h.api('/api/extensions/autotitle/organize', 'POST')).json() as { queued: number };
+    assert.equal(again.queued, 0, 'a finished pass leaves nothing to do');
+  } finally { await h.close(); }
+});

@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import type { AutoTitleSettings, AutoTitleStatus, ExtensionViewProps } from '@calli/extension-api/web';
+import type { AutoTitlePass, AutoTitleSettings, AutoTitleStatus, ExtensionViewProps } from '@calli/extension-api/web';
 import { t } from './i18n';
 
-type Loaded = { settings: AutoTitleSettings; status: AutoTitleStatus; defaultRules: string };
+type Loaded = { settings: AutoTitleSettings; status: AutoTitleStatus; pass: AutoTitlePass | null; defaultRules: string };
 
 /** The settings of 自动取名: who names, when, by which rules, and a dry run on one thread. */
 export function AutoTitleView({ host }: ExtensionViewProps) {
@@ -17,6 +17,7 @@ export function AutoTitleView({ host }: ExtensionViewProps) {
   const [threads, setThreads] = useState(() => host.threads.snapshot());
   const [tryOn, setTryOn] = useState<string | null>(null);
   const [trial, setTrial] = useState<{ state: 'idle' | 'running' } | { state: 'done'; title: string } | { state: 'error'; message: string }>({ state: 'idle' });
+  const [organizing, setOrganizing] = useState<{ kind: 'idle' } | { kind: 'queued'; n: number } | { kind: 'none' } | { kind: 'error' }>({ kind: 'idle' });
 
   const load = () => {
     if (!api) return;
@@ -25,6 +26,12 @@ export function AutoTitleView({ host }: ExtensionViewProps) {
   };
   useEffect(load, [api]);
   useEffect(() => host.threads.subscribe(setThreads), [host]);
+  // While a backlog pass runs, its progress is worth watching.
+  useEffect(() => {
+    if (!api || !data?.pass) return;
+    const timer = setTimeout(() => void api.load().then(value => setData(value)).catch(() => undefined), 2000);
+    return () => clearTimeout(timer);
+  }, [api, data]);
   const agent = data?.settings.agent ?? null;
   useEffect(() => {
     setModels([]);
@@ -40,7 +47,7 @@ export function AutoTitleView({ host }: ExtensionViewProps) {
   );
   if (!data) return <div className="autotitle-page" aria-busy="true" />;
 
-  const { settings, status } = data;
+  const { settings, status, pass } = data;
   const save = async (patch: Partial<AutoTitleSettings>) => {
     const next = await api.save(patch);
     setData(d => (d ? { ...d, settings: next } : d));
@@ -64,6 +71,17 @@ export function AutoTitleView({ host }: ExtensionViewProps) {
       setTrial({ state: 'done', title });
     } catch (error) {
       setTrial({ state: 'error', message: error instanceof Error ? error.message : String(error) });
+    }
+  };
+
+  const runOrganize = async () => {
+    setOrganizing({ kind: 'idle' });
+    try {
+      const { queued } = await api.organize();
+      setOrganizing(queued > 0 ? { kind: 'queued', n: queued } : { kind: 'none' });
+      if (queued > 0) { const value = await api.load(); setData(value); }
+    } catch {
+      setOrganizing({ kind: 'error' });
     }
   };
 
@@ -160,6 +178,23 @@ export function AutoTitleView({ host }: ExtensionViewProps) {
             )}
             {trial.state === 'error' && <p className="autotitle-error" role="alert">{trial.message}</p>}
           </>
+        )}
+      </section>
+
+      <section className="autotitle-section">
+        <h2>{t(locale, 'organize')}</h2>
+        <p className="autotitle-note">{t(locale, 'organizeHint')}</p>
+        {pass ? (
+          <p className="autotitle-note" role="status">{t(locale, 'organizing', pass.done, pass.total)}</p>
+        ) : (
+          <div className="autotitle-row">
+            <button type="button" className="autotitle-button primary" disabled={!picked} onClick={() => void runOrganize()}>
+              {t(locale, 'organizeRun')}
+            </button>
+            {organizing.kind === 'queued' && <span className="autotitle-note">{t(locale, 'organized', organizing.n)}</span>}
+            {organizing.kind === 'none' && <span className="autotitle-note">{t(locale, 'noneToOrganize')}</span>}
+            {organizing.kind === 'error' && <span className="autotitle-error" role="alert">{t(locale, 'organizeFailed')}</span>}
+          </div>
         )}
       </section>
 

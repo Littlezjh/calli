@@ -35,6 +35,13 @@ export interface AutoTitleStatus {
   error: { threadId: string; message: string; at: string } | null;
 }
 
+/** A backlog pass in progress: how many threads it is naming, and how many are done. */
+export interface AutoTitlePass {
+  total: number;
+  done: number;
+  at: string;
+}
+
 export const DEFAULT_RULES = ['- 8 到 20 个字，和对话用同一种语言', '- 说清楚要做的事，不要客套话', '- 不加标点和引号'].join('\n');
 const DEFAULTS: AutoTitleSettings = { agent: null, model: null, rules: DEFAULT_RULES, trigger: 'finished', again: false };
 /** How much of the first message and of its answer the naming agent reads. */
@@ -83,6 +90,8 @@ export class AutoTitle implements DaemonExtension {
   /** One naming at a time, in the order asked; a thread already waiting is not asked twice. */
   private chain: Promise<unknown> = Promise.resolve();
   private readonly waiting = new Set<string>();
+  /** A backlog pass running now; null when none is. */
+  private pass: AutoTitlePass | null = null;
 
   constructor(
     manifest: ExtensionManifest,
@@ -124,6 +133,11 @@ export class AutoTitle implements DaemonExtension {
 
   status(): AutoTitleStatus {
     return this.store.hubSetting<AutoTitleStatus>('autotitle.status', { last: null, error: null });
+  }
+
+  /** The backlog pass running now, for the settings page to show its progress. */
+  passState(): AutoTitlePass | null {
+    return this.pass;
   }
 
   /** Whether the extension may act now: installed, enabled, and holding what renaming needs. */
@@ -170,6 +184,37 @@ export class AutoTitle implements DaemonExtension {
     // What the title is when the person asks: if they rename it while the agent thinks, theirs stays.
     const before = (() => { try { return { title: this.manager.threadView(threadId).title }; } catch { return null; } })();
     return this.queue(threadId, false, opts.apply, before, true);
+  }
+
+  /**
+   * Names the backlog: every live thread still carrying a default title — including the ones from
+   * before this was kept, which the automatic passes leave alone. Titles the person set or an
+   * earlier pass gave are not touched again; neither are team members' threads, scheduled runs or
+   * borrowed tasks. One at a time through the chain, so a large backlog costs a call per thread
+   * and takes a while; the pass shows in the settings while it runs.
+   */
+  organize(): { queued: number } {
+    if (!this.allowed()) throw new HttpError(403, '自动取名扩展未安装、已停用或缺少权限');
+    if (!this.settings().agent) throw new HttpError(409, '先在自动取名的设置里选一个取名用的 agent');
+    if (this.pass) throw new HttpError(409, '整理已在进行中');
+    const threads = this.manager.listThreads().filter(view => {
+      const by = this.manager.titleBy(view.id);
+      if (by !== null && by !== 'default') return false;
+      if (view.schedule || view.handover) return false;
+      if (view.coordination && view.coordination.rootId !== view.id) return false;
+      if (!this.userTurns(view.id).length) return false;
+      return !this.manager.borrowing?.owns(view.id);
+    });
+    if (!threads.length) return { queued: 0 };
+    this.pass = { total: threads.length, done: 0, at: new Date().toISOString() };
+    for (const view of threads) {
+      const run = this.chain.then(() => this.run(view.id, false, true, { title: view.title }, true));
+      this.chain = run.catch(() => undefined).then(() => {
+        if (this.pass) this.pass = { ...this.pass, done: this.pass.done + 1 };
+      });
+    }
+    this.chain = this.chain.then(() => { this.pass = null; });
+    return { queued: threads.length };
   }
 
   private queue(threadId: string, automatic: boolean, apply = true, before: { title: string } | null = null, answer = true): Promise<{ title: string }> {

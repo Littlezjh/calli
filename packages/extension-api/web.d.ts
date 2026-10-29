@@ -128,12 +128,21 @@ export interface AutoTitleStatus {
   error: { threadId: string; message: string; at: string } | null;
 }
 
+/** A backlog pass in progress: how many threads it is naming, and how many are done. */
+export interface AutoTitlePass {
+  total: number;
+  done: number;
+  at: string;
+}
+
 /** Only for the built-in 自动取名 extension; others get nothing here. */
 export interface WebHostAutotitle {
-  load(): Promise<{ settings: AutoTitleSettings; status: AutoTitleStatus; defaultRules: string }>;
+  load(): Promise<{ settings: AutoTitleSettings; status: AutoTitleStatus; pass: AutoTitlePass | null; defaultRules: string }>;
   save(patch: Partial<AutoTitleSettings>): Promise<AutoTitleSettings>;
   /** The title the rules give a thread now, without renaming it. */
   preview(threadId: string): Promise<{ title: string }>;
+  /** Name every live thread still carrying a default title; the answer says how many were queued. */
+  organize(): Promise<{ queued: number }>;
   /** The models an agent instance offers, for choosing which one names. */
   models(agentId: string): Promise<{ id: string; label: string }[]>;
 }
