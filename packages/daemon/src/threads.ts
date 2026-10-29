@@ -594,14 +594,27 @@ export class ThreadManager {
     if (!adapter.capabilities.forkAt || !adapter.loadHistory || !thread.agentSessionId) {
       throw new HttpError(400, `${thread.agent} can only fork a whole conversation`);
     }
-    const agentTurns = await adapter.loadHistory(thread.agentSessionId, thread.cwd);
-    const matched = matchTurns(agentTurns.map((t) => turnKey(t.text)), hubKeys, ThreadManager.SYNC_SKIP_TOLERANCE);
-    const agentIndex = matched?.hubToAgent[hubIndex] ?? -1;
-    if (agentIndex < 0) throw new HttpError(409, `this turn is not in ${thread.agent}'s own history, so a copy cannot stop there`);
-    if (agentIndex === agentTurns.length - 1) return undefined;
-    const ref = agentTurns[agentIndex].forkRef;
-    if (!ref) throw new HttpError(409, `${thread.agent} cannot stop a copy at this turn`);
-    return ref;
+    const active = this.running.has(thread.id);
+    const retryDelays = active ? [0, 50, 150] : [0];
+    for (const delayMs of retryDelays) {
+      // A second app-server can briefly see the active writer's history one turn behind. Only
+      // retry that prefix case; a real text disagreement still fails immediately.
+      if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
+      const agentTurns = await adapter.loadHistory(thread.agentSessionId, thread.cwd);
+      const matched = matchTurns(agentTurns.map((t) => turnKey(t.text)), hubKeys, ThreadManager.SYNC_SKIP_TOLERANCE);
+      const agentIndex = matched?.hubToAgent[hubIndex] ?? -1;
+      if (agentIndex < 0) {
+        if (matched && delayMs !== retryDelays.at(-1)) continue;
+        break;
+      }
+      // During a live turn the read snapshot may end at this older boundary even though the writer
+      // has already started another turn. Pass the explicit ref instead of cloning its moving tip.
+      if (!active && agentIndex === agentTurns.length - 1) return undefined;
+      const ref = agentTurns[agentIndex].forkRef;
+      if (!ref) throw new HttpError(409, `${thread.agent} cannot stop a copy at this turn`);
+      return ref;
+    }
+    throw new HttpError(409, `this turn is not in ${thread.agent}'s own history, so a copy cannot stop there`);
   }
 
   /** Where a stored image is on disk, for the HTTP layer to stream. */

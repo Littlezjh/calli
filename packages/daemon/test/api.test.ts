@@ -1194,9 +1194,21 @@ test('fork at a turn: the copy ends where that turn ended, on the hub and on the
     const t = (await (await api(`/api/threads/${thread.id}`)).json()) as { status: string };
     return t.status === 'running' ? t : null;
   });
-  const historyFork = await forkAt(thread.id, first.turnId!);
-  assert.equal(historyFork.status, 201);
-  assert.equal(((await historyFork.json()) as Record<string, any>).agentSessionId, 'hist-forkat-fork-e2');
+  const pi = (manager as unknown as { adapters: Map<string, AgentAdapter> }).adapters.get('pi')!;
+  const loadHistory = pi.loadHistory!;
+  let historyReads = 0;
+  pi.loadHistory = async (...args) => {
+    const history = await loadHistory.call(pi, ...args);
+    return ++historyReads === 1 ? [] : history.slice(0, 1);
+  };
+  try {
+    const historyFork = await forkAt(thread.id, first.turnId!);
+    assert.equal(historyFork.status, 201);
+    assert.equal(((await historyFork.json()) as Record<string, any>).agentSessionId, 'hist-forkat-fork-e2');
+    assert.equal(historyReads, 2, 'an active writer history snapshot that is one turn behind is retried');
+  } finally {
+    pi.loadHistory = loadHistory;
+  }
   assert.equal((await api(`/api/threads/${thread.id}/fork`, { method: 'POST' })).status, 409);
   assert.equal((await forkAt(thread.id, running.turnId)).status, 409);
   await api(`/api/threads/${thread.id}/cancel`, { method: 'POST' });
