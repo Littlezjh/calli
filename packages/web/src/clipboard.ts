@@ -40,6 +40,10 @@ function canWritePngImage(): boolean {
     && (typeof Item.supports !== 'function' || Item.supports('image/png'));
 }
 
+function hasLegacyCopySupport(): boolean {
+  return typeof document !== 'undefined' && typeof document.execCommand === 'function';
+}
+
 function imageAsPng(url: string): Promise<Blob> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -60,10 +64,45 @@ function imageAsPng(url: string): Promise<Blob> {
   });
 }
 
+function blobAsDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('Cannot read image'));
+    reader.onerror = () => reject(new Error('Cannot read image'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function copyImageSelection(url: string): Promise<boolean> {
+  if (!hasLegacyCopySupport()) return false;
+  const png = await imageAsPng(url);
+  const dataUrl = await blobAsDataUrl(png);
+  const box = document.createElement('div');
+  box.contentEditable = 'true';
+  // Keep it selectable on-screen: some browsers refuse copying from display:none or off-screen nodes.
+  Object.assign(box.style, { position: 'fixed', top: '0', left: '0', opacity: '0', pointerEvents: 'none' });
+  const img = document.createElement('img');
+  img.src = dataUrl;
+  img.alt = '';
+  box.appendChild(img);
+  document.body.appendChild(box);
+  const range = document.createRange();
+  range.selectNode(img);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+  try {
+    return document.execCommand('copy');
+  } finally {
+    selection?.removeAllRanges();
+    box.remove();
+  }
+}
+
 /** Copies a displayed picture when the browser exposes the async image clipboard API. */
 export async function copyImage(url: string): Promise<ImageCopyResult> {
-  if (!canWritePngImage()) return 'unavailable';
   try {
+    if (!canWritePngImage()) return await copyImageSelection(url) ? 'copied' : 'unavailable';
     const original = await (await fetch(url)).blob();
     // Browsers that can write images are consistently happiest with PNG clipboard items.
     const blob = original.type === 'image/png' ? original : await imageAsPng(url);

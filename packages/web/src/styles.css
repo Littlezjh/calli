@@ -7014,7 +7014,7 @@ input.picker-search {
   margin: 0;
 }
 
-.file-image button {
+.file-image .file-image-preview {
   display: block;
   padding: 0;
   border: 1px solid var(--border);
@@ -7034,12 +7034,45 @@ input.picker-search {
 .file-image figcaption {
   /* A long path must not widen the picture's button and expose its background. */
   contain: inline-size;
-  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   color: var(--muted);
   font-family: var(--mono);
   font-size: 12px;
+}
+
+.file-image figcaption > span {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.file-image-copy {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.file-image-copy:hover {
+  border-color: var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.file-image-note {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .markdown img {

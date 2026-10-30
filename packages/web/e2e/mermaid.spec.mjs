@@ -15,13 +15,14 @@ before(async () => {
   mkdirSync(shots, { recursive: true });
 });
 after(async () => { await browser?.close(); await vite?.close(); });
-async function setup(t, phone = false, theme = 'light', images = false, clipboard = false) {
+async function setup(t, phone = false, theme = 'light', images = false, clipboard = false, fileImages = false) {
   const context = await browser.newContext({ viewport: phone ? { width: 390, height: 844 } : { width: 1440, height: 960 }, isMobile: phone, hasTouch: phone, colorScheme: theme });
   t.after(() => context.close());
   const page = await context.newPage();
   page.setDefaultTimeout(10000);
-  await page.addInitScript(({ theme, images, clipboard }) => {
+  await page.addInitScript(({ theme, images, clipboard, fileImages }) => {
     window.testImages = images;
+    window.testFileImages = fileImages;
     if (clipboard) {
       window.copiedImages = [];
       class MockClipboardItem {
@@ -40,7 +41,7 @@ async function setup(t, phone = false, theme = 'light', images = false, clipboar
       });
     }
     window.addEventListener('DOMContentLoaded', () => { document.documentElement.dataset.theme = theme; }, { once: true });
-  }, { theme, images, clipboard });
+  }, { theme, images, clipboard, fileImages });
   await page.route('**/src/main.tsx', route => route.fulfill({ contentType: 'text/javascript', body: "import '/e2e/mermaid-fixture.js';" }));
   await page.goto(base);
   await page.locator('.code-diagram svg').waitFor();
@@ -188,6 +189,19 @@ test('copying an opened image works from the toolbar and by double click', async
   await page.locator('.lightbox img').dblclick();
   await page.waitForFunction(() => window.copiedImages.length === 2);
   assert.equal(await page.locator('.lightbox').count(), 1, 'double click copies without closing');
+});
+
+test('copying an inline artifact image works from the row and by double click', async t => {
+  const page = await setup(t, false, 'light', false, true, true);
+  await page.locator('.file-image img').waitFor();
+  await page.getByRole('button', { name: '复制图片', exact: true }).click();
+  await page.getByText('已复制图片').waitFor();
+  assert.deepEqual(await page.evaluate(() => window.copiedImages.map(({ type }) => type)), ['image/png']);
+  await page.locator('.file-image-preview').dblclick();
+  await page.waitForFunction(() => window.copiedImages.length === 2);
+  assert.equal(await page.locator('.lightbox').count(), 0, 'double click copies without opening the viewer');
+  await page.locator('.file-image-preview').click();
+  await page.locator('.lightbox img').waitFor();
 });
 
 

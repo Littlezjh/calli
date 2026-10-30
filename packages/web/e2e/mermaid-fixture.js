@@ -33,8 +33,11 @@ const diagram = `flowchart LR
   codex --> files
   reviewer --> preview`;
 const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 200"><rect width="800" height="200" fill="steelblue"/></svg>';
+const png = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR4AWP4z8DwHwwMjAwgAQA0HQMEem2V3QAAAABJRU5ErkJggg==';
 const items = [{ kind: 'assistant', key: 'architecture', turnId: 'one', done: true,
   text: `## 远程 Agent 架构\n\n在手机和桌面浏览器中操作同一条对话。各层通过明确的协议连接，文件保持只读。\n\n\`\`\`mermaid\n${diagram}\n\`\`\`${window.testImages ? `\n\n\`\`\`svg\n${svg}\n\`\`\`` : ''}` }];
+if (window.testFileImages) items[0].text += '\n\n保存到 artifacts/agent_message_chart.png';
+const imageBlob = () => new Blob([Uint8Array.from(atob(png), c => c.charCodeAt(0))], { type: 'image/png' });
 const noop = async () => new Blob();
 createRoot(document.getElementById('root')).render(React.createElement('main', { style: { maxWidth: 1000, margin: 'auto', padding: 20 } },
-  React.createElement(ThreadView, { items, roots: [], loadImage: noop, loadFile: noop })));
+  React.createElement(ThreadView, { items, roots: [], loadImage: noop, loadFile: async () => window.testFileImages ? imageBlob() : new Blob() })));

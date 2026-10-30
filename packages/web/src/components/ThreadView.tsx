@@ -5,7 +5,7 @@ import { Children, createContext, Fragment, isValidElement, memo, useCallback, u
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { enlargeMermaidDiagram, renderMermaidDiagram } from '../mermaid';
-import { copyText } from '../clipboard';
+import { copyImage, copyText, type ImageCopyResult } from '../clipboard';
 import { diffLines, numberLines } from '../diff';
 import { pictureUrl, svgPicture } from '../images';
 import { SentVideo } from './VideoPreview';
@@ -922,8 +922,24 @@ const DeliveredNote = memo(function DeliveredNote({ turnId, note, text }: { turn
 });
 
 /** An image file the answer points at. Shown only if the daemon confirms it is one; otherwise nothing. */
+const FILE_IMAGE_DOUBLE_CLICK_MS = 500;
+
+function imageCopyNote(result: ImageCopyResult): string {
+  return t(result === 'copied' ? 'lightbox.copyDone' : result === 'unavailable' ? 'lightbox.copyUnavailable' : 'lightbox.copyFailed');
+}
+
 function FileImage({ path, roots, load, onOpen }: { path: string; roots: string[]; load: (path: string) => Promise<Blob>; onOpen: (url: string, name?: string) => void }) {
   const [url, setUrl] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const openTimer = useRef<number | null>(null);
+
+  const clearPendingOpen = () => {
+    if (openTimer.current !== null) {
+      window.clearTimeout(openTimer.current);
+      openTimer.current = null;
+    }
+  };
 
   useEffect(() => {
     let alive = true;
@@ -938,17 +954,51 @@ function FileImage({ path, roots, load, onOpen }: { path: string; roots: string[
       .catch(() => undefined); // not an image, not in this thread's directory, or gone
     return () => {
       alive = false;
+      clearPendingOpen();
       if (made) URL.revokeObjectURL(made);
     };
   }, [path, load]);
 
+  useEffect(() => {
+    if (!note) return;
+    const timer = setTimeout(() => {
+      setNote(null);
+      setCopied(false);
+    }, 2400);
+    return () => clearTimeout(timer);
+  }, [note]);
+
+  const copy = async () => {
+    if (!url) return;
+    clearPendingOpen();
+    const result = await copyImage(url);
+    setCopied(result === 'copied');
+    setNote(imageCopyNote(result));
+  };
+
+  const openOrCopy = (detail: number) => {
+    if (!url) return;
+    if (detail >= 2) {
+      void copy();
+      return;
+    }
+    clearPendingOpen();
+    openTimer.current = window.setTimeout(() => onOpen(url, path), FILE_IMAGE_DOUBLE_CLICK_MS);
+  };
+
   if (!url) return null;
   return (
     <figure className="file-image">
-      <button type="button" onClick={() => onOpen(url, path)} aria-label={t('view.enlargePath', path)}>
+      <button type="button" className="file-image-preview" onClick={(event) => openOrCopy(event.detail)} aria-label={t('view.enlargePath', path)} title={t('lightbox.copyHint')}>
         <img src={url} alt={path} />
       </button>
-      <figcaption title={path}>{relativePath(path, roots)}</figcaption>
+      <figcaption title={path}>
+        <span>{relativePath(path, roots)}</span>
+        <button type="button" className="file-image-copy" aria-label={t('lightbox.copy')} title={t('lightbox.copyHint')} onClick={() => void copy()}>
+          {copied ? <IconCheck size={14} /> : <IconCopy size={14} />}
+        </button>
+      </figcaption>
+      {note && <span className="file-image-note" role="status">{note}</span>}
     </figure>
   );
 }
