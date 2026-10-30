@@ -1,8 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type PointerEvent } from 'react';
 import { createPortal } from 'react-dom';
+import { copyImage } from '../clipboard';
 import { savePicture, savePictureAsPng } from '../images';
 import { MAX_ZOOM, REST, fitted, panBy, zoomAt, type View } from '../zoom';
-import { IconClose, IconDownload, IconMinus, IconPlus } from './icons';
+import { IconCheck, IconClose, IconCopy, IconDownload, IconMinus, IconPlus } from './icons';
 import { t } from '../i18n';
 
 interface Props {
@@ -16,6 +17,8 @@ interface Props {
 
 /** How far a pointer travels before it is dragging rather than tapping. */
 const TAP_SLOP = 6;
+/** How long a plain image click waits so a second click can turn it into copy instead of close. */
+const DOUBLE_CLICK_MS = 500;
 /** One press of a zoom button, or of + and -. */
 const STEP = 1.5;
 
@@ -26,12 +29,14 @@ const STEP = 1.5;
  */
 export function Lightbox({ url = '', svg, name, onClose }: Props) {
   const [view, setView] = useState<View>(REST);
-  /** Why the picture could not be saved, shown for a moment. */
+  /** What just happened to the picture, shown for a moment above the toolbar. */
   const [note, setNote] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const stageRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const drawingRef = useRef<HTMLDivElement>(null);
   const natural = useRef({ width: 0, height: 0 });
+  const closeTimer = useRef<number | null>(null);
   const isSvg = url.startsWith('data:image/svg+xml');
 
   // The size the picture rests at, worked out from its shape and the room above the bar. Left to
@@ -74,6 +79,13 @@ export function Lightbox({ url = '', svg, name, onClose }: Props) {
   };
   const zoomRef = useRef(zoom);
   zoomRef.current = zoom;
+  const clearPendingClose = () => {
+    if (closeTimer.current !== null) {
+      window.clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+  };
+  useEffect(() => () => clearPendingClose(), []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -116,7 +128,10 @@ export function Lightbox({ url = '', svg, name, onClose }: Props) {
 
   useEffect(() => {
     if (!note) return;
-    const timer = setTimeout(() => setNote(null), 2400);
+    const timer = setTimeout(() => {
+      setNote(null);
+      setCopied(false);
+    }, 2400);
     return () => clearTimeout(timer);
   }, [note]);
 
@@ -177,14 +192,32 @@ export function Lightbox({ url = '', svg, name, onClose }: Props) {
   // The click that ends a press, not the release itself: closing on the release would leave the
   // click to land on whatever lies under the picture. A tap closes, unless it was a drag or landed
   // on a picture that is zoomed in.
+  const copy = async () => {
+    clearPendingClose();
+    const result = await copyImage(url);
+    setCopied(result === 'copied');
+    setNote(t(result === 'copied' ? 'lightbox.copyDone' : result === 'unavailable' ? 'lightbox.copyUnavailable' : 'lightbox.copyFailed'));
+  };
   const onClick = (e: MouseEvent<HTMLDivElement>) => {
     e.stopPropagation();
     if (svg || onControls(e.target)) return;
-    if (!gesture.current.moved && !(gesture.current.onPicture && view.scale > 1)) onClose();
+    if (gesture.current.moved || (gesture.current.onPicture && view.scale > 1)) return;
+    if (gesture.current.onPicture) {
+      if (e.detail >= 2) {
+        void copy();
+        return;
+      }
+      clearPendingClose();
+      closeTimer.current = window.setTimeout(onClose, DOUBLE_CLICK_MS);
+      return;
+    }
+    onClose();
   };
-
   const save = (how: (url: string, name?: string) => Promise<void>) => () => {
-    how(url, name).catch(() => setNote(t('lightbox.saveFailed')));
+    how(url, name).catch(() => {
+      setCopied(false);
+      setNote(t('lightbox.saveFailed'));
+    });
   };
 
   const zoomed = view.scale > 1;
@@ -236,6 +269,9 @@ export function Lightbox({ url = '', svg, name, onClose }: Props) {
         </button>
         {!svg && <>
         <span className="lightbox-sep" aria-hidden="true" />
+        <button type="button" aria-label={t('lightbox.copy')} title={t('lightbox.copyHint')} onClick={() => void copy()}>
+          {copied ? <IconCheck size={17} /> : <IconCopy size={17} />}
+        </button>
         {isSvg ? (
           <>
             <button type="button" className="lightbox-save" aria-label={t('lightbox.svg')} title={t('lightbox.svg')} onClick={save(savePicture)}>

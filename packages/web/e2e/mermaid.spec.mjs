@@ -15,12 +15,32 @@ before(async () => {
   mkdirSync(shots, { recursive: true });
 });
 after(async () => { await browser?.close(); await vite?.close(); });
-async function setup(t, phone = false, theme = 'light', images = false) {
+async function setup(t, phone = false, theme = 'light', images = false, clipboard = false) {
   const context = await browser.newContext({ viewport: phone ? { width: 390, height: 844 } : { width: 1440, height: 960 }, isMobile: phone, hasTouch: phone, colorScheme: theme });
   t.after(() => context.close());
   const page = await context.newPage();
   page.setDefaultTimeout(10000);
-  await page.addInitScript(({ theme, images }) => { window.testImages = images; window.addEventListener('DOMContentLoaded', () => { document.documentElement.dataset.theme = theme; }, { once: true }); }, { theme, images });
+  await page.addInitScript(({ theme, images, clipboard }) => {
+    window.testImages = images;
+    if (clipboard) {
+      window.copiedImages = [];
+      class MockClipboardItem {
+        constructor(items) { this.items = items; }
+        static supports(type) { return type === 'image/png'; }
+      }
+      Object.defineProperty(window, 'ClipboardItem', { value: MockClipboardItem, configurable: true });
+      Object.defineProperty(navigator, 'clipboard', {
+        value: {
+          write: async (items) => {
+            const blob = items[0]?.items?.['image/png'];
+            window.copiedImages.push({ type: blob?.type, size: blob?.size ?? 0 });
+          },
+        },
+        configurable: true,
+      });
+    }
+    window.addEventListener('DOMContentLoaded', () => { document.documentElement.dataset.theme = theme; }, { once: true });
+  }, { theme, images, clipboard });
   await page.route('**/src/main.tsx', route => route.fulfill({ contentType: 'text/javascript', body: "import '/e2e/mermaid-fixture.js';" }));
   await page.goto(base);
   await page.locator('.code-diagram svg').waitFor();
@@ -154,7 +174,20 @@ test('desktop double click and existing SVG image zoom and tap-to-close', async 
   assert.equal(await page.locator('.lightbox-scale').textContent(), '150%');
   await page.keyboard.press('0');
   await page.locator('.lightbox img').click();
-  assert.equal(await page.locator('.lightbox').count(), 0);
+  await page.locator('.lightbox').waitFor({ state: 'detached' });
+});
+
+test('copying an opened image works from the toolbar and by double click', async t => {
+  const page = await setup(t, false, 'light', true, true);
+  await page.locator('.code-picture').click();
+  await page.locator('.lightbox img').waitFor();
+  await page.getByRole('button', { name: '复制图片', exact: true }).click();
+  await page.getByText('已复制图片').waitFor();
+  assert.deepEqual(await page.evaluate(() => window.copiedImages.map(({ type }) => type)), ['image/png']);
+  assert.ok(await page.evaluate(() => window.copiedImages[0].size > 0));
+  await page.locator('.lightbox img').dblclick();
+  await page.waitForFunction(() => window.copiedImages.length === 2);
+  assert.equal(await page.locator('.lightbox').count(), 1, 'double click copies without closing');
 });
 
 
