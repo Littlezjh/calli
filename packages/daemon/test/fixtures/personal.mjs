@@ -1,15 +1,27 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+let router = false;
 /** A portable coding agent needs only shell execution, its scoped env and the prompt. */
 export function personalFixture(text) {
   const command = text.split('\n')[0];
+  if (text.includes('<calli-personal-router>')) router = true;
+  if (router && ['router-fixture-slow', 'router-fixture-fail'].includes(command)) return null;
   const clarification = process.env.FAKE_PERSONAL_DELEGATE_CLARIFY === '1' && command.startsWith('这是一件新交给你的事，不是交接');
   const review = process.env.FAKE_PERSONAL_REVIEW && (command === '由 Calli 发起的私人事项盘点。' || command.startsWith('开始 '));
-  if (!review && !clarification && !['personal-ui', 'personal-start', 'personal-notify', 'personal-quiet', 'personal-wish', '由 Calli 发起的事项跟进。', '由 Calli 发起的近期总结。', '# 交接信息', '# 接手'].includes(command)) return null;
+  if (!router && !review && !clarification && !['personal-ui', 'personal-start', 'personal-notify', 'personal-quiet', 'personal-wish', '由 Calli 发起的事项跟进。', '由 Calli 发起的近期总结。', '# 交接信息', '# 接手'].includes(command)) return null;
   // A handover first turn, in the old coordinate format or the clean brief, carrying open todos.
   if ((command === '# 交接信息' || command === '# 接手') && !text.includes('## 关联事项与接续说明')) return null;
   const cli = (args, input = '') => JSON.parse(execFileSync(process.execPath, [join(process.env.CALLI_BIN_DIR, 'calli'), ...args], { input, encoding: 'utf8' }));
+  if (router) {
+    if (command === 'router-fixture-long') return '鱼'.repeat(350);
+    if (command.startsWith('记一件事：')) {
+      const name = command.slice('记一件事：'.length).trim();
+      cli(['todo', 'add', '--owner', 'me', '--lane', 'you', '--text-file', '-'], name);
+      return `已记下「${name}」，在新发现里点「跟踪」就能放上桌面。`;
+    }
+    return `收到「${command}」。要开始时告诉我，我再交给 agent。`;
+  }
   if (review) {
     if (command.startsWith('开始 ')) return JSON.stringify(cli(['todo', 'delegate', command.slice('开始 '.length)]));
     if (process.env.FAKE_PERSONAL_REVIEW === 'quiet') { cli(['quiet']); return 'Nothing needs attention.'; }

@@ -120,13 +120,18 @@ export interface ScheduleRunRecord {
   message: string | null;
 }
 
+export type TodoLane = 'you' | 'doing' | 'wait' | 'later';
+export const TODO_LANES: TodoLane[] = ['you', 'doing', 'wait', 'later'];
+
 /** One entry on the plan page. `parentId` is only ever a top-level todo: one level of nesting. */
 export interface TodoNote { text: string; updatedAt: string | null; threadId: string | null }
 export interface TodoProposal { id: string; todoId: string; kind: 'add' | 'done'; evidence: string; threadId: string; createdAt: string; state: 'open' | 'accepted' | 'dismissed' }
-export type TodoPatch = Partial<Pick<TodoRecord, 'text' | 'done' | 'owner' | 'state' | 'waitingOn' | 'dueAt' | 'followUpAt' | 'followUpNoProgress' | 'followUpPaused' | 'proposed'>>;
+export type TodoPatch = Partial<Pick<TodoRecord, 'text' | 'done' | 'owner' | 'state' | 'lane' | 'waitingOn' | 'dueAt' | 'followUpAt' | 'followUpNoProgress' | 'followUpPaused' | 'proposed'>>;
 export interface TodoRecord {
   owner: 'me' | 'agent';
   state: 'open' | 'waiting' | 'done';
+  /** Explicit group; null lets the page infer it from the due date and waiting state. */
+  lane: TodoLane | null;
   waitingOn: string | null;
   dueAt: string | null;
   followUpAt: string | null;
@@ -143,11 +148,13 @@ export interface TodoRecord {
   parentId: string | null;
   position: number;
   createdAt: string;
+  /** When the person or an agent last did anything to this item; the desk's last-activity signal. */
+  updatedAt: string;
   doneAt: string | null;
 }
 
 interface TodoRow {
-  owner: 'me' | 'agent'; state: 'open' | 'waiting' | 'done'; waiting_on: string | null;
+  owner: 'me' | 'agent'; state: 'open' | 'waiting' | 'done'; lane: string | null; waiting_on: string | null;
   due_at: string | null; follow_up_at: string | null; rev: number; proposed: number;
   follow_up_no_progress: number; follow_up_paused: number;
   has_note: number; note_preview: string | null; note_updated_at: string | null;
@@ -157,6 +164,7 @@ interface TodoRow {
   parent_id: string | null;
   position: number;
   created_at: string;
+  updated_at: string | null;
   done_at: string | null;
 }
 
@@ -235,7 +243,8 @@ function todoNotePreview(text: string): string {
 }
 
 const toTodo = (r: TodoRow): TodoRecord => ({
-  owner: r.owner, state: r.state, waitingOn: r.waiting_on, dueAt: r.due_at, followUpAt: r.follow_up_at,
+  owner: r.owner, state: r.state, lane: (TODO_LANES as string[]).includes(r.lane ?? '') ? r.lane as TodoLane : null,
+  waitingOn: r.waiting_on, dueAt: r.due_at, followUpAt: r.follow_up_at,
   followUpNoProgress: r.follow_up_no_progress, followUpPaused: r.follow_up_paused === 1,
   rev: r.rev, proposed: r.proposed === 1, hasNote: r.has_note === 1, notePreview: r.note_preview, noteUpdatedAt: r.note_updated_at,
   id: r.id,
@@ -244,6 +253,7 @@ const toTodo = (r: TodoRow): TodoRecord => ({
   parentId: r.parent_id,
   position: r.position,
   createdAt: r.created_at,
+  updatedAt: r.updated_at ?? r.created_at,
   doneAt: r.done_at,
 });
 
@@ -509,9 +519,11 @@ export class Store {
     `));
     if (!runColumns.some(c => c.name === 'note_before_hash')) this.db.exec('ALTER TABLE schedule_runs ADD COLUMN note_before_hash TEXT');
     const todoColumns = new Set((this.db.prepare('PRAGMA table_info(todos)').all() as Array<{ name: string }>).map(c => c.name));
-    for (const [column, definition] of Object.entries({ owner: "TEXT NOT NULL DEFAULT 'me'", state: "TEXT NOT NULL DEFAULT 'open'", waiting_on: 'TEXT', due_at: 'TEXT', follow_up_at: 'TEXT', follow_up_no_progress: 'INTEGER NOT NULL DEFAULT 0', follow_up_paused: 'INTEGER NOT NULL DEFAULT 0', rev: 'INTEGER NOT NULL DEFAULT 1', proposed: 'INTEGER NOT NULL DEFAULT 0', has_note: 'INTEGER NOT NULL DEFAULT 0', note_preview: 'TEXT', note_updated_at: 'TEXT' })) {
+    for (const [column, definition] of Object.entries({ owner: "TEXT NOT NULL DEFAULT 'me'", state: "TEXT NOT NULL DEFAULT 'open'", lane: 'TEXT', waiting_on: 'TEXT', due_at: 'TEXT', follow_up_at: 'TEXT', follow_up_no_progress: 'INTEGER NOT NULL DEFAULT 0', follow_up_paused: 'INTEGER NOT NULL DEFAULT 0', rev: 'INTEGER NOT NULL DEFAULT 1', proposed: 'INTEGER NOT NULL DEFAULT 0', has_note: 'INTEGER NOT NULL DEFAULT 0', note_preview: 'TEXT', note_updated_at: 'TEXT', updated_at: 'TEXT' })) {
       if (!todoColumns.has(column)) this.db.exec(`ALTER TABLE todos ADD COLUMN ${column} ${definition}`);
     }
+    // Old items were last touched when they were created; every writer stamps from now on.
+    this.db.exec('UPDATE todos SET updated_at = created_at WHERE updated_at IS NULL');
     if (!todoColumns.has('state')) this.db.exec("UPDATE todos SET state = CASE WHEN done = 1 THEN 'done' ELSE 'open' END");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS todo_notes (todo_id TEXT PRIMARY KEY REFERENCES todos(id) ON DELETE CASCADE, text TEXT NOT NULL, updated_at TEXT NOT NULL, thread_id TEXT);
@@ -947,10 +959,10 @@ export class Store {
       .get(parentId) as { next: number };
     const now = new Date().toISOString();
     this.db
-      .prepare('INSERT INTO todos (id, text, done, parent_id, position, created_at) VALUES (?, ?, 0, ?, ?, ?)')
-      .run(id, text, parentId, row.next, now);
+      .prepare('INSERT INTO todos (id, text, done, parent_id, position, created_at, updated_at) VALUES (?, ?, 0, ?, ?, ?, ?)')
+      .run(id, text, parentId, row.next, now, now);
     if (Object.keys(fields).length) {
-      this.db.prepare('UPDATE todos SET owner = ?, due_at = ?, proposed = ? WHERE id = ?').run(fields.owner ?? 'me', fields.dueAt ?? null, fields.proposed ? 1 : 0, id);
+      this.db.prepare('UPDATE todos SET owner = ?, due_at = ?, proposed = ?, lane = ? WHERE id = ?').run(fields.owner ?? 'me', fields.dueAt ?? null, fields.proposed ? 1 : 0, fields.lane ?? null, id);
     }
     return this.getTodo(id)!;
   }
@@ -966,13 +978,22 @@ export class Store {
 
   updateTodo(id: string, patch: TodoPatch, rev = this.getTodo(id)?.rev): TodoRecord {
     const current = this.checkTodoRev(id, rev);
+    if (patch.lane !== undefined && patch.lane !== null && !TODO_LANES.includes(patch.lane)) throw new HttpError(400, 'lane must be you, doing, wait, later or null');
     const next = { ...current, ...patch };
     if (patch.state !== undefined) next.done = patch.state === 'done';
     else if (patch.done !== undefined) next.state = patch.done ? 'done' : 'open';
     next.doneAt = next.done ? (current.doneAt ?? new Date().toISOString()) : null;
     if (next.state !== 'waiting') next.waitingOn = null;
-    this.db.prepare('UPDATE todos SET text = ?, done = ?, done_at = ?, owner = ?, state = ?, waiting_on = ?, due_at = ?, follow_up_at = ?, follow_up_no_progress = ?, follow_up_paused = ?, proposed = ?, rev = rev + 1 WHERE id = ?')
-      .run(next.text, next.done ? 1 : 0, next.doneAt, next.owner, next.state, next.waitingOn, next.dueAt, next.followUpAt, next.followUpNoProgress, next.followUpPaused ? 1 : 0, next.proposed ? 1 : 0, id);
+    next.updatedAt = new Date().toISOString();
+    this.db.prepare('UPDATE todos SET text = ?, done = ?, done_at = ?, owner = ?, state = ?, lane = ?, waiting_on = ?, due_at = ?, follow_up_at = ?, follow_up_no_progress = ?, follow_up_paused = ?, proposed = ?, updated_at = ?, rev = rev + 1 WHERE id = ?')
+      .run(next.text, next.done ? 1 : 0, next.doneAt, next.owner, next.state, next.lane, next.waitingOn, next.dueAt, next.followUpAt, next.followUpNoProgress, next.followUpPaused ? 1 : 0, next.proposed ? 1 : 0, next.updatedAt, id);
+    return this.getTodo(id)!;
+  }
+
+  /** 「还在跟」: refreshes only the activity timestamp; no rev bump, nothing else changes. */
+  touchTodo(id: string): TodoRecord {
+    if (!this.getTodo(id)) throw new HttpError(404, 'todo not found');
+    this.db.prepare('UPDATE todos SET updated_at = ? WHERE id = ?').run(new Date().toISOString(), id);
     return this.getTodo(id)!;
   }
 
@@ -986,8 +1007,8 @@ export class Store {
       const changed = this.todoNote(id).text !== text;
       const now = new Date().toISOString();
       this.db.prepare('INSERT INTO todo_notes (todo_id, text, updated_at, thread_id) VALUES (?, ?, ?, ?) ON CONFLICT(todo_id) DO UPDATE SET text = excluded.text, updated_at = excluded.updated_at, thread_id = excluded.thread_id').run(id, text, now, threadId);
-      this.db.prepare('UPDATE todos SET has_note = ?, note_preview = ?, note_updated_at = ?, follow_up_no_progress = ?, follow_up_paused = ?, rev = rev + ? WHERE id = ?')
-        .run(Number(Boolean(text.trim())), todoNotePreview(text), now, changed ? 0 : todo.followUpNoProgress, changed ? 0 : Number(todo.followUpPaused), bumpRev ? 1 : 0, id);
+      this.db.prepare('UPDATE todos SET has_note = ?, note_preview = ?, note_updated_at = ?, follow_up_no_progress = ?, follow_up_paused = ?, updated_at = ?, rev = rev + ? WHERE id = ?')
+        .run(Number(Boolean(text.trim())), todoNotePreview(text), now, changed ? 0 : todo.followUpNoProgress, changed ? 0 : Number(todo.followUpPaused), now, bumpRev ? 1 : 0, id);
       return this.getTodo(id)!;
     });
   }

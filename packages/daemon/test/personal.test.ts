@@ -82,6 +82,100 @@ test('personal CRUD checks provided revisions, note lists remain small, writes o
     assert.equal((await h.api(`/api/todos/${todo.id}?rev=5`, 'DELETE')).status, 204);
   } finally { await h.close(); }
 });
+test('todo lane: validated on create and patch, flows through the CLI, none clears it', async () => {
+  const h = await setup(); try {
+    const created = await (await h.api('/api/todos', 'POST', { text: 'Pick a lane', lane: 'you' })).json();
+    assert.equal(created.lane, 'you');
+    assert.equal((await h.api('/api/todos', 'POST', { text: 'Bad lane', lane: 'someday' })).status, 400);
+    assert.equal((await h.api(`/api/todos/${created.id}`, 'PATCH', { lane: 7 })).status, 400);
+    const later = await (await h.api(`/api/todos/${created.id}`, 'PATCH', { rev: created.rev, lane: 'later' })).json();
+    assert.equal(later.lane, 'later');
+    // The store itself refuses bad lanes, not just the HTTP layer.
+    assert.throws(() => h.store.updateTodo(created.id, { lane: 'someday' as never }, later.rev), /lane/);
+    const cleared = await (await h.api(`/api/todos/${created.id}`, 'PATCH', { rev: later.rev, lane: null })).json();
+    assert.equal(cleared.lane, null);
+    assert.equal(((await (await h.api('/api/todos')).json() as Array<{ id: string; lane: string | null }>)).find(t => t.id === created.id)?.lane, null);
+
+    // CLI: --lane on add and update; none clears it so the page infers the group again.
+    const added = await h.cli(['todo', 'add', '--owner', 'agent', '--text-file', h.file('lane-text', 'Lane from CLI'), '--lane', 'wait']);
+    assert.equal(added.lane, 'wait');
+    const doing = await h.cli(['todo', 'update', added.id, '--rev', String(added.rev), '--lane', 'doing']);
+    assert.equal(doing.lane, 'doing');
+    const none = await h.cli(['todo', 'update', added.id, '--rev', String(doing.rev), '--lane', 'none']);
+    assert.equal(none.lane, null);
+    await assert.rejects(h.cli(['todo', 'update', added.id, '--rev', String(none.rev), '--lane', 'someday']), /lane/);
+  } finally { await h.close(); }
+});
+test('todo updatedAt: every write touches it, {touch:true} refreshes it alone, old rows backfill', async () => {
+  const h = await setup(); const pause = () => new Promise(r => setTimeout(r, 5)); try {
+    const created = await (await h.api('/api/todos', 'POST', { text: 'Still on it' })).json();
+    assert.equal(created.updatedAt, created.createdAt);
+    await pause();
+    const lane = await (await h.api(`/api/todos/${created.id}`, 'PATCH', { lane: 'doing' })).json();
+    assert.ok(lane.updatedAt > created.createdAt, 'a PATCH is activity');
+    await pause();
+    const noted = await (await h.api(`/api/todos/${created.id}/note`, 'PUT', { rev: lane.rev, text: '## 下一步\n推进中' })).json();
+    assert.ok(noted.updatedAt > lane.updatedAt, 'writing the note is activity');
+    await pause();
+    await h.api(`/api/todos/${created.id}/threads`, 'POST', { threadId: h.thread.id, rev: noted.rev });
+    assert.ok(h.store.getTodo(created.id)!.updatedAt > noted.updatedAt, 'linking a thread is activity');
+    await pause();
+    const beforeDue = h.store.getTodo(created.id)!.updatedAt;
+    const due = await (await h.api(`/api/todos/${created.id}`, 'PATCH', { rev: h.store.getTodo(created.id)!.rev, dueAt: '2026-11-05T10:00:00.000Z' })).json();
+    assert.ok(due.updatedAt > beforeDue, 'a due-date change is activity');
+    await pause();
+    // The agent proposes done through the scoped CLI; accepting it is the person's write.
+    await h.cli(['todo', 'propose-done', created.id, '--rev', String(h.store.getTodo(created.id)!.rev), '--evidence-file', h.file('evidence', 'Filed and confirmed')]);
+    await pause();
+    const beforeAccept = h.store.getTodo(created.id)!.updatedAt;
+    const proposal = h.store.todoProposals(created.id).find(p => p.state === 'open')!;
+    const accepted = await (await h.api(`/api/todos/${created.id}/proposals/${proposal.id}/accept`, 'POST', { rev: h.store.getTodo(created.id)!.rev })).json();
+    assert.equal(accepted.state, 'done');
+    assert.ok(accepted.updatedAt > beforeAccept, 'accepting a proposal is activity');
+
+    // 「还在跟」: the timestamp moves, nothing else does — not even rev, so it cannot 409 an agent.
+    await pause();
+    const before = h.store.getTodo(created.id)!;
+    const touched = await (await h.api(`/api/todos/${created.id}`, 'PATCH', { touch: true })).json();
+    assert.ok(touched.updatedAt > before.updatedAt);
+    assert.equal(touched.rev, before.rev);
+    assert.equal(touched.text, before.text);
+    assert.equal(touched.lane, before.lane);
+    assert.equal((await h.api(`/api/todos/${created.id}`, 'PATCH', { touch: 'yes' })).status, 400);
+  } finally { await h.close(); }
+});
+test('todo updatedAt backfills old rows with their creation time on reopen', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'calli-todo-updated-'));
+  let store = new Store(dir);
+  try {
+    store.createTodo('updated-1', 'Old row', null);
+    store.close();
+    // A database from before the column existed: the row has no timestamp at all.
+    const raw = new DatabaseSync(join(dir, 'hub.db'));
+    raw.exec('UPDATE todos SET updated_at = NULL');
+    raw.close();
+    store = new Store(dir);
+    assert.equal(store.getTodo('updated-1')?.updatedAt, store.getTodo('updated-1')?.createdAt);
+  } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+test('todo lane: the column migrates like the other todo fields and its value survives a reopen', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'calli-lane-reopen-'));
+  let store = new Store(dir);
+  try {
+    store.createTodo('lane-1', 'Persisted', null, { lane: 'wait' });
+    assert.equal(store.getTodo('lane-1')?.lane, 'wait');
+    store.close();
+    store = new Store(dir);
+    assert.equal(store.getTodo('lane-1')?.lane, 'wait');
+    // A value written by an older or buggy build reads back as null instead of leaking out.
+    store.close();
+    const raw = new DatabaseSync(join(dir, 'hub.db'));
+    raw.prepare('UPDATE todos SET lane = ? WHERE id = ?').run('someday', 'lane-1');
+    raw.close();
+    store = new Store(dir);
+    assert.equal(store.getTodo('lane-1')?.lane, null);
+  } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
+});
 test('todo note previews prefer next steps, skip headings and backfill existing notes without changing revisions', () => {
   const dir = mkdtempSync(join(tmpdir(), 'calli-note-preview-'));
   let store = new Store(dir);

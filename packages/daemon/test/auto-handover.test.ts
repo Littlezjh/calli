@@ -40,7 +40,17 @@ async function setup(summaryFail = false, hidden?: string) {
   const api = (path: string, method = 'GET', body?: unknown) => fetch(base + path, { method, headers: { Authorization: 'Bearer test-token', 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const thread = await manager.createThread({ agent: 'agy', cwd: dir, model: 'gemini-pro' });
   const config = (targets = [{ agent: 'agy2', model: 'gemini-pro' }]) => manager.autoHandover.configure({ enabled: true, threshold: 90, orders: { agy: targets } });
-  const done = async (id = thread.id) => wait(() => manager.threadView(id).status !== 'running' && !manager.autoHandover.held(id));
+  // A coordination reply can start the next turn right after the current one ends, in the gap
+  // between the status cleanup and the queued turn's own running flag. Settling means the
+  // not-running observation survives a beat. Turns that stay queued without starting are fine:
+  // they do not make a takeover busy.
+  const done = async (id = thread.id) => {
+    for (;;) {
+      await wait(() => manager.threadView(id).status !== 'running' && !manager.autoHandover.held(id));
+      await new Promise(r => setTimeout(r, 50));
+      if (manager.threadView(id).status !== 'running' && !manager.autoHandover.held(id)) return;
+    }
+  };
   return { dir, store, manager, team, thread, api, config, done, adapters,
     async close() { team.dispose(); await manager.shutdown(); await new Promise<void>(r => server.close(() => r())); store.close(); rmSync(dir, { recursive: true, force: true }); } };
 }

@@ -38,7 +38,7 @@ export function Dialog({ title, message, input, options = [], confirmLabel, dang
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onCancel();
+      if (e.key === 'Escape' && !e.isComposing && e.keyCode !== 229) onCancel();
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
@@ -126,7 +126,7 @@ interface ChoiceProps {
 export function ChoiceDialog({ title, choices, onPick, onCancel }: ChoiceProps) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onCancel();
+      if (e.key === 'Escape' && !e.isComposing && e.keyCode !== 229) onCancel();
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
@@ -163,25 +163,38 @@ export function DialogSurface({ children, className = '', labelledBy, onClose, b
   busy?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const closeRef = useRef({ onClose, busy });
+  closeRef.current = { onClose, busy };
+  const pressedOutside = useRef(false);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
-    ref.current?.focus();
-    return () => previous?.focus();
+    ref.current?.focus({ preventScroll: true });
+    const onKey = (e: KeyboardEvent) => {
+      if (e.isComposing || e.keyCode === 229) return;
+      const surface = ref.current;
+      // A nested dialog or a portalled menu owns the keyboard until it closes. Listening on the
+      // document also handles a focused button becoming disabled while its request is in flight.
+      const dialogs = [...document.querySelectorAll<HTMLElement>('[role="dialog"][aria-modal="true"]')];
+      if (!surface || dialogs.at(-1) !== surface || document.querySelector('.pop-panel')) return;
+      const owner = e.target instanceof Element ? e.target.closest('[role="dialog"]') : null;
+      if (owner && owner !== surface) return;
+      if (e.key === 'Escape') { e.stopPropagation(); if (!closeRef.current.busy) closeRef.current.onClose(); }
+      if (e.key !== 'Tab') return;
+      const items = [...surface.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href], [tabindex="0"]')].filter(el => el.getClientRects().length > 0);
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (!first) { e.preventDefault(); surface.focus(); return; }
+      const outside = !surface.contains(document.activeElement) || document.activeElement === surface;
+      if (e.shiftKey && (document.activeElement === first || outside)) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && (document.activeElement === last || outside)) { e.preventDefault(); first.focus(); }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('keydown', onKey); previous?.focus({ preventScroll: true }); };
   }, []);
   return (
-    <div className="dialog-scrim" onClick={busy ? undefined : onClose}>
+    <div className="dialog-scrim" onPointerDown={e => { pressedOutside.current = e.target === e.currentTarget; }} onClick={e => { if (!busy && pressedOutside.current && e.target === e.currentTarget) onClose(); }}>
       <div ref={ref} tabIndex={-1} className={`dialog ${className}`} role="dialog" aria-modal="true" aria-labelledby={labelledBy}
-        onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => {
-          if (e.key === 'Escape') { e.stopPropagation(); if (!busy) onClose(); }
-          if (e.key !== 'Tab') return;
-          const items = [...(ref.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), a[href], [tabindex="0"]') ?? [])];
-          const first = items[0];
-          const last = items[items.length - 1];
-          if (!first) { e.preventDefault(); return; }
-          if (e.shiftKey && (document.activeElement === first || document.activeElement === ref.current)) { e.preventDefault(); last.focus(); }
-          else if (!e.shiftKey && (document.activeElement === last || document.activeElement === ref.current)) { e.preventDefault(); first.focus(); }
-        }}>
+        onClick={(e) => e.stopPropagation()}>
         {children}
       </div>
     </div>
@@ -196,7 +209,7 @@ export function PanelDialog({ title, children, onClose, className = '' }: { titl
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     close.current?.focus();
-    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') closeAction.current(); };
+    const key = (event: KeyboardEvent) => { if (event.key === 'Escape' && !event.isComposing && event.keyCode !== 229) closeAction.current(); };
     document.addEventListener('keydown', key);
     return () => { document.removeEventListener('keydown', key); previous?.focus(); };
   }, []);

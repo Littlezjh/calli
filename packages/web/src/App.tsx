@@ -67,6 +67,7 @@ import { teamRecipient } from './teams';
 import type { TeamSummary } from './api';
 import { SkillsPage } from './components/SkillsPage';
 import { SchedulesPage } from './components/SchedulesPage';
+import { DeskPage } from './components/DeskPage';
 import { TodosPage } from './components/TodosPage';
 import { ActivityPage } from './components/ActivityPage';
 import { ExtensionsPage } from './components/ExtensionsPage';
@@ -121,6 +122,7 @@ const isNearBottom = (el: HTMLElement) => el.scrollHeight - el.scrollTop - el.cl
 
 /** The plan page's address. Threads have none: the main area showing a thread is the plain URL. */
 const TODOS_HASH = '#/todos';
+const DESK_HASH = '#/desk';
 const SKILLS_HASH = '#/skills';
 const TEAMS_HASH = '#/teams';
 const AGENTS_HASH = '#/agents';
@@ -130,14 +132,16 @@ const ACTIVITY_HASH = '#/activity';
 const OBSERVABILITY_HASH = '#/observability';
 const EXTENSIONS_HASH = '#/extensions';
 /** The hub's own pages. Any other `#/…` may be an extension's view; see extensions/routes.ts. */
-const CORE_ROUTES = [AGENTS_HASH, TEAMS_HASH, TODOS_HASH, SKILLS_HASH, MCP_HASH, SCHEDULES_HASH, ACTIVITY_HASH, OBSERVABILITY_HASH, EXTENSIONS_HASH];
+const CORE_ROUTES = [AGENTS_HASH, TEAMS_HASH, TODOS_HASH, DESK_HASH, SKILLS_HASH, MCP_HASH, SCHEDULES_HASH, ACTIVITY_HASH, OBSERVABILITY_HASH, EXTENSIONS_HASH];
 
-type MainView = 'agents' | 'teams' | 'thread' | 'todos' | 'schedules' | 'activity' | 'observability' | 'skills' | 'mcp' | 'extensions' | 'ext';
+type MainView = 'agents' | 'teams' | 'thread' | 'todos' | 'desk' | 'schedules' | 'activity' | 'observability' | 'skills' | 'mcp' | 'extensions' | 'ext';
 
 /** The page an address opens; null for none (a thread). Skills and MCP are the hub's own machinery, which the demo has none of. */
 function viewForHash(hash: string, connected: boolean): MainView | null {
   if (hash.startsWith('#/thread/')) return null;
   switch (hash) {
+    case DESK_HASH:
+      return 'desk';
     case TODOS_HASH:
       return 'todos';
     case SCHEDULES_HASH:
@@ -437,6 +441,14 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const [threadsKnown, setThreadsKnown] = useState(() => !keepThreads || cachedThreads(hostId) !== null);
   const [sections, setSections] = useState<Section[]>([]);
   const [todos, setTodos] = useState<Todo[]>([]);
+  const [todosLoading, setTodosLoading] = useState(true);
+  const [todosError, setTodosError] = useState('');
+  const [petAvatar, setPetAvatar] = useState<string>();
+  useEffect(() => {
+    if (api.demo) return; let live = true;
+    void api.pet().then(status => { if (live) setPetAvatar(status.installed ? api.petFrame(status.id, 'idle', 0) : undefined); }).catch(() => undefined);
+    return () => { live = false; };
+  }, [api]);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   /** What the main area shows: a thread (or the blank one a new thread starts from), one of the hub's pages, or an extension's view. */
   // Those pages have addresses of their own, so a reload or a bookmark lands back on them.
@@ -772,6 +784,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     return () => { cancelled = true; };
   }, [api, selectedId, threads]);
   useEffect(() => { setAgentsOpen(false); setDraftCollaboration(false); setCollaborationDirectories([]); }, [selectedId, hostId]);
+  const onDesk = view === 'desk' && !selectedId;
   const onTodos = view === 'todos' && !selectedId;
   const onSchedules = view === 'schedules' && !selectedId;
   const onActivity = view === 'activity' && !selectedId;
@@ -786,7 +799,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const extOpen = onExt && extensions && extTarget ? resolveExtensionRoute(extTarget, extensions) : null;
   const extName = extOpen ? extensions?.find((e) => e.manifest.id === extOpen.extensionId)?.manifest.name[locale()] ?? extOpen.extensionId : '';
   /** The name of the page the main area shows instead of a thread, for the top bar; null on a thread. */
-  const viewTitle = onObservability ? t('obs.title') : onAgents ? t('agents.title') : onTeams ? t('teams.title') : onTodos
+  const viewTitle = onDesk ? t('desk.title') : onObservability ? t('obs.title') : onAgents ? t('agents.title') : onTeams ? t('teams.title') : onTodos
     ? t('todos.title')
     : onSchedules
       ? t('sidebar.schedules')
@@ -849,11 +862,11 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const extWant = onExt ? (extOpen ? extensionHash(extOpen) : extTarget ?? '') : '';
   useEffect(() => {
     if (threadLink) return;
-    const want = onObservability ? OBSERVABILITY_HASH : onAgents ? AGENTS_HASH : onTeams ? TEAMS_HASH : onTodos ? TODOS_HASH : onSchedules ? SCHEDULES_HASH : onActivity ? ACTIVITY_HASH : onSkills ? SKILLS_HASH : onMcp ? MCP_HASH : onExtensions ? EXTENSIONS_HASH : extWant;
+    const want = onDesk ? DESK_HASH : onObservability ? OBSERVABILITY_HASH : onAgents ? AGENTS_HASH : onTeams ? TEAMS_HASH : onTodos ? TODOS_HASH : onSchedules ? SCHEDULES_HASH : onActivity ? ACTIVITY_HASH : onSkills ? SKILLS_HASH : onMcp ? MCP_HASH : onExtensions ? EXTENSIONS_HASH : extWant;
     if (window.location.hash !== want) {
       window.history.replaceState(window.history.state, '', want || window.location.pathname + window.location.search);
     }
-  }, [onObservability, onAgents, onTeams, onTodos, onActivity, onSkills, onSchedules, onMcp, onExtensions, extWant, threadLink]);
+  }, [onDesk, onObservability, onAgents, onTeams, onTodos, onActivity, onSkills, onSchedules, onMcp, onExtensions, extWant, threadLink]);
 
   // Whether the directory a new thread would start in is a git repository. Asked once per directory picked.
   useEffect(() => {
@@ -1004,7 +1017,19 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     void reloadExtensions();
     return () => { extensionRequest.current++; };
   }, [reloadExtensions]);
-  const reloadTodos = useCallback(() => api?.todos().then(setTodos).catch(() => undefined), [api]);
+  const todosRequest = useRef(0);
+  const reloadTodos = useCallback(async () => {
+    const request = ++todosRequest.current;
+    try {
+      const value = await api.todos();
+      if (request === todosRequest.current) { setTodos(value); setTodosError(''); }
+    } catch (e) { if (request === todosRequest.current) setTodosError(String(e)); }
+    finally { if (request === todosRequest.current) setTodosLoading(false); }
+  }, [api]);
+  useEffect(() => {
+    setTodosLoading(true); setTodosError(''); setTodos([]); void reloadTodos();
+    return () => { todosRequest.current++; };
+  }, [reloadTodos]);
   const reloadSchedules = useCallback(
     () => api?.schedules().then(setSchedules).catch(() => setSchedules([])),
     [api],
@@ -1017,19 +1042,17 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     let cancelled = false;
     (async () => {
       try {
-        const [a, c, , s, td, sc] = await Promise.all([
+        const [a, c, , s, sc] = await Promise.all([
           api.agents(),
           api.workdirs(),
           threadFeed.read(),
           api.sections(),
-          api.todos().catch(() => []),
           api.schedules().catch(() => []),
         ]);
         if (cancelled) return;
         setAgents(a);
         applyWorkdirs(c);
         setSections(s);
-        setTodos(td);
         setSchedules(sc);
         setDraftCwd((cur) => cur || c.workdirs[0] || '');
         const first = a.find((x) => x.available && !x.hidden);
@@ -1688,6 +1711,9 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   };
 
   // The plan page takes the place of a thread, so no thread is open while it is.
+  const openDesk = () => {
+    setSelectedId(null); setView('desk'); setDrawer(false);
+  };
   const openTodos = () => {
     setSelectedId(null);
     setView('todos');
@@ -2288,6 +2314,9 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           onNewSection={threadActions.newSection}
           onOpenTodos={showcase ? undefined : openTodos}
           todosActive={onTodos}
+          onOpenDesk={showcase ? undefined : openDesk}
+          deskActive={onDesk}
+          petAvatar={petAvatar}
           onOpenSchedules={showcase ? undefined : openSchedules}
           onOpenDesktop={hasDesktop ? () => { setDrawer(false); setDesktop('open'); } : undefined}
           desktopRunning={desktop === 'minimized'}
@@ -2488,6 +2517,13 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
               onOpenThread={(id) => pick(id)}
               onError={handleError}
             />
+          </div>
+        ) : onDesk ? (
+          <div key="desk" className="scroller">
+            <DeskPage api={api} todos={todos} loading={todosLoading} error={todosError} threads={threads} agents={agents}
+              personal={personal} personalError={personalError} refreshKey={todosKey} onReload={reloadTodos}
+              onPetStatusChange={status => setPetAvatar(status.installed ? api.petFrame(status.id, 'idle', 0) : undefined)}
+              onPersonalChange={setPersonal} onPersonalRetry={reloadPersonal} onOpenThread={pick} onOpenPlans={openTodos} />
           </div>
         ) : onTodos ? (
           // A scroller of its own: the thread's one pins itself to the bottom, a document starts at the top.

@@ -1125,6 +1125,7 @@ export class ThreadManager {
   deleteTodo(id: string, rev?: unknown): void {
     this.store.checkTodoRev(id, rev === undefined ? this.store.getTodo(id)?.rev : rev);
     this.store.deleteTodo(id);
+    this.personal.mirrorTodoRemoval(id);
     this.broadcastTodo();
   }
 
@@ -2320,6 +2321,8 @@ export class ThreadManager {
   async shutdown(): Promise<void> {
     this.autoHandover.close();
     this.coordination?.suspendAll();
+    // The file mirror must finish its queued writes before callers remove the data directory.
+    await this.personal.flushMirror().catch(() => undefined);
     for (const threadId of [...this.running.keys()]) await this.cancelTurn(threadId).catch(() => undefined);
     const deadline = Date.now() + 3000;
     while (this.running.size > 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 25));

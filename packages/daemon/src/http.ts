@@ -23,6 +23,7 @@ import { listProjectDirectories } from './project-directories.js';
 import { MAX_VIDEO_BYTES } from './videos.js';
 import type { VoiceService } from './voice-service.js';
 import { sendToolArtifact } from './borrowing-server.js';
+import { PetService } from './pets.js';
 
 export interface HttpDeps {
   push?: PushService;
@@ -43,6 +44,8 @@ export interface HttpDeps {
   autotitle?: import('./autotitle.js').AutoTitle;
   /** Host-owned native voice; absent on deployments that do not provide it. */
   voice?: VoiceService;
+  /** The desk's companion and its downloaded frames. Defaults to the one under the Calli home directory. */
+  pets?: PetService;
   /**
    * Requests need no token: the server listens on a socket only this user can open, and a hub
    * reaches it over SSH. Such a server shows this machine only, never the machines added to it.
@@ -272,12 +275,14 @@ function serveDownload(
 
 export function createHttpServer(deps: HttpDeps): Server {
   const { manager, registry, terminals, desktop, hosts, scheduler, extensions, voice, trusted, token, webDir, version, autotitle } = deps;
+  const pets = deps.pets ?? new PetService();
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? '/', 'http://localhost');
     const path = url.pathname;
     const method = req.method ?? 'GET';
 
+    if (path.startsWith('/pets/') && (method === 'GET' || method === 'HEAD') && pets.serve(path, res)) return;
     if (!path.startsWith('/api/')) {
       if (webDir && (method === 'GET' || method === 'HEAD')) return serveStatic(res, webDir, path);
       res.writeHead(404).end();
@@ -310,6 +315,8 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (method === 'GET') return sendJson(res, 200, await manager.personal.settingsView());
       if (method === 'PUT') { manager.personal.putSettings(await readJson(req)); return sendJson(res, 200, await manager.personal.settingsView()); }
     }
+    if (path === '/api/personal/say' && method === 'POST') return sendJson(res, 201, await manager.personal.router.say(await readJson(req)));
+    if (path === '/api/personal/router' && method === 'GET') return sendJson(res, 200, manager.personal.router.status());
     if (path === '/api/wishes' && method === 'GET') return sendJson(res, 200, url.searchParams.get('summary') === 'true' ? { count: manager.personal.store.wishCount() } : manager.personal.store.listWishes());
     if (path === '/api/todos/summary') {
       if (method === 'GET') return sendJson(res, 200, manager.personal.summary.status());
@@ -772,6 +779,13 @@ export function createHttpServer(deps: HttpDeps): Server {
         res.writeHead(204).end();
         return;
       }
+    }
+
+    if (path === '/api/pets' && method === 'GET') return sendJson(res, 200, pets.status());
+    if (path === '/api/pets/install' && method === 'POST') {
+      // Answers at once; the page polls the status while the frames arrive.
+      void pets.install().catch(() => undefined);
+      return sendJson(res, 202, pets.status());
     }
 
     // Plan page: the user's own long-lived list, linked to threads.

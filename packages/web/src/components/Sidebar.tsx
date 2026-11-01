@@ -12,7 +12,7 @@ import { HostSwitcher } from './Hosts';
 import { Menu } from './Menu';
 import type { HostIconName } from '@calli/extension-api';
 import { HostIcon } from '../extensions/ui';
-import { AgentMark, IconBell, IconChevron, IconClock, IconClose, IconDesktop, IconEdit, IconFolder, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconSidebar } from './icons';
+import { AgentMark, IconBell, IconChevron, IconClock, IconClose, IconDesktop, IconEdit, IconFolder, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconSidebar, IconSparkle } from './icons';
 import { t } from '../i18n';
 
 export { folderName } from '../paths';
@@ -61,6 +61,9 @@ interface Props {
   onSectionMenu: (section: Section, x: number, y: number) => void;
   onNewSection: () => void;
   onOpenTodos?: () => void;
+  onOpenDesk?: () => void;
+  deskActive?: boolean;
+  petAvatar?: string;
   /** The plan page is what the main area shows. */
   todosActive?: boolean;
   onOpenSchedules?: () => void;
@@ -138,6 +141,9 @@ export function Sidebar({
   onSectionMenu,
   onNewSection,
   onOpenTodos,
+  onOpenDesk,
+  deskActive = false,
+  petAvatar,
   todosActive = false,
   onOpenSchedules,
   onOpenDesktop,
@@ -564,6 +570,9 @@ export function Sidebar({
                     <IconEdit size={17} /> {t('sidebar.newThread')}
                   </button>
                 ),
+                onOpenDesk && <button key="desk" className={`side-link${deskActive ? ' active' : ''}`} aria-current={deskActive ? 'page' : undefined} onClick={onOpenDesk}>
+                  {petAvatar ? <span className="side-pet-avatar"><img src={petAvatar} alt="" /></span> : <IconSparkle size={compact ? 21 : 17} />} {t('pet.name')}
+                </button>,
                 onOpenTodos && <button key="todos" className={`side-link${todosActive ? ' active' : ''}`} aria-current={todosActive ? 'page' : undefined} onClick={onOpenTodos}>
                   <IconList size={compact ? 21 : 17} /> {t('todos.title')}
                 </button>,

@@ -1,0 +1,167 @@
+import { t } from './i18n';
+
+export type PetClip = 'idle' | 'thinking' | 'success' | 'poke' | 'head_pat' | 'idle_yawn';
+
+/** What the desk knows when she speaks. Null until the matters have loaded: no data is not "nothing urgent". */
+export type PetGreeting = { you: number; first: string | null } | null;
+
+/** The size of every frame in the artwork. */
+export const PET_FRAME = { width: 412, height: 344 };
+/** The artwork's pinned commit; the daemon's `PET.commit` downloads the same one. */
+export const PET_ART_COMMIT = '084323845ab82b68d5388d5c638bec09d8544a8a';
+/** Frames kept decoded: the one on screen and those just ahead, about half a megabyte each. */
+export const PET_RING_SIZE = 8;
+export const PET_WEBP_QUALITY = 0.9;
+export const PET_CACHE_PREFIX = 'calli-pet-';
+
+/** Named after the artwork and how it is cleaned, so changing either starts over. */
+export function petCacheName(id: string): string {
+  return `${PET_CACHE_PREFIX}${id}-${PET_ART_COMMIT}-1`;
+}
+
+/** Never fetched: Cache Storage only wants an address of this origin to file the frame under. */
+export function petCacheKey(clip: PetClip, index: number): string {
+  return `/calli-pet-frames/${clip}/${index}.webp`;
+}
+
+/** The frames to keep decoded: this one and the next ones, wrapping if it loops, stopping at the end if not. */
+export function petRing(frame: number, frames: number, loop: boolean, size: number): number[] {
+  const ring: number[] = [];
+  for (let step = 0; step < Math.min(size, frames); step += 1) {
+    if (!loop && frame + step >= frames) break;
+    ring.push((frame + step) % frames);
+  }
+  return ring;
+}
+
+/** The frame after this one, or null when a one-shot clip has played out. */
+export function nextPetFrame(frame: number, frames: number, loop: boolean): number | null {
+  if (frame + 1 < frames) return frame + 1;
+  return loop ? 0 : null;
+}
+
+/** How long she stays awake between yawns: 40 to 80 seconds. */
+export function yawnDelay(random: () => number = Math.random): number {
+  return 40_000 + random() * 40_000;
+}
+
+/** Local date, so "once a day" turns over at the person's own midnight. */
+export function petDay(now: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+/** What she says on the first visit of the day: what needs the person, or something light when nothing does. */
+export function petGreetingLine(greeting: NonNullable<PetGreeting>, now: Date): string {
+  if (greeting.you > 0) return t('pet.greeting', greeting.you, greeting.first);
+  const calm = [t('pet.calm1'), t('pet.calm2'), t('pet.calm3')];
+  return calm[now.getDate() % calm.length];
+}
+
+/** The openings offered above the keyboard. Each is a label and the words it puts in the field. */
+export function petStarters(): { label: string; start: string }[] {
+  return [
+    { label: t('pet.urgent'), start: t('pet.urgentStart') },
+    { label: t('pet.note'), start: t('pet.noteStart') },
+    { label: t('pet.done'), start: t('pet.doneStart') },
+  ];
+}
+
+/** Puts an opening in front of what is written, in place of another opening if one is already there. */
+export function applyPetStarter(draft: string, start: string, starts: readonly string[]): string {
+  const opening = starts.find((s) => draft.startsWith(s));
+  return start + (opening ? draft.slice(opening.length) : draft);
+}
+
+/** A message on its way to the Router. Kept across pages, because leaving the desk must not lose the answer. */
+export interface PetPending {
+  /** The Router's last reply when this was sent: only something newer answers it. */
+  since: string | null;
+  threadId: string;
+  sentAt: number;
+  /** What was said, to send again if no answer comes. */
+  text: string;
+}
+
+/** After this long she says she is still at it; the wait goes on. */
+export const PET_LATE_MS = 2 * 60_000;
+/** After this long the answer is left in the conversation. */
+export const PET_GIVE_UP_MS = 30 * 60_000;
+/** Polls in a row with the Router at rest and nothing new before it counts as having ended without a reply. */
+export const PET_QUIET_POLLS = 6;
+/** Failed polls in a row before she says she cannot reach the hub. */
+export const PET_LOST_POLLS = 5;
+
+export function parsePetPending(raw: string | null, now: number): PetPending | null {
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw) as Partial<PetPending>;
+    if (typeof value.threadId !== 'string' || typeof value.sentAt !== 'number') return null;
+    if (now - value.sentAt > PET_GIVE_UP_MS) return null;
+    return { since: typeof value.since === 'string' ? value.since : null, threadId: value.threadId, sentAt: value.sentAt, text: typeof value.text === 'string' ? value.text : '' };
+  } catch {
+    return null;
+  }
+}
+
+export interface PetRouterReading {
+  threadId: string | null;
+  status: string | null;
+  lastReply: string | null;
+  lastReplyAt: string | null;
+}
+
+export type PetWait = 'waiting' | 'quiet' | 'failed' | { reply: string };
+
+/** Reads one poll of the Router: answered, gone wrong, or still to wait for. `restingPolls` counts this one. */
+export function readPetRouter(router: PetRouterReading, since: string | null, restingPolls: number): PetWait {
+  const fresh = Boolean(router.lastReplyAt && router.lastReply) && (!since || Date.parse(router.lastReplyAt!) > Date.parse(since));
+  if (fresh) return { reply: petReplyPreview(router.lastReply!) };
+  if (router.status === 'error') return 'failed';
+  if (router.status !== 'running' && restingPolls >= PET_QUIET_POLLS) return 'quiet';
+  return 'waiting';
+}
+
+/**
+ * The artwork carries a sheet of nearly invisible black (alpha 1 to 3) across every frame, which shows
+ * as a faint box on a pale page. Clears it in place; real edges and sparkles are well above this.
+ */
+export function clearPetHaze(pixels: Uint8ClampedArray): void {
+  for (let alpha = 3; alpha < pixels.length; alpha += 4) {
+    if (pixels[alpha] <= 3) pixels[alpha] = 0;
+  }
+}
+
+/** The technical part of a failure, for the details line: never the addresses in it. Null when nothing is left. */
+export function petErrorDetail(error: unknown): string | null {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  const detail = message.replace(/\b[a-z]+:\/\/\S+/gi, '').replace(/[\s:：,，-]+$/, '').trim();
+  return detail || null;
+}
+
+export type PetReplyPart = { text: string; todoId?: string };
+
+/** Splits a reply around the matters it names, longest name first, so each can be opened from the bubble. */
+export function petReplyParts(reply: string, todos: readonly { id: string; text: string }[]): PetReplyPart[] {
+  const names = todos.filter((todo) => Array.from(todo.text).length >= 2).sort((a, b) => b.text.length - a.text.length);
+  const parts: PetReplyPart[] = [];
+  let rest = reply;
+  while (rest) {
+    let first: { at: number; todo: { id: string; text: string } } | null = null;
+    for (const todo of names) {
+      const at = rest.indexOf(todo.text);
+      if (at >= 0 && (!first || at < first.at)) first = { at, todo };
+    }
+    if (!first) { parts.push({ text: rest }); break; }
+    if (first.at > 0) parts.push({ text: rest.slice(0, first.at) });
+    parts.push({ text: first.todo.text, todoId: first.todo.id });
+    rest = rest.slice(first.at + first.todo.text.length);
+  }
+  return parts;
+}
+
+/** Keep the bubble short without cutting a surrogate pair. The Router is asked for 100 characters, not forced to. */
+export function petReplyPreview(text: string): string {
+  const chars = Array.from(text.trim());
+  return chars.length > 100 ? chars.slice(0, 99).join('') + '…' : chars.join('');
+}

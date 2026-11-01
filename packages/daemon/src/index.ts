@@ -76,6 +76,8 @@ async function main(): Promise<void> {
   manager.personal.socket = personalPath;
   const personal = personalServer(manager.personal);
   if (!await listenPrivate(personal, personalPath)) throw new Error('Personal socket is already in use');
+  // The personal directory mirrors the plan page's todos as files; reconcile once at startup.
+  manager.personal.syncMirror();
   // Scheduled tasks tick on their own, on the machine where their threads live.
   const scheduler = new Scheduler(store, manager, adapters);
   const coordination = new CoordinationManager(store, manager, coordinationPath);

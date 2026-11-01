@@ -8,8 +8,11 @@ import { fileURLToPath } from 'node:url';
 import type { AgentAdapter } from './adapters/types.js';
 import { isWithinWorkdirs } from './workdirs.js';
 import { HttpError } from './errors.js';
+import { PersonalFiles } from './personal-files.js';
 import { PersonalReview } from './personal-review.js';
-import type { Store, TodoPatch, TodoRecord, TodoProposal } from './store.js';
+import { PersonalRouter } from './personal-router.js';
+import type { Store, TodoLane, TodoNote, TodoPatch, TodoRecord, TodoProposal } from './store.js';
+import { TODO_LANES } from './store.js';
 import type { ThreadManager } from './threads.js';
 import { SummaryService } from './summary.js';
 
@@ -66,12 +69,16 @@ ${workflow}
 export class PersonalService {
   private readonly credentials = new Map<string, string>();
   private readonly introduced = new Set<string>();
+  /** The plan page's file mirror under the personal directory; the database stays the source of truth. */
+  private readonly files = new PersonalFiles(() => this.directory());
   socket = '';
   readonly summary: SummaryService;
   readonly review: PersonalReview;
+  readonly router: PersonalRouter;
   constructor(readonly store: Store, private readonly manager: ThreadManager, private readonly adapters: Map<string, AgentAdapter>) {
     this.summary = new SummaryService(store, manager, this, adapters);
     this.review = new PersonalReview(store);
+    this.router = new PersonalRouter(store, manager, this, adapters);
   }
   private storedSettings(): PersonalSettings { return this.store.hubSetting('personal', { directory: null, agent: null, model: null }); }
   directory(): string {
@@ -143,6 +150,7 @@ export class PersonalService {
         this.store.checkTodoRev(id, todo.rev);
         this.store.linkTodoThread(id, thread.id);
         this.store.updateTodo(id, {}, todo.rev);
+        this.mirror(id);
       });
       this.manager.broadcastTodo();
       return this.manager.threadView(thread.id);
@@ -179,6 +187,20 @@ export class PersonalService {
     if (!this.store.getTodo(id)) throw new HttpError(404, 'todo not found');
     return { ...this.store.todoNote(id), rev: this.store.getTodo(id)!.rev };
   }
+  /** Writes one matter's mirror file; the mirror never throws, so API answers cannot fail on it. */
+  private mirror(id: string): void {
+    const todo = this.store.getTodo(id);
+    if (!todo) return;
+    void this.files.writeMatter(todo, this.store.todoNote(id), this.store.todoThreadIds(id));
+  }
+  /** Mirror removal; public because the web's plan-page delete (threads.ts) bypasses remove(). */
+  mirrorTodoRemoval(id: string): void { void this.files.removeMatter(id); }
+  /** Reconciles the whole mirror at startup: extra directories removed, missing ones written. */
+  syncMirror(): void {
+    void this.files.syncAll(this.store.listTodos().map(todo => ({ todo, note: this.store.todoNote(todo.id), threads: this.store.todoThreadIds(todo.id) })));
+  }
+  /** Waits for the queued mirror writes, so shutdown can close the store and remove the directory safely. */
+  flushMirror(): Promise<void> { return this.files.dispose(); }
   private patch(input: Record<string, unknown>): TodoPatch {
     const patch: TodoPatch = {};
     if (input.text !== undefined) patch.text = personalText(input.text, 300).trim();
@@ -189,6 +211,10 @@ export class PersonalService {
     if (input.state !== undefined) {
       if (!['open', 'waiting', 'done'].includes(String(input.state))) throw new HttpError(400, 'invalid todo state');
       patch.state = input.state as TodoRecord['state'];
+    }
+    if (input.lane !== undefined) {
+      if (input.lane !== null && !TODO_LANES.includes(String(input.lane) as TodoLane)) throw new HttpError(400, 'lane must be you, doing, wait, later or null');
+      patch.lane = input.lane === null ? null : String(input.lane) as TodoLane;
     }
     if (input.done !== undefined) {
       if (typeof input.done !== 'boolean') throw new HttpError(400, 'done must be a boolean');
@@ -227,7 +253,7 @@ export class PersonalService {
       // for it through the plan page's summary: then it describes work that happened.
       const recorded = links.some(id => id !== actor) || Boolean(actor && this.store.summaryThreadIds().has(actor));
       const proposed = Boolean(actor && (patch.owner ?? 'me') === 'me' && !recorded);
-      const todo = this.store.createTodo(randomUUID(), text, parentId, { owner: patch.owner, dueAt: patch.dueAt, proposed });
+      const todo = this.store.createTodo(randomUUID(), text, parentId, { owner: patch.owner, dueAt: patch.dueAt, lane: patch.lane, proposed });
       if (this.recordsSelf(actor, links)) this.store.linkTodoThread(todo.id, actor!);
       for (const id of links) this.store.linkTodoThread(todo.id, id);
       // Work the person already marked done in every one of its threads is recorded as done.
@@ -237,10 +263,21 @@ export class PersonalService {
     });
     this.manager.broadcastTodo();
     if (todo.proposed) this.manager.notice(actor!, `待你确认：${todo.text}`, true);
+    this.mirror(todo.id);
     return todo;
   }
   update(id: string, input: Record<string, unknown>, actor?: string): TodoRecord {
     if (actor) this.require(actor);
+    // 「还在跟」: when touch is the whole request, only the activity timestamp moves — no rev
+    // bump, so it can never conflict with an agent's read-before-write.
+    if (input.touch !== undefined) {
+      if (typeof input.touch !== 'boolean') throw new HttpError(400, 'touch must be a boolean');
+      if (Object.keys(input).filter(key => input[key] !== undefined).length === 1) {
+        const todo = this.store.touchTodo(id);
+        this.manager.broadcastTodo();
+        return todo;
+      }
+    }
     const current = this.store.checkTodoRev(id, input.rev === undefined && !actor ? this.store.getTodo(id)?.rev : input.rev), patch = this.patch(input);
     if (actor && patch.owner !== undefined && patch.owner !== current.owner) throw new HttpError(403, 'agents cannot change ownership');
     if (actor && current.owner === 'me' && (patch.done === true || patch.state === 'done' || patch.owner === 'agent')) throw new HttpError(403, 'use calli todo propose-done for your personal commitments');
@@ -261,7 +298,9 @@ export class PersonalService {
       for (const thread of unlinks) this.store.unlinkTodoThread(id, thread);
       return next;
     });
-    this.manager.broadcastTodo(); return todo;
+    this.manager.broadcastTodo();
+    this.mirror(id);
+    return todo;
   }
   /** Agents delete with a fresh rev, one item at a time: a plan with sub-items goes only once they are gone. */
   remove(id: string, input: Record<string, unknown>, actor: string) {
@@ -271,6 +310,7 @@ export class PersonalService {
     if (current.owner === 'me' && current.done) throw new HttpError(403, 'finished commitments stay; only the person removes them');
     this.store.deleteTodo(id);
     this.manager.broadcastTodo();
+    this.mirrorTodoRemoval(id);
     return { id, deleted: true };
   }
   writeNote(id: string, input: Record<string, unknown>, actor?: string): TodoRecord {
@@ -279,7 +319,9 @@ export class PersonalService {
     const text = personalText(input.text, 4000, true);
     const todo = this.store.writeTodoNote(id, text, actor ?? null, current.rev);
     if (actor) this.store.linkTodoThread(id, actor);
-    this.manager.broadcastTodo(); return todo;
+    this.manager.broadcastTodo();
+    this.mirror(id);
+    return todo;
   }
   propose(id: string, input: Record<string, unknown>, actor: string) {
     this.require(actor);
@@ -291,6 +333,7 @@ export class PersonalService {
       this.store.updateTodo(id, {}, current.rev); this.store.saveTodoProposal(proposal); this.store.linkTodoThread(id, actor);
     });
     this.manager.broadcastTodo(); this.manager.notice(actor, `待你确认：${current.text}`, true);
+    this.mirror(id);
     return { ...proposal, rev: this.store.getTodo(id)!.rev };
   }
   resolveProposal(id: string, pid: string, action: 'accept' | 'dismiss', rev: unknown) {
@@ -298,25 +341,31 @@ export class PersonalService {
     const proposal = this.store.todoProposals(id).find(p => p.id === pid);
     if (!proposal) throw new HttpError(404, 'proposal not found');
     if (proposal.state !== 'open') throw new HttpError(409, 'proposal already resolved');
+    const removed = proposal.kind === 'add' && action === 'dismiss';
     this.store.transaction(() => {
-      if (proposal.kind === 'add' && action === 'dismiss') this.store.deleteTodo(id);
+      if (removed) this.store.deleteTodo(id);
       else {
         this.store.updateTodo(id, action === 'dismiss' ? {} : proposal.kind === 'add' ? { proposed: false } : { state: 'done', followUpAt: null }, current.rev);
         this.store.saveTodoProposal({ ...proposal, state: action === 'accept' ? 'accepted' : 'dismissed' });
       }
     });
-    this.manager.broadcastTodo(); return this.store.getTodo(id);
+    this.manager.broadcastTodo();
+    if (removed) this.mirrorTodoRemoval(id); else this.mirror(id);
+    return this.store.getTodo(id);
   }
   inherit(sourceId: string, targetId: string): void {
     if (!this.allowed(sourceId) || !this.allowed(targetId)) return;
+    const touched: string[] = [];
     this.store.transaction(() => {
       for (const todo of this.store.listTodos()) {
         if (!this.store.todoThreadIds(todo.id).includes(sourceId)) continue;
         this.store.linkTodoThread(todo.id, targetId);
         this.store.updateTodo(todo.id, {}, todo.rev);
+        touched.push(todo.id);
       }
     });
     this.manager.broadcastTodo();
+    for (const id of touched) this.mirror(id);
   }
 
   context(threadId: string): string {

@@ -329,6 +329,7 @@ export interface Section {
 /** One entry on the plan page. `parentId` is a top-level todo or null: one level of nesting. */
 export interface PersonalSettings { directoryIsDefault?: boolean; defaultDirectory?: string; defaultDirectoryDisplay?: string; directoryDisplay?: string | null; directory: string | null; agent: string | null; model: string | null }
 export interface TodoNote { text: string; updatedAt: string | null; threadId: string | null; rev: number }
+export interface PetStatus { id: string; installed: boolean; installing: boolean; error: string | null; clips: Record<string, number>; frameMs: number }
 export interface TodoSummaryStatus { threadId: string | null; running: boolean; days: number | null; startedAt: string | null }
 export interface Wish { id: string; threadId: string; text: string; createdAt: string }
 export interface PushSettings { enabled: boolean; recipient: string; baseUrl: string; waiting: boolean; failure: boolean; notice: boolean; scheduled: boolean }
@@ -337,12 +338,15 @@ export interface PushStatus { cli: boolean; botReady: boolean; recipient: string
 export interface Todo {
   owner?: 'me' | 'agent';
   state?: 'open' | 'waiting' | 'done';
+  lane?: 'you' | 'doing' | 'wait' | 'later' | null;
   waitingOn?: string | null;
   dueAt?: string | null;
   followUpAt?: string | null;
   followUpPaused?: boolean;
   hasNote?: boolean;
   noteUpdatedAt?: string | null;
+  /** First line of the continuation note's next steps; the desk cover falls back to thread titles. */
+  notePreview?: string | null;
   proposed?: boolean;
   rev?: number;
   proposals?: Array<{ id: string; kind: 'add' | 'done'; evidence: string; threadId: string }>;
@@ -352,6 +356,8 @@ export interface Todo {
   parentId: string | null;
   position: number;
   createdAt: string;
+  /** Last time anyone did anything to this plan; the desk's last-activity signal. */
+  updatedAt?: string;
   doneAt: string | null;
   /** Threads linked to this plan, as full views so chips can show agent, title and state. */
   threads: Thread[];
@@ -838,6 +844,15 @@ export class Api {
   personalSettings(): Promise<PersonalSettings> { return this.request('GET', '/api/personal/settings'); }
   savePersonalSettings(value: PersonalSettings): Promise<PersonalSettings> { return this.request('PUT', '/api/personal/settings', value); }
   todoNote(id: string): Promise<TodoNote> { return this.request('GET', `/api/todos/${id}/note`); }
+  /** The desk's companion: whether its frames are here yet. Always this hub's own, never another machine's. */
+  pet(): Promise<PetStatus> { return this.send('GET', `${this.base}/api/pets`); }
+  installPet(): Promise<PetStatus> { return this.send('POST', `${this.base}/api/pets/install`); }
+  petSay(text: string): Promise<{ threadId: string }> { return this.request('POST', '/api/personal/say', { text }); }
+  petRouter(): Promise<{ threadId: string | null; status: 'idle' | 'running' | 'error' | null; lastReply: string | null; lastReplyAt: string | null }> {
+    return this.request('GET', '/api/personal/router');
+  }
+  /** Frames are public artwork, loaded by `<img>` without a token. */
+  petFrame(id: string, clip: string, index: number): string { return `${this.base}/pets/${id}/${clip}/${clip}_${String(index * 2 + 1).padStart(3, '0')}.webp`; }
   resolveTodoProposal(id: string, pid: string, action: 'accept' | 'dismiss', rev?: number): Promise<Todo | null> { return this.request('POST', `/api/todos/${id}/proposals/${pid}/${action}`, { rev }); }
   delegateTodo(id: string, cwd?: string): Promise<Thread> { return this.request('POST', `/api/todos/${id}/delegate`, { cwd }); }
   /** The latest "summarize recent days" run on the plan page. */
@@ -859,7 +874,7 @@ export class Api {
     return this.request('POST', '/api/todos', { text, parentId });
   }
 
-  updateTodo(id: string, patch: { text?: string; done?: boolean; followUpAt?: string | null }): Promise<Todo> {
+  updateTodo(id: string, patch: { text?: string; done?: boolean; lane?: 'you' | 'doing' | 'wait' | 'later' | null; touch?: boolean; followUpAt?: string | null }): Promise<Todo> {
     return this.request('PATCH', `/api/todos/${id}`, patch);
   }
 
