@@ -82,6 +82,11 @@ interface Props {
    * `label` names the agent one click goes to; `choose` opens the handover to pick another.
    */
   takeover?: { label: string; go: () => void; choose: () => void; busy?: boolean } | null;
+  /**
+   * When the last turn failed because the agent's plan ran out: wait for the quota to reset and
+   * continue with the same agent. `armed` mirrors the daemon's watch; `onArm`/`onCancel` toggle it.
+   */
+  resume?: { armed: boolean; resetsAt?: string | null; onArm: () => void; onCancel: () => void; busy?: boolean; error?: string } | null;
   /** The agent can end a copy at any finished turn, so every answer gets the button, not only the last. */
   forkAnyTurn?: boolean;
   /**
@@ -102,7 +107,7 @@ const RECENT_TURNS = 30;
 /** Scrolling up to within this distance of the top unfolds or fetches the earlier turns. */
 const NEAR_TOP_PX = 600;
 
-export function ThreadView({ chain = false, observeOlder = true, beforeItems, olderLabel, olderError, revealTurnId, historyApi, historyThreadId, items: originalItems, roots, loadImage, loadFile, onOpenFile, onPreview, hasOlder, loadingOlder, onLoadOlder, onFork, forkAnyTurn, onEdit, revision = 0, takeover }: Props) {
+export function ThreadView({ chain = false, observeOlder = true, beforeItems, olderLabel, olderError, revealTurnId, historyApi, historyThreadId, items: originalItems, roots, loadImage, loadFile, onOpenFile, onPreview, hasOlder, loadingOlder, onLoadOlder, onFork, forkAnyTurn, onEdit, revision = 0, takeover, resume }: Props) {
   const [loadedFiles, setLoadedFiles] = useState<{ client?: HistoryClient; files: Map<string, WorkFiles> }>({ files: new Map() });
   const historyClient = useMemo(() => {
     if (!historyApi || !historyThreadId) return undefined;
@@ -244,6 +249,7 @@ export function ThreadView({ chain = false, observeOlder = true, beforeItems, ol
           return <div key={item.key} className="agent-notice"><IconBell size={14} /><span>{item.confirmation ? (title ? t('personal.confirmTitle', title) : t('personal.confirm')) : <>{t('personal.notice')} {title}</>}{item.confirmation && <> · <a href="#/todos">{t('personal.openPlans')}</a></>}</span></div>;
         }
         case 'model-switch': return <div key={item.key} className="context-compaction handover-divider">{t('auto.switched', item.model, item.previous, t(item.reason === 'exhausted' ? 'auto.exhausted' : 'auto.near'))}</div>;
+        case 'quota-resume': return <div key={item.key} className="context-compaction handover-divider">{t('auto.resumed')}</div>;
         case 'user': {
           if (item.handoverCollapsed) return null;
           // Nobody wrote this turn: the agent picked up work on its own, e.g. a finished background task.
@@ -369,6 +375,19 @@ export function ThreadView({ chain = false, observeOlder = true, beforeItems, ol
                     <button className="ghost" onClick={takeover.choose} disabled={takeover.busy}>{t('view.chooseOther')}</button>
                   </div>
                 )}
+                {/* The alternative to handing over: stay on this agent and let the daemon continue
+                    the thread once the quota resets. A quiet text link, not a third button. */}
+                {item.planExhausted && resume && item === items[items.length - 1] && (
+                  <div className="error-resume">
+                    {resume.armed ? <>
+                      <span role="status">{resume.resetsAt ? t('view.resumeArmedAt', resetClock(resume.resetsAt)) : t('view.resumeArmedAny')}
+                        {resume.error && <small>{resume.error}</small>}</span>
+                      <button className="text-btn" onClick={resume.onCancel} disabled={resume.busy}>{t('view.resumeCancel')}</button>
+                    </> : (
+                      <button className="text-btn" onClick={resume.onArm} disabled={resume.busy}>{t('view.resumeArm')}</button>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           );
@@ -419,6 +438,15 @@ export function ThreadView({ chain = false, observeOlder = true, beforeItems, ol
 }
 
 const HistoryContext = createContext<HistoryClient | undefined>(undefined);
+
+/** A quota reset time as a short local note: "17:00" today, "10/12 17:00" later. Empty when unknown. */
+function resetClock(iso: string | null | undefined, now = new Date()): string {
+  if (!iso) return '';
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return '';
+  const hm = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+  return at.toDateString() === now.toDateString() ? hm : `${at.getMonth() + 1}/${at.getDate()} ${hm}`;
+}
 
 function VoiceRecap({ item, render }: { item: Extract<Item, { kind: 'voice-recap' }>; render: (items: Item[]) => ReactNode }) {
   const client = useContext(HistoryContext);

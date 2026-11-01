@@ -1024,3 +1024,19 @@ test('agent notices preserve their text and confirmation link marker without cha
   assert.deepEqual(notices.map(item => [item.text, item.confirmation]), [['The draft is ready.', false], ['待你确认：Review report', true]]);
   assert.equal(timeline.running, false);
 });
+
+test('a quota-resume marker divides the timeline where the daemon continued the thread by itself', () => {
+  const timeline = buildTimeline([
+    ev('turn.started', { text: 'keep working' }),
+    ev('turn.error', { message: 'You have exhausted your quota on this model.', code: 'plan_exhausted' }),
+    ev('handover.resume', { resetsAt: '2026-10-12T09:00:00.000Z' }, null),
+    ev('turn.started', { text: 'keep working' }, 't2'),
+    ev('message.delta', { text: 'resumed' }, 't2'),
+    ev('turn.done', {}, 't2'),
+  ]);
+  const marker = timeline.items.find(item => item.kind === 'quota-resume');
+  assert.ok(marker?.kind === 'quota-resume');
+  assert.equal(marker.resetsAt, '2026-10-12T09:00:00.000Z');
+  assert.ok(!marker.turnId);
+  assert.ok(timeline.items.some(item => item.kind === 'error' && item.planExhausted === true));
+});

@@ -89,6 +89,8 @@ export function HandoverSettingsDialog({ api, agents, onClose }: { api: Api; age
     {value && <>
       <div className="auto-setting-line"><span>{t('auto.global')}</span><button aria-label={t('auto.global')} className="auto-toggle" role="switch" aria-checked={value.enabled} onClick={() => setValue({ ...value, enabled: !value.enabled })}>{t(value.enabled ? 'auto.on' : 'auto.off')}</button></div>
       <label className="auto-setting-line">{t('auto.threshold')}<input inputMode="numeric" value={value.threshold} onChange={e => setValue({ ...value, threshold: Number(e.target.value) })} /></label>
+      <div className="auto-setting-line"><span>{t('auto.resume')}</span><button aria-label={t('auto.resume')} className="auto-toggle" role="switch" aria-checked={value.resume === true} onClick={() => setValue({ ...value, resume: value.resume !== true })}>{t(value.resume === true ? 'auto.on' : 'auto.off')}</button></div>
+      <p className="auto-setting-hint">{t('auto.resumeHint')}</p>
       <div className="auto-orders">{agents.map(agent => {
         const order = value.orders[agent.id];
         return <section key={agent.id}>

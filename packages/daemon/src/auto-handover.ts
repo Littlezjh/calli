@@ -1,18 +1,23 @@
 import type { Store } from './store.js';
 import type { ThreadManager } from './threads.js';
 import type { PlanQuota, QuotaWindow } from './adapters/types.js';
+import type { ResumeView } from './quota-resume.js';
 import { HttpError } from './errors.js';
 
 export interface HandoverTarget { agent: string; model?: string }
-export interface HandoverSettings { enabled: boolean; threshold: number; orders: Record<string, HandoverTarget[]> }
+export interface HandoverSettings { enabled: boolean; threshold: number; orders: Record<string, HandoverTarget[]>; resume: boolean }
 export interface AutoHandoverView {
   enabled: boolean; source: 'thread' | 'collaboration' | 'global'; override: boolean | null;
   state?: 'checking' | 'preparing' | 'countdown' | 'stopped' | 'failed';
   target?: HandoverTarget; deadline?: string; reason?: 'near' | 'exhausted'; error?: string;
+  /** The thread's quota-reset watch, added where the thread view is composed. */
+  resume?: ResumeView | null;
 }
 type Attempt = { turnId: string; cancelled: boolean; view: Partial<AutoHandoverView>; wake?: () => void };
 type Block = HandoverTarget & { at: string; used?: number; resetsAt?: string };
-const defaults = (): HandoverSettings => ({ enabled: false, threshold: 90, orders: {} });
+const defaults = (): HandoverSettings => ({ enabled: false, threshold: 90, orders: {}, resume: false });
+/** What `settled` did with an exhausted turn: moved the work, parked it, or nothing to do. */
+export type SettledOutcome = 'moved' | 'parked' | 'none';
 
 /** An unknown scoped window cannot decide that a particular model is exhausted. */
 export function modelWindows(quota: PlanQuota, model?: string | null): QuotaWindow[] {
@@ -20,7 +25,7 @@ export function modelWindows(quota: PlanQuota, model?: string | null): QuotaWind
     && (!w.scope || !!model && w.modelIds?.includes(model)));
 }
 /** Unmapped pools can retire an instance, but cannot justify switching models within it. */
-function instanceWindows(quota: PlanQuota, model?: string | null): QuotaWindow[] {
+export function instanceWindows(quota: PlanQuota, model?: string | null): QuotaWindow[] {
   return quota.windows.filter(w => Number.isFinite(w.usedPercent) && w.usedPercent >= 0 && w.usedPercent <= 100
     && (!w.modelIds?.length || !model || w.modelIds.includes(model)));
 }
@@ -35,11 +40,17 @@ export class AutoHandover {
   private notices = new Map<string, Partial<AutoHandoverView>>();
   private closed = false;
   constructor(private store: Store, private manager: ThreadManager, readonly delayMs = 5000) {}
-  settings(): HandoverSettings { return this.store.hubSetting('handover.settings', defaults()); }
+  /** Wired by the ThreadManager so a saved settings change reaches the quota-resume watches. */
+  onSaved?: (settings: HandoverSettings) => void;
+  settings(): HandoverSettings {
+    const stored = this.store.hubSetting<Partial<HandoverSettings>>('handover.settings', defaults());
+    return { ...defaults(), ...stored, resume: stored.resume === true };
+  }
   configure(input: unknown): HandoverSettings {
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new HttpError(400, 'invalid handover settings');
     const v = input as HandoverSettings;
     if (typeof v.enabled !== 'boolean' || !Number.isFinite(v.threshold) || v.threshold < 1 || v.threshold > 99
+      || v.resume !== undefined && typeof v.resume !== 'boolean'
       || !v.orders || typeof v.orders !== 'object' || Array.isArray(v.orders)) throw new HttpError(400, 'invalid handover settings');
     const orders: HandoverSettings['orders'] = {};
     for (const [id, targets] of Object.entries(v.orders)) {
@@ -54,9 +65,10 @@ export class AutoHandover {
         return { agent: t.agent, ...(t.model ? { model: t.model } : {}) };
       });
     }
-    const settings = { enabled: v.enabled, threshold: v.threshold, orders };
+    const settings = { enabled: v.enabled, threshold: v.threshold, orders, resume: v.resume === true };
     this.store.saveHubSetting('handover.settings', settings);
     for (const id of this.attempts.keys()) if (!this.view(id).enabled) this.cancel(id);
+    this.onSaved?.(settings);
     this.manager.notifyHandover();
     return settings;
   }
@@ -97,6 +109,12 @@ export class AutoHandover {
       if (attempt.view.state === 'preparing') void this.manager.cancelHandoverSummary(id);
       attempt.view = {}; attempt.wake?.();
     }
+    this.notices.delete(id);
+    this.manager.notifyHandover(id);
+  }
+  /** Drops a stop/failed notice without touching a running attempt; the resume path frees the queue with it. */
+  clearNotice(id: string): void {
+    if (!this.notices.has(id)) return;
     this.notices.delete(id);
     this.manager.notifyHandover(id);
   }
@@ -154,17 +172,17 @@ export class AutoHandover {
     }
     return out;
   }
-  async settled(id: string, turnId: string): Promise<void> {
+  async settled(id: string, turnId: string): Promise<SettledOutcome> {
     const attempt = this.attempts.get(id);
-    if (!attempt || attempt.turnId !== turnId) return;
+    if (!attempt || attempt.turnId !== turnId) return 'none';
     let transferred = false;
     let retry = false;
     try {
       const events = this.store.listTurnEvents(id, turnId);
       const start = events.find(e => e.type === 'turn.started');
       const end = events.find(e => e.type === 'turn.done' || e.type === 'turn.error');
-      if (!start || start.data.handover || start.data.control || !end || end.data.stopReason === 'cancelled') return;
-      if (this.manager.threadView(id).waiting || this.manager.getThread(id).status === 'running') return;
+      if (!start || start.data.handover || start.data.control || !end || end.data.stopReason === 'cancelled') return 'none';
+      if (this.manager.threadView(id).waiting || this.manager.getThread(id).status === 'running') return 'none';
       const thread = this.manager.getThread(id);
       const model = await this.manager.handoverModel(thread.agent, thread.model);
       const source = { agent: thread.agent, ...(model ? { model } : {}) };
@@ -175,31 +193,31 @@ export class AutoHandover {
       if (!this.isBlocked(source) && episodes[episodeKey]) { delete episodes[episodeKey]; this.store.saveHubSetting('handover.episodes', episodes); }
       const exhausted = end.data.code === 'plan_exhausted';
       const near = quota && instanceWindows(quota, model).some(w => w.usedPercent >= this.settings().threshold);
-      if (!exhausted && (!near || end.type !== 'turn.done')) return;
-      if (episodes[episodeKey]) return;
+      if (!exhausted && (!near || end.type !== 'turn.done')) return 'none';
+      if (episodes[episodeKey]) return 'parked';
       episodes[episodeKey] = true; this.store.saveHubSetting('handover.episodes', episodes);
       const mapped = quota?.windows.some(w => w.modelIds?.includes(model!));
       this.block(mapped ? source : { agent: thread.agent }, quota);
-      if (attempt.cancelled || !this.view(id).enabled || this.closed) return;
+      if (attempt.cancelled || !this.view(id).enabled || this.closed) return 'parked';
       const target = (await this.targets(id))[0];
-      if (!target) { this.notices.set(id, { state: 'stopped', reason: exhausted ? 'exhausted' : 'near' }); return; }
+      if (!target) { this.notices.set(id, { state: 'stopped', reason: exhausted ? 'exhausted' : 'near' }); return 'parked'; }
       attempt.view = { state: 'preparing', target, reason: exhausted ? 'exhausted' : 'near' };
       this.manager.notifyHandover(id);
       const switchModel = target.agent === thread.agent && !!target.model && this.manager.canSwitchHandoverModel(thread.agent);
       const summary = switchModel ? null : await this.manager.autoHandoverSummary(id, target.agent, exhausted);
-      if (attempt.cancelled || !this.view(id).enabled || this.closed) return;
+      if (attempt.cancelled || !this.view(id).enabled || this.closed) return 'parked';
       attempt.view = { ...attempt.view, state: 'countdown', deadline: new Date(Date.now() + this.delayMs).toISOString() };
       this.manager.notifyHandover(id);
       await new Promise<void>(resolve => {
         const timer = setTimeout(resolve, this.delayMs);
         attempt.wake = () => { clearTimeout(timer); resolve(); };
       });
-      if (attempt.cancelled || !this.view(id).enabled || this.closed || this.manager.threadView(id).waiting || this.manager.getThread(id).archivedAt) return;
+      if (attempt.cancelled || !this.view(id).enabled || this.closed || this.manager.threadView(id).waiting || this.manager.getThread(id).archivedAt) return 'parked';
       // Availability and quota may have changed while the summary was being written.
       if (!(await this.targets(id)).some(t => t.agent === target.agent && t.model === target.model)) {
-        this.notices.set(id, { state: 'stopped', reason: attempt.view.reason }); return;
+        this.notices.set(id, { state: 'stopped', reason: attempt.view.reason }); return 'parked';
       }
-      if (attempt.cancelled) return;
+      if (attempt.cancelled) return 'parked';
       if (switchModel) {
         await this.manager.updateThread(id, { model: target.model });
         this.manager.recordHandoverModel(id, target.model!, model, attempt.view.reason!);
@@ -210,6 +228,7 @@ export class AutoHandover {
       }
     } catch (error) {
       this.notices.set(id, { state: 'failed', error: error instanceof Error ? error.message : String(error) });
+      return 'parked';
     } finally {
       this.attempts.delete(id);
       this.manager.coordination?.handoverSettled(id, transferred || retry);
@@ -219,5 +238,6 @@ export class AutoHandover {
       try { await this.manager.retryAutoHandoverTurn(id, turnId); }
       catch (error) { this.notices.set(id, { state: 'failed', error: String(error) }); this.manager.notifyHandover(id); }
     }
+    return 'moved';
   }
 }

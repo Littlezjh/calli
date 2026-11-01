@@ -1083,8 +1083,12 @@ export function createHttpServer(deps: HttpDeps): Server {
 
       if (sub === 'auto-handover') {
         manager.getThread(threadId);
-        if (method === 'GET') return sendJson(res, 200, { ...manager.autoHandover.view(threadId), targets: await manager.autoHandover.targets(threadId) });
-        if (method === 'PATCH') return sendJson(res, 200, manager.autoHandover.setOverride(threadId, (await readJson(req)).enabled));
+        if (method === 'GET') return sendJson(res, 200, { ...manager.autoHandover.view(threadId), resume: manager.quotaResume.view(threadId), targets: await manager.autoHandover.targets(threadId) });
+        if (method === 'PATCH') {
+          const body = await readJson(req);
+          if (body.resume !== undefined) return sendJson(res, 200, await manager.setResume(threadId, body.resume));
+          return sendJson(res, 200, manager.autoHandover.setOverride(threadId, body.enabled));
+        }
         if (method === 'DELETE') { manager.autoHandover.cancel(threadId); return sendJson(res, 200, manager.autoHandover.view(threadId)); }
       }
       if (sub === 'collaboration-handover' && method === 'PATCH') {

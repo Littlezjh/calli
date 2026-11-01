@@ -6,6 +6,8 @@ export type EventType =
   | 'agent.notice'
   | 'handover.updated'
   | 'handover.model'
+  /** The quota reset came and the daemon resent the failed turn by itself. */
+  | 'handover.resume'
   | 'thread.created'
   | 'thread.updated'
   /** Current conversation changed; clients reload history without rewinding the SSE cursor. */

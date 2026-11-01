@@ -956,6 +956,8 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
 
   // A takeover under way, from the button on a turn that failed because the plan ran out.
   const [takingOver, setTakingOver] = useState(false);
+  // Arming or cancelling a "wait for the quota and continue" watch on that same turn.
+  const [resumeBusy, setResumeBusy] = useState(false);
   const scrollerRef = useRef<HTMLDivElement>(null);
   // Whether the margin beside the conversation is wide enough to hold the team's card.
   const mainRef = useRef<HTMLElement>(null);
@@ -2608,6 +2610,20 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
                   void threadActions.takeOver(selected, successor.id).catch(() => undefined).finally(() => setTakingOver(false));
                 },
                 choose: () => threadActions.handover(selected),
+              } : null}
+              resume={!api.demo && selected.autoHandover?.resume !== undefined ? {
+                armed: Boolean(selected.autoHandover.resume),
+                resetsAt: selected.autoHandover.resume?.resetsAt ?? null,
+                error: selected.autoHandover.resume?.lastError,
+                busy: resumeBusy,
+                onArm: () => {
+                  setResumeBusy(true);
+                  void api.setResume(selected.id, true).catch(handleError).finally(() => setResumeBusy(false));
+                },
+                onCancel: () => {
+                  setResumeBusy(true);
+                  void api.setResume(selected.id, false).catch(handleError).finally(() => setResumeBusy(false));
+                },
               } : null}
             />
           ) : (

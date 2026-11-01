@@ -1,5 +1,6 @@
 import { PersonalService } from './personal.js';
-import { AutoHandover, type AutoHandoverView, type HandoverTarget } from './auto-handover.js';
+import { AutoHandover, type AutoHandoverView, type HandoverTarget, type SettledOutcome } from './auto-handover.js';
+import { QuotaResume, type ResumeView } from './quota-resume.js';
 import type { VoiceTransport } from './voice-sessions.js';
 import { VoiceConversation } from './voice-conversation.js';
 import { turnOutcome } from './lifecycle.js';
@@ -289,7 +290,7 @@ export class ThreadManager {
   readonly autoHandover: AutoHandover;
   readonly personal: PersonalService;
   private readonly quietTurns = new Set<string>();
-  private readonly settlingHandovers = new Set<Promise<void>>();
+  private readonly settlingHandovers = new Set<Promise<unknown>>();
 
   constructor(
     private readonly store: Store,
@@ -301,10 +302,30 @@ export class ThreadManager {
   ) {
     this.dirs = Array.isArray(workdirs) ? new Workdirs(workdirs) : workdirs;
     this.autoHandover = new AutoHandover(store, this);
+    this.quotaResume = new QuotaResume(store, this, this.autoHandover);
+    this.autoHandover.onSaved = settings => this.quotaResume.onSettings(settings.resume);
+    this.quotaResume.start();
     this.personal = new PersonalService(store, this, adapters);
     this.dirs.personalDirectory = () => this.personal.directory();
     this.skills = new SkillsManager(this.adapters);
     this.mcp = new McpManager(this.adapters, store.mcpEntries);
+  }
+
+  /** Watches parked threads for their quota to reset, then continues them. Owned here so the HTTP layer can reach it. */
+  readonly quotaResume: QuotaResume;
+
+  /** Marks the timeline: the quota came back and the daemon resent the failed turn by itself. */
+  recordQuotaResume(id: string, resetsAt: string | null): void {
+    this.emitThreadEvent(id, null, 'handover.resume', { ...(resetsAt ? { resetsAt } : {}) });
+  }
+
+  /** The person's 「额度恢复后自动继续」 on an exhausted turn, or its cancel. */
+  async setResume(id: string, armed: unknown): Promise<AutoHandoverView & { resume: ResumeView | null }> {
+    this.getThread(id);
+    if (typeof armed !== 'boolean') throw new HttpError(400, 'resume must be boolean');
+    if (armed) await this.quotaResume.arm(id, 'user');
+    else this.quotaResume.drop(id);
+    return { ...this.autoHandover.view(id), resume: this.quotaResume.view(id) };
   }
 
   /** The skills every agent instance on this machine can reach. Read-mostly, by the skills page. */
@@ -866,7 +887,7 @@ export class ThreadManager {
       ...(modelQueueState.message !== undefined ? { message: modelQueueState.message } : {}),
       updatedAt: modelQueueState.updatedAt,
     } : null;
-    return { ...thread, writing: thread.writing ? { ...thread.writing, habits: habitsPath() } : null, handover: thread.handover ? { ...thread.handover, mode: this.store.handoverMode(thread)!, automatic: thread.handover.mode === 'continue' } : null, autoHandover: this.autoHandover.view(thread.id), worktree, resumeCommand, cwdReal, waiting, waitingReason, queued, modelQueue, terminalActivity, scratch, runningSince, coordination: this.coordination?.metadata(thread.id) };
+    return { ...thread, writing: thread.writing ? { ...thread.writing, habits: habitsPath() } : null, handover: thread.handover ? { ...thread.handover, mode: this.store.handoverMode(thread)!, automatic: thread.handover.mode === 'continue' } : null, autoHandover: { ...this.autoHandover.view(thread.id), resume: this.quotaResume.view(thread.id) }, worktree, resumeCommand, cwdReal, waiting, waitingReason, queued, modelQueue, terminalActivity, scratch, runningSince, coordination: this.coordination?.metadata(thread.id) };
   }
 
   /**
@@ -1358,6 +1379,7 @@ export class ThreadManager {
       doomed = { main, tree };
     }
     await this.dropSession(id);
+    this.quotaResume.drop(id);
     if (opts.agentSession && thread.agentSessionId) {
       const adapter = this.adapters.get(thread.agent);
       if (!adapter?.capabilities.deleteSession || !adapter.deleteSession) {
@@ -1693,6 +1715,8 @@ export class ThreadManager {
   async createHandoverThread(threadId: string, agent: string, model?: string, mode?: unknown): Promise<ThreadView> {
     const source = this.getThread(threadId);
     if (mode !== undefined && mode !== 'continue' && mode !== 'branch') throw new HttpError(400, 'invalid handover mode');
+    // Whoever takes over from here, the work leaves this thread; stop waiting for its quota.
+    this.quotaResume.drop(threadId);
     const selected = mode ?? 'branch';
     const successor = await this.createThread({
       agent,
@@ -2184,6 +2208,7 @@ export class ThreadManager {
     if (note !== undefined && (typeof note !== 'string' || note.length > 20_000)) throw new HttpError(400, 'invalid note');
     if (this.running.has(id) || this.threadView(id).waiting) throw new HttpError(409, 'the thread is busy');
     this.autoHandover.cancel(id);
+    this.quotaResume.drop(id);
     // The turn that failed is carried over, so the successor picks up the ask that was cut off.
     const last = this.store.listTurns(id).at(-1)?.turnId ?? null;
     const failed = last && this.store.listTurnEvents(id, last).some(e => e.type === 'turn.error') ? last : null;
@@ -2194,6 +2219,8 @@ export class ThreadManager {
 
   async executeAutoHandover(id: string, target: HandoverTarget, summary: string, failedTurn: string | null, note?: string): Promise<ThreadView> {
     const source = this.getThread(id);
+    // The work moves; waiting for this agent's quota to come back is moot.
+    this.quotaResume.drop(id);
     const successor = await this.createHandoverThread(id, target.agent, target.model, 'continue');
     this.autoHandover.inherit(id, successor.id);
     const adapter = this.adapters.get(target.agent)!;
@@ -2320,6 +2347,7 @@ export class ThreadManager {
   /** Closes live agent processes. Threads and events stay in the store. */
   async shutdown(): Promise<void> {
     this.autoHandover.close();
+    this.quotaResume.dispose();
     this.coordination?.suspendAll();
     // The file mirror must finish its queued writes before callers remove the data directory.
     await this.personal.flushMirror().catch(() => undefined);
@@ -2400,7 +2428,14 @@ export class ThreadManager {
         void this.refreshGoal(thread.id);
         const settling = this.autoHandover.settled(thread.id, turnId);
         this.settlingHandovers.add(settling);
-        try { await settling; } finally { this.settlingHandovers.delete(settling); }
+        let settled: SettledOutcome = 'none';
+        try { settled = await settling; } finally { this.settlingHandovers.delete(settling); }
+        // The turn died of plan exhaustion and the handover did not move the work away: a spot
+        // where the resume watch belongs (armed here when the global setting is on, by the
+        // exhausted turn's card otherwise).
+        const failed = this.store.listTurnEvents(thread.id, turnId).find(e => e.type === 'turn.error');
+        if (failed?.data.code === 'plan_exhausted' && settled !== 'moved'
+          && !this.running.has(thread.id) && !this.threadView(thread.id).waiting) this.quotaResume.parked(thread.id);
         this.startNextQueued(thread.id);
       }
     }

@@ -161,11 +161,15 @@ export interface CoordinationMessage {
   replyTo?: string | null;
 }
 export interface HandoverTarget { agent: string; model?: string }
-export interface HandoverSettings { enabled: boolean; threshold: number; orders: Record<string, HandoverTarget[]> }
+export interface HandoverSettings { enabled: boolean; threshold: number; orders: Record<string, HandoverTarget[]>; resume?: boolean }
+/** A watch waiting for the thread's agent quota to reset; the daemon then resends the failed turn. */
+export interface ResumeView { origin: 'user' | 'global'; resetsAt: string | null; nextCheckAt: string; lastError?: string }
 export interface AutoHandoverView {
   enabled: boolean; source: 'thread' | 'collaboration' | 'global'; override: boolean | null;
   state?: 'checking' | 'preparing' | 'countdown' | 'stopped' | 'failed';
   target?: HandoverTarget; deadline?: string; reason?: 'near' | 'exhausted'; error?: string;
+  /** Present when this thread waits for its quota to come back; absent on older daemons. */
+  resume?: ResumeView | null;
 }
 export interface Thread {
   autoHandover?: AutoHandoverView;
@@ -1263,6 +1267,7 @@ export class Api {
   /** The thread's native goal, for the goal card above the input. */
   threadGoal(id: string): Promise<{ goal: GoalView | null }> { return this.request('GET', `/api/threads/${id}/goal`); }
   setAutoHandover(id: string, enabled: boolean | null): Promise<AutoHandoverView> { return this.request('PATCH', `/api/threads/${id}/auto-handover`, { enabled }); }
+  setResume(id: string, armed: boolean): Promise<AutoHandoverView> { return this.request('PATCH', `/api/threads/${id}/auto-handover`, { resume: armed }); }
   cancelAutoHandover(id: string): Promise<AutoHandoverView> { return this.request('DELETE', `/api/threads/${id}/auto-handover`); }
   setCollaborationHandover(id: string, enabled: boolean): Promise<Coordination> { return this.request('PATCH', `/api/threads/${id}/collaboration-handover`, { enabled }); }
 
