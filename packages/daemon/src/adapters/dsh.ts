@@ -43,6 +43,7 @@ export class DshAcpAdapter extends AcpAdapter {
   readonly capabilities = {
     resume: true,
     approvals: true,
+    coordination: true,
     permissionModes: [] as const,
     effortLevels: DSH_EFFORTS,
     images: true,
