@@ -59,6 +59,7 @@ Calli 不动 agent 本身的目录、配置和会话，装好即用。Calli 是�
 | Codex | `codex app-server` | 有 | 有 | 有 |
 | TRAE CLI | app-server 执行，ACP 模型与历史接口 | 有 | 有 | 有 |
 | zcode | `zcode app-server` 精简接入 | 有 | 按原生模型能力 | 暂无 |
+| DeepSeek Harness | `dsh --profile acp`（ACP） | 有（仅允许一次/拒绝） | 有（按当前模型路由） | 暂无 |
 
 各家 agent CLI 需要先在主机上装好并完成登录或鉴权。没装的 agent 在界面里显示为不可用；各家的能力和接入边界见 [架构说明](docs/PLAN.md)。
 

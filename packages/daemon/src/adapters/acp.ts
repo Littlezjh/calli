@@ -105,10 +105,10 @@ export function mapAcpUpdate(update: any): EmittedEvent | null {
   }
 }
 
-/** Effort levels in the agent's effort config option. "default" is not a level: it means no override. */
+/** Effort levels in the agent's effort config option. "default" and "" mean no override. */
 export function effortsFromConfig(configOptions: ConfigOption[] | undefined): EffortLevel[] {
   const option = (configOptions ?? []).find((o) => o.id === 'effort' || o.category === 'thought_level');
-  return (option?.options ?? []).map((o) => o.value).filter((v) => v !== 'default') as EffortLevel[];
+  return (option?.options ?? []).map((o) => o.value).filter((v) => v !== 'default' && v !== '') as EffortLevel[];
 }
 
 /** The fast select is exposed only for models that support it. */
@@ -184,10 +184,27 @@ export function turnsFromAcpReplay(updates: any[], isAgentNote: (text: string) =
 /** Reads the model list out of the `model` config option the agent returns with a session. */
 export function modelsFromConfig(configOptions: ConfigOption[] | undefined): ModelOption[] {
   const option = (configOptions ?? []).find((o) => o.id === 'model' || o.category === 'model');
-  return (option?.options ?? []).map((o) => ({
+  const rows: Array<{ value: string; name: string; description?: string }> = [];
+  for (const entry of option?.options ?? []) {
+    // Agents may group the entries (DeepSeek Harness groups them by provider); the models are then
+    // the group's children, and the group's own name says which provider a model comes through.
+    const group = entry as { value?: unknown; name?: unknown; description?: unknown; options?: unknown[] };
+    if (Array.isArray(group.options)) {
+      for (const model of group.options) {
+        const row = model as { value?: unknown; name?: unknown; description?: unknown };
+        if (typeof row?.value !== 'string') continue;
+        const via = typeof group.name === 'string' && group.name ? group.name : '';
+        const note = typeof row.description === 'string' && row.description ? row.description : '';
+        rows.push({ value: row.value, name: String(row.name ?? row.value), description: [via, note].filter(Boolean).join(' · ') || undefined });
+      }
+    } else if (typeof group.value === 'string') {
+      rows.push({ value: group.value, name: String(group.name ?? group.value), description: typeof group.description === 'string' && group.description ? group.description : undefined });
+    }
+  }
+  return rows.map((o) => ({
     id: o.value,
     label: o.name,
-    description: o.description || undefined,
+    description: o.description,
     ...(option?.currentValue === o.value ? { isDefault: true } : {}),
   }));
 }
@@ -216,6 +233,9 @@ export class AcpSession implements AgentSession {
   onSpeed?: (speed: string) => void;
   private speedOverride: string | undefined;
   private configRequests = 0;
+  /** The latest snapshot of each tool call, so a permission request that names only the call id
+   * (DeepSeek Harness does) can still show what is being approved. Bounded; the oldest drops out. */
+  private readonly toolCalls = new Map<string, { title?: string; kind?: string; rawInput?: unknown; content?: unknown }>();
 
   constructor(
     readonly agentSessionId: string,
@@ -244,6 +264,11 @@ export class AcpSession implements AgentSession {
 
   /** Called by the peer for every session/update notification. */
   onUpdate(update: unknown): void {
+    const value = update as any;
+    if (value?.sessionUpdate === 'tool_call' && typeof value.toolCallId === 'string') {
+      if (this.toolCalls.size >= 100) this.toolCalls.delete(this.toolCalls.keys().next().value!);
+      this.toolCalls.set(value.toolCallId, { title: value.title, kind: value.kind, rawInput: value.rawInput, content: value.content });
+    }
     const modeUpdate = update as any;
     if (modeUpdate?.sessionUpdate === 'config_option_update') {
       this.configOptions = modeUpdate.configOptions ?? [];
@@ -257,7 +282,6 @@ export class AcpSession implements AgentSession {
       this.workMode = modeUpdate.currentModeId === 'plan' ? 'plan' : 'execute';
       this.onWorkMode?.(this.workMode);
     }
-    const value = update as any;
     // Output with no prompt open is the agent working on its own. A finished background task
     // only updates its tool call; the model speaking or calling a tool starts a cycle, which
     // always ends with a costed usage report. Hooks are set after session/load, so replay is not this.
@@ -286,7 +310,13 @@ export class AcpSession implements AgentSession {
   async onPermission(params: any): Promise<unknown> {
     const hooks = this.turnHooks;
     if (!hooks) return { outcome: { outcome: 'cancelled' } };
-    const plan = params?.toolCall?.rawInput?.plan;
+    // An agent may name only the call; the card then borrows what the call's own update showed.
+    const toolCall = { ...params?.toolCall };
+    if (toolCall && toolCall.title === undefined && toolCall.rawInput === undefined) {
+      const known = this.toolCalls.get(String(toolCall.toolCallId));
+      if (known) Object.assign(toolCall, known);
+    }
+    const plan = toolCall?.rawInput?.plan;
     if (typeof plan === 'string' && this.workMode === 'plan' && hooks.requestInput) {
       const preferred = this.permissionMode === 'ask' ? ['exit-plan-default'] : this.permissionMode === 'full_access' ? ['exit-plan-bypass'] : ['exit-plan-auto', 'exit-plan-accept-edits'];
       const option = preferred.map(id => params.options?.find((o: any) => o.optionId === id)).find(Boolean);
@@ -296,13 +326,13 @@ export class AcpSession implements AgentSession {
       }
     }
     const decision: ApprovalDecision = await hooks.requestApproval({
-      title: params?.toolCall?.title ?? 'Permission requested',
+      title: (typeof toolCall?.title === 'string' && toolCall.title) || 'Permission requested',
       options: (params?.options ?? []).map((o: any) => ({
         optionId: o.optionId,
         name: o.name,
         kind: o.kind,
       })),
-      toolCall: params?.toolCall ?? {},
+      toolCall,
     });
     if ('cancelled' in decision) return { outcome: { outcome: 'cancelled' } };
     return { outcome: { outcome: 'selected', optionId: decision.optionId } };
@@ -471,6 +501,11 @@ export abstract class AcpAdapter implements AgentAdapter {
   abstract resumeCommand(agentSessionId: string): string;
   /** Agent-side mode ids for each hub permission level, in order of preference. */
   protected abstract readonly modeIds: Record<PermissionMode, readonly string[]>;
+  /**
+   * How a thread's own conversation is brought back. The standard `session/load` replays history
+   * as updates; DeepSeek Harness instead keeps the log to itself and offers `session/resume`.
+   */
+  protected resumeVia: 'session/load' | 'session/resume' = 'session/load';
 
   /** Commands as last announced by a session in each directory. Project commands differ per directory. */
   protected readonly commandsByCwd = new Map<string, SlashCommand[]>();
@@ -667,7 +702,7 @@ export abstract class AcpAdapter implements AgentAdapter {
       let sessionId: string;
       let info: any;
       if (opts.resumeId) {
-        info = await peer.request('session/load', { sessionId: opts.resumeId, cwd: opts.cwd, mcpServers: [] });
+        info = await peer.request(this.resumeVia, { sessionId: opts.resumeId, cwd: opts.cwd, mcpServers: [] });
         sessionId = opts.resumeId;
       } else {
         info = await peer.request('session/new', { cwd: opts.cwd, mcpServers: [] });
@@ -680,8 +715,13 @@ export abstract class AcpAdapter implements AgentAdapter {
       const session = new AcpSession(sessionId, peer, this.modeIds, offeredModes, effortConfigIdOf(configOptions), emit => this.liveUsage(sessionId, opts.cwd, emit), configOptions);
       this.configureSession(session, peer);
       holder.session = session;
-      if (opts.permissionMode) await session.setPermissionMode(opts.permissionMode);
-      if (opts.workMode === 'plan') await session.setWorkMode('plan');
+      // An agent without session modes (DeepSeek Harness) has no permission level to set; set_mode
+      // would only be rejected, and a plan the hub somehow still carries is refused up front.
+      if (opts.permissionMode && this.capabilities.permissionModes.length > 0) await session.setPermissionMode(opts.permissionMode);
+      if (opts.workMode === 'plan') {
+        if (!this.capabilities.workModes?.includes('plan')) throw new Error('此 agent 不支持计划模式');
+        await session.setWorkMode('plan');
+      }
       session.onWorkMode = opts.onWorkMode;
       if (opts.model) await session.setModel(opts.model);
       if (opts.effort) await session.setEffort(opts.effort);

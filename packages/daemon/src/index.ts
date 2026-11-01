@@ -45,6 +45,7 @@ async function main(): Promise<void> {
       agyCommand: config.agyCommand,
       traexCommand: config.traexCommand,
       codexCommand: config.codexCommand,
+      dshCommand: config.dshCommand,
     }),
   });
   const adapters = registry.adapters;

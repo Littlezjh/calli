@@ -4,6 +4,10 @@ if (process.argv.includes('--version')) { process.stdout.write('fixture 1.2.3\n'
 // FAKE_ACP_FLAVOR=traex shapes the answers the way TRAE CLI does: no modes in session/new,
 // the effort option is named reasoning_effort, and "delete" on the command line (its CLI,
 // which the adapter runs for deletion) logs to FAKE_ACP_DELETE_LOG and exits.
+// FAKE_ACP_FLAVOR=dsh shapes them the way DeepSeek Harness does: no modes and no session/load
+// at all (resume is session/resume), model options grouped by provider with opaque route ids as
+// values, a reasoning_effort option with an empty "provider default" value, permission options
+// named allow-once/reject-once with a toolCall that names only the call id, and no usage cost.
 import { claudeUsage } from './live-usage.mjs';
 import { personalFixture } from './personal.mjs';
 import { coordinationFixture } from './coordination.mjs';
@@ -36,6 +40,7 @@ if (process.argv[2] === 'delete') {
 }
 
 const traex = process.env.FAKE_ACP_FLAVOR === 'traex';
+const dsh = process.env.FAKE_ACP_FLAVOR === 'dsh';
 // The ids the agent's messages carry in the canned history below; a fork can stop at any of them.
 const HIST_MESSAGE_IDS = ['m1a', 'm1b', 'm2'];
 
@@ -47,47 +52,91 @@ let backgroundWork; // the timer of work the agent started on its own
 let nextAgentRequestId = 1000;
 const awaitingInput = new Map();
 let currentMode = 'default';
-let currentModel = 'default';
-let currentEffort = 'default';
+let currentModel = dsh ? '["deepseek-official","deepseek-v4-pro"]' : 'default';
+let currentEffort = dsh ? '' : 'default';
 let currentSpeed = 'off';
 // No "auto" mode on purpose: the adapter must fall back to acceptEdits for auto_edit.
 const knownModes = traex
   // The modes TRAE CLI answers to, without the agent announcing them in session/new.
   ? ['default', 'plan', 'auto', 'bypass_permissions']
-  : ['default', 'acceptEdits', 'plan', 'bypassPermissions'];
+  : dsh
+    ? [] // DeepSeek Harness has no session modes; set_mode is always rejected.
+    : ['default', 'acceptEdits', 'plan', 'bypassPermissions'];
+// Opaque route ids the way dsh builds them: [provider, model] as JSON.
+const DSH_MODELS = {
+  pro: '["deepseek-official","deepseek-v4-pro"]',
+  flash: '["deepseek-official","deepseek-v4.1-flash"]',
+  pi: '["pi-ai","pi-5"]',
+};
 const sessionInfo = () => ({
-  // TRAE CLI does not report its modes; the adapter must still set one it accepts.
-  ...(traex ? {} : { modes: { currentModeId: currentMode, availableModes: knownModes.map((id) => ({ id, name: id })) } }),
+  // TRAE CLI and DeepSeek Harness do not report their modes; the adapter must not call set_mode.
+  ...(traex || dsh ? {} : { modes: { currentModeId: currentMode, availableModes: knownModes.map((id) => ({ id, name: id })) } }),
   configOptions: [
-    ...(process.env.FAKE_ACP_SPEED && currentModel !== 'small' ? [{ id: 'fast', category: 'model_config', type: 'select', currentValue: currentSpeed, options: [{ value: 'on', name: 'On' }, { value: 'off', name: 'Off' }] }] : []),
-    {
-      id: 'model',
-      category: 'model',
-      type: 'select',
-      currentValue: currentModel,
-      options: [
-        { value: 'default', name: 'Default', description: 'Big 1.0' },
-        { value: 'big', name: 'Big 1.0', description: 'For hard work' },
-        { value: 'small', name: 'Small 1.0', description: '' },
-        { value: 'broken', name: 'Broken 1.0', description: 'Not on this account' },
-      ],
-    },
-    // Like the real agent: the small model has no effort option at all, and big lacks "max".
-    // TRAE CLI names the option reasoning_effort and offers its own levels.
-    ...(currentModel === 'small'
-      ? []
-      : [
-          {
-            id: traex ? 'reasoning_effort' : 'effort',
-            category: 'thought_level',
-            type: 'select',
-            currentValue: currentEffort,
-            options: (traex ? ['low', 'medium', 'high', 'xhigh'] : ['default', 'low', 'high', ...(currentModel === 'big' ? [] : ['max'])]).map((v) => ({
-              value: v,
-              name: v,
-            })),
-          },
-        ]),
+    ...(process.env.FAKE_ACP_SPEED && !dsh && currentModel !== 'small' ? [{ id: 'fast', category: 'model_config', type: 'select', currentValue: currentSpeed, options: [{ value: 'on', name: 'On' }, { value: 'off', name: 'Off' }] }] : []),
+    dsh
+      ? {
+          id: 'model',
+          category: 'model',
+          type: 'select',
+          currentValue: currentModel,
+          options: [
+            {
+              group: 'deepseek-official',
+              name: 'DeepSeek',
+              options: [
+                { value: DSH_MODELS.pro, name: 'DeepSeek V4 Pro', description: '最强推理' },
+                { value: DSH_MODELS.flash, name: 'DeepSeek V4.1 Flash' },
+              ],
+            },
+            { group: 'pi-ai', name: 'pi.ai', options: [{ value: DSH_MODELS.pi, name: 'Pi 5' }] },
+          ],
+        }
+      : {
+          id: 'model',
+          category: 'model',
+          type: 'select',
+          currentValue: currentModel,
+          options: [
+            { value: 'default', name: 'Default', description: 'Big 1.0' },
+            { value: 'big', name: 'Big 1.0', description: 'For hard work' },
+            { value: 'small', name: 'Small 1.0', description: '' },
+            { value: 'broken', name: 'Broken 1.0', description: 'Not on this account' },
+          ],
+        },
+    // Like the real agents: a model may have no effort option at all. dsh's has an empty
+    // "provider default" value and only appears while a reasoning model is selected.
+    ...(dsh
+      ? currentModel === DSH_MODELS.pi
+        ? []
+        : [
+            {
+              id: 'reasoning_effort',
+              category: 'thought_level',
+              type: 'select',
+              currentValue: currentEffort,
+              options: [
+                { value: '', name: 'Provider default' },
+                { value: 'off', name: 'Off' },
+                { value: 'low', name: 'Low' },
+                { value: 'high', name: 'High' },
+                { value: 'max', name: 'Max' },
+              ],
+            },
+          ]
+      : currentModel === 'small'
+        ? []
+        : [
+            {
+              id: traex ? 'reasoning_effort' : 'effort',
+              category: 'thought_level',
+              type: 'select',
+              currentValue: currentEffort,
+              options: (traex ? ['low', 'medium', 'high', 'xhigh'] : ['default', 'low', 'high', ...(currentModel === 'big' ? [] : ['max'])]).map((v) => ({
+                value: v,
+                name: v,
+              })),
+            },
+          ]),
   ],
 });
 const awaitingPermission = new Map(); // request id -> prompt id
@@ -127,7 +176,7 @@ rl.on('line', (line) => {
       return out({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1, agentCapabilities: {} } });
     case 'session/new':
       if (process.env.FAKE_ACP_START_ERROR) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: process.env.FAKE_ACP_START_ERROR } });
-      out({
+      if (!dsh) out({
         jsonrpc: '2.0',
         method: 'session/update',
         params: {
@@ -145,6 +194,14 @@ rl.on('line', (line) => {
         },
       });
       return out({ jsonrpc: '2.0', id: msg.id, result: { sessionId, ...sessionInfo() } });
+    case 'session/resume':
+      // dsh restores a persisted session without replaying anything; session/load does not exist.
+      if (!dsh) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: 'not found' } });
+      if (msg.params.sessionId === 'not-resumable') {
+        return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: `session is not resumable: ${msg.params.sessionId}` } });
+      }
+      if (process.env.FAKE_ACP_RESUME_LOG) appendFileSync(process.env.FAKE_ACP_RESUME_LOG, msg.params.sessionId + '\n');
+      return out({ jsonrpc: '2.0', id: msg.id, result: { configOptions: sessionInfo().configOptions } });
     case 'session/list': {
       // Tests describe the agent's existing sessions in a JSON file. Two per page, to exercise paging.
       const file = process.env.FAKE_ACP_SESSIONS_FILE;
@@ -170,6 +227,7 @@ rl.on('line', (line) => {
         return out({ jsonrpc: '2.0', id: msg.id, result: { sessionId: `${msg.params.sessionId}-fork${at ? `-at-${at.messageId}` : ''}${into}` } });
       }
     case 'session/load': {
+      if (dsh) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: 'not found' } });
       const replay = (u) => out({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: msg.params.sessionId, update: u } });
       if (String(msg.params.sessionId).startsWith('hist-')) {
         // A two-turn conversation, replayed the way the real agent does: all of it before the response.
@@ -192,12 +250,12 @@ rl.on('line', (line) => {
       return out({ jsonrpc: '2.0', id: msg.id, result: sessionInfo() });
     }
     case 'session/set_config_option':
-      if (msg.params.configId === 'model' && msg.params.value === 'broken') {
-        return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: 'Internal error' } });
+      if (msg.params.configId === 'model' && ((msg.params.value === 'broken') || (dsh && msg.params.value === process.env.FAKE_DSH_UNSELECTABLE))) {
+        return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: dsh ? `unknown model option: ${msg.params.value}` : 'Internal error' } });
       }
       if (msg.params.configId === 'model') currentModel = msg.params.value;
       else if (msg.params.configId === 'fast' && process.env.FAKE_ACP_SPEED && currentModel !== 'small') currentSpeed = msg.params.value;
-      else if (msg.params.configId === (traex ? 'reasoning_effort' : 'effort')) currentEffort = msg.params.value;
+      else if (msg.params.configId === (dsh || traex ? 'reasoning_effort' : 'effort')) currentEffort = msg.params.value;
       else return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: 'unknown config option' } });
       return out({ jsonrpc: '2.0', id: msg.id, result: { configOptions: sessionInfo().configOptions } });
     case 'session/delete':
@@ -234,7 +292,7 @@ rl.on('line', (line) => {
       out({ jsonrpc: '2.0', id: msg.id, result: {} }); return;
     }
     case 'session/prompt': {
-      recordSession(traex ? 'traex' : 'claude', msg.params.sessionId);
+      recordSession(dsh ? 'dsh' : traex ? 'traex' : 'claude', msg.params.sessionId);
       const blocks = msg.params.prompt;
       const text = blocks.filter((p) => p.type === 'text').map((p) => p.text).join('');
       // A naming request from 自动取名: a title wrapped the way real agents sometimes answer, with an
@@ -382,7 +440,8 @@ rl.on('line', (line) => {
         });
       }
       if (text.includes('usage')) {
-        update({ sessionUpdate: 'usage_update', used: 52000, size: 200000, cost: { amount: 0.42, currency: 'USD' } });
+        // dsh reports context pressure only; the costed usage report is Claude's own shape.
+        update({ sessionUpdate: 'usage_update', used: 52000, size: 200000, ...(!dsh ? { cost: { amount: 0.42, currency: 'USD' } } : {}) });
       }
       update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'thinking' } });
       update({ sessionUpdate: 'tool_call', toolCallId: 't1', title: 'Run ls', kind: 'execute', status: 'pending', rawInput: { command: 'ls' } });
@@ -392,21 +451,28 @@ rl.on('line', (line) => {
         update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `model:${currentModel};mode:${currentMode};effort:${currentEffort}` } });
         return out({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });
       }
-      if (text.includes('approve') && currentMode !== 'bypassPermissions' && currentMode !== 'bypass_permissions') {
+      if (text.includes('approve') && (dsh || (currentMode !== 'bypassPermissions' && currentMode !== 'bypass_permissions'))) {
         const reqId = nextAgentRequestId++;
         awaitingPermission.set(reqId, msg.id);
         pendingPrompt = { id: msg.id };
+        // dsh offers one-shot choices and its toolCall names only the call id: the approval card
+        // then has to borrow what the tool's own update showed.
         return out({
           jsonrpc: '2.0',
           id: reqId,
           method: 'session/request_permission',
           params: {
             sessionId,
-            toolCall: { toolCallId: 't2', title: 'Edit file', kind: 'edit' },
-            options: [
-              { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
-              { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
-            ],
+            toolCall: dsh ? { toolCallId: 't1' } : { toolCallId: 't2', title: 'Edit file', kind: 'edit' },
+            options: dsh
+              ? [
+                  { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+                  { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' },
+                ]
+              : [
+                  { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
+                  { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+                ],
           },
         });
       }

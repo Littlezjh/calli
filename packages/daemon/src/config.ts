@@ -21,6 +21,8 @@ export interface Config {
   traexCommand: string[];
   /** argv that starts Codex's app server. */
   codexCommand: string[];
+  /** argv that starts DeepSeek Harness as an ACP server. */
+  dshCommand: string[];
   /** Executable that runs in a web terminal. */
   termShell: string | null;
   /** Directory of the built web UI, served at `/` when present. */
@@ -126,6 +128,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const agyCommand = [env.CALLI_AGY_BIN || 'agy'];
   const traexCommand = [env.CALLI_TRAEX_BIN || 'traex', 'acp', 'serve'];
   const codexCommand = [env.CALLI_CODEX_BIN || 'codex', 'app-server'];
+  const dshCommand = [env.CALLI_DSH_BIN || 'dsh', '--profile', 'acp'];
   const termShell = env.CALLI_TERM_SHELL || null;
 
   // Serve the built UI from the sibling web package when it exists; CALLI_WEB_DIR overrides.
@@ -150,6 +153,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     agyCommand,
     traexCommand,
     codexCommand,
+    dshCommand,
     termShell,
     webDir,
     socket,

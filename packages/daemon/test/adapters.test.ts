@@ -4,10 +4,11 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { effortsFromConfig, mapAcpUpdate, modelsFromConfig } from '../src/adapters/acp.js';
 import { ClaudeAcpAdapter } from '../src/adapters/claude.js';
+import { DshAcpAdapter } from '../src/adapters/dsh.js';
 import { TraexAcpAdapter } from '../src/adapters/traex.js';
 import { mapPiEvent, mapPiStats, piEfforts, PiRpcAdapter } from '../src/adapters/pi.js';
 import type { EmittedEvent } from '../src/events.js';
-import type { ApprovalDecision, TurnHooks, TurnInput } from '../src/adapters/types.js';
+import type { ApprovalDecision, ApprovalRequest, TurnHooks, TurnInput } from '../src/adapters/types.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fakeAcp = join(here, 'fixtures', 'fake-acp.mjs');
@@ -139,6 +140,41 @@ test('ClaudeAcpAdapter: cancel resolves a slow prompt as cancelled', async () =>
   await session.close();
 });
 
+test('DshAcpAdapter: model list flattens provider groups and probes each model\'s efforts', async () => {
+  const adapter = new DshAcpAdapter([process.execPath, fakeAcp], { FAKE_ACP_FLAVOR: 'dsh' });
+  const models = await adapter.models();
+  assert.deepEqual(models.map((m) => m.label), ['DeepSeek V4 Pro', 'DeepSeek V4.1 Flash', 'Pi 5']);
+  // The provider group rides along as a note; the default model is the route the agent reported.
+  assert.equal(models[0].description, 'DeepSeek · 最强推理');
+  assert.equal(models.find((m) => m.isDefault)?.id, '["deepseek-official","deepseek-v4-pro"]');
+  // Probing asks each model for its own efforts; the empty provider-default value is not a level.
+  assert.deepEqual(models[0].efforts, ['off', 'low', 'high', 'max']);
+  // A model with no reasoning setting offers no levels, not the adapter-wide fallback.
+  assert.deepEqual(models.find((m) => m.label === 'Pi 5')?.efforts, []);
+});
+
+test('DshAcpAdapter: a model that cannot be selected stays listed without effort details', async () => {
+  const adapter = new DshAcpAdapter([process.execPath, fakeAcp], { FAKE_ACP_FLAVOR: 'dsh', FAKE_DSH_UNSELECTABLE: '["pi-ai","pi-5"]' });
+  const models = await adapter.models();
+  const pi = models.find((m) => m.label === 'Pi 5');
+  assert.ok(pi, 'the unselectable model is still there');
+  assert.equal(pi.efforts, undefined, 'no probe result, so the agent-wide list applies');
+});
+
+test('DshAcpAdapter: streams a turn with usage but no cost, and images pass through', async () => {
+  const adapter = new DshAcpAdapter([process.execPath, fakeAcp], { FAKE_ACP_FLAVOR: 'dsh' });
+  const session = await adapter.start({ cwd: here, permissionMode: 'auto_edit' });
+  const { hooks, events } = collectingHooks();
+  const result = await session.prompt(turn('usage and a picture', [{ data: PNG, mimeType: 'image/png' }]), hooks);
+  assert.equal(result.stopReason, 'end_turn');
+  // dsh reports context pressure without a price; the hub must not invent one.
+  const usage = events.find((e) => e.type === 'usage.updated')?.data as { used: number; size: number; cost?: unknown };
+  assert.deepEqual(usage, { used: 52000, size: 200000 });
+  assert.equal('cost' in (usage ?? {}), false);
+  assert.equal(events.find((e) => e.type === 'message.delta' && String(e.data.text).startsWith('images:'))?.data.text, 'images:1:image/png;');
+  await session.close();
+});
+
 test('ClaudeAcpAdapter: resume uses session/load and keeps the same id', async () => {
   const adapter = new ClaudeAcpAdapter([process.execPath, fakeAcp]);
   const session = await adapter.start({ cwd: here, resumeId: 'previous-session' });
@@ -147,6 +183,61 @@ test('ClaudeAcpAdapter: resume uses session/load and keeps the same id', async (
   await session.prompt(turn('hi'), hooks);
   // The replayed text sent during session/load must not leak into this turn.
   assert.ok(!events.some((e) => String(e.data.text ?? '').includes('replayed')));
+  await session.close();
+});
+
+test('DshAcpAdapter: resume goes through session/resume, which never replays', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'calli-dsh-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const log = join(dir, 'resume.log');
+  const adapter = new DshAcpAdapter([process.execPath, fakeAcp], { FAKE_ACP_FLAVOR: 'dsh', FAKE_ACP_RESUME_LOG: log });
+  const session = await adapter.start({ cwd: here, resumeId: 'dsh-persisted-1' });
+  assert.equal(session.agentSessionId, 'dsh-persisted-1');
+  assert.equal(readFileSync(log, 'utf8'), 'dsh-persisted-1\n');
+  const { hooks, events } = collectingHooks();
+  const result = await session.prompt(turn('hi'), hooks);
+  assert.equal(result.stopReason, 'end_turn');
+  assert.equal(events.at(-1)?.data.text, 'echo:hi');
+  await session.close();
+  // An id the agent cannot resume is the agent's own error, surfaced as a failed start.
+  await assert.rejects(adapter.start({ cwd: here, resumeId: 'not-resumable' }), /not resumable/);
+});
+
+test('DshAcpAdapter: no plan mode, and the approval names only the call id', async () => {
+  const adapter = new DshAcpAdapter([process.execPath, fakeAcp], { FAKE_ACP_FLAVOR: 'dsh' });
+  assert.deepEqual(adapter.capabilities.permissionModes, []);
+  await assert.rejects(adapter.start({ cwd: here, workMode: 'plan' }), /此 agent 不支持计划模式/);
+
+  // The approval request itself carries only the call id and one-shot options; what the card
+  // shows is borrowed from the tool's own update, and the agent gets the chosen option back.
+  const session = await adapter.start({ cwd: here, permissionMode: 'full_access' });
+  const seen: ApprovalRequest[] = [];
+  const hooks: TurnHooks = {
+    emit: () => undefined,
+    requestApproval: async (req) => {
+      seen.push(req);
+      return { optionId: 'reject-once' };
+    },
+  };
+  const result = await session.prompt(turn('please approve this'), hooks);
+  assert.equal(result.stopReason, 'end_turn');
+  assert.equal(seen.length, 1);
+  assert.deepEqual(seen[0].options.map((o) => o.optionId), ['allow-once', 'reject-once']);
+  // The request itself named only the call id; the title and payload are the tool's own.
+  assert.equal(seen[0].title, 'Run ls');
+  assert.equal(seen[0].toolCall.title, 'Run ls');
+  assert.deepEqual(seen[0].toolCall.rawInput, { command: 'ls' });
+  await session.close();
+});
+
+test('DshAcpAdapter: cancel resolves a slow prompt as cancelled', async () => {
+  const adapter = new DshAcpAdapter([process.execPath, fakeAcp], { FAKE_ACP_FLAVOR: 'dsh' });
+  const session = await adapter.start({ cwd: here });
+  const { hooks } = collectingHooks();
+  const pending = session.prompt(turn('slow task'), hooks);
+  await new Promise((r) => setTimeout(r, 50));
+  await session.cancel();
+  assert.equal((await pending).stopReason, 'cancelled');
   await session.close();
 });
 

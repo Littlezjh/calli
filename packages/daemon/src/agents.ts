@@ -7,6 +7,7 @@ import { AgyAdapter, AGY_METADATA } from './adapters/agy.js';
 import { ClaudeAcpAdapter, CLAUDE_METADATA } from './adapters/claude.js';
 import { ZcodeAdapter, ZCODE_METADATA } from './adapters/zcode.js';
 import { CodexAppServerAdapter, CODEX_METADATA } from './adapters/codex.js';
+import { DshAcpAdapter, DSH_METADATA } from './adapters/dsh.js';
 import { PiRpcAdapter, PI_METADATA } from './adapters/pi.js';
 import { TraexAcpAdapter, TRAEX_METADATA } from './adapters/traex.js';
 import type { AgentAdapter, DiscoveredAccount, LoginSession } from './adapters/types.js';
@@ -20,7 +21,7 @@ import { HttpError } from './errors.js';
 export interface AgentInstance {
   /** What threads store; also the key in the adapter map. */
   id: string;
-  adapter: 'claude' | 'pi' | 'agy' | 'traex' | 'codex' | 'zcode';
+  adapter: 'claude' | 'pi' | 'agy' | 'traex' | 'codex' | 'zcode' | 'dsh';
   label?: string;
   /** Hidden from the new-thread picker; threads and settings keep working. */
   hidden?: boolean;
@@ -43,6 +44,7 @@ const ADAPTER_LABELS: Record<AgentInstance['adapter'], string> = {
   traex: 'TRAE CLI',
   codex: 'Codex',
   zcode: 'ZCode',
+  dsh: 'DeepSeek Harness',
 };
 
 /** How each adapter is built. One line per protocol; instances differ only in command and env. */
@@ -73,6 +75,9 @@ function buildAdapter(
     case 'codex':
       adapter = new CodexAppServerAdapter(command, env);
       break;
+    case 'dsh':
+      adapter = new DshAcpAdapter(command, env);
+      break;
   }
   // An instance may carry its own name ("Claude 工作号"); otherwise the adapter's own label stands.
   if (instance.label) (adapter as { label: string }).label = instance.label;
@@ -87,6 +92,7 @@ export function defaultInstances(opts: {
   traexCommand: string[];
   codexCommand: string[];
   zcodeCommand?: string[];
+  dshCommand?: string[];
 }): AgentInstance[] {
   return [
     { id: 'claude', adapter: 'claude', command: opts.claudeCommand },
@@ -95,6 +101,7 @@ export function defaultInstances(opts: {
     { id: 'traex', adapter: 'traex', command: opts.traexCommand },
     { id: 'codex', adapter: 'codex', command: opts.codexCommand },
     { id: 'zcode', adapter: 'zcode', command: opts.zcodeCommand ?? ['zcode', 'app-server'] },
+    { id: 'dsh', adapter: 'dsh', command: opts.dshCommand ?? ['dsh', '--profile', 'acp'] },
   ];
 }
 
@@ -113,6 +120,7 @@ export const SUPPORTED_AGENTS: SupportedAgent[] = [
   AGY_METADATA,
   TRAEX_METADATA,
   ZCODE_METADATA,
+  DSH_METADATA,
 ];
 
 /** An executable on PATH that looks like another copy of a known agent CLI. */
@@ -149,6 +157,7 @@ const KNOWN_PREFIXES: Array<[AgentInstance['adapter'], RegExp]> = [
   ['agy', copyOf('agy')],
   ['codex', copyOf('codex')],
   ['zcode', copyOf('zcode')],
+  ['dsh', copyOf('dsh')],
   // traex and the compatibility names its installer creates for the same CLI
   ['traex', copyOf('traex')],
   ['traex', copyOf('traecli')],
@@ -166,6 +175,7 @@ const PREFERRED_NAMES: Record<AgentInstance['adapter'], string[]> = {
   traex: ['traex', 'traecli', 'trae-cli', 'trae-agent', 'coco', 'ta'],
   codex: ['codex'],
   zcode: ['zcode'],
+  dsh: ['dsh'],
 };
 
 /**

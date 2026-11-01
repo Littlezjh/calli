@@ -86,6 +86,12 @@ export async function startDaemon(env = {}, opts = {}) {
   shim(binDir, 'fake-pi', 'fake-pi.mjs');
   shim(binDir, 'fake-claude', 'fake-acp.mjs');
   shim(binDir, 'fake-agy', 'fake-agy.mjs');
+  // The dsh adapter wants the same fake ACP agent shaped the way DeepSeek Harness answers.
+  writeFileSync(
+    join(binDir, 'fake-dsh'),
+    `#!/bin/sh\nFAKE_ACP_FLAVOR=dsh exec "${process.execPath}" "${join(fixtures, 'fake-acp.mjs')}" "$@"\n`,
+    { mode: 0o755 },
+  );
   // For the tests of other machines: `CALLI_SSH_BIN: 'fake-ssh'` makes directories stand in for them.
   shim(binDir, 'fake-ssh', 'fake-ssh.mjs');
   // An extra CLI for the discovery tests: looks like another copy of agy on PATH.
@@ -107,6 +113,7 @@ export async function startDaemon(env = {}, opts = {}) {
     CALLI_PI_BIN: 'fake-pi',
     CALLI_CLAUDE_ACP_BIN: 'fake-claude',
     CALLI_AGY_BIN: 'fake-agy',
+    CALLI_DSH_BIN: 'fake-dsh',
     PI_CODING_AGENT_DIR: join(dataDir, 'pi-agent'),
     CALLI_AGY_HOME: join(dataDir, 'agy-home'),
     ZCODE_DATA_BASE_DIR: dataDir,
