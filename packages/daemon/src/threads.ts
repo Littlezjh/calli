@@ -52,6 +52,12 @@ const WORKTREE_REFUSALS = {
   outside_workdirs: 'the repository is outside the allowed workdirs, so a worktree in it would be too',
 } as const;
 
+/** General preferences are shared by every browser connected to this daemon. */
+export interface GeneralSettings {
+  /** The page to open when no thread or page was explicitly requested. */
+  startupPage: 'new-thread' | 'recent-thread';
+}
+
 /** What forking a thread can offer besides a copy in the same directory. */
 export interface ForkOptions {
   worktree: {
@@ -839,6 +845,19 @@ export class ThreadManager {
 
   listThreads(opts: { archived?: boolean } = {}): ThreadView[] {
     return this.store.listThreads(opts).map((t) => this.view(t));
+  }
+
+  generalSettings(): GeneralSettings {
+    const value = this.store.hubSetting<Partial<GeneralSettings> | null>('general.settings', null);
+    return { startupPage: value?.startupPage === 'recent-thread' ? 'recent-thread' : 'new-thread' };
+  }
+
+  saveGeneralSettings(input: unknown): GeneralSettings {
+    const startupPage = (input as Partial<GeneralSettings> | null)?.startupPage;
+    if (startupPage !== 'new-thread' && startupPage !== 'recent-thread') throw new HttpError(400, 'invalid startup page');
+    const value: GeneralSettings = { startupPage };
+    this.store.saveHubSetting('general.settings', value);
+    return value;
   }
 
   threadView(id: string): ThreadView {

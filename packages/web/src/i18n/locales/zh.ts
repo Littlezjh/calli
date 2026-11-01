@@ -340,6 +340,14 @@ export const zh = {
   'locale.menu': '语言',
   'locale.system': '跟随系统',
 
+  // General settings
+  'general.title': '常规',
+  'general.startupPage': '默认打开页面',
+  'general.newThread': '新会话页面',
+  'general.recentThread': '最近会话',
+  'general.startupHint': '此设置在连接这台机器的设备间共用。最近会话按活动时间选择，没有会话时打开新会话页面。',
+  'general.saving': '正在保存…',
+
   // Appearance
   'appearance.title': '外观',
   'appearance.hint': '只改这台设备上的样子，选了就生效。',

@@ -311,6 +311,10 @@ export function createHttpServer(deps: HttpDeps): Server {
       return { threads, schedules, teams, handoverOrders };
     };
 
+    if (path === '/api/general-settings') {
+      if (method === 'GET') return sendJson(res, 200, manager.generalSettings());
+      if (method === 'PUT') return sendJson(res, 200, manager.saveGeneralSettings(await readJson(req)));
+    }
     if (path === '/api/personal/settings') {
       if (method === 'GET') return sendJson(res, 200, await manager.personal.settingsView());
       if (method === 'PUT') { manager.personal.putSettings(await readJson(req)); return sendJson(res, 200, await manager.personal.settingsView()); }

@@ -340,6 +340,14 @@ export const en: Messages = {
   'locale.menu': 'Language',
   'locale.system': 'Follow system',
 
+  // General settings
+  'general.title': 'General',
+  'general.startupPage': 'Default opening page',
+  'general.newThread': 'New conversation',
+  'general.recentThread': 'Most recent conversation',
+  'general.startupHint': 'Shared by devices connected to this machine. The most recent conversation is chosen by activity. Opens a new conversation when none are available.',
+  'general.saving': 'Saving…',
+
   // Appearance
   'appearance.title': 'Appearance',
   'appearance.hint': 'Changes how the hub looks on this device only, and applies right away.',

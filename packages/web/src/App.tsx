@@ -1,4 +1,5 @@
 import { PushSettingsDialog } from './components/PushSettingsDialog';
+import { GeneralSettingsDialog } from './components/GeneralSettingsDialog';
 import { AutoHandoverNotice, HandoverSettingsDialog } from './components/AutoHandover';
 import { useWorkSources, WorkSummary } from './extensions/work';
 import { HostIcon } from './extensions/ui';
@@ -14,6 +15,7 @@ import {
   MAX_QUEUED,
   type AgentInfo,
   type PersonalSettings,
+  type GeneralSettings,
   type GoalView,
   type ModelOption,
   type Section,
@@ -95,7 +97,7 @@ import { NoteMarks, type NoteMark } from './components/NoteMarks';
 import { Toast, type ToastState } from './components/Toast';
 import { ConnectDialog, DemoBar } from './components/ConnectDialog';
 import { DemoApi, DemoError } from './demo/DemoApi';
-import { IconCheck, IconBell, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconMore, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconLanguage, IconWaveform } from './components/icons';
+import { IconCheck, IconBell, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconSettings, IconMore, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconLanguage, IconWaveform } from './components/icons';
 import { chooseLocale, locale, LOCALES, localeChoice, t } from './i18n';
 
 const sleep = (ms: number, signal: AbortSignal) =>
@@ -536,7 +538,22 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const [todosKey, setTodosKey] = useState(0);
   /** The same, for the open scheduled-task page. */
   const [schedulesKey, setSchedulesKey] = useState(0);
-  const [selectedId, setSelectedId] = useState<string | null>(typeof start === 'object' ? start.thread : showcase?.initialThreadId ?? null);
+  // Explicit navigation wins even when the startup preference or thread list arrives late.
+  const startupPending = useRef(!demo && !showcase && start === undefined && !window.location.hash);
+  const [startupSettings, setStartupSettings] = useState<GeneralSettings | null>(null);
+  const [generalSettingsOpen, setGeneralSettingsOpen] = useState(false);
+  const [selectedId, setSelectedIdState] = useState<string | null>(typeof start === 'object' ? start.thread : showcase?.initialThreadId ?? null);
+  const setSelectedId = useCallback((id: string | null) => {
+    startupPending.current = false;
+    setSelectedIdState(id);
+  }, []);
+  useEffect(() => {
+    if (api.demo || !startupPending.current) return;
+    let live = true;
+    void api.generalSettings().then(value => { if (live) setStartupSettings(value); })
+      .catch(() => { if (live) setStartupSettings({ startupPage: 'new-thread' }); });
+    return () => { live = false; };
+  }, [api]);
   const [singleSegmentId, setSingleSegmentId] = useState<string | null>(null);
   const [coordination, setCoordination] = useState<Coordination | null>(null);
   const memberDefaultsKey = hostId ? `${MEMBER_DEFAULTS_KEY}:${hostId}` : MEMBER_DEFAULTS_KEY;
@@ -890,6 +907,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   // opened, so the listener is renewed with the token.
   useEffect(() => {
     const onHash = () => {
+      startupPending.current = false;
       const hash = window.location.hash;
       if (hash.startsWith('#/thread/')) { setThreadLink(hash); return; }
       setThreadLink(null);
@@ -944,6 +962,17 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const waitingOn = waiting[0] ?? null;
 
   const topLevelThreads = useMemo(() => threads.filter((t) => !t.coordination || t.coordination.rootId === t.id || !threads.some((r) => r.id === t.coordination!.rootId)), [threads]);
+
+  useEffect(() => {
+    if (!startupPending.current || !startupSettings) return;
+    if (startupSettings.startupPage === 'recent-thread' && !observedAt) return;
+    startupPending.current = false;
+    if (startupSettings.startupPage === 'recent-thread') {
+      const recent = topLevelThreads.filter(thread => !thread.archivedAt)
+        .reduce<Thread | null>((latest, thread) => !latest || thread.updatedAt > latest.updatedAt ? thread : latest, null);
+      if (recent) { setSelectedIdState(recent.id); setDrawer(false); }
+    }
+  }, [startupSettings, observedAt, topLevelThreads]);
 
   // Members are listed under their lead in the sidebar, not as threads of their own.
   const teamMembers = useMemo(() => {
@@ -2234,6 +2263,8 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     <div
       className={`app${listOpen ? ' drawer-open' : ''}${sidebarHidden && !compact ? ' sidebar-hidden' : ''}${sidebarDrag ? ' sidebar-resizing' : ''}`}
       style={{ '--sidebar-w': `${sidebarWidth}px` } as CSSProperties}
+      onPointerDownCapture={() => { startupPending.current = false; }}
+      onKeyDownCapture={() => { startupPending.current = false; }}
     >
       {remotePick && (
         <DirectoryPicker
@@ -2809,6 +2840,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         />
       )}
       {pushSettingsOpen && <PushSettingsDialog api={api} onClose={() => setPushSettingsOpen(false)} />}
+      {generalSettingsOpen && <GeneralSettingsDialog api={api} onSave={setStartupSettings} onClose={() => setGeneralSettingsOpen(false)} />}
       {handoverSettingsOpen && api && <HandoverSettingsDialog api={api} agents={agents} onClose={() => setHandoverSettingsOpen(false)} />}
       {quotaOpen && api && <QuotaBoard api={api} agents={agents} current={onPage ? undefined : activeAgent} onClose={() => setQuotaOpen(false)} onError={handleError} />}
       {onboardOpen && (
@@ -2871,6 +2903,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           corner="bottom-right"
           onClose={() => setSettingsAt(null)}
           items={showcase ? [{ id: 'install', label: t('app.install'), icon: IconSignIn, onSelect: () => { setDrawer(false); showcase.onInstall(); } }] : [
+            ...(!api.demo ? [{ id: 'general', label: t('general.title'), icon: IconSettings, onSelect: () => { setGeneralSettingsOpen(true); setDrawer(false); } }] : []),
             // The demo's way in. The look works as it is; the hub's own machinery is left out.
             ...(demo
               ? [

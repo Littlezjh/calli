@@ -146,6 +146,24 @@ test('config exposes allowed workdirs', async () => {
   assert.deepEqual(await res.json(), { workdirs: [workdir], roots: [{ path: workdir, removable: false }], scratch: true });
 });
 
+test('general settings default to a new thread and persist across clients and store reopen', async () => {
+  const path = '/api/general-settings';
+  assert.equal((await api(path, {}, false)).status, 401);
+  assert.equal((await api(path, { method: 'PUT', body: JSON.stringify({ startupPage: 'recent-thread' }) }, false)).status, 401);
+  assert.deepEqual(await (await api(path)).json(), { startupPage: 'new-thread' });
+  for (const value of [null, {}, { startupPage: 'unknown' }, { startupPage: true }]) {
+    assert.equal((await api(path, { method: 'PUT', body: JSON.stringify(value) })).status, 400);
+  }
+  const saved = await api(path, { method: 'PUT', body: JSON.stringify({ startupPage: 'recent-thread' }) });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(await saved.json(), { startupPage: 'recent-thread' });
+  assert.deepEqual(await (await api(path)).json(), { startupPage: 'recent-thread' });
+  const reopened = new Store(dataDir);
+  try { assert.deepEqual(reopened.hubSetting('general.settings', null), { startupPage: 'recent-thread' }); }
+  finally { reopened.close(); }
+  assert.deepEqual(await (await api(path, { method: 'PUT', body: JSON.stringify({ startupPage: 'new-thread' }) })).json(), { startupPage: 'new-thread' });
+});
+
 test('project directory browsing is authenticated, read-only, and independent of file access', async () => {
   assert.equal((await api('/api/project-directories', {}, false)).status, 401);
   const before = await (await api('/api/config')).json();

@@ -338,6 +338,14 @@ export const ja: Messages = {
   'locale.menu': '言語',
   'locale.system': 'システムに合わせる',
 
+  // General settings
+  'general.title': '一般',
+  'general.startupPage': '起動時に開くページ',
+  'general.newThread': '新しい会話',
+  'general.recentThread': '最近の会話',
+  'general.startupHint': 'このマシンに接続する端末間で共有されます。最近の会話は活動時刻で選び、会話がない場合は新しい会話ページを開きます。',
+  'general.saving': '保存中…',
+
   // Appearance
   'appearance.title': '外観',
   'appearance.hint': 'このデバイスでの見た目だけを変更します。選ぶとすぐに反映されます。',
