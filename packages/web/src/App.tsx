@@ -551,7 +551,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     if (api.demo || !startupPending.current) return;
     let live = true;
     void api.generalSettings().then(value => { if (live) setStartupSettings(value); })
-      .catch(() => { if (live) setStartupSettings({ startupPage: 'new-thread' }); });
+      .catch(() => { if (live) setStartupSettings({ startupPage: 'new-thread', autoArchiveDays: null }); });
     return () => { live = false; };
   }, [api]);
   const [singleSegmentId, setSingleSegmentId] = useState<string | null>(null);

@@ -1,8 +1,11 @@
 import type { ExtensionState, Permission, ExtensionPackagePreview, ExtensionConfiguration, ExtensionDetection, WorkProjection, ProgressReport } from '@calli/extension-api';
 export type WorkMode = 'execute' | 'plan';
+export type AutoArchiveDays = 1 | 3 | 7 | 15 | 30 | null;
 export interface GeneralSettings {
   /** Shared startup preference stored by the daemon. */
   startupPage: 'new-thread' | 'recent-thread';
+  /** Shared automatic archive window. Null means conversations stay in the sidebar. */
+  autoArchiveDays: AutoArchiveDays;
 }
 export interface UserQuestion { id: string; question: string; header?: string; options: Array<{ value: string; label: string; description?: string }>; multiple?: boolean; freeText?: boolean; required?: boolean }
 export type UserInputAnswer = { answers: Record<string, string[]> } | { cancelled: true };

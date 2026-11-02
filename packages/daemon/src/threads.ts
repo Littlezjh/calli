@@ -53,9 +53,26 @@ const WORKTREE_REFUSALS = {
 } as const;
 
 /** General preferences are shared by every browser connected to this daemon. */
+export type AutoArchiveDays = 1 | 3 | 7 | 15 | 30 | null;
+
+const AUTO_ARCHIVE_DAY_OPTIONS = [1, 3, 7, 15, 30] as const;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 export interface GeneralSettings {
   /** The page to open when no thread or page was explicitly requested. */
   startupPage: 'new-thread' | 'recent-thread';
+  /** Conversations older than this many days are hidden from the sidebar. Null leaves them alone. */
+  autoArchiveDays: AutoArchiveDays;
+}
+
+function storedAutoArchiveDays(value: unknown): AutoArchiveDays {
+  return AUTO_ARCHIVE_DAY_OPTIONS.includes(value as never) ? value as AutoArchiveDays : null;
+}
+
+function parseAutoArchiveDays(value: unknown): AutoArchiveDays {
+  if (value === null) return null;
+  if (AUTO_ARCHIVE_DAY_OPTIONS.includes(value as never)) return value as AutoArchiveDays;
+  throw new HttpError(400, 'invalid auto archive period');
 }
 
 /** What forking a thread can offer besides a copy in the same directory. */
@@ -849,15 +866,44 @@ export class ThreadManager {
 
   generalSettings(): GeneralSettings {
     const value = this.store.hubSetting<Partial<GeneralSettings> | null>('general.settings', null);
-    return { startupPage: value?.startupPage === 'recent-thread' ? 'recent-thread' : 'new-thread' };
+    return {
+      startupPage: value?.startupPage === 'recent-thread' ? 'recent-thread' : 'new-thread',
+      autoArchiveDays: storedAutoArchiveDays(value?.autoArchiveDays),
+    };
   }
 
   saveGeneralSettings(input: unknown): GeneralSettings {
-    const startupPage = (input as Partial<GeneralSettings> | null)?.startupPage;
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new HttpError(400, 'invalid general settings');
+    const current = this.generalSettings();
+    const raw = input as Partial<GeneralSettings>;
+    const startupPage = raw.startupPage;
     if (startupPage !== 'new-thread' && startupPage !== 'recent-thread') throw new HttpError(400, 'invalid startup page');
-    const value: GeneralSettings = { startupPage };
+    const autoArchiveDays = Object.hasOwn(raw, 'autoArchiveDays') ? parseAutoArchiveDays(raw.autoArchiveDays) : current.autoArchiveDays;
+    const value: GeneralSettings = { startupPage, autoArchiveDays };
     this.store.saveHubSetting('general.settings', value);
     return value;
+  }
+
+  /** Periodic housekeeping only archives conversations that do not currently need attention. */
+  async autoArchiveOldThreads(now = new Date()): Promise<number> {
+    const days = this.generalSettings().autoArchiveDays;
+    if (days === null) return 0;
+    const cutoff = now.getTime() - days * DAY_MS;
+    let archived = 0;
+    for (const thread of this.store.listThreads()) {
+      const updatedAt = Date.parse(thread.updatedAt);
+      if (!Number.isFinite(updatedAt) || updatedAt >= cutoff) continue;
+      if (thread.pinned || thread.unread || thread.status === 'running') continue;
+      if (this.view(thread).waiting) continue;
+      try {
+        await this.updateThread(thread.id, { archived: true });
+        archived++;
+      } catch (error) {
+        if (error instanceof HttpError && error.status === 409) continue;
+        throw error;
+      }
+    }
+    return archived;
   }
 
   threadView(id: string): ThreadView {

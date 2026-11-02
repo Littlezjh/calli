@@ -150,18 +150,18 @@ test('general settings default to a new thread and persist across clients and st
   const path = '/api/general-settings';
   assert.equal((await api(path, {}, false)).status, 401);
   assert.equal((await api(path, { method: 'PUT', body: JSON.stringify({ startupPage: 'recent-thread' }) }, false)).status, 401);
-  assert.deepEqual(await (await api(path)).json(), { startupPage: 'new-thread' });
-  for (const value of [null, {}, { startupPage: 'unknown' }, { startupPage: true }]) {
+  assert.deepEqual(await (await api(path)).json(), { startupPage: 'new-thread', autoArchiveDays: null });
+  for (const value of [null, {}, { startupPage: 'unknown', autoArchiveDays: null }, { startupPage: true, autoArchiveDays: null }, { startupPage: 'new-thread', autoArchiveDays: 2 }, { startupPage: 'new-thread', autoArchiveDays: '7' }]) {
     assert.equal((await api(path, { method: 'PUT', body: JSON.stringify(value) })).status, 400);
   }
-  const saved = await api(path, { method: 'PUT', body: JSON.stringify({ startupPage: 'recent-thread' }) });
+  const saved = await api(path, { method: 'PUT', body: JSON.stringify({ startupPage: 'recent-thread', autoArchiveDays: 7 }) });
   assert.equal(saved.status, 200);
-  assert.deepEqual(await saved.json(), { startupPage: 'recent-thread' });
-  assert.deepEqual(await (await api(path)).json(), { startupPage: 'recent-thread' });
+  assert.deepEqual(await saved.json(), { startupPage: 'recent-thread', autoArchiveDays: 7 });
+  assert.deepEqual(await (await api(path)).json(), { startupPage: 'recent-thread', autoArchiveDays: 7 });
   const reopened = new Store(dataDir);
-  try { assert.deepEqual(reopened.hubSetting('general.settings', null), { startupPage: 'recent-thread' }); }
+  try { assert.deepEqual(reopened.hubSetting('general.settings', null), { startupPage: 'recent-thread', autoArchiveDays: 7 }); }
   finally { reopened.close(); }
-  assert.deepEqual(await (await api(path, { method: 'PUT', body: JSON.stringify({ startupPage: 'new-thread' }) })).json(), { startupPage: 'new-thread' });
+  assert.deepEqual(await (await api(path, { method: 'PUT', body: JSON.stringify({ startupPage: 'new-thread', autoArchiveDays: null }) })).json(), { startupPage: 'new-thread', autoArchiveDays: null });
 });
 
 test('project directory browsing is authenticated, read-only, and independent of file access', async () => {

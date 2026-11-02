@@ -345,6 +345,9 @@ export const en: Messages = {
   'general.startupPage': 'Default opening page',
   'general.newThread': 'New conversation',
   'general.recentThread': 'Most recent conversation',
+  'general.autoArchive': 'Auto-archive',
+  'general.autoArchiveNever': 'Do not archive',
+  'general.autoArchiveDays': (days: number) => `${days} ${days === 1 ? 'day' : 'days'} ago`,
   'general.startupHint': 'Shared by devices connected to this machine. The most recent conversation is chosen by activity. Opens a new conversation when none are available.',
   'general.saving': 'Saving…',
 

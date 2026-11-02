@@ -343,6 +343,9 @@ export const ja: Messages = {
   'general.startupPage': '起動時に開くページ',
   'general.newThread': '新しい会話',
   'general.recentThread': '最近の会話',
+  'general.autoArchive': '自動アーカイブ',
+  'general.autoArchiveNever': 'アーカイブしない',
+  'general.autoArchiveDays': (days: number) => `${days}日前`,
   'general.startupHint': 'このマシンに接続する端末間で共有されます。最近の会話は活動時刻で選び、会話がない場合は新しい会話ページを開きます。',
   'general.saving': '保存中…',
 

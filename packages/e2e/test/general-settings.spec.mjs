@@ -7,7 +7,7 @@ import { startDaemon, launchBrowser, openUi, api } from '../harness.mjs';
 test('general startup preference is shared, respects recent activity and explicit navigation', async () => {
   const daemon = await startDaemon();
   const browser = await launchBrowser();
-  const save = startupPage => api(daemon, '/api/general-settings', { method: 'PUT', body: JSON.stringify({ startupPage }) });
+  const save = (startupPage, autoArchiveDays = null) => api(daemon, '/api/general-settings', { method: 'PUT', body: JSON.stringify({ startupPage, autoArchiveDays }) });
   const shots = '/tmp/calli-general-settings-shots'; mkdirSync(shots, { recursive: true });
   try {
     const create = async title => (await api(daemon, '/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: daemon.workdir, title }) })).json();
@@ -42,13 +42,20 @@ test('general startup preference is shared, respects recent activity and explici
       await page.getByRole('menuitemradio', { name: '最近会话', exact: true }).click();
       assert.equal((await saved).status(), 200);
       await page.waitForFunction(() => !document.querySelector('.general-select:disabled'));
+      const archiveSelect = dialog.getByRole('button', { name: '自动归档', exact: true });
+      assert.match(await archiveSelect.innerText(), /不归档/);
+      await archiveSelect.click();
+      const archiveSaved = page.waitForResponse(response => response.url().endsWith('/api/general-settings') && response.request().method() === 'PUT');
+      await page.getByRole('menuitemradio', { name: '7 天前', exact: true }).click();
+      assert.equal((await archiveSaved).status(), 200);
+      await page.waitForFunction(() => !document.querySelector('.general-select:disabled'));
       await page.screenshot({ path: join(shots, `general-${mobile ? 'mobile' : 'desktop'}-${theme}.png`), fullPage: true, animations: 'disabled' });
       await select.click();
       await page.screenshot({ path: join(shots, `general-menu-${mobile ? 'mobile' : 'desktop'}-${theme}.png`), fullPage: true, animations: 'disabled' });
       await page.keyboard.press('Escape');
       await dialog.getByRole('button', { name: '关闭', exact: true }).click();
       await dialog.waitFor({ state: 'detached' });
-      assert.deepEqual(await (await api(daemon, '/api/general-settings')).json(), { startupPage: 'recent-thread' });
+      assert.deepEqual(await (await api(daemon, '/api/general-settings')).json(), { startupPage: 'recent-thread', autoArchiveDays: 7 });
       await page.reload();
       await page.locator('.topbar-title', { hasText: 'Latest conversation' }).waitFor();
       // An explicit new-thread action is not undone by subsequent list updates.
@@ -76,7 +83,7 @@ test('general startup preference is shared, respects recent activity and explici
     await page.getByRole('menuitemradio', { name: '新会话页面', exact: true }).click();
     await dialog.getByRole('alert').waitFor();
     assert.match(await dialog.getByRole('button', { name: '默认打开页面', exact: true }).innerText(), /最近会话/);
-    assert.deepEqual(await (await api(daemon, '/api/general-settings')).json(), { startupPage: 'recent-thread' });
+    assert.deepEqual(await (await api(daemon, '/api/general-settings')).json(), { startupPage: 'recent-thread', autoArchiveDays: 7 });
     await page.unroute('**/api/general-settings');
     await dialog.getByRole('button', { name: '关闭', exact: true }).click();
     // A slow preference response must not replace a thread the user chose in the meantime.
