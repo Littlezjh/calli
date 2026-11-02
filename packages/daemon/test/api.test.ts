@@ -2168,6 +2168,40 @@ test('sync: turns the terminal added appear, are marked, and warn until the hub 
   }
 });
 
+test('sync: a hub turn sent while the history is being read is not copied back as a terminal turn', async () => {
+  const messagesFile = join(dataDir, 'pi-terminal-messages-race.json');
+  process.env.FAKE_PI_MESSAGES_FILE = messagesFile;
+  process.env.FAKE_PI_MESSAGES_DELAY_MS = '600';
+  try {
+    const thread = await newThread({ agent: 'pi', cwd: workdir });
+    await post(`/api/threads/${thread.id}/turns`, { text: 'hello' });
+    await untilIdle(thread.id);
+
+    const syncing = api(`/api/threads/${thread.id}/sync`, { method: 'POST' });
+    await new Promise((r) => setTimeout(r, 200));
+    // The person sends while the sync is still reading; the agent records the message at once.
+    await post(`/api/threads/${thread.id}/turns`, { text: 'slow, sent mid-sync' });
+    writeFileSync(
+      messagesFile,
+      JSON.stringify({
+        'pi-session-1': [
+          { role: 'user', content: 'hello' },
+          { role: 'assistant', content: [{ type: 'text', text: 'hi there hello' }] },
+          { role: 'user', content: 'slow, sent mid-sync' },
+        ],
+      }),
+    );
+    const { added } = (await (await syncing).json()) as { added: number };
+    assert.equal(added, 0);
+    assert.equal((await events(thread.id)).filter((e) => e.data.fromTerminal === true).length, 0);
+    await api(`/api/threads/${thread.id}/cancel`, { method: 'POST' });
+    await untilIdle(thread.id);
+  } finally {
+    delete process.env.FAKE_PI_MESSAGES_FILE;
+    delete process.env.FAKE_PI_MESSAGES_DELAY_MS;
+  }
+});
+
 test('sync: a hub turn the agent never recorded is skipped, not treated as divergence', async () => {
   const messagesFile = join(dataDir, 'pi-terminal-messages-2.json');
   process.env.FAKE_PI_MESSAGES_FILE = messagesFile;

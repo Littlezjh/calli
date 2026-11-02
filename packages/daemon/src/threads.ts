@@ -1621,14 +1621,13 @@ export class ThreadManager {
       throw new HttpError(400, `this thread's session cannot be read back`);
     }
 
-    const [agentTurns, hubTexts] = await Promise.all([
-      adapter.loadHistory(thread.agentSessionId, thread.cwd),
-      Promise.resolve(
-        // Every turn the hub has, not one page of the log: a turn missing from this list would
-        // look new on the agent's side and be appended again on every sync.
-        this.store.listEventsOfType(id, 'turn.started').map((ev) => turnKey(String(ev.data.text ?? ''))),
-      ),
-    ]);
+    const agentTurns = await adapter.loadHistory(thread.agentSessionId, thread.cwd);
+    // Reading the history takes a while. A turn the hub started meanwhile is already in the agent's
+    // session, so the hub's turns are read after it, and a turn still running is left for later.
+    if (this.running.has(id)) return { added: 0, terminalActivity: this.view(thread).terminalActivity };
+    // Every turn the hub has, not one page of the log: a turn missing from this list would look
+    // new on the agent's side and be appended again on every sync.
+    const hubTexts = this.store.listEventsOfType(id, 'turn.started').map((ev) => turnKey(String(ev.data.text ?? '')));
 
     const matched = matchTurns(agentTurns.map((t) => turnKey(t.text)), hubTexts, ThreadManager.SYNC_SKIP_TOLERANCE);
     if (!matched) return { added: 0, terminalActivity: this.view(thread).terminalActivity }; // histories disagree

@@ -181,6 +181,8 @@ rl.on('line', (line) => {
     case 'set_thinking_level':
       return reply({});
     case 'get_messages':
+      // A slow read lets a test start a hub turn while /sync is still reading the session.
+      if (process.env.FAKE_PI_MESSAGES_DELAY_MS) return setTimeout(() => reply({ messages: messagesOf(sessionId) }), Number(process.env.FAKE_PI_MESSAGES_DELAY_MS));
       return reply({ messages: messagesOf(sessionId) });
     // The user messages a copy can be forked from, each with the id `fork` takes.
     case 'get_fork_messages':
