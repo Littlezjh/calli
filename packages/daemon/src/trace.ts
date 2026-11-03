@@ -224,13 +224,22 @@ export function buildTrace(events: StoredEvent[]): { steps: TraceStep[]; totals:
           if (target) {
             if (typeof tokens.output === 'number') target.outputTokens ??= tokens.output;
             const durationMs = num(data.durationMs), ttftMs = num(data.ttftMs);
-            if (typeof data.startedAt === 'string' && durationMs !== undefined && ttftMs !== undefined) {
-              const base = Date.parse(data.startedAt);
-              if (Number.isFinite(base)) {
+            // Native timing needs the request's own duration and first-token wait. With a start
+            // time (zcode) the bounds are the request's own; without one (pi) the sample lands at
+            // message_end, so the request ended there and began a duration earlier. Only a start
+            // before the turn itself is pulled back to the turn's start: whatever the duration
+            // claims, the request cannot have begun before the ask.
+            if (durationMs !== undefined && ttftMs !== undefined) {
+              const end = typeof data.startedAt === 'string' && Number.isFinite(Date.parse(data.startedAt))
+                ? Date.parse(data.startedAt) + durationMs
+                : Date.parse(ev.ts);
+              const floor = steps[0]?.ts ? Date.parse(steps[0].ts) : Number.NEGATIVE_INFINITY;
+              if (Number.isFinite(end)) {
+                const start = Math.max(end - durationMs, floor);
                 target.source = 'native';
-                target.start = data.startedAt;
-                target.firstOutput = new Date(base + ttftMs).toISOString();
-                target.end = new Date(base + durationMs).toISOString();
+                target.start = new Date(start).toISOString();
+                target.firstOutput = new Date(start + Math.max(0, ttftMs)).toISOString();
+                target.end = new Date(Math.max(end, start)).toISOString();
               }
             }
           }

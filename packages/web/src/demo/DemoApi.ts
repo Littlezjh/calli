@@ -170,6 +170,8 @@ export function route(data: DemoData, method: string, url: string, body?: unknow
         return data.systemPrompts[t.id] ?? undefined;
       case 'trace':
         return data.traces[t.id] ?? undefined;
+      case 'stats':
+        return data.stats[t.id] ?? undefined;
       case 'events': {
         const after = Number(q.get('after') ?? 0);
         const before = Number(q.get('before') ?? Infinity);
