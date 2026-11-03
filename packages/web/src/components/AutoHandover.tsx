@@ -88,6 +88,10 @@ export function HandoverSettingsDialog({ api, agents, onClose }: { api: Api; age
     {!value && !error && <p>{t('common.loading')}</p>}
     {value && <>
       <div className="auto-setting-line"><span>{t('auto.global')}</span><button aria-label={t('auto.global')} className="auto-toggle" role="switch" aria-checked={value.enabled} onClick={() => setValue({ ...value, enabled: !value.enabled })}>{t(value.enabled ? 'auto.on' : 'auto.off')}</button></div>
+      <div className="auto-setting-line"><span id="auto-method">{t('auto.method')}</span><div className="chip-row" role="radiogroup" aria-labelledby="auto-method">
+        {(['resume', 'summary'] as const).map(m => <button key={m} type="button" className={`chip${(value.method ?? 'resume') === m ? ' on' : ''}`} role="radio" aria-checked={(value.method ?? 'resume') === m} onClick={() => setValue({ ...value, method: m })}>{t(m === 'resume' ? 'auto.methodResume' : 'auto.methodSummary')}</button>)}
+      </div></div>
+      <p className="auto-setting-hint">{t('auto.methodHint')}</p>
       <label className="auto-setting-line">{t('auto.threshold')}<input inputMode="numeric" value={value.threshold} onChange={e => setValue({ ...value, threshold: Number(e.target.value) })} /></label>
       <div className="auto-setting-line"><span>{t('auto.resume')}</span><button aria-label={t('auto.resume')} className="auto-toggle" role="switch" aria-checked={value.resume === true} onClick={() => setValue({ ...value, resume: value.resume !== true })}>{t(value.resume === true ? 'auto.on' : 'auto.off')}</button></div>
       <p className="auto-setting-hint">{t('auto.resumeHint')}</p>

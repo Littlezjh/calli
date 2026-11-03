@@ -228,6 +228,8 @@ rl.on('line', (line) => {
       }
     case 'session/load': {
       if (dsh) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: 'not found' } });
+      // Tests read this file to see which account resumed which session.
+      if (process.env.FAKE_ACP_LOAD_LOG) appendFileSync(process.env.FAKE_ACP_LOAD_LOG, `${process.env.CLAUDE_CONFIG_DIR ?? ''}\t${msg.params.sessionId}\n`);
       const replay = (u) => out({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: msg.params.sessionId, update: u } });
       if (String(msg.params.sessionId).startsWith('hist-')) {
         // A two-turn conversation, replayed the way the real agent does: all of it before the response.
@@ -492,7 +494,8 @@ rl.on('line', (line) => {
           },
         });
       }
-      if (text.includes('out of plan')) {
+      // FAKE_ACP_PLAN_LEFT stands for another account whose plan still has room.
+      if (text.includes('out of plan') && !process.env.FAKE_ACP_PLAN_LEFT) {
         return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: "Internal error: You've hit your session limit · resets 10:10am (UTC)" } });
       }
       if (text.includes('slow')) {

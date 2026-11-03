@@ -2354,9 +2354,77 @@ export class ThreadManager {
     // The turn that failed is carried over, so the successor picks up the ask that was cut off.
     const last = this.store.listTurns(id).at(-1)?.turnId ?? null;
     const failed = last && this.store.listTurnEvents(id, last).some(e => e.type === 'turn.error') ? last : null;
+    const target = { agent, ...(model ? { model } : {}) };
+    if (this.autoHandover.settings().method === 'resume' && await this.canResumeHandover(id, agent, failed)) {
+      const sessionId = await this.importHandoverSession(id, agent);
+      if (sessionId) return this.executeResumeHandover(id, target, sessionId, failed, note?.trim());
+    }
     const result = await this.handoverSummary(id, null);
     if (!('summary' in result)) throw new HttpError(409, 'handover summary unavailable');
-    return this.executeAutoHandover(id, { agent, ...(model ? { model } : {}) }, result.summary, failed, note?.trim());
+    return this.executeAutoHandover(id, target, result.summary, failed, note?.trim());
+  }
+
+  /**
+   * Whether `target` can go on in a copy of this thread's own conversation: another instance (another
+   * account) of the same agent, one that can take in a session the source wrote.
+   */
+  async canResumeHandover(id: string, target: string, failedTurn: string | null): Promise<boolean> {
+    const thread = this.getThread(id);
+    if (target === thread.agent || !thread.agentSessionId || !this.adapters.get(thread.agent)?.sessionLocation || !this.adapters.get(target)?.importSession) return false;
+    // A teammate's place moves with the successor's first turn; without a failed turn to resend there is none.
+    if (!failedTurn && this.coordination?.metadata(id)) return false;
+    const agents = await this.listAgents();
+    const kind = (agent: string) => agents.find(a => a.id === agent)?.adapter;
+    return kind(thread.agent) !== undefined && kind(thread.agent) === kind(target);
+  }
+
+  /** Copies the thread's conversation into `target`'s account; null when it cannot be read or written. */
+  async importHandoverSession(id: string, target: string): Promise<string | null> {
+    const thread = this.getThread(id);
+    try {
+      const { sessionPath } = await this.adapters.get(thread.agent)!.sessionLocation!(thread.agentSessionId!, thread.cwd);
+      return sessionPath ? await this.adapters.get(target)!.importSession!(sessionPath) : null;
+    } catch (error) {
+      console.error(`[handover] could not copy the conversation of ${id} to ${target}: ${error instanceof Error ? error.message : error}`);
+      return null;
+    }
+  }
+
+  /**
+   * Hands the thread to another account of the same agent, which goes on in a copy of the
+   * conversation: no brief, the failed turn resent as it was asked. The successor joins the source as
+   * an automatic continuation, so the page shows one conversation.
+   */
+  async executeResumeHandover(id: string, target: HandoverTarget, sessionId: string, failedTurn: string | null, note?: string): Promise<ThreadView> {
+    const source = this.getThread(id);
+    this.quotaResume.drop(id);
+    const successor = await this.createHandoverThread(id, target.agent, target.model, 'continue');
+    this.store.updateThread(successor.id, { agentSessionId: sessionId });
+    this.autoHandover.inherit(id, successor.id);
+    const adapter = this.adapters.get(target.agent)!;
+    if (adapter.capabilities.permissionModes.includes(source.permissionMode as PermissionMode)) await this.updateThread(successor.id, { permissionMode: source.permissionMode });
+    if (adapter.capabilities.workModes?.includes(source.workMode ?? 'execute')) await this.updateThread(successor.id, { workMode: source.workMode ?? 'execute' });
+    this.attachments.copyThread(id, successor.id);
+    const failed = failedTurn ? this.store.listTurnEvents(id, failedTurn).find(e => e.type === 'turn.started') : undefined;
+    if (failed || note) {
+      const images = ((failed?.data.images ?? []) as Array<{ id: string }>).map(img => {
+        const file = this.attachments.find(id, img.id);
+        if (!file) throw new HttpError(409, 'handover attachment unavailable');
+        return { mimeType: file.mimeType, data: readFileSync(file.path).toString('base64') };
+      });
+      const added = note ? `${failed ? '\n\n' : ''}${note}` : '';
+      const text = String(failed?.data.displayText ?? failed?.data.text ?? '') + added;
+      const turnId = randomUUID();
+      await this.startTurn(successor.id, { text: failed?.data.hiddenPrompt ? String(failed.data.text) + added : text, ...(failed?.data.hiddenPrompt ? { displayText: text } : {}), channel: failed?.data.channel as TurnChannel | undefined, images, videos: ((failed?.data.videos ?? []) as Array<{ id: string }>).map(v => v.id), handoverFrom: id }, {
+        turnId, source: { handover: id, ...(failedTurn ? { retry: failedTurn } : {}) }, displayText: text,
+        claim: () => this.coordination?.replaceHandoverMember(id, successor.id, turnId),
+      });
+    }
+    const queue = this.queues.get(id) ?? [];
+    this.setQueue(id, []);
+    if (queue.length) this.setQueue(successor.id, [...(this.queues.get(successor.id) ?? []), ...queue]);
+    this.startNextQueued(successor.id);
+    return this.threadView(successor.id);
   }
 
   async executeAutoHandover(id: string, target: HandoverTarget, summary: string, failedTurn: string | null, note?: string): Promise<ThreadView> {

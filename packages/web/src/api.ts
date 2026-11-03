@@ -169,7 +169,9 @@ export interface CoordinationMessage {
   replyTo?: string | null;
 }
 export interface HandoverTarget { agent: string; model?: string }
-export interface HandoverSettings { enabled: boolean; threshold: number; orders: Record<string, HandoverTarget[]>; resume?: boolean }
+/** How another account of the same agent takes over: a copy of the conversation, or a brief. Absent on older daemons. */
+export type HandoverMethod = 'resume' | 'summary';
+export interface HandoverSettings { enabled: boolean; threshold: number; orders: Record<string, HandoverTarget[]>; resume?: boolean; method?: HandoverMethod }
 /** A watch waiting for the thread's agent quota to reset; the daemon then resends the failed turn. */
 export interface ResumeView { origin: 'user' | 'global'; resetsAt: string | null; nextCheckAt: string; lastError?: string }
 export interface AutoHandoverView {

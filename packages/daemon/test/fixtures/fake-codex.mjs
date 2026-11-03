@@ -5,8 +5,8 @@ if (process.argv.includes('--version')) { process.stdout.write('fixture 1.2.3\n'
 // file, "approve" asks for a command approval, "deny" offers a plain decline, "slow" waits until
 // interrupted, "crash" exits. Settings ride with turn/start the way the adapter sends them.
 import { coordinationFixture } from './coordination.mjs';
-import { appendFileSync, readFileSync, cpSync, existsSync, mkdirSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { appendFileSync, readFileSync, writeFileSync, cpSync, existsSync, mkdirSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 
 // Optional on-disk generated memory, read by the adapter without an RPC or a new turn.
@@ -22,6 +22,24 @@ const rl = createInterface({ input: process.stdin });
 const out = (obj) => process.stdout.write(JSON.stringify(obj) + '\n');
 
 let threadId = process.env.FAKE_CODEX_THREAD ?? 'codex-thread-1';
+// A rollout file under this account's CODEX_HOME, the way the real CLI keeps one, so the copy-in
+// flow has something on disk to read: session meta first, one line per turn after it.
+const rolloutPath = () => {
+  if (!process.env.CODEX_HOME) return null;
+  const day = new Date().toISOString().slice(0, 10).split('-');
+  return join(process.env.CODEX_HOME, 'sessions', day[0], day[1], day[2], `rollout-fixture-${threadId}.jsonl`);
+};
+const ensureRollout = () => {
+  const path = rolloutPath();
+  if (!path || existsSync(path)) return;
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify({ timestamp: new Date().toISOString(), type: 'session_meta', payload: { id: threadId, cwd: '/tmp/one' } }) + '\n');
+};
+const appendRollout = (text) => {
+  ensureRollout();
+  const path = rolloutPath();
+  if (path) appendFileSync(path, JSON.stringify({ timestamp: new Date().toISOString(), type: 'event_msg', payload: { type: 'user_message', message: text } }) + '\n');
+};
 let nextTurnSeq = 1;
 let billedTokens = 900000;
 let nextServerRequestId = 1000;
@@ -563,6 +581,7 @@ rl.on('line', (line) => {
       if (typeof msg.params?.sandbox === 'string') currentSandbox = msg.params.sandbox.replace(/-([a-z])/g, (_, c) => c.toUpperCase()).replace('Fullaccess', 'FullAccess');
       if (typeof msg.params?.approvalPolicy === 'string') currentApproval = msg.params.approvalPolicy;
       if (typeof msg.params?.model === 'string') currentModel = msg.params.model;
+      ensureRollout();
       return out({ jsonrpc: '2.0', id: msg.id, result: { thread: { id: threadId, cwd: '/tmp/one' }, model: currentModel, reasoningEffort: currentEffort, sandbox: { type: 'readOnly' }, approvalPolicy: currentApproval } });
     case 'thread/resume':
       currentWebSearch = msg.params?.config?.web_search ?? null;
@@ -582,6 +601,7 @@ rl.on('line', (line) => {
       }
       const turnId = `turn-${nextTurnSeq++}`;
       const text = (msg.params?.input ?? []).filter((i) => i.type === 'text').map((i) => i.text).join('');
+      appendRollout(text);
       const images = (msg.params?.input ?? []).filter((i) => i.type === 'localImage');
       const inlineImages = (msg.params?.input ?? []).filter((i) => i.type === 'image');
       const skills = (msg.params?.input ?? []).filter((i) => i.type === 'skill');
@@ -618,7 +638,7 @@ rl.on('line', (line) => {
       out({ jsonrpc: '2.0', id: msg.id, result: { turn: { id: turnId, items: [], itemsView: 'notLoaded', status: 'inProgress', error: null } } });
       activeTurn = turnId;
       notify('turn/started', { turn: { id: turnId, items: [], itemsView: 'notLoaded', status: 'inProgress', error: null } });
-      if (text === 'quota-exhausted') { activeTurn = null; finishTurn(turnId, 'failed', { message: "You've hit your usage limit for this model. Switch to another model now, or try again later." }); break; }
+      if (text === 'quota-exhausted' && !process.env.FAKE_CODEX_PLAN_LEFT) { activeTurn = null; finishTurn(turnId, 'failed', { message: "You've hit your usage limit for this model. Switch to another model now, or try again later." }); break; }
       // Reproduce a backend rejecting uploaded image references while accepting image bytes.
       if (images.length && process.env.FAKE_CODEX_REJECT_LOCAL_IMAGES) {
         activeTurn = null; finishTurn(turnId, 'failed', { message: 'stream disconnected before completion: Invalid image' }); break;
@@ -700,6 +720,14 @@ rl.on('line', (line) => {
       if (String(msg.params?.threadId).startsWith('hist-')) return out({ jsonrpc: '2.0', id: msg.id, result: { data: historyTurns(), nextCursor: null } });
       return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: 'unknown thread' } });
     case 'thread/fork': {
+      // Fork by path: the rollout file is read from disk, `threadId` is then ignored (the schema
+      // still requires it; calli passes an empty one). A missing file is the caller's error.
+      if (typeof msg.params?.path === 'string' && msg.params.path) {
+        let first = '';
+        try { first = readFileSync(msg.params.path, 'utf8').split('\n')[0] ?? ''; } catch { first = ''; }
+        if (!first.startsWith('{')) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: 'no rollout found for path' } });
+        return out({ jsonrpc: '2.0', id: msg.id, result: { thread: { id: `imported-${basename(msg.params.path, '.jsonl')}`, cwd: msg.params?.cwd ?? '/tmp/one' }, model: currentModel } });
+      }
       // `lastTurnId`: the copy goes through that turn and leaves out what came after.
       const last = msg.params?.lastTurnId;
       if (last && !historyTurns().some((t) => t.id === last)) {
