@@ -1,5 +1,7 @@
 import type { Todo } from './api';
 import { formatDate, formatTime, t } from './i18n';
+import { needsPerson, quadrantOf, type Quadrant } from '../../daemon/src/todo-priority';
+export { importantOf, needsPerson, quadrantOf, type Quadrant } from '../../daemon/src/todo-priority';
 
 /** Where a matter sits on the desk: someone waits on you, you are on it, it waits on others, it can wait. */
 export type Lane = 'you' | 'doing' | 'wait' | 'later';
@@ -17,23 +19,29 @@ export interface Pile {
   pinned: boolean;
   /** Whole days since anything happened to it. */
   idleDays: number;
-  /** Cards it would spread into: the note, each sub-item list, each thread, each proposal. */
+  /** Cards it would spread into: the note, each sub-item list, each thread, each proposal, her own work. */
   cards: number;
   /** Due by the end of today, or already past. */
   dueSoon: boolean;
   overdue: boolean;
 }
 
+/** Where a matter sits by weight: do it now, schedule it, deal with it quickly, or leave it. */
+export const QUADRANTS: Quadrant[] = ['now', 'plan', 'quick', 'later'];
+
 export interface Desk {
   lanes: Record<Lane, Pile[]>;
+  quadrants: Record<Quadrant, Pile[]>;
   /** Suggestions an agent made that the person has not taken yet. */
   inbox: DeskTodo[];
-  /** The few to do first: the head of the "you" lane. */
+  /** The few to do first: the head of what is both important and urgent. */
   first: Pile[];
   week: WeekDay[];
   doneThisWeek: number;
   /** Open matters untouched for three days or more, outside "later". */
   stale: number;
+  /** Matters that cannot move without the person, or that belong to doing now; each counted once. */
+  needsYou: number;
 }
 
 export interface WeekDay {
@@ -78,7 +86,7 @@ function pile(todo: DeskTodo, children: DeskTodo[], now: Date): Pile {
     lane: laneOf(todo, now),
     pinned: Boolean(todo.lane && LANES.includes(todo.lane)),
     idleDays: Math.max(0, Math.floor((now.getTime() - pileActivity({ todo, children })) / DAY)),
-    cards: (todo.hasNote ? 1 : 0) + (children.length ? 1 : 0) + todo.threads.length + (todo.proposals?.length ?? 0),
+    cards: (todo.hasNote ? 1 : 0) + (children.length ? 1 : 0) + todo.threads.length + (todo.proposals?.length ?? 0) + (sourceLabel(todo.source) || todo.subscriptions?.length ? 1 : 0) + (todo.proactiveRunCount ? 1 : 0),
     dueSoon: Number.isFinite(due) && due < endOfDay(now),
     overdue: Number.isFinite(due) && due < now.getTime(),
   };
@@ -94,6 +102,73 @@ export function dueLabel(dueAt: string, now: Date): { text: string; overdue: boo
   if (days === 0) return { text: t('desk.dueToday', formatTime(due, { hour: '2-digit', minute: '2-digit' })), overdue };
   if (days === 1) return { text: t('desk.dueTomorrow'), overdue };
   return { text: formatDate(due, { month: 'numeric', day: 'numeric' }), overdue };
+}
+
+/** Where a matter came from, in words; null when it came from the person's own hand. */
+export function sourceLabel(source: DeskTodo['source']): string | null {
+  switch (source?.type) {
+    case 'lark-message': return source.from ? t('desk.sourceMessageFrom', source.from) : t('desk.sourceMessage');
+    case 'lark-task': return t('desk.sourceTask');
+    case 'lark-flag': return t('desk.sourceFlag');
+    case 'lark-calendar': return t('desk.sourceCalendar');
+    default: return null;
+  }
+}
+
+/** A link from outside only opens over https, as the hub also requires: the source's URL is someone else's text. */
+export function safeSourceUrl(url: string | undefined): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).protocol === 'https:' ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The reasons a matter is where it is. Only lateness calls for attention. */
+export function whyHere(todo: DeskTodo, now: Date): { urgent: string | null; overdue: boolean; important: string | null } {
+  const reason = todo.urgency?.reason ?? null;
+  let urgent: string | null = null;
+  if ((reason === 'overdue' || reason === 'due-soon') && todo.dueAt) {
+    const label = dueLabel(todo.dueAt, now);
+    const daysLate = new Date(todo.dueAt).getTime() < new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    urgent = daysLate ? label.text : t('desk.whyDue', label.text);
+  } else if (reason === 'pinned') urgent = t('desk.whyPinned');
+  else if (reason === 'meeting-today') urgent = t('desk.whyMeeting');
+  return { urgent, overdue: reason === 'overdue', important: sourceLabel(todo.source) };
+}
+
+export type BriefStatus = { kind: 'morning' | 'evening'; at: string } & ({ state: 'sent'; text: string } | { state: 'failed'; reason: string | null });
+
+/** How today's brief went: the most recent one, delivered or not. Yesterday's says nothing about today. */
+export function briefStatus(
+  last: Record<'morning' | 'evening', { text: string; sentAt: string } | null>,
+  records: readonly { kind: string; at: string; result: string; reason: string | null }[],
+  now: Date,
+): BriefStatus | null {
+  const today = (at: string) => new Date(at).toDateString() === now.toDateString();
+  const candidates: BriefStatus[] = [];
+  for (const kind of ['morning', 'evening'] as const) {
+    const sent = last[kind];
+    if (sent && today(sent.sentAt)) candidates.push({ kind, at: sent.sentAt, state: 'sent', text: sent.text });
+    const failed = records.find((record) => record.kind === kind && record.result === 'failed' && today(record.at));
+    if (failed && !(sent && today(sent.sentAt))) candidates.push({ kind, at: failed.at, state: 'failed', reason: failed.reason });
+  }
+  return candidates.sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0] ?? null;
+}
+
+/** The times a brief can be set to, every half hour, inside the hours it would actually go out. */
+export function briefTimes(kind: 'morning' | 'evening'): string[] {
+  const [from, to] = kind === 'morning' ? [8, 12] : [16, 22.5];
+  const times: string[] = [];
+  for (let at = from; at <= to; at += 0.5) times.push(`${String(Math.floor(at)).padStart(2, '0')}:${at % 1 ? '30' : '00'}`);
+  return times;
+}
+
+/** When a pin for today, tomorrow or this week runs out: the last moment of that day, Sunday for the week. */
+export function pinUntil(span: 'today' | 'tomorrow' | 'week', now: Date): string {
+  const days = span === 'today' ? 0 : span === 'tomorrow' ? 1 : (7 - now.getDay()) % 7;
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate() + days, 23, 59, 59, 999).toISOString();
 }
 
 /** First what is overdue or due soonest, then what has sat longest. */
@@ -115,6 +190,8 @@ export function buildDesk(todos: DeskTodo[], now = new Date()): Desk {
     lanes[p.lane].push(p);
   }
   for (const lane of LANES) lanes[lane].sort(byUrgency);
+  const piles = LANES.flatMap((lane) => lanes[lane]);
+  const quadrants = Object.fromEntries(QUADRANTS.map((key) => [key, piles.filter((p) => quadrantOf(p.todo) === key).sort(byUrgency)])) as Record<Quadrant, Pile[]>;
 
   const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7));
   const week: WeekDay[] = Array.from({ length: 7 }, (_, i) => {
@@ -130,11 +207,13 @@ export function buildDesk(todos: DeskTodo[], now = new Date()): Desk {
   const open = LANES.filter((lane) => lane !== 'later').flatMap((lane) => lanes[lane]);
   return {
     lanes,
+    quadrants,
     inbox: top.filter((todo) => todo.proposed && !todo.done),
-    first: lanes.you.slice(0, 3),
+    first: quadrants.now.slice(0, 3),
     week,
     doneThisWeek: week.reduce((n, d) => n + (d.done ?? 0), 0),
     stale: open.filter((p) => p.idleDays >= 3).length,
+    needsYou: piles.filter((p) => needsPerson(p.todo.stage) || quadrantOf(p.todo) === 'now').length,
   };
 }
 

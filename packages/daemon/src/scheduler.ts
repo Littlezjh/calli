@@ -1,3 +1,4 @@
+import type { PushService } from './push.js';
 import { randomUUID } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -75,6 +76,7 @@ export class Scheduler {
     private readonly store: Store,
     private readonly manager: ThreadManager,
     private readonly adapters: Map<string, AgentAdapter>,
+    private readonly push?: PushService,
   ) {}
 
   /** Page-change notifications, for the list stream. */
@@ -147,6 +149,7 @@ export class Scheduler {
 
   private recover(): void {
     this.manager.personal.review.recover();
+    this.manager.personal.proactive.recover();
     const now = new Date();
     for (const run of this.store.runningScheduleRuns()) {
       this.store.updateScheduleRun(run.id, { status: 'error', finishedAt: now.toISOString(), message: 'daemon 重启时被打断' });
@@ -203,6 +206,8 @@ export class Scheduler {
     await this.followUps();
     await this.reviews();
     await this.autoArchive(now);
+    this.manager.briefs.tick(now, this.push);
+    await this.manager.personal.proactive.tick(now);
     this.sweep();
     this.changed();
   }

@@ -1,19 +1,81 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdirSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 let router = false;
 /** A portable coding agent needs only shell execution, its scoped env and the prompt. */
 export function personalFixture(text) {
   const command = text.split('\n')[0];
   if (text.includes('<calli-personal-router>')) router = true;
+  if (router && command === 'router-fixture-fail' && existsSync('.calli/router-retry-ready')) return JSON.stringify({ intro: text.includes('<calli-personal-router>'), profile: text.includes('<calli-personal-profile>') });
   if (router && ['router-fixture-slow', 'router-fixture-fail'].includes(command)) return null;
+  const proactive = ['由 Calli 发起的提前准备。', '由 Calli 发起的沙盒动手。'].includes(command);
   const clarification = process.env.FAKE_PERSONAL_DELEGATE_CLARIFY === '1' && command.startsWith('这是一件新交给你的事，不是交接');
   const review = process.env.FAKE_PERSONAL_REVIEW && (command === '由 Calli 发起的私人事项盘点。' || command.startsWith('开始 '));
-  if (!router && !review && !clarification && !['personal-ui', 'personal-start', 'personal-notify', 'personal-quiet', 'personal-wish', '由 Calli 发起的事项跟进。', '由 Calli 发起的近期总结。', '# 交接信息', '# 接手'].includes(command)) return null;
+  if (!router && !review && !clarification && !proactive && !['personal-ui', 'personal-start', 'personal-notify', 'personal-quiet', 'personal-wish', '由 Calli 发起的事项跟进。', '由 Calli 发起的近期总结。', '# 交接信息', '# 接手'].includes(command)) return null;
   // A handover first turn, in the old coordinate format or the clean brief, carrying open todos.
   if ((command === '# 交接信息' || command === '# 接手') && !text.includes('## 关联事项与接续说明')) return null;
   const cli = (args, input = '') => JSON.parse(execFileSync(process.execPath, [join(process.env.CALLI_BIN_DIR, 'calli'), ...args], { input, encoding: 'utf8' }));
+  if (proactive) {
+    const id = text.match(/^ID：(.+)$/m)?.[1];
+    if (!id) throw new Error('missing proactive matter id');
+    if (process.env.FAKE_PROACTIVE_MODE === 'error') throw new Error('fixture proactive failed');
+    if (process.env.FAKE_PROACTIVE_MODE === 'quiet') return '没有值得准备的材料。';
+    if (command === '由 Calli 发起的提前准备。') {
+      for (const instruction of ['只写材料目录下的文件', '不发消息', '不改外部仓库', '已备好', '不要自行 git 提交']) {
+        if (!text.includes(instruction)) throw new Error(`missing preparation instruction: ${instruction}`);
+      }
+      const dir = text.match(/^材料目录：(.+)$/m)?.[1];
+      if (!dir || dir.startsWith('/') || dir.includes('..')) throw new Error('invalid artifact path');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'outline.md'), '# 会前提纲\n\n先核对目标，再列决策。\n');
+      const todo = cli(['todo', 'show', id]);
+      cli(['todo', 'update', id, '--rev', String(todo.rev), '--note-file', '-'], `${todo.note.text}\n已备好会前提纲。`);
+      return '已备好会前提纲，列出目标和待决策问题。';
+    }
+    for (const instruction of [`Calli-Proactive: ${id}`, '跑该仓库测试', '不动主工作区', '不推送远端']) {
+      if (!text.includes(instruction)) throw new Error(`missing sandbox instruction: ${instruction}`);
+    }
+    writeFileSync('proactive-fixture.txt', 'sandbox change\n');
+    const git = args => execFileSync('git', args, { encoding: 'utf8' });
+    git(['add', '--', 'proactive-fixture.txt']);
+    git(['-c', 'user.name=Calli', '-c', 'user.email=calli@localhost', '-c', 'commit.gpgsign=false', 'commit', '-qm', `Prepare fixture\n\nCalli-Proactive: ${id}`]);
+    return '## 改动摘要\n补好沙盒示例。\n## 测试结果\nfixture check: passed';
+  }
   if (router) {
+    if (command === '<calli-worker-report>') { const report = JSON.parse(text.split('\n').find(line => line.startsWith('{"matterId"'))); if (!report.notified && !report.pushed) cli(['notify', '--text-file', '-'], `「${report.title}」要你看一下`); return `「${report.title}」要你看一下`; }
+    if (command === 'router-fixture-inspect') return JSON.stringify({ intro: text.includes('<calli-personal-router>'), profile: text.includes('<calli-personal-profile>') });
+    if (command === '把早报改到八点半') {
+      if (!text.includes('只有人在当前对话里开口要求，才能改')) throw new Error('missing settings permission rule');
+      if (!text.includes('不主动建议改设置')) throw new Error('missing settings restraint rule');
+      const reply = cli(['settings', 'set', 'brief.morning', '08:30']);
+      if (reply.changed !== 'brief.morning') throw new Error('unexpected settings reply');
+      return `已把早报改到 ${reply.settings.morning}。`;
+    }
+    if (command === '看看现在关注了谁') {
+      const list = cli(['settings']);
+      return `当前关注：${list.lark.people.map(person => person.name).join('、') || '无'}。`;
+    }
+    if (command === '<calli-lark-signals>') {
+      const signals = text.split('\n').filter(line => line.startsWith('{"summary":')).map(line => JSON.parse(line));
+      // Let fake-pi's normal failure protocol run until the retry fixture is released.
+      if (signals.some(signal => signal.source.ref === 'router-fixture-fail') && !existsSync('.calli/router-retry-ready')) return null;
+      let count = 0;
+      for (const signal of signals) {
+        if (cli(['todo']).some(todo => todo.source?.ref === signal.source.ref)) continue;
+        mkdirSync('.calli', { recursive: true });
+        const file = join('.calli', 'fixture-source.json');
+        writeFileSync(file, JSON.stringify(signal.source));
+        try {
+          const roleReason = signal.senderRole === 'boss' ? '老板提的' : signal.senderRole === 'pm' ? 'PM 提的' : null;
+          const importance = roleReason || signal.source.type === 'lark-task' ? 'high' : 'normal';
+          const todo = cli(['todo', 'add', '--owner', 'me', '--lane', 'you', '--importance', importance, '--source-file', file,
+            ...(signal.dueAt ? ['--due', signal.dueAt] : []), ...(signal.urgentUntil ? ['--urgent-until', signal.urgentUntil] : []), '--text-file', '-'], signal.summary);
+          cli(['todo', 'update', todo.id, '--rev', String(todo.rev), '--note-file', '-'], `## 下一步\n请确认是否跟踪。\n## 轻重理由\n${roleReason ?? signal.reason ?? '分给你的任务，需要你确认。'}`);
+          count++;
+        } finally { unlinkSync(file); }
+      }
+      return `发现 ${count} 件与你有关的事，已放进新发现，等你决定。`;
+    }
     if (command === 'router-fixture-long') return '鱼'.repeat(350);
     if (command.startsWith('记一件事：')) {
       const name = command.slice('记一件事：'.length).trim();

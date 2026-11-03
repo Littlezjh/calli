@@ -3,17 +3,17 @@ import { createPortal } from 'react-dom';
 import { ApiError, type Api, type PetStatus } from '../api';
 import { IconArrowUp, IconClose } from './icons';
 import { useIsNarrow } from '../hooks';
+import { ProfileDialog } from './ProfileDialog';
 import { t } from '../i18n';
 import {
-  applyPetStarter, clearPetHaze, nextPetFrame, parsePetPending, petCacheKey, petCacheName, petDay, petErrorDetail, petGreetingLine, petReplyParts, petRing, petStarters, readPetRouter, yawnDelay,
-  PET_ART_COMMIT, PET_CACHE_PREFIX, PET_FRAME, PET_GIVE_UP_MS, PET_RING_SIZE, PET_WEBP_QUALITY, PET_LATE_MS, PET_LOST_POLLS,
+  applyPetStarter, clearPetHaze, nextPetFrame, petBustBox, parsePetPending, petCacheKey, petCacheName, petDay, petErrorDetail, petLicenseUrl, petGreetingLine, petReplyParts, petRing, petStarters, readPetRouter, yawnDelay,
+  PET_CACHE_PREFIX, PET_FRAME, PET_GIVE_UP_MS, PET_RING_SIZE, PET_WEBP_QUALITY, PET_LATE_MS, PET_LOST_POLLS,
   type PetClip, type PetGreeting, type PetPending,
 } from '../pet';
 
 const GREETED_KEY = 'calli.pet.greeted';
 const PENDING_KEY = 'calli.pet.pending';
 const DRAFT_KEY = 'calli.pet.draft';
-const CREDIT_URL = `https://github.com/QCYTSN/dsh-dafeiyu/blob/${PET_ART_COMMIT}/assets/dsh-pet-LICENSE.txt`;
 const GREETING_DELAY_MS = 900;
 const GREETING_MS = 8_000;
 const INSTALL_POLL_MS = 2_000;
@@ -47,7 +47,7 @@ class PetFrameStore {
   private readonly cache: Promise<Cache | null>;
   private readonly held = new Map<string, Blob>();
 
-  constructor(private readonly id: string, private readonly frameUrl: (clip: string, index: number) => string) {
+  constructor(private readonly id: string, private readonly commit: string, private readonly frameUrl: (clip: string, index: number) => string) {
     this.scratch.width = PET_FRAME.width;
     this.scratch.height = PET_FRAME.height;
     this.scratchContext = this.scratch.getContext('2d', { willReadFrequently: true });
@@ -57,7 +57,7 @@ class PetFrameStore {
   private async openCache(): Promise<Cache | null> {
     if (typeof caches === 'undefined') return null;
     try {
-      const name = petCacheName(this.id);
+      const name = petCacheName(this.id, this.commit);
       for (const old of await caches.keys()) {
         if (old !== name && old.startsWith(PET_CACHE_PREFIX)) void caches.delete(old);
       }
@@ -138,7 +138,7 @@ class PetPlayer {
     this.context = canvas.getContext('2d');
     this.before.width = PET_FRAME.width;
     this.before.height = PET_FRAME.height;
-    this.store = new PetFrameStore(status.id, frameUrl);
+    this.store = new PetFrameStore(status.id, status.commit, frameUrl);
     this.fill();
   }
 
@@ -260,10 +260,107 @@ function useReducedMotion(): boolean {
   return reduced;
 }
 
+/** Her head and upper body from the first idle frame, cut to her outline. */
+export interface PetBust { src: string; aspect: number }
+
+const busts = new Map<string, Promise<PetBust | null>>();
+
+async function cutBust(url: string): Promise<PetBust | null> {
+  const response = await fetch(url);
+  if (!response.ok) return null;
+  const source = await createImageBitmap(await response.blob());
+  const canvas = document.createElement('canvas');
+  canvas.width = source.width;
+  canvas.height = source.height;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) return null;
+  context.drawImage(source, 0, 0);
+  source.close();
+  const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+  clearPetHaze(pixels.data);
+  const box = petBustBox(pixels.data, canvas.width, canvas.height);
+  if (!box) return null;
+  const cut = document.createElement('canvas');
+  cut.width = box.width;
+  cut.height = box.height;
+  cut.getContext('2d')?.putImageData(pixels, -box.x, -box.y);
+  return { src: cut.toDataURL('image/png'), aspect: box.width / box.height };
+}
+
+/** Her small portrait for the sidebar and the title, once per page; null until it is cut, or if she is not installed. */
+export function usePetBust(api: Api, status: PetStatus | null): PetBust | null {
+  const url = status?.installed ? api.petFrame(status.id, 'idle', 0) : null;
+  const [bust, setBust] = useState<PetBust | null>(null);
+  useEffect(() => {
+    if (!url) { setBust(null); return; }
+    let live = true;
+    let cutting = busts.get(url);
+    if (!cutting) { cutting = cutBust(url).catch(() => null); busts.set(url, cutting); }
+    void cutting.then((value) => { if (live) setBust(value); });
+    return () => { live = false; };
+  }, [url]);
+  return bust;
+}
+
+/** That portrait at a given height, centred on an icon's width so the label beside it keeps its place. */
+export function PetBustImage({ bust, height, slot }: { bust: PetBust; height: number; slot: number }) {
+  const width = Math.round(height * bust.aspect);
+  return <img className="pet-bust" src={bust.src} alt="" width={width} height={height}
+    style={{ marginInline: (slot - width) / 2, marginBlock: Math.min(0, (slot - height) / 2) }} />;
+}
+
 type Say =
   | { kind: 'greeting'; text: string }
   | { kind: 'reply'; text: string; threadId: string }
   | { kind: 'error'; text: string; retry?: () => void; threadId?: string; detail?: string | null; lost?: boolean; configure?: boolean };
+
+/**
+ * Her face at the head of her own conversation: the same artwork as on the desk, cropped to head and
+ * shoulders. It scrolls away with the conversation, and says when it has, so the title bar can carry
+ * her instead; a tap pokes her.
+ */
+export function PetPortrait({ api, status, onAway }: { api: Api; status: PetStatus; onAway?: (away: boolean) => void }) {
+  const visible = usePageVisible();
+  const still = useReducedMotion();
+  const faceRef = useRef<HTMLButtonElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const playerRef = useRef<PetPlayer | null>(null);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const player = new PetPlayer(canvas, status, (clip, index) => api.petFrame(status.id, clip, index), still, () => playerRef.current?.play('idle', true));
+    playerRef.current = player;
+    return () => { player.dispose(); playerRef.current = null; };
+  }, [api, status, still]);
+  useEffect(() => {
+    const player = playerRef.current;
+    if (!player || !visible) return;
+    player.start();
+    return () => player.stop();
+  }, [visible, api, status, still]);
+  useEffect(() => {
+    const face = faceRef.current;
+    const scroller = face?.closest('.scroller');
+    if (!face || !scroller || !onAway) return;
+    let away: boolean | null = null;
+    const read = () => {
+      const rect = face.getBoundingClientRect();
+      const now = rect.top + rect.height / 2 < scroller.getBoundingClientRect().top;
+      if (now !== away) onAway((away = now));
+    };
+    read();
+    scroller.addEventListener('scroll', read, { passive: true });
+    return () => { scroller.removeEventListener('scroll', read); onAway(false); };
+  }, [onAway]);
+  return (
+    <div className="pet-portrait">
+      <button ref={faceRef} type="button" className="pet-portrait-face" aria-label={t('pet.name')} onClick={() => playerRef.current?.play('poke', false)}>
+        <canvas ref={canvasRef} width={PET_FRAME.width} height={PET_FRAME.height} aria-hidden="true" />
+      </button>
+      <span className="pet-portrait-name">{t('pet.name')}</span>
+    </div>
+  );
+}
 
 interface Props {
   api: Api;
@@ -367,6 +464,9 @@ function PetCompanion({ api, status, greeting, spreadOpen, onOpenThread, onConfi
   const [sending, setSending] = useState(false);
   const [pending, setPendingState] = useState<PetPending | null>(() => parsePetPending(readStored(PENDING_KEY), Date.now()));
   const [late, setLate] = useState(false);
+  // Whether the person has yet to say what they care about; null until known, and she waits to greet until then.
+  const [profileBlank, setProfileBlank] = useState<boolean | null>(null);
+  const [writingProfile, setWritingProfile] = useState(false);
 
   const busy = sending || pending !== null;
   const busyRef = useRef(busy);
@@ -415,19 +515,25 @@ function PetCompanion({ api, status, greeting, spreadOpen, onOpenThread, onConfi
     return () => window.clearTimeout(timer);
   }, [still, visible, busy]);
 
+  useEffect(() => {
+    let live = true;
+    void api.personalProfile().then(profile => { if (live) setProfileBlank(profile.isTemplate); }).catch(() => { if (live) setProfileBlank(false); });
+    return () => { live = false; };
+  }, [api]);
+
   // Once a day, once the matters are in, and only when it can be seen: never over the card or a spread pile.
   useEffect(() => {
-    if (!greeting || !visible || busy || open || spreadOpen) return;
+    if (!greeting || profileBlank === null || !visible || busy || open || spreadOpen) return;
     const now = new Date();
     if (readStored(GREETED_KEY) === petDay(now)) return;
     const timer = window.setTimeout(() => {
       writeStored(GREETED_KEY, petDay(now));
       // A phone has no room for a bubble that does not cover the desk: she only waves, and the words wait in the card.
       if (narrow) playerRef.current?.play('poke', false);
-      else setSay((current) => current ?? { kind: 'greeting', text: petGreetingLine(greeting, now) });
+      else setSay((current) => current ?? { kind: 'greeting', text: profileBlank ? t('pet.askProfile') : petGreetingLine(greeting, now) });
     }, GREETING_DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [greeting, visible, busy, open, spreadOpen, narrow]);
+  }, [greeting, profileBlank, visible, busy, open, spreadOpen, narrow]);
 
   const greetingShown = say?.kind === 'greeting';
   useEffect(() => {
@@ -589,7 +695,9 @@ function PetCompanion({ api, status, greeting, spreadOpen, onOpenThread, onConfi
     <div ref={rootRef} className={`pet${open ? ' pet-open' : ''}${spreadOpen ? ' pet-back' : ''}`}>
       {open && (
         <div className="pet-card" role="dialog" aria-label={t('pet.open')}>
-          {narrow && greeting && greeting.you > 0 && <p className="pet-card-note">{petGreetingLine(greeting, new Date())}</p>}
+          {profileBlank
+            ? <p className="pet-card-note pet-card-ask">{t('pet.askProfile')} <button type="button" onClick={() => { setOpen(false); setWritingProfile(true); }}>{t('pet.writeProfile')}</button></p>
+            : narrow && greeting && greeting.you > 0 && <p className="pet-card-note">{petGreetingLine(greeting, new Date())}</p>}
           <textarea
             ref={fieldRef}
             className="pet-field"
@@ -616,7 +724,7 @@ function PetCompanion({ api, status, greeting, spreadOpen, onOpenThread, onConfi
               <IconArrowUp size={16} />
             </button>
           </div>
-          <a className="pet-credit" href={CREDIT_URL} target="_blank" rel="noreferrer">{t('pet.credit')}</a>
+          <a className="pet-credit" href={petLicenseUrl(status.commit)} target="_blank" rel="noreferrer">{t('pet.credit')}</a>
         </div>
       )}
 
@@ -648,6 +756,7 @@ function PetCompanion({ api, status, greeting, spreadOpen, onOpenThread, onConfi
         </div>
       )}
 
+      {writingProfile && createPortal(<ProfileDialog api={api} onClose={() => setWritingProfile(false)} onSaved={setProfileBlank} />, document.body)}
       <button ref={bodyRef} type="button" className="pet-body" aria-label={t('pet.open')} aria-expanded={open} onClick={openCard}>
         <canvas ref={canvasRef} width={PET_FRAME.width} height={PET_FRAME.height} aria-hidden="true" />
       </button>

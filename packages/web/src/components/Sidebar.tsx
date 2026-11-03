@@ -10,6 +10,7 @@ import { timeAgo } from '../sessions';
 import { deliveredPreview } from '../timeline';
 import { HostSwitcher } from './Hosts';
 import { Menu } from './Menu';
+import { PetBustImage, type PetBust } from './Pet';
 import type { HostIconName } from '@calli/extension-api';
 import { HostIcon } from '../extensions/ui';
 import { AgentMark, IconBell, IconChevron, IconClock, IconClose, IconDesktop, IconEdit, IconFolder, IconList, IconMore, IconPin, IconPlus, IconSearch, IconSettings, IconSidebar, IconSparkle } from './icons';
@@ -63,7 +64,7 @@ interface Props {
   onOpenTodos?: () => void;
   onOpenDesk?: () => void;
   deskActive?: boolean;
-  petAvatar?: string;
+  petBust?: PetBust | null;
   /** The plan page is what the main area shows. */
   todosActive?: boolean;
   onOpenSchedules?: () => void;
@@ -143,7 +144,7 @@ export function Sidebar({
   onOpenTodos,
   onOpenDesk,
   deskActive = false,
-  petAvatar,
+  petBust,
   todosActive = false,
   onOpenSchedules,
   onOpenDesktop,
@@ -571,7 +572,7 @@ export function Sidebar({
                   </button>
                 ),
                 onOpenDesk && <button key="desk" className={`side-link${deskActive ? ' active' : ''}`} aria-current={deskActive ? 'page' : undefined} onClick={onOpenDesk}>
-                  {petAvatar ? <span className="side-pet-avatar"><img src={petAvatar} alt="" /></span> : <IconSparkle size={compact ? 21 : 17} />} {t('pet.name')}
+                  {petBust ? <PetBustImage bust={petBust} height={compact ? 30 : 24} slot={compact ? 21 : 17} /> : <IconSparkle size={compact ? 21 : 17} />} {t('pet.name')}
                 </button>,
                 onOpenTodos && <button key="todos" className={`side-link${todosActive ? ' active' : ''}`} aria-current={todosActive ? 'page' : undefined} onClick={onOpenTodos}>
                   <IconList size={compact ? 21 : 17} /> {t('todos.title')}

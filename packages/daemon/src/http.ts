@@ -24,6 +24,7 @@ import { MAX_VIDEO_BYTES } from './videos.js';
 import type { VoiceService } from './voice-service.js';
 import { sendToolArtifact } from './borrowing-server.js';
 import { PetService } from './pets.js';
+import { todoStages } from './todo-stage.js';
 
 export interface HttpDeps {
   push?: PushService;
@@ -319,8 +320,47 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (method === 'GET') return sendJson(res, 200, await manager.personal.settingsView());
       if (method === 'PUT') { manager.personal.putSettings(await readJson(req)); return sendJson(res, 200, await manager.personal.settingsView()); }
     }
+    if (path === '/api/personal/proactive' && method === 'GET') {
+      const proactive = manager.personal.proactive;
+      return sendJson(res, 200, url.searchParams.get('summary') === 'true'
+        ? { settings: proactive.settings(), counts: proactive.counts() }
+        : { settings: proactive.settings(), runs: proactive.runs(url.searchParams.get('matterId') ?? undefined) });
+    }
+    if (path === '/api/personal/proactive/settings' && method === 'PUT') return sendJson(res, 200, await manager.personal.proactive.save(await readJson(req)));
+    if (parts[1] === 'personal' && parts[2] === 'proactive' && parts[3] === 'runs' && parts[4] && parts.length === 6) {
+      if (parts[5] === 'diff' && method === 'GET') return sendJson(res, 200, await manager.personal.proactive.diff(parts[4]));
+      if (['merge', 'discard', 'revert'].includes(parts[5]) && method === 'POST') return sendJson(res, 200, await manager.personal.proactive.act(parts[4], parts[5] as 'merge' | 'discard' | 'revert'));
+      // Marking an observation as "this one is fine": a record of the person's judgement, never a start.
+      if (parts[5] === 'approve' && method === 'POST') return sendJson(res, 200, manager.personal.proactive.approve(parts[4]));
+    }
+    if (path === '/api/personal/brief' && method === 'GET') return sendJson(res, 200, manager.briefs.preview(url.searchParams.get('kind')));
+    if (path === '/api/personal/brief/last' && method === 'GET') return sendJson(res, 200, manager.briefs.last(url.searchParams.get('kind')));
+    if (path === '/api/personal/brief/settings') {
+      if (method === 'GET') return sendJson(res, 200, manager.briefs.settings());
+      if (method === 'PUT') return sendJson(res, 200, manager.briefs.save(await readJson(req)));
+    }
+    if (path === '/api/personal/channels/lark') {
+      if (method === 'GET') return sendJson(res, 200, manager.lark.settings());
+      if (method === 'PUT') return sendJson(res, 200, manager.lark.save(await readJson(req)));
+    }
+    if (path === '/api/personal/channels/lark/status' && method === 'GET') return sendJson(res, 200, await manager.lark.status());
+    // What has reached a matter: the archive the channel keeps of every signal and where it went.
+    if (path === '/api/personal/signals' && method === 'GET') {
+      const matterId = url.searchParams.get('matterId') ?? undefined;
+      const rows = manager.personal.store.listSignals({ ...(matterId ? { matterId } : {}), limit: 50 });
+      return sendJson(res, 200, { signals: rows.map(({ payload, disposition, ...rest }) => {
+        const signal = payload as { summary?: unknown; source?: unknown };
+        return { ...rest, summary: signal.summary ?? null, source: signal.source ?? null, disposition };
+      }) });
+    }
+    if (path === '/api/personal/channels/lark/run' && method === 'POST') return sendJson(res, 200, await manager.lark.run());
+    if (path === '/api/personal/channels/lark/search' && method === 'GET') return sendJson(res, 200, await manager.lark.search(url.searchParams.get('kind'), url.searchParams.get('q')));
     if (path === '/api/personal/say' && method === 'POST') return sendJson(res, 201, await manager.personal.router.say(await readJson(req)));
     if (path === '/api/personal/router' && method === 'GET') return sendJson(res, 200, manager.personal.router.status());
+    if (path === '/api/personal/profile') {
+      if (method === 'GET') return sendJson(res, 200, manager.personal.profile());
+      if (method === 'PUT') return sendJson(res, 200, await manager.personal.saveProfile(await readJson(req)));
+    }
     if (path === '/api/wishes' && method === 'GET') return sendJson(res, 200, url.searchParams.get('summary') === 'true' ? { count: manager.personal.store.wishCount() } : manager.personal.store.listWishes());
     if (path === '/api/todos/summary') {
       if (method === 'GET') return sendJson(res, 200, manager.personal.summary.status());
@@ -794,7 +834,12 @@ export function createHttpServer(deps: HttpDeps): Server {
 
     // Plan page: the user's own long-lived list, linked to threads.
     if (path === '/api/todos') {
-      if (method === 'GET') return sendJson(res, 200, manager.listTodos());
+      if (method === 'GET') {
+        const counts = manager.personal.proactive.counts();
+        const todos = manager.listTodos();
+        const stages = todoStages(manager, todos);
+        return sendJson(res, 200, todos.map(todo => ({ ...todo, proactiveRunCount: counts[todo.id] ?? 0, stage: stages.get(todo.id) ?? null })));
+      }
       if (method === 'POST') {
         const body = await readJson(req);
         return sendJson(res, 201, manager.createTodo(body.text, body.parentId, body));

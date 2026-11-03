@@ -310,7 +310,13 @@ export class ApiError extends Error {
 /** How many messages may wait behind a running turn. Matches the daemon's limit. */
 export const MAX_QUEUED = 5;
 
+/** One arrival in a batch the Router took in a single turn. */
+export type TurnPart = { kind: 'person'; text: string } | { kind: 'lark' | 'worker'; count: number };
+/** A turn a channel started on the person's behalf (a batch of Lark signals), not words they wrote. */
+export interface TurnChannel { kind: string; count: number; parts?: TurnPart[] }
+
 export interface QueuedMessage {
+  channel?: TurnChannel;
   targets?: string[];
   error?: string;
   id: string;
@@ -338,18 +344,86 @@ export interface Section {
 }
 
 /** One entry on the plan page. `parentId` is a top-level todo or null: one level of nesting. */
-export interface PersonalSettings { directoryIsDefault?: boolean; defaultDirectory?: string; defaultDirectoryDisplay?: string; directoryDisplay?: string | null; directory: string | null; agent: string | null; model: string | null }
+export interface PersonalSettings { routerThreadId?: string | null; directoryIsDefault?: boolean; defaultDirectory?: string; defaultDirectoryDisplay?: string; directoryDisplay?: string | null; directory: string | null; agent: string | null; model: string | null }
+export interface PersonalBrief { title: string; lines: string[]; text: string }
+export interface LastPersonalBrief { text: string; sentAt: string }
+export interface BriefSettings { enabled: boolean; morning: string; evening: string }
+export interface LarkChannelSettings {
+  enabled: boolean; people: Array<{ id: string; name: string; role?: string }>; chats: Array<{ id: string; name: string }>;
+  intervalMin: number; workHours?: { start: number; end: number; timeZone: string };
+}
+export interface LarkChannelStatus { cli: boolean; realtime?: LarkRealtime; topicErrors?: Array<{ ref: string; error: string }>; loggedIn: boolean; lastRunAt: string | null; nextRunAt: string | null; lastError: string | null; lastSignals: number }
+export type LarkRealtime = 'off' | 'connecting' | 'live' | 'busy-elsewhere' | 'console-off' | 'unavailable' | 'error';
+/** A signal the channel kept on a matter, and where it went. */
+export interface MatterSignal {
+  key: string;
+  at: string;
+  summary: string | null;
+  disposition: { outcome: 'filtered' | 'delivered' | 'router'; reason?: string; pending?: boolean };
+}
+export interface LarkSearchResult { id: string; name: string; hint?: string }
 export interface TodoNote { text: string; updatedAt: string | null; threadId: string | null; rev: number }
-export interface PetStatus { id: string; installed: boolean; installing: boolean; error: string | null; clips: Record<string, number>; frameMs: number }
+export interface PetStatus { id: string; commit: string; installed: boolean; installing: boolean; error: string | null; clips: Record<string, number>; frameMs: number }
 export interface TodoSummaryStatus { threadId: string | null; running: boolean; days: number | null; startedAt: string | null }
 export interface Wish { id: string; threadId: string; text: string; createdAt: string }
 export interface PushSettings { enabled: boolean; recipient: string; baseUrl: string; waiting: boolean; failure: boolean; notice: boolean; scheduled: boolean }
 export interface PushRecord { key: string; at: string; kind: string; title: string; result: 'queued' | 'sent' | 'failed' | 'dropped'; reason: string | null }
 export interface PushStatus { cli: boolean; botReady: boolean; recipient: string; reason: string | null; records: PushRecord[]; dropped: number }
+export interface TodoSource { type: 'lark-task' | 'lark-message' | 'lark-flag' | 'lark-calendar' | 'manual'; ref: string; url?: string; from?: string; at?: string }
+export interface TodoUrgency { urgent: boolean; reason: 'overdue' | 'due-soon' | 'pinned' | 'meeting-today' | null }
+/** Whether the assistant may act on its own, and in which repositories she may work in a sandbox. */
+export type ProactiveMode = 'off' | 'observe' | 'auto';
+export interface ProactiveSettings {
+  /** off: nothing; observe: only note what she would have done; auto: really do it. */
+  mode: ProactiveMode;
+  repos: string[];
+  /** Read-only, for older clients: `mode !== 'off'`. */
+  enabled: boolean;
+}
+
+export interface ProactiveFile {
+  path: string;
+  additions: number;
+  deletions: number;
+}
+
+export type ProactiveStatus = 'running' | 'observed' | 'approved' | 'ready' | 'merged' | 'discarded' | 'reverted' | 'failed';
+
+/** One thing she did unasked: materials prepared for a matter, or code changed in a sandbox. */
+export interface ProactiveRun {
+  id: string;
+  matterId: string;
+  kind: 'prepare' | 'sandbox';
+  repo?: string;
+  branch?: string;
+  threadId: string;
+  startedAt: string;
+  endedAt?: string;
+  status: ProactiveStatus;
+  /** What was done, or why it failed. */
+  summary?: string;
+  /** The worker's own account of the tests. */
+  testReport?: string;
+  files?: ProactiveFile[];
+  /** Why she dropped the work herself, for an audit list. */
+  discardReason?: string;
+}
+
+export type ProactiveAction = 'merge' | 'discard' | 'revert' | 'approve';
+
+/** Where a matter stands, derived by the daemon. Null when nothing is going on with it. */
+export type TodoStage = 'answer' | 'review' | 'blocked' | 'working' | 'idle';
+export interface TodoSubscription { kind: 'lark-thread' | 'lark-task' | 'lark-calendar'; ref: string; at: string }
+
 export interface Todo {
   owner?: 'me' | 'agent';
   state?: 'open' | 'waiting' | 'done';
   lane?: 'you' | 'doing' | 'wait' | 'later' | null;
+  importance?: 'high' | 'normal' | 'low' | null;
+  urgentUntil?: string | null;
+  source?: TodoSource | null;
+  /** Daemon-derived, never stored; only present on list responses. */
+  urgency?: TodoUrgency;
   waitingOn?: string | null;
   dueAt?: string | null;
   followUpAt?: string | null;
@@ -358,6 +432,11 @@ export interface Todo {
   noteUpdatedAt?: string | null;
   /** First line of the continuation note's next steps; the desk cover falls back to thread titles. */
   notePreview?: string | null;
+  /** How many things the assistant did on its own on this matter; the runs themselves load when asked for. */
+  proactiveRunCount?: number;
+  stage?: TodoStage | null;
+  /** The outside threads this matter follows. */
+  subscriptions?: TodoSubscription[];
   proposed?: boolean;
   rev?: number;
   proposals?: Array<{ id: string; kind: 'add' | 'done'; evidence: string; threadId: string }>;
@@ -856,6 +935,21 @@ export class Api {
   saveGeneralSettings(value: GeneralSettings): Promise<GeneralSettings> { return this.request('PUT', '/api/general-settings', value); }
   personalSettings(): Promise<PersonalSettings> { return this.request('GET', '/api/personal/settings'); }
   savePersonalSettings(value: PersonalSettings): Promise<PersonalSettings> { return this.request('PUT', '/api/personal/settings', value); }
+  personalBrief(kind: 'morning' | 'evening'): Promise<PersonalBrief | null> { return this.request('GET', `/api/personal/brief?kind=${kind}`); }
+  lastPersonalBrief(kind: 'morning' | 'evening'): Promise<LastPersonalBrief | null> { return this.request('GET', `/api/personal/brief/last?kind=${kind}`); }
+  briefSettings(): Promise<BriefSettings> { return this.request('GET', '/api/personal/brief/settings'); }
+  saveBriefSettings(value: BriefSettings): Promise<BriefSettings> { return this.request('PUT', '/api/personal/brief/settings', value); }
+  proactive(matterId?: string): Promise<{ settings: ProactiveSettings; runs: ProactiveRun[] }> { return this.request('GET', `/api/personal/proactive${matterId ? `?matterId=${encodeURIComponent(matterId)}` : ''}`); }
+  proactiveSettings(): Promise<{ settings: ProactiveSettings }> { return this.request('GET', '/api/personal/proactive?summary=true'); }
+  saveProactiveSettings(value: Partial<Omit<ProactiveSettings, 'enabled'>>): Promise<ProactiveSettings> { return this.request('PUT', '/api/personal/proactive/settings', value); }
+  proactiveDiff(id: string): Promise<{ files: ProactiveFile[] }> { return this.request('GET', `/api/personal/proactive/runs/${encodeURIComponent(id)}/diff`); }
+  proactiveAct(id: string, action: ProactiveAction): Promise<ProactiveRun> { return this.request('POST', `/api/personal/proactive/runs/${encodeURIComponent(id)}/${action}`); }
+  larkChannel(): Promise<LarkChannelSettings> { return this.request('GET', '/api/personal/channels/lark'); }
+  saveLarkChannel(value: LarkChannelSettings): Promise<LarkChannelSettings> { return this.request('PUT', '/api/personal/channels/lark', value); }
+  larkStatus(): Promise<LarkChannelStatus> { return this.request('GET', '/api/personal/channels/lark/status'); }
+  runLark(): Promise<LarkChannelStatus> { return this.request('POST', '/api/personal/channels/lark/run'); }
+  searchLark(kind: 'people' | 'chats', q: string): Promise<LarkSearchResult[]> { return this.request('GET', `/api/personal/channels/lark/search?kind=${kind}&q=${encodeURIComponent(q)}`); }
+  matterSignals(matterId: string): Promise<{ signals: MatterSignal[] }> { return this.request('GET', `/api/personal/signals?matterId=${encodeURIComponent(matterId)}`); }
   todoNote(id: string): Promise<TodoNote> { return this.request('GET', `/api/todos/${id}/note`); }
   /** The desk's companion: whether its frames are here yet. Always this hub's own, never another machine's. */
   pet(): Promise<PetStatus> { return this.send('GET', `${this.base}/api/pets`); }
@@ -863,6 +957,10 @@ export class Api {
   petSay(text: string): Promise<{ threadId: string }> { return this.request('POST', '/api/personal/say', { text }); }
   petRouter(): Promise<{ threadId: string | null; status: 'idle' | 'running' | 'error' | null; lastReply: string | null; lastReplyAt: string | null }> {
     return this.request('GET', '/api/personal/router');
+  }
+  personalProfile(): Promise<{ text: string; updatedAt: string | null; path: string; isTemplate: boolean; rev: number }> { return this.request('GET', '/api/personal/profile'); }
+  savePersonalProfile(text: string, rev?: number): Promise<{ text: string; updatedAt: string; path: string; isTemplate: boolean; rev: number }> {
+    return this.request('PUT', '/api/personal/profile', rev === undefined ? { text } : { text, rev });
   }
   /** Frames are public artwork, loaded by `<img>` without a token. */
   petFrame(id: string, clip: string, index: number): string { return `${this.base}/pets/${id}/${clip}/${clip}_${String(index * 2 + 1).padStart(3, '0')}.webp`; }
@@ -887,7 +985,7 @@ export class Api {
     return this.request('POST', '/api/todos', { text, parentId });
   }
 
-  updateTodo(id: string, patch: { text?: string; done?: boolean; lane?: 'you' | 'doing' | 'wait' | 'later' | null; touch?: boolean; followUpAt?: string | null }): Promise<Todo> {
+  updateTodo(id: string, patch: { text?: string; done?: boolean; lane?: 'you' | 'doing' | 'wait' | 'later' | null; importance?: 'high' | 'normal' | 'low' | null; urgentUntil?: string | null; source?: TodoSource | null; touch?: boolean; followUpAt?: string | null; unsubscribe?: Array<Pick<TodoSubscription, 'kind' | 'ref'>> }): Promise<Todo> {
     return this.request('PATCH', `/api/todos/${id}`, patch);
   }
 

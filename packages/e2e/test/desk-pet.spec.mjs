@@ -19,11 +19,19 @@ test('a pet reply naming a child opens its parent pile, and an unconfigured dele
         { ...base, id:'child', text:'Check control group', parentId:'parent' },
       ];
       const api = {
-        pet: async () => ({installed:true, installing:false, error:null, id:'dafeiyu', clips:{idle:1}, frameMs:84}),
+        pet: async () => ({installed:true, installing:false, error:null, id:'dafeiyu', commit:'test', clips:{idle:1}, frameMs:84}),
         petFrame: () => 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
         petRouter: async () => ({threadId:'router', status:'idle', lastReply:'Next: Check control group', lastReplyAt:createdAt}),
         todoNote: async () => ({text:'',updatedAt:null,threadId:null,rev:0}),
         workdirs: async () => ({workdirs:[]}),
+        personalProfile: async () => ({text:'', updatedAt:null, path:'profile.md', isTemplate:false, rev:1}),
+        lastPersonalBrief: async () => null,
+        pushStatus: async () => ({records:[]}),
+        briefSettings: async () => ({enabled:false, morning:'09:00', evening:'19:00'}),
+        proactiveSettings: async () => ({settings:{mode:'off', repos:[], enabled:false}}),
+        pushSettings: async () => ({enabled:false}),
+        larkChannel: async () => ({enabled:false, people:[], chats:[], intervalMin:30}),
+        larkStatus: async () => ({cli:false, loggedIn:false, lastRunAt:null, nextRunAt:null, lastError:null, lastSignals:0}),
       };
       localStorage.setItem('calli.pet.pending', JSON.stringify({since:null,threadId:'router',sentAt:Date.now(),text:'What next?'}));
       createRoot(document.getElementById('root')).render(<DeskPage api={api} todos={todos} loading={false} error="" threads={[]} agents={[]} personal={{agent:null,model:null,directory:null}} personalError="" refreshKey={0} onReload={() => {}} onPersonalChange={() => {}} onPersonalRetry={() => {}} onPetStatusChange={() => {}} onOpenThread={() => {}} onOpenPlans={() => {}} />);

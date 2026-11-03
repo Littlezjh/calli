@@ -158,3 +158,21 @@ test('filed by project a row is its title; activity and search add the latest as
   assert.equal(await rowOf('一行标题').locator('.thread-preview').innerText(), 'hello rows');
   await page.keyboard.press('Escape');
 });
+
+test("her conversation is reached through her, not listed again among the threads", async () => {
+  await api(daemon, '/api/personal/settings', { method: 'PUT', body: JSON.stringify({ agent: 'pi', directory: daemon.workdir }) });
+  await (await api(daemon, '/api/personal/say', { method: 'POST', body: JSON.stringify({ text: 'hello' }) })).json();
+  // Told apart by the hub's answer: another thread with her name is still an ordinary thread.
+  await api(daemon, '/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: daemon.workdir, title: '助手' }) });
+  await openUi(page, daemon);
+  const sidebar = page.locator('.sidebar');
+  await sidebar.locator('.thread-title', { hasText: '助手' }).first().waitFor({ timeout: 10_000 });
+  assert.equal(await sidebar.locator('.thread-title', { hasText: '助手' }).count(), 1, 'only the ordinary namesake is listed');
+
+  await sidebar.locator('.side-link', { hasText: '助手' }).click();
+  await page.getByRole('button', { name: '和助手聊', exact: true }).click();
+  await page.getByText('收到「hello」', { exact: false }).waitFor({ timeout: 15_000 });
+  assert.equal(await page.locator('.topbar-title').first().innerText(), '助手');
+  assert.equal(await page.locator('.composer textarea').getAttribute('placeholder'), '给助手发消息');
+  assert.equal(await sidebar.locator('.side-link.active', { hasText: '助手' }).count(), 1, 'her row stands for her conversation too');
+});

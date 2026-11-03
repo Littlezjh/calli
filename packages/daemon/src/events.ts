@@ -49,6 +49,11 @@ export type EventType =
   /** An extension was installed, removed, enabled or disabled. Broadcast only, never stored in an event log. */
   | 'extensions.changed';
 
+/** Structured origin for turns started by an internal channel rather than a person. */
+export type TurnPart = { kind: 'person'; text: string } | { kind: 'lark' | 'worker'; count: number };
+/** `mixed`: several arrivals folded into one Router turn, in order; `parts` keeps them apart for display. */
+export interface TurnChannel { kind: 'lark' | 'worker' | 'mixed'; count: number; parts?: TurnPart[] }
+
 export interface StoredEvent {
   threadId: string;
   seq: number;

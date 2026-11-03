@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import type { TodoNote, TodoRecord } from './store.js';
 
 /**
@@ -17,8 +17,9 @@ import type { TodoNote, TodoRecord } from './store.js';
 /** Commits as Calli no matter how git is configured on the machine; never signs. */
 const GIT_IDENTITY = ['-c', 'user.name=Calli', '-c', 'user.email=calli@localhost', '-c', 'commit.gpgsign=false'];
 
-/** The only paths a commit may touch; extend when inbox/journal and friends arrive. */
-const OWNED_PATHS = ['matters', 'AGENTS.md', 'profile.md', '.gitignore'];
+/** The only paths a routine mirror commit may touch: the mirrored files themselves, never a
+ *  matter's artifacts (committed by commitArtifacts) and never something the person staged. */
+const OWNED_PATHS = ['matters/*/matter.md', 'AGENTS.md', 'profile.md', '.gitignore'];
 
 /** Marks a repository Calli initialized itself; lives in the gitignored .calli/. */
 const OWNERSHIP_MARKER = '.calli/git-owned';
@@ -35,26 +36,35 @@ For agents:
 
 - Read freely. A matter's state is in its \`matter.md\` frontmatter, its continuation note in
   the body.
-- Change matters only through the \`calli todo\` command (see \`calli todo --help\`). Never
-  edit files under \`matters/\` by hand: Calli overwrites them from its database, and hand
-  edits are lost.
+- Change matters only through the \`calli todo\` command (see \`calli todo --help\`). Never edit
+  a matter's \`matter.md\` by hand: Calli overwrites it from its database, and hand edits are
+  lost. A matter's \`artifacts/\` is different — working material (drafts, agendas, one-pagers)
+  that Calli's proactive runs may write there.
 - \`profile.md\` is the person's own notes; do not rewrite it unless asked.
 
-说明（中文）：这是 Calli 为人维护的私人目录；\`matters/\` 下的内容由 Calli 从数据库镜像生成。
-事项只能用 \`calli todo\` 命令修改，不要直接改 \`matters/\` 里的文件；\`profile.md\` 由人自己写。
+说明（中文）：这是 Calli 为人维护的私人目录；\`matters/\` 下每个事项的 \`matter.md\` 由 Calli 从数据库
+镜像生成，事项只能用 \`calli todo\` 命令修改，不要直接改 \`matter.md\`。事项的 \`artifacts/\` 是工作材料
+（草稿、提纲、一页纸），Calli 的主动准备会写进去；\`profile.md\` 由人自己写。
 `;
 
-const PROFILE_MD = `# 我的说明
+/** The scaffold written only when profile.md does not exist; also the isTemplate marker. */
+export const PROFILE_TEMPLATE = `# 我的说明
 
-这里由我自己写，Calli 和各家 agent 都会读，用来了解我怎么工作。
+这里由我自己写，Calli 和各家 agent 都会读：了解我在意什么、找谁、什么节奏、什么算重要。
 
 ## 我在意什么
 
 ## 老板和 PM
 
+写名字与角色，不写 ID。
+
 ## 周报节奏
 
-## 信息源
+## 重要的判断
+
+什么算重要：例如老板提的、OKR 相关、对外承诺。
+
+## 不要打扰我的时间
 `;
 
 /** Shown for a matter whose note was never written, so the file shows what belongs where. */
@@ -81,9 +91,12 @@ function matterMarkdown(todo: TodoRecord, note: TodoNote, threads: string[]): st
     `id: ${yamlString(todo.id)}`,
     `title: ${yamlString(todo.text)}`,
     `lane: ${lane}`,
+    `importance: ${todo.importance === null ? 'null' : yamlString(todo.importance)}`,
     `owner: ${todo.owner}`,
     `due: ${yamlValue(todo.dueAt)}`,
     `follow_up: ${yamlValue(todo.followUpAt)}`,
+    `urgent_until: ${yamlValue(todo.urgentUntil)}`,
+    `source: ${todo.source === null ? 'null' : JSON.stringify(todo.source)}`,
     `waiting_on: ${yamlValue(todo.waitingOn)}`,
     `rev: ${todo.rev}`,
     `created: ${yamlValue(todo.createdAt)}`,
@@ -117,6 +130,20 @@ export class PersonalFiles {
     return next;
   }
 
+  /** Like run, but the caller needs the value and the failure: errors are not swallowed. */
+  private expect<T>(work: () => Promise<T>): Promise<T> {
+    const next = this.queue.then(work);
+    this.queue = next.then(() => undefined, () => undefined);
+    return next;
+  }
+
+  /** The prepared root: the checks run once per directory, like every writer here does. */
+  private async ready(): Promise<string> {
+    const root = this.dir();
+    if (this.preparedFor !== root) { await this.prepare(root); this.preparedFor = root; }
+    return root;
+  }
+
   /** Waits for everything queued so far, and for anything that arrives while waiting. */
   async dispose(): Promise<void> {
     const last = this.queue;
@@ -124,20 +151,30 @@ export class PersonalFiles {
     if (this.queue !== last) return this.dispose();
   }
 
+  /** Writes profile.md atomically; commits only in a Calli-owned repository. */
+  writeProfile(text: string): Promise<void> {
+    return this.run(async () => {
+      try {
+        await this.ready();
+        // Write a temporary file and rename, like matter.md: a crash cannot tear the text.
+        const tmp = join(this.dir(), '.profile.md.tmp');
+        writeFileSync(tmp, text);
+        renameSync(tmp, join(this.dir(), 'profile.md'));
+        await this.commit('profile update');
+      } catch (error) { this.log('cannot write profile.md', error); }
+    });
+  }
+
   /** Creates the skeleton on first use. Existing files are never overwritten. */
   ensure(): Promise<void> {
-    return this.run(async () => {
-      const root = this.dir();
-      if (this.preparedFor !== root) { await this.prepare(root); this.preparedFor = root; }
-    });
+    return this.run(async () => { await this.ready(); });
   }
 
   writeMatter(todo: TodoRecord, note: TodoNote, threads: string[] = []): Promise<void> {
     return this.run(async () => {
       try {
-        const root = this.dir();
-        if (this.preparedFor !== root) { await this.prepare(root); this.preparedFor = root; }
-        await this.writeInto(join(root, 'matters'), todo, note, threads);
+        await this.ready();
+        await this.writeInto(join(this.dir(), 'matters'), todo, note, threads);
       } catch (error) { this.log(`cannot mirror matter ${todo.id}`, error); }
     });
   }
@@ -148,11 +185,13 @@ export class PersonalFiles {
         const matters = join(this.dir(), 'matters');
         const dir = this.matterDir(matters, id);
         if (!dir) return;
+        const name = relative(matters, dir);
         // Deleted outright, not parked in a trash folder: the database is the authority and git
         // history preserves the file, so trash would only add untracked clutter that a later
         // index rebuild (step 3 of the design) would have to skip.
         rmSync(dir, { recursive: true, force: true });
-        await this.commit(`matter delete ${id}`);
+        // The whole directory went, artifacts included: the delete commit scopes to it by name.
+        await this.commit(`matter delete ${id}`, [`matters/${name}`]);
       } catch (error) { this.log(`cannot remove mirrored matter ${id}`, error); }
     });
   }
@@ -161,8 +200,7 @@ export class PersonalFiles {
   syncAll(todos: MatterInput[]): Promise<void> {
     return this.run(async () => {
       try {
-        const root = this.dir();
-        if (this.preparedFor !== root) { await this.prepare(root); this.preparedFor = root; }
+        const root = await this.ready();
         const matters = join(root, 'matters');
         const keep = new Map<string, string>();
         for (const { todo, note, threads } of todos) {
@@ -175,10 +213,45 @@ export class PersonalFiles {
           // title. An unreadable directory is not proven to be a mirror, so it stays.
           if (id && keep.get(id) !== name) {
             rmSync(join(matters, name), { recursive: true, force: true });
-            await this.commit(`matter delete ${id}`);
+            await this.commit(`matter delete ${id}`, [`matters/${name}`]);
           }
         }
       } catch (error) { this.log('cannot sync the matter mirror', error); }
+    });
+  }
+
+  /** The matter's artifacts directory relative to the root, created on demand, for a proactive
+   *  prepare run to write into and record. Errors propagate: an explicit action, not a mirror. */
+  artifacts(id: string): Promise<string> {
+    return this.expect(async () => {
+      const root = await this.ready();
+      const dir = this.matterDir(join(root, 'matters'), id);
+      if (!dir) throw new Error(`matter ${id} is not mirrored yet`);
+      mkdirSync(join(dir, 'artifacts'), { recursive: true });
+      return relative(root, join(dir, 'artifacts')).split(sep).join('/');
+    });
+  }
+
+  /** Commits the matter's new and changed artifacts as Calli (`proactive prepare <id>`), scoped
+   *  to that directory alone so nothing else is swept in. Errors propagate to the proactive run. */
+  commitArtifacts(id: string): Promise<{ path: string; additions: number; deletions: number }[]> {
+    return this.expect(async () => {
+      const root = await this.ready();
+      const dir = this.matterDir(join(root, 'matters'), id);
+      if (!dir) throw new Error(`matter ${id} is not mirrored yet`);
+      if (!this.gitUsable) throw new Error('git is unavailable');
+      if (!this.gitOwned) throw new Error('the personal directory is not a Calli-owned git repository');
+      const scope = `${relative(root, dir).split(sep).join('/')}/artifacts`;
+      const status = await this.git(['status', '--porcelain', '--', scope]);
+      if (!status.trim()) return [];
+      const before = (await this.git(['rev-parse', 'HEAD'])).trim();
+      await this.git(['add', '-A', '--', scope]);
+      await this.git([...GIT_IDENTITY, 'commit', '--quiet', '-m', `proactive prepare ${id}`, '--', scope]);
+      const numstat = await this.git(['-c', 'core.quotepath=false', 'diff', '--numstat', before, 'HEAD', '--', scope]);
+      return numstat.split('\n').filter(Boolean).map(line => {
+        const [additions, deletions, path] = line.split('\t');
+        return { path, additions: Number(additions) || 0, deletions: Number(deletions) || 0 };
+      });
     });
   }
 
@@ -186,8 +259,12 @@ export class PersonalFiles {
   private async writeInto(matters: string, todo: TodoRecord, note: TodoNote, threads: string[]): Promise<void> {
     const target = join(matters, `${todo.id}-${matterSlug(todo.text)}`);
     const current = this.matterDir(matters, todo.id);
+    let scope: string[] | undefined;
     if (current && current !== target) {
-      // The title changed: the directory is renamed, nothing stays under the old name.
+      // The title changed: the directory is renamed, nothing stays under the old name. The
+      // commit scopes to both directories — the old one vanishes whole, artifacts included, and
+      // the new one only carries what the rename brought with it.
+      scope = [`matters/${relative(matters, current)}`, `matters/${relative(matters, target)}`];
       rmSync(target, { recursive: true, force: true });
       renameSync(current, target);
     }
@@ -196,14 +273,14 @@ export class PersonalFiles {
     const tmp = join(target, '.matter.md.tmp');
     writeFileSync(tmp, matterMarkdown(todo, note, threads));
     renameSync(tmp, join(target, 'matter.md'));
-    await this.commit(`matter update ${todo.id}`);
+    await this.commit(`matter update ${todo.id}`, scope);
   }
 
   private async prepare(root: string): Promise<void> {
     mkdirSync(root, { recursive: true });
     mkdirSync(join(root, 'matters'), { recursive: true });
     await this.claimRepository(root);
-    for (const [name, content] of [['.gitignore', GITIGNORE], ['AGENTS.md', AGENTS_MD], ['profile.md', PROFILE_MD]] as const) {
+    for (const [name, content] of [['.gitignore', GITIGNORE], ['AGENTS.md', AGENTS_MD], ['profile.md', PROFILE_TEMPLATE]] as const) {
       const path = join(root, name);
       if (existsSync(path)) continue;
       try { writeFileSync(path, content); } catch (error) { this.log(`cannot write ${name}`, error); }
@@ -265,15 +342,21 @@ export class PersonalFiles {
     } catch { return null; }
   }
 
-  /** Commits Calli's own paths, as Calli. An unowned repository, an empty tree and a broken git
-   *  are all skipped or logged, never raised. */
-  private async commit(message: string): Promise<void> {
+  /** Commits exactly the given scopes, as Calli: the commit itself carries the pathspec, so
+   *  files someone else staged in the same repository are never swept into a mirror commit. An
+   *  unowned repository, an empty tree and a broken git are all skipped or logged, never raised. */
+  private async commit(message: string, scope: string[] = OWNED_PATHS): Promise<void> {
     if (!this.gitUsable || !this.gitOwned) return;
     try {
-      const status = await this.git(['status', '--porcelain', '--', ...OWNED_PATHS]);
-      if (!status.trim()) return;
-      await this.git(['add', '-A', '--', ...OWNED_PATHS]);
-      await this.git([...GIT_IDENTITY, 'commit', '--quiet', '-m', message]);
+      // One pathspec at a time: `git add` treats a pathspec that matches nothing as an error,
+      // and on a first commit the matter glob matches nothing yet.
+      const live: string[] = [];
+      for (const path of scope) {
+        if ((await this.git(['status', '--porcelain', '--', path])).trim()) live.push(path);
+      }
+      if (!live.length) return;
+      for (const path of live) await this.git(['add', '-A', '--', path]);
+      await this.git([...GIT_IDENTITY, 'commit', '--quiet', '-m', message, '--', ...live]);
     } catch (error) { this.log('git commit failed', error); }
   }
 

@@ -7,16 +7,19 @@ export type PetGreeting = { you: number; first: string | null } | null;
 
 /** The size of every frame in the artwork. */
 export const PET_FRAME = { width: 412, height: 344 };
-/** The artwork's pinned commit; the daemon's `PET.commit` downloads the same one. */
-export const PET_ART_COMMIT = '084323845ab82b68d5388d5c638bec09d8544a8a';
 /** Frames kept decoded: the one on screen and those just ahead, about half a megabyte each. */
 export const PET_RING_SIZE = 8;
 export const PET_WEBP_QUALITY = 0.9;
 export const PET_CACHE_PREFIX = 'calli-pet-';
 
 /** Named after the artwork and how it is cleaned, so changing either starts over. */
-export function petCacheName(id: string): string {
-  return `${PET_CACHE_PREFIX}${id}-${PET_ART_COMMIT}-1`;
+export function petCacheName(id: string, commit: string): string {
+  return `${PET_CACHE_PREFIX}${id}-${commit}-1`;
+}
+
+/** The license that came with the artwork, at the commit the hub pinned. */
+export function petLicenseUrl(commit: string): string {
+  return `https://github.com/QCYTSN/dsh-dafeiyu/blob/${commit}/assets/dsh-pet-LICENSE.txt`;
 }
 
 /** Never fetched: Cache Storage only wants an address of this origin to file the frame under. */
@@ -130,6 +133,25 @@ export function clearPetHaze(pixels: Uint8ClampedArray): void {
   for (let alpha = 3; alpha < pixels.length; alpha += 4) {
     if (pixels[alpha] <= 3) pixels[alpha] = 0;
   }
+}
+
+/** How much of her height, from the top of her hair, a small portrait keeps: head and upper body. */
+export const PET_BUST = 0.68;
+
+/**
+ * The box around her head and upper body in one frame, trimmed to her outline: nothing but the
+ * artwork, no margin of empty canvas. Null for a frame with nothing in it.
+ */
+export function petBustBox(pixels: Uint8ClampedArray, width: number, height: number, keep = PET_BUST): { x: number; y: number; width: number; height: number } | null {
+  const solid = (x: number, y: number) => pixels[(y * width + x) * 4 + 3] > 24;
+  let top = -1, bottom = -1;
+  for (let y = 0; y < height && top < 0; y++) for (let x = 0; x < width; x++) if (solid(x, y)) { top = y; break; }
+  if (top < 0) return null;
+  for (let y = height - 1; y >= top && bottom < 0; y--) for (let x = 0; x < width; x++) if (solid(x, y)) { bottom = y; break; }
+  const end = top + Math.max(1, Math.round((bottom - top + 1) * keep));
+  let left = width, right = -1;
+  for (let y = top; y < end; y++) for (let x = 0; x < width; x++) if (solid(x, y)) { if (x < left) left = x; if (x > right) right = x; }
+  return { x: left, y: top, width: right - left + 1, height: end - top };
 }
 
 /** The technical part of a failure, for the details line: never the addresses in it. Null when nothing is left. */

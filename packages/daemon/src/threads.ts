@@ -1,3 +1,5 @@
+import { PersonalBriefSchedule } from './personal-brief-schedule.js';
+import { LarkChannel } from './channels/lark.js';
 import { PersonalService } from './personal.js';
 import { AutoHandover, type AutoHandoverView, type HandoverTarget, type SettledOutcome } from './auto-handover.js';
 import { QuotaResume, type ResumeView } from './quota-resume.js';
@@ -38,8 +40,11 @@ import { handoverBrief, handoverPrompt, synthesizeBrief, turnMessage } from './h
 import { McpManager } from './mcp.js';
 import { SkillsManager } from './skills.js';
 import { isWithinWorkdirs, Workdirs } from './workdirs.js';
-import { coalesceToolEvents, compactDeltas, toolText, type EmittedEvent, type EventType, type StoredEvent } from './events.js';
-import type { SearchHit, SectionRecord, Store, ThreadRecord, ThreadWorktree, TodoRecord } from './store.js';
+import { coalesceToolEvents, compactDeltas, toolText, type EmittedEvent, type EventType, type StoredEvent, type TurnChannel } from './events.js';
+import type { SearchHit, SectionRecord, Store, ThreadRecord, ThreadWorktree, TodoProposal, TodoRecord, TodoUrgency } from './store.js';
+import { urgencyOf } from './store.js';
+import { todoStages } from './todo-stage.js';
+import { batchShape, mergeBatches, type TurnBatch } from './turn-batch.js';
 import { buildTrace, type TurnTrace } from './trace.js';
 import { askedText } from './util.js';
 import { MessageEdits } from './message-edits.js';
@@ -121,7 +126,7 @@ export type ThreadView = Omit<ThreadRecord, 'worktree' | 'handover' | 'writing'>
   waiting: boolean;
   waitingReason: 'approval' | 'question' | 'plan' | null;
   /** Messages sent while a turn was running. They go out, in order, as turns finish. */
-  queued: Array<{ id: string; text: string; images: number; videos: number; targets?: string[]; error?: string }>;
+  queued: Array<{ id: string; text: string; images: number; videos: number; targets?: string[]; error?: string; channel?: TurnChannel }>;
   /** The upstream model-provider queue reported by the native runtime, if this turn is waiting there. */
   modelQueue?: ModelQueueView | null;
   /** Turns the terminal added to this session since the hub last wrote to it. */
@@ -131,6 +136,10 @@ export type ThreadView = Omit<ThreadRecord, 'worktree' | 'handover' | 'writing'>
 };
 
 interface QueuedTurn {
+  displayText?: string;
+  channel?: TurnChannel;
+  /** Later sends carrying a batch fold into this one instead of queueing behind it. */
+  coalesce?: TurnBatch;
   voiceSummary?: string;
   collaboration?: CoordinationSetup;
   error?: string;
@@ -312,6 +321,8 @@ export class ThreadManager {
   readonly dirs: Workdirs;
   readonly autoHandover: AutoHandover;
   readonly personal: PersonalService;
+  readonly lark: LarkChannel;
+  readonly briefs: PersonalBriefSchedule;
   private readonly quietTurns = new Set<string>();
   private readonly settlingHandovers = new Set<Promise<unknown>>();
 
@@ -329,6 +340,8 @@ export class ThreadManager {
     this.autoHandover.onSaved = settings => this.quotaResume.onSettings(settings.resume);
     this.quotaResume.start();
     this.personal = new PersonalService(store, this, adapters);
+    this.lark = new LarkChannel(store, this.personal);
+    this.briefs = new PersonalBriefSchedule(store, () => this.personal.review.status().quietHours, () => todoStages(this, this.listTodos()));
     this.dirs.personalDirectory = () => this.personal.directory();
     this.skills = new SkillsManager(this.adapters);
     this.mcp = new McpManager(this.adapters, store.mcpEntries);
@@ -925,7 +938,8 @@ export class ThreadManager {
     let waitingReason: ThreadView['waitingReason'] = this.inputs.waitingReason(thread.id);
     for (const p of this.approvals.values()) if (p.threadId === thread.id) { waitingReason = 'approval'; break; }
     const waiting = waitingReason !== null;
-    const queued = (this.queues.get(thread.id) ?? []).map((q) => ({ id: q.id, text: q.voiceSummary ? '[语音结束总结]' : q.text, images: q.images.length, videos: q.videos.length,
+    const queued = (this.queues.get(thread.id) ?? []).map((q) => ({ id: q.id, text: q.voiceSummary ? '[语音结束总结]' : q.displayText ?? q.text, images: q.images.length, videos: q.videos.length,
+      ...(q.channel ? { channel: q.channel } : {}),
       ...(q.mentions?.length ? { targets: q.mentions.map(m => {
         const value = m as { label?: unknown; id?: unknown };
         return typeof value.label === 'string' ? value.label : String(value.id ?? '');
@@ -1174,12 +1188,12 @@ export class ThreadManager {
     return { turnId };
   }
 
-  notice(id: string, text: unknown, confirmation = false): StoredEvent {
+  notice(id: string, text: unknown, confirmation = false, proactive = false): StoredEvent {
     this.getThread(id);
     if (typeof text !== 'string' || !text.trim() || [...text].length > 500) throw new HttpError(400, 'notice text must contain 1–500 characters');
     this.personal.review.recordNotice(id, this.running.get(id)?.turnId ?? null);
     this.store.updateThread(id, { unread: true });
-    const event = this.store.appendEvent(id, this.running.get(id)?.turnId ?? null, 'agent.notice', { text, ...(confirmation ? { confirmation: true } : {}) });
+    const event = this.store.appendEvent(id, this.running.get(id)?.turnId ?? null, 'agent.notice', { text, ...(confirmation ? { confirmation: true } : {}), ...(proactive ? { proactive: true } : {}) });
     for (const listener of this.listeners) listener(event);
     this.emitThreadEvent(id, null, 'thread.updated', {});
     return event;
@@ -1188,9 +1202,10 @@ export class ThreadManager {
   // ---------- Plan page (todos) ----------
 
   /** Todos with their linked threads as full views, so chips can show agent, title and state. */
-  listTodos(): Array<TodoRecord & { threads: ThreadView[] }> {
+  listTodos(): Array<TodoRecord & { urgency: TodoUrgency; proposals: TodoProposal[]; threads: ThreadView[] }> {
     return this.store.listTodos().map((todo) => ({
       ...todo,
+      urgency: urgencyOf(todo),
       proposals: this.store.todoProposals(todo.id).filter(p => p.state === 'open'),
       threads: this.store
         .todoThreadIds(todo.id)
@@ -2011,7 +2026,7 @@ export class ThreadManager {
 
   private async startTurnReady(
     threadId: string,
-    input: { voiceSummary?: string; workMode?: unknown; text?: unknown; images?: unknown; videos?: unknown; queue?: unknown; mentions?: unknown; collaboration?: CoordinationSetup; handoverFrom?: string; autoContinuation?: boolean; handover?: unknown; scheduled?: unknown; review?: boolean },
+    input: { voiceSummary?: string; workMode?: unknown; text?: unknown; displayText?: string; channel?: TurnChannel; coalesce?: TurnBatch; images?: unknown; videos?: unknown; queue?: unknown; mentions?: unknown; collaboration?: CoordinationSetup; handoverFrom?: string; autoContinuation?: boolean; handover?: unknown; scheduled?: unknown; review?: boolean; proactive?: unknown },
     delivery?: { turnId: string; source: Record<string, unknown>; displayText: string; claim: () => void },
     fromQueue = false,
     reservedTurnId?: string,
@@ -2058,9 +2073,15 @@ export class ThreadManager {
       }
       if (input.queue !== true) throw new HttpError(409, 'a turn is already running in this thread');
       const queue = this.queues.get(threadId) ?? [];
+      const tail = queue.at(-1);
+      const merged = input.coalesce && tail?.coalesce && !tail.error ? mergeBatches(tail.coalesce, input.coalesce) : null;
+      if (tail && merged) {
+        this.setQueue(threadId, [...queue.slice(0, -1), { ...tail, text: merged.body + merged.context, coalesce: merged, ...batchShape(merged.parts) }]);
+        return { queued: true, id: tail.id };
+      }
       if (queue.length >= MAX_QUEUED) throw new HttpError(409, `at most ${MAX_QUEUED} messages can wait in a thread`);
       this.attachments.check(rawImages); // a bad image is refused now, not when its turn comes
-      const queued: QueuedTurn = { voiceSummary: input.voiceSummary, workMode: thread.workMode ?? 'execute', id: randomUUID(), text: originalText, images: rawImages, videos: videoIds, ...(mentions ? { mentions } : {}), ...(input.collaboration ? { collaboration: input.collaboration } : {}) };
+      const queued: QueuedTurn = { voiceSummary: input.voiceSummary, workMode: thread.workMode ?? 'execute', id: randomUUID(), text: originalText, displayText: input.displayText, channel: input.channel, ...(input.coalesce ? { coalesce: input.coalesce } : {}), images: rawImages, videos: videoIds, ...(mentions ? { mentions } : {}), ...(input.collaboration ? { collaboration: input.collaboration } : {}) };
       this.queues.set(threadId, [...queue, queued]);
       this.emitThreadEvent(threadId, null, 'thread.updated', {});
       return { queued: true, id: queued.id };
@@ -2096,6 +2117,9 @@ export class ThreadManager {
     }
     const { stored, images } = this.attachments.save(threadId, rawImages);
     const promptText = text + this.attachments.videoNote(threadId, storedVideos);
+    // Internal callers may attach protocol context. Only the person's words (or a channel
+    // summary) belong in the conversation, its queue, and later replay/continuation views.
+    const displayText = delivery?.displayText ?? input.displayText ?? rawText.split('\n\n[指定协作对象]')[0];
 
     const turnId = delivery?.turnId ?? reservedTurnId ?? randomUUID();
     if (askProgress) this.reportTurns.add(turnId);
@@ -2113,23 +2137,26 @@ export class ThreadManager {
         this.modelQueues.delete(threadId);
         this.store.updateThread(threadId, { status: 'running', workMode: thread.workMode ?? 'execute', hubTurnAt: new Date().toISOString() }, { touch: true });
         if (thread.title === 'New thread' && !input.voiceSummary) {
-          const title = askedText(rawText).split('\n')[0].slice(0, 60) || (storedVideos.length ? '视频' : '图片');
+          const title = askedText(displayText).split('\n')[0].slice(0, 60) || (storedVideos.length ? '视频' : '图片');
           this.store.updateThread(threadId, { title });
           this.store.setTitleBy(threadId, 'default');
         }
         this.emitThreadEvent(threadId, turnId, 'turn.started', {
           text: promptText,
+          ...(input.channel ? { channel: input.channel } : {}),
+          ...(input.displayText !== undefined ? { hiddenPrompt: true } : {}),
           ...(bare ? { background: true } : {}),
           ...(input.voiceSummary ? { voiceSummary: input.voiceSummary } : {}),
           speed: thread.speed,
           workMode: thread.workMode ?? 'execute',
           ...(delivery ? { coordination: delivery.source } : {}),
-          ...(promptText !== rawText ? { displayText: delivery?.displayText ?? rawText.split('\n\n[指定协作对象]')[0] } : {}),
+          ...(promptText !== displayText ? { displayText } : {}),
           ...(stored.length ? { images: stored } : {}),
           ...(storedVideos.length ? { videos: storedVideos } : {}),
           ...(typeof input.handover === 'string' && input.handover ? { handover: input.handover, handoverLabel: this.adapters.get(input.handover)?.label ?? input.handover } : {}),
           ...(input.scheduled === true ? { scheduled: true } : {}),
           ...(input.review === true ? { review: true } : {}),
+          ...(input.proactive === true ? { proactive: true } : {}),
         });
       });
     } catch (err) { this.running.delete(threadId); this.reportTurns.delete(turnId); throw err; }
@@ -2254,7 +2281,7 @@ export class ThreadManager {
     });
     const text = String(failed.data.displayText ?? failed.data.text ?? '');
     const turnId = randomUUID();
-    await this.startTurn(id, { text, images, videos: ((failed.data.videos ?? []) as Array<{ id: string }>).map(v => v.id), autoContinuation: true }, {
+    await this.startTurn(id, { text: failed.data.hiddenPrompt ? failed.data.text : text, ...(failed.data.hiddenPrompt ? { displayText: text } : {}), channel: failed.data.channel as TurnChannel | undefined, images, videos: ((failed.data.videos ?? []) as Array<{ id: string }>).map(v => v.id), autoContinuation: true }, {
       turnId, source: { retry: failedTurn }, displayText: text,
       claim: () => this.coordination?.retryHandoverTurn(id, failedTurn, turnId),
     }, true);
@@ -2302,8 +2329,11 @@ export class ThreadManager {
     const retry = failed ? String(failed.data.displayText ?? failed.data.text ?? '') : '';
     const turnId = randomUUID();
     const text = summary + (retry ? '\n\n## 继续未完成的这一轮\n\n' + retry : '') + (note ? '\n\n## 用户补充\n\n' + note : '');
+    const promptText = failed?.data.hiddenPrompt
+      ? summary + '\n\n## 继续未完成的这一轮\n\n' + String(failed.data.text) + (note ? '\n\n## 用户补充\n\n' + note : '')
+      : text;
     // Reserve the mailbox identity in the same synchronous claim as the first successor turn.
-    await this.startTurn(successor.id, { text, images, videos, handoverFrom: id }, {
+    await this.startTurn(successor.id, { text: promptText, ...(failed?.data.hiddenPrompt ? { displayText: text } : {}), channel: failed?.data.channel as TurnChannel | undefined, images, videos, handoverFrom: id }, {
       turnId, source: { handover: id }, displayText: text,
       claim: () => this.coordination?.replaceHandoverMember(id, successor.id, turnId),
     });
@@ -2324,7 +2354,7 @@ export class ThreadManager {
     const videos = this.attachments.videos(threadId, taken.videos);
     this.setQueue(threadId, queue.filter((q) => q.id !== queuedId));
     this.startNextQueued(threadId);
-    return { text: taken.text, images: taken.images, ...(videos.length ? { videos } : {}), ...(taken.mentions ? { mentions: taken.mentions } : {}) };
+    return { text: taken.displayText ?? taken.text, images: taken.images, ...(videos.length ? { videos } : {}), ...(taken.mentions ? { mentions: taken.mentions } : {}) };
   }
 
   /** Interrupts the running turn so that this waiting message goes out next, ahead of the others. */
@@ -2355,7 +2385,7 @@ export class ThreadManager {
     this.dispatchingQueues.add(threadId);
     if (rest.length) this.queues.set(threadId, rest);
     else this.queues.delete(threadId);
-    this.startTurn(threadId, { workMode: next.workMode, text: next.text, voiceSummary: next.voiceSummary, images: next.images, videos: next.videos, mentions: next.mentions, collaboration: next.collaboration }, undefined, true).catch((err) => {
+    this.startTurn(threadId, { workMode: next.workMode, text: next.text, displayText: next.displayText, channel: next.channel, voiceSummary: next.voiceSummary, images: next.images, videos: next.videos, mentions: next.mentions, collaboration: next.collaboration }, undefined, true).catch((err) => {
       // The thread was archived or deleted in the meantime, or the message is no longer acceptable.
       console.error(`could not send a queued message: ${err instanceof Error ? err.message : err}`);
       if (this.store.getThread(threadId)) this.setQueue(threadId, [
@@ -2375,7 +2405,7 @@ export class ThreadManager {
     this.getThread(threadId);
     if (!opts.keepQueue) await this.coordination?.beforeStop(threadId);
     const mentions = opts.keepQueue ? [] : (this.queues.get(threadId) ?? []).flatMap(q => q.mentions ?? []);
-    const dropped = opts.keepQueue ? [] : (this.queues.get(threadId) ?? []).map((q) => q.text).filter(Boolean);
+    const dropped = opts.keepQueue ? [] : (this.queues.get(threadId) ?? []).map((q) => q.displayText ?? q.text).filter(Boolean);
     if (!opts.keepQueue && this.queues.has(threadId)) this.setQueue(threadId, []);
     await this.stopTurn(threadId);
     return { dropped, ...(mentions.length ? { mentions } : {}) };
@@ -2410,6 +2440,7 @@ export class ThreadManager {
 
   /** Closes live agent processes. Threads and events stay in the store. */
   async shutdown(): Promise<void> {
+    await this.lark.dispose();
     this.autoHandover.close();
     this.quotaResume.dispose();
     this.coordination?.suspendAll();

@@ -239,7 +239,7 @@ rl.on('line', (line) => {
         for (let i = 0; i < (cmd.message.includes('twice') ? 2 : 1); i++) {
           out({ type: `${prefix}compaction_start`, reason: 'threshold' });
           out({ type: `${prefix}compaction_end`, reason: 'threshold', aborted: cmd.message.includes('cancel'),
-            ...(cmd.message.includes('fail') ? { errorMessage: 'summary failed' } : cmd.message.includes('cancel') || cmd.message.includes('skip') ? {} : { result: { summary: 'summary', tokensBefore: 150000 } }) });
+            ...(/\bfail\b/.test(cmd.message) ? { errorMessage: 'summary failed' } : cmd.message.includes('cancel') || cmd.message.includes('skip') ? {} : { result: { summary: 'summary', tokensBefore: 150000 } }) });
         }
         out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: '继续处理。' } });
         out({ type: 'agent_settled', aborted: false });
@@ -429,7 +429,10 @@ rl.on('line', (line) => {
       out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'hi ' } });
       const marker = process.env.FAKE_PI_LABEL ? `[${process.env.FAKE_PI_LABEL}] ` : '';
       out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: marker + 'there ' + cmd.message } });
-      if (cmd.message.includes('fail')) {
+      // Whole word only: protocol envelopes (the Router's INTRO names push.failure) must not
+      // turn an unrelated reply into a failure, while fail markers anywhere (work fail,
+      // router-fixture-fail in a signal ref) still do.
+      if (/\bfail\b/.test(cmd.message)) {
         out({ type: 'message_end', message: { role: 'assistant', stopReason: 'error', errorMessage: 'provider exploded' } });
         running = false;
         return out({ type: 'agent_settled', aborted: false });

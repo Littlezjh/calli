@@ -96,7 +96,9 @@ test('todos: create, list, edit, strike through, delete', async () => {
   assert.equal(((await untoggled.json()) as TodoJson).done, false);
 
   const listed = await api('/api/todos');
-  assert.deepEqual(((await listed.json()) as TodoJson[]).map((t) => t.id), [todo.id]);
+  const page = (await listed.json()) as Array<TodoJson & { stage: unknown }>;
+  assert.deepEqual(page.map((t) => t.id), [todo.id]);
+  assert.equal(page[0].stage, null, 'a matter with no work thread has no stage');
 
   assert.equal((await api(`/api/todos/${todo.id}`, { method: 'DELETE' })).status, 204);
   assert.equal((await api(`/api/todos/${todo.id}`, { method: 'PATCH', body: JSON.stringify({ done: true }) })).status, 404);

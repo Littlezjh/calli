@@ -8,7 +8,7 @@ import { sizeLabel } from '../files';
 import { mentionAt } from '../mentions';
 import { takeoverMention } from '../handover';
 import { MAX_IMAGES, prepareImage, restoreImage, type PreparedImage } from '../images';
-import { withNotes, type Note } from '../timeline';
+import { channelRows, withNotes, type Note } from '../timeline';
 import { Popover } from './Popover';
 import { ComposerMenu, type GoalAction, type GoalCapability, type WritingMode } from './ComposerMenu';
 import { GoalCard } from './GoalCard';
@@ -977,8 +977,8 @@ export function Composer({
                 <div key={q.id} className="queue-entry">
                 <div className="queue-item">
                   <span className={`queue-badge${q.error ? ' failed' : ''}`}>{t(q.error ? 'composer.notSent' : 'composer.queue')}</span>
-                  <span className="queue-text" title={q.text}>
-                    {q.text || (q.targets?.length ? t('app.collab') : q.videos ? t('videos.video') : t('images.image'))}
+                  <span className={`queue-text${q.channel?.parts ? ' parts' : ''}`} title={q.text}>
+                    {q.channel?.parts ? channelRows(q.channel, q.text).map((row, index) => <span key={index} className={row.kind === 'note' ? 'muted' : undefined}>{index > 0 && ' · '}{row.text}</span>) : q.text || (q.targets?.length ? t('app.collab') : q.videos ? t('videos.video') : t('images.image'))}
                     {q.images > 0 && q.text && <span className="muted"> · {t('composer.images', q.images)}</span>}
                     {!!q.videos && <span className="muted"> · {t('composer.videos', q.videos!)}</span>}
                   </span>

@@ -31,9 +31,11 @@ test('installs the kept frames from the pinned commit, with the license', async 
     const { urls, download } = fakeDownload();
     const pets = new PetService(root, download);
     assert.equal(pets.status().installed, false);
+    assert.equal(pets.status().commit, PET.commit);
     await Promise.all([pets.install(), pets.install()]);
     const status = pets.status();
     assert.equal(status.installed, true);
+    assert.equal(status.commit, PET.commit);
     assert.equal(status.installing, false);
     assert.equal(status.clips.idle, keptFrames(PET.clips.idle));
     // Joined, not doubled: every file fetched once.
@@ -56,6 +58,7 @@ test('a failed download leaves nothing half-installed and reports the error', as
     await assert.rejects(pets.install());
     const status = pets.status();
     assert.equal(status.installed, false);
+    assert.equal(status.commit, PET.commit);
     assert.match(status.error ?? '', /offline/);
     assert.equal(existsSync(join(root, PET.id)), false);
   } finally {
@@ -75,11 +78,13 @@ test('frames are served without a token; everything else about pets needs one', 
   const auth = { Authorization: `Bearer ${TOKEN}` };
   try {
     assert.equal((await fetch(`${base}/api/pets`)).status, 401);
-    assert.equal((await (await fetch(`${base}/api/pets`, { headers: auth })).json()).installed, false);
+    const status = await (await fetch(`${base}/api/pets`, { headers: auth })).json();
+    assert.equal(status.installed, false); assert.equal(status.commit, PET.commit);
     assert.equal((await fetch(`${base}/pets/${PET.id}/idle/idle_001.webp`)).status, 404);
 
     const started = await fetch(`${base}/api/pets/install`, { method: 'POST', headers: auth });
     assert.equal(started.status, 202);
+    assert.equal((await started.json()).commit, PET.commit);
     for (let i = 0; i < 200 && !pets.status().installed; i++) await new Promise((r) => setTimeout(r, 10));
 
     const frame = await fetch(`${base}/pets/${PET.id}/idle/idle_001.webp`);

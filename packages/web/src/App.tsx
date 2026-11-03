@@ -66,7 +66,8 @@ import { SideChat } from './components/SideChat';
 import { McpPage } from './components/McpPage';
 import { TeamsPage } from './components/TeamsPage';
 import { teamRecipient } from './teams';
-import type { TeamSummary } from './api';
+import type { PetStatus, TeamSummary } from './api';
+import { PetBustImage, PetPortrait, usePetBust } from './components/Pet';
 import { SkillsPage } from './components/SkillsPage';
 import { SchedulesPage } from './components/SchedulesPage';
 import { DeskPage } from './components/DeskPage';
@@ -445,10 +446,12 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const [todos, setTodos] = useState<Todo[]>([]);
   const [todosLoading, setTodosLoading] = useState(true);
   const [todosError, setTodosError] = useState('');
-  const [petAvatar, setPetAvatar] = useState<string>();
+  const [petStatus, setPetStatus] = useState<PetStatus | null>(null);
+  const petBust = usePetBust(api, petStatus);
   useEffect(() => {
     if (api.demo) return; let live = true;
-    void api.pet().then(status => { if (live) setPetAvatar(status.installed ? api.petFrame(status.id, 'idle', 0) : undefined); }).catch(() => undefined);
+    // An older hub has no pets endpoint: the sidebar keeps its plain icon.
+    void api.pet().then(status => { if (live) setPetStatus(status); }).catch(() => undefined);
     return () => { live = false; };
   }, [api]);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
@@ -791,6 +794,19 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     return null;
   }, [timeline.items]);
   const selected = threads.find((t) => t.id === selectedId) ?? null;
+  // Her own conversation is told apart by the hub's answer, never by its agent or title.
+  const [routerThreadId, setRouterThreadId] = useState<string | null>(null);
+  useEffect(() => {
+    if (api.demo) return; let live = true;
+    void api.petRouter().then(router => { if (live) setRouterThreadId(router.threadId); }).catch(() => undefined);
+    return () => { live = false; };
+  }, [api, threads.length]);
+  const onRouterThread = Boolean(selected && routerThreadId === selected.id);
+  // Her portrait heads the conversation; once it scrolls away the title carries her face instead.
+  const [portraitAway, setPortraitAway] = useState(false);
+  const routerTitle = portraitAway && petBust
+    ? <span className="topbar-pet"><PetBustImage bust={petBust} height={22} slot={22} /><span>{t('pet.name')}</span></span>
+    : t('pet.name');
   const latestSegment = selected ? latestHandoverThread(selected, threads) : null;
   const viewingEarlier = Boolean(selected && latestSegment && latestSegment.id !== selected.id);
   const mergedHandover = !api.demo && singleSegmentId !== selectedId && Boolean(selected?.handover?.mode === 'continue' || viewingEarlier);
@@ -962,6 +978,8 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const waitingOn = waiting[0] ?? null;
 
   const topLevelThreads = useMemo(() => threads.filter((t) => !t.coordination || t.coordination.rootId === t.id || !threads.some((r) => r.id === t.coordination!.rootId)), [threads]);
+  // Her conversation is reached through her, from the sidebar's own row and the desk, not listed twice.
+  const listedThreads = useMemo(() => routerThreadId ? topLevelThreads.filter((t) => t.id !== routerThreadId) : topLevelThreads, [topLevelThreads, routerThreadId]);
 
   useEffect(() => {
     if (!startupPending.current || !startupSettings) return;
@@ -1742,8 +1760,10 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   };
 
   // The plan page takes the place of a thread, so no thread is open while it is.
-  const openDesk = () => {
-    setSelectedId(null); setView('desk'); setDrawer(false);
+  // `finds` lays the new finds out on arrival, for a matter her conversation asked the person to confirm.
+  const [deskFinds, setDeskFinds] = useState(false);
+  const openDesk = (finds = false) => {
+    setSelectedId(null); setView('desk'); setDrawer(false); setDeskFinds(finds);
   };
   const openTodos = () => {
     setSelectedId(null);
@@ -2315,7 +2335,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           personalDirectory={personal?.directory}
           storagePrefix={showcase ? 'calli.showcase.sidebar' : undefined}
           showEmptySections={!showcase}
-          threads={topLevelThreads}
+          threads={listedThreads}
           members={teamMembers}
           sections={sections}
           agents={agents}
@@ -2336,7 +2356,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           hostDown={Boolean(host) && !hostUp}
           loading={!threadsKnown}
           merged={merging ? [
-            { hostId, label: host?.label ?? t('hosts.local'), state: (Boolean(host) && !hostUp ? 'offline' : threadsKnown ? 'live' : 'loading') as HostSource['state'], at: observedAt, threads },
+            { hostId, label: host?.label ?? t('hosts.local'), state: (Boolean(host) && !hostUp ? 'offline' : threadsKnown ? 'live' : 'loading') as HostSource['state'], at: observedAt, threads: routerThreadId ? threads.filter((t) => t.id !== routerThreadId) : threads },
             ...elsewhere,
           ].sort((a, b) => (a.hostId === null ? -1 : b.hostId === null ? 1 : hosts.findIndex((h) => h.id === a.hostId) - hosts.findIndex((h) => h.id === b.hostId))) : null}
           onAll={keepThreads && hosts.length > 0 ? () => setAllHosts(true) : undefined}
@@ -2347,9 +2367,9 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           onNewSection={threadActions.newSection}
           onOpenTodos={showcase ? undefined : openTodos}
           todosActive={onTodos}
-          onOpenDesk={showcase ? undefined : openDesk}
-          deskActive={onDesk}
-          petAvatar={petAvatar}
+          onOpenDesk={showcase ? undefined : () => openDesk()}
+          deskActive={onDesk || onRouterThread}
+          petBust={petBust}
           onOpenSchedules={showcase ? undefined : openSchedules}
           onOpenDesktop={hasDesktop ? () => { setDrawer(false); setDesktop('open'); } : undefined}
           desktopRunning={desktop === 'minimized'}
@@ -2408,9 +2428,9 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
             {/* On a phone there is no room for the tag: the title itself opens where the thread runs. */}
             {placeShown && !compact && <ThreadPlace thread={selected!} agent={agentLabel(selected!.agent)} host={host?.label} />}
             {compact && placeShown ? (
-              <ThreadPlace thread={selected!} agent={agentLabel(selected!.agent)} host={host?.label} title={selected!.title} />
+              <ThreadPlace thread={selected!} agent={agentLabel(selected!.agent)} host={host?.label} title={onRouterThread ? routerTitle : selected!.title} />
             ) : (
-              <div className="topbar-title">{host && !hostUp ? host.label : viewTitle ?? (selected ? selected.title : t('sidebar.newThread'))}</div>
+              <div className="topbar-title">{host && !hostUp ? host.label : viewTitle ?? (selected ? (onRouterThread ? routerTitle : selected.title) : t('sidebar.newThread'))}</div>
             )}
             {selected?.coordination?.team && <div className={`team-task-status${['awaiting_confirm', 'needs_attention'].includes(selected.coordination.team.status) ? ' attention' : ''}`}><span className="team-task-name">{selected.coordination.team.name}</span><span> · {t(`teams.${selected.coordination.team.status}`)}</span></div>}
             {!selected && host && hostUp && <div className="topbar-sub">{host.label}</div>}
@@ -2555,8 +2575,9 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           <div key="desk" className="scroller">
             <DeskPage api={api} todos={todos} loading={todosLoading} error={todosError} threads={threads} agents={agents}
               personal={personal} personalError={personalError} refreshKey={todosKey} onReload={reloadTodos}
-              onPetStatusChange={status => setPetAvatar(status.installed ? api.petFrame(status.id, 'idle', 0) : undefined)}
-              onPersonalChange={setPersonal} onPersonalRetry={reloadPersonal} onOpenThread={pick} onOpenPlans={openTodos} />
+              onPetStatusChange={setPetStatus}
+              onPersonalChange={setPersonal} onPersonalRetry={reloadPersonal} onOpenThread={pick} onOpenPlans={openTodos}
+              openFinds={deskFinds} onFindsOpened={() => setDeskFinds(false)} />
           </div>
         ) : onTodos ? (
           // A scroller of its own: the thread's one pins itself to the bottom, a document starts at the top.
@@ -2585,6 +2606,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         ) : (
         <div key="thread" className="scroller" ref={scrollerRef} onScroll={onScroll} {...gestureProps}>
           {selected && <TurnRuler key={selected.id} threadId={selected.id} scrollerRef={scrollerRef} previews={turnPreviewMap} turnIds={rulerTurnIds} onJump={turnId => setJump({ threadId: selected.id, turnId })} />}
+          {onRouterThread && petStatus?.installed && <PetPortrait api={api} status={petStatus} onAway={setPortraitAway} />}
           {selected && <AutoHandoverNotice api={api} thread={selected} agents={agents} />}
           {selected && eventsLoading && <div className="loading-note">{t('common.loading')}</div>}
           {showcase && selected && !eventsLoading && !timeline.items.length && showcase.intro(selected.id)}
@@ -2592,6 +2614,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
             <MergedHistory
               key={`${handoverHistoryKey(selected, threads)}:${mergedHandover}`}
               api={api} thread={selected} merged={mergedHandover} ready={historyReady} agentLabel={agentLabel}
+              onOpenFinds={onRouterThread ? () => openDesk(true) : undefined}
               onBrowseOlder={() => { stickToBottom.current = false; setAtBottom(false); }}
               canFork={thread => ({ enabled: Boolean(thread.agentSessionId && capsOf(thread.agent)?.fork), any: Boolean(capsOf(thread.agent)?.forkAt) })}
               onSegmentFork={(thread, turn) => threadActions.forkAt(thread, turn)}
@@ -2703,7 +2726,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           voiceControls={voice.state.active ? <VoiceControls session={voice.state} onMute={voice.toggleMute} onStop={() => void voice.stop()} /> : undefined}
           running={voice.state.active ? false : running}
           disabled={modeBusy || (!selected && !draftCwd)}
-          placeholder={voice.state.active ? t('app.placeholder.continue') : demo ? t('app.placeholder.demo') : workMode === 'plan' && !running ? t('composerMenu.planOn') : writing && !running ? t('writing.placeholder') : selected ? (running ? t('sideChat.queuePlaceholder') : t('app.placeholder.continue')) : draftScratch ? t('app.placeholder.scratch') : t('app.placeholder.startIn', folderName(draftCwd))}
+          placeholder={voice.state.active ? t('app.placeholder.continue') : onRouterThread && !running ? t('pet.threadPlaceholder') : demo ? t('app.placeholder.demo') : workMode === 'plan' && !running ? t('composerMenu.planOn') : writing && !running ? t('writing.placeholder') : selected ? (running ? t('sideChat.queuePlaceholder') : t('app.placeholder.continue')) : draftScratch ? t('app.placeholder.scratch') : t('app.placeholder.startIn', folderName(draftCwd))}
           onSend={voice.state.active ? async (text, images, _mentions, videos = []) => {
             try { await voice.appendText(text, images.map(img => ({ data: img.data, mimeType: img.mimeType })), await Promise.all(videos.map(async video => (await api.uploadVideo(selectedId!, video.file)).id))); }
             catch (error) { handleError(error); throw error; }

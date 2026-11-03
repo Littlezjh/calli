@@ -19,7 +19,7 @@ export const PET = {
 };
 
 export type PetClip = keyof typeof PET.clips;
-export interface PetStatus { id: string; installed: boolean; installing: boolean; error: string | null; clips: Record<string, number>; frameMs: number }
+export interface PetStatus { id: string; commit: string; installed: boolean; installing: boolean; error: string | null; clips: Record<string, number>; frameMs: number }
 
 const FRAME = /^\/pets\/([a-z0-9_-]+)\/([a-z_]+)\/([a-z_]+_\d{3})\.webp$/;
 
@@ -41,6 +41,7 @@ export class PetService {
   status(): PetStatus {
     return {
       id: PET.id,
+      commit: PET.commit,
       installed: existsSync(this.marker()),
       installing: Boolean(this.installing),
       error: this.error,

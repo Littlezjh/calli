@@ -434,6 +434,7 @@
 
 - [~] **P0** 推送（见第 5 节）
 - [~] **P0** 事项字段、接续说明、建议与完成提议、个人目录、`calli todo / wish / quiet`、跟进时间、交接带事项：后端与 CLI 已实现。2026-10-25 真实验收：Pi + TRAE 模型（`cliproxy/GPT-5.6-Sol`）建事项、写说明、设跟进；原线程归档后，到点 Calli 新开线程，Pi 只靠事项与说明接着做完并提议完成，确认后完成。计划页界面已按审过的草图实现：私人设置一行与弹窗、待你确认、说明默认收起点开才读、跟进预设、防空转停下标记、顺带、新/已有事项「交给 agent」（`POST /api/todos/:id/delegate`）、侧边栏「私人」组；桌面/手机 × 亮/暗无头 Chromium 截图已看，本人审过实拍截图，实体手机未测
+- [~] **P1** 主动行动分级：大肥鱼从「主动发现」升级到敢动手，L1 准备（提前备材料到个人目录）+ L2 沙盒动手（独立 worktree、分支 `calli/proactive/<事项ID>`、提交带 `Calli-Proactive:` 标记、看改动/合入/丢弃/撤回），L3 对外动作永远要人点头。整体默认关，用户主动开启，L2 另按仓库允许。设计见 [主动行动分级](proactive-design.md)。*已实现：daemon（设置/空闲调度/编排/API/测试）、沙盒 git 层（含 revert 身份预探测、.git/info/exclude）、web（设置节、沙盒卡、筛选与撤回、三语）；daemon 全包 948/948、根级 typecheck/test/build、真实后端 e2e 3/3 全绿；四组合截图在 /tmp/claude-pet/proactive/（32 张，claude-web 亲看 10 张、lead 亲看 2 张）*
 - [ ] **P0** `calli ask`：不可逆动作前的确认与「请你接管」，不依赖 agent 原生审批（Pi 没有审批）。要排在任何对外提交的场景之前，设计待补
 - [ ] TRAE CLI 默认档沙箱挡住 `calli` 的 socket（`connect EPERM`，2026-10-25 实测），Codex 可能相同；处理方向待定
 

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyPetStarter, clearPetHaze, nextPetFrame, petCacheKey, petCacheName, petErrorDetail, petReplyParts, petRing, parsePetPending, petDay, petGreetingLine, petReplyPreview, PET_GIVE_UP_MS, PET_QUIET_POLLS, readPetRouter, yawnDelay } from '../src/pet.js';
+import { applyPetStarter, clearPetHaze, petBustBox, nextPetFrame, petCacheKey, petCacheName, petErrorDetail, petLicenseUrl, petReplyParts, petRing, parsePetPending, petDay, petGreetingLine, petReplyPreview, PET_GIVE_UP_MS, PET_QUIET_POLLS, readPetRouter, yawnDelay } from '../src/pet.js';
 
 test('a looping clip wraps and a one-shot clip ends', () => {
   assert.equal(nextPetFrame(0, 121, true), 1);
@@ -17,7 +17,8 @@ test('only the frames just ahead stay decoded', () => {
 });
 
 test('cleaned frames are filed under the artwork they came from', () => {
-  assert.match(petCacheName('dafeiyu'), /dafeiyu-[0-9a-f]{40}/);
+  assert.notEqual(petCacheName('dafeiyu', 'aaa'), petCacheName('dafeiyu', 'bbb'));
+  assert.match(petLicenseUrl('aaa'), /\/blob\/aaa\//);
   assert.equal(petCacheKey('idle', 7), '/calli-pet-frames/idle/7.webp');
 });
 
@@ -98,4 +99,14 @@ test('reply previews are at most 100 characters and preserve Unicode', () => {
   assert.equal(Array.from(reply).length, 100);
   assert.equal(reply, '🐟'.repeat(99) + '…');
   assert.equal(petReplyPreview('a'.repeat(100)), 'a'.repeat(100));
+});
+
+test('a small portrait keeps her head and upper body, trimmed to her outline', () => {
+  const width = 10, height = 10, pixels = new Uint8ClampedArray(width * height * 4);
+  const paint = (x: number, y: number, alpha = 255) => { pixels[(y * width + x) * 4 + 3] = alpha; };
+  for (let y = 2; y < 6; y++) for (let x = 3; x < 6; x++) paint(x, y); // head and body
+  for (let y = 6; y < 10; y++) paint(1, y); // a tail low down, outside the bust
+  paint(9, 0, 3); // haze does not count
+  assert.deepEqual(petBustBox(pixels, width, height, 0.5), { x: 3, y: 2, width: 3, height: 4 });
+  assert.equal(petBustBox(new Uint8ClampedArray(16), 2, 2), null);
 });

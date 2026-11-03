@@ -20,6 +20,8 @@ import { BorrowingService } from './borrowing.js';
 import { borrowingServer } from './borrowing-server.js';
 import { VoiceService } from './voice-service.js';
 import { displayForDesktop, PersonalBrowser } from './personal-browser.js';
+import { WorkerReports } from './worker-reports.js';
+import { LarkEvents } from './channels/lark-events.js';
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -72,6 +74,10 @@ async function main(): Promise<void> {
   const dirs = new Workdirs(workdirs, join(config.dataDir, 'workdirs.json'), join(config.dataDir, 'scratch'));
   const manager = new ThreadManager(store, adapters, dirs, new AttachmentStore(config.dataDir), () => registry.list());
   manager.recoverInterrupted();
+  manager.personal.proactive.recover();
+  // Started after recovery: turns a restart cut off are not news from a Worker.
+  const workerReports = new WorkerReports(manager);
+  workerReports.start();
   const push = new PushService(store, manager);
   const personalPath = join(config.dataDir, 'personal', 'calli.sock');
   manager.personal.socket = personalPath;
@@ -80,7 +86,7 @@ async function main(): Promise<void> {
   // The personal directory mirrors the plan page's todos as files; reconcile once at startup.
   manager.personal.syncMirror();
   // Scheduled tasks tick on their own, on the machine where their threads live.
-  const scheduler = new Scheduler(store, manager, adapters);
+  const scheduler = new Scheduler(store, manager, adapters, push);
   const coordination = new CoordinationManager(store, manager, coordinationPath);
   const collaborationServer = coordinationServer(coordination);
   if (!await listenPrivate(collaborationServer, coordinationPath)) throw new Error('Collaboration socket is already in use');
@@ -125,6 +131,9 @@ async function main(): Promise<void> {
   coordination.hosts = hosts;
   // Catch-up runs need all thread-scoped sockets and runtime services to be ready.
   scheduler.start();
+  manager.lark.start();
+  const larkEvents = new LarkEvents(manager.lark);
+  larkEvents.start();
   // Previews are served on a port of their own: the iframe needs an origin separate from the app
   // (see preview.ts). One port past the app's is the default; CALLI_PREVIEW_PORT picks another.
   const previewPort = Number(process.env.CALLI_PREVIEW_PORT) || config.port + 1;
@@ -191,7 +200,10 @@ async function main(): Promise<void> {
     personal.close();
     rmSync(personalPath, { force: true });
     registry.dispose();
+    workerReports.stop();
+    await larkEvents.dispose();
     await manager.shutdown();
+    await manager.personal.proactive.flush();
     terminals.dispose();
     desktop.dispose();
     store.close();

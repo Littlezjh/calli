@@ -4,7 +4,7 @@
  */
 import { diffStats } from './diff';
 import { IMAGE_FILE, relativePath } from './paths';
-import type { VideoRef } from './api';
+import type { TurnChannel, TurnPart, VideoRef } from './api';
 import { formatDate, formatList, t } from './i18n';
 import { withVoiceItems, type VoiceTranscript } from './voice-timeline';
 
@@ -128,6 +128,39 @@ export function deliveredPreview(text: string): string {
     .slice(0, 200);
 }
 
+export type { TurnChannel, TurnPart };
+
+function turnPart(raw: unknown): TurnPart | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const { kind, text, count } = raw as Record<string, unknown>;
+  if (kind === 'person') return typeof text === 'string' ? { kind, text } : null;
+  if (kind === 'lark' || kind === 'worker') return { kind, count: typeof count === 'number' && Number.isFinite(count) ? count : 0 };
+  return null;
+}
+
+export function turnChannel(raw: unknown): TurnChannel | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const { kind, count, parts: rawParts } = raw as Record<string, unknown>;
+  if (typeof kind !== 'string' || !kind) return null;
+  const parts = Array.isArray(rawParts) ? rawParts.map(turnPart).filter((part): part is TurnPart => part !== null) : [];
+  // A batch that cannot say what it holds is shown as a plain message, so a person's words never turn into a quiet line.
+  if (kind === 'mixed' && !parts.length) return null;
+  return { kind, count: typeof count === 'number' && Number.isFinite(count) ? count : 0, ...(parts.length ? { parts } : {}) };
+}
+
+/** The quiet line for what a channel brought; null for a channel this client has no words for. */
+export function channelLabel(kind: string, count: number): string | null {
+  if (kind === 'lark') return t('view.channelLark', count);
+  if (kind === 'worker') return t('view.channelWorker', count);
+  return null;
+}
+
+/** What a channel turn shows, in order: a person's words stay words, the rest are quiet lines. */
+export function channelRows(channel: TurnChannel, text: string): Array<{ kind: 'person' | 'note'; text: string }> {
+  if (channel.parts) return channel.parts.map(part => part.kind === 'person' ? { kind: 'person', text: part.text } : { kind: 'note', text: channelLabel(part.kind, part.count) ?? '' });
+  return [{ kind: 'note', text: channelLabel(channel.kind, channel.count) ?? text }];
+}
+
 export type Item =
   | { kind: 'handover-summary'; key: string; turnId: string; target: string; done: boolean; version: number }
   | { kind: 'notice'; key: string; turnId: string; text: string; confirmation: boolean }
@@ -140,7 +173,7 @@ export type Item =
    */
   | { kind: 'input'; key: string; turnId: string; inputId: string; title: string; inputKind?: string; plan?: string; questions: import('./api').UserQuestion[]; answer: import('./api').UserInputAnswer | { cancelled: true; ended: true } | null }
   | { kind: 'voice-recap'; key: string; turnId: null; sessionId: string; seconds: number; count: number }
-  | { kind: 'user'; voice?: boolean; background?: boolean; streaming?: boolean; handoverCollapsed?: boolean; workMode?: string; key: string; turnId: string; text: string; images: ImageRef[]; videos?: VideoRef[]; fromTerminal?: boolean; scheduled?: boolean; coordination?: CoordinationNote }
+  | { kind: 'user'; voice?: boolean; background?: boolean; streaming?: boolean; handoverCollapsed?: boolean; workMode?: string; key: string; turnId: string; text: string; images: ImageRef[]; videos?: VideoRef[]; fromTerminal?: boolean; scheduled?: boolean; coordination?: CoordinationNote; channel?: TurnChannel }
   /** The turn's answer: the text after everything the agent did. */
   | { kind: 'assistant'; key: string; turnId: string; text: string; done: boolean }
   /**
@@ -515,6 +548,7 @@ export function buildTimeline(events: StoredEvent[], speech: readonly VoiceTrans
           ...(ev.data.scheduled ? { scheduled: true } : {}),
           ...(ev.data.source === 'background' ? { background: true } : {}),
           ...(delivered ? { coordination: delivered.note } : {}),
+          ...(turnChannel(ev.data.channel) ? { channel: turnChannel(ev.data.channel)! } : {}),
         });
         break;
       }

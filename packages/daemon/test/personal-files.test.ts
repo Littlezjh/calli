@@ -16,10 +16,10 @@ const wait = async (fn: () => boolean) => { for (let i = 0; i < 500; i++) { if (
 const git = (dir: string, args: string[]): string => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' });
 
 const todo = (overrides: Partial<TodoRecord> = {}): TodoRecord => ({
-  owner: 'me', state: 'open', waitingOn: null, dueAt: null, followUpAt: null,
+  owner: 'me', state: 'open', lane: null, importance: null, urgentUntil: null, source: null, waitingOn: null, dueAt: null, followUpAt: null,
   followUpNoProgress: 0, followUpPaused: false, rev: 1, proposed: false, hasNote: false,
   notePreview: null, noteUpdatedAt: null, id: 'm-7f3a', text: '阈值实验结论发给老板', done: false,
-  parentId: null, position: 1, createdAt: '2026-10-28T09:00:00.000Z', doneAt: null, ...overrides,
+  parentId: null, position: 1, createdAt: '2026-10-28T09:00:00.000Z', updatedAt: '2026-10-28T09:00:00.000Z', doneAt: null, ...overrides,
 });
 const note = (text = '', updatedAt: string | null = null): TodoNote => ({ text, updatedAt, threadId: null });
 
@@ -33,7 +33,7 @@ test('personal files: ensure scaffolds once and never overwrites what is already
     assert.match(agents, /calli todo/);
     assert.match(agents, /matters/);
     const profile = readFileSync(join(dir, 'profile.md'), 'utf8');
-    for (const heading of ['我在意什么', '老板和 PM', '周报节奏', '信息源']) {
+    for (const heading of ['我在意什么', '老板和 PM', '周报节奏', '重要的判断', '不要打扰我的时间']) {
       assert.match(profile, new RegExp(`^## ${heading}$`, 'm'));
     }
     assert.ok(existsSync(join(dir, 'matters')));
@@ -120,6 +120,45 @@ test('personal files: matter lane prefers the explicit field; done wins; waiting
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('personal files: artifacts commit on their own; mirror commits never sweep them', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'calli-personal-artifacts-'));
+  try {
+    const files = new PersonalFiles(dir);
+    await files.ensure();
+    await files.writeMatter(todo({ id: 'm-art', text: 'note' }), note('x'), []);
+    const matterDir = join(dir, 'matters', 'm-art-note');
+    await wait(() => existsSync(join(matterDir, 'matter.md')));
+
+    // The artifacts directory is created on demand and reported relative to the root.
+    assert.equal(await files.artifacts('m-art'), 'matters/m-art-note/artifacts');
+    // A worker drops an artifact next to the mirror; the next mirror commit leaves it alone.
+    writeFileSync(join(matterDir, 'artifacts', 'reply-draft.md'), '草稿 v1\n');
+    await files.writeMatter(todo({ id: 'm-art', text: 'note', rev: 2 }), note('y'), []);
+    assert.match(git(dir, ['status', '--porcelain']), /^\?\? matters\/m-art-note\/artifacts\/$/m);
+    assert.ok(!git(dir, ['show', '--name-only', '--format=', 'HEAD']).includes('reply-draft.md'));
+
+    // commitArtifacts takes it, as Calli, with the id in the message, and reports the numbers.
+    assert.deepEqual(await files.commitArtifacts('m-art'),
+      [{ path: 'matters/m-art-note/artifacts/reply-draft.md', additions: 1, deletions: 0 }]);
+    assert.match(git(dir, ['log', '--format=%an|%s']), /Calli\|proactive prepare m-art/);
+    assert.equal(git(dir, ['status', '--porcelain']).trim(), '');
+    // Nothing new: an empty list, not an empty commit.
+    assert.deepEqual(await files.commitArtifacts('m-art'), []);
+
+    // Files the person staged for themselves never ride along with an artifacts commit.
+    writeFileSync(join(dir, 'my-own.md'), 'mine');
+    execFileSync('git', ['-C', dir, 'add', 'my-own.md']);
+    writeFileSync(join(matterDir, 'artifacts', 'onepager.md'), '一页纸\n');
+    assert.deepEqual(await files.commitArtifacts('m-art'),
+      [{ path: 'matters/m-art-note/artifacts/onepager.md', additions: 1, deletions: 0 }]);
+    assert.match(git(dir, ['status', '--porcelain']), /my-own\.md/);
+
+    // An unknown matter is an error an explicit action can act on, not a swallowed log line.
+    await assert.rejects(() => files.artifacts('m-missing'), /not mirrored/);
+    await assert.rejects(() => files.commitArtifacts('m-missing'), /not mirrored/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('personal files: a repository Calli did not create is never committed', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'calli-personal-foreign-'));
   try {
@@ -139,6 +178,8 @@ test('personal files: a repository Calli did not create is never committed', asy
     const status = git(dir, ['status', '--porcelain']);
     assert.match(status, /draft\.md/);
     assert.match(status, /matters/);
+    // An explicit artifacts commit in a foreign repository refuses instead of committing.
+    await assert.rejects(() => files.commitArtifacts('m-no-commit'), /not a Calli-owned/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -174,6 +215,27 @@ test('personal files: a Calli-created repository commits only the managed paths'
       assert.match(path, /^(matters\/|AGENTS\.md$|profile\.md$|\.gitignore$)/);
     }
     assert.match(git(dir, ['status', '--porcelain']), /sketch\.txt/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('personal files: matter.md carries importance, urgent_until and source', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'calli-personal-importance-'));
+  try {
+    const files = new PersonalFiles(dir);
+    await files.ensure();
+    const file = join(dir, 'matters', 'm-imp-note', 'matter.md');
+    await files.writeMatter(todo({ id: 'm-imp', text: 'note', importance: 'high', urgentUntil: '2026-12-01T10:00:00.000Z',
+      source: { type: 'lark-task', ref: 'task-7', url: 'https://lark.example.com/task/7' } }), note('x'), []);
+    const text = readFileSync(file, 'utf8');
+    assert.match(text, /^importance: "high"$/m);
+    assert.match(text, /^urgent_until: "2026-12-01T10:00:00\.000Z"$/m);
+    assert.match(text, /^source: \{"type":"lark-task","ref":"task-7","url":"https:\/\/lark\.example\.com\/task\/7"\}$/m);
+    // Unset fields read back as explicit nulls, not missing lines.
+    await files.writeMatter(todo({ id: 'm-imp', text: 'note' }), note('x'), []);
+    const bare = readFileSync(file, 'utf8');
+    assert.match(bare, /^importance: null$/m);
+    assert.match(bare, /^urgent_until: null$/m);
+    assert.match(bare, /^source: null$/m);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { channelRows, turnChannel } from '../src/timeline.js';
 import {
   buildTimeline,
   compactionLabel,
@@ -1039,4 +1040,28 @@ test('a quota-resume marker divides the timeline where the daemon continued the 
   assert.equal(marker.resetsAt, '2026-10-12T09:00:00.000Z');
   assert.ok(!marker.turnId);
   assert.ok(timeline.items.some(item => item.kind === 'error' && item.planExhausted === true));
+});
+
+test('a turn a channel started is marked by its source, never by its words', () => {
+  const user = (data: Record<string, any>) => buildTimeline([ev('turn.started', data)]).items.find(i => i.kind === 'user') as any;
+  assert.deepEqual(user({ text: 'raw', displayText: '飞书 · 3 条新信号', channel: { kind: 'lark', count: 3 } }).channel, { kind: 'lark', count: 3 });
+  assert.equal(user({ text: '飞书 · 3 条新信号' }).channel, undefined);
+  assert.equal(user({ text: 'x', channel: { count: 2 } }).channel, undefined);
+});
+
+test('a mixed batch keeps its parts in order: a person\'s words stay words, the rest are quiet lines', () => {
+  const parts = [{ kind: 'lark', count: 2 }, { kind: 'person', text: '先记下周三的会' }, { kind: 'worker', count: 1 }, { kind: 'person', text: '买票' }];
+  const channel = turnChannel({ kind: 'mixed', count: 5, parts })!;
+  assert.deepEqual(channel.parts, parts);
+  assert.deepEqual(channelRows(channel, 'joined'), [
+    { kind: 'note', text: '飞书 · 2 条新信号' }, { kind: 'person', text: '先记下周三的会' }, { kind: 'note', text: '工作 · 1 条进展' }, { kind: 'person', text: '买票' },
+  ]);
+});
+
+test('single channels are one quiet line, and a batch that cannot say what it holds stays a message', () => {
+  assert.deepEqual(channelRows(turnChannel({ kind: 'worker', count: 3 })!, 'x'), [{ kind: 'note', text: '工作 · 3 条进展' }]);
+  assert.deepEqual(channelRows(turnChannel({ kind: 'future', count: 1 })!, 'as sent'), [{ kind: 'note', text: 'as sent' }]);
+  assert.equal(turnChannel({ kind: 'mixed', count: 2 }), null);
+  assert.equal(turnChannel({ kind: 'mixed', count: 2, parts: [{ kind: 'nonsense' }] }), null);
+  assert.deepEqual(turnChannel({ kind: 'mixed', count: 2, parts: [{ kind: 'nonsense' }, { kind: 'person', text: '话' }] })!.parts, [{ kind: 'person', text: '话' }]);
 });

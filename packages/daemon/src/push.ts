@@ -1,3 +1,4 @@
+import { LAST_BRIEF_KEY, type BriefKind, type PersonalBrief, type LastPersonalBrief } from './personal-brief.js';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import type { StoredEvent } from './events.js';
@@ -15,7 +16,7 @@ export interface PushSettings {
   notice: boolean;
   scheduled: boolean;
 }
-export type PushKind = 'approval' | 'question' | 'plan' | 'failure' | 'notice' | 'scheduled' | 'confirmation' | 'test';
+export type PushKind = 'approval' | 'question' | 'plan' | 'failure' | 'notice' | 'scheduled' | 'confirmation' | 'test' | BriefKind;
 export interface PushRecord {
   key: string;
   at: string;
@@ -26,9 +27,9 @@ export interface PushRecord {
   reason: string | null;
 }
 const defaults: PushSettings = { enabled: false, recipient: '', baseUrl: '', waiting: true, failure: true, notice: true, scheduled: false };
-const labels: Record<PushKind, string> = { approval: '等你批准', question: '等你回答', plan: '计划待确认', failure: '一轮失败', notice: '通知你', scheduled: '定时任务完成', confirmation: '待你确认', test: '测试推送' };
+const labels: Record<PushKind, string> = { approval: '等你批准', question: '等你回答', plan: '计划待确认', failure: '一轮失败', notice: '通知你', scheduled: '定时任务完成', confirmation: '待你确认', test: '测试推送', morning: '早报', evening: '晚报' };
 type Identity = { cli: boolean; botReady: boolean; recipient: string; reason: string | null };
-type Item = { record: PushRecord; body: string; settings: PushSettings };
+type Item = { record: PushRecord; body: string; settings: PushSettings; briefText?: string };
 
 /** Only live events enter this bounded, in-memory queue; startup never replays history. */
 export class PushService {
@@ -105,6 +106,12 @@ export class PushService {
   async status(summary = false) { return { ...await this.identity(), records: (summary ? this.records.slice(0, 1) : this.records).map(r => ({ ...r })), dropped: this.dropped }; }
   test(): PushRecord { return this.enqueue('test', null, randomUUID()); }
 
+  /** A deterministic digest is a hub message, not an agent notice. Respect the push master switch. */
+  brief(kind: BriefKind, brief: PersonalBrief, key: string): PushRecord | null {
+    if (this.stopped || !this.settings().enabled) return null;
+    return this.enqueue(kind, null, key, undefined, brief);
+  }
+
   private onEvent(ev: StoredEvent) {
     if (!ev.threadId || this.stopped) return;
     const end = turnOutcome(ev);
@@ -118,6 +125,9 @@ export class PushService {
     // A background question (askOnce) has nobody to answer it and the manager cancels it, so its
     // approvals, notices and failures are not news. Follow-ups on an archived thread still are.
     if (started?.data.background) return;
+    // A proactive run surfaces on the desk, not on the phone: its notices and routine
+    // completions never push. A failure still does — that is worth hearing about.
+    const proactive = started?.data.proactive === true || ev.data.proactive === true;
     const origin = turnOrigin(started ?? { data: ev.data });
     if (origin.imported || origin.fromTerminal || origin.control || ev.data.imported || ev.data.fromTerminal || end?.imported || end?.fromTerminal) return;
     const settings = this.settings();
@@ -133,14 +143,14 @@ export class PushService {
       const attention = attentionOf({ waiting: true, waitingReason: ev.type === 'approval.request' ? 'approval' : ev.data.kind === 'plan' ? 'plan' : 'question', unread: false, status: 'running' });
       kind = attention!.kind as 'approval' | 'question' | 'plan';
     } else if (end?.outcome === 'error' && settings.failure && origin.initiator !== 'coordination') kind = 'failure';
-    else if (end?.outcome === 'ok' && started?.data.review !== true && ev.data.quiet !== true && settings.scheduled && origin.initiator === 'schedule') kind = 'scheduled';
-    else if (ev.type === 'agent.notice' && settings.notice) kind = ev.data.confirmation ? 'confirmation' : 'notice';
+    else if (!proactive && end?.outcome === 'ok' && started?.data.review !== true && ev.data.quiet !== true && settings.scheduled && origin.initiator === 'schedule') kind = 'scheduled';
+    else if (ev.type === 'agent.notice' && settings.notice && !proactive) kind = ev.data.confirmation ? 'confirmation' : 'notice';
     if (kind) this.enqueue(kind, ev.threadId, `${ev.threadId}:${ev.seq}`, (kind === 'notice' || kind === 'confirmation') ? String(ev.data.text ?? '') : undefined);
   }
-  private enqueue(kind: PushKind, threadId: string | null, key: string, notice?: string): PushRecord {
+  private enqueue(kind: PushKind, threadId: string | null, key: string, notice?: string, brief?: PersonalBrief): PushRecord {
     const settings = this.settings(), now = this.now();
     const thread = threadId ? this.store.getThread(threadId) : null;
-    const record: PushRecord = { key, at: new Date(now).toISOString(), kind, threadId, title: thread?.title ?? 'Calli', result: 'queued', reason: null };
+    const record: PushRecord = { key, at: new Date(now).toISOString(), kind, threadId, title: brief?.title ?? thread?.title ?? 'Calli', result: 'queued', reason: null };
     this.records.unshift(record); this.records.splice(20);
     for (const [id, at] of this.notices) if (now - at >= 60000) this.notices.delete(id);
     this.hourly = this.hourly.filter(t => now - t < 3600000);
@@ -154,9 +164,9 @@ export class PushService {
     this.hourly.push(now);
     if (kind === 'notice' && threadId) this.notices.set(threadId, now);
     const time = new Date(now).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-    const body = [`[Calli] ${labels[kind]} · ${record.title}`, `${thread?.agent ?? 'Calli'} · ${time}`,
+    const body = brief ? [`[Calli] ${brief.title}`, brief.text, ...(settings.baseUrl ? [`打开：${settings.baseUrl}/#/desk`] : [])].join('\n') : [`[Calli] ${labels[kind]} · ${record.title}`, `${thread?.agent ?? 'Calli'} · ${time}`,
       ...(notice !== undefined ? [`来自 agent：${notice}`] : []), ...(settings.baseUrl && threadId ? [`打开：${settings.baseUrl}/#/thread/${encodeURIComponent(threadId)}`] : [])].join('\n');
-    this.queue.push({ record, body, settings });
+    this.queue.push({ record, body, settings, ...(brief ? { briefText: `${brief.title}\n${brief.text}` } : {}) });
     void this.drain();
     return record;
   }
@@ -165,7 +175,7 @@ export class PushService {
     this.working = true;
     try {
       while (this.queue.length && !this.stopped) {
-        const { record, body, settings } = this.queue.shift()!;
+        const { record, body, settings, briefText } = this.queue.shift()!;
         const identity = await this.identity();
         const recipient = settings.recipient || identity.recipient;
         if (!identity.botReady || !recipient) {
@@ -174,6 +184,10 @@ export class PushService {
         for (let attempt = 0; attempt < 3 && !this.stopped; attempt++) {
           try {
             await this.run(['im', '+messages-send', '--as', 'bot', '--user-id', recipient, '--markdown', '-', '--idempotency-key', record.key], body);
+            if (briefText !== undefined && (record.kind === 'morning' || record.kind === 'evening')) {
+              const last = this.store.hubSetting<Partial<Record<BriefKind, LastPersonalBrief>>>(LAST_BRIEF_KEY, {});
+              this.store.saveHubSetting(LAST_BRIEF_KEY, { ...last, [record.kind]: { text: briefText, sentAt: new Date(this.now()).toISOString() } });
+            }
             record.result = 'sent'; record.reason = null; break;
           } catch (e) {
             record.result = attempt === 2 ? 'failed' : 'queued'; record.reason = (e as Error).message;

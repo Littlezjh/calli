@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildDesk, byPeriod, dueLabel, laneOf, noteSections, tilt, type DeskTodo } from '../src/desk.js';
+import { briefStatus, briefTimes, buildDesk, byPeriod, dueLabel, importantOf, laneOf, pinUntil, quadrantOf, safeSourceUrl, sourceLabel, whyHere, noteSections, tilt, type DeskTodo } from '../src/desk.js';
 
 // Saturday 31 October 2026, 15:00 local time.
 const NOW = new Date(2026, 9, 31, 15, 0, 0);
@@ -25,6 +25,76 @@ test('a due date says what it means now, and only a late one needs attention', (
   assert.match(dueLabel(at(10, 5, 9), NOW).text, /11.*5/);
 });
 
+test('by weight: a person\'s answer wins, and an unweighed deadline of their own does not sink', () => {
+  const urgent = { urgent: true, reason: 'overdue' } as const;
+  assert.equal(importantOf(todo({ importance: 'high' })), true);
+  assert.equal(importantOf(todo({ importance: 'normal', dueAt: at(-3) })), false);
+  assert.equal(importantOf(todo({ importance: 'low', dueAt: at(-3) })), false);
+  assert.equal(importantOf(todo({ dueAt: at(-3) })), true);
+  assert.equal(importantOf(todo({ dueAt: at(-3), owner: 'agent' })), false);
+  assert.equal(importantOf(todo()), false);
+  assert.equal(quadrantOf(todo({ importance: 'high', urgency: urgent })), 'now');
+  assert.equal(quadrantOf(todo({ importance: 'high' })), 'plan');
+  assert.equal(quadrantOf(todo({ importance: 'low', urgency: urgent })), 'quick');
+  assert.equal(quadrantOf(todo()), 'later');
+  const now = todo({ importance: 'high', urgency: urgent });
+  const quick = todo({ importance: 'normal', urgency: urgent });
+  const desk = buildDesk([quick, now, todo()], NOW);
+  assert.deepEqual(desk.first.map((p) => p.todo.id), [now.id]);
+  assert.deepEqual(desk.quadrants.quick.map((p) => p.todo.id), [quick.id]);
+  assert.equal(desk.quadrants.later.length, 1);
+});
+
+test('each pile says why it is there, and only lateness calls for attention', () => {
+  const late = whyHere(todo({ dueAt: new Date(2026, 9, 29, 18).toISOString(), urgency: { urgent: true, reason: 'overdue' } }), NOW);
+  assert.deepEqual(late, { urgent: '逾期 2 天', overdue: true, important: null });
+  const soon = whyHere(todo({ dueAt: new Date(2026, 9, 31, 18).toISOString(), urgency: { urgent: true, reason: 'due-soon' }, source: { type: 'lark-message', ref: 'm', from: '老板' } }), NOW);
+  assert.match(soon.urgent!, /^今天 .*18.* 截止$/);
+  assert.equal(soon.overdue, false);
+  assert.equal(soon.important, '老板的飞书消息');
+  assert.equal(whyHere(todo({ urgency: { urgent: true, reason: 'pinned' } }), NOW).urgent, '你钉的');
+  assert.equal(sourceLabel({ type: 'lark-flag', ref: 'f' }), '你收藏的消息');
+  assert.equal(sourceLabel({ type: 'manual', ref: '' }), null);
+  assert.equal(sourceLabel(null), null);
+});
+
+test('a pin runs to the end of that day, Sunday for the week', () => {
+  const end = (month: number, day: number) => new Date(2026, month, day, 23, 59, 59, 999).toISOString();
+  assert.equal(pinUntil('today', NOW), end(9, 31));
+  assert.equal(pinUntil('tomorrow', NOW), end(10, 1));
+  assert.equal(pinUntil('week', NOW), end(10, 1));
+  assert.equal(pinUntil('week', new Date(2026, 10, 1, 9)), end(10, 1));
+  assert.equal(pinUntil('week', new Date(2026, 10, 2, 9)), end(10, 8));
+});
+
+test('the desk says how today\'s brief went, and nothing about earlier days', () => {
+  const at = (day: number, hour: number) => new Date(2026, 9, day, hour).toISOString();
+  const none = { morning: null, evening: null };
+  assert.equal(briefStatus(none, [], NOW), null);
+  assert.equal(briefStatus({ ...none, morning: { text: '早报', sentAt: at(30, 9) } }, [], NOW), null);
+  assert.deepEqual(briefStatus({ ...none, morning: { text: '早报', sentAt: at(31, 9) } }, [], NOW), { kind: 'morning', at: at(31, 9), state: 'sent', text: '早报' });
+  const failed = { kind: 'evening', at: at(31, 19), result: 'failed', reason: 'bot' };
+  assert.deepEqual(briefStatus({ ...none, morning: { text: '早报', sentAt: at(31, 9) } }, [failed], NOW), { kind: 'evening', at: at(31, 19), state: 'failed', reason: 'bot' });
+  const retried = { kind: 'morning', at: at(31, 9), result: 'failed', reason: 'bot' };
+  assert.equal(briefStatus({ ...none, morning: { text: '早报', sentAt: at(31, 10) } }, [retried], NOW)?.state, 'sent');
+  assert.equal(briefStatus(none, [{ kind: 'test', at: at(31, 9), result: 'failed', reason: null }], NOW), null);
+});
+
+test('brief times stay inside the hours a brief can go out', () => {
+  assert.deepEqual(briefTimes('morning').slice(0, 3), ['08:00', '08:30', '09:00']);
+  assert.ok(briefTimes('morning').includes('09:00'));
+  assert.ok(briefTimes('evening').includes('19:00'));
+  assert.equal(briefTimes('evening').at(-1), '22:30');
+});
+
+test('only an https address from outside becomes a link', () => {
+  assert.equal(safeSourceUrl('https://example.test/a'), 'https://example.test/a');
+  assert.equal(safeSourceUrl('javascript:alert(1)'), null);
+  assert.equal(safeSourceUrl('http://example.test/a'), null);
+  assert.equal(safeSourceUrl('not a url'), null);
+  assert.equal(safeSourceUrl(undefined), null);
+});
+
 test('lanes come from what the person set, then from waiting, dates and proposals', () => {
   assert.equal(laneOf(todo({ lane: 'later', dueAt: at(1) }), NOW), 'later');
   assert.equal(laneOf(todo({ state: 'waiting' }), NOW), 'wait');
@@ -36,8 +106,8 @@ test('lanes come from what the person set, then from waiting, dates and proposal
 });
 
 test('the desk leaves out finished plans and suggestions, and puts the urgent first', () => {
-  const late = todo({ dueAt: at(2) });
-  const tonight = todo({ dueAt: new Date(2026, 9, 31, 18).toISOString() });
+  const late = todo({ dueAt: at(2), urgency: { urgent: true, reason: 'overdue' } });
+  const tonight = todo({ dueAt: new Date(2026, 9, 31, 18).toISOString(), urgency: { urgent: true, reason: 'due-soon' } });
   const parent = todo();
   const child = todo({ parentId: parent.id });
   const suggestion = todo({ proposed: true, owner: 'me' });
@@ -125,4 +195,19 @@ test('yesterday follows the local calendar across a daylight-saving change', () 
     if (previous === undefined) delete process.env.TZ;
     else process.env.TZ = previous;
   }
+});
+
+test('the head counts what waits on the person and what is to do now, each matter once', () => {
+  const urgent = { urgent: true, reason: 'overdue' } as const;
+  const count = (...todos: DeskTodo[]) => buildDesk(todos, NOW).needsYou;
+  assert.equal(count(todo({ stage: 'answer' }), todo({ stage: 'review' }), todo({ stage: 'blocked' })), 3);
+  assert.equal(count(todo({ stage: 'working' }), todo({ stage: 'idle' }), todo({ stage: null }), todo()), 0);
+  assert.equal(count(todo({ importance: 'high', urgency: urgent })), 1, 'to do now, whatever its stage');
+  assert.equal(count(todo({ importance: 'high', urgency: urgent, stage: 'answer' })), 1, 'both, counted once');
+  assert.equal(count(todo({ stage: 'answer', done: true }), todo({ stage: 'answer', proposed: true })), 0, 'finished and unaccepted matters are not waiting');
+});
+
+test('a followed source is a card even without an origin', () => {
+  const followed = todo({ subscriptions: [{ kind: 'lark-task', ref: 'x', at: at(1) }] });
+  assert.equal(buildDesk([followed], NOW).lanes.doing.concat(buildDesk([followed], NOW).lanes.later, buildDesk([followed], NOW).lanes.you, buildDesk([followed], NOW).lanes.wait)[0].cards, 1);
 });

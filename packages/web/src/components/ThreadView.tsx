@@ -1,4 +1,4 @@
-import { hydrateHistoryFiles } from '../timeline';
+import { channelRows, hydrateHistoryFiles } from '../timeline';
 import { ApiError, type Api } from '../api';
 import { hydrateWork, HistoryClient, type HistoryDetail, type HistoryWork, type ResourceKind, type WorkFiles } from '../history';
 import { Children, createContext, Fragment, isValidElement, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
@@ -45,13 +45,15 @@ import {
 import { VoiceCloud } from './VoiceOrb';
 import { Lightbox } from './Lightbox';
 import { PlanCopyButton, PlanDownloadButton, PlanReader } from './PlanReader';
-import { IconBell, ActivityIcon, IconAgents, IconCheck, IconChevron, IconClose, IconCompact, IconCopy, IconEdit, IconFile, IconFork, IconHand, IconHandover, IconList, IconQuote, IconWorktree } from './icons';
+import { IconBell, ActivityIcon, IconAgents, IconCheck, IconChevron, IconClose, IconCompact, IconCopy, IconEdit, IconFile, IconFork, IconHand, IconHandover, IconList, IconQuote, IconTray, IconWorktree } from './icons';
 import { t } from '../i18n';
 
 // The daemon's confirmation marker is replaced by the localized notice label.
 const PERSONAL_CONFIRMATION_TEXT = '待你确认';
 
 interface Props {
+  /** Where a matter waiting for confirmation is looked at, when not the plans page: her desk's new finds. */
+  onOpenFinds?: () => void;
   beforeItems?: ReactNode;
   chain?: boolean;
   observeOlder?: boolean;
@@ -107,7 +109,7 @@ const RECENT_TURNS = 30;
 /** Scrolling up to within this distance of the top unfolds or fetches the earlier turns. */
 const NEAR_TOP_PX = 600;
 
-export function ThreadView({ chain = false, observeOlder = true, beforeItems, olderLabel, olderError, revealTurnId, historyApi, historyThreadId, items: originalItems, roots, loadImage, loadFile, onOpenFile, onPreview, hasOlder, loadingOlder, onLoadOlder, onFork, forkAnyTurn, onEdit, revision = 0, takeover, resume }: Props) {
+export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, beforeItems, olderLabel, olderError, revealTurnId, historyApi, historyThreadId, items: originalItems, roots, loadImage, loadFile, onOpenFile, onPreview, hasOlder, loadingOlder, onLoadOlder, onFork, forkAnyTurn, onEdit, revision = 0, takeover, resume }: Props) {
   const [loadedFiles, setLoadedFiles] = useState<{ client?: HistoryClient; files: Map<string, WorkFiles> }>({ files: new Map() });
   const historyClient = useMemo(() => {
     if (!historyApi || !historyThreadId) return undefined;
@@ -246,7 +248,9 @@ export function ThreadView({ chain = false, observeOlder = true, beforeItems, ol
         case 'handover-summary': return <HandoverSummary key={item.key} item={item} />;
         case 'notice': {
           const title = item.confirmation ? item.text.replace(new RegExp(`^${PERSONAL_CONFIRMATION_TEXT}[：:]?`), '') : item.text;
-          return <div key={item.key} className="agent-notice"><IconBell size={14} /><span>{item.confirmation ? (title ? t('personal.confirmTitle', title) : t('personal.confirm')) : <>{t('personal.notice')} {title}</>}{item.confirmation && <> · <a href="#/todos">{t('personal.openPlans')}</a></>}</span></div>;
+          // In her own conversation a matter to confirm is looked at on the desk, among the new finds.
+          const go = onOpenFinds ? <button type="button" className="agent-notice-link" onClick={onOpenFinds}>{t('personal.openFinds')}</button> : <a href="#/todos">{t('personal.openPlans')}</a>;
+          return <div key={item.key} className="agent-notice"><IconBell size={14} /><span>{item.confirmation ? (title ? t('personal.confirmTitle', title) : t('personal.confirm')) : <>{t('personal.notice')} {title}</>}{item.confirmation && <> · {go}</>}</span></div>;
         }
         case 'model-switch': return <div key={item.key} className="context-compaction handover-divider">{t('auto.switched', item.model, item.previous, t(item.reason === 'exhausted' ? 'auto.exhausted' : 'auto.near'))}</div>;
         case 'quota-resume': return <div key={item.key} className="context-compaction handover-divider">{t('auto.resumed')}</div>;
@@ -258,6 +262,10 @@ export function ThreadView({ chain = false, observeOlder = true, beforeItems, ol
               <span className="work-toggle"><span className="work-label">{t('view.backgroundTurn')}</span></span>
             </div>
           );
+          // Nobody said this either: a channel handed over what it read. A quiet line, not a bubble.
+          if (item.channel) return channelRows(item.channel, item.text).map((row, index) => row.kind === 'person'
+            ? <div key={`${item.key}:${index}`} className="row user" data-turn={item.turnId}><div className="bubble">{row.text}</div></div>
+            : <div key={`${item.key}:${index}`} className="row channel-note" data-turn={item.turnId}><IconTray size={13} /><span>{row.text}</span></div>);
           if (item.coordination) return <DeliveredNote key={item.key} turnId={item.turnId} note={item.coordination} text={item.text} />;
           // Notes (and the older single quote) ride in the message text; drawn apart here.
           const noted = splitNotes(item.text);
