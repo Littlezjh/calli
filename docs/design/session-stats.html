@@ -1,0 +1,750 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Calli 会话统计与轨迹 · 可交互草图（待审）</title>
+  <style>
+    /* Tokens copied from packages/web/src/styles.css (paper), so the sketch opens on its own. */
+    :root {
+      --bg: #f8f6f1; --sidebar: #f1efe9; --surface: #ffffff; --surface-2: #fbfaf7;
+      --text: #1f1e1c; --muted: #827f77; --faint: #a9a69e; --border: #e5e2da; --border-strong: #d6d2c8;
+      --hover: rgba(31, 30, 28, 0.045); --active: rgba(31, 30, 28, 0.08);
+      --accent: #1f1e1c; --accent-fg: #ffffff; --positive: #2f7d5b;
+      --user-bg: #eceae4; --code-bg: #efede7; --warn: #c2410c; --danger: #b42318; --danger-bg: #fdecea;
+      --scrim: rgba(24, 23, 21, 0.32);
+      --shadow-pop: 0 14px 40px rgba(31, 30, 28, 0.14), 0 2px 6px rgba(31, 30, 28, 0.06);
+      --shadow-card: 0 1px 2px rgba(31, 30, 28, 0.04), 0 6px 20px rgba(31, 30, 28, 0.05);
+      --radius-pill: 999px; --radius-sm: 8px; --radius: 12px; --radius-lg: 18px;
+      --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Noto Sans CJK SC', 'Microsoft YaHei', sans-serif;
+      --mono: ui-monospace, 'SF Mono', Menlo, Consolas, 'Noto Sans Mono CJK SC', monospace;
+    }
+    [data-theme='dark'] {
+      --bg: #1b1a18; --sidebar: #161514; --surface: #252422; --surface-2: #201f1d;
+      --text: #ecebe7; --muted: #9a978f; --faint: #6f6c65; --border: #32302c; --border-strong: #423f3a;
+      --hover: rgba(236, 235, 231, 0.06); --active: rgba(236, 235, 231, 0.1);
+      --accent: #ecebe7; --accent-fg: #1b1a18; --positive: #3f9a72;
+      --user-bg: #2f2d2a; --code-bg: #201f1d; --warn: #f0935a; --danger: #f97066; --danger-bg: #3b1f1c;
+      --scrim: rgba(0, 0, 0, 0.55);
+      --shadow-pop: 0 14px 40px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.3);
+      --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.25);
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: var(--text); background: var(--bg); font-family: var(--font); font-size: 14px; -webkit-font-smoothing: antialiased; }
+    button { font: inherit; cursor: pointer; color: inherit; border: 0; background: none; padding: 0; }
+    button:focus-visible { outline: 2px solid var(--border-strong); outline-offset: 1px; }
+    svg { flex: none; }
+
+    /* ---------- Sketch chrome ---------- */
+    .bar { position: sticky; top: 0; z-index: 100; display: flex; gap: 10px 16px; align-items: center; flex-wrap: wrap;
+      padding: 12px 24px; background: var(--bg); border-bottom: 1px solid var(--border); }
+    .bar h1 { font-size: 15px; font-weight: 650; margin: 0 6px 0 0; }
+    .ctl { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+    .seg { display: inline-flex; padding: 3px; border-radius: var(--radius-pill); background: var(--sidebar); border: 1px solid var(--border); }
+    .seg button { padding: 5px 12px; border-radius: var(--radius-pill); font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+    .seg button[aria-pressed='true'] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-card); font-weight: 600; }
+    .shots { display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start; max-width: 1480px; margin: 22px auto 0; padding: 0 24px; }
+    .shot > h2 { font-size: 13px; font-weight: 650; margin: 0 0 4px; }
+    .shot > p { margin: 0 0 12px; color: var(--muted); font-size: 12.5px; line-height: 1.7; max-width: 640px; }
+    .frame { border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; background: var(--bg); box-shadow: var(--shadow-card); position: relative; }
+    .frame.desk { width: 1000px; height: 680px; }
+    .frame.phone { width: 390px; height: 800px; border-radius: 34px; }
+    .still .pop-panel, .still .sheet, .still .scrim, .still .trace, .still .card { animation: none; }
+    .notes { max-width: 1480px; margin: 26px auto 60px; padding: 0 24px; color: var(--muted); font-size: 13px; line-height: 1.8; }
+    .notes h2 { font-size: 13px; color: var(--text); font-weight: 650; margin: 0 0 4px; }
+    .notes ul { margin: 0; padding-left: 18px; max-width: 900px; }
+    .notes b { color: var(--text); font-weight: 600; }
+
+    /* ---------- App (mirrors the real classes and sizes) ---------- */
+    .app { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--bg); }
+    .topbar { position: relative; z-index: 20; flex-shrink: 0; display: flex; align-items: center; gap: 8px; height: 52px; padding: 0 12px; }
+    .topbar-heading { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+    .topbar-title { font-size: 14px; font-weight: 600; letter-spacing: -0.005em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .topbar-actions { display: flex; align-items: center; flex-shrink: 0; gap: 2px; }
+    .icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; flex-shrink: 0; border-radius: 50%; color: var(--text); transition: background .12s; }
+    .icon-btn:hover { background: var(--hover); }
+    .icon-btn[aria-pressed='true'] { background: var(--active); }
+    .icon-btn.small { width: 32px; height: 32px; }
+    .icon-btn:disabled { color: var(--faint); cursor: default; background: none; }
+
+    /* A quiet reading: same look as the context ring's button in the composer. */
+    .pop { position: relative; display: inline-flex; min-width: 0; }
+    .stat { display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 0 9px; border-radius: var(--radius-pill);
+      color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; transition: background .12s, color .12s; }
+    .stat:hover, .stat[aria-expanded='true'] { background: var(--hover); color: var(--muted); }
+    .stat .dot { margin: 0 1px; opacity: .8; }
+    .stat .approx { margin-right: -2px; }
+    .stats-top { display: flex; align-items: center; margin-right: 4px; }
+    .stats-below { display: flex; justify-content: center; gap: 2px; padding-top: 4px; }
+
+    .body { position: relative; flex: 1; display: flex; min-height: 0; }
+
+    /* The corner card (Codex's way): one button opens it, it stays until closed. */
+    .card { position: absolute; z-index: 30; top: 4px; right: 16px; width: 300px; padding: 12px 6px 6px; border: 1px solid var(--border); border-radius: 20px;
+      background: var(--surface-2); box-shadow: var(--shadow-card); animation: pop-in .14s cubic-bezier(.2,.8,.2,1); }
+    .card:not(.drop) { max-height: calc(100% - 132px); overflow-y: auto; }
+    /* The conversation steps aside while the card is open, so nothing it says is hidden. */
+    .convo.with-card .scroll { padding-right: 340px; }
+    .card.drop { top: 64px; left: 10px; right: 10px; width: auto; z-index: 40; box-shadow: var(--shadow-pop); }
+    .card-head, .card-sec { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 2px 12px 6px; color: var(--muted); font-size: 13px; }
+    .card-sec { padding-top: 6px; }
+    .card-head .v, .card-sec .v { color: var(--faint); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+    .card-row { display: grid; grid-template-columns: 18px 1fr auto; align-items: center; gap: 12px; width: 100%; min-height: 36px; padding: 0 12px; border-radius: 10px; font-size: 13.5px; text-align: left; }
+    .card-row > svg { color: var(--muted); }
+    .card-row .lbl { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .card-row .val { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .card-row.btn:hover { background: var(--hover); }
+    .card-row.danger > svg, .card-row.danger .val { color: var(--danger); }
+    .card-row.more .lbl { color: var(--muted); }
+    .card-row.more > svg { color: var(--faint); }
+    .card-dl { padding: 0 12px 6px 42px !important; font-size: 12.5px !important; gap: 5px 14px !important; }
+    .card-note { padding: 0 12px 4px 42px; color: var(--faint); font-size: 11.5px; line-height: 1.5; }
+    .card-rule { height: 1px; background: var(--border); margin: 6px 12px; }
+    .mini { display: block; width: calc(100% - 12px); margin: 0 6px 2px; padding: 8px 6px; border-radius: 10px; }
+    .mini:hover { background: var(--hover); }
+    .mini-row { position: relative; height: 6px; }
+    .mini-row > span { position: absolute; top: 1px; height: 4px; min-width: 2px; border-radius: 2px; display: flex; overflow: hidden; background: var(--faint); }
+    .mini-row > span.model { background: none; }
+    .mini-row > span.fail { background: var(--danger); }
+    .mini-row .w { background: var(--border-strong); height: 100%; }
+    .mini-row .g { background: var(--muted); height: 100%; flex: 1; }
+    .mini-row .live .g { background: repeating-linear-gradient(-45deg, var(--muted) 0 3px, var(--faint) 3px 6px); background-size: 8.49px 8.49px; animation: crawl .8s linear infinite; }
+    .convo { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+    .scroll { flex: 1; overflow: auto; padding: 8px 28px 20px; }
+    .col { max-width: 720px; margin: 0 auto; }
+    .bubble { margin: 12px 0 0 auto; width: fit-content; max-width: 82%; background: var(--user-bg); border-radius: 18px; padding: 10px 16px; line-height: 1.65; font-size: 14.5px; }
+    .workline { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13.5px; margin: 18px 0 14px; padding-bottom: 14px; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+    .workline .pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); animation: pulse 1.2s ease-in-out infinite; }
+    @keyframes pulse { 50% { opacity: .25; } }
+    .answer { line-height: 1.8; font-size: 14.5px; margin: 0; }
+    .meta { display: flex; align-items: center; gap: 12px; color: var(--faint); font-size: 12px; margin-top: 10px; }
+    .earlier { color: var(--faint); font-size: 12.5px; text-align: center; margin: 4px 0 2px; }
+
+    .composer { padding: 0 28px 14px; }
+    .composer-box { max-width: 720px; margin: 0 auto; border: 1px solid var(--border); border-radius: 22px; background: var(--surface); box-shadow: var(--shadow-card); }
+    .composer-box .ph { padding: 14px 16px 4px; min-height: 46px; color: var(--faint); font-size: 14.5px; }
+    .composer-bar { display: flex; align-items: center; gap: 4px; padding: 6px 8px 8px; }
+    .spacer { flex: 1; }
+    .tool-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 0 10px; border-radius: 999px; color: var(--muted); font-size: 13.5px; white-space: nowrap; }
+    .tool-btn:hover { background: var(--hover); }
+    .model-btn { background: var(--hover); color: var(--text); padding: 0 10px 0 12px; }
+    .usage { display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 0 8px; border-radius: 999px; color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; }
+    .usage .track { stroke: var(--border-strong); } .usage .fill { stroke: currentColor; }
+    .send-btn { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; margin-left: 4px; border-radius: 50%; background: var(--accent); color: var(--accent-fg); opacity: .3; }
+    .send-btn.stop { opacity: 1; }
+    .send-btn.stop i { width: 10px; height: 10px; border-radius: 2px; background: currentColor; }
+
+    /* ---------- Popovers ---------- */
+    .pop-panel { position: absolute; z-index: 50; width: 296px; padding: 6px; border: 1px solid var(--border); border-radius: 16px;
+      background: var(--surface); box-shadow: var(--shadow-pop); animation: pop-in .14s cubic-bezier(.2,.8,.2,1); text-align: left; }
+    .pop-panel.below { top: calc(100% + 8px); right: 0; }
+    .pop-panel.above { bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); animation-name: pop-in-x; }
+    @keyframes pop-in { from { opacity: 0; transform: translateY(4px); } }
+    @keyframes pop-in-x { from { opacity: 0; transform: translate(-50%, 4px); } }
+    .pop-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 8px 10px 8px; }
+    .pop-head .t { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12.5px; }
+    .pop-head .v { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .rule { height: 1px; background: var(--border); margin: 0 6px 4px; }
+    dl.rows { display: grid; grid-template-columns: 1fr auto; gap: 8px 18px; margin: 0; padding: 6px 10px 8px; font-size: 13px; }
+    dl.rows dt { color: var(--muted); }
+    dl.rows dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+    dl.rows dd .sub { color: var(--faint); font-size: 12px; margin-left: 4px; }
+    .foot { padding: 0 10px 8px; color: var(--faint); font-size: 12px; line-height: 1.55; }
+    .pop-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px; border-radius: 10px; font-size: 13.5px; text-align: left; }
+    .pop-item:hover { background: var(--hover); }
+    .pop-item .grow { flex: 1; }
+    .pop-item .hint { color: var(--faint); }
+    /* Phones: the same panel, as a sheet at the bottom. */
+    .scrim { position: absolute; inset: 0; z-index: 70; background: var(--scrim); animation: fade .14s; }
+    @keyframes fade { from { opacity: 0; } }
+    .sheet { position: absolute; z-index: 71; left: 8px; right: 8px; bottom: 8px; padding: 6px 6px 10px; border-radius: 24px; background: var(--surface);
+      box-shadow: var(--shadow-pop); animation: sheet-in .2s cubic-bezier(.2,.8,.2,1); }
+    .sheet .grab { width: 36px; height: 4px; border-radius: 2px; background: var(--border-strong); margin: 6px auto 4px; }
+    .sheet dl.rows { font-size: 14px; gap: 10px 18px; }
+    @keyframes sheet-in { from { transform: translateY(24px); opacity: 0; } }
+
+    /* ---------- Trace panel ---------- */
+    .trace { width: 452px; flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--border); background: var(--surface-2); animation: slide-in .18s cubic-bezier(.2,.8,.2,1); }
+    @keyframes slide-in { from { transform: translateX(16px); opacity: 0; } }
+    .trace.sheetview { position: absolute; inset: 0; z-index: 60; width: auto; border: 0; background: var(--bg); animation: sheet-in .2s cubic-bezier(.2,.8,.2,1); }
+    .trace-head { display: flex; align-items: center; gap: 4px; height: 48px; padding: 0 8px 0 16px; flex-shrink: 0; }
+    .trace.sheetview .trace-head { height: 56px; padding: 0 12px; gap: 8px; }
+    .trace-head h3 { margin: 0; font-size: 14px; font-weight: 600; flex: 1; }
+    .turn-nav { display: inline-flex; align-items: center; gap: 0; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+    .turn-nav span { padding: 0 2px; min-width: 52px; text-align: center; }
+    .trace-body { position: relative; flex: 1; overflow: auto; padding: 0 0 16px; background: inherit; }
+    .ov-wrap { position: sticky; top: 0; z-index: 3; padding: 0 16px 10px; background: inherit; }
+    .sess { display: flex; align-items: center; gap: 2px; margin: 0 10px 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+    .trace-sum { padding: 2px 16px 12px; font-size: 13px; line-height: 1.65; font-variant-numeric: tabular-nums; }
+    .trace-sum .q { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 2px; }
+    .trace-sum .m { color: var(--muted); font-size: 12.5px; }
+    .trace-sum .err { color: var(--danger); }
+
+    .ov { position: relative; padding: 12px 12px 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+    .ov-plot { position: relative; }
+    .ov-grid { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px dashed var(--border); }
+    .ov-row { position: relative; height: 11px; }
+    .ov-row button { position: absolute; top: 2px; height: 7px; min-width: 3px; border-radius: 3px; display: flex; overflow: hidden; padding: 0; transition: opacity .12s; }
+    .ov-row button:focus-visible { outline-offset: 2px; }
+    .ov-row .w { background: var(--border-strong); height: 100%; }
+    .ov-row .g { background: var(--muted); height: 100%; flex: 1; }
+    .ov-row .tool { background: var(--faint); width: 100%; height: 100%; }
+    .ov-row .tool.fail { background: var(--danger); }
+    .ov-row .mark { top: 1px; width: 9px; min-width: 9px; height: 9px; border-radius: 50%; margin-left: -4px; background: var(--surface); box-shadow: inset 0 0 0 2px var(--muted); }
+    .ov-row .live .g { background: repeating-linear-gradient(-45deg, var(--muted) 0 3px, var(--faint) 3px 6px); background-size: 8.49px 8.49px; animation: crawl .8s linear infinite; }
+    @keyframes crawl { to { background-position: 8.49px 0; } }
+    .ov.has-sel .ov-row button:not(.sel):not(.hl) { opacity: .32; }
+    .ov-row button.hl { box-shadow: 0 0 0 2px var(--surface), 0 0 0 3px var(--muted); }
+    .ov-axis { position: relative; height: 16px; margin-top: 6px; color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+    .ov-axis span { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+    .ov-axis span:first-child { transform: none; }
+    .ov-legend { display: flex; gap: 12px; margin-top: 4px; color: var(--faint); font-size: 11.5px; }
+    .ov-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: -0.5px; }
+    .tip { position: absolute; z-index: 5; pointer-events: none; padding: 6px 9px; border-radius: 8px; background: var(--text); color: var(--bg); font-size: 12px; line-height: 1.5;
+      white-space: nowrap; transform: translate(-50%, calc(-100% - 6px)); box-shadow: var(--shadow-pop); font-variant-numeric: tabular-nums; }
+
+    .steps { padding: 0 8px; }
+    .step { display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 8px; width: 100%; padding: 7px 8px; border-radius: 10px; text-align: left; }
+    .step:hover { background: var(--hover); }
+    .step.sel { background: var(--active); }
+    .step .ic { color: var(--muted); display: flex; justify-content: center; }
+    .step .main { min-width: 0; }
+    .step .tt { font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .step .tt .fail { color: var(--danger); font-size: 12px; margin-left: 6px; }
+    .step .sub { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; font-variant-numeric: tabular-nums; }
+    .step .tm { text-align: right; font-variant-numeric: tabular-nums; line-height: 1.35; }
+    .step .tm .d { color: var(--muted); font-size: 12.5px; display: block; }
+    .step .tm .s { color: var(--faint); font-size: 11px; display: block; }
+    .step-detail { margin: 2px 8px 10px 44px; font-size: 12.5px; }
+    .step-detail dl.rows { padding: 2px 0 6px; font-size: 12.5px; gap: 6px 18px; }
+    .step-detail pre { margin: 4px 0 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--code-bg); font: 12px/1.6 var(--mono); white-space: pre-wrap; word-break: break-word; max-height: 140px; overflow: auto; }
+    .step-detail .quote { color: var(--muted); line-height: 1.65; }
+    .step-detail .foot { padding: 4px 0 0; }
+
+    /* ---------- Phone ---------- */
+    .phone .topbar { height: 60px; padding: 0 10px; gap: 10px; }
+    .phone .back { width: 44px; height: 44px; border-radius: 50%; background: var(--surface); box-shadow: var(--shadow-card); display: grid; place-items: center; flex-shrink: 0; }
+    .phone .topbar-title { font-size: 16px; font-weight: 650; }
+    .phone .pill { display: flex; align-items: center; padding: 2px 4px; border-radius: 999px; background: var(--surface); box-shadow: var(--shadow-card); }
+    .phone .pill .icon-btn { width: 36px; height: 40px; }
+    .phone .scroll { padding: 4px 16px 16px; }
+    .phone .bubble { max-width: 88%; font-size: 15px; }
+    .phone .answer { font-size: 15px; }
+    .phone .composer { padding: 0 14px 12px; }
+    .phone .composer-box { border-radius: 26px; display: flex; align-items: center; padding: 6px; }
+    .phone .composer-box .ph { flex: 1; padding: 0 10px; min-height: 0; font-size: 15px; }
+    .phone .stats-below { padding-top: 6px; }
+    .phone .trace-sum { font-size: 13.5px; }
+    .phone .step { padding: 9px 8px; }
+    .phone .step .tt { font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="bar">
+    <h1>会话统计与轨迹 · 草图</h1>
+    <span class="ctl">统计放在 <span class="seg" data-key="pos"><button data-v="top">右上角读数</button><button data-v="card">右上角卡片</button><button data-v="below">输入框下方</button></span></span>
+    <span class="ctl">数据 <span class="seg" data-key="source"><button data-v="claude">Claude · Codex</button><button data-v="pi">pi · zcode</button></span></span>
+    <span class="ctl">状态 <span class="seg" data-key="running"><button data-v="0">已完成</button><button data-v="1">运行中</button></span></span>
+    <span class="ctl">主题 <span class="seg" data-key="theme"><button data-v="light">浅色</button><button data-v="dark">深色</button></span></span>
+  </div>
+
+  <div class="shots">
+    <section class="shot">
+      <h2>桌面</h2>
+      <p>点读数看明细，点右上角的轨迹按钮打开这一轮的时间线。悬停时间条看具体时刻，点时间条或下面的行展开详情。</p>
+      <div class="frame desk" id="desk"></div>
+    </section>
+    <section class="shot">
+      <h2>手机</h2>
+      <p>读数和明细的点法和桌面一样，明细从底部弹出。轨迹铺满整屏。</p>
+      <div class="frame phone" id="phone"></div>
+    </section>
+  </div>
+
+  <div class="notes">
+    <h2>说明</h2>
+    <ul>
+      <li><b>右上角读数与输入框下方。</b>右上角不占输入区，读数挨着轨迹按钮；但手机顶栏放不下读数，只能放进轨迹页顶部。输入框下方和 DSH 一样一眼能看到，手机上多占一行，约 26px。</li>
+      <li><b>右上角卡片。</b>学 Codex：顶栏只多一个按钮，读数、Token 明细和最近一轮的迷你时间线都在卡片里，失败的步骤直接列出来，「查看全部」打开完整轨迹。卡片在桌面上一直开着，直到再点按钮，盖在对话右上方；手机上从顶栏下拉，点别处收起。</li>
+      <li><b>tok/s 口径。</b>输出 token 除以生成时间，不含等待首个 token 的时间。pi、zcode 用原生上报的耗时；Claude、Codex 不报，由 hub 用收到第一段和最后一段输出的时间来算，读数前加「约」。</li>
+      <li><b>缓存命中。</b>缓存读取 ÷（未缓存输入 + 缓存读取 + 缓存写入）。没有缓存数据就不显示这一项，不显示 0。</li>
+      <li><b>按需加载。</b>首屏只取汇总；点开读数才取明细，打开轨迹才读这一轮的步骤。</li>
+      <li>数字都是示例数据。</li>
+    </ul>
+  </div>
+
+<script>
+(() => {
+  // ---------- Icons: 24px grid, 1.8 stroke, like icons.tsx ----------
+  const P = {
+    folder: '<path d="M3 6h6l2 2h10v11H3z"/>',
+    files: '<path d="M3 18V5h5l2 2h7v2"/><path d="M9 11h12v9H9z"/>',
+    term: '<path d="M5 7l4 4-4 4M12 17h7"/>',
+    more: '<path d="M6 12h.01M12 12h.01M18 12h.01" stroke-width="2.6"/>',
+    pen: '<path d="M4 20h4L19 9l-4-4L4 16zM14 6l4 4"/>',
+    trace: '<path d="M4 4v16"/><path d="M7.5 7.5h6M10.5 12h9M8.5 16.5h5"/>',
+    gauge: '<path d="M4.6 17.5a8.5 8.5 0 1 1 14.8 0"/><path d="M12 13.2l3.6-3.8"/>',
+    db: '<ellipse cx="12" cy="6" rx="7" ry="2.8"/><path d="M5 6v12c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8V6"/><path d="M5 12c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8"/>',
+    back: '<path d="M15 5l-7 7 7 7"/>',
+    left: '<path d="M14.5 6l-6 6 6 6"/>',
+    right: '<path d="M9.5 6l6 6-6 6"/>',
+    down: '<path d="M6 9.5l6 6 6-6"/>',
+    close: '<path d="M6 6l12 12M18 6L6 18"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    shield: '<path d="M12 3.5l7 2.8v5c0 4.3-2.9 7.8-7 9.2-4.1-1.4-7-4.9-7-9.2v-5z"/>',
+    up: '<path d="M12 19V5M6 11l6-6 6 6"/>',
+    copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>',
+    user: '<path d="M5 5.5h14v10H10l-5 4z"/>',
+    model: '<path d="M12 3.8l1.9 4.9 4.9 1.9-4.9 1.9L12 17.4l-1.9-4.9-4.9-1.9 4.9-1.9z"/><path d="M18.5 16.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/>',
+    read: '<path d="M4 5h6a2 2 0 0 1 2 2v12a2 2 0 0 0-2-2H4zM20 5h-6a2 2 0 0 0-2 2v12a2 2 0 0 1 2-2h6z"/>',
+    search: '<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/>',
+    answer: '<path d="M5 7h14M5 12h14M5 17h9"/>',
+  };
+  P.summary = '<circle cx="6.5" cy="7" r="2.2"/><circle cx="6.5" cy="17" r="2.2"/><path d="M11.5 7H20M11.5 17H20"/>';
+  P.clock = '<circle cx="12" cy="12" r="8"/><path d="M12 8v4.4l2.8 1.7"/>';
+  P.wrench = '<path d="M14.6 5.2a4.2 4.2 0 0 0-5.1 5.4L4.4 15.7a1.9 1.9 0 0 0 2.7 2.7l5.1-5.1a4.2 4.2 0 0 0 5.4-5.1l-2.6 2.6-2.3-.4-.4-2.3z"/>';
+  P.alert = '<circle cx="12" cy="12" r="8"/><path d="M12 8v4.6M12 15.8h.01"/>';
+  P.edit = P.pen; P.run = P.term;
+  const ic = (name, size = 18) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[name]}</svg>`;
+
+  // ---------- Sample data ----------
+  const TURNS = {
+    12: {
+      q: '商品列表往下滚的时候会跳一下，图片加载出来以后更明显。查一下原因并修掉。',
+      a: '找到了：行高只在第一次渲染时量一次，图片加载后没有重新量。改成图片加载完再量，e2e 和 lint 都过了。',
+      steps: [
+        { k: 'user', t: '提问', s: 0 },
+        { k: 'model', n: 1, s: 0.4, w: 2.1, g: 4.3, inp: 38204, cache: 37112, out: 412, note: '先读组件，找量行高的地方' },
+        { k: 'read', t: '读取了 src/components/ProductList.tsx', s: 6.9, d: 0.1, out: '214 行' },
+        { k: 'search', t: '搜索了 measureRow', s: 7.1, d: 0.4, out: 'src/components/ProductList.tsx:48\nsrc/hooks/useRowHeight.ts:12' },
+        { k: 'model', n: 2, s: 7.6, w: 1.6, g: 14.2, inp: 41760, cache: 40988, out: 1104, note: '改成 onLoad 后重新量' },
+        { k: 'edit', t: '编辑了 src/components/ProductList.tsx', s: 23.5, d: 0.2, out: '+6 −2' },
+        { k: 'run', t: '运行了 npm run e2e -- product-list', s: 23.8, d: 92.0, out: '6 passed (1m 31s)' },
+        { k: 'model', n: 3, s: 116.0, w: 1.9, g: 3.1, inp: 43020, cache: 42611, out: 236 },
+        { k: 'run', t: '运行了 npm run lint', s: 121.2, d: 3.2, fail: true, out: "ProductList.tsx:52  'height' is assigned a value but never used" },
+        { k: 'model', n: 4, s: 124.6, w: 1.4, g: 6.0, inp: 43611, cache: 43280, out: 402 },
+        { k: 'edit', t: '编辑了 src/components/ProductList.tsx', s: 132.1, d: 0.2, out: '+0 −1' },
+        { k: 'run', t: '运行了 npm run lint', s: 132.4, d: 2.9, out: 'No problems' },
+        { k: 'model', n: 5, s: 135.5, w: 1.7, g: 21.8, inp: 44102, cache: 43790, out: 1618, note: '写回答' },
+        { k: 'answer', t: '回答', s: 159.0 },
+      ],
+    },
+    11: {
+      q: '这个列表组件用的是虚拟滚动吗？',
+      a: '是的，用的是自己写的 useVirtualRows，按估算行高渲染可见区上下各 6 行。',
+      steps: [
+        { k: 'user', t: '提问', s: 0 },
+        { k: 'model', n: 1, s: 0.3, w: 2.4, g: 8.1, inp: 36120, cache: 35210, out: 520 },
+        { k: 'read', t: '读取了 src/hooks/useVirtualRows.ts', s: 10.9, d: 0.1, out: '88 行' },
+        { k: 'model', n: 2, s: 11.1, w: 1.8, g: 12.4, inp: 37944, cache: 37500, out: 905 },
+        { k: 'answer', t: '回答', s: 25.3 },
+      ],
+    },
+  };
+  const SESSION = { turns: 12, steps: 86, llmMs: 582000, toolMs: 845000, ttft: 1.8, tps: 74, uncached: 182113, cacheRead: 50712904, cacheWrite: 61322, output: 191864, reasoning: 40112 };
+  const MODEL = { claude: { label: 'Opus 4.7', id: 'claude-opus-4-7' }, pi: { label: 'GLM-5.2', id: 'glm-5.2' } };
+
+  // ---------- State ----------
+  const state = { pos: 'top', source: 'claude', running: '0', theme: 'light', open: null, trace: { desk: false, phone: false }, turn: 12, sel: { desk: null, phone: null }, expanded: { desk: new Set(), phone: new Set() }, elapsed: 141, liveTps: 75, card: { desk: false, phone: false }, cardTok: { desk: false, phone: false } };
+
+  // ---------- Formatting ----------
+  const n0 = (v) => v.toLocaleString('en-US');
+  const compact = (v) => v >= 1e6 ? (v / 1e6).toFixed(1).replace(/\.0$/, '') + 'M' : v >= 1e3 ? (v / 1e3).toFixed(v >= 1e5 ? 0 : 1).replace(/\.0$/, '') + 'K' : String(v);
+  const secs = (s) => {
+    if (s < 10) return `${s.toFixed(1)} 秒`;
+    if (s < 60) return `${Math.round(s)} 秒`;
+    const m = Math.floor(s / 60), r = Math.round(s - m * 60);
+    return r ? `${m} 分 ${r} 秒` : `${m} 分`;
+  };
+  const clock = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+  const pct = (v) => (Math.floor(v * 1000) / 10).toFixed(1) + '%';
+  const est = () => state.source === 'claude';
+  const approx = () => est() ? '约 ' : '';
+  const running = () => state.running === '1';
+
+  // ---------- Turn data, with the live tail when running ----------
+  function turnSteps(turn) {
+    const base = TURNS[turn].steps.map((s) => ({ ...s }));
+    if (!(running() && turn === 12)) return base;
+    const steps = base.filter((s) => s.k !== 'answer');
+    const last = steps[steps.length - 1];
+    last.g = Math.max(0.5, state.elapsed - last.s - last.w);
+    last.out = Math.round(last.g * state.liveTps);
+    last.live = true;
+    return steps;
+  }
+  const endOf = (s) => s.s + (s.k === 'model' ? s.w + s.g : s.d || 0);
+  function summary(turn) {
+    const steps = turnSteps(turn);
+    const total = Math.max(...steps.map(endOf));
+    const models = steps.filter((s) => s.k === 'model');
+    const tools = steps.filter((s) => s.d !== undefined && s.k !== 'user' && s.k !== 'answer');
+    const out = models.reduce((a, s) => a + s.out, 0), gen = models.reduce((a, s) => a + s.g, 0);
+    const inp = models.reduce((a, s) => a + s.inp, 0), cache = models.reduce((a, s) => a + s.cache, 0);
+    return { steps, total, llm: models.reduce((a, s) => a + s.w + s.g, 0), tool: tools.reduce((a, s) => a + s.d, 0), out, tps: out / gen, inp, cache, fails: steps.filter((s) => s.fail).length };
+  }
+  const stepTitle = (s) => s.k === 'model' ? `模型请求 #${s.n}` : s.t;
+  function stepSub(s) {
+    if (s.k === 'model') return s.live ? `等待 ${secs(s.w)} · 生成中 · ${approx()}${Math.round(state.liveTps)} tok/s` : `等待 ${secs(s.w)} · 生成 ${secs(s.g)} · ${approx()}${Math.round(s.out / s.g)} tok/s`;
+    if (s.k === 'user') return TURNS[state.turn].q;
+    if (s.k === 'answer') return TURNS[state.turn].a;
+    return s.out;
+  }
+
+  // ---------- Pieces ----------
+  function statButtons(frame, where) {
+    const tps = running() ? state.liveTps : SESSION.tps;
+    const hit = SESSION.cacheRead / (SESSION.uncached + SESSION.cacheRead + SESSION.cacheWrite);
+    const total = SESSION.uncached + SESSION.cacheRead + SESSION.cacheWrite + SESSION.output;
+    const pop = (which) => Boolean(state.open && state.open.frame === frame && state.open.which === which && state.open.where === where);
+    const one = (which, icon, label, aria) => `<span class="pop"><button class="stat" data-act="open" data-frame="${frame}" data-which="${which}" data-where="${where}" aria-haspopup="dialog" aria-expanded="${pop(which)}" aria-label="${aria}">${ic(icon, 15)}<span>${label}</span></button>${pop(which) && frame === 'desk' ? panel(which, where) : ''}</span>`;
+    return one('activity', 'gauge', `${SESSION.turns} 轮<span class="dot"> · </span><span data-live="tps">${approx()}${Math.round(tps)}</span> tok/s`, '会话统计')
+      + one('usage', 'db', `${compact(total)} tok<span class="dot"> · </span>缓存 ${pct(hit)}`, 'Token 用量');
+  }
+
+  function panel(which, where) {
+    const cls = where === 'sheet' ? '' : `pop-panel ${where === 'top' ? 'below' : 'above'}`;
+    const wrap = (inner) => where === 'sheet' ? inner : `<div class="${cls}" role="dialog">${inner}</div>`;
+    if (which === 'activity') {
+      const tps = running() ? state.liveTps : SESSION.tps;
+      return wrap(`
+        <div class="pop-head"><span class="t">${ic('gauge', 15)}会话统计</span><span class="v">${SESSION.turns} 轮 · ${SESSION.steps} 步</span></div>
+        <div class="rule"></div>
+        <dl class="rows">
+          <dt>模型用时</dt><dd>${secs(SESSION.llmMs / 1000)}</dd>
+          <dt>工具用时</dt><dd>${secs(SESSION.toolMs / 1000)}</dd>
+          <dt>平均等待首个 token</dt><dd>${approx()}${SESSION.ttft} 秒</dd>
+          <dt>输出速度</dt><dd>${approx()}${Math.round(tps)} tok/s</dd>
+        </dl>
+        ${est() ? '<div class="foot">约：Claude、Codex 不上报耗时，按 hub 收到输出的时刻计算。</div>' : ''}
+        <div class="rule"></div>
+        <button class="pop-item" data-act="trace-from-pop">${ic('trace', 17)}<span class="grow">查看这一轮的轨迹</span>${ic('right', 15)}</button>`);
+    }
+    const s = SESSION, billed = s.uncached + s.cacheRead + s.cacheWrite;
+    return wrap(`
+      <div class="pop-head"><span class="t">${ic('db', 15)}Token 用量</span><span class="v">${n0(billed + s.output)}</span></div>
+      <div class="rule"></div>
+      <dl class="rows">
+        <dt>缓存命中</dt><dd>${pct(s.cacheRead / billed)}</dd>
+        <dt>未缓存输入</dt><dd>${n0(s.uncached)}</dd>
+        <dt>缓存读取</dt><dd>${n0(s.cacheRead)}</dd>
+        <dt>缓存写入</dt><dd>${n0(s.cacheWrite)}</dd>
+        <dt>输出</dt><dd>${n0(s.output)}<span class="sub">含推理 ${n0(s.reasoning)}</span></dd>
+      </dl>`);
+  }
+
+  function ring(percent) {
+    const c = 2 * Math.PI * 6;
+    return `<button class="usage" aria-label="上下文">${'<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><circle class="track" cx="8" cy="8" r="6" fill="none" stroke-width="2.2"/><circle class="fill" cx="8" cy="8" r="6" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-dasharray="' + (percent / 100 * c).toFixed(2) + ' ' + c.toFixed(2) + '" transform="rotate(-90 8 8)"/></svg>'}<span>${percent}%</span></button>`;
+  }
+
+  function conversation(frame) {
+    const t = TURNS[12];
+    const work = running()
+      ? `<div class="workline"><span class="pulse"></span>工作中 · <span data-live="elapsed">${secs(state.elapsed)}</span> · 13 步 ${ic('right', 14)}</div>`
+      : `<div class="workline">用时 ${secs(159)} · 14 步 ${ic('right', 14)}</div>`;
+    const answer = running() ? '' : `<p class="answer">${t.a}</p><div class="meta">${ic('copy', 15)}<span>12:06</span></div>`;
+    return `<div class="scroll"><div class="col">
+      <div class="earlier">更早的 11 轮</div>
+      <div class="bubble">${t.q}</div>
+      ${work}${answer}
+    </div></div>`;
+  }
+
+  function composer(frame) {
+    const below = state.pos === 'below' ? `<div class="stats-below">${statButtons(frame, 'below')}</div>` : '';
+    if (frame === 'phone') {
+      return `<div class="composer"><div class="composer-box">
+        <button class="icon-btn small">${ic('plus', 20)}</button><div class="ph">继续这个线程</div>
+        <button class="send-btn${running() ? ' stop' : ''}">${running() ? '<i></i>' : ic('up', 18)}</button>
+      </div>${below}</div>`;
+    }
+    return `<div class="composer"><div class="composer-box">
+      <div class="ph">继续这个线程</div>
+      <div class="composer-bar">
+        <button class="tool-btn" aria-label="添加">${ic('plus', 18)}</button>
+        <button class="tool-btn">${ic('shield', 16)}<span>帮我批准</span></button>
+        <div class="spacer"></div>
+        ${ring(41)}
+        <button class="tool-btn model-btn"><span>${MODEL[state.source].label}</span><span style="color:var(--muted)">高</span>${ic('down', 14)}</button>
+        <button class="send-btn${running() ? ' stop' : ''}">${running() ? '<i></i>' : ic('up', 18)}</button>
+      </div>
+    </div>${below}</div>`;
+  }
+
+  function overview(frame, sum) {
+    const T = Math.max(sum.total, 1);
+    const step = [5, 10, 15, 30, 60, 120, 300].find((v) => T / v <= 4) || 600;
+    const ticks = []; for (let v = 0; v <= T + 0.001; v += step) ticks.push(v);
+    const lab = (v) => v === 0 ? '0' : v < 60 ? `${v} 秒` : v % 60 ? clock(v) : `${v / 60} 分`;
+    const hasSel = state.sel[frame] !== null;
+    const rows = sum.steps.map((s, i) => {
+      const left = (s.s / T) * 100, sel = state.sel[frame] === i ? ' sel' : '';
+      const common = `data-act="bar" data-i="${i}" data-frame="${frame}" aria-label="${stepTitle(s)}"`;
+      if (s.k === 'user' || s.k === 'answer') return `<div class="ov-row"><button class="mark${sel}" ${common} style="left:${left}%"></button></div>`;
+      if (s.k === 'model') {
+        const w = (s.w + s.g) / T * 100, wf = s.w / (s.w + s.g) * 100;
+        return `<div class="ov-row"><button class="${sel}${s.live ? ' live' : ''}" ${common} style="left:${left}%;width:${w}%"><span class="w" style="width:${wf}%"></span><span class="g"></span></button></div>`;
+      }
+      return `<div class="ov-row"><button class="${sel}" ${common} style="left:${left}%;width:${(s.d / T) * 100}%"><span class="tool${s.fail ? ' fail' : ''}"></span></button></div>`;
+    }).join('');
+    const grid = ticks.slice(1).map((v) => `<span class="ov-grid" style="left:${v / T * 100}%"></span>`).join('');
+    return `<div class="ov${hasSel ? ' has-sel' : ''}" data-ov="${frame}">
+      <div class="ov-plot">${grid}${rows}</div>
+      <div class="ov-axis">${ticks.map((v) => `<span style="left:${v / T * 100}%">${lab(v)}</span>`).join('')}</div>
+      <div class="ov-legend"><span><i style="background:var(--border-strong)"></i>等待首个 token</span><span><i style="background:var(--muted)"></i>生成</span><span><i style="background:var(--faint)"></i>工具</span></div>
+    </div>`;
+  }
+
+  function stepDetail(s) {
+    const t = TURNS[state.turn];
+    if (s.k === 'user') return `<div class="step-detail"><div class="quote">${t.q}</div></div>`;
+    if (s.k === 'answer') return `<div class="step-detail"><div class="quote">${t.a}</div></div>`;
+    if (s.k === 'model') return `<div class="step-detail"><dl class="rows">
+        <dt>模型</dt><dd>${MODEL[state.source].id}</dd>
+        <dt>输入</dt><dd>${n0(s.inp)}<span class="sub">缓存读取 ${n0(s.cache)}</span></dd>
+        <dt>输出</dt><dd>${n0(s.out)}</dd>
+        <dt>等待首个 token</dt><dd>${approx()}${secs(s.w)}</dd>
+        <dt>生成</dt><dd>${s.live ? '进行中' : approx() + secs(s.g)}</dd>
+      </dl>${s.note ? `<div class="quote">${s.note}</div>` : ''}${est() ? '<div class="foot">时间按 hub 收到输出的时刻计算。</div>' : ''}</div>`;
+    return `<div class="step-detail"><pre>${s.out}</pre></div>`;
+  }
+
+  function trace(frame) {
+    const sum = summary(state.turn);
+    const sheet = frame === 'phone';
+    const t = TURNS[state.turn];
+    const head = sheet
+      ? `<div class="trace-head"><button class="back" data-act="trace-close" data-frame="${frame}" aria-label="返回">${ic('back', 20)}</button><h3>轨迹</h3>${turnNav(frame)}</div>`
+      : `<div class="trace-head"><h3>轨迹</h3>${turnNav(frame)}<button class="icon-btn small" data-act="trace-close" data-frame="${frame}" aria-label="关闭轨迹">${ic('close', 17)}</button></div>`;
+    const sess = sheet && state.pos === 'top' ? `<div class="sess">${statButtons(frame, 'sheet')}</div>` : '';
+    const live = running() && state.turn === 12;
+    const meta = [
+      live ? `运行中 · <span data-live="elapsed">${secs(state.elapsed)}</span>` : `用时 ${secs(sum.total)}`,
+      `${sum.steps.length} 步`, `模型 ${secs(sum.llm)}`, `工具 ${secs(sum.tool)}`,
+    ].join(' · ');
+    const meta2 = [`输入 ${compact(sum.inp)}，缓存 ${pct(sum.cache / sum.inp)}`, `输出 ${compact(sum.out)}`, `${approx()}${Math.round(sum.tps)} tok/s`].join(' · ')
+      + (sum.fails ? ` · <span class="err">${sum.fails} 步失败</span>` : '');
+    const list = sum.steps.map((s, i) => {
+      const open = state.expanded[frame].has(`${state.turn}:${i}`);
+      const dur = s.k === 'model' ? (s.live ? '生成中' : secs(s.w + s.g)) : s.d !== undefined ? secs(s.d) : '';
+      return `<button class="step${state.sel[frame] === i ? ' sel' : ''}" data-act="step" data-i="${i}" data-frame="${frame}" aria-expanded="${open}">
+          <span class="ic">${ic(s.k, 17)}</span>
+          <span class="main"><span class="tt">${stepTitle(s)}${s.fail ? '<span class="fail">失败</span>' : ''}</span><span class="sub" style="display:block">${stepSub(s)}</span></span>
+          <span class="tm">${dur ? `<span class="d">${dur}</span>` : ''}<span class="s">${clock(s.s)}</span></span>
+        </button>${open ? stepDetail(s) : ''}`;
+    }).join('');
+    return `<aside class="trace${sheet ? ' sheetview' : ''}" aria-label="轨迹">${head}
+      <div class="trace-body" data-scroll="${frame}">${sess}
+        <div class="trace-sum"><div class="q">${t.q}</div><div class="m">${meta}</div><div class="m">${meta2}</div></div>
+        <div class="ov-wrap">${overview(frame, sum)}</div>
+        <div class="steps">${list}</div>
+      </div></aside>`;
+  }
+
+  function turnNav(frame) {
+    return `<span class="turn-nav"><button class="icon-btn small" data-act="turn" data-d="-1" data-frame="${frame}" aria-label="上一轮" ${state.turn <= 11 ? 'disabled' : ''}>${ic('left', 16)}</button><span>第 ${state.turn} 轮</span><button class="icon-btn small" data-act="turn" data-d="1" data-frame="${frame}" aria-label="下一轮" ${state.turn >= 12 ? 'disabled' : ''}>${ic('right', 16)}</button></span>`;
+  }
+
+  function card(frame) {
+    const s = SESSION, billed = s.uncached + s.cacheRead + s.cacheWrite;
+    const tps = running() ? state.liveTps : s.tps;
+    const sum = summary(12), T = Math.max(sum.total, 1);
+    const bars = sum.steps.map((st) => {
+      if (st.k === 'user' || st.k === 'answer') return '';
+      const left = st.s / T * 100;
+      if (st.k === 'model') {
+        const w = (st.w + st.g) / T * 100, wf = st.w / (st.w + st.g) * 100;
+        return `<div class="mini-row"><span class="model${st.live ? ' live' : ''}" style="left:${left}%;width:${w}%"><span class="w" style="width:${wf}%"></span><span class="g"></span></span></div>`;
+      }
+      return `<div class="mini-row"><span class="${st.fail ? 'fail' : ''}" style="left:${left}%;width:${st.d / T * 100}%"></span></div>`;
+    }).join('');
+    const fail = sum.steps.findIndex((st) => st.fail);
+    const tok = state.cardTok[frame];
+    return `<div class="card${frame === 'phone' ? ' drop' : ''}" role="dialog" aria-label="概况">
+      <div class="card-head"><span>本会话</span><span class="v">${s.turns} 轮 · ${s.steps} 步</span></div>
+      <div class="card-row">${ic('gauge', 17)}<span class="lbl">输出速度</span><span class="val">${approx()}${Math.round(tps)} tok/s</span></div>
+      <div class="card-row">${ic('clock', 17)}<span class="lbl">模型用时</span><span class="val">${secs(s.llmMs / 1000)}</span></div>
+      <div class="card-row">${ic('wrench', 17)}<span class="lbl">工具用时</span><span class="val">${secs(s.toolMs / 1000)}</span></div>
+      ${est() ? '<div class="card-note">约：Claude、Codex 不上报耗时，按 hub 收到输出的时刻计算。</div>' : ''}
+      <button class="card-row btn" data-act="card-tok" data-frame="${frame}" aria-expanded="${tok}">${ic('db', 17)}<span class="lbl">Token</span><span class="val">${compact(billed + s.output)} · 缓存 ${pct(s.cacheRead / billed)}</span></button>
+      ${tok ? `<dl class="rows card-dl"><dt>未缓存输入</dt><dd>${n0(s.uncached)}</dd><dt>缓存读取</dt><dd>${n0(s.cacheRead)}</dd><dt>缓存写入</dt><dd>${n0(s.cacheWrite)}</dd><dt>输出</dt><dd>${n0(s.output)}</dd></dl>` : ''}
+      <div class="card-rule"></div>
+      <div class="card-sec"><span>轨迹 · 第 12 轮</span><span class="v">${running() ? `运行中 · ${secs(state.elapsed)}` : secs(sum.total)}</span></div>
+      <button class="mini" data-act="card-trace" data-frame="${frame}" aria-label="打开轨迹">${bars}</button>
+      ${fail >= 0 ? `<button class="card-row btn danger" data-act="card-step" data-i="${fail}" data-frame="${frame}">${ic('alert', 17)}<span class="lbl">${stepTitle(sum.steps[fail])}</span><span class="val">失败</span></button>` : ''}
+      <button class="card-row btn more" data-act="card-trace" data-frame="${frame}">${ic('trace', 17)}<span class="lbl">查看全部</span><span class="val">${sum.steps.length} 步</span></button>
+    </div>`;
+  }
+
+  function desk() {
+    const open = state.trace.desk;
+    const cardMode = state.pos === 'card';
+    const traceBtn = cardMode
+      ? `<button class="icon-btn" data-act="card-toggle" data-frame="desk" aria-pressed="${state.card.desk || open}" aria-label="概况" title="概况">${ic('summary')}</button>`
+      : `<button class="icon-btn" data-act="trace-toggle" data-frame="desk" aria-pressed="${open}" aria-label="轨迹" title="轨迹">${ic('trace')}</button>`;
+    return `<div class="app">
+      <header class="topbar">
+        <div class="topbar-heading"><button class="icon-btn small" aria-label="线程所在位置">${ic('folder', 16)}</button><div class="topbar-title">修复商品列表滚动跳动</div></div>
+        <div class="topbar-actions">
+          ${state.pos === 'top' ? `<div class="stats-top">${statButtons('desk', 'top')}</div>` : ''}
+          ${traceBtn}
+          <button class="icon-btn" aria-label="文件">${ic('files')}</button>
+          <button class="icon-btn" aria-label="终端">${ic('term')}</button>
+          <button class="icon-btn" aria-label="更多">${ic('more')}</button>
+        </div>
+      </header>
+      <div class="body"><div class="convo${cardMode && state.card.desk && !open ? ' with-card' : ''}">${conversation('desk')}${composer('desk')}</div>${open ? trace('desk') : ''}${cardMode && state.card.desk && !open ? card('desk') : ''}</div>
+    </div>`;
+  }
+
+  function phone() {
+    const sheetOpen = state.open && state.open.frame === 'phone';
+    return `<div class="app">
+      <header class="topbar">
+        <button class="back" aria-label="返回">${ic('back', 20)}</button>
+        <div class="topbar-title" style="flex:1">修复商品列表滚动跳动</div>
+        <div class="pill">
+          ${state.pos === 'card'
+            ? `<button class="icon-btn" data-act="card-toggle" data-frame="phone" aria-pressed="${state.card.phone}" aria-label="概况">${ic('summary', 19)}</button>`
+            : `<button class="icon-btn" data-act="trace-toggle" data-frame="phone" aria-label="轨迹">${ic('trace', 19)}</button>`}
+          <button class="icon-btn" aria-label="文件">${ic('files', 19)}</button>
+          <button class="icon-btn" aria-label="新线程">${ic('pen', 19)}</button>
+          <button class="icon-btn" aria-label="更多">${ic('more', 19)}</button>
+        </div>
+      </header>
+      <div class="body"><div class="convo">${conversation('phone')}${composer('phone')}</div></div>
+      ${state.trace.phone ? trace('phone') : ''}
+      ${state.pos === 'card' && state.card.phone && !state.trace.phone ? card('phone') : ''}
+      ${sheetOpen ? `<div class="scrim" data-act="dismiss"></div><div class="sheet" role="dialog"><div class="grab"></div>${panel(state.open.which, 'sheet')}</div>` : ''}
+    </div>`;
+  }
+
+  // ---------- Render, keeping scroll positions ----------
+  const deskEl = document.getElementById('desk'), phoneEl = document.getElementById('phone');
+  function render(still = false) {
+    deskEl.classList.toggle('still', still); phoneEl.classList.toggle('still', still);
+    document.documentElement.dataset.theme = state.theme;
+    document.querySelectorAll('.seg').forEach((seg) => seg.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(state[seg.dataset.key] === b.dataset.v))));
+    const keep = {};
+    document.querySelectorAll('[data-scroll]').forEach((el) => { keep[el.dataset.scroll] = el.scrollTop; });
+    deskEl.innerHTML = desk();
+    phoneEl.innerHTML = phone();
+    document.querySelectorAll('[data-scroll]').forEach((el) => { if (keep[el.dataset.scroll] !== undefined) el.scrollTop = keep[el.dataset.scroll]; });
+    fit();
+  }
+
+  // Shrink the desktop frame to the space there is (the preview panel may be narrow).
+  function fit() {
+    const width = document.documentElement.clientWidth - 50;
+    deskEl.style.zoom = String(Math.min(1, width / 1000));
+    phoneEl.style.zoom = String(Math.min(1, width / 392));
+  }
+  window.addEventListener('resize', fit);
+
+  // Keep a step's row and its details in view, below the pinned overview.
+  function scrollToStep(frame, i) {
+    const row = document.querySelector(`#${frame} .step[data-i="${i}"]`);
+    if (!row) return;
+    const box = row.closest('.trace-body'), pinned = box.querySelector('.ov-wrap').offsetHeight;
+    const detail = row.nextElementSibling && row.nextElementSibling.classList.contains('step-detail') ? row.nextElementSibling : row;
+    const start = row.offsetTop - pinned - 6, end = detail.offsetTop + detail.offsetHeight + 12 - box.clientHeight;
+    box.scrollTo({ top: Math.min(start, Math.max(box.scrollTop, end)), behavior: 'smooth' });
+  }
+
+  // ---------- Events ----------
+  document.querySelector('.bar').addEventListener('click', (e) => {
+    const b = e.target.closest('.seg button'); if (!b) return;
+    const key = b.closest('.seg').dataset.key;
+    state[key] = b.dataset.v; state.open = null;
+    if (key === 'running') { state.turn = 12; state.sel = { desk: null, phone: null }; state.elapsed = 141; }
+    if (key === 'pos') { state.trace = { desk: false, phone: false }; state.card = { desk: b.dataset.v === 'card', phone: false }; }
+    render();
+  });
+
+  document.addEventListener('click', (e) => {
+    const el = e.target.closest('[data-act]');
+    if (!el) {
+      if (state.open && !e.target.closest('.pop-panel, .sheet')) { state.open = null; render(); }
+      else if (state.card.phone && e.target.closest('#phone') && !e.target.closest('.card')) { state.card.phone = false; render(); }
+      return;
+    }
+    const frame = el.dataset.frame, act = el.dataset.act;
+    if (act === 'open') {
+      const same = state.open && state.open.frame === frame && state.open.which === el.dataset.which && state.open.where === el.dataset.where;
+      state.open = same ? null : { frame, which: el.dataset.which, where: el.dataset.where };
+    } else if (act === 'dismiss') {
+      state.open = null;
+    } else if (act === 'trace-toggle') {
+      state.trace[frame] = !state.trace[frame]; state.open = null;
+    } else if (act === 'trace-close') {
+      state.trace[frame] = false;
+      if (state.pos === 'card' && frame === 'desk') state.card.desk = true;
+    } else if (act === 'card-toggle') {
+      if (state.trace[frame]) { state.trace[frame] = false; state.card[frame] = false; }
+      else state.card[frame] = !state.card[frame];
+    } else if (act === 'card-tok') {
+      state.cardTok[frame] = !state.cardTok[frame];
+    } else if (act === 'card-trace' || act === 'card-step') {
+      state.trace[frame] = true; state.card[frame] = false; state.turn = 12;
+      if (act === 'card-step') { const i = Number(el.dataset.i); state.sel[frame] = i; state.expanded[frame].add(`12:${i}`); render(); scrollToStep(frame, i); return; }
+    } else if (act === 'trace-from-pop') {
+      const f = state.open ? state.open.frame : 'desk';
+      state.trace[f] = true; state.open = null; state.turn = 12;
+    } else if (act === 'turn') {
+      state.turn = Math.min(12, Math.max(11, state.turn + Number(el.dataset.d))); state.sel[frame] = null;
+    } else if (act === 'bar' || act === 'step') {
+      const i = Number(el.dataset.i), key = `${state.turn}:${i}`;
+      if (act === 'step' && state.sel[frame] === i && state.expanded[frame].has(key)) { state.expanded[frame].delete(key); state.sel[frame] = null; }
+      else { state.sel[frame] = i; state.expanded[frame].add(key); }
+      render();
+      if (act === 'bar') scrollToStep(frame, i);
+      return;
+    } else return;
+    render();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (state.open) state.open = null;
+    else if (state.sel.desk !== null || state.sel.phone !== null) state.sel = { desk: null, phone: null };
+    else if (state.trace.desk || state.trace.phone) state.trace.desk = state.trace.phone = false;
+    else state.card = { desk: false, phone: false };
+    render();
+  });
+
+  // Hovering a bar on the desktop: exact times above it, and its row lit in the list.
+  document.addEventListener('pointerover', (e) => {
+    document.querySelectorAll('.ov-row button.hl').forEach((b) => b.classList.remove('hl'));
+    const row = e.target.closest('.step');
+    if (row) { const b = document.querySelector(`#${row.dataset.frame} .ov-row button[data-i="${row.dataset.i}"]`); if (b) b.classList.add('hl'); }
+    const bar = e.target.closest('.ov-row button');
+    document.querySelectorAll('.tip').forEach((t) => t.remove());
+    if (!bar || e.pointerType === 'touch') return;
+    const s = summary(state.turn).steps[Number(bar.dataset.i)];
+    const ov = bar.closest('.ov');
+    const lines = s.k === 'model'
+      ? `${stepTitle(s)} · ${clock(s.s)} 开始<br>等待 ${approx()}${secs(s.w)} · 生成 ${s.live ? '进行中' : approx() + secs(s.g)}`
+      : s.d !== undefined ? `${stepTitle(s)}<br>${clock(s.s)} 开始 · ${secs(s.d)}${s.fail ? ' · 失败' : ''}` : `${stepTitle(s)} · ${clock(s.s)}`;
+    const tip = document.createElement('div');
+    tip.className = 'tip'; tip.innerHTML = lines;
+    const left = bar.offsetLeft + bar.offsetWidth / 2 + 12;
+    tip.style.left = Math.min(Math.max(left, 120), ov.clientWidth - 120) + 'px';
+    tip.style.top = (bar.offsetTop + bar.parentElement.offsetTop + 12) + 'px';
+    ov.appendChild(tip);
+  });
+
+  // ---------- Live numbers while a turn runs ----------
+  setInterval(() => {
+    if (!running()) return;
+    state.elapsed += 1;
+    state.liveTps = 72 + Math.round(Math.random() * 6);
+    if (document.querySelector('.tip')) { document.querySelectorAll('[data-live="tps"]').forEach((el) => { el.textContent = approx() + state.liveTps; }); return; }
+    render(true);
+  }, 1000);
+
+  render();
+})();
+</script>
+</body>
+</html>

@@ -40,6 +40,22 @@ export interface TraceTotals {
   output: number;
 }
 
+/** One model request's time: from its start to the next tool call or the turn's end. */
+export interface TraceSegment {
+  /** The request's real start when the agent reported it, else when the segment opened. */
+  start: string;
+  /** First text, thought or tool call inside the segment; null until one arrived. */
+  firstOutput: string | null;
+  /** When the segment closed; still open (the turn is running) reads null. */
+  end: string | null;
+  /** native: the agent reported the request's own timing; hub: derived from the hub's log. */
+  source: 'native' | 'hub';
+  /** Output tokens of the request matched to this segment; absent when none matched. */
+  outputTokens?: number;
+  /** The trace steps (1-based, in `steps`) whose events fall inside this segment. */
+  steps: number[];
+}
+
 export interface TurnTrace {
   threadId: string;
   turnId: string;
@@ -52,6 +68,8 @@ export interface TurnTrace {
   startedAt: string;
   endedAt: string | null;
   steps: TraceStep[];
+  /** The turn's model segments, in order; the timeline draws one bar per segment and per tool. */
+  segments: TraceSegment[];
   totals: TraceTotals;
   /** The thread's other turns, oldest first, so the trace can step to the one before or after. */
   turns: Array<{ turnId: string; ts: string }>;
@@ -74,15 +92,40 @@ const num = (value: unknown): number | undefined => (typeof value === 'number' &
 /**
  * The steps of one turn's events. Streamed fragments become one text, a tool's start, updates and
  * end become one step, and every `usage.sample` is one request. Events of other turns are ignored.
+ *
+ * The same walk collects the turn's model segments: one opens at the turn's start or when the last
+ * running tool ends, and closes at the next tool call or the turn's end; a sample carrying native
+ * timing (`durationMs` and `ttftMs`, pi and zcode) replaces the event-derived bounds. A segment
+ * where nothing happened at all is dropped, so chained tool calls do not fake model time.
  */
-export function buildTrace(events: StoredEvent[]): { steps: TraceStep[]; totals: TraceTotals; models: string[]; status: TurnTrace['status']; endedAt: string | null } {
+export function buildTrace(events: StoredEvent[]): { steps: TraceStep[]; totals: TraceTotals; models: string[]; status: TurnTrace['status']; endedAt: string | null; segments: TraceSegment[] } {
   const steps: TraceStep[] = [];
   const tools = new Map<string, TraceStep>();
   const compactions = new Map<string, TraceStep>();
   const totals: TraceTotals = { tools: 0, mcp: 0, requests: 0, input: 0, output: 0 };
   const models: string[] = [];
+  const segments: TraceSegment[] = [];
+  const runningTools = new Set<string>();
+  // The segment being filled, or null while tools run or the turn is between segments. Held in an
+  // object so the helpers below can fill it without TypeScript narrowing it away.
+  const segment: { current: TraceSegment | null } = { current: null };
+  let seenEvent = false;
   let status: TurnTrace['status'] = 'running';
   let endedAt: string | null = null;
+
+  const openSegment = (ts: string) => {
+    if (!segment.current) segment.current = { start: ts, firstOutput: null, end: null, source: 'hub', steps: [] };
+  };
+  const closeSegment = (ts: string) => {
+    const seg = segment.current;
+    if (!seg) return;
+    segment.current = null;
+    // Nothing arrived and no time passed (chained tools): no model time to measure, not even zero.
+    if (ts === seg.start && seg.source === 'hub' && seg.outputTokens === undefined) return;
+    // A native request keeps its own bounds; the hub's event clock only fills what it knows.
+    if (!(seg.source === 'native' && seg.end)) seg.end = ts;
+    segments.push(seg);
+  };
 
   const setText = (step: TraceStep, text: string) => {
     const c = cut(text);
@@ -93,12 +136,17 @@ export function buildTrace(events: StoredEvent[]): { steps: TraceStep[]; totals:
 
   for (const ev of compactDeltas(coalesceToolEvents(events))) {
     const data = ev.data;
+    // A log that starts mid-turn (the daemon restarted) still times what it can see.
+    if (!seenEvent) { seenEvent = true; openSegment(ev.ts); }
     switch (ev.type) {
       case 'turn.started':
+        openSegment(ev.ts);
         setText(steps[steps.push({ kind: 'user', ts: ev.ts }) - 1], stringOf(data.text));
         break;
       case 'message.delta':
       case 'reasoning.delta': {
+        const cur = segment.current;
+        if (cur && cur.firstOutput === null) cur.firstOutput = ev.ts;
         const kind = ev.type === 'message.delta' ? 'assistant' : 'thinking';
         const last = steps[steps.length - 1];
         // compactDeltas gives a run as its first fragment and then the rest; join them back.
@@ -123,6 +171,10 @@ export function buildTrace(events: StoredEvent[]): { steps: TraceStep[]; totals:
         const id = String(data.id ?? '');
         let step = tools.get(id);
         if (!step) {
+          // The call's first event is the model's answer to the open segment, and its end.
+          const cur = segment.current;
+          if (cur) { if (cur.firstOutput === null) cur.firstOutput = ev.ts; closeSegment(ev.ts); }
+          runningTools.add(id);
           step = { kind: 'tool', ts: ev.ts };
           tools.set(id, step);
           steps.push(step);
@@ -148,7 +200,12 @@ export function buildTrace(events: StoredEvent[]): { steps: TraceStep[]; totals:
           step.output = c.text;
           if (c.cut) step.cut = true;
         }
-        if (ev.type === 'tool.end') step.endTs = ev.ts;
+        if (ev.type === 'tool.end') {
+          step.endTs = ev.ts;
+          // The next segment opens when the last running tool of this batch ends.
+          runningTools.delete(id);
+          if (runningTools.size === 0) openSegment(ev.ts);
+        }
         break;
       }
       case 'usage.sample': {
@@ -161,6 +218,23 @@ export function buildTrace(events: StoredEvent[]): { steps: TraceStep[]; totals:
         const started = typeof data.startedAt === 'string' ? data.startedAt : ev.ts;
         const ended = typeof data.endedAt === 'string' ? data.endedAt : ev.ts;
         steps.push({ kind: 'request', ts: started, endTs: ended, model, tokens });
+        // Request-scoped samples can match one segment; turn- and update-scoped ones cannot.
+        if (data.scope === 'request') {
+          const target: TraceSegment | undefined = segment.current ?? segments[segments.length - 1];
+          if (target) {
+            if (typeof tokens.output === 'number') target.outputTokens ??= tokens.output;
+            const durationMs = num(data.durationMs), ttftMs = num(data.ttftMs);
+            if (typeof data.startedAt === 'string' && durationMs !== undefined && ttftMs !== undefined) {
+              const base = Date.parse(data.startedAt);
+              if (Number.isFinite(base)) {
+                target.source = 'native';
+                target.start = data.startedAt;
+                target.firstOutput = new Date(base + ttftMs).toISOString();
+                target.end = new Date(base + durationMs).toISOString();
+              }
+            }
+          }
+        }
         break;
       }
       case 'context.compaction': {
@@ -178,11 +252,13 @@ export function buildTrace(events: StoredEvent[]): { steps: TraceStep[]; totals:
       case 'turn.error':
         status = 'error';
         endedAt = ev.ts;
+        closeSegment(ev.ts);
         steps.push({ kind: 'error', ts: ev.ts, text: stringOf(data.message ?? data.error) || '这一轮出错了' });
         break;
       case 'turn.done':
         status = data.stopReason === 'cancelled' ? 'cancelled' : 'done';
         endedAt = ev.ts;
+        closeSegment(ev.ts);
         break;
       default:
         break;
@@ -190,5 +266,17 @@ export function buildTrace(events: StoredEvent[]): { steps: TraceStep[]; totals:
   }
   // A tool step that never ended reads as running until the turn did; then it ended with it.
   if (endedAt) for (const step of [...tools.values(), ...compactions.values()]) step.endTs ??= endedAt;
-  return { steps, totals, models, status, endedAt };
+  // A segment still open when the log ends is the one the turn is inside of right now.
+  const tail = segment.current;
+  if (tail) segments.push({ start: tail.start, firstOutput: tail.firstOutput, end: null, source: 'hub', steps: [] });
+  // Steps belong to the segment whose window they fall in; the first one wins when native bounds overlap.
+  const lastTs = events.length ? events[events.length - 1].ts : null;
+  for (const [index, step] of steps.entries()) {
+    if (step.kind === 'user') continue;
+    const at = Date.parse(step.ts);
+    if (!Number.isFinite(at)) continue;
+    const seg = segments.find((s) => at >= Date.parse(s.start) && at <= Date.parse(s.end ?? lastTs ?? s.start));
+    if (seg) seg.steps.push(index + 1);
+  }
+  return { steps, totals, models, status, endedAt, segments };
 }
