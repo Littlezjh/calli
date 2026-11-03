@@ -14,7 +14,8 @@ import { BrowserComputer } from '../browser-computer.js';
 import { spawn } from 'node:child_process';
 import { CodexMemoryReader } from './codex-memory.js';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import type { EmittedEvent } from '../events.js';
 import { commandExists } from '../util.js';
 import { titlePlan } from './plans.js';
@@ -1324,6 +1325,26 @@ export class CodexAppServerAdapter implements AgentAdapter {
     });
   }
 
+  /**
+   * Another account's rollout, forked into this account through the app-server's fork-by-path. The
+   * cleaned rollout is staged under this account's own `sessions/` first — the fork's lineage names
+   * it as its source, so it stays; without it the fork cannot be resumed. Encrypted reasoning only
+   * the account that wrote it can read is left out of the copy; a conversation compacted natively
+   * cannot go over at all, its summary being sealed the same way.
+   */
+  async importSession(sourcePath: string): Promise<string> {
+    const dir = join(configDirectory(this.env, 'CODEX_HOME', ['.codex'], process.cwd()), 'sessions', 'imported');
+    const path = join(dir, basename(sourcePath));
+    await mkdir(dir, { recursive: true });
+    await writeFile(path, portableRollout(await readFile(sourcePath, 'utf8')), { mode: 0o600 });
+    return await this.withServer(async (peer) => {
+      const res = await peer.request('thread/fork', { threadId: '', path, ephemeral: false, excludeTurns: true });
+      const id = res?.thread?.id;
+      if (!id) throw new Error(`${this.name} did not return a thread id for the copy`);
+      return String(id);
+    });
+  }
+
   /** A copy that stops before one turn, excluding it and everything after it. */
   async forkBeforeSession(agentSessionId: string, _cwd: string, forkBeforeRef: string): Promise<string> {
     return this.withServer(async (peer) => {
@@ -1438,4 +1459,26 @@ export class CodexAppServerAdapter implements AgentAdapter {
       peer.close();
     }
   }
+}
+
+/**
+ * A rollout another account can go on with: reasoning items whose content is sealed for the account
+ * that wrote them are dropped. Throws for a native compaction, whose sealed summary stands in for
+ * the earlier conversation and could not be dropped without losing it.
+ */
+export function portableRollout(text: string): string {
+  const out: string[] = [];
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    let record: any;
+    try { record = JSON.parse(line); } catch { out.push(line); continue; }
+    const payload = record?.payload;
+    if (record?.type === 'compacted' && line.includes('"encrypted_content"')
+      || record?.type === 'response_item' && payload?.type !== 'reasoning' && payload?.encrypted_content) {
+      throw new Error('this conversation was compacted natively; only its own account can read the summary');
+    }
+    if (record?.type === 'response_item' && payload?.type === 'reasoning' && payload.encrypted_content) continue;
+    out.push(line);
+  }
+  return out.join('\n') + '\n';
 }

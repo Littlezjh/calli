@@ -131,7 +131,9 @@ export class TraexAcpAdapter extends AcpAdapter {
     this.cli = cli ?? (endsWithServe ? command.slice(0, -2) : command);
     // TRAE's ImageX references can produce 4016 Invalid image even after a successful upload.
     // Inline image bytes remain readable and do not leave an invalid CDN reference in history.
-    this.execution = new CodexAppServerAdapter([...this.cli, 'app-server'], env, 'TRAE CLI', true);
+    // The copy-in staging folder of importSession follows CODEX_HOME; point it at TRAE's own home.
+    this.execution = new CodexAppServerAdapter([...this.cli, 'app-server'],
+      env.CALLI_TRAEX_HOME ? { ...env, CODEX_HOME: env.CALLI_TRAEX_HOME } : env, 'TRAE CLI', true);
   }
 
   override diagnose() { return cliDiagnostic(this.cli, this.env, 'app-server / ACP 1'); }
@@ -205,6 +207,11 @@ export class TraexAcpAdapter extends AcpAdapter {
     const configDir = configDirectory(this.env, 'CALLI_TRAEX_HOME', ['.trae', 'cli'], cwd);
     const sessionPath = await findSessionFile(join(configDir, 'sessions'), agentSessionId, 3, (name, id) => name.startsWith('rollout-') && name.endsWith(`-${id}.jsonl`));
     return { configDir, sessionPath };
+  }
+
+  /** Another account's session, forked in through the app-server as Codex does it. */
+  importSession(sourcePath: string): Promise<string> {
+    return this.execution.importSession(sourcePath);
   }
 
   /** The ACP server has no session/delete; the CLI does it in one short run. */

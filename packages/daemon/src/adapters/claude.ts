@@ -3,8 +3,10 @@ import { copyClaudeAccount, startClaudeLogin } from './claude-account.js';
 import { claudeLiveUsage } from './session-usage.js';
 import type { UsageSample } from '../telemetry.js';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { AcpAdapter, AcpSession, airForkPoint } from './acp.js';
 import { CLAUDE_ICON } from './icons.js';
 import { titlePlan } from './plans.js';
@@ -206,6 +208,22 @@ export class ClaudeAcpAdapter extends AcpAdapter {
       sessionPath,
       ...(agentSessionId ? { resumeCommand: `env CLAUDE_CONFIG_DIR=${quoteArg(configDir)} ${quoteArg(this.env.CALLI_CLAUDE_BIN || claudeCli())} --resume ${quoteArg(agentSessionId)}` } : {}),
     };
+  }
+
+  /**
+   * Another account's transcript, copied into this account's `projects/` under a new id: Claude
+   * Code resumes any transcript in its config directory, whichever account wrote it. Only the
+   * `sessionId` field of each line is renamed, so paths into the original's folder (large tool
+   * results saved beside it) still resolve.
+   */
+  async importSession(sourcePath: string): Promise<string> {
+    const oldId = basename(sourcePath, '.jsonl');
+    const id = randomUUID();
+    const dir = join(configDirectory(this.env, 'CLAUDE_CONFIG_DIR', ['.claude'], process.cwd()), 'projects', basename(dirname(sourcePath)));
+    const text = await readFile(sourcePath, 'utf8');
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, `${id}.jsonl`), text.split(`"sessionId":"${oldId}"`).join(`"sessionId":"${id}"`), { flag: 'wx', mode: 0o600 });
+    return id;
   }
 
   /** The system prompt the conversation runs with, from the transcript's own snapshot of it. */

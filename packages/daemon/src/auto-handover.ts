@@ -5,7 +5,12 @@ import type { ResumeView } from './quota-resume.js';
 import { HttpError } from './errors.js';
 
 export interface HandoverTarget { agent: string; model?: string }
-export interface HandoverSettings { enabled: boolean; threshold: number; orders: Record<string, HandoverTarget[]>; resume: boolean }
+/**
+ * How the work moves to another account of the same agent: `resume` copies the conversation over and
+ * goes on in it, `summary` starts afresh from a brief. A different agent always gets a brief.
+ */
+export type HandoverMethod = 'resume' | 'summary';
+export interface HandoverSettings { enabled: boolean; threshold: number; orders: Record<string, HandoverTarget[]>; resume: boolean; method: HandoverMethod }
 export interface AutoHandoverView {
   enabled: boolean; source: 'thread' | 'collaboration' | 'global'; override: boolean | null;
   state?: 'checking' | 'preparing' | 'countdown' | 'stopped' | 'failed';
@@ -15,7 +20,7 @@ export interface AutoHandoverView {
 }
 type Attempt = { turnId: string; cancelled: boolean; view: Partial<AutoHandoverView>; wake?: () => void };
 type Block = HandoverTarget & { at: string; used?: number; resetsAt?: string };
-const defaults = (): HandoverSettings => ({ enabled: false, threshold: 90, orders: {}, resume: false });
+const defaults = (): HandoverSettings => ({ enabled: false, threshold: 90, orders: {}, resume: false, method: 'resume' });
 /** What `settled` did with an exhausted turn: moved the work, parked it, or nothing to do. */
 export type SettledOutcome = 'moved' | 'parked' | 'none';
 
@@ -44,13 +49,14 @@ export class AutoHandover {
   onSaved?: (settings: HandoverSettings) => void;
   settings(): HandoverSettings {
     const stored = this.store.hubSetting<Partial<HandoverSettings>>('handover.settings', defaults());
-    return { ...defaults(), ...stored, resume: stored.resume === true };
+    return { ...defaults(), ...stored, resume: stored.resume === true, method: stored.method === 'summary' ? 'summary' : 'resume' };
   }
   configure(input: unknown): HandoverSettings {
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new HttpError(400, 'invalid handover settings');
     const v = input as HandoverSettings;
     if (typeof v.enabled !== 'boolean' || !Number.isFinite(v.threshold) || v.threshold < 1 || v.threshold > 99
       || v.resume !== undefined && typeof v.resume !== 'boolean'
+      || v.method !== undefined && v.method !== 'resume' && v.method !== 'summary'
       || !v.orders || typeof v.orders !== 'object' || Array.isArray(v.orders)) throw new HttpError(400, 'invalid handover settings');
     const orders: HandoverSettings['orders'] = {};
     for (const [id, targets] of Object.entries(v.orders)) {
@@ -65,7 +71,7 @@ export class AutoHandover {
         return { agent: t.agent, ...(t.model ? { model: t.model } : {}) };
       });
     }
-    const settings = { enabled: v.enabled, threshold: v.threshold, orders, resume: v.resume === true };
+    const settings: HandoverSettings = { enabled: v.enabled, threshold: v.threshold, orders, resume: v.resume === true, method: v.method ?? this.settings().method };
     this.store.saveHubSetting('handover.settings', settings);
     for (const id of this.attempts.keys()) if (!this.view(id).enabled) this.cancel(id);
     this.onSaved?.(settings);
@@ -204,7 +210,10 @@ export class AutoHandover {
       attempt.view = { state: 'preparing', target, reason: exhausted ? 'exhausted' : 'near' };
       this.manager.notifyHandover(id);
       const switchModel = target.agent === thread.agent && !!target.model && this.manager.canSwitchHandoverModel(thread.agent);
-      const summary = switchModel ? null : await this.manager.autoHandoverSummary(id, target.agent, exhausted);
+      const failedTurn = exhausted ? turnId : null;
+      // Another account of the same agent goes on in a copy of the conversation and needs no brief.
+      const resume = !switchModel && this.settings().method === 'resume' && await this.manager.canResumeHandover(id, target.agent, failedTurn);
+      let summary = switchModel || resume ? null : await this.manager.autoHandoverSummary(id, target.agent, exhausted);
       if (attempt.cancelled || !this.view(id).enabled || this.closed) return 'parked';
       attempt.view = { ...attempt.view, state: 'countdown', deadline: new Date(Date.now() + this.delayMs).toISOString() };
       this.manager.notifyHandover(id);
@@ -223,7 +232,13 @@ export class AutoHandover {
         this.manager.recordHandoverModel(id, target.model!, model, attempt.view.reason!);
         retry = exhausted;
       } else {
-        await this.manager.executeAutoHandover(id, target, summary!, exhausted ? turnId : null);
+        const sessionId = resume ? await this.manager.importHandoverSession(id, target.agent) : null;
+        if (sessionId) await this.manager.executeResumeHandover(id, target, sessionId, failedTurn);
+        else {
+          // A conversation that could not be copied goes over as a brief, written from the log.
+          summary ??= await this.manager.autoHandoverSummary(id, target.agent, true);
+          await this.manager.executeAutoHandover(id, target, summary, failedTurn);
+        }
         transferred = true;
       }
     } catch (error) {

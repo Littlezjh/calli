@@ -375,6 +375,13 @@ export interface AgentAdapter {
     /** Account-scoped command, to run in the thread's working directory. */
     resumeCommand?: string;
   }>;
+  /**
+   * Copies a session file of another instance of the same agent (another account) into this
+   * instance's own store, under a new id, and returns that id. The copy resumes here with the whole
+   * conversation; the original is left as it was. Agents that cannot resume a conversation
+   * another account wrote leave this out.
+   */
+  importSession?(sourcePath: string): Promise<string>;
   /** Removes the agent's own record of a session. Present only when capabilities.deleteSession is true. */
   deleteSession?(agentSessionId: string, cwd: string): Promise<void>;
   /**

@@ -80,7 +80,7 @@ test('settings API validates and persists machine config; thread overrides are s
     assert.equal((await (await h.api('/api/handover-settings')).json()).enabled, false);
     const settings = { enabled: true, threshold: 93, orders: { agy: [{ agent: 'agy2', model: 'gemini-pro' }] } };
     assert.equal((await h.api('/api/handover-settings', 'PUT', settings)).status, 200);
-    assert.deepEqual(h.store.hubSetting('handover.settings', null), { ...settings, resume: false });
+    assert.deepEqual(h.store.hubSetting('handover.settings', null), { ...settings, resume: false, method: 'resume' });
     assert.equal((await h.api('/api/handover-settings', 'PUT', { ...settings, resume: 'yes' })).status, 400);
     for (const bad of [{ ...settings, threshold: 100 }, { ...settings, enabled: 'true' }, { ...settings, orders: { agy: [{ agent: 'missing' }] } }]) assert.equal((await h.api('/api/handover-settings', 'PUT', bad)).status, 400);
     assert.equal((await h.api(`/api/threads/${h.thread.id}/auto-handover`, 'PATCH', { enabled: 'false' })).status, 400);
@@ -95,6 +95,8 @@ test('fresh near-quota -> agent summary -> countdown -> successor; queued work f
   const h = await setup();
   try {
     h.config();
+    // The summary path: the brief is written even for another account of the same agent.
+    h.manager.autoHandover.configure({ enabled: true, threshold: 90, orders: { agy: [{ agent: 'agy2', model: 'gemini-pro' }] }, method: 'summary' });
     await h.manager.agentQuota('agy'); // The fresh turn must not use this 10% cached value.
     await h.manager.startTurn(h.thread.id, { text: 'quota-near' });
     await h.manager.startTurn(h.thread.id, { text: 'queued followup', queue: true });

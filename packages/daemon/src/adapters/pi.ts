@@ -6,7 +6,9 @@ import { sessionEnvironment } from './types.js';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import type { EmittedEvent } from '../events.js';
 import { imagePathNote } from '../attachments.js';
 import { commandExists, textOf } from '../util.js';
@@ -880,6 +882,24 @@ export class PiRpcAdapter implements AgentAdapter {
     const configDir = configDirectory(this.env, 'PI_CODING_AGENT_DIR', ['.pi', 'agent'], cwd);
     const sessionPath = await findSessionFile(join(configDir, 'sessions'), agentSessionId, 1, (name, id) => name.endsWith(`_${id}.jsonl`));
     return { configDir, sessionPath, ...(agentSessionId ? { resumeCommand: `env PI_CODING_AGENT_DIR=${quoteArg(configDir)} pi --session ${quoteArg(sessionPath ?? agentSessionId)}` } : {}) };
+  }
+
+  /**
+   * Another instance's session (another key or provider), copied under a new id into this
+   * instance's sessions folder for the same directory. pi keeps the whole conversation itself and
+   * can go on with it on any model; only the header names the session.
+   */
+  async importSession(sourcePath: string): Promise<string> {
+    const text = await readFile(sourcePath, 'utf8');
+    const end = text.indexOf('\n');
+    const header = JSON.parse(end < 0 ? text : text.slice(0, end));
+    if (header?.type !== 'session' || typeof header.id !== 'string') throw new Error('not a pi session file');
+    const id = randomUUID();
+    const dir = join(configDirectory(this.env, 'PI_CODING_AGENT_DIR', ['.pi', 'agent'], process.cwd()), 'sessions', basename(dirname(sourcePath)));
+    await mkdir(dir, { recursive: true });
+    const name = basename(sourcePath).replace(`_${header.id}.jsonl`, `_${id}.jsonl`);
+    await writeFile(join(dir, name), JSON.stringify({ ...header, id }) + (end < 0 ? '\n' : text.slice(end)), { flag: 'wx', mode: 0o600 });
+    return id;
   }
 
   skillDirs(): SkillDir[] {
