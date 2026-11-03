@@ -11410,13 +11410,20 @@ button.trace-step-head:hover { background: var(--hover); }
 .handover-summary-details { padding: 8px 16px; border-left: 1px solid var(--border); }
 .handover-summary-details pre { white-space: pre-wrap; overflow-wrap: anywhere; font-family: inherit; font-size: 13px; color: var(--muted); }
 .auto-add { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
-.auto-notice { position: sticky; top: 8px; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 16px; max-width: 800px; margin: 12px auto; padding: 12px 20px; background: var(--surface-2); border: 1px solid var(--border); font-size: 13px; }
+/* One line across the thread: rule — fork icon — what is about to happen — rule. Sticky, so the
+   countdown stays visible; the bar carries the page background, not a card. */
+.auto-notice { position: sticky; top: 8px; z-index: 2; display: flex; align-items: center; gap: 10px; max-width: 800px; margin: 12px auto; padding: 4px 12px; background: var(--bg); color: var(--muted); font-size: 12.5px; }
+.auto-notice .rule { flex: 1 0 24px; height: 1px; background: var(--border-strong); }
+.auto-notice > span { min-width: 0; }
+.auto-notice > svg { flex-shrink: 0; color: var(--positive); }
+.auto-notice.is-danger, .auto-notice.is-danger > svg { color: var(--danger); }
 .auto-notice small { display: block; color: var(--muted); }
-.auto-notice button { flex-shrink: 0; }
+.auto-notice button { flex-shrink: 0; border: 0; background: none; font: inherit; font-size: 12px; color: var(--muted); cursor: pointer; padding: 3px 8px; border-radius: 6px; }
+.auto-notice button:hover { background: var(--hover); color: var(--text); }
 .auto-member-mark { color: var(--muted); font-size: 11px; margin-left: 6px; }
 @media (max-width: 600px) {
   .auto-order-head { gap: 8px; }
-  .auto-notice { margin: 8px 12px; padding: 10px 12px; align-items: flex-start; }
+  .auto-notice { margin: 8px 12px; gap: 8px; }
 }
 
 .auto-order-head:hover { background: var(--hover); }

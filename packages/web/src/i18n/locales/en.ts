@@ -340,7 +340,7 @@ export const en: Messages = {
   "auto.source.collaboration": "Collaboration",
   "auto.source.global": "Global",
   "auto.members": "Automatic member handover",
-  "auto.preparing": "Preparing handover summary",
+  "auto.preparing": "Preparing handover",
   "auto.stopped": "No successor available. Automatic handover stopped.",
   "auto.cancel": "Cancel this handover",
   "auto.failed": "Automatic handover failed",

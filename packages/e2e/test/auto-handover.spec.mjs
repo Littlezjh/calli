@@ -19,7 +19,8 @@ const thread = (id) => request(`/api/threads/${id}`);
 const idle = id => wait(async () => { const t = await thread(id); return t.status !== 'running' && !['checking', 'preparing', 'countdown'].includes(t.autoHandover?.state) && !t.queued.length && t; });
 const create = title => request('/api/threads', 'POST', { agent: 'agy', model: 'gemini-pro', cwd: daemon.workdir, title });
 const send = (id, text, queue = false) => request(`/api/threads/${id}/turns`, 'POST', { text, queue });
-const configure = (targets, enabled = true) => request('/api/handover-settings', 'PUT', { enabled, threshold: 90, orders: { agy: targets } });
+// This spec exercises the summary path; the copy-the-conversation path has its own tests.
+const configure = (targets, enabled = true) => request('/api/handover-settings', 'PUT', { enabled, threshold: 90, orders: { agy: targets }, method: 'summary' });
 const select = async (page, title, mobile = false) => {
   if (mobile) await page.locator('.menu-btn').click();
   await page.locator('.sidebar .thread-item').filter({ has: page.locator('.thread-title', { hasText: new RegExp(`^${title}$`) }) }).click();

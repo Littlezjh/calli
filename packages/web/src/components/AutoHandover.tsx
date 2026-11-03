@@ -4,7 +4,7 @@ import { t } from '../i18n';
 import { Dialog } from './Dialog';
 import { Popover } from './Popover';
 import { AgentPicker } from './Pickers';
-import { AgentMark, IconChevron, IconGrip, IconMore } from './icons';
+import { AgentMark, IconChevron, IconFork, IconGrip, IconMore } from './icons';
 
 export function AutoHandoverChoice({ api, thread }: { api: Api; thread: Thread }) {
   const [value, setValue] = useState<AutoHandoverView | undefined>(thread.autoHandover);
@@ -35,11 +35,15 @@ export function AutoHandoverNotice({ api, thread, agents }: { api: Api; thread: 
   if (!state?.state || state.state === 'checking') return null;
   const target = state.target;
   const label = target ? [agents.find(a => a.id === target.agent)?.label ?? target.agent, target.model].filter(Boolean).join(' · ') : '';
-  return <div className="auto-notice" role={state.state === 'failed' || state.state === 'stopped' ? 'alert' : 'status'}>
+  const danger = state.state === 'failed' || state.state === 'stopped';
+  return <div className={`auto-notice${danger ? ' is-danger' : ''}`} role={danger ? 'alert' : 'status'}>
+    <span className="rule" />
+    <IconFork size={14} />
     <span>{state.state === 'countdown' ? t('auto.countdown', label, Math.max(0, Math.ceil((Date.parse(state.deadline!) - now) / 1000)))
       : state.state === 'preparing' ? t('auto.preparing') : state.state === 'stopped' ? t('auto.stopped') : t('auto.failed')}
       {state.error && <small>{state.error}</small>}{error && <small role="alert">{error}</small>}</span>
-    {(state.state === 'preparing' || state.state === 'countdown') && <button className="ghost" onClick={() => { void api.cancelAutoHandover(thread.id).catch(e => setError(String(e))); }}>{t('auto.cancel')}</button>}
+    {(state.state === 'preparing' || state.state === 'countdown') && <button onClick={() => { void api.cancelAutoHandover(thread.id).catch(e => setError(String(e))); }}>{t('auto.cancel')}</button>}
+    <span className="rule" />
   </div>;
 }
 
