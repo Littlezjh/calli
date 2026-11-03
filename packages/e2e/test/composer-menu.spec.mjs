@@ -268,7 +268,7 @@ test('add menu offers searchable actions and skills and controls goals without l
       // Control commands must not consume or send pending attachments.
       await add(page).click();
       const chooser = page.waitForEvent('filechooser');
-      await item(page, '添加图片或视频').click();
+      await item(page, '添加附件').click();
       await (await chooser).setFiles({ name: 'pixel.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j6r0AAAAASUVORK5CYII=', 'base64') });
       await page.locator('.attachment img').waitFor();
       if (mobile) {

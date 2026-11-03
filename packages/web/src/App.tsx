@@ -89,6 +89,7 @@ import { AgentPicker, type DiscoveredAccount, type DiscoveredAgent, effortsForMo
 import { Sidebar, SIDEBAR_SHORTCUT } from './components/Sidebar';
 import { forkBlocked, useThreadActions } from './components/ThreadActions';
 import { MergedHistory } from './components/MergedHistory';
+import { currentPlan, PlanButton } from './components/PlanPanel';
 import { HandoverComposer } from './components/HandoverComposer';
 import { WritingBar } from './components/WritingBar';
 import { handoverHistoryKey, latestHandoverThread } from './handover';
@@ -776,6 +777,9 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     voice.state.messagesThreadId === selectedId ? voice.state.messages : []),
   [events, selectedId, voice.state.messages, voice.state.messagesThreadId]);
   const turnPreviewMap = useMemo(() => turnPreviews(timeline.items), [timeline.items]);
+  // The newest turn's plan sits in the top bar, so the conversation does not show it twice.
+  const topPlan = useMemo(() => currentPlan(timeline.items), [timeline.items]);
+  const threadItems = useMemo(() => topPlan ? timeline.items.filter((item) => item !== topPlan) : timeline.items, [timeline.items, topPlan]);
   /** The thread's native goal. Live events say it when they can; otherwise what the hub last said. */
   const [goalFetched, setGoalFetched] = useState<GoalView | null>(null);
   const goalView = useMemo(() => {
@@ -1731,7 +1735,8 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     if (!selectedId) throw new Error(t('composer.noThread'));
     const taken = await api.removeQueued(selectedId, queuedId);
     refreshThreads();
-    return { ...taken, videos: await restoreVideos(api, selectedId, taken.videos) };
+    // The text goes back in the box now; videos and files follow once they are downloaded again.
+    return { ...taken, videos: restoreVideos(api, selectedId, taken.videos) };
   };
 
   const sendQueuedNow = (queuedId: string) => {
@@ -2452,6 +2457,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
               {teamShown && !atMember && teamNote && !compact && !(roomy && !agentsOpen && !files && coordination) && (
                 <span className={`topbar-team-note${teamWaiting ? ' attention' : ''}`}>{teamNote}</span>
               )}
+              {topPlan && !onPage && <PlanButton item={topPlan} />}
               <button
                 className={`icon-btn topbar-files${files ? ' on' : ''}`}
                 aria-label={t('files.files')}
@@ -2627,7 +2633,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
               onSegmentPreview={(thread, path) => setPreview({ threadId: thread.id, path })}
               historyApi={api ?? undefined}
               historyThreadId={selected.id}
-              items={timeline.items}
+              items={threadItems}
               revealTurnId={jump?.threadId === selected.id ? jump.turnId : undefined}
               roots={threadRoots}
               loadImage={loadImage}

@@ -7030,6 +7030,19 @@ div.file-card:hover { background: var(--surface); }
   animation: pulse 1.4s ease-in-out infinite;
 }
 
+/* The newest turn's plan, as a top-bar button: the ring and the count. */
+.topbar-plan { width: auto; color: var(--muted); gap: 6px; padding: 0 10px; border-radius: var(--radius-pill); font-size: 13px; }
+/* The phone's top bar sizes its buttons as squares; this one is as wide as its count. */
+.topbar-actions .icon-btn.topbar-plan { width: auto; }
+@media (max-width: 640px) { .topbar-plan { padding: 0 8px; gap: 4px; } }
+.topbar-plan[aria-expanded='true'] { background: var(--active); color: var(--text); }
+/* On a phone it is the usual bottom sheet. */
+@media (min-width: 641px) { .pop-panel.plan-panel { width: 360px; padding: 12px 14px 14px; } }
+.plan-panel .plan-panel-head, .plan-panel .plan-list { padding-inline: 4px; }
+.plan-panel-head { margin-bottom: 8px; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.plan-panel .plan-list { margin: 0; padding-block: 0; border-left: 0; gap: 8px; }
+.plan-panel .plan-entry { font-size: 14px; }
+
 /* ---------- Images an answer points at ---------- */
 
 .file-images {

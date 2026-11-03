@@ -13,7 +13,7 @@ before(async () => {
 after(async () => { await browser?.close(); await daemon?.stop(); });
 
 const planChoice = page => page.getByRole(page.viewportSize().width <= 640 ? 'menuitemcheckbox' : 'option', { name: /^计划模式/ });
-const attachChoice = page => page.getByRole(page.viewportSize().width <= 640 ? 'menuitem' : 'option', { name: '添加图片或视频', exact: true });
+const attachChoice = page => page.getByRole(page.viewportSize().width <= 640 ? 'menuitem' : 'option', { name: '添加附件', exact: true });
 const questionSheet = page => page.getByRole('dialog', { name: '智能体提问' });
 const planSheet = page => page.getByRole('dialog', { name: '计划审批' });
 const composerHidden = page => page.locator('.composer-box').evaluate(el => getComputedStyle(el).visibility === 'hidden');

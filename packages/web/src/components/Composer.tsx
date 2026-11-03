@@ -181,7 +181,8 @@ interface Props {
   modelQueue?: ModelQueue | null;
   onRemoveQueued: (id: string) => void;
   /** Takes a waiting message out of the queue and returns it, to be edited in the box. */
-  onEditQueued: (id: string) => Promise<{ text: string; images: OutgoingImage[]; videos?: PreparedVideo[]; mentions?: AgentMention[] }>;
+  /** Videos and files may come later than the text: restoring them can mean downloading them again. */
+  onEditQueued: (id: string) => Promise<{ text: string; images: OutgoingImage[]; videos?: PreparedVideo[] | Promise<PreparedVideo[]>; mentions?: AgentMention[] }>;
   /** Interrupt the running turn and send this waiting message next. */
   onSendQueuedNow: (id: string) => void;
   /** Text to put back in the box, such as messages that were waiting when the user pressed stop. */
@@ -238,7 +239,7 @@ export function Composer({
   attachmentsBlocked,
   attachNote,
   onError,
-  queued,
+  queued: queuedProp,
   modelQueue = null,
   onRemoveQueued,
   onEditQueued,
@@ -268,6 +269,12 @@ export function Composer({
   const [slow, setSlow] = useState(false);
   const [images, setImages] = useState<PreparedImage[]>([]);
   const [videos, setVideos] = useState<PreparedVideo[]>([]);
+  // Waiting messages being taken back into the box, hidden before the thread list catches up.
+  const [taking, setTaking] = useState<string[]>([]);
+  const queued = useMemo(() => taking.length ? queuedProp.filter(q => !taking.includes(q.id)) : queuedProp, [queuedProp, taking]);
+  useEffect(() => {
+    setTaking(current => current.length && current.some(id => !queuedProp.some(q => q.id === id)) ? current.filter(id => queuedProp.some(q => q.id === id)) : current);
+  }, [queuedProp]);
   const [videoPreview, setVideoPreview] = useState<PreparedVideo | null>(null);
   const [preparing, setPreparing] = useState(0);
   const [dragOver, setDragOver] = useState(false);
@@ -541,24 +548,30 @@ export function Composer({
 
   // A waiting message goes back in the box, in front of anything typed, pictures included.
   const editQueued = async (id: string) => {
+    // The row goes at once; waiting for the thread list to say so left it standing beside its own text.
+    setTaking(current => [...current, id]);
     try {
       const taken = await onEditQueued(id);
       if (taken.mentions?.length) setMentions(current => [...taken.mentions!, ...current]);
       setText((current) => [taken.text, current].filter((s) => s.trim()).join('\n\n'));
       const room = MAX_IMAGES - images.length - preparing;
       if (taken.images.length > room) onError(t('composer.maxImagesNotRestored', MAX_IMAGES));
-      const videoRoom = Math.max(0, MAX_UPLOADS - videos.length);
-      const returnedVideos = taken.videos ?? [];
-      if (returnedVideos.length > videoRoom) onError(t('composer.maxUploads', MAX_UPLOADS));
-      returnedVideos.slice(videoRoom).forEach(video => URL.revokeObjectURL(video.previewUrl));
-      setVideos(current => [...returnedVideos.slice(0, videoRoom), ...current]);
       const back = taken.images.slice(0, Math.max(0, room)).map(restoreImage);
       if (back.length) setImages((prev) => [...back, ...prev]);
       ref.current?.focus();
+      const returnedVideos = await (taken.videos ?? []);
+      // What is in the box by now, not when the edit began: these may arrive a while later.
+      const videoRoom = Math.max(0, MAX_UPLOADS - (draftRef.current.videos?.length ?? 0));
+      if (returnedVideos.length > videoRoom) onError(t('composer.maxUploads', MAX_UPLOADS));
+      returnedVideos.slice(videoRoom).forEach(video => URL.revokeObjectURL(video.previewUrl));
+      setVideos(current => [...returnedVideos.slice(0, videoRoom), ...current]);
     } catch (e) {
       // The turn ahead of it may have ended in the meantime, taking the message out with it.
       if (e instanceof ApiError && e.status === 404) onError(t('composer.alreadySent'));
-      else onError(e instanceof Error ? e.message : t('composer.takeBackFailed'));
+      else {
+        setTaking(current => current.filter(other => other !== id));
+        onError(e instanceof Error ? e.message : t('composer.takeBackFailed'));
+      }
     }
   };
 
