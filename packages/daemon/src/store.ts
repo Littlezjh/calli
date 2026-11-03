@@ -1276,6 +1276,11 @@ export class Store {
       // A payload field the incoming snapshot does not carry (diffs especially) is only in the
       // old row; keep the row then. A call alternates fields rarely, so this stays bounded.
       if (!(!now.output && old.output) && !(!now.content && old.content)) {
+        // What names the call (a streamed one learns its command only from an update) goes on
+        // with the snapshot that replaces the row, or a reload would show "Terminal" again.
+        for (const field of ['title', 'kind', 'input'] as const) {
+          if (stored[field] === undefined && before[field] !== undefined) stored[field] = before[field];
+        }
         this.db.prepare('DELETE FROM events WHERE thread_id = ? AND seq = ?').run(threadId, prior.seq);
         this.db.prepare('DELETE FROM history_rows WHERE thread_id = ? AND seq = ?').run(threadId, prior.seq);
       }

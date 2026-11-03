@@ -28,6 +28,7 @@ import {
   splitUserQuote,
   thinkingPreview,
   stepActive,
+  stepCommand,
   stepTitle,
   stepStatusLabel,
   workSections,
@@ -1349,6 +1350,8 @@ function StepRow({ step: original, roots }: { step: Step; roots: string[] }) {
   const shown = full.text ?? step.output;
   // An edit is best shown as its diff; the raw arguments would repeat the same text as JSON.
   const showInput = step.input !== undefined && step.diffs.length === 0 && JSON.stringify(step.input) !== '{}';
+  // A command reads as the line that was typed, not as the JSON it was sent in.
+  const command = stepCommand(step);
   const result = step.status === 'completed' ? t('view.succeeded') : step.status === 'failed' ? t('team.failed') : null;
   const hasContent = showInput || step.diffs.length > 0 || Boolean(step.output);
   const hasDetail = Boolean(original.detail) || hasContent || result !== null;
@@ -1363,7 +1366,7 @@ function StepRow({ step: original, roots }: { step: Step; roots: string[] }) {
         <div className="step-detail">
           <div className="step-detail-content">
             <ResourceStatus resource={resource} />
-            {showInput && <pre>{JSON.stringify(step.input, null, 2)}</pre>}
+            {showInput && (command ? <pre className="step-command">{command}</pre> : <pre>{JSON.stringify(step.input, null, 2)}</pre>)}
             {step.diffs.length > 0 && <DiffView diffs={step.diffs} />}
             {truncated && resource.value?.fullAvailable && full.state !== 'loading' && <button className="text-btn history-more" onClick={loadFullOutput}>{t('view.toolFullOutput')}</button>}
             {truncated && full.state === 'loading' && <div className="history-status" role="status">{t('common.loading')}</div>}

@@ -138,11 +138,15 @@ function mergedToolEvent(run: StoredEvent[]): StoredEvent {
   const last = run[run.length - 1];
   let status: unknown;
   let title: unknown;
+  let kind: unknown;
+  let input: unknown;
   let content: unknown;
   let text: string | undefined;
   for (const ev of run) {
     if (ev.data.status) status = ev.data.status;
     if (ev.data.title) title = ev.data.title;
+    if (ev.data.kind) kind = ev.data.kind;
+    if (ev.data.input !== undefined) input = ev.data.input;
     // The timeline replaces a step's diffs only when an event carries some, and its output text
     // from the last event that carries either; each field is taken from where it was last set.
     if (hasDiffParts(ev.data.content)) content = ev.data.content;
@@ -152,6 +156,8 @@ function mergedToolEvent(run: StoredEvent[]): StoredEvent {
   const data: Record<string, unknown> = { id: last.data.id };
   if (status !== undefined) data.status = status;
   if (title !== undefined) data.title = title;
+  if (kind !== undefined) data.kind = kind;
+  if (input !== undefined) data.input = input;
   if (content !== undefined) data.content = content;
   if (text !== undefined) data.output = text;
   return { ...last, data };

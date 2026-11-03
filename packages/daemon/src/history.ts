@@ -184,8 +184,10 @@ export class HistoryStore {
         detail = { thread_id: threadId, turn_id: turnId, id: seq, tool_id: String(data.id), kind: 'tool', version: seq, input_seq: null, output_seq: null, diff_seq: null, end_seq: seq };
       }
       const diffs = Array.isArray(data.content) ? data.content.filter((p: any) => p?.type === 'diff') as any[] : [];
-      // Match tool.start: input and initial content; later inputs are not replacements.
-      const inputSeq = ev.type === 'tool.start' && data.input !== undefined ? Math.max(seq, detail.input_seq ?? 0) : detail.input_seq;
+      // The input is tool.start's, unless a later event names the call: one that surfaced while its
+      // input still streamed (Claude's bridge) starts with none and learns its command from an update.
+      const named = data.input !== undefined && (ev.type === 'tool.start' || (typeof data.input === 'object' && data.input !== null && Object.keys(data.input).length > 0));
+      const inputSeq = named ? Math.max(seq, detail.input_seq ?? 0) : detail.input_seq;
       const outputSeq = hasOutput(ev.type === 'tool.start' ? undefined : data.output, data.content) ? Math.max(seq, detail.output_seq ?? 0) : detail.output_seq;
       const diffSeq = diffs.length ? Math.max(seq, detail.diff_seq ?? 0) : detail.diff_seq;
       this.db.prepare('UPDATE history_details SET version=?, input_seq=?, output_seq=?, diff_seq=?, end_seq=? WHERE thread_id=? AND turn_id=? AND id=?')

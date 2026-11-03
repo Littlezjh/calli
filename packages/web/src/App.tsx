@@ -83,7 +83,7 @@ import { ExtensionView } from './extensions/ExtensionView';
 import { threadSummaries } from './extensions/project';
 import { createThreadFeed } from './extensions/thread-feed';
 import { cachedThreads, rememberThreads } from './thread-cache';
-import { clampSidebarWidth, projectDir, savedSidebarWidth, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, type HostSource } from './sidebar';
+import { clampSidebarWidth, defaultSidebarWidth, projectDir, savedSidebarWidth, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, type HostSource } from './sidebar';
 import { enabledViews, extensionHash, looksLikeExtensionRoute, resolveExtensionRoute } from './extensions/routes';
 import { AgentPicker, type DiscoveredAccount, type DiscoveredAgent, effortsForModel, imagesBlocked, imagesNote, modelName, speedsForModel, ModelPicker, PermissionPicker, UsageMeter, WorkspacePicker } from './components/Pickers';
 import { Sidebar, SIDEBAR_SHORTCUT } from './components/Sidebar';
@@ -592,14 +592,24 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const modelVersions = useRef<Record<string, number>>({});
   const [commandsByKey, setCommandsByKey] = useState<Record<string, SlashCommand[]>>({});
   const [drawer, setDrawer] = useState(start === 'list');
-  const [sidebarWidth, setSidebarWidth] = useState(() => {
-    if (showcase) return savedSidebarWidth(null);
+  const [chosenSidebarWidth, setSidebarWidth] = useState<number | null>(() => {
+    if (showcase) return null;
     try {
       return savedSidebarWidth(window.localStorage.getItem(SIDEBAR_WIDTH_KEY));
     } catch {
-      return savedSidebarWidth(null);
+      return null;
     }
   });
+  // Without a dragged width the list follows the window. The state changes only when the width it
+  // gives does, so resizing the window does not render the app on every frame.
+  const [fittedSidebarWidth, setFittedSidebarWidth] = useState(() => defaultSidebarWidth(window.innerWidth));
+  useEffect(() => {
+    if (chosenSidebarWidth !== null) return;
+    const fit = () => setFittedSidebarWidth(defaultSidebarWidth(window.innerWidth));
+    window.addEventListener('resize', fit);
+    return () => window.removeEventListener('resize', fit);
+  }, [chosenSidebarWidth]);
+  const sidebarWidth = chosenSidebarWidth ?? fittedSidebarWidth;
   const [sidebarDrag, setSidebarDrag] = useState<{ pointerId: number; startX: number; startWidth: number } | null>(null);
   const rememberSidebarWidth = useCallback((width: number) => {
     if (showcase) return;
@@ -1017,8 +1027,11 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     const el = mainRef.current;
     if (!el) return;
     const read = () => {
-      const column = parseFloat(getComputedStyle(el).getPropertyValue('--content-w')) || 760;
+      const column = parseFloat(getComputedStyle(el).getPropertyValue('--content-w')) || 780;
       setRoomy((el.clientWidth - column) / 2 >= 272);
+      // What the column's lean toward the middle of the screen is worked out from (see styles.css).
+      // clientWidth includes the padding the lean adds, so the two do not chase each other.
+      el.style.setProperty('--main-w', `${el.clientWidth}px`);
     };
     read();
     const watch = new ResizeObserver(read);
@@ -2402,7 +2415,9 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         />
       )}
 
-      <main className="main" ref={mainRef}>
+      {/* A conversation under way leans toward the middle of the screen, as in Codex; a new
+          thread, and the pages, stay centred where they are. */}
+      <main className={`main${selected && !onPage && hostUp && !compact ? ' lean' : ''}`} ref={mainRef}>
         {compact && selected && !listOpen && !onPage && hostUp && (
           <ThreadQuickSwitch threads={topLevelThreads} selectedId={selected.id} agents={agents} onSelect={pick} />
         )}

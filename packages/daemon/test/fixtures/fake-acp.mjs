@@ -429,6 +429,13 @@ rl.on('line', (line) => {
         });
         update({ sessionUpdate: 'tool_call_update', toolCallId: 'e1', status: 'completed', rawOutput: 'ok' });
       }
+      if (text.includes('streamed command')) {
+        // Like Claude's bridge: the call surfaces while its input still streams, as "Terminal" with
+        // no input, and only a later update names the command.
+        update({ sessionUpdate: 'tool_call', toolCallId: 's1', title: 'Terminal', kind: 'execute', status: 'pending', rawInput: {} });
+        update({ sessionUpdate: 'tool_call_update', toolCallId: 's1', title: 'npm test -- --grep upload', kind: 'execute', rawInput: { command: 'npm test -- --grep upload', description: 'Run the upload tests' }, content: [{ type: 'content', content: { type: 'text', text: 'Run the upload tests' } }] });
+        update({ sessionUpdate: 'tool_call_update', toolCallId: 's1', status: 'completed', rawOutput: '2 passing' });
+      }
       if (text.includes('plan')) {
         update({
           sessionUpdate: 'plan',

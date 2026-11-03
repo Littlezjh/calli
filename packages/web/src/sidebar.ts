@@ -6,18 +6,28 @@ import { t } from './i18n';
 
 /** Desktop sidebar bounds keep the thread list useful without squeezing the conversation away. */
 export const SIDEBAR_MIN_WIDTH = 240;
-export const SIDEBAR_DEFAULT_WIDTH = 288;
 export const SIDEBAR_MAX_WIDTH = 520;
+/** The width nobody chose: a quarter of the window, between these two. */
+export const SIDEBAR_DEFAULT_MIN = 288;
+export const SIDEBAR_DEFAULT_MAX = 360;
 
 export function clampSidebarWidth(width: number): number {
   return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(width)));
 }
 
-/** Invalid or missing saved values fall back to the layout's original width. */
-export function savedSidebarWidth(value: string | null): number {
-  if (value === null) return SIDEBAR_DEFAULT_WIDTH;
+/**
+ * Until the list is dragged, its width follows the window: a wide screen has room for whole thread
+ * titles, a laptop keeps the conversation its space.
+ */
+export function defaultSidebarWidth(viewport: number): number {
+  return Math.min(SIDEBAR_DEFAULT_MAX, Math.max(SIDEBAR_DEFAULT_MIN, Math.round(viewport / 4)));
+}
+
+/** A width the user dragged to, or null when there is none (or what is stored is not a width). */
+export function savedSidebarWidth(value: string | null): number | null {
+  if (value === null) return null;
   const width = Number(value);
-  return Number.isFinite(width) ? clampSidebarWidth(width) : SIDEBAR_DEFAULT_WIDTH;
+  return Number.isFinite(width) ? clampSidebarWidth(width) : null;
 }
 
 /**

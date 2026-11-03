@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { channelRows, turnChannel } from '../src/timeline.js';
 import {
   buildTimeline,
+  stepCommand,
   compactionLabel,
   coordinationNote,
   deliveredPreview,
@@ -151,6 +152,23 @@ test('tool.update changes status without creating a new step', () => {
   assert.equal(work.kind === 'work' && work.steps.length, 1);
   assert.equal(work.kind === 'work' && work.steps[0].output, 'partial');
   assert.equal(tl.running, true);
+});
+
+test('a command that surfaced as "Terminal" takes its name and input from the update that names it', () => {
+  seq = 0;
+  const tl = buildTimeline([
+    ev('turn.started', { text: 'x' }),
+    ev('tool.start', { id: 's', title: 'Terminal', kind: 'execute', input: {} }),
+    ev('tool.update', { id: 's', title: 'npm test', kind: 'execute', input: { command: 'npm test', description: 'Run tests' } }),
+    ev('tool.end', { id: 's', status: 'completed', output: '2 passing' }),
+  ]);
+  const work = tl.items[1];
+  const step = work.kind === 'work' ? work.steps[0] : undefined;
+  assert.equal(step && stepTitle(step), '运行了 npm test');
+  assert.equal(step && stepCommand(step), 'npm test');
+  assert.equal(step?.output, '2 passing');
+  assert.equal(stepCommand({ kind: 'read', input: { command: 'x' } }), null, 'only a command run has a command line');
+  assert.equal(stepCommand({ kind: 'execute', input: {} }), null);
 });
 
 test('approval is shown and its decision is attached when resolved', () => {

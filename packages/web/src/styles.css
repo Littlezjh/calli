@@ -76,7 +76,7 @@
   --radius-lg: 18px;
   --radius-xl: 30px;
   --sidebar-w: 288px;
-  --content-w: 760px;
+  --content-w: 780px;
   /* The home-indicator inset; App.tsx sets it to 0 while a phone keyboard covers that edge. */
   --safe-bottom: env(safe-area-inset-bottom);
   /* Below the app on a phone: the browser's own bottom-bar area. A clear step deeper than the
@@ -1147,7 +1147,7 @@ html.list-open body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13.5px;
+  font-size: 14px;
   line-height: 1.3;
 }
 
@@ -2001,6 +2001,17 @@ html.list-open body {
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* The command, as the line that was typed: a prompt mark, then the words. The output follows
+   under the separator every detail block gets. */
+.step-detail pre.step-command {
+  color: var(--text);
+}
+
+.step-detail pre.step-command::before {
+  content: '$ ';
+  color: var(--faint);
 }
 
 .error-box {
@@ -6694,6 +6705,68 @@ div.file-card:hover { background: var(--surface); }
 
   .panel-row:not(.single) .panel-row-main {
     flex-basis: 100%;
+  }
+}
+
+/* ---------- Desktop: a running conversation leans toward the screen's middle ---------- */
+
+/* Centred in the area beside the sidebar, the column sits right of the screen's middle on a wide
+   window. Once a conversation is under way it moves left by half of that, up to a quarter of the
+   sidebar, as Codex does; a new thread stays centred. The room comes from padding on the right of
+   .main, so everything centred in it moves together (the composer, and the demo, error and
+   handover bars) while the top bar and the scroller reach back to the edge. Code and wide tables
+   may then grow to the right, into the room the move freed. --main-w is set from App. */
+@media (min-width: 900px) {
+  .main {
+    --column-shift: 0px;
+    --column-extra: 0px;
+    transition: padding-right 0.3s ease;
+  }
+
+  .main.lean {
+    --column-shift: clamp(0px, calc((var(--main-w, 0px) - var(--content-w)) / 4 - 32px), calc(var(--sidebar-w) / 4));
+    --column-extra: clamp(0px, calc((var(--main-w, 0px) - var(--content-w)) / 2 + var(--column-shift) - 48px), 160px);
+    padding-right: calc(2 * var(--column-shift));
+  }
+
+  /* With the list put away the column is already in the middle of the screen. */
+  .app.sidebar-hidden .main.lean {
+    --column-shift: 0px;
+  }
+
+  .main > .topbar {
+    margin-right: calc(-2 * var(--column-shift));
+    transition: margin-right 0.3s ease;
+  }
+
+  .main > .scroller {
+    margin-right: calc(-2 * var(--column-shift));
+    padding-right: calc(24px + 2 * var(--column-shift));
+    transition: margin-right 0.3s ease, padding-right 0.3s ease;
+  }
+
+  /* Dragging the list must not leave the column trailing behind the pointer. */
+  .app.sidebar-resizing .main,
+  .app.sidebar-resizing .main > .topbar,
+  .app.sidebar-resizing .main > .scroller {
+    transition: none;
+  }
+
+  .main.lean .thread .markdown .code-block {
+    margin-right: calc(-1 * var(--column-extra));
+  }
+
+  .main.lean .thread .markdown table {
+    width: max-content;
+    max-width: calc(100% + var(--column-extra));
+  }
+}
+
+@media (min-width: 900px) and (prefers-reduced-motion: reduce) {
+  .main,
+  .main > .topbar,
+  .main > .scroller {
+    transition: none;
   }
 }
 

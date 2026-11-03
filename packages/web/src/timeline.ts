@@ -391,6 +391,9 @@ function applyToolData(step: Step, data: Record<string, any>): void {
   if (data.files) step.files = data.files;
   if (data.status) step.status = String(data.status);
   if (data.title) step.title = String(data.title);
+  // A call that surfaced while its input still streamed is named by a later event.
+  if (data.kind) step.kind = String(data.kind);
+  if (data.input && typeof data.input === 'object' && Object.keys(data.input).length) step.input = data.input;
   const diffs = diffsOf(data.content);
   if (diffs.length) { step.diffs = diffs; step.files = undefined; }
   const text = outputText(data.output) || textOfContent(data.content);
@@ -999,6 +1002,12 @@ const LEADING_CD = /^cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*(?:&&|;)\s*(?=\S)/;
 export function stepTitle(step: Step): string {
   const title = step.kind === 'execute' ? step.title.replace(LEADING_CD, '') : step.title;
   return hasVerb(step.kind) ? t(`step.${step.kind}`, title) : title;
+}
+
+/** The command a step ran, when its input names one. */
+export function stepCommand(step: Pick<Step, 'kind' | 'input'>): string | null {
+  const command = (step.input as { command?: unknown } | undefined)?.command;
+  return step.kind === 'execute' && typeof command === 'string' && command.trim() ? command : null;
 }
 
 /** A row shows timing; failure belongs to the tool's expanded detail, not the conversation. */

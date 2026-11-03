@@ -721,6 +721,29 @@ test('file changes from an edit arrive as diff content on the tool events', asyn
   assert.match(withDiff!.data.content[0].path, /src\/app\.ts$/);
 });
 
+test('a command named only by a later update keeps its name and input once its result is stored', async () => {
+  const thread = await newThread({ agent: 'claude' });
+  await api(`/api/threads/${thread.id}/turns`, { method: 'POST', body: JSON.stringify({ text: 'run a streamed command' }) });
+  const events = (await finishedEvents(thread.id)).filter((e) => e.type.startsWith('tool.') && e.data.id === 's1');
+  assert.equal(events[0].type, 'tool.start');
+  assert.equal(events[0].data.title, 'Terminal', 'the call surfaced before its command was known');
+  // The update that named the command is superseded by the result, but what it said is kept.
+  const last = events.at(-1)!;
+  assert.equal(last.type, 'tool.end');
+  assert.equal(last.data.title, 'npm test -- --grep upload');
+  assert.equal(last.data.kind, 'execute');
+  assert.deepEqual(last.data.input, { command: 'npm test -- --grep upload', description: 'Run the upload tests' });
+  assert.equal(last.data.output, '2 passing');
+  // The page's first screen of the thread reads the same merged record.
+  const page = (await (await api(`/api/threads/${thread.id}/events?tail`)).json()) as { events?: StoredEvent[] } | StoredEvent[];
+  const replayed = (Array.isArray(page) ? page : page.events ?? []).filter((e) => e.type.startsWith('tool.') && e.data.id === 's1');
+  assert.equal(replayed.at(-1)!.data.title, 'npm test -- --grep upload');
+  // Opening the step reads its detail from the history projection, which has the command too.
+  const start = events[0] as StoredEvent & { seq: number; turnId: string };
+  const detail = await (await api(`/api/threads/${thread.id}/history/detail?turn=${encodeURIComponent(start.turnId)}&id=${start.seq}`)).json() as { input?: unknown };
+  assert.deepEqual(detail.input, { command: 'npm test -- --grep upload', description: 'Run the upload tests' });
+});
+
 const patchThread = async (id: string, body: unknown) => {
   const res = await api(`/api/threads/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
   return { status: res.status, body: (await res.json()) as any };

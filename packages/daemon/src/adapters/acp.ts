@@ -83,10 +83,14 @@ export function mapAcpUpdate(update: any): EmittedEvent | null {
       };
     case 'tool_call_update': {
       const done = update.status === 'completed' || update.status === 'failed';
+      // A call surfaced while its input still streamed (Claude's bridge: "Terminal", no input) is
+      // named by a later update; the command or path it carries must not be dropped.
       const data = {
         id: update.toolCallId,
         title: update.title,
         status: update.status,
+        ...(typeof update.kind === 'string' && update.kind ? { kind: update.kind } : {}),
+        ...(update.rawInput && typeof update.rawInput === 'object' && Object.keys(update.rawInput).length ? { input: update.rawInput } : {}),
         output: update.rawOutput,
         content: update.content,
       };
