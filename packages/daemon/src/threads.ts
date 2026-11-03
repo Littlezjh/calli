@@ -46,6 +46,7 @@ import { urgencyOf } from './store.js';
 import { todoStages } from './todo-stage.js';
 import { batchShape, mergeBatches, type TurnBatch } from './turn-batch.js';
 import { buildTrace, type TurnTrace } from './trace.js';
+import { aggregateThreadStats, statsOfTrace, type ThreadStats, type TurnStatsRow } from './turn-stats.js';
 import { askedText } from './util.js';
 import { MessageEdits } from './message-edits.js';
 import { addWorktree, countChanges, findCheckout, initRepository, removeWorktree, samePath, worktreeLeftovers, type Checkout, type Worktree } from './worktrees.js';
@@ -691,6 +692,43 @@ export class ThreadManager {
 
   activityReport(days: number, agent: string) { return this.store.activity.read(days, agent); }
 
+  /**
+   * The thread's session statistics: stored per-turn timing, tokens summed from the native usage
+   * samples, and the running turn's progress computed fresh. Turns without a stored row — old
+   * threads, imports, a turn that ended while the daemon was down — are computed once here and
+   * then read from storage; the running turn is never stored, it is still growing.
+   */
+  threadStats(threadId: string): ThreadStats {
+    this.getThread(threadId);
+    const turns = this.store.listTurns(threadId);
+    const runningTurnId = this.store.openTurn(threadId);
+    const rows = this.store.telemetry.turnStatsRows(threadId);
+    for (const turn of turns) {
+      if (rows.has(turn.turnId)) continue;
+      const row = this.computeTurnStats(threadId, turn.turnId);
+      if (!row) continue;
+      rows.set(turn.turnId, row);
+      // The running turn is computed fresh on every read and never stored; it is still growing.
+      if (turn.turnId !== runningTurnId) this.store.telemetry.recordTurnStats(threadId, turn.turnId, row);
+    }
+    return aggregateThreadStats({
+      threadId,
+      checkedAt: new Date().toISOString(),
+      running: runningTurnId !== null,
+      runningTurnId,
+      turns,
+      rows,
+      tokens: this.store.telemetry.tokenSumsByTurn(threadId),
+    });
+  }
+
+  private computeTurnStats(threadId: string, turnId: string): TurnStatsRow | null {
+    const events = this.store.turnEvents(threadId, turnId);
+    if (!events.length) return null;
+    const trace = buildTrace(events);
+    return statsOfTrace(trace, trace.endedAt ?? events[events.length - 1].ts);
+  }
+
   /** One turn of a thread as a trace, the last turn when none is named. */
   turnTrace(threadId: string, turnId?: string): TurnTrace {
     const thread = this.getThread(threadId);
@@ -710,6 +748,7 @@ export class ThreadManager {
       startedAt: turn.ts,
       endedAt: trace.endedAt,
       steps: trace.steps,
+      segments: trace.segments,
       totals: trace.totals,
       turns: turns.map((t) => ({ turnId: t.turnId, ts: t.ts })),
     };
@@ -2974,6 +3013,19 @@ export class ThreadManager {
       if (account) data = { ...data, linkedAccount: account };
     }
     const stored = this.store.appendEvent(threadId, turnId, type, data);
+    // Turn timing is computed once, when the turn ends; a deferred task keeps it off the turn's tail.
+    if (turnId && (type === 'turn.done' || type === 'turn.error') && !data.imported && !data.fromTerminal) this.recordTurnStats(threadId, turnId);
     for (const l of this.listeners) l(stored);
+  }
+
+  /** Store a finished turn's timing in the background; a failed run is recomputed on the next read. */
+  private recordTurnStats(threadId: string, turnId: string): void {
+    const timer = setTimeout(() => {
+      try {
+        const row = this.computeTurnStats(threadId, turnId);
+        if (row) this.store.telemetry.recordTurnStats(threadId, turnId, row);
+      } catch { /* The store may be closing; the read path backfills this turn later. */ }
+    }, 0);
+    timer.unref?.();
   }
 }

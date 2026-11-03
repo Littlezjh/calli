@@ -1089,6 +1089,12 @@ export function createHttpServer(deps: HttpDeps): Server {
         return sendJson(res, 200, manager.turnTrace(threadId, url.searchParams.get('turn') || undefined));
       }
 
+      if (method === 'GET' && sub === 'stats') {
+        // Summary numbers for the top-bar readings: per-turn timing from storage, tokens from the
+        // native samples, the running turn's progress computed fresh.
+        return sendJson(res, 200, manager.threadStats(threadId));
+      }
+
       if (method === 'GET' && sub === 'system-prompt') {
         return sendJson(res, 200, await manager.threadSystemPrompt(threadId));
       }
