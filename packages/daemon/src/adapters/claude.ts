@@ -20,8 +20,8 @@ import type { DiscoveredAccount, McpServerInfo, ModelOption, PermissionMode, Pla
  * - its permission modes: "auto" (Claude decides which actions are risky) is the closest match for
  *   auto_edit, acceptEdits is the fallback when the account or adapter version does not offer it;
  * - it answers /cost and /stats in a session without announcing them;
- * - the model list says nothing about which models this account can use, so each model is selected
- *   once in a throw-away session to check.
+ * - subscription models are selected once in a throw-away session to check account access;
+ *   gateway catalogs are shown directly, with access checked when a model is selected.
  */
 
 /**
@@ -175,6 +175,9 @@ export class ClaudeAcpAdapter extends AcpAdapter {
    * account cannot use. The session comes from the shared probe, which sends no prompt.
    */
   protected refineModels(models: ModelOption[], session: AcpSession): Promise<ModelOption[]> {
+    // Selecting every gateway model can issue paid API probes and exceed the list deadline.
+    // Keep the CLI's catalog; ordinary session model selection still validates access.
+    if (this.env.ANTHROPIC_BASE_URL) return Promise.resolve(models);
     return (async () => {
       const usable: ModelOption[] = [];
       for (const model of models) {
