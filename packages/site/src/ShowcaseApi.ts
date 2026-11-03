@@ -45,7 +45,11 @@ export class ShowcaseApi extends DemoApi {
     fixture.todos = [];
     fixture.schedules = [];
     fixture.activity = [];
-    fixture.traces = {};
+    // The showcase threads replay their own runs; only the example trace stays, with its segments,
+    // and the session statistics behind the thread that has them.
+    const showcaseIds: Set<string> = new Set(SCENARIOS.map(s => s.threadId).filter(id => id !== null));
+    fixture.traces = Object.fromEntries(Object.entries(fixture.traces).filter(([id]) => showcaseIds.has(id)));
+    fixture.stats = Object.fromEntries(Object.entries(fixture.stats).filter(([id]) => showcaseIds.has(id)));
     for (const thread of fixture.threads) {
       if (!SCENARIOS.some(s => s.threadId === thread.id)) continue;
       const source = fixture.events[thread.id];

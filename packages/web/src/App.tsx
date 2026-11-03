@@ -99,7 +99,9 @@ import { NoteMarks, type NoteMark } from './components/NoteMarks';
 import { Toast, type ToastState } from './components/Toast';
 import { ConnectDialog, DemoBar } from './components/ConnectDialog';
 import { DemoApi, DemoError } from './demo/DemoApi';
-import { IconCheck, IconBell, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconSettings, IconMore, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconLanguage, IconWaveform } from './components/icons';
+import { IconCheck, IconBell, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconSettings, IconMore, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconTrace, IconLanguage, IconWaveform } from './components/icons';
+import { StatReadings } from './components/SessionStats';
+import { ThreadTracePanel } from './components/TracePanel';
 import { chooseLocale, locale, LOCALES, localeChoice, t } from './i18n';
 
 const sleep = (ms: number, signal: AbortSignal) =>
@@ -1542,8 +1544,10 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   // The file panel: what it shows, for the thread on screen. Switching threads closes it.
   const [filesThreadId, setFilesThreadId] = useState<string | null>(null);
   const [files, setFiles] = useState<FilesTarget | null>(null);
+  /** The thread's trace, beside the conversation on a desktop, a page of its own on a phone. */
+  const [traceOpen, setTraceOpen] = useState(false);
   const filesSeq = useRef(0);
-  useEffect(() => { setFiles(null); setFilesThreadId(null); }, [selectedId]);
+  useEffect(() => { setFiles(null); setFilesThreadId(null); setTraceOpen(false); }, [selectedId]);
   // A page the agent wrote, rendered in a sandboxed iframe.
   const [preview, setPreview] = useState<{ threadId: string; path: string } | null>(null);
   const openFileLink = useCallback(
@@ -2473,6 +2477,17 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
                 <span className={`topbar-team-note${teamWaiting ? ' attention' : ''}`}>{teamNote}</span>
               )}
               {topPlan && !onPage && <PlanButton item={topPlan} />}
+              {/* The session's numbers, quiet pills beside the trace button; a phone reads them in the trace page. */}
+              {!compact && <StatReadings api={api} threadId={selected.id} active={selected.status === 'running'} onOpenTrace={() => { setAgentsOpen(false); setFiles(null); setTraceOpen(true); }} />}
+              <button
+                className={`icon-btn topbar-trace${traceOpen ? ' on' : ''}`}
+                aria-label={t('trace.openTrace')}
+                aria-pressed={traceOpen}
+                title={t('trace.openTrace')}
+                onClick={() => { setAgentsOpen(false); setFiles(null); setTraceOpen((v) => !v); }}
+              >
+                <IconTrace />
+              </button>
               <button
                 className={`icon-btn topbar-files${files ? ' on' : ''}`}
                 aria-label={t('files.files')}
@@ -2842,6 +2857,16 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           permission={a.capabilities.permissionModes.length ? thread.permissionMode : undefined} onPermission={(permissionMode) => { void api.updateThread(thread.id, { permissionMode }).then(() => refreshThreads()).catch(handleError); }} /> : null;
       }} leadAgent={threads.find((t) => t.id === coordination.rootId)?.agent} phone={compact} onClose={() => setAgentsOpen(false)} onOpen={thread => { openThread(thread); setAgentsOpen(false); }} onAdjust={name => { setAgentsOpen(false); setSelectedId(coordination.rootId); setRestore({ text: t('app.adjustTask', name), nonce: Date.now() }); }} onRefresh={() => { void refreshThreads(); }} onError={handleError} />}
       {files && selected && api && <FilesPanel api={api} threadId={filesThreadId ?? selected.id} target={files} phone={compact} revision={threads.find(t => t.id === (filesThreadId ?? selected.id))?.updatedAt} writingStage={selected.writing?.stage ?? null} writingHabits={selected.writing?.habits ?? null} noted={{ count: noteCount, nonce: filesNotePulse }} onClose={() => setFiles(null)} />}
+      {traceOpen && selected && (
+        <ThreadTracePanel
+          api={api}
+          agents={agents}
+          threadId={selected.id}
+          phone={compact}
+          readings={compact ? <StatReadings api={api} threadId={selected.id} active={selected.status === 'running'} /> : undefined}
+          onClose={() => setTraceOpen(false)}
+        />
+      )}
       {preview && api && (
         <PreviewPanel api={api} threadId={preview.threadId} path={preview.path} onClose={() => setPreview(null)} onError={handleError} />
       )}

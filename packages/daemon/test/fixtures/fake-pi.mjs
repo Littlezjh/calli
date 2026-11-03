@@ -419,6 +419,39 @@ rl.on('line', (line) => {
         running = false;
         return out({ type: 'agent_settled', aborted: false });
       }
+      // With FAKE_PI_TWO_REQUESTS the turn looks like pi's real shape: one request decides on the
+      // tool, the tool runs, a second request writes the answer, each with its own usage — so a
+      // session's model segments and tools alternate on the timeline instead of overlapping.
+      const twoRequests = process.env.FAKE_PI_TWO_REQUESTS === '1';
+      if (twoRequests) {
+        out({ type: 'message_start', message: { role: 'assistant', timestamp: Date.now() - 150 } });
+        out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: '先看一眼目录。' } });
+        out({ type: 'message_end', message: { role: 'assistant', model: 'fixture-model', provider: 'fixture-provider', stopReason: 'tool_use', durationMs: 300, usage: { input: 80, output: 12, cacheRead: 20, cacheWrite: 5, totalTokens: 117 } } });
+        // The tool takes a beat, and the second request takes longer than the first.
+        setTimeout(() => {
+          out({ type: 'tool_execution_start', toolCallId: 'c1', toolName: 'bash', args: { command: 'ls' } });
+          out({ type: 'tool_execution_update', toolCallId: 'c1', toolName: 'bash', partialResult: { content: [{ type: 'text', text: 'partial' }] } });
+          out({ type: 'tool_execution_end', toolCallId: 'c1', toolName: 'bash', result: { content: [{ type: 'text', text: 'a.txt' }] }, isError: false });
+          setTimeout(() => {
+            if (cmd.images?.length) {
+              out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: `images:${cmd.images.length}:${cmd.images.map((i) => i.mimeType).join(',')};` } });
+            }
+            out({ type: 'message_start', message: { role: 'assistant', timestamp: Date.now() - 200 } });
+            out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'hi ' } });
+            const marker = process.env.FAKE_PI_LABEL ? `[${process.env.FAKE_PI_LABEL}] ` : '';
+            out({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: marker + 'there ' + cmd.message } });
+            if (/\bfail\b/.test(cmd.message)) {
+              out({ type: 'message_end', message: { role: 'assistant', stopReason: 'error', errorMessage: 'provider exploded' } });
+              running = false;
+              return out({ type: 'agent_settled', aborted: false });
+            }
+            if (process.env.FAKE_TELEMETRY) out({ type: 'message_end', message: { role: 'assistant', model: 'fixture-model', provider: 'fixture-provider', stopReason: 'stop', durationMs: 600, usage: { input: 120, output: 20, cacheRead: 40, cacheWrite: 10, reasoning: 5, totalTokens: 175, cost: { total: 0.0123 } } } });
+            running = false;
+            out({ type: 'agent_settled', aborted: false });
+          }, 400);
+        }, 300);
+        return;
+      }
       out({ type: 'tool_execution_start', toolCallId: 'c1', toolName: 'bash', args: { command: 'ls' } });
       out({ type: 'tool_execution_update', toolCallId: 'c1', toolName: 'bash', partialResult: { content: [{ type: 'text', text: 'partial' }] } });
       out({ type: 'tool_execution_end', toolCallId: 'c1', toolName: 'bash', result: { content: [{ type: 'text', text: 'a.txt' }] }, isError: false });
