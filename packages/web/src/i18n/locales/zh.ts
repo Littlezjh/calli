@@ -340,7 +340,7 @@ export const zh = {
   "auto.source.collaboration": "协作",
   "auto.source.global": "全局",
   "auto.members": "成员自动交接",
-  "auto.preparing": "正在准备交接摘要",
+  "auto.preparing": "正在准备交接",
   "auto.stopped": "没有可用的接手目标，已停止自动交接",
   "auto.cancel": "取消这次交接",
   "auto.failed": "自动交接失败",
