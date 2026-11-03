@@ -31,7 +31,7 @@ test('videos can be picked, previewed, retried and played from history on deskto
         await openUi(page, daemon);
         await select();
         const picker = page.locator('.composer input[type=file]');
-        assert.match(await picker.getAttribute('accept'), /video\/mp4/);
+        assert.equal(await picker.getAttribute('accept'), null, 'the picker takes any file');
         await picker.setInputFiles(sample);
         await page.getByRole('button', { name: '预览视频：sample-video.mp4', exact: true }).waitFor();
         await shot('video-picked');

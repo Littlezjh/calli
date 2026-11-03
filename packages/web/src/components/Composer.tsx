@@ -14,7 +14,7 @@ import { ComposerMenu, type GoalAction, type GoalCapability, type WritingMode } 
 import { GoalCard } from './GoalCard';
 import { Lightbox } from './Lightbox';
 import { VideoPreview } from './VideoPreview';
-import { isVideo, MAX_VIDEOS, prepareVideo, VIDEO_ACCEPT, type PreparedVideo } from '../videos';
+import { isPlayable, isSupportedVideo, MAX_UPLOADS, MAX_VIDEOS, prepareFile, prepareVideo, type PreparedVideo } from '../videos';
 import {
   IconArchive,
   AgentMark,
@@ -32,6 +32,7 @@ import {
   IconList,
   IconPaperclip,
   IconPen,
+  IconFile,
   IconPlay,
   IconPin,
   IconPlus,
@@ -342,7 +343,7 @@ export function Composer({
       const entries = commands.filter(c => catalog === 'skills' ? c.kind !== 'command' : c.kind !== 'skill' && c.kind !== 'prompt');
       return searchCommands(query, catalog === 'actions' ? actions.filter(a => !['help', 'skills'].includes(a.id)) : [], entries, [...hiddenCommands, ...(goal ? ['goal'] : [])]);
     }
-    const additions: HubAction[] = [{ id: 'composer:attach', label: t('composerMenu.attach'), hint: '', keywords: ['attach', 'image', 'video', '附件'] }];
+    const additions: HubAction[] = [{ id: 'composer:attach', label: t('composerMenu.attach'), hint: '', keywords: ['attach', 'image', 'video', 'file', '附件', '文件'] }];
     if (planMode) additions.push({ id: 'composer:plan', label: t('composerMenu.planMode'), hint: planMode.disabled ? t('composer.planAfterTurn') : planMode.active ? t('composer.planActive') : t('composerMenu.planOn'), keywords: ['plan', '计划'], disabled: planMode.disabled });
     if (writingMode) additions.push({ id: 'composer:writing', label: t('writing.mode'), hint: writingMode.active ? t('writing.off') : t('writing.modeHint'), keywords: ['writing', 'write', '写作', '文章'], disabled: writingMode.disabled });
     // One entry for every agent, like the phone menu: starting a goal fills the box; what the
@@ -501,17 +502,25 @@ export function Composer({
 
   const addFiles = async (files: File[]) => {
     if (attachmentsBlocked) return onError(attachmentsBlocked);
-    const pickedVideos = files.filter(isVideo);
-    if (pickedVideos.length) {
-      const room = MAX_VIDEOS - videos.length;
-      if (pickedVideos.length > room) onError(t('composer.maxVideos', MAX_VIDEOS));
+    // Pictures go to the model as pictures, videos can be previewed here; anything else is a plain file.
+    const pictures = files.filter((f) => f.type.startsWith('image/'));
+    const uploads = files.filter((f) => !f.type.startsWith('image/'));
+    if (uploads.length) {
+      let room = MAX_UPLOADS - videos.length;
+      let videoRoom = MAX_VIDEOS - videos.filter(isPlayable).length;
       const ready: PreparedVideo[] = [];
-      for (const file of pickedVideos.slice(0, Math.max(0, room))) {
-        try { ready.push(prepareVideo(file)); } catch (error) { onError(error instanceof Error ? error.message : t('composer.videoFailed')); }
+      for (const file of uploads) {
+        const video = isSupportedVideo(file);
+        if (room <= 0) { onError(t('composer.maxUploads', MAX_UPLOADS)); break; }
+        if (video && videoRoom <= 0) { onError(t('composer.maxVideos', MAX_VIDEOS)); continue; }
+        try {
+          ready.push(video ? prepareVideo(file) : prepareFile(file));
+          room -= 1;
+          if (video) videoRoom -= 1;
+        } catch (error) { onError(error instanceof Error ? error.message : t(video ? 'composer.videoFailed' : 'composer.fileFailed')); }
       }
       setVideos(current => [...current, ...ready]);
     }
-    const pictures = files.filter((f) => f.type.startsWith('image/'));
     if (pictures.length === 0) return;
     if (attachBlocked) return onError(attachBlocked);
     const room = MAX_IMAGES - images.length - preparing;
@@ -538,9 +547,9 @@ export function Composer({
       setText((current) => [taken.text, current].filter((s) => s.trim()).join('\n\n'));
       const room = MAX_IMAGES - images.length - preparing;
       if (taken.images.length > room) onError(t('composer.maxImagesNotRestored', MAX_IMAGES));
-      const videoRoom = Math.max(0, MAX_VIDEOS - videos.length);
+      const videoRoom = Math.max(0, MAX_UPLOADS - videos.length);
       const returnedVideos = taken.videos ?? [];
-      if (returnedVideos.length > videoRoom) onError(t('composer.maxVideos', MAX_VIDEOS));
+      if (returnedVideos.length > videoRoom) onError(t('composer.maxUploads', MAX_UPLOADS));
       returnedVideos.slice(videoRoom).forEach(video => URL.revokeObjectURL(video.previewUrl));
       setVideos(current => [...returnedVideos.slice(0, videoRoom), ...current]);
       const back = taken.images.slice(0, Math.max(0, room)).map(restoreImage);
@@ -844,7 +853,7 @@ export function Composer({
 
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
     const files = [...e.clipboardData.files];
-    if (files.some((f) => f.type.startsWith('image/') || isVideo(f))) {
+    if (files.length) {
       e.preventDefault();
       void addFiles(files);
     }
@@ -978,9 +987,10 @@ export function Composer({
                 <div className="queue-item">
                   <span className={`queue-badge${q.error ? ' failed' : ''}`}>{t(q.error ? 'composer.notSent' : 'composer.queue')}</span>
                   <span className={`queue-text${q.channel?.parts ? ' parts' : ''}`} title={q.text}>
-                    {q.channel?.parts ? channelRows(q.channel, q.text).map((row, index) => <span key={index} className={row.kind === 'note' ? 'muted' : undefined}>{index > 0 && ' · '}{row.text}</span>) : q.text || (q.targets?.length ? t('app.collab') : q.videos ? t('videos.video') : t('images.image'))}
+                    {q.channel?.parts ? channelRows(q.channel, q.text).map((row, index) => <span key={index} className={row.kind === 'note' ? 'muted' : undefined}>{index > 0 && ' · '}{row.text}</span>) : q.text || (q.targets?.length ? t('app.collab') : q.files ? t('uploads.file') : q.videos ? t('videos.video') : t('images.image'))}
                     {q.images > 0 && q.text && <span className="muted"> · {t('composer.images', q.images)}</span>}
                     {!!q.videos && <span className="muted"> · {t('composer.videos', q.videos!)}</span>}
+                    {!!q.files && <span className="muted"> · {t('composer.files', q.files!)}</span>}
                   </span>
                   {!!q.targets?.length && <span className="queue-targets" title={t('composer.queueTargets', q.targets.join(', '))} aria-label={t('composer.queueTargets', q.targets.join(', '))}><span className="queue-target-names">@{q.targets.join(', ')}</span><span className="queue-target-count">{t('composer.queueTargetCount', q.targets.length)}</span></span>}
                   <button type="button" className="queue-now" title={t(q.error ? 'common.retry' : 'composer.sendNowHint')} onClick={() => onSendQueuedNow(q.id)}>
@@ -1018,9 +1028,13 @@ export function Composer({
                 </div>
               ))}
               {videos.map(video => <div key={video.id} className="attachment video-attachment">
-                <button type="button" className="video-card" aria-label={t('composer.previewVideo', video.name)} onClick={() => setVideoPreview(video)}>
-                  <IconPlay size={20} /><span><span className="video-name">{video.name}</span><span className="video-size">{t('videos.video')} · {sizeLabel(video.file.size)}</span></span>
-                </button>
+                {isPlayable(video)
+                  ? <button type="button" className="video-card" aria-label={t('composer.previewVideo', video.name)} onClick={() => setVideoPreview(video)}>
+                    <IconPlay size={20} /><span><span className="video-name">{video.name}</span><span className="video-size">{t('videos.video')} · {sizeLabel(video.file.size)}</span></span>
+                  </button>
+                  : <div className="video-card file-card" title={video.name}>
+                    <IconFile size={20} /><span><span className="video-name">{video.name}</span><span className="video-size">{sizeLabel(video.file.size)}</span></span>
+                  </div>}
                 <button type="button" className="attachment-remove" aria-label={t('composer.remove', video.name)} onClick={() => { URL.revokeObjectURL(video.previewUrl); setVideos(current => current.filter(v => v.id !== video.id)); }}><IconClose size={12} /></button>
               </div>)}
               {Array.from({ length: preparing }, (_, i) => (
@@ -1125,7 +1139,6 @@ export function Composer({
             <input
               ref={fileRef}
               type="file"
-              accept={`image/*,${VIDEO_ACCEPT}`}
               multiple
               hidden
               onChange={(e) => {

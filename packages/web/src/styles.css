@@ -5789,6 +5789,7 @@ input.picker-search {
 .video-card > svg { flex: none; }
 .video-card > span { min-width: 0; }
 .video-card:hover { background: var(--hover); }
+div.file-card:hover { background: var(--surface); }
 .video-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .video-size { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; }
 .video-preview { width: min(800px, calc(100vw - 32px)); }

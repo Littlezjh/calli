@@ -34,7 +34,7 @@ import {
 import type { GoalSnapshot } from './adapters/native-goal.js';
 import { findFiles, listDir, readText, type Listing, type TextFile } from './browse.js';
 import { referencedFile } from './artifacts.js';
-import { imagePathNote, MAX_IMAGES, sniffImageType, sniffSvg, type AttachmentStore, type StoredAttachment, type StoredVideo } from './attachments.js';
+import { imagePathNote, isVideoType, MAX_IMAGES, sniffImageType, sniffSvg, type AttachmentStore, type StoredAttachment, type StoredVideo } from './attachments.js';
 import { HttpError } from './errors.js';
 import { handoverBrief, handoverPrompt, synthesizeBrief, turnMessage } from './handover.js';
 import { McpManager } from './mcp.js';
@@ -126,7 +126,7 @@ export type ThreadView = Omit<ThreadRecord, 'worktree' | 'handover' | 'writing'>
   waiting: boolean;
   waitingReason: 'approval' | 'question' | 'plan' | null;
   /** Messages sent while a turn was running. They go out, in order, as turns finish. */
-  queued: Array<{ id: string; text: string; images: number; videos: number; targets?: string[]; error?: string; channel?: TurnChannel }>;
+  queued: Array<{ id: string; text: string; images: number; videos: number; files?: number; targets?: string[]; error?: string; channel?: TurnChannel }>;
   /** The upstream model-provider queue reported by the native runtime, if this turn is waiting there. */
   modelQueue?: ModelQueueView | null;
   /** Turns the terminal added to this session since the hub last wrote to it. */
@@ -673,6 +673,18 @@ export class ThreadManager {
     return this.attachments.saveVideo(threadId, source, name);
   }
 
+  /** Counts a waiting message's uploads by kind; `videos` held only videos before other files were allowed. */
+  private queuedUploads(threadId: string, ids: string[]): { videos: number; files?: number } {
+    const files = ids.filter(id => { const found = this.attachments.find(threadId, id); return found && !isVideoType(found.mimeType); }).length;
+    return { videos: ids.length - files, ...(files ? { files } : {}) };
+  }
+
+  async saveFile(threadId: string, source: AsyncIterable<Uint8Array>, name: string): Promise<StoredVideo> {
+    const thread = this.getThread(threadId);
+    if (thread.archivedAt) throw new HttpError(409, 'this thread is archived');
+    return this.attachments.saveFile(threadId, source, name);
+  }
+
   usageReport(hours: number, agent: string) { return this.store.telemetry.read(hours, agent); }
   usageCosts(hours: number, agent: string) { return this.store.telemetry.costReport(hours, agent); }
   usageDaily(agent: string, timeZone?: string) { return this.store.telemetry.daily(agent, timeZone); }
@@ -938,7 +950,7 @@ export class ThreadManager {
     let waitingReason: ThreadView['waitingReason'] = this.inputs.waitingReason(thread.id);
     for (const p of this.approvals.values()) if (p.threadId === thread.id) { waitingReason = 'approval'; break; }
     const waiting = waitingReason !== null;
-    const queued = (this.queues.get(thread.id) ?? []).map((q) => ({ id: q.id, text: q.voiceSummary ? '[语音结束总结]' : q.displayText ?? q.text, images: q.images.length, videos: q.videos.length,
+    const queued = (this.queues.get(thread.id) ?? []).map((q) => ({ id: q.id, text: q.voiceSummary ? '[语音结束总结]' : q.displayText ?? q.text, images: q.images.length, ...this.queuedUploads(thread.id, q.videos),
       ...(q.channel ? { channel: q.channel } : {}),
       ...(q.mentions?.length ? { targets: q.mentions.map(m => {
         const value = m as { label?: unknown; id?: unknown };
@@ -2043,7 +2055,7 @@ export class ThreadManager {
     const rawImages = Array.isArray(input.images) ? input.images : [];
     const storedVideos = this.attachments.videos(threadId, input.videos);
     const videoIds = storedVideos.map(v => v.id);
-    if (storedVideos.length && /^\/\S+/.test(rawText)) throw new HttpError(400, '视频请随普通消息发送，不能附在斜杠命令后');
+    if (storedVideos.length && /^\/\S+/.test(rawText)) throw new HttpError(400, '视频和文件请随普通消息发送，不能附在斜杠命令后');
     if (!rawText && rawImages.length === 0 && !storedVideos.length) throw new HttpError(400, 'text is empty');
     if (thread.archivedAt && !this.backgroundThreads.has(threadId)) throw new HttpError(409, 'this thread is archived; restore it first');
     if (this.running.has(threadId) || this.autoHandover.held(threadId) && !input.handover && !input.autoContinuation || !fromQueue && this.queues.get(threadId)?.some(q => !q.error)) {
@@ -2137,7 +2149,7 @@ export class ThreadManager {
         this.modelQueues.delete(threadId);
         this.store.updateThread(threadId, { status: 'running', workMode: thread.workMode ?? 'execute', hubTurnAt: new Date().toISOString() }, { touch: true });
         if (thread.title === 'New thread' && !input.voiceSummary) {
-          const title = askedText(displayText).split('\n')[0].slice(0, 60) || (storedVideos.length ? '视频' : '图片');
+          const title = askedText(displayText).split('\n')[0].slice(0, 60) || (storedVideos.length ? storedVideos.every(v => isVideoType(v.mimeType)) ? '视频' : storedVideos[0].name : '图片');
           this.store.updateThread(threadId, { title });
           this.store.setTitleBy(threadId, 'default');
         }

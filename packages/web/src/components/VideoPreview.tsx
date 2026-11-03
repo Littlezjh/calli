@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import type { VideoRef } from '../api';
 import { sizeLabel } from '../files';
 import { PanelDialog } from './Dialog';
-import { IconDownload, IconPlay } from './icons';
+import { IconDownload, IconFile, IconPlay } from './icons';
+import { downloadBlob } from '../images';
 import { t } from '../i18n';
 
 export function VideoPreview({ url, name, onClose }: { url: string; name: string; onClose: () => void }) {
@@ -16,7 +17,10 @@ export function VideoPreview({ url, name, onClose }: { url: string; name: string
   </PanelDialog>;
 }
 
-/** Fetch only on demand; opening a thread must not download every video in its history. */
+/**
+ * A video or other file sent with a message. Fetched only on demand, so opening a thread does not
+ * download everything in its history: a video plays, any other file is saved.
+ */
 export function SentVideo({ video, load }: { video: VideoRef; load: (id: string) => Promise<Blob> }) {
   const [url, setUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -24,18 +28,20 @@ export function SentVideo({ video, load }: { video: VideoRef; load: (id: string)
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
+  const playable = video.mimeType.startsWith('video/');
   const open = async () => {
     setLoading(true);
     setError(false);
     try {
       const blob = await load(video.id);
-      if (alive.current) setUrl(URL.createObjectURL(blob));
+      if (!playable) downloadBlob(blob, video.name);
+      else if (alive.current) setUrl(URL.createObjectURL(blob));
     } catch { if (alive.current) setError(true); }
     finally { if (alive.current) setLoading(false); }
   };
   return <>
-    <button type="button" className="video-card" disabled={loading} onClick={() => void open()} aria-label={t('video.play', video.name)}>
-      <IconPlay size={20} /><span><span className="video-name">{video.name}</span><span className="video-size">{loading ? t('video.loading') : error ? t('video.loadFailed') : sizeLabel(video.size)}</span></span>
+    <button type="button" className={`video-card${playable ? '' : ' file-card'}`} disabled={loading} onClick={() => void open()} aria-label={t(playable ? 'video.play' : 'uploads.download', video.name)} title={playable ? undefined : video.name}>
+      {playable ? <IconPlay size={20} /> : <IconFile size={20} />}<span><span className="video-name">{video.name}</span><span className="video-size">{loading ? t(playable ? 'video.loading' : 'uploads.loading') : error ? t('video.loadFailed') : sizeLabel(video.size)}</span></span>
     </button>
     {url && <VideoPreview url={url} name={video.name} onClose={() => setUrl(null)} />}
   </>;

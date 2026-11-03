@@ -16,6 +16,7 @@ import type { HistoryPage, HistoryDetail, HistoryWork } from './history';
 import { cachedQuota, clearQuotaCache, rememberQuota } from './quota-cache';
 import { clearThreadCache } from './thread-cache';
 import { localeTag, t } from './i18n';
+import { isSupportedVideo } from './videos';
 
 /** Where threads may work: the project roots, and whether one can start outside any project. */
 export interface FolderEntry {
@@ -324,6 +325,8 @@ export interface QueuedMessage {
   /** How many pictures go with it. */
   images: number;
   videos?: number;
+  /** Attached files that are not videos. */
+  files?: number;
 }
 
 export interface ModelQueue {
@@ -1198,17 +1201,21 @@ export class Api {
     return this.request('DELETE', `/api/threads/${threadId}/queue/${queuedId}`);
   }
 
-  /** Binary upload, shared across retries of the same file in the same thread. */
+  /**
+   * Binary upload of a video or any other file, shared across retries of the same file in the same
+   * thread. Either way the message lists it under `videos`.
+   */
   uploadVideo(threadId: string, file: File): Promise<VideoRef> {
     const uploads = this.videoUploads.get(file) ?? new Map<string, Promise<VideoRef>>();
     this.videoUploads.set(file, uploads);
     const existing = uploads.get(threadId);
     if (existing) return existing;
     const pending = (async () => {
-      const res = await fetch(this.url(`/api/threads/${threadId}/videos`), { method: 'POST', headers: this.headers({ 'Content-Type': file.type || 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name) }), body: file });
+      const video = isSupportedVideo(file);
+      const res = await fetch(this.url(`/api/threads/${threadId}/${video ? 'videos' : 'files'}`), { method: 'POST', headers: this.headers({ 'Content-Type': file.type || 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name) }), body: file });
       if (res.status === 401) throw new AuthError('unauthorized');
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new ApiError(res.status === 404 ? t('api.noVideos') : json.error ?? `HTTP ${res.status}`, json, res.status);
+      if (!res.ok) throw new ApiError(res.status === 404 ? t(video ? 'api.noVideos' : 'api.noFiles') : json.error ?? `HTTP ${res.status}`, json, res.status);
       return json as VideoRef;
     })();
     uploads.set(threadId, pending);

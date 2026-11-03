@@ -1801,6 +1801,50 @@ test('videos upload as original files, stay scoped to a thread, and survive queu
   assert.deepEqual(Buffer.from(await (await api(`/api/threads/${fork.id}/attachments/${video.id}`)).arrayBuffer()), bytes);
 });
 
+test('any file can be attached: kept under its own name, served only as bytes, and given to the agent by path', async () => {
+  const thread = await newThread({ agent: 'pi', model: 'fake/plain' });
+  const other = await newThread({ agent: 'pi' });
+  const bytes = Buffer.from('<script>alert(1)</script>\n会议记录');
+  const upload = (id: string, name: string, body: Buffer = bytes, authenticated = true) => api(`/api/threads/${id}/files`, { method: 'POST', headers: { 'Content-Type': 'text/html', 'X-File-Name': encodeURIComponent(name) }, body }, authenticated);
+  assert.equal((await upload(thread.id, 'a.txt', bytes, false)).status, 401);
+  assert.equal((await upload(thread.id, 'a.txt', Buffer.alloc(0))).status, 400);
+  const uploaded = await upload(thread.id, '../../transcript.txt');
+  assert.equal(uploaded.status, 201);
+  const file = await uploaded.json();
+  assert.deepEqual(file, { id: file.id, mimeType: 'application/octet-stream', size: bytes.length, name: 'transcript.txt' });
+  const stored = join(dataDir, 'attachments', thread.id, file.id, 'transcript.txt');
+  assert.deepEqual(readFileSync(stored), bytes, 'the name cannot climb out of its folder');
+  const downloaded = await api(`/api/threads/${thread.id}/attachments/${file.id}`);
+  assert.equal(downloaded.headers.get('content-type'), 'application/octet-stream', 'the claimed type is never served back');
+  assert.deepEqual(Buffer.from(await downloaded.arrayBuffer()), bytes);
+  assert.equal((await api(`/api/threads/${other.id}/attachments/${file.id}`)).status, 404);
+  assert.equal((await post(`/api/threads/${other.id}/turns`, { videos: [file.id] })).status, 404);
+
+  assert.equal((await post(`/api/threads/${thread.id}/turns`, { videos: [file.id] })).status, 202);
+  await untilIdle(thread.id);
+  const log = await events(thread.id);
+  const start = log.find(e => e.type === 'turn.started')!;
+  assert.deepEqual(start.data.videos, [file]);
+  assert.match(start.data.text, /The user attached 1 file\(s\)/);
+  assert.doesNotMatch(start.data.text, /video/);
+  const answer = log.filter(e => e.type === 'message.delta').map(e => e.data.text).join('');
+  assert.ok(answer.includes(stored), 'the agent gets the path with the original name');
+  assert.equal((await api(`/api/threads/${thread.id}`).then(r => r.json())).title, 'transcript.txt');
+
+  await post(`/api/threads/${thread.id}/turns`, { text: 'slow' });
+  const queued = await (await post(`/api/threads/${thread.id}/turns`, { text: '总结', videos: [file.id], queue: true })).json();
+  const waiting = (await (await api(`/api/threads/${thread.id}`)).json()).queued[0];
+  assert.equal(waiting.videos, 0);
+  assert.equal(waiting.files, 1);
+  const taken = await (await api(`/api/threads/${thread.id}/queue/${queued.id}`, { method: 'DELETE' })).json();
+  assert.deepEqual(taken.videos, [file]);
+  await manager.cancelTurn(thread.id);
+  await untilIdle(thread.id);
+  const fork = await (await post(`/api/threads/${thread.id}/fork`, {})).json();
+  await api(`/api/threads/${thread.id}`, { method: 'DELETE' });
+  assert.deepEqual(Buffer.from(await (await api(`/api/threads/${fork.id}/attachments/${file.id}`)).arrayBuffer()), bytes);
+});
+
 test('files: an image in the thread directory is served; anything else, or anywhere else, is not', async () => {
   const thread = await newThread({ agent: 'claude' });
   const png = Buffer.from(PNG, 'base64');

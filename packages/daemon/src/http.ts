@@ -20,7 +20,7 @@ import type { TerminalEvent, TerminalManager } from './terminals.js';
 import type { ThreadManager } from './threads.js';
 import { isWithinWorkdirs } from './workdirs.js';
 import { listProjectDirectories } from './project-directories.js';
-import { MAX_VIDEO_BYTES } from './videos.js';
+import { MAX_FILE_BYTES, MAX_VIDEO_BYTES } from './videos.js';
 import type { VoiceService } from './voice-service.js';
 import { sendToolArtifact } from './borrowing-server.js';
 import { PetService } from './pets.js';
@@ -1197,6 +1197,13 @@ export function createHttpServer(deps: HttpDeps): Server {
         let name: string;
         try { name = decodeURIComponent(String(req.headers['x-file-name'] ?? '')); } catch { throw new HttpError(400, 'invalid file name'); }
         return sendJson(res, 201, await manager.saveVideo(threadId, req, name));
+      }
+
+      if (method === 'POST' && sub === 'files' && !parts[4]) {
+        if (Number(req.headers['content-length']) > MAX_FILE_BYTES) throw new HttpError(413, '文件不能超过 100 MB');
+        let name: string;
+        try { name = decodeURIComponent(String(req.headers['x-file-name'] ?? '')); } catch { throw new HttpError(400, 'invalid file name'); }
+        return sendJson(res, 201, await manager.saveFile(threadId, req, name));
       }
 
       // DELETE /api/threads/:id/queue/:queuedId: take back a message that is waiting; it comes back

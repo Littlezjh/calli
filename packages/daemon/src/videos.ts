@@ -1,8 +1,14 @@
-import { open, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, open, rename, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { HttpError } from './errors.js';
 
 export const MAX_VIDEOS = 3;
 export const MAX_VIDEO_BYTES = 100 * 1024 * 1024;
+/** How many uploaded files, videos included, one message may carry. */
+export const MAX_UPLOADS = 10;
+export const MAX_FILE_BYTES = 100 * 1024 * 1024;
+/** The stored type of an attached file that is not a video: bytes to save, never to render. */
+export const FILE_TYPE = 'application/octet-stream';
 export const VIDEO_EXTENSIONS: Record<string, string> = { 'video/mp4': 'mp4', 'video/quicktime': 'mov', 'video/webm': 'webm' };
 
 /** Container signatures, not the browser's claimed MIME type or file extension. */
@@ -36,8 +42,7 @@ export async function storeVideo(base: string, source: AsyncIterable<Uint8Array>
     }
     const mimeType = sniffVideoType(head);
     if (!mimeType) throw new HttpError(400, '请选择 MP4、MOV 或 WebM 视频');
-    const cleanName = name.split(/[\\/]/).pop()?.replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 200);
-    const info = { mimeType, size, name: cleanName || `视频.${VIDEO_EXTENSIONS[mimeType]}` };
+    const info = { mimeType, size, name: cleanFileName(name) || `视频.${VIDEO_EXTENSIONS[mimeType]}` };
     destination = `${base}.${VIDEO_EXTENSIONS[mimeType]}`;
     await file.close();
     await rename(partial, destination);
@@ -47,6 +52,43 @@ export async function storeVideo(base: string, source: AsyncIterable<Uint8Array>
     await file.close().catch(() => undefined);
     await rm(partial, { force: true });
     if (destination) await rm(destination, { force: true });
+    await rm(`${base}.json`, { force: true });
+    throw error;
+  }
+}
+
+/** The last path segment of a client-supplied name, without control characters; empty if nothing usable is left. */
+export function cleanFileName(name: string): string {
+  const clean = name.split(/[\\/]/).pop()?.replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 200) ?? '';
+  return clean === '.' || clean === '..' ? '' : clean;
+}
+
+/**
+ * Any other file the user attaches. It keeps its own name, inside a folder named by its id, so the
+ * agent's tools see a real extension. Its type is never taken from the client: it is served back
+ * as octet-stream, only ever for downloading.
+ */
+export async function storeFile(base: string, source: AsyncIterable<Uint8Array>, name: string): Promise<{ mimeType: string; size: number; name: string }> {
+  const partial = `${base}.part`;
+  const file = await open(partial, 'wx', 0o600);
+  let size = 0;
+  try {
+    for await (const chunk of source) {
+      size += chunk.length;
+      if (size > MAX_FILE_BYTES) throw new HttpError(413, '文件不能超过 100 MB');
+      await file.writeFile(chunk);
+    }
+    await file.close();
+    if (!size) throw new HttpError(400, '文件是空的');
+    const info = { mimeType: FILE_TYPE, size, name: cleanFileName(name) || 'file' };
+    await mkdir(base, { mode: 0o700 });
+    await rename(partial, join(base, info.name));
+    await writeFile(`${base}.json`, JSON.stringify(info), { mode: 0o600 });
+    return info;
+  } catch (error) {
+    await file.close().catch(() => undefined);
+    await rm(partial, { force: true });
+    await rm(base, { recursive: true, force: true });
     await rm(`${base}.json`, { force: true });
     throw error;
   }
