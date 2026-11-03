@@ -137,8 +137,51 @@ export interface TurnTrace {
   startedAt: string;
   endedAt: string | null;
   steps: TraceStep[];
+  /** The turn's model segments, in order; the timeline draws one bar per segment and per tool. Missing from older daemons. */
+  segments?: TraceSegment[];
   totals: { tools: number; mcp: number; requests: number; input: number; output: number };
   turns: Array<{ turnId: string; ts: string }>;
+}
+
+/** One model request's time: native bounds when the agent reported them, else the hub's reading. */
+export interface TraceSegment {
+  start: string;
+  firstOutput: string | null;
+  end: string | null;
+  source: 'native' | 'hub';
+  outputTokens?: number;
+  /** The trace steps (1-based) whose events fall inside this segment. */
+  steps: number[];
+}
+
+/** A thread's session statistics: what the top-bar readings and the token popover show. */
+export interface ThreadStats {
+  threadId: string;
+  checkedAt: string;
+  running: boolean;
+  turns: number;
+  steps: number;
+  timing: null | {
+    source: 'native' | 'hub';
+    turns: number;
+    segments: number;
+    waitMs: number;
+    avgWaitMs: number | null;
+    genMs: number;
+    modelMs: number;
+    toolMs: number;
+  };
+  tokens: null | {
+    turnsWithout: number;
+    input: number | null;
+    cacheRead: number | null;
+    cacheWrite: number | null;
+    output: number | null;
+    reasoning: number | null;
+    total: number | null;
+  };
+  tokPerSec: number | null;
+  tokPerSecApprox: boolean;
 }
 
 /** The model and thinking effort members of one instance start with; null leaves the agent's own. */
@@ -1158,6 +1201,11 @@ export class Api {
   trace(threadId: string, turnId?: string): Promise<TurnTrace> {
     return this.request('GET', `/api/threads/${threadId}/trace${turnId ? `?turn=${encodeURIComponent(turnId)}` : ''}`);
   }
+
+  /** The thread's session statistics: summary numbers only, timing from per-turn storage. */
+  stats(threadId: string): Promise<ThreadStats> {
+    return this.request('GET', `/api/threads/${threadId}/stats`);
+ }
 
   /** The whole prompt a thread's conversation runs with, as the agent itself persisted it. */
   systemPrompt(threadId: string): Promise<SystemPrompt> {

@@ -10716,7 +10716,8 @@ button.coord-row-name { cursor: pointer; }
 .trace-panel .panel-head { flex-shrink: 0; }
 .trace-empty { margin: 0; padding: 28px 22px; color: var(--muted); font-size: 13.5px; list-style: none; }
 
-.trace-body { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+/* The body is the column; the scroll lives in .trace-scroll, so a phone's head can stay put. */
+.trace-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .trace-head { padding: 10px 22px 0; }
 .trace-title-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .trace-thread {
@@ -12421,3 +12422,358 @@ button.pet-summon:hover { background: var(--surface-2); color: var(--text); }
 .topbar-pet .pet-bust { animation: topbar-pet-in 0.18s ease-out; }
 @keyframes topbar-pet-in { from { opacity: 0; transform: scale(0.8); } }
 @media (prefers-reduced-motion: reduce) { .topbar-pet .pet-bust { animation: none; } }
+
+/* ---------- Session statistics readings (top bar) and their popovers ---------- */
+
+.stats-top {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* A reading: the same quiet pill as the context ring's button. */
+.stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--faint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .stat:hover {
+    background: var(--hover);
+    color: var(--muted);
+  }
+}
+
+.stat[aria-expanded='true'] {
+  background: var(--hover);
+  color: var(--muted);
+}
+
+.stat-dot { opacity: 0.8; }
+
+.stat-panel { width: 300px; }
+
+/* The reading's detail: a titled list of numbers, one row per question. */
+.pop-head-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 10px 6px;
+}
+
+.pop-title-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.pop-value {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.pop-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 4px 10px 8px;
+  font-size: 13px;
+}
+
+.pop-rows > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 18px;
+  min-width: 0;
+}
+
+.pop-rows dt { color: var(--muted); }
+.pop-rows dd {
+  margin: 0;
+  text-align: right;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.pop-sub {
+  margin-left: 5px;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.pop-foot {
+  padding: 0 10px 8px;
+  color: var(--faint);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.pop-rule {
+  height: 1px;
+  margin: 2px 6px;
+  background: var(--border);
+}
+
+/* The top bar runs out of room from the right inwards: the token reading gives up first, then the
+   session one; the trace button stays. Measured against the bar itself, not the window. */
+.topbar { container-type: inline-size; }
+
+@container (max-width: 880px) {
+  .topbar .stats-top .pop:nth-child(2) { display: none; }
+}
+
+@container (max-width: 700px) {
+  .topbar .stats-top { display: none; }
+}
+
+/* ---------- The thread's own trace panel ---------- */
+
+.trace-side {
+  position: relative;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  width: min(500px, 46vw);
+  height: 100%;
+  border-left: 1px solid var(--border);
+  background: var(--bg);
+  animation: side-in 0.18s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.trace-side.phone {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  width: auto;
+  border-left: 0;
+}
+
+.trace-phone-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 56px;
+  padding: env(safe-area-inset-top) 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.trace-phone-head h3 {
+  flex: 1;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.trace-scroll {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.trace-body.variant-side .trace-head,
+.trace-body.variant-phone .trace-phone-head + .trace-empty,
+.trace-body.variant-side .trace-empty { padding: 10px 16px 0; }
+
+.trace-heading {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.trace-body.variant-side .trace-head,
+.trace-body.variant-side .trace-scroll .trace-head { padding: 10px 14px 0; }
+
+.trace-body.variant-side .trace-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+.trace-body.variant-side .ov-wrap { padding: 10px 12px; }
+
+/* What a model request's row adds: how long it waited, how long it generated, how fast. */
+.trace-timing {
+  display: flex;
+  gap: 10px;
+  padding: 0 10px 6px 66px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.trace-step.sel > .trace-step-head { background: var(--active); }
+
+/* ---------- The turn drawn in real time (the pinned overview) ---------- */
+
+.ov-wrap {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  padding: 10px 14px 10px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.trace-panel .ov-wrap,
+.trace-body.variant-dialog .ov-wrap { background: var(--surface); }
+
+.ov {
+  position: relative;
+  padding: 8px 10px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.ov-plot { position: relative; }
+
+.ov-grid {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1px dashed var(--border);
+}
+
+.ov-row { position: relative; height: 11px; }
+
+.ov-row + .ov-row { margin-top: 2px; }
+
+.ov-bar {
+  position: absolute;
+  top: 2px;
+  display: flex;
+  height: 7px;
+  min-width: 3px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--faint);
+  cursor: pointer;
+  transition: opacity 0.12s;
+}
+
+.ov-bar.ov-seg { background: var(--muted); }
+
+.ov-bar .ov-wait {
+  flex: none;
+  height: 100%;
+  background: var(--border-strong);
+}
+
+.ov-bar .ov-gen { flex: 1; height: 100%; }
+
+.ov-bar.tool { background: var(--faint); }
+
+.ov-bar.tool.fail { background: var(--danger); }
+
+/* A piece still running: stripes crawling forward. */
+.ov-bar.live .ov-gen {
+  background: repeating-linear-gradient(-45deg, var(--muted) 0 3px, var(--faint) 3px 6px);
+  background-size: 8.49px 8.49px;
+  animation: ov-crawl 0.8s linear infinite;
+}
+
+@keyframes ov-crawl { to { background-position: 8.49px 0; } }
+
+.ov.has-sel .ov-bar:not(.sel):not(.hl) { opacity: 0.32; }
+
+.ov-bar.hl { box-shadow: 0 0 0 2px var(--surface-2), 0 0 0 3px var(--muted); }
+
+.ov-bar:focus-visible { outline: 2px solid var(--border-strong); outline-offset: 2px; }
+
+.ov-tip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  pointer-events: none;
+  padding: 6px 9px;
+  border-radius: var(--radius-sm);
+  background: var(--text);
+  color: var(--bg);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+  box-shadow: var(--shadow-pop);
+  font-variant-numeric: tabular-nums;
+}
+
+.ov-tip strong { font-weight: 600; }
+
+.ov-axis {
+  position: relative;
+  height: 15px;
+  margin-top: 6px;
+  color: var(--faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ov-axis span {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.ov-axis span:first-child { transform: none; }
+
+.ov-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 3px;
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+.ov-legend i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 4px;
+  border-radius: 2px;
+  vertical-align: -0.5px;
+}
+
+.ov-legend-wait { background: var(--border-strong); }
+.ov-legend-gen { background: var(--muted); }
+.ov-legend-tool { background: var(--faint); }
+
+@media (prefers-reduced-motion: reduce) {
+  .ov-bar.live .ov-gen { animation: none; }
+}
+
+/* On a phone the readings sit at the top of the trace page, as the sketch puts them. */
+.trace-body.variant-phone .stats-top {
+  display: flex;
+  justify-content: center;
+  padding: 10px 12px 0;
+}

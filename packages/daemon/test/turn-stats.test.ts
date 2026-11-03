@@ -85,6 +85,20 @@ test('a sample with native timing replaces the hub bounds; an estimated one only
   assert.equal(native.segments[0].source, 'hub', 'the earlier segment had no sample');
   assert.equal(statsOfTrace(native, null).timing, 'hub', 'any hub segment makes the turn hub-timed');
 
+  // pi reports duration and first-token wait without a start time; the sample lands at message_end.
+  const piStyle = buildTrace(log([
+    ['turn.started', { text: 'x' }, 0],
+    ['message.delta', { text: 'a' }, 300],
+    ['usage.sample', { id: 's3', scope: 'request', output: 25, durationMs: 1_000, ttftMs: 200 }, 1_500],
+    ['turn.done', { stopReason: 'end_turn' }, 1_600],
+  ]));
+  const piSeg = piStyle.segments[0];
+  assert.equal(piSeg.source, 'native');
+  assert.equal(piSeg.start, new Date(BASE + 500).toISOString());
+  assert.equal(piSeg.firstOutput, new Date(BASE + 700).toISOString());
+  assert.equal(piSeg.end, new Date(BASE + 1_500).toISOString(), 'the request ended where the sample arrived');
+  assert.equal(piSeg.outputTokens, 25);
+
   const estimated = buildTrace(log([
     ['turn.started', { text: 'x' }, 0],
     ['message.delta', { text: 'a' }, 400],

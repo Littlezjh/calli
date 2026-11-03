@@ -6,7 +6,7 @@
  * Nothing here is anyone's real project, path or machine.
  */
 import { CLAUDE_ICON, CODEX_ICON, PI_ICON } from '../../../daemon/src/adapters/icons';
-import type { ActivityDay, AgentInfo, FolderListing, ModelOption, Schedule, Section, SystemPrompt, TextFile, Thread, Todo, TurnTrace, WorkdirsConfig } from '../api';
+import type { ActivityDay, AgentInfo, FolderListing, ModelOption, Schedule, Section, SystemPrompt, TextFile, Thread, ThreadStats, Todo, TurnTrace, WorkdirsConfig } from '../api';
 import type { StoredEvent } from '../timeline';
 
 export interface DemoData {
@@ -27,6 +27,8 @@ export interface DemoData {
   systemPrompts: Record<string, SystemPrompt>;
   /** Turn traces by thread, as the trace endpoint would answer for its last turn. */
   traces: Record<string, TurnTrace>;
+  /** Session statistics by thread, as the stats endpoint would answer. */
+  stats: Record<string, ThreadStats>;
 }
 
 const STOREFRONT = '~/projects/storefront';
@@ -496,6 +498,22 @@ export function demoData(now = Date.now()): DemoData {
     },
   };
 
+  // The session behind the example thread, as the stats endpoint would answer it: twelve turns of
+  // real-looking work, one of them (an import) without usage data. Times are hub-read, so ≈.
+  const stats: DemoData['stats'] = {
+    'demo-scroll-fix': {
+      threadId: 'demo-scroll-fix',
+      checkedAt: new Date(now).toISOString(),
+      running: false,
+      turns: 12,
+      steps: 86,
+      timing: { source: 'hub', turns: 12, segments: 38, waitMs: 64_800, avgWaitMs: 1_800, genMs: 517_200, modelMs: 582_000, toolMs: 845_000 },
+      tokens: { turnsWithout: 1, input: 51_362_118, cacheRead: 50_712_904, cacheWrite: 61_322, output: 191_864, reasoning: 40_112, total: 51_553_982 },
+      tokPerSec: 74.2,
+      tokPerSecApprox: true,
+    },
+  };
+
   return {
     agents: AGENTS,
     config: {
@@ -523,5 +541,6 @@ export function demoData(now = Date.now()): DemoData {
     activity,
     systemPrompts,
     traces,
+    stats,
   };
 }
