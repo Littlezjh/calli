@@ -250,12 +250,21 @@ rl.on('line', (line) => {
       return out({ jsonrpc: '2.0', id: msg.id, result: sessionInfo() });
     }
     case 'session/set_config_option':
+      if (msg.params.configId === 'model' && process.env.FAKE_ACP_MODEL_SELECTION_LOG) {
+        appendFileSync(process.env.FAKE_ACP_MODEL_SELECTION_LOG, msg.params.value + '\n');
+      }
       if (msg.params.configId === 'model' && ((msg.params.value === 'broken') || (dsh && msg.params.value === process.env.FAKE_DSH_UNSELECTABLE))) {
         return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: dsh ? `unknown model option: ${msg.params.value}` : 'Internal error' } });
       }
       if (msg.params.configId === 'model') currentModel = msg.params.value;
       else if (msg.params.configId === 'fast' && process.env.FAKE_ACP_SPEED && currentModel !== 'small') currentSpeed = msg.params.value;
-      else if (msg.params.configId === (dsh || traex ? 'reasoning_effort' : 'effort')) currentEffort = msg.params.value;
+      else if (msg.params.configId === (dsh || traex ? 'reasoning_effort' : 'effort')) {
+        const option = sessionInfo().configOptions.find(option => option.id === msg.params.configId);
+        if (!traex && !dsh && !option?.options.some(value => value.value === msg.params.value)) {
+          return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: 'unsupported effort' } });
+        }
+        currentEffort = msg.params.value;
+      }
       else return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: 'unknown config option' } });
       return out({ jsonrpc: '2.0', id: msg.id, result: { configOptions: sessionInfo().configOptions } });
     case 'session/delete':

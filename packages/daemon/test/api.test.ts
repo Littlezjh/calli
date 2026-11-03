@@ -444,7 +444,7 @@ test('agents report permission modes and effort levels; pi has no permission mod
 
 test('model and command lists are served per agent; unknown agents are 404', async () => {
   const models = (await (await api('/api/agents/claude/models')).json()) as Array<{ id: string }>;
-  assert.deepEqual(models.map((m) => m.id), ['default', 'big', 'small']);
+  assert.deepEqual(models.map((m) => m.id), ['default', 'big', 'small', 'broken']);
   const commands = (await (await api('/api/agents/claude/commands')).json()) as Array<{ name: string }>;
   assert.deepEqual(commands.map((c) => c.name), ['compact', 'review', 'goal', 'cost', 'stats']);
   assert.equal((await api('/api/agents/nope/models')).status, 404);
@@ -518,42 +518,46 @@ test('deleting a thread removes it and its events; a running thread cannot be de
 });
 
 test('effort is checked against the model: a model without effort rejects it, and switching clears it', async () => {
-  const created = await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'claude', cwd: workdir }) });
+  const created = await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: workdir }) });
   const thread = (await created.json()) as { id: string };
   const patch = async (body: unknown) => {
     const res = await api(`/api/threads/${thread.id}`, { method: 'PATCH', body: JSON.stringify(body) });
     return { status: res.status, body: (await res.json()) as { model: string | null; effort: string | null } };
   };
 
-  // "max" exists on the default model but not on "big".
+  // Pi reports effort capabilities in its catalog, without selecting each model.
   assert.equal((await patch({ effort: 'max' })).body.effort, 'max');
-  const toBig = await patch({ model: 'big' });
-  assert.deepEqual([toBig.body.model, toBig.body.effort], ['big', null], 'unsupported effort is dropped with the model change');
+  const toLoose = await patch({ model: 'fake/loose' });
+  assert.deepEqual([toLoose.body.model, toLoose.body.effort], ['fake/loose', null], 'unsupported effort is dropped with the model change');
 
   assert.equal((await patch({ effort: 'max' })).status, 400);
   assert.equal((await patch({ effort: 'high' })).body.effort, 'high');
 
-  // "small" has no effort setting at all.
-  const toSmall = await patch({ model: 'small' });
-  assert.deepEqual([toSmall.body.model, toSmall.body.effort], ['small', null]);
+  const toPlain = await patch({ model: 'fake/plain' });
+  assert.deepEqual([toPlain.body.model, toPlain.body.effort], ['fake/plain', null]);
   assert.equal((await patch({ effort: 'low' })).status, 400);
 
   // Model and effort in one request are checked together.
-  assert.equal((await patch({ model: 'big', effort: 'max' })).status, 400);
+  assert.equal((await patch({ model: 'fake/loose', effort: 'max' })).status, 400);
   assert.equal((await patch({ model: null, effort: 'max' })).body.effort, 'max');
 });
 
-test('creating a thread with an effort the chosen model lacks is rejected; unusable models are not offered', async () => {
-  const bad = await api('/api/threads', {
-    method: 'POST',
-    body: JSON.stringify({ agent: 'claude', cwd: workdir, model: 'small', effort: 'high' }),
-  });
-  assert.equal(bad.status, 400);
-  const broken = await api('/api/threads', {
-    method: 'POST',
-    body: JSON.stringify({ agent: 'claude', cwd: workdir, model: 'broken' }),
-  });
-  assert.equal(broken.status, 400);
+test('Claude validates unknown model capabilities when used; known catalog restrictions reject creation', async () => {
+  for (const choice of [{ model: 'small', effort: 'high' }, { model: 'broken' }]) {
+    const created = await api('/api/threads', {
+      method: 'POST', body: JSON.stringify({ agent: 'claude', cwd: workdir, ...choice }),
+    });
+    assert.equal(created.status, 201, 'creating a thread does not probe model access or unknown capabilities');
+    const thread = (await created.json()) as { id: string };
+    assert.equal((await api(`/api/threads/${thread.id}/turns`, {
+      method: 'POST', body: JSON.stringify({ text: 'hi' }),
+    })).status, 202);
+    const failed = await waitFor(async () => {
+      const events = (await (await api(`/api/threads/${thread.id}/events`)).json()) as StoredEvent[];
+      return events.some(event => event.type === 'turn.error') ? events : null;
+    });
+    assert.equal(failed.some(event => event.type === 'message.delta'), false, 'the rejected configuration must not run a prompt');
+  }
   const piPlain = await api('/api/threads', {
     method: 'POST',
     body: JSON.stringify({ agent: 'pi', cwd: workdir, model: 'fake/plain', effort: 'high' }),

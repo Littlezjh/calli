@@ -313,11 +313,9 @@ test('modelsFromConfig reads the model option and keeps the description', () => 
 test('ClaudeAcpAdapter: model list and slash commands come from the agent', async () => {
   const adapter = new ClaudeAcpAdapter([process.execPath, fakeAcp]);
   const models = await adapter.models(); // no session yet: the adapter probes one
-  // "broken" is refused by the agent, so it is hidden rather than offered and failing later.
-  assert.deepEqual(models.map((m) => m.id), ['default', 'big', 'small']);
+  // Listing does not select models or hide one based on a preflight request.
+  assert.deepEqual(models.map((m) => m.id), ['default', 'big', 'small', 'broken']);
   assert.equal(models[1].description, 'For hard work');
-  // Effort levels are per model: one model lacks "max", another has no effort setting at all.
-  assert.deepEqual(models.map((m) => m.efforts), [['low', 'high', 'max'], ['low', 'high'], []]);
   assert.equal(await adapter.models(), models, 'the probe runs once and is cached');
   // What the agent announced, then the commands it answers without announcing them.
   assert.deepEqual((await adapter.commands()).map((c) => c.name), ['compact', 'review', 'goal', 'cost', 'stats']);
@@ -341,11 +339,11 @@ test('ClaudeAcpAdapter: full_access skips the approval prompt, and settings chan
   assert.deepEqual(first.approvals, [], 'no approval should be requested in full_access');
 
   await session.setPermissionMode!('ask');
-  assert.equal(await session.setModel!('small'), true);
+  assert.equal(await session.setModel!('big'), true);
   assert.equal(await session.setEffort!('low'), true);
   const second = collectingHooks();
   await session.prompt(turn('model?'), second.hooks);
-  assert.equal(second.events.at(-1)?.data.text, 'model:small;mode:default;effort:low');
+  assert.equal(second.events.at(-1)?.data.text, 'model:big;mode:default;effort:low');
   await session.close();
 });
 

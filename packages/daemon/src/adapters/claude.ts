@@ -12,7 +12,7 @@ import type { JsonRpcPeer } from './jsonrpc.js';
 import { installJsonMcpServer, jsonMcpServers, removeJsonMcpServer } from '../mcp-format.js';
 import { configDirectory, findSessionFile, quoteArg } from './session-location.js';
 import { claudeSystemPromptLine, scanJsonl } from './system-prompt.js';
-import type { DiscoveredAccount, McpServerInfo, ModelOption, PermissionMode, PlanQuota, QuotaWindow, SkillDir, SlashCommand, SystemPrompt } from './types.js';
+import type { DiscoveredAccount, McpServerInfo, PermissionMode, PlanQuota, QuotaWindow, SkillDir, SlashCommand, SystemPrompt } from './types.js';
 
 /**
  * Claude Code, through the ACP bridge this repo ships with (`@agentclientprotocol/claude-agent-acp`).
@@ -20,8 +20,8 @@ import type { DiscoveredAccount, McpServerInfo, ModelOption, PermissionMode, Pla
  * - its permission modes: "auto" (Claude decides which actions are risky) is the closest match for
  *   auto_edit, acceptEdits is the fallback when the account or adapter version does not offer it;
  * - it answers /cost and /stats in a session without announcing them;
- * - subscription models are selected once in a throw-away session to check account access;
- *   gateway catalogs are shown directly, with access checked when a model is selected.
+ * - model catalogs are read without selecting each model; access and effort settings are checked
+ *   when a session applies its settings.
  */
 
 /**
@@ -168,28 +168,6 @@ export class ClaudeAcpAdapter extends AcpAdapter {
       await peer.request('_session/goal', { sessionId: session.agentSessionId, action: 'clear' });
       return '已请求清除原生目标。';
     };
-  }
-
-  /**
-   * Selects each model in turn to learn which effort levels it offers and to drop models this
-   * account cannot use. The session comes from the shared probe, which sends no prompt.
-   */
-  protected refineModels(models: ModelOption[], session: AcpSession): Promise<ModelOption[]> {
-    // Selecting every gateway model can issue paid API probes and exceed the list deadline.
-    // Keep the CLI's catalog; ordinary session model selection still validates access.
-    if (this.env.ANTHROPIC_BASE_URL) return Promise.resolve(models);
-    return (async () => {
-      const usable: ModelOption[] = [];
-      for (const model of models) {
-        const settings = await session.probeModel(model.id);
-        if (settings === null) {
-          console.error(`[claude-acp] model ${model.id} cannot be selected on this account; hiding it`);
-          continue;
-        }
-        usable.push({ ...model, ...settings });
-      }
-      return usable;
-    })();
   }
 
   protected extraCommands(listed: SlashCommand[]): SlashCommand[] {
