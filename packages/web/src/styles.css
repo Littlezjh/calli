@@ -11640,6 +11640,12 @@ button.trace-step-head:hover { background: var(--hover); }
 .personal-wish-list > div { padding: 9px 0; }
 .personal-wish-list p { margin: 0 0 4px; color: var(--text); }
 .personal-wish-list small, .personal-wish-list .text-btn { font-size: 12px; color: var(--muted); }
+.general-settings { width: min(520px, calc(100vw - 32px)); }
+.general-body { padding: 4px 22px 22px; }
+.general-setting-line { border-bottom: 0; }
+.general-select { padding: 8px 10px; border: 1px solid var(--border); }
+.pop-panel.general-startup-menu { z-index: 72; min-width: 180px; }
+.general-hint { margin: 0; line-height: 1.6; }
 .personal-settings .dialog-actions { margin-top: 20px; }
 .personal-settings, .push-settings { width: min(520px, calc(100vw - 32px)); }
 .personal-setting-line { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 15px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
@@ -11674,8 +11680,8 @@ button.trace-step-head:hover { background: var(--hover); }
   .todo-proposal-actions { width: 100%; flex-direction: row-reverse; justify-content: flex-start; }
   .todo-note-section { display: block; }
   .todo-note-section strong { margin-right: 8px; }
-  .personal-settings, .push-settings { width: 100%; max-height: calc(100dvh - 24px); overflow-y: auto; border-radius: var(--radius-lg) var(--radius-lg) 0 0; margin-top: auto; margin-bottom: 0; }
-  .dialog-scrim:has(> .personal-settings), .dialog-scrim:has(> .push-settings) { padding: 0; align-items: flex-end; }
+  .general-settings, .personal-settings, .push-settings { width: 100%; max-height: calc(100dvh - 24px); overflow-y: auto; border-radius: var(--radius-lg) var(--radius-lg) 0 0; margin-top: auto; margin-bottom: 0; }
+  .dialog-scrim:has(> .general-settings), .dialog-scrim:has(> .personal-settings), .dialog-scrim:has(> .push-settings) { padding: 0; align-items: flex-end; }
   .personal-setting-line { gap: 12px; }
 }
 .personal-settings .agent-btn.has-mark > span { display: inline; }
