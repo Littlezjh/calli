@@ -276,10 +276,6 @@ export function SelectionMenu({ onNote, onSideAsk }: Props) {
     if (touch) {
       return (
         <div ref={rootRef} className={`selection-menu commenting docked${pick?.body ? ' tagged' : ''}`} role="dialog" aria-label={t('selection.addNote')}>
-          <div className="selection-quote">
-            <IconQuote size={13} />
-            <span>{textRef.current}</span>
-          </div>
           {tagRow}
           <div className="selection-field">{field}</div>
         </div>

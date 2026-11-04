@@ -561,3 +561,26 @@ export const IconAgent = (p: { size?: number }) => (
     <circle cx="9" cy="12" r=".6" /><circle cx="15" cy="12" r=".6" />
   </Svg>
 );
+
+/** The thread's trace: a vertical axis with three runs of different length. */
+export const IconTrace = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M4 4v16" />
+    <path d="M8 8h6M11 12h9M9 16h5" />
+  </Svg>
+);
+
+/** Stored tokens: a stack of discs. */
+export const IconDatabase = (p: { size?: number }) => (
+  <Svg {...p}>
+    <ellipse cx="12" cy="6" rx="7" ry="2.6" />
+    <path d="M5 6v12c0 1.4 3.1 2.6 7 2.6s7-1.2 7-2.6V6" />
+    <path d="M5 12c0 1.4 3.1 2.6 7 2.6s7-1.2 7-2.6" />
+  </Svg>
+);
+
+export const IconChevronRight = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M9.5 6l6 6-6 6" />
+  </Svg>
+);

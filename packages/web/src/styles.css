@@ -54,9 +54,10 @@
   /* What a drawing with no background of its own is shown on. White in every theme: that is what it was drawn for. */
   --picture-bg: #ffffff;
   --code-bg: #efede7;
-  /* Syntax colours for the file viewer. Mixed with the text colour, so every palette keeps its own tone. */
+  /* Syntax colours for the file viewer and code in answers. Mixed with the text colour, so every palette keeps its own tone. */
   --syn-keyword: color-mix(in srgb, #a4387a 82%, var(--text));
-  --syn-string: color-mix(in srgb, #2f7a3d 85%, var(--text));
+  --syn-string: color-mix(in srgb, #a3342b 85%, var(--text));
+  --syn-comment: color-mix(in srgb, #3d8a4a 70%, var(--muted));
   --syn-number: color-mix(in srgb, #b25a12 85%, var(--text));
   --syn-title: color-mix(in srgb, #3557b5 85%, var(--text));
   --syn-type: color-mix(in srgb, #8a5a00 85%, var(--text));
@@ -141,7 +142,8 @@
   --lightbox: rgba(0, 0, 0, 0.92);
     --code-bg: #201f1d;
     --syn-keyword: color-mix(in srgb, #e58ac0 85%, var(--text));
-    --syn-string: color-mix(in srgb, #8fcf8a 85%, var(--text));
+    --syn-string: color-mix(in srgb, #e48b84 85%, var(--text));
+    --syn-comment: color-mix(in srgb, #7fbf7a 70%, var(--muted));
     --syn-number: color-mix(in srgb, #f0a46a 85%, var(--text));
     --syn-title: color-mix(in srgb, #86aaf5 85%, var(--text));
     --syn-type: color-mix(in srgb, #e3c178 85%, var(--text));
@@ -197,7 +199,8 @@
   --lightbox: rgba(0, 0, 0, 0.92);
   --code-bg: #201f1d;
   --syn-keyword: color-mix(in srgb, #e58ac0 85%, var(--text));
-  --syn-string: color-mix(in srgb, #8fcf8a 85%, var(--text));
+  --syn-string: color-mix(in srgb, #e48b84 85%, var(--text));
+  --syn-comment: color-mix(in srgb, #7fbf7a 70%, var(--muted));
   --syn-number: color-mix(in srgb, #f0a46a 85%, var(--text));
   --syn-title: color-mix(in srgb, #86aaf5 85%, var(--text));
   --syn-type: color-mix(in srgb, #e3c178 85%, var(--text));
@@ -3092,8 +3095,9 @@ html.list-open body {
 }
 
 .selection-comment {
-  flex: 1;
+  flex: 1 1 0%;
   min-width: 0;
+  width: 0;
   height: 32px;
   border: 0;
   outline: none;
@@ -3141,15 +3145,34 @@ html.list-open body {
 }
 
 .selection-menu.commenting.docked {
+  flex-direction: row;
+  align-items: center;
+  padding: 4px 4px 4px 14px;
+  border-radius: var(--radius-pill);
+}
+
+.selection-menu.commenting.docked.tagged {
   flex-direction: column;
   align-items: stretch;
   gap: 6px;
-  padding: 10px 6px 6px 14px;
+  padding: 8px 6px 6px 14px;
   border-radius: var(--radius-lg);
+}
+
+.selection-menu.commenting.docked .selection-field {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .app:has(.selection-menu.docked) .composer-box {
   visibility: hidden;
+}
+
+.app:has(.selection-menu.docked) .jump-anchor {
+  display: none;
 }
 
 .selection-quote {
@@ -6211,28 +6234,57 @@ div.file-card:hover { background: var(--surface); }
 }
 
 .code-block {
+  position: relative;
   margin: 0 0 0.9em;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
   overflow: hidden;
 }
 
+/* One card, as Codex draws it: the language named in plain type over the code, copy at its right. */
 .code-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 32px;
-  padding: 0 4px 0 13px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-2);
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 12px;
+  gap: 8px;
+  min-height: 40px;
+  padding: 6px 8px 0 18px;
+  color: var(--text);
+  font-size: 13.5px;
+}
+
+.code-lang {
+  font-weight: 500;
+}
+
+.code-head .code-actions {
+  margin-left: auto;
 }
 
 .markdown .code-block pre {
   margin: 0;
+  padding: 6px 18px 16px;
   border-radius: 0;
+  background: transparent;
+}
+
+/* Plain text has no name: copy floats in the corner instead of taking a line of its own. */
+.code-block.bare .code-head {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  bottom: 1px;
+  align-items: flex-start;
+  min-height: 0;
+  padding: 5px 5px 0 16px;
+  /* A long line scrolls away under it, fading out instead of running into the button. */
+  background: linear-gradient(to right, transparent, var(--surface-2) 14px);
+  border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+}
+
+.markdown .code-block.bare pre {
+  padding: 14px 48px 14px 18px;
 }
 
 .code-actions {
@@ -7127,6 +7179,11 @@ div.file-card:hover { background: var(--surface); }
 
 .file-images:empty {
   display: none;
+}
+
+/* Placed after the passage that names them, they keep clear of the next one too. */
+.markdown .file-images {
+  margin-bottom: 14px;
 }
 
 .file-image {
@@ -8457,66 +8514,96 @@ div.file-card:hover { background: var(--surface); }
   gap: 6px;
 }
 
-/* Highlighting, from the classes highlight.js gives. */
+/* Highlighting, from the classes highlight.js gives: the file viewer and code in answers alike. */
 .files-code .hljs-comment,
-.files-code .hljs-quote {
-  color: var(--faint);
-  font-style: italic;
+.code-block .hljs-comment,
+.files-code .hljs-quote,
+.code-block .hljs-quote {
+  color: var(--syn-comment);
 }
 
 .files-code .hljs-keyword,
+.code-block .hljs-keyword,
 .files-code .hljs-selector-tag,
+.code-block .hljs-selector-tag,
 .files-code .hljs-literal,
+.code-block .hljs-literal,
 .files-code .hljs-doctag,
-.files-code .hljs-section {
+.code-block .hljs-doctag,
+.files-code .hljs-section,
+.code-block .hljs-section {
   color: var(--syn-keyword);
 }
 
 .files-code .hljs-string,
+.code-block .hljs-string,
 .files-code .hljs-regexp,
+.code-block .hljs-regexp,
 .files-code .hljs-addition,
-.files-code .hljs-template-tag {
+.code-block .hljs-addition,
+.files-code .hljs-template-tag,
+.code-block .hljs-template-tag {
   color: var(--syn-string);
 }
 
 .files-code .hljs-number,
+.code-block .hljs-number,
 .files-code .hljs-symbol,
-.files-code .hljs-bullet {
+.code-block .hljs-symbol,
+.files-code .hljs-bullet,
+.code-block .hljs-bullet {
   color: var(--syn-number);
 }
 
 .files-code .hljs-title,
+.code-block .hljs-title,
 .files-code .hljs-title.function_,
-.files-code .hljs-name {
+.code-block .hljs-title.function_,
+.files-code .hljs-name,
+.code-block .hljs-name {
   color: var(--syn-title);
 }
 
 .files-code .hljs-type,
+.code-block .hljs-type,
 .files-code .hljs-built_in,
-.files-code .hljs-title.class_ {
+.code-block .hljs-built_in,
+.files-code .hljs-title.class_,
+.code-block .hljs-title.class_ {
   color: var(--syn-type);
 }
 
 .files-code .hljs-attr,
+.code-block .hljs-attr,
 .files-code .hljs-attribute,
+.code-block .hljs-attribute,
 .files-code .hljs-property,
+.code-block .hljs-property,
 .files-code .hljs-variable,
+.code-block .hljs-variable,
 .files-code .hljs-template-variable,
+.code-block .hljs-template-variable,
 .files-code .hljs-selector-class,
-.files-code .hljs-selector-id {
+.code-block .hljs-selector-class,
+.files-code .hljs-selector-id,
+.code-block .hljs-selector-id {
   color: var(--syn-attr);
 }
 
 .files-code .hljs-meta,
-.files-code .hljs-deletion {
+.code-block .hljs-meta,
+.files-code .hljs-deletion,
+.code-block .hljs-deletion {
   color: var(--danger);
 }
 
-.files-code .hljs-emphasis {
+.files-code .hljs-emphasis,
+.code-block .hljs-emphasis {
   font-style: italic;
 }
 
-.files-code .hljs-strong {
+.files-code .hljs-strong,
+.code-block .hljs-strong {
   font-weight: 600;
 }
 
@@ -9467,7 +9554,16 @@ div.file-card:hover { background: var(--surface); }
 .handover-toggle { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 26px; padding: 0 12px 0 10px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--muted); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
 .handover-toggle:hover { background: var(--hover); color: var(--text); }
 .handover-toggle > svg { margin-left: auto; flex: none; }
-.handover-marks { display: flex; gap: 4px; }
+/* A team or chain folded: overlapping agent marks instead of a count, the words in the label.
+   Each mark sits on a chip of its own backdrop so the one behind is cut away cleanly. */
+.stack-line { display: flex; align-items: center; flex: none; }
+.stack-chip { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 17px; height: 17px; border-radius: 50%; background: var(--sidebar); color: var(--muted); }
+.handover-group.open .stack-chip { background: var(--surface-2); }
+.stack-chip + .stack-chip { margin-left: -5px; }
+.stack-chip.dim { opacity: 0.45; }
+.stack-more { margin-left: 4px; font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.compact .stack-chip { width: 19px; height: 19px; }
+.compact .stack-chip + .stack-chip { margin-left: -6px; }
 .handover-members { display: flex; flex-direction: column; padding: 0 0 2px; }
 .handover-member { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 30px; padding: 0 12px 0 10px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
 .handover-member:hover { background: var(--hover); }
@@ -9668,10 +9764,12 @@ div.file-card:hover { background: var(--surface); }
 .agent-panel-footer { padding: 14px 16px; border-top: 1px solid var(--border); display: flex; gap: 8px; flex-wrap: wrap; }
 .agent-panel-footer:not(.adjust) button, .agent-panel-latest { border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 7px 14px; background: var(--surface); color: var(--text); font: inherit; font-size: 12.5px; cursor: pointer; }
 /* A member's footer: one line shaped like the composer, to have the lead change its course; stop beside it. */
-.agent-panel-footer.adjust { flex-wrap: nowrap; align-items: center; padding: 12px 16px calc(12px + var(--safe-bottom)); border-top: 0; }
-.agent-adjust { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; height: 44px; padding: 0 16px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface); box-shadow: var(--shadow-card); color: var(--faint); font: inherit; font-size: 14px; text-align: left; cursor: pointer; transition: border-color 0.15s; }
-.agent-adjust span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-@media (hover: hover) { .agent-adjust:hover { border-color: var(--border-strong); color: var(--muted); } }
+.agent-panel-composer { flex: none; padding-top: 4px; }
+.agent-panel-composer .composer { max-width: none; }
+/* Going through the lead: one quiet control over the box, out of the way of writing. */
+.agent-panel-via { display: flex; justify-content: flex-end; margin: 0 2px 6px; }
+.agent-panel-via .text-btn { display: inline-flex; align-items: center; gap: 5px; min-height: 28px; padding: 0 8px; border-radius: var(--radius-sm); color: var(--muted); font-size: 12.5px; }
+.agent-panel-via .text-btn:hover { background: var(--hover); color: var(--text); }
 .coord-back { display: flex; transform: rotate(180deg); }
 /* The team's messages, read like a chat channel: who said it, when, then the words; answers fold under. */
 .agent-tabs { display: flex; gap: 4px; margin-bottom: 14px; padding: 3px; border-radius: var(--radius-sm); background: var(--hover); }
@@ -10716,7 +10814,8 @@ button.coord-row-name { cursor: pointer; }
 .trace-panel .panel-head { flex-shrink: 0; }
 .trace-empty { margin: 0; padding: 28px 22px; color: var(--muted); font-size: 13.5px; list-style: none; }
 
-.trace-body { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+/* The body is the column; the scroll lives in .trace-scroll, so a phone's head can stay put. */
+.trace-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .trace-head { padding: 10px 22px 0; }
 .trace-title-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .trace-thread {
@@ -12450,3 +12549,358 @@ button.pet-summon:hover { background: var(--surface-2); color: var(--text); }
 .topbar-pet .pet-bust { animation: topbar-pet-in 0.18s ease-out; }
 @keyframes topbar-pet-in { from { opacity: 0; transform: scale(0.8); } }
 @media (prefers-reduced-motion: reduce) { .topbar-pet .pet-bust { animation: none; } }
+
+/* ---------- Session statistics readings (top bar) and their popovers ---------- */
+
+.stats-top {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* A reading: the same quiet pill as the context ring's button. */
+.stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--faint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .stat:hover {
+    background: var(--hover);
+    color: var(--muted);
+  }
+}
+
+.stat[aria-expanded='true'] {
+  background: var(--hover);
+  color: var(--muted);
+}
+
+.stat-dot { opacity: 0.8; }
+
+.stat-panel { width: 300px; }
+
+/* The reading's detail: a titled list of numbers, one row per question. */
+.pop-head-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 10px 6px;
+}
+
+.pop-title-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.pop-value {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.pop-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 4px 10px 8px;
+  font-size: 13px;
+}
+
+.pop-rows > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 18px;
+  min-width: 0;
+}
+
+.pop-rows dt { color: var(--muted); }
+.pop-rows dd {
+  margin: 0;
+  text-align: right;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.pop-sub {
+  margin-left: 5px;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.pop-foot {
+  padding: 0 10px 8px;
+  color: var(--faint);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.pop-rule {
+  height: 1px;
+  margin: 2px 6px;
+  background: var(--border);
+}
+
+/* The top bar runs out of room from the right inwards: the token reading gives up first, then the
+   session one; the trace button stays. Measured against the bar itself, not the window. */
+.topbar { container-type: inline-size; }
+
+@container (max-width: 880px) {
+  .topbar .stats-top .pop:nth-child(2) { display: none; }
+}
+
+@container (max-width: 700px) {
+  .topbar .stats-top { display: none; }
+}
+
+/* ---------- The thread's own trace panel ---------- */
+
+.trace-side {
+  position: relative;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  width: min(500px, 46vw);
+  height: 100%;
+  border-left: 1px solid var(--border);
+  background: var(--bg);
+  animation: side-in 0.18s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.trace-side.phone {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  width: auto;
+  border-left: 0;
+}
+
+.trace-phone-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 56px;
+  padding: env(safe-area-inset-top) 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.trace-phone-head h3 {
+  flex: 1;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.trace-scroll {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.trace-body.variant-side .trace-head,
+.trace-body.variant-phone .trace-phone-head + .trace-empty,
+.trace-body.variant-side .trace-empty { padding: 10px 16px 0; }
+
+.trace-heading {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.trace-body.variant-side .trace-head,
+.trace-body.variant-side .trace-scroll .trace-head { padding: 10px 14px 0; }
+
+.trace-body.variant-side .trace-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+.trace-body.variant-side .ov-wrap { padding: 10px 12px; }
+
+/* What a model request's row adds: how long it waited, how long it generated, how fast. */
+.trace-timing {
+  display: flex;
+  gap: 10px;
+  padding: 0 10px 6px 66px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.trace-step.sel > .trace-step-head { background: var(--active); }
+
+/* ---------- The turn drawn in real time (the pinned overview) ---------- */
+
+.ov-wrap {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  padding: 10px 14px 10px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.trace-panel .ov-wrap,
+.trace-body.variant-dialog .ov-wrap { background: var(--surface); }
+
+.ov {
+  position: relative;
+  padding: 8px 10px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.ov-plot { position: relative; }
+
+.ov-grid {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1px dashed var(--border);
+}
+
+.ov-row { position: relative; height: 11px; }
+
+.ov-row + .ov-row { margin-top: 2px; }
+
+.ov-bar {
+  position: absolute;
+  top: 2px;
+  display: flex;
+  height: 7px;
+  min-width: 3px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--faint);
+  cursor: pointer;
+  transition: opacity 0.12s;
+}
+
+.ov-bar.ov-seg { background: var(--muted); }
+
+.ov-bar .ov-wait {
+  flex: none;
+  height: 100%;
+  background: var(--border-strong);
+}
+
+.ov-bar .ov-gen { flex: 1; height: 100%; }
+
+.ov-bar.tool { background: var(--faint); }
+
+.ov-bar.tool.fail { background: var(--danger); }
+
+/* A piece still running: stripes crawling forward. */
+.ov-bar.live .ov-gen {
+  background: repeating-linear-gradient(-45deg, var(--muted) 0 3px, var(--faint) 3px 6px);
+  background-size: 8.49px 8.49px;
+  animation: ov-crawl 0.8s linear infinite;
+}
+
+@keyframes ov-crawl { to { background-position: 8.49px 0; } }
+
+.ov.has-sel .ov-bar:not(.sel):not(.hl) { opacity: 0.32; }
+
+.ov-bar.hl { box-shadow: 0 0 0 2px var(--surface-2), 0 0 0 3px var(--muted); }
+
+.ov-bar:focus-visible { outline: 2px solid var(--border-strong); outline-offset: 2px; }
+
+.ov-tip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  pointer-events: none;
+  padding: 6px 9px;
+  border-radius: var(--radius-sm);
+  background: var(--text);
+  color: var(--bg);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+  box-shadow: var(--shadow-pop);
+  font-variant-numeric: tabular-nums;
+}
+
+.ov-tip strong { font-weight: 600; }
+
+.ov-axis {
+  position: relative;
+  height: 15px;
+  margin-top: 6px;
+  color: var(--faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ov-axis span {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.ov-axis span:first-child { transform: none; }
+
+.ov-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 3px;
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+.ov-legend i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 4px;
+  border-radius: 2px;
+  vertical-align: -0.5px;
+}
+
+.ov-legend-wait { background: var(--border-strong); }
+.ov-legend-gen { background: var(--muted); }
+.ov-legend-tool { background: var(--faint); }
+
+@media (prefers-reduced-motion: reduce) {
+  .ov-bar.live .ov-gen { animation: none; }
+}
+
+/* On a phone the readings sit at the top of the trace page, as the sketch puts them. */
+.trace-body.variant-phone .stats-top {
+  display: flex;
+  justify-content: center;
+  padding: 10px 12px 0;
+}
