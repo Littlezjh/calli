@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Calli 智能体面板直接发消息 · 草图（待审）</title>
+  <style>
+    /* Tokens copied from packages/web/src/styles.css (paper), so the sketch opens on its own. */
+    :root {
+      --bg: #f8f6f1; --sidebar: #f1efe9; --surface: #ffffff; --surface-2: #fbfaf7;
+      --text: #1f1e1c; --muted: #827f77; --faint: #a9a69e; --border: #e5e2da; --border-strong: #d6d2c8;
+      --hover: rgba(31, 30, 28, 0.045); --active: rgba(31, 30, 28, 0.08);
+      --accent: #1f1e1c; --accent-fg: #ffffff; --positive: #2f7d5b;
+      --user-bg: #eceae4; --code-bg: #efede7; --warn: #c2410c; --danger: #b42318;
+      --shadow-card: 0 1px 2px rgba(31, 30, 28, 0.04), 0 6px 20px rgba(31, 30, 28, 0.05);
+      --radius-pill: 999px; --radius-sm: 8px; --radius: 12px; --radius-lg: 18px;
+      --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Noto Sans CJK SC', 'Microsoft YaHei', sans-serif;
+      --mono: ui-monospace, 'SF Mono', Menlo, Consolas, 'Noto Sans Mono CJK SC', monospace;
+    }
+    [data-theme='dark'] {
+      --bg: #1b1a18; --sidebar: #161514; --surface: #252422; --surface-2: #201f1d;
+      --text: #ecebe7; --muted: #9a978f; --faint: #6f6c65; --border: #32302c; --border-strong: #423f3a;
+      --hover: rgba(236, 235, 231, 0.06); --active: rgba(236, 235, 231, 0.1);
+      --accent: #ecebe7; --accent-fg: #1b1a18; --positive: #3f9a72;
+      --user-bg: #2f2d2a; --code-bg: #201f1d; --warn: #f0935a; --danger: #f97066;
+      --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.25);
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: var(--text); background: var(--bg); font-family: var(--font); font-size: 14px; -webkit-font-smoothing: antialiased; }
+    button { font: inherit; cursor: pointer; color: inherit; border: 0; background: none; padding: 0; }
+    svg { flex: none; }
+
+    /* ---------- Sketch chrome ---------- */
+    .bar { display: flex; gap: 16px; align-items: center; padding: 12px 24px; border-bottom: 1px solid var(--border); }
+    .bar h1 { font-size: 15px; font-weight: 650; margin: 0; }
+    .seg { display: inline-flex; padding: 3px; border-radius: var(--radius-pill); background: var(--sidebar); border: 1px solid var(--border); }
+    .seg button { padding: 5px 12px; border-radius: var(--radius-pill); font-size: 12.5px; color: var(--muted); }
+    .seg button[aria-pressed='true'] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-card); font-weight: 600; }
+    .shots { display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start; padding: 22px 24px 40px; }
+    .shot > h2 { font-size: 13px; font-weight: 650; margin: 0 0 4px; }
+    .shot > p { margin: 0 0 12px; color: var(--muted); font-size: 12.5px; line-height: 1.7; max-width: 420px; }
+    .frame { position: relative; border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; background: var(--bg); box-shadow: var(--shadow-card); }
+    .frame.desk { width: 560px; height: 470px; }
+    .frame.phone { width: 390px; height: 560px; border-radius: 34px; }
+
+    /* ---------- Agent panel (mirrors the real classes) ---------- */
+    .agent-panel { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--bg); }
+    .agent-panel-head { display: flex; align-items: center; gap: 8px; padding: 20px; border-bottom: 1px solid var(--border); }
+    .phone .agent-panel-head { padding: 14px 12px; }
+    .agent-panel-heading { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 5px; }
+    .agent-panel-heading strong { font-size: 16px; }
+    .agent-panel-heading span { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 8px; color: var(--muted); }
+    .model-pill { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 8px; border-radius: 8px; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+    .phone .model-pill .long { display: none; }
+    .agent-panel-body { flex: 1; min-height: 0; overflow: hidden; padding: 16px 20px; display: flex; flex-direction: column; justify-content: flex-end; gap: 14px; }
+    .bubble { align-self: flex-end; max-width: 80%; padding: 10px 16px; border-radius: 20px; background: var(--user-bg); font-size: 14.5px; line-height: 1.55; }
+    .meta { font-size: 12.5px; color: var(--faint); }
+    .prose { font-size: 14.5px; line-height: 1.75; }
+    .prose p { margin: 0 0 8px; }
+    code { font-family: var(--mono); font-size: 12.5px; background: var(--code-bg); padding: 1px 5px; border-radius: 5px; }
+    .working { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+    .working i { width: 7px; height: 7px; border-radius: 50%; background: var(--positive); box-shadow: 0 0 0 3px color-mix(in srgb, var(--positive) 22%, transparent); }
+
+    /* ---------- The new footer: the real composer, scoped to this member ---------- */
+    .composer { padding: 0 16px 14px; }
+    .composer-over { display: flex; justify-content: flex-end; align-items: center; min-height: 28px; margin: 0 4px 6px; }
+    .via-lead { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 8px; border-radius: 8px; color: var(--muted); font-size: 12.5px; }
+    .via-lead:hover { background: var(--hover); color: var(--text); }
+    .composer-box { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 22px; background: var(--surface); box-shadow: var(--shadow-card); }
+    .composer-box.focus { border-color: var(--border-strong); }
+    .text { min-height: 52px; padding: 14px 16px 4px; font-size: 15.5px; line-height: 1.5; }
+    .text.ph { color: var(--faint); }
+    .caret { display: inline-block; width: 1.5px; height: 1.1em; vertical-align: -3px; background: var(--text); margin-left: 1px; }
+    .composer-bar { display: flex; align-items: center; gap: 4px; padding: 6px 8px 8px; }
+    .spacer { flex: 1; }
+    .add { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 50%; color: var(--muted); }
+    .send-btn { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; margin-left: 4px; border-radius: 50%; background: var(--accent); color: var(--accent-fg); }
+    .send-btn:disabled { opacity: 0.22; }
+    .queue { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px 0; }
+    .queue-item { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 0 4px 0 8px; border-radius: var(--radius-sm); background: var(--surface-2); font-size: 13.5px; }
+    .queue-badge { padding: 1px 7px; border-radius: 999px; background: var(--user-bg); color: var(--muted); font-size: 11.5px; }
+    .queue-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .queue-now { min-height: 28px; padding: 0 8px; border-radius: 7px; color: var(--muted); font-size: 12.5px; }
+    .queue-remove { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 7px; color: var(--faint); }
+
+    /* ---------- The lead's thread, after "let the lead adjust" ---------- */
+    .main { position: absolute; inset: 0; display: flex; flex-direction: column; }
+    .topbar { display: flex; align-items: center; gap: 8px; height: 56px; padding: 0 16px; border-bottom: 1px solid var(--border); }
+    .topbar strong { font-size: 15px; flex: 1; }
+    .team-chip { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--radius-pill); font-size: 12.5px; color: var(--muted); }
+    .team-chip i { width: 6px; height: 6px; border-radius: 50%; background: var(--positive); }
+    .hl { background: color-mix(in srgb, var(--positive) 14%, transparent); border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <div class="bar">
+    <h1>智能体面板 · 直接发给成员</h1>
+    <div class="seg" id="theme"><button data-v="light" aria-pressed="true">亮色</button><button data-v="dark" aria-pressed="false">深色</button></div>
+  </div>
+  <div class="shots" id="shots"></div>
+
+  <template id="head">
+    <header class="agent-panel-head">
+      <button class="icon-btn" aria-label="返回"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg></button>
+      <div class="agent-panel-heading"><strong>pi-stats</strong><span>{status} · pi · b48b03a5</span></div>
+      <span class="model-pill"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 14a8 8 0 1 1 16 0"/><path d="M12 14l4-4"/></svg><span class="long">GLM-5.3-Flash · ZCode · </span>最大</span>
+      <button class="icon-btn" aria-label="展开查看"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg></button>
+      <button class="icon-btn" aria-label="关闭"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </header>
+  </template>
+
+  <script>
+    const icon = {
+      plus: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+      send: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg>',
+      stop: '<svg width="14" height="14" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="3" fill="currentColor"/></svg>',
+      lead: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14l-5-5 5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-2"/></svg>',
+      edit: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>',
+      x: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+    };
+    const head = (status) => document.getElementById('head').innerHTML.replace('{status}', status);
+    const viaLead = `<div class="composer-over"><button class="via-lead">${icon.lead}让主智能体调整</button></div>`;
+
+    const idle = (phone) => `<div class="agent-panel">${head('已返回')}
+      <div class="agent-panel-body">
+        <div class="bubble">代码合入，然后重启</div>
+        <div class="meta">用时 5 分 9 秒 · 9 步 ›</div>
+        <div class="prose"><p>合入与重启都完成了。</p><p>阶段一已合入 master（<code>e6b9137</code>），并已排定空闲后自动重启；第二阶段界面部分尚未开工。</p></div>
+      </div>
+      <div class="composer">${viaLead}
+        <div class="composer-box"><div class="text ph">发给 pi-stats…</div>
+          <div class="composer-bar"><button class="add">${icon.plus}</button><div class="spacer"></div><button class="send-btn" disabled>${icon.send}</button></div></div>
+      </div></div>`;
+
+    const running = (phone) => `<div class="agent-panel">${head('运行中')}
+      <div class="agent-panel-body">
+        <div class="bubble">接着做第二阶段，先做顶栏读数</div>
+        <div class="working"><i></i>正在修改 SessionStats.tsx · 1 分 12 秒</div>
+      </div>
+      <div class="composer">${viaLead}
+        <div class="composer-box focus">
+          <div class="queue"><div class="queue-item"><span class="queue-badge">排队</span><span class="queue-text">弹层先只放总时长和 token</span><button class="queue-now">立即发送</button><button class="queue-remove">${icon.edit}</button><button class="queue-remove">${icon.x}</button></div></div>
+          <div class="text">手机上读数收成一个数字<span class="caret"></span></div>
+          <div class="composer-bar"><button class="add">${icon.plus}</button><div class="spacer"></div><button class="send-btn">${icon.stop}</button><button class="send-btn">${icon.send}</button></div></div>
+      </div></div>`;
+
+    const handed = (phone) => `<div class="main">
+      <div class="topbar"><strong>会话统计</strong><span class="team-chip"><i></i>1 运行中</span></div>
+      <div class="agent-panel-body"><div class="bubble">按设计文档把会话统计做出来，daemon 和界面分两阶段</div>
+        <div class="prose"><p>已派给 pi-stats，第一阶段（daemon）已返回，等你验收。</p></div></div>
+      <div class="composer"><div class="composer-box focus"><div class="text"><span class="hl">请调整「pi-stats」的任务：</span>手机上读数收成一个数字<span class="caret"></span></div>
+        <div class="composer-bar"><button class="add">${icon.plus}</button><div class="spacer"></div><button class="send-btn">${icon.send}</button></div></div></div>
+    </div>`;
+
+    const shots = [
+      ['① 空闲：默认直接发给这个成员', '底部是真正的输入框，提示「发给 pi-stats…」，发出去就是 pi-stats 自己的下一轮。「让主智能体调整」降为输入框上方一个灰色文字按钮。', idle],
+      ['② 运行中：追加的话排队，停止在原位', '成员在跑时，写的话进排队列表（可立即发送、编辑、撤回），等这一轮结束再投递；停止按钮和发送按钮并排，跟主线程的输入框一样。', running],
+      ['③ 点「让主智能体调整」：草稿带到主线程', '面板关掉，回到主智能体的线程，输入框里已经是「请调整「pi-stats」的任务：」加上刚才写了一半的话，不用重写；成员输入框里的草稿随之清空。', handed],
+    ];
+    const host = document.getElementById('shots');
+    for (const [title, note, draw] of shots) for (const phone of [false, true]) {
+      const el = document.createElement('section');
+      el.className = 'shot';
+      el.innerHTML = `<h2>${title} · ${phone ? '手机' : '桌面'}</h2><p>${note}</p><div class="frame ${phone ? 'phone' : 'desk'}">${draw(phone)}</div>`;
+      host.append(el);
+    }
+    const setTheme = (v) => { document.documentElement.dataset.theme = v; for (const b of document.querySelectorAll('#theme button')) b.setAttribute('aria-pressed', String(b.dataset.v === v)); };
+    document.getElementById('theme').addEventListener('click', (e) => { if (e.target.dataset.v) setTheme(e.target.dataset.v); });
+    if (new URLSearchParams(location.search).get('theme') === 'dark') setTheme('dark');
+  </script>
+</body>
+</html>
