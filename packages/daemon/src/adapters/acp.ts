@@ -498,6 +498,8 @@ export abstract class AcpAdapter implements AgentAdapter {
   protected liveUsage(_id: string, _cwd: string, _emit: (sample: UsageSample) => void): LiveUsage | undefined { return undefined; }
   /** Optional protocol extensions supplied by a concrete adapter. */
   protected configureSession(_session: AcpSession, _peer: JsonRpcPeer): void {}
+  /** Agent-specific options that must be present when a fresh native session is created. */
+  protected initialSessionOptions(_opts: StartOptions): { meta?: Record<string, unknown>; model?: boolean; effort?: boolean } { return {}; }
   abstract readonly id: string;
   abstract readonly label: string;
   abstract readonly capabilities: AgentAdapter['capabilities'];
@@ -543,7 +545,7 @@ export abstract class AcpAdapter implements AgentAdapter {
   }
 
   private async readModels(): Promise<ModelOption[]> {
-    const { session, configOptions } = await this.open({ cwd: tmpdir() }, true);
+    const { session, configOptions } = await this.open({ cwd: tmpdir(), probe: true }, true);
     try {
       return await probeWithDeadline(async () => this.refineModels(modelsFromConfig(configOptions), session), () => session.close());
     } finally {
@@ -703,13 +705,15 @@ export abstract class AcpAdapter implements AgentAdapter {
         clientCapabilities: { elicitation: { form: {} } },
       });
 
+      const initial = opts.resumeId ? {} : this.initialSessionOptions(opts);
+      const startParams = { cwd: opts.cwd, mcpServers: [], ...(initial.meta ? { _meta: initial.meta } : {}) };
       let sessionId: string;
       let info: any;
       if (opts.resumeId) {
-        info = await peer.request(this.resumeVia, { sessionId: opts.resumeId, cwd: opts.cwd, mcpServers: [] });
+        info = await peer.request(this.resumeVia, { sessionId: opts.resumeId, ...startParams });
         sessionId = opts.resumeId;
       } else {
-        info = await peer.request('session/new', { cwd: opts.cwd, mcpServers: [] });
+        info = await peer.request('session/new', startParams);
         sessionId = info.sessionId as string;
       }
 
@@ -727,8 +731,8 @@ export abstract class AcpAdapter implements AgentAdapter {
         await session.setWorkMode('plan');
       }
       session.onWorkMode = opts.onWorkMode;
-      if (opts.model) await session.setModel(opts.model);
-      if (opts.effort) await session.setEffort(opts.effort);
+      if (opts.model && !initial.model) await session.setModel(opts.model);
+      if (opts.effort && !initial.effort) await session.setEffort(opts.effort);
       if (opts.speed != null) await session.setSpeed(opts.speed);
       session.onSpeed = opts.onSpeed;
       return { session, configOptions };
