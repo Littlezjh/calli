@@ -137,6 +137,22 @@ test('cancel suppresses this episode; exhausted fallback skips unavailable and d
   } finally { await context.close(); quota('agy2'); }
 });
 
+test('manual exhausted takeover button uses the quota-aware target', async () => {
+  quota('agy'); quota('agy2', 95); quota('agy3'); await configure([{ agent: 'agy2', model: 'gemini-pro' }, { agent: 'agy3', model: 'gemini-pro' }], false);
+  const source = await create('手动接手跳过空额度');
+  const context = await browser.newContext({ viewport: { width: 1440, height: 960 } });
+  const page = await context.newPage();
+  try {
+    await openUi(page, daemon); await select(page, source.title);
+    await send(source.id, 'quota-exhausted'); await idle(source.id);
+    await page.getByRole('button', { name: '交给 Agent 3 · gemini-pro 接手', exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: /交给 Agent 2/ }).count(), 0);
+    await page.getByRole('button', { name: '交给 Agent 3 · gemini-pro 接手', exact: true }).click();
+    const next = await wait(async () => (await request('/api/threads')).find(t => t.handover?.sourceId === source.id));
+    assert.equal(next.agent, 'agy3'); assert.equal(next.model, 'gemini-pro');
+  } finally { await context.close(); quota('agy2'); }
+});
+
 for (const mobile of [false, true]) for (const theme of ['light', 'dark']) {
   test(`settings and conversation override: ${mobile ? 'phone' : 'desktop'} ${theme}`, async () => {
     await configure([{ agent: 'agy', model: 'gemini-pro' }, { agent: 'agy', model: 'claude-sonnet' }, { agent: 'agy2', model: 'gemini-pro' }]);
