@@ -833,9 +833,14 @@ const MAX_IMAGE_PATHS = 6;
  * Web addresses are left alone. Whether a file really exists and is an image is for the daemon to say.
  */
 export function imagePathsIn(text: string, roots: string[] = []): string[] {
-  const found: string[] = [];
+  return imagePlaces(text, roots).map((place) => place.path);
+}
+
+/** The same files, each with where in the text it is first named, so its picture can follow that passage. */
+export function imagePlaces(text: string, roots: string[] = []): Array<{ path: string; at: number }> {
+  const found: Array<{ path: string; at: number }> = [];
   const seen = new Set<string>();
-  const add = (raw: string, encoded = false) => {
+  const add = (raw: string, at: number, encoded = false) => {
     let path = raw.replace(/^file:\/\//, '');
     if (encoded || path !== raw) {
       try {
@@ -849,17 +854,19 @@ export function imagePathsIn(text: string, roots: string[] = []): string[] {
     const key = relativePath(path, roots).replace(/^(?:\.\/)+/, '');
     if (!IMAGE_FILE.test(path) || seen.has(key) || found.length >= MAX_IMAGE_PATHS) return;
     seen.add(key);
-    found.push(path);
+    found.push({ path, at });
   };
-  const rest = text.replace(/!?\[[^\]\n]*\]\(\s*(?:<([^>\n]+)>|((?:\\.|[^\\\s()]|\([^()\s]*\))+))(?:\s+"[^"\n]*")?\s*\)/g, (_match, angle: string | undefined, plain: string) => {
-    add((angle ?? plain).replace(/\\([\\()[\]<> ])/g, '$1'), true);
-    return '';
+  // Links are blanked out rather than cut, so what follows keeps its place in the text; the blank
+  // is no space, so a word on either side still does not count as standing alone.
+  const rest = text.replace(/!?\[[^\]\n]*\]\(\s*(?:<([^>\n]+)>|((?:\\.|[^\\\s()]|\([^()\s]*\))+))(?:\s+"[^"\n]*")?\s*\)/g, (match: string, angle: string | undefined, plain: string, at: number) => {
+    add((angle ?? plain).replace(/\\([\\()[\]<> ])/g, '$1'), at, true);
+    return '\u0000'.repeat(match.length);
   });
   // A path stands on its own: after a space, a quote, a bracket or CJK punctuation, never mid-word or inside a URL.
   for (const m of rest.matchAll(/(?<=^|[\s`'"(（：，。])((?:file:\/\/)?[\p{L}\p{N}_@%+.~\-/]+\.(?:png|jpe?g|gif|webp|svg))(?=$|[\s`'")）：，。,;；!?]|[.:](?:\s|$))/gimu)) {
-    add(m[1]);
+    add(m[1], m.index!);
   }
-  return found;
+  return found.sort((a, b) => a.at - b.at);
 }
 
 /** Add file counts discovered on an explicit work expansion without changing the view layout. */

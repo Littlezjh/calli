@@ -405,7 +405,7 @@ test('a turn refused for lack of permission explains the way out; other errors a
   assert.equal(errors[1], 'quota exceeded');
 });
 
-import { imagePathsIn, usageSummary } from '../src/timeline.js';
+import { imagePathsIn, imagePlaces, usageSummary } from '../src/timeline.js';
 
 test('a plan is one item per turn, updated in place, and does not open a work group', () => {
   seq = 0;
@@ -453,6 +453,13 @@ test('unknown context clears the previous reading and a later measurement restor
   assert.deepEqual(buildTimeline(events).usage, { used: 12000, size: 258400 });
   for (const used of [-1, NaN, Infinity]) events.push(ev('usage.updated', { used, size: 258400 }));
   assert.deepEqual(buildTimeline(events).usage, { used: 12000, size: 258400 });
+});
+
+test('imagePlaces says where each picture is first named, in reading order', () => {
+  const text = 'First ![a](out/a.png) then:\n\n- see /work/b.jpg\n- and [again](out/a.png)';
+  assert.deepEqual(imagePlaces(text), [{ path: 'out/a.png', at: text.indexOf('![a]') }, { path: '/work/b.jpg', at: text.indexOf('/work/b.jpg') }]);
+  // A link cut out of the text does not make the word after it stand alone.
+  assert.deepEqual(imagePathsIn('word[x](a.png)b.png'), ['a.png']);
 });
 
 test('imagePathsIn finds local image files in an answer and leaves web addresses alone', () => {
