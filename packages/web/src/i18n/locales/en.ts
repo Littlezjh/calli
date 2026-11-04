@@ -790,6 +790,7 @@ export const en: Messages = {
   'collab.pickAndWrite': 'Choose and write a task',
 
   // Composer menu
+  'goal.show': 'View goal',
   'goal.set': 'Set goal',
   'goal.pause': 'Pause goal',
   'goal.resume': 'Resume goal',

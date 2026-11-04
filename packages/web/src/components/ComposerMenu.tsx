@@ -5,12 +5,22 @@ import { t } from '../i18n';
 export type GoalCapability = NonNullable<AgentInfo['capabilities']['goal']>;
 export type GoalAction = NonNullable<GoalCapability['actions']>[number];
 
+/** Keep native controls reachable even when no live goal card is available. */
+export function goalMenuActions(goal: GoalCapability, hasCard: boolean, running: boolean, plan: boolean) {
+  return (goal.actions ?? []).filter(action => action === 'set' || !hasCard).map(action => ({
+    action,
+    blocked: running && !goal.controls.some(control => control === action) ? t('composerMenu.afterTurn')
+      : plan && (action === 'set' || action === 'resume') ? t('composerMenu.planFirst') : '',
+  }));
+}
+
 interface Props {
   commands: SlashCommand[];
   planMode?: { active: boolean; disabled: boolean; onChange: (active: boolean) => void };
   writingMode?: WritingMode;
   goal?: GoalCapability;
   running: boolean;
+  goalHasCard?: boolean;
   attachTitle: string;
   attachDisabled?: boolean;
   onAttach: () => void;
@@ -23,7 +33,7 @@ interface Props {
 export interface WritingMode { active: boolean; disabled: boolean; onChange: (active: boolean) => void }
 
 /** A compact phone menu. Browsing opens the composer's full-width command palette. */
-export function ComposerMenu({ commands, planMode, writingMode, goal, running, attachTitle, attachDisabled, onAttach, onBrowse, onGoal, close }: Props) {
+export function ComposerMenu({ commands, planMode, writingMode, goal, running, goalHasCard = false, attachTitle, attachDisabled, onAttach, onBrowse, onGoal, close }: Props) {
   const unknownKinds = commands.some(c => !c.kind);
   const skillTitle = unknownKinds ? t('composerMenu.skillsAndCommands') : t('composerMenu.skills');
   const pick = (action: () => void) => { close(); action(); };
@@ -47,18 +57,14 @@ export function ComposerMenu({ commands, planMode, writingMode, goal, running, a
       <span className="pop-item-text"><span className="pop-item-label">{t('writing.mode')}</span><small className="pop-item-hint">{t('writing.modeHint')}</small></span>
       {writingMode.active && <span className="pop-item-check"><IconCheck size={16} /></span>}
     </button>}
-    {goal && (() => {
-      // Every agent gets the same single tap, like plan mode: /goal goes into the box and the
-      // objective is typed after it. What the card cannot show (an agent without live state)
-      // is typed by hand when needed.
-      const blocked = running ? t('composerMenu.afterTurn') : planMode?.active ? t('composerMenu.planFirst') : null;
-      return <button type="button" role="menuitem" className="pop-item" disabled={!!blocked}
-        title={blocked ?? t('composer.goalSetHint')}
-        onClick={() => pick(() => onGoal('set'))}>
+    {goal && goalMenuActions(goal, goalHasCard, running, !!planMode?.active).map(({ action, blocked }) => (
+      <button key={action} type="button" role="menuitem" className="pop-item" disabled={!!blocked}
+        title={blocked || (action === 'set' ? t('composer.goalSetHint') : t(`goal.${action}`))}
+        onClick={() => pick(() => onGoal(action))}>
         <span className="pop-item-icon"><IconTarget size={19} /></span>
-        <span className="pop-item-text"><span className="pop-item-label">{t('goal.set')}</span>{blocked && <small className="pop-item-hint">{blocked}</small>}</span>
-      </button>;
-    })()}
+        <span className="pop-item-text"><span className="pop-item-label">{t(`goal.${action}`)}</span>{blocked && <small className="pop-item-hint">{blocked}</small>}</span>
+      </button>
+    ))}
     <div className="pop-divider" />
     <button type="button" role="menuitem" className="pop-item" onClick={() => pick(() => onBrowse('actions'))}>
       <span className="pop-item-icon"><IconBolt size={19} /></span><span className="pop-item-text"><span className="pop-item-label">{t('composerMenu.actions')}</span></span><IconChevron size={14} />

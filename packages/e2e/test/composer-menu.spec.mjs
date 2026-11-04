@@ -321,12 +321,9 @@ test('goal actions follow capabilities, Plan blocks starting a goal, and Pi skil
     await startGoal(page, 'slow');
     await page.getByRole('button', { name: '停止', exact: true }).waitFor();
     await openGoal(page);
-    assert.equal(await item(page, /^查看目标/).count(), 0);
+    assert.equal(await item(page, /^查看目标/).isDisabled(), true);
     assert.equal(await item(page, /^设置目标/).isDisabled(), true);
-    await page.keyboard.press('Escape');
-    // Claude has no live card; native control commands remain available in the composer.
-    await input(page).fill('/goal clear');
-    await page.getByRole('button', { name: '发送', exact: true }).click();
+    await item(page, '清除目标').click();
     await page.getByRole('button', { name: '停止', exact: true }).waitFor({ state: 'hidden' });
 
     await create(page, 'codex', '计划内的目标菜单', false);
@@ -335,13 +332,13 @@ test('goal actions follow capabilities, Plan blocks starting a goal, and Pi skil
     await page.locator('.composer textarea[placeholder="先分析和讨论方案"]').waitFor();
     await openGoal(page);
     assert.equal(await item(page, /^设置目标/).isDisabled(), true);
-    assert.equal(await item(page, /^继续目标/).count(), 0);
+    assert.equal(await item(page, /^继续目标/).isDisabled(), true);
     const query = page.getByRole('textbox', { name: '搜索操作与技能' });
     await query.fill('设置目标');
     await query.press('ArrowDown');
     await query.press('Enter');
     assert.equal(await page.getByRole('dialog', { name: '设置目标', exact: true }).count(), 0);
-    await query.fill('目标');
+    await query.fill('继续目标');
     await query.press('ArrowUp');
     assert.equal(await page.getByRole('option', { selected: true }).count(), 0, 'disabled goal action cannot be selected');
 
@@ -353,4 +350,39 @@ test('goal actions follow capabilities, Plan blocks starting a goal, and Pi skil
     await item(page, /^(?:\/)?skill:pdf/).click();
     assert.equal(await input(page).inputValue(), '/skill:pdf 整理文档');
   } finally { await context.close(); }
+});
+
+
+test('goals without a live card retain visible controls and drafts in all four layouts', { timeout: 120000 }, async () => {
+  for (const mobile of [false, true]) for (const colorScheme of ['light', 'dark']) {
+    const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1400, height: 900 }, isMobile: mobile, hasTouch: mobile, colorScheme });
+    try {
+      const page = await context.newPage();
+      const thread = await create(page, 'claude', `目标操作 ${mobile} ${colorScheme}`, mobile);
+      await startGoal(page, 'slow');
+      await page.getByRole('button', { name: '停止', exact: true }).waitFor();
+      await input(page).fill('保留我的草稿');
+      await openGoal(page);
+      assert.equal(await item(page, '查看目标').isDisabled(), true);
+      assert.equal(await item(page, '清除目标').isEnabled(), true);
+      assert.equal(await item(page, '暂停目标').count(), 0);
+      await screenshot(page, `goal-fallback-running-${mobile ? 'phone' : 'desktop'}-${colorScheme}`);
+      await item(page, '清除目标').click();
+      await page.getByRole('button', { name: '停止', exact: true }).waitFor({ state: 'hidden' });
+      assert.equal(await input(page).inputValue(), '保留我的草稿');
+      assert.equal(await page.locator('.queue-item').count(), 0);
+      await page.reload();
+      if (mobile) await page.locator('.menu-btn').click();
+      await page.locator('.thread-title', { hasText: thread.title }).first().click();
+      await openGoal(page);
+      assert.equal(await item(page, '查看目标').isEnabled(), true);
+      await screenshot(page, `goal-fallback-idle-${mobile ? 'phone' : 'desktop'}-${colorScheme}`);
+      await item(page, '查看目标').click();
+      await page.getByText('当前没有目标。', { exact: true }).last().waitFor();
+      const events = await (await api(daemon, `/api/threads/${thread.id}/events`)).json();
+      assert.ok(events.some(e => e.type === 'turn.started' && e.data.text === '/goal clear' && e.data.control));
+      assert.ok(events.some(e => e.type === 'turn.started' && e.data.text === '/goal'));
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
+    } finally { await context.close(); }
+  }
 });
