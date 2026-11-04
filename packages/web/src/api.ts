@@ -559,6 +559,14 @@ export interface ModelOption {
   description?: string;
   /** How busy this model is right now; above 100 means overloaded. */
   loadPercent?: number;
+  /** Total queued requests. Null means unavailable, not zero; absent means no queue metadata. */
+  queueSize?: number | null;
+  /** Observed request position, not total queue size. Zero means observed nonqueued; null means unknown/stale. */
+  queuePosition?: number | null;
+  /** Queue observation time in epoch milliseconds; absent when no valid observation exists. */
+  queueObservedAt?: number;
+  /** True when reading the upstream load failed, rather than the upstream omitting it. */
+  loadError?: boolean;
   /** Effort levels this model accepts. Empty: none. Missing: use the agent-wide list. */
   efforts?: string[];
   speeds?: Array<{ id: string; label: string; description?: string; isFast?: boolean }>;
@@ -1750,8 +1758,8 @@ export class Api {
     return this.request('DELETE', `/api/terminals/${id}`);
   }
 
-  models(agent: string): Promise<ModelOption[]> {
-    return this.request('GET', `/api/agents/${agent}/models`);
+  models(agent: string, refresh = false): Promise<ModelOption[]> {
+    return this.request('GET', `/api/agents/${encodeURIComponent(agent)}/models${refresh ? '?refresh=1' : ''}`);
   }
 
   listDirectory(path: string): Promise<DirectoryInfo> {

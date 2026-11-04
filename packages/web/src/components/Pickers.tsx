@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { isFastSpeed, type AgentInfo, type Api, type ModelOption } from '../api';
 import { usageSummary, type Usage } from '../timeline';
 import { EFFORT_LABELS, PERMISSION_LABELS, PERMISSION_ORDER, permissionHint } from '../permissions';
@@ -140,6 +140,33 @@ export function modelLoadLabel(percent: number): string {
   return t('pickers.modelLoad', percent);
 }
 
+/** Metadata, not the agent's name, decides whether a model has a queue status row. */
+function hasModelQueue(option: ModelOption | undefined): boolean {
+  return option?.queuePosition !== undefined || option?.queueSize !== undefined;
+}
+
+/** A request position is a recent observation, never a model-wide queue count. */
+export function modelQueueLabel(option: ModelOption | undefined, now = Date.now()): string {
+  if (!option) return '';
+  if (option.queuePosition === undefined) return option.queueSize !== undefined ? t('pickers.modelQueue', option.queueSize) : '';
+  const at = option.queueObservedAt;
+  if (at === undefined || !Number.isFinite(at) || at <= 0 || at > now) return t('pickers.modelQueueUnknown');
+  if (now - at > 30 * 60_000) return t('pickers.modelQueueStale');
+  if (option.queuePosition === null || !Number.isSafeInteger(option.queuePosition) || option.queuePosition < 0) return t('pickers.modelQueueUnknown');
+  const minutes = Math.floor((now - at) / 60_000);
+  const age = minutes < 1 ? t('time.justNow') : t('time.minutesAgo', minutes);
+  return t('pickers.modelQueueObserved', option.queuePosition, age);
+}
+
+/** A missing queue is not an empty queue; older catalogs keep their existing load-only display. */
+export function modelStatusLabel(option: ModelOption | undefined, now = Date.now()): string {
+  if (!option) return '';
+  return [
+    option.loadPercent !== undefined ? modelLoadLabel(option.loadPercent) : option.loadError ? t('pickers.modelLoadFailed') : hasModelQueue(option) ? t('pickers.modelLoadUnknown') : '',
+    modelQueueLabel(option, now),
+  ].filter(Boolean).join(' · ');
+}
+
 /** Why pictures cannot be sent with this model, or null when they can. */
 export function imagesBlocked(models: ModelOption[], id: string | null): string | null {
   const option = resolveModel(models, id);
@@ -164,11 +191,13 @@ export function effortsForModel(models: ModelOption[], model: string | null, fal
  * Rows for the model list. If the agent lists its own default, that row stands for "no override"
  * (stored as null), so there is never a second, duplicate default row.
  */
-export function modelRows(models: ModelOption[]): Array<{ value: string | null; label: string; hint?: string }> {
-  const rest = models.filter((m) => m.id !== AGENT_DEFAULT).map((m) => ({ value: m.id, label: m.label, hint: [m.description, m.speeds?.some(isFastSpeed) ? t('pickers.canAccelerate') : ''].filter(Boolean).join(' · ') || undefined }));
+export function modelRows(models: ModelOption[], now = Date.now()): Array<{ value: string | null; label: string; hint?: string }> {
+  const rest = models.filter((m) => m.id !== AGENT_DEFAULT).map((m) => ({ value: m.id, label: m.label, hint: [hasModelQueue(m) ? modelStatusLabel(m, now) : '', m.description, m.speeds?.some(isFastSpeed) ? t('pickers.canAccelerate') : ''].filter(Boolean).join(' · ') || undefined }));
   const target = defaultTarget(models);
+  const defaultModel = resolveModel(models, null);
+  const status = hasModelQueue(defaultModel) ? modelStatusLabel(defaultModel, now) : '';
   const first = target
-    ? { value: null, label: t('pickers.default'), hint: t('pickers.currently', target) }
+    ? { value: null, label: status ? `${t('pickers.default')} · ${target}` : t('pickers.default'), hint: status || t('pickers.currently', target) }
     : { value: null, label: t('pickers.defaultModel'), hint: t('pickers.agentModel') };
   return [first, ...rest];
 }
@@ -244,7 +273,19 @@ export function ModelPicker(props: ModelProps) {
 
 function ModelControl({ models, model, efforts, effort, onModel, onEffort, speed, onSpeed }: ModelProps) {
   const levels = effortsForModel(models, model, efforts);
-  const loadPercent = modelLoadPercent(models, model);
+  const selectedModel = resolveModel(models, model);
+  const loadPercent = selectedModel?.loadPercent;
+  const queueStatus = hasModelQueue(selectedModel);
+  const [clock, setClock] = useState(Date.now);
+  const hasObservations = models.some(m => m.queueObservedAt !== undefined);
+  useEffect(() => {
+    if (!hasObservations) return;
+    // Only advance observation age while this card is open; no provider polling or inference.
+    const timer = setInterval(() => setClock(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, [hasObservations]);
+  const now = Math.max(clock, Date.now());
+  const queueLabel = modelQueueLabel(selectedModel, now);
   const speeds = onSpeed ? speedsForModel(models, model) : [];
   const fastSpeed = speeds.find(isFastSpeed);
   const standardSpeed = speeds.find(s => s.id === 'default');
@@ -261,7 +302,7 @@ function ModelControl({ models, model, efforts, effort, onModel, onEffort, speed
         <span>{t('pickers.chooseModel')}</span>
       </div>
       <div className="pop-scroll">
-        {modelRows(models).map((row) => (
+        {modelRows(models, now).map((row) => (
           <button key={row.value ?? 'default'} type="button" role="menuitemradio" aria-checked={row.value === (model === AGENT_DEFAULT ? null : model)} className="pop-item compact"
             onClick={() => { onModel(row.value); setPreview(undefined); setShowModels(false); }}>
             <span className="pop-item-text"><span className="pop-item-label">{row.label}</span><span className="pop-item-hint">{row.hint}</span></span>
@@ -283,9 +324,16 @@ function ModelControl({ models, model, efforts, effort, onModel, onEffort, speed
         ><IconBolt size={19} /></button> : <span aria-hidden="true" />}
         <div className="effort-card-heading">
           <div className="effort-value" aria-live="polite">{levels.length ? (shown ? (EFFORT_LABELS[shown] ?? shown) : t('pickers.default')) : t('pickers.noEffort')}</div>
-          <button type="button" className="effort-model" disabled={models.length === 0} onClick={() => setShowModels(true)} aria-label={t('pickers.switchModel', [modelName(models, model), loadPercent === undefined ? '' : modelLoadLabel(loadPercent)].filter(Boolean).join(' · '))}>
-            <span className="effort-model-name">{modelName(models, model)}</span>{loadPercent !== undefined && <ModelLoad percent={loadPercent} />}<IconChevron size={13} />
+          <button type="button" className="effort-model" disabled={models.length === 0} onClick={() => setShowModels(true)} aria-label={t('pickers.switchModel', [modelName(models, model), modelStatusLabel(selectedModel, now)].filter(Boolean).join(' · '))}>
+            <span className="effort-model-name">{modelName(models, model)}</span>
+            {!queueStatus && loadPercent !== undefined && <ModelLoad percent={loadPercent} />}
+            <IconChevron size={13} />
           </button>
+          {/* Keep the model's identity readable; queue metadata lives in one short secondary row. */}
+          {queueStatus && <div className="model-status-line" aria-hidden="true">
+            {loadPercent !== undefined ? <ModelLoad percent={loadPercent} /> : <span className="model-inline-load">{selectedModel?.loadError ? t('pickers.modelLoadFailed') : t('pickers.modelLoadUnknown')}</span>}
+            <span className="model-inline-load model-inline-queue" title={queueLabel}>{queueLabel}</span>
+          </div>}
         </div>
         <button type="button" className="icon-btn effort-reset" aria-label={t('pickers.resetEffort')} title={t('pickers.resetEffort')} disabled={selected === null} onClick={() => onEffort(null)}><IconRefresh size={18} /></button>
       </div>

@@ -1,11 +1,13 @@
 import { execFile } from 'node:child_process';
 import { copyClaudeAccount, startClaudeLogin } from './claude-account.js';
 import { claudeLiveUsage } from './session-usage.js';
+import { readTraexModelStatus } from './traex.js';
+import { ferryModelKey, readFerryQueueObservations } from './ferry.js';
 import type { UsageSample } from '../telemetry.js';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { AcpAdapter, AcpSession, airForkPoint } from './acp.js';
 import { CLAUDE_ICON } from './icons.js';
@@ -14,7 +16,7 @@ import type { JsonRpcPeer } from './jsonrpc.js';
 import { installJsonMcpServer, jsonMcpServers, removeJsonMcpServer } from '../mcp-format.js';
 import { configDirectory, findSessionFile, quoteArg } from './session-location.js';
 import { claudeSystemPromptLine, scanJsonl } from './system-prompt.js';
-import type { DiscoveredAccount, McpServerInfo, PermissionMode, PlanQuota, QuotaWindow, SkillDir, SlashCommand, SystemPrompt } from './types.js';
+import type { DiscoveredAccount, McpServerInfo, ModelOption, PermissionMode, PlanQuota, QuotaWindow, SkillDir, SlashCommand, SystemPrompt } from './types.js';
 
 /**
  * Claude Code, through the ACP bridge this repo ships with (`@agentclientprotocol/claude-agent-acp`).
@@ -23,7 +25,8 @@ import type { DiscoveredAccount, McpServerInfo, PermissionMode, PlanQuota, Quota
  *   auto_edit, acceptEdits is the fallback when the account or adapter version does not offer it;
  * - it answers /cost and /stats in a session without announcing them;
  * - model catalogs are read without selecting each model; access and effort settings are checked
- *   when a session applies its settings.
+ *   when a session applies its settings;
+ * - opt-in gateway discovery reads the gateway's own catalog and capabilities without inference.
  */
 
 /**
@@ -42,6 +45,95 @@ const CLAUDE_INTERRUPT_NOTE = /^\[Request interrupted by user( for tool use)?\]$
 
 /** Effort levels Claude accepts through the `effort` config option. */
 const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+
+interface GatewayCatalogModel {
+  id: string;
+  display_name?: string;
+  capabilities?: {
+    effort?: Record<string, boolean | { supported?: boolean }>;
+    image_input?: { supported?: boolean };
+  };
+}
+
+const CLAUDE_GATEWAY_OPENROUTER_4O = /(?:^|[-_\s])(?:openrouter|openroute)-4o(?:$|[-_[\]\s])/i;
+
+function isOpenrouter4O(text: string): boolean {
+  return CLAUDE_GATEWAY_OPENROUTER_4O.test(text);
+}
+
+function isGpt55OrNewer(text: string): boolean {
+  const match = /\bgpt[-\s]?(\d+)(?:[.-](\d+))?/i.exec(text);
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = match[2] === undefined ? 0 : Number(match[2]);
+  return major > 5 || major === 5 && minor >= 5;
+}
+
+function showClaudeGatewayModel(model: GatewayCatalogModel): boolean {
+  const searchable = `${model.id} ${model.display_name ?? ''}`;
+  // Ferry exposes a broad shared catalog; Calli's Claude picker stays on the curated models we want users to choose.
+  return isGpt55OrNewer(searchable) || isOpenrouter4O(searchable);
+}
+
+function orderClaudeGatewayModels(models: ModelOption[]): ModelOption[] {
+  // Keep Opus 5.5 easy to reach while preserving Ferry's order within each bucket.
+  return [
+    ...models.filter(model => isOpenrouter4O(`${model.id} ${model.label}`)),
+    ...models.filter(model => !isOpenrouter4O(`${model.id} ${model.label}`)),
+  ];
+}
+
+/** The same opt-in discovery endpoint Claude Code uses for a configured gateway. */
+async function gatewayModels(url: string, headers: Record<string, string>, env: NodeJS.ProcessEnv, defaultModel?: string): Promise<ModelOption[]> {
+  const endpoint = new URL(url.replace(/\/$/, '') + (/\/v1\/?$/.test(url) ? '/models' : '/v1/models'));
+  const signal = AbortSignal.timeout(10000);
+  const models: ModelOption[] = [];
+  const cursors = new Set<string>();
+  for (;;) {
+    const response = await fetch(endpoint, { headers, signal });
+    if (!response.ok) throw new Error(`Gateway model discovery failed (HTTP ${response.status})`);
+    const page = await response.json() as { data?: GatewayCatalogModel[]; has_more?: boolean; last_id?: string };
+    if (!Array.isArray(page.data)) throw new Error('Gateway model discovery returned an invalid catalog');
+    for (const model of page.data) {
+      if (typeof model.id !== 'string' || !model.id) throw new Error('Gateway model discovery returned an invalid model ID');
+      if (!showClaudeGatewayModel(model)) continue;
+      const effort = model.capabilities?.effort;
+      const image = model.capabilities?.image_input?.supported;
+      models.push({
+        id: model.id, label: model.display_name || model.id,
+        ...(model.id === defaultModel ? { isDefault: true } : {}),
+        ...(effort ? { efforts: CLAUDE_EFFORTS.filter(level => typeof effort[level] === 'object' && effort[level].supported === true) } : {}),
+        ...(typeof image === 'boolean' ? { images: image } : {}),
+      });
+    }
+    if (!page.has_more) break;
+    if (!page.last_id || cursors.has(page.last_id)) throw new Error('Gateway model discovery returned an invalid pagination cursor');
+    cursors.add(page.last_id);
+    endpoint.searchParams.set('after_id', page.last_id);
+  }
+  // Local TRAE metadata must never be applied to a remote or unrelated gateway's models.
+  if (['localhost', '127.0.0.1', '[::1]'].includes(endpoint.hostname) && models.some(model => model.label.startsWith('Ferry '))) {
+    // Optional reads are independent: a missing CLI must not hide a valid queue observation.
+    const [status, queues] = await Promise.all([
+      readTraexModelStatus([env.CALLI_TRAEX_BIN || 'traex'], env).catch(() => null),
+      readFerryQueueObservations(env),
+    ]);
+    for (const model of models) {
+      if (!model.label.startsWith('Ferry ')) continue;
+      // Standard and Max share the upstream config; punctuation differs between their public IDs.
+      const key = ferryModelKey(model.id);
+      const live = status?.find(row => ferryModelKey(row.configName ?? row.name) === key);
+      if (live?.loadPercent !== undefined) model.loadPercent = live.loadPercent;
+      if (status === null) model.loadError = true;
+      // Ferry reports request positions, not total queue size. Never substitute one for the other.
+      model.queueSize = null;
+      const queue = queues.get(key);
+      model.queuePosition = queue?.position ?? null;
+      if (queue) model.queueObservedAt = queue.at;
+    }
+  }
+  return orderClaudeGatewayModels(models);
+}
 
 /**
  * Commands Claude answers in an ACP session without announcing them (checked by sending each one).
@@ -109,6 +201,9 @@ export const CLAUDE_METADATA = {
 };
 
 export class ClaudeAcpAdapter extends AcpAdapter {
+  private gatewayProbe: Promise<ModelOption[]> | null = null;
+  private gatewayKey = '';
+  private gatewayCommandProbe: Promise<void> | null = null;
   protected override liveUsage(id: string, cwd: string, emit: (sample: UsageSample) => void) {
     return claudeLiveUsage(id, cwd, this.env, emit);
   }
@@ -155,6 +250,42 @@ export class ClaudeAcpAdapter extends AcpAdapter {
 
   protected readonly modeIds = CLAUDE_MODE_IDS;
 
+  override models(refresh = false): Promise<ModelOption[]> {
+    const configDir = configDirectory(this.env, 'CLAUDE_CONFIG_DIR', ['.claude'], process.cwd());
+    let settings: { env?: Record<string, string>; model?: string } = {};
+    try {
+      settings = JSON.parse(readFileSync(join(configDir, 'settings.json'), 'utf8'));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return Promise.reject(error);
+    }
+    // Claude applies settings.env after the process environment. Respect account isolation too.
+    const env = { ...process.env, ...this.env, ...settings.env };
+    const url = env.ANTHROPIC_BASE_URL;
+    if (env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY !== '1' || !url) {
+      const changed = !!this.gatewayKey;
+      this.gatewayKey = '';
+      this.gatewayProbe = null;
+      return super.models(refresh || changed);
+    }
+    const headers: Record<string, string> = { 'anthropic-version': '2023-06-01' };
+    if (env.ANTHROPIC_AUTH_TOKEN) headers.Authorization = `Bearer ${env.ANTHROPIC_AUTH_TOKEN}`;
+    else if (env.ANTHROPIC_API_KEY) headers['x-api-key'] = env.ANTHROPIC_API_KEY;
+    const defaultModel = env.ANTHROPIC_MODEL || settings.model;
+    const key = JSON.stringify([url, headers, defaultModel]);
+    if (refresh || key !== this.gatewayKey) this.gatewayProbe = null;
+    this.gatewayKey = key;
+    if (!this.gatewayProbe) {
+      // The gateway's catalog is authoritative: no model switch, inference or quota checks.
+      // A failed discovery remains an error, and the next request retries instead of caching it.
+      const probe = gatewayModels(url, headers, env, defaultModel).catch(error => {
+        if (this.gatewayProbe === probe) this.gatewayProbe = null;
+        throw error;
+      });
+      this.gatewayProbe = probe;
+    }
+    return this.gatewayProbe;
+  }
+
   protected configureSession(session: AcpSession, peer: JsonRpcPeer): void {
     const prompt = session.prompt.bind(session);
     session.prompt = async (input, hooks) => {
@@ -174,6 +305,17 @@ export class ClaudeAcpAdapter extends AcpAdapter {
 
   protected extraCommands(listed: SlashCommand[]): SlashCommand[] {
     return withUnlistedCommands(listed);
+  }
+
+  override async commands(cwd?: string): Promise<SlashCommand[]> {
+    const listed = await super.commands(cwd);
+    if (!this.gatewayKey || listed.length) return listed;
+    // Gateway discovery skips ACP startup; still discover the CLI's own slash commands on demand.
+    this.gatewayCommandProbe ??= this.open({ cwd: tmpdir() }, true)
+      .then(async ({ session }) => { await session.close(); })
+      .finally(() => { this.gatewayCommandProbe = null; });
+    await this.gatewayCommandProbe;
+    return super.commands(cwd);
   }
 
   resumeCommand(agentSessionId: string): string {

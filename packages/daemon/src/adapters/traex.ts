@@ -70,6 +70,14 @@ export function parseTraexModelStatus(stdout: string): TraexModelStatus[] {
   });
 }
 
+/** Shared read-only metadata query for TRAE and its local Ferry gateway. */
+export async function readTraexModelStatus(cli: string[], env: NodeJS.ProcessEnv): Promise<TraexModelStatus[]> {
+  const { stdout } = await execFileAsync(cli[0], [...cli.slice(1), 'models', '--json'], {
+    env: { ...process.env, ...env }, timeout: 15_000, maxBuffer: 2 * 1024 * 1024,
+  });
+  return parseTraexModelStatus(stdout);
+}
+
 export const TRAEX_METADATA = {
   adapter: 'traex' as const,
   label: 'TRAE CLI',
@@ -158,9 +166,7 @@ export class TraexAcpAdapter extends AcpAdapter {
   /** Coalesce concurrent requests only; quota caching belongs to ThreadManager. */
   private readModelStatus(): Promise<TraexModelStatus[]> {
     if (this.statusRead) return this.statusRead;
-    const read = execFileAsync(this.cli[0], [...this.cli.slice(1), 'models', '--json'], {
-      env: { ...process.env, ...this.env }, timeout: 15_000, maxBuffer: 2 * 1024 * 1024,
-    }).then(({ stdout }) => parseTraexModelStatus(stdout));
+    const read = readTraexModelStatus(this.cli, this.env);
     this.statusRead = read;
     void read.finally(() => { if (this.statusRead === read) this.statusRead = null; }).catch(() => undefined);
     return read;

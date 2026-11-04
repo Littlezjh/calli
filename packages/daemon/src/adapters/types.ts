@@ -190,6 +190,14 @@ export interface ModelOption {
   description?: string;
   /** How busy this model is right now; above 100 means overloaded. */
   loadPercent?: number;
+  /** Total queued requests when reported. Null means unavailable, not zero; absent means no queue metadata. */
+  queueSize?: number | null;
+  /** Observed request position, not total queue size. Zero means observed nonqueued; null means unknown/stale. */
+  queuePosition?: number | null;
+  /** Queue observation time in epoch milliseconds; absent when no valid observation exists. */
+  queueObservedAt?: number;
+  /** The upstream load query failed; distinguish a failed read from unreported metadata. */
+  loadError?: boolean;
   /**
    * Thinking effort levels this model accepts. An empty list means the model has no effort setting.
    * Left out when the agent does not say, in which case the agent-wide list applies.
