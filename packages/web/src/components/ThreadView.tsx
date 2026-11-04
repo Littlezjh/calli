@@ -5,6 +5,7 @@ import { Children, createContext, Fragment, isValidElement, memo, useCallback, u
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { placeImages, stripPaths } from '../image-places';
+import { highlightLanguage, languageName } from '../code-language';
 import { enlargeMermaidDiagram, renderMermaidDiagram } from '../mermaid';
 import { copyText } from '../clipboard';
 import { diffLines, numberLines } from '../diff';
@@ -678,7 +679,7 @@ function editRequestId(): string {
 }
 
 /** The history the page last read; an edit sent against a stale one is refused by the daemon. */
-function CopyButton({ text, label }: { text: string; label: string }) {  const [state, setState] = useState<'idle' | 'done' | 'failed'>('idle');
+function CopyButton({ text, label, size = 15 }: { text: string; label: string; size?: number }) {  const [state, setState] = useState<'idle' | 'done' | 'failed'>('idle');
   useEffect(() => {
     if (state === 'idle') return;
     const timer = setTimeout(() => setState('idle'), 1600);
@@ -692,7 +693,7 @@ function CopyButton({ text, label }: { text: string; label: string }) {  const [
       title={state === 'failed' ? t('view.copyFailed') : state === 'done' ? t('common.copied') : label}
       onClick={async () => setState((await copyText(text)) ? 'done' : 'failed')}
     >
-      {state === 'done' ? <IconCheck size={15} /> : <IconCopy size={15} />}
+      {state === 'done' ? <IconCheck size={size} /> : <IconCopy size={size} />}
     </button>
   );
 }
@@ -714,6 +715,19 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   const className = isValidElement<{ className?: string }>(code) ? (code.props.className ?? '') : '';
   const language = /language-([\w+#.-]+)/.exec(className)?.[1] ?? '';
   const text = plainText(children).replace(/\n$/, '');
+  const label = languageName(language);
+  // Colour comes in once the highlighter has loaded; until then, and for a language it does not
+  // know or a block too long to colour quickly, the code stays plain.
+  const [colored, setColored] = useState<string | null>(null);
+  useEffect(() => {
+    setColored(null);
+    if (!label || text.length > MAX_HIGHLIGHTED_BLOCK) return;
+    let alive = true;
+    void loadHighlighter().then((m) => alive && setColored(m.highlight(text, highlightLanguage(language)))).catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [text, language, label]);
   const picture = useMemo(() => svgPicture(text), [text]);
   // A source the browser cannot draw (not well formed) stays code.
   const [failed, setFailed] = useState<string | null>(null);
@@ -750,9 +764,9 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   const pictures = useContext(Pictures);
   const drawn = (picture !== null && picture !== failed) || diagram !== null;
   return (
-    <div className="code-block">
+    <div className={`code-block${label || drawn ? '' : ' bare'}`}>
       <div className="code-head">
-        <span>{language}</span>
+        {label && <span className="code-lang">{label}</span>}
         <span className="code-actions">
           {drawn && (
             <span className="code-views" role="group" aria-label={t('view.display')}>
@@ -764,7 +778,7 @@ function CodeBlock({ children }: { children?: ReactNode }) {
               </button>
             </span>
           )}
-          <CopyButton text={text} label={t('view.copyCode')} />
+          <CopyButton text={text} label={t('view.copyCode')} size={16} />
         </span>
       </div>
       {drawn && !showCode ? (
@@ -790,12 +804,20 @@ function CodeBlock({ children }: { children?: ReactNode }) {
             <img src={picture ?? undefined} alt={t('view.svg')} onError={() => picture && setFailed(picture)} />
           </button>
         )
+      ) : colored !== null ? (
+        <pre><code className={className} dangerouslySetInnerHTML={{ __html: colored }} /></pre>
       ) : (
         <pre>{children}</pre>
       )}
     </div>
   );
 }
+
+// The highlighter is shared with the file viewer, and fetched the first time either needs it.
+let highlighter: Promise<typeof import('../highlight')> | null = null;
+const loadHighlighter = () => (highlighter ??= import('../highlight'));
+/** Past this, a block in an answer is left plain, so a long paste never holds the thread up. */
+const MAX_HIGHLIGHTED_BLOCK = 20_000;
 
 /**
  * An image in Markdown. One from the web is shown as it is. A local path cannot be loaded by the

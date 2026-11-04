@@ -54,9 +54,10 @@
   /* What a drawing with no background of its own is shown on. White in every theme: that is what it was drawn for. */
   --picture-bg: #ffffff;
   --code-bg: #efede7;
-  /* Syntax colours for the file viewer. Mixed with the text colour, so every palette keeps its own tone. */
+  /* Syntax colours for the file viewer and code in answers. Mixed with the text colour, so every palette keeps its own tone. */
   --syn-keyword: color-mix(in srgb, #a4387a 82%, var(--text));
-  --syn-string: color-mix(in srgb, #2f7a3d 85%, var(--text));
+  --syn-string: color-mix(in srgb, #a3342b 85%, var(--text));
+  --syn-comment: color-mix(in srgb, #3d8a4a 70%, var(--muted));
   --syn-number: color-mix(in srgb, #b25a12 85%, var(--text));
   --syn-title: color-mix(in srgb, #3557b5 85%, var(--text));
   --syn-type: color-mix(in srgb, #8a5a00 85%, var(--text));
@@ -141,7 +142,8 @@
   --lightbox: rgba(0, 0, 0, 0.92);
     --code-bg: #201f1d;
     --syn-keyword: color-mix(in srgb, #e58ac0 85%, var(--text));
-    --syn-string: color-mix(in srgb, #8fcf8a 85%, var(--text));
+    --syn-string: color-mix(in srgb, #e48b84 85%, var(--text));
+    --syn-comment: color-mix(in srgb, #7fbf7a 70%, var(--muted));
     --syn-number: color-mix(in srgb, #f0a46a 85%, var(--text));
     --syn-title: color-mix(in srgb, #86aaf5 85%, var(--text));
     --syn-type: color-mix(in srgb, #e3c178 85%, var(--text));
@@ -197,7 +199,8 @@
   --lightbox: rgba(0, 0, 0, 0.92);
   --code-bg: #201f1d;
   --syn-keyword: color-mix(in srgb, #e58ac0 85%, var(--text));
-  --syn-string: color-mix(in srgb, #8fcf8a 85%, var(--text));
+  --syn-string: color-mix(in srgb, #e48b84 85%, var(--text));
+  --syn-comment: color-mix(in srgb, #7fbf7a 70%, var(--muted));
   --syn-number: color-mix(in srgb, #f0a46a 85%, var(--text));
   --syn-title: color-mix(in srgb, #86aaf5 85%, var(--text));
   --syn-type: color-mix(in srgb, #e3c178 85%, var(--text));
@@ -6211,28 +6214,57 @@ div.file-card:hover { background: var(--surface); }
 }
 
 .code-block {
+  position: relative;
   margin: 0 0 0.9em;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
+  background: var(--surface-2);
   overflow: hidden;
 }
 
+/* One card, as Codex draws it: the language named in plain type over the code, copy at its right. */
 .code-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 32px;
-  padding: 0 4px 0 13px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-2);
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 12px;
+  gap: 8px;
+  min-height: 40px;
+  padding: 6px 8px 0 18px;
+  color: var(--text);
+  font-size: 13.5px;
+}
+
+.code-lang {
+  font-weight: 500;
+}
+
+.code-head .code-actions {
+  margin-left: auto;
 }
 
 .markdown .code-block pre {
   margin: 0;
+  padding: 6px 18px 16px;
   border-radius: 0;
+  background: transparent;
+}
+
+/* Plain text has no name: copy floats in the corner instead of taking a line of its own. */
+.code-block.bare .code-head {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  bottom: 1px;
+  align-items: flex-start;
+  min-height: 0;
+  padding: 5px 5px 0 16px;
+  /* A long line scrolls away under it, fading out instead of running into the button. */
+  background: linear-gradient(to right, transparent, var(--surface-2) 14px);
+  border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+}
+
+.markdown .code-block.bare pre {
+  padding: 14px 48px 14px 18px;
 }
 
 .code-actions {
@@ -8462,66 +8494,96 @@ div.file-card:hover { background: var(--surface); }
   gap: 6px;
 }
 
-/* Highlighting, from the classes highlight.js gives. */
+/* Highlighting, from the classes highlight.js gives: the file viewer and code in answers alike. */
 .files-code .hljs-comment,
-.files-code .hljs-quote {
-  color: var(--faint);
-  font-style: italic;
+.code-block .hljs-comment,
+.files-code .hljs-quote,
+.code-block .hljs-quote {
+  color: var(--syn-comment);
 }
 
 .files-code .hljs-keyword,
+.code-block .hljs-keyword,
 .files-code .hljs-selector-tag,
+.code-block .hljs-selector-tag,
 .files-code .hljs-literal,
+.code-block .hljs-literal,
 .files-code .hljs-doctag,
-.files-code .hljs-section {
+.code-block .hljs-doctag,
+.files-code .hljs-section,
+.code-block .hljs-section {
   color: var(--syn-keyword);
 }
 
 .files-code .hljs-string,
+.code-block .hljs-string,
 .files-code .hljs-regexp,
+.code-block .hljs-regexp,
 .files-code .hljs-addition,
-.files-code .hljs-template-tag {
+.code-block .hljs-addition,
+.files-code .hljs-template-tag,
+.code-block .hljs-template-tag {
   color: var(--syn-string);
 }
 
 .files-code .hljs-number,
+.code-block .hljs-number,
 .files-code .hljs-symbol,
-.files-code .hljs-bullet {
+.code-block .hljs-symbol,
+.files-code .hljs-bullet,
+.code-block .hljs-bullet {
   color: var(--syn-number);
 }
 
 .files-code .hljs-title,
+.code-block .hljs-title,
 .files-code .hljs-title.function_,
-.files-code .hljs-name {
+.code-block .hljs-title.function_,
+.files-code .hljs-name,
+.code-block .hljs-name {
   color: var(--syn-title);
 }
 
 .files-code .hljs-type,
+.code-block .hljs-type,
 .files-code .hljs-built_in,
-.files-code .hljs-title.class_ {
+.code-block .hljs-built_in,
+.files-code .hljs-title.class_,
+.code-block .hljs-title.class_ {
   color: var(--syn-type);
 }
 
 .files-code .hljs-attr,
+.code-block .hljs-attr,
 .files-code .hljs-attribute,
+.code-block .hljs-attribute,
 .files-code .hljs-property,
+.code-block .hljs-property,
 .files-code .hljs-variable,
+.code-block .hljs-variable,
 .files-code .hljs-template-variable,
+.code-block .hljs-template-variable,
 .files-code .hljs-selector-class,
-.files-code .hljs-selector-id {
+.code-block .hljs-selector-class,
+.files-code .hljs-selector-id,
+.code-block .hljs-selector-id {
   color: var(--syn-attr);
 }
 
 .files-code .hljs-meta,
-.files-code .hljs-deletion {
+.code-block .hljs-meta,
+.files-code .hljs-deletion,
+.code-block .hljs-deletion {
   color: var(--danger);
 }
 
-.files-code .hljs-emphasis {
+.files-code .hljs-emphasis,
+.code-block .hljs-emphasis {
   font-style: italic;
 }
 
-.files-code .hljs-strong {
+.files-code .hljs-strong,
+.code-block .hljs-strong {
   font-weight: 600;
 }
 
