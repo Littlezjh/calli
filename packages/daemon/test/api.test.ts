@@ -441,12 +441,14 @@ test('new threads default to auto_edit; settings are validated and stored', asyn
   assert.equal(thread.effort, null);
 
   const patch = (body: unknown) => api(`/api/threads/${thread.id}`, { method: 'PATCH', body: JSON.stringify(body) });
+  store.saveHubSetting('permission.default', 'ask');
   const ok = await patch({ permissionMode: 'full_access', model: 'big', effort: 'high' });
   assert.equal(ok.status, 200);
   assert.deepEqual(
     (({ permissionMode, model, effort }) => ({ permissionMode, model, effort }))((await ok.json()) as any),
     { permissionMode: 'full_access', model: 'big', effort: 'high' },
   );
+  assert.equal(store.hubSetting('permission.default', null), 'ask');
 
   assert.equal((await patch({ permissionMode: 'root' })).status, 400);
   assert.equal((await patch({ model: 'does-not-exist' })).status, 400);
@@ -480,11 +482,12 @@ test('one global permission choice is shared by compatible agents and future thr
     assert.equal(thread.permissionMode, 'full_access');
     assert.equal(((await (await api(`/api/threads/${existingThread.id}`)).json()) as { permissionMode: string }).permissionMode, 'auto_edit');
 
-    // Changing one agent's existing thread becomes another compatible agent's next default.
+    // Existing-thread patches are also used by collaboration sync; they must not rewrite the future default.
     const changed = await api(`/api/threads/${thread.id}`, { method: 'PATCH', body: JSON.stringify({ permissionMode: 'auto_edit' }) });
     assert.equal(changed.status, 200);
+    assert.equal(store.hubSetting('permission.default', null), 'full_access');
     const next = await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'claude', cwd: workdir }) });
-    assert.equal(((await next.json()) as { permissionMode: string }).permissionMode, 'auto_edit');
+    assert.equal(((await next.json()) as { permissionMode: string }).permissionMode, 'full_access');
 
     // An agent that cannot represent the global value keeps its own safe adapter default.
     assert.equal((await saveDefault('claude', 'ask')).status, 200);

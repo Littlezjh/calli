@@ -1928,10 +1928,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     setThreads((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
     api
       .updateThread(id, patch)
-      .then((updated) => {
-        setThreads((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
-        if (patch.permissionMode) acceptPermissionDefault(updated.permissionMode);
-      })
+      .then((updated) => setThreads((prev) => prev.map((t) => (t.id === updated.id ? updated : t))))
       .catch((e) => {
         setThreads((prev) => prev.map((t) => (t.id === id ? { ...t, ...before } : t)));
         handleError(e);
@@ -2736,7 +2733,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       {agentsOpen && coordination && <AgentPanel key={`${coordination.rootId}:${agentsStart ?? ''}`} start={agentsStart} api={api} memberApi={(id) => new Api(token ?? '', '', id)} team={coordination} agents={agents} memberModel={(thread) => {
         const a = agents.find((v) => v.id === thread.agent);
         return a ? <MemberModel agent={a} models={modelsByAgent[a.id] ?? []} value={{ model: thread.model ?? null, effort: thread.effort ?? null }} onNeed={needModels} onChange={({ model, effort }) => { void api.updateThread(thread.id, { model, effort }).then(() => refreshThreads()).catch(handleError); }}
-          permission={a.capabilities.permissionModes.length ? thread.permissionMode : undefined} onPermission={(permissionMode) => { void api.updateThread(thread.id, { permissionMode }).then((updated) => { acceptPermissionDefault(updated.permissionMode); return refreshThreads(); }).catch(handleError); }} /> : null;
+          permission={a.capabilities.permissionModes.length ? thread.permissionMode : undefined} onPermission={(permissionMode) => { void api.updateThread(thread.id, { permissionMode }).then(() => refreshThreads()).catch(handleError); }} /> : null;
       }} leadAgent={threads.find((t) => t.id === coordination.rootId)?.agent} phone={compact} onClose={() => setAgentsOpen(false)} onOpen={thread => { openThread(thread); setAgentsOpen(false); }} onAdjust={name => { setAgentsOpen(false); setSelectedId(coordination.rootId); setRestore({ text: t('app.adjustTask', name), nonce: Date.now() }); }} onRefresh={() => { void refreshThreads(); }} onError={handleError} />}
       {files && selected && api && <FilesPanel api={api} threadId={filesThreadId ?? selected.id} target={files} phone={compact} revision={threads.find(t => t.id === (filesThreadId ?? selected.id))?.updatedAt} writingStage={selected.writing?.stage ?? null} writingHabits={selected.writing?.habits ?? null} noted={{ count: noteCount, nonce: filesNotePulse }} onClose={() => setFiles(null)} />}
       {preview && api && (

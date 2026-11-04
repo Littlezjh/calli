@@ -948,7 +948,7 @@ export function createHttpServer(deps: HttpDeps): Server {
 
       if (method === 'PATCH' && !sub) {
         const body = await readJson(req);
-        const updated = await manager.updateThread(threadId, {
+        return sendJson(res, 200, await manager.updateThread(threadId, {
           title: body.title,
           pinned: body.pinned,
           workMode: body.workMode,
@@ -960,10 +960,7 @@ export function createHttpServer(deps: HttpDeps): Server {
           sectionId: body.sectionId,
           unread: body.unread,
           done: body.done,
-        });
-        // Only this existing thread changes; the stored value is a default for future threads.
-        if (body.permissionMode !== undefined) manager.rememberPermissionDefault(updated.agent, updated.permissionMode);
-        return sendJson(res, 200, updated);
+        }));
       }
 
       if (method === 'GET' && sub === 'history') {
