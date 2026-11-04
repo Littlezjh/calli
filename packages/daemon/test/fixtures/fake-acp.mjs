@@ -176,6 +176,18 @@ rl.on('line', (line) => {
       return out({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1, agentCapabilities: {} } });
     case 'session/new':
       if (process.env.FAKE_ACP_START_ERROR) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: process.env.FAKE_ACP_START_ERROR } });
+      if (!dsh) {
+        const initial = msg.params?._meta?.claudeCode?.options;
+        if (typeof initial?.model === 'string' && process.env.FAKE_ACP_MODEL_SELECTION_LOG) appendFileSync(process.env.FAKE_ACP_MODEL_SELECTION_LOG, initial.model + '\n');
+        if (initial?.model === 'broken') return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: 'Internal error' } });
+        if (typeof initial?.model === 'string') currentModel = initial.model;
+        if (typeof initial?.effort === 'string') {
+          const efforts = sessionInfo().configOptions.find(option => option.id === 'effort')?.options;
+          if (!efforts?.some(value => value.value === initial.effort)) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: 'unsupported effort' } });
+          currentEffort = initial.effort;
+        }
+        if (process.env.FAKE_ACP_NEW_LOG) appendFileSync(process.env.FAKE_ACP_NEW_LOG, JSON.stringify(msg.params) + '\n');
+      }
       if (!dsh) out({
         jsonrpc: '2.0',
         method: 'session/update',

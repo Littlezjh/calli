@@ -254,6 +254,8 @@ export interface DiscoveredAccount {
 }
 
 export interface StartOptions {
+  /** Internal metadata probes must not take the shortcuts used to create a real conversation. */
+  probe?: boolean;
   /** Native capability requested for an isolated Calli tool job, absent on ordinary threads. */
   borrowedTool?: string;
   workMode?: WorkMode;

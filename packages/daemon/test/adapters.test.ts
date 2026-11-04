@@ -321,13 +321,19 @@ test('ClaudeAcpAdapter: model list and slash commands come from the agent', asyn
   assert.deepEqual((await adapter.commands()).map((c) => c.name), ['compact', 'review', 'goal', 'cost', 'stats']);
 });
 
-test('ClaudeAcpAdapter: permission mode, model and effort are applied at start', async () => {
-  const adapter = new ClaudeAcpAdapter([process.execPath, fakeAcp]);
+test('ClaudeAcpAdapter: permission mode, model and effort are applied when the native session starts', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'calli-claude-start-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const started = join(dir, 'new.jsonl');
+  const selected = join(dir, 'selected.log');
+  const adapter = new ClaudeAcpAdapter([process.execPath, fakeAcp], { FAKE_ACP_NEW_LOG: started, FAKE_ACP_MODEL_SELECTION_LOG: selected });
   const session = await adapter.start({ cwd: here, permissionMode: 'auto_edit', model: 'big', effort: 'high' });
   const { hooks, events } = collectingHooks();
   await session.prompt(turn('model?'), hooks);
   // The fake has no "auto" mode, so auto_edit falls back to acceptEdits.
   assert.equal(events.at(-1)?.data.text, 'model:big;mode:acceptEdits;effort:high');
+  assert.deepEqual(JSON.parse(readFileSync(started, 'utf8'))._meta.claudeCode.options, { model: 'big', effort: 'high' });
+  assert.equal(readFileSync(selected, 'utf8'), 'big\n', 'a fresh Claude session must select the model only at native startup');
   await session.close();
 });
 

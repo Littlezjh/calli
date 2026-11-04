@@ -14,7 +14,7 @@ import type { JsonRpcPeer } from './jsonrpc.js';
 import { installJsonMcpServer, jsonMcpServers, removeJsonMcpServer } from '../mcp-format.js';
 import { configDirectory, findSessionFile, quoteArg } from './session-location.js';
 import { claudeSystemPromptLine, scanJsonl } from './system-prompt.js';
-import type { DiscoveredAccount, McpServerInfo, PermissionMode, PlanQuota, QuotaWindow, SkillDir, SlashCommand, SystemPrompt } from './types.js';
+import type { DiscoveredAccount, McpServerInfo, PermissionMode, PlanQuota, QuotaWindow, SkillDir, SlashCommand, StartOptions, SystemPrompt } from './types.js';
 
 /**
  * Claude Code, through the ACP bridge this repo ships with (`@agentclientprotocol/claude-agent-acp`).
@@ -154,6 +154,14 @@ export class ClaudeAcpAdapter extends AcpAdapter {
   }
 
   protected readonly modeIds = CLAUDE_MODE_IDS;
+
+  protected initialSessionOptions(opts: StartOptions) {
+    if (opts.probe) return {};
+    const options = { ...(opts.model ? { model: opts.model } : {}), ...(opts.effort ? { effort: opts.effort } : {}) };
+    return Object.keys(options).length
+      ? { meta: { claudeCode: { options } }, model: !!opts.model, effort: !!opts.effort }
+      : {};
+  }
 
   protected configureSession(session: AcpSession, peer: JsonRpcPeer): void {
     const prompt = session.prompt.bind(session);
