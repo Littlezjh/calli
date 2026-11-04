@@ -1184,6 +1184,28 @@ html.list-open body {
   font-weight: 400;
 }
 
+/* A thread of another machine names it, beside the folder. The name keeps its room (the folder
+   gives way first); only a very long one is cut. The hub's own machine carries no mark. */
+.thread-host {
+  flex: none;
+  max-width: 7em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 5px;
+  border-radius: var(--radius-xs);
+  background: var(--hover);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 16px;
+}
+
+.compact .thread-host {
+  font-size: 12px;
+  line-height: 18px;
+}
+
 .thread-preview {
   overflow: hidden;
   text-overflow: ellipsis;

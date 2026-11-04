@@ -124,6 +124,25 @@ test('a title the person set is never renamed, and the second pass only revises 
   } finally { await h.close(); }
 });
 
+test('a first turn that was stopped leaves the default title, and the next turn that ends well names the thread', async () => {
+  const h = await setup();
+  try {
+    await h.api('/api/extensions/autotitle/settings', 'PUT', { agent: 'claude' });
+    const thread = await h.manager.createThread({ agent: 'claude', cwd: h.cwd });
+    await h.manager.startTurn(thread.id, { text: 'slow 登录接口总是超时' });
+    await h.manager.cancelTurn(thread.id); await h.idle(thread.id);
+    await new Promise(r => setTimeout(r, 200));
+    assert.equal(h.manager.titleBy(thread.id), 'default', 'a stopped turn is not named');
+    await h.send(thread.id, '继续');
+    await wait(() => h.manager.titleBy(thread.id) === 'auto');
+    const question = String(h.store.listEventsOfType(h.manager.listThreads({ archived: true })[0].id, 'turn.started')[0].data.text);
+    assert.match(question, /登录接口总是超时/, 'named from the first message, not the one that ended well');
+    await h.send(thread.id, '再看看');
+    await new Promise(r => setTimeout(r, 200));
+    assert.equal(h.manager.listThreads({ archived: true }).length, 1, 'once named, later turns ask nothing');
+  } finally { await h.close(); }
+});
+
 test('naming on send uses only the message; nothing happens without a chosen agent or the extension', async () => {
   const off = await setup({ install: false });
   try {

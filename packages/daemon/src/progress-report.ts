@@ -5,6 +5,8 @@
  * or is ready to check — never that it is done: the person marks that.
  */
 
+import type { InjectionGate } from './injections.js';
+
 export type ProgressStage = 'doing' | 'review' | 'blocked';
 
 export interface ProgressReport {
@@ -32,7 +34,10 @@ export function parseProgress(answer: string): { stage: ProgressStage; note: str
 }
 
 /** Appended to what the person sent, the way collaboration appends its own; never shown to them. */
-export function progressInstructions(text: string): string {
-  if (text.includes(MARK) || text.includes(LEGACY_MARK)) return text;
-  return `${text}\n\n${MARK}\n本轮结束时，在回复最后单独写一行进度：\n[进度] 进行中|待验收|需要你：一句话说明\n进行中：还有工作要做；待验收：你认为已经做完，请用户检查；需要你：没有用户就无法继续。是否完成由用户确认，不要说已完成。\n</calli-progress>`;
+const BLOCK = `${MARK}\n本轮结束时，在回复最后单独写一行进度：\n[进度] 进行中|待验收|需要你：一句话说明\n进行中：还有工作要做；待验收：你认为已经做完，请用户检查；需要你：没有用户就无法继续。是否完成由用户确认，不要说已完成。\n</calli-progress>`;
+
+/** `gate` leaves the block out when the agent has it in view already. */
+export function progressInstructions(text: string, gate?: InjectionGate): string {
+  if (text.includes(MARK) || text.includes(LEGACY_MARK) || gate?.('progress', BLOCK) === false) return text;
+  return `${text}\n\n${BLOCK}`;
 }

@@ -10,6 +10,7 @@ import { UserInputs } from './user-input.js';
 import type { SystemPrompt, WorkMode } from './adapters/types.js';
 import { diagnosticFailure } from './adapters/diagnostics.js';
 import { turnAnswer, type CoordinationManager, type CoordinationSetup } from './coordination.js';
+import { Injections, type InjectionGate } from './injections.js';
 import { parseProgress, progressInstructions } from './progress-report.js';
 import { habitsPath, isEditableArticle, isWritingStage, newestArticle, noteFile, saveArticle, writingInstructions, type WritingState } from './writing.js';
 import { randomUUID } from 'node:crypto';
@@ -303,6 +304,8 @@ export class ThreadManager {
   private readonly reportTurns = new Set<string>();
   /** Archived threads asking an agent one question (askOnce): they may run, and get nothing added. */
   private readonly backgroundThreads = new Set<string>();
+  /** Which protocol blocks each thread's agent has read, so a block is not attached to every message. */
+  private readonly injections: Injections;
   /** Whether an enabled extension holds `progress.report`. Wired by the daemon's entry point. */
   progressWanted: () => boolean = () => false;
   private readonly approvals = new Map<string, PendingApproval>();
@@ -338,6 +341,7 @@ export class ThreadManager {
     private readonly agentMeta: () => Array<{ id: string; adapter?: string; account?: string | null; hidden?: boolean }> = () => [],
   ) {
     this.dirs = Array.isArray(workdirs) ? new Workdirs(workdirs) : workdirs;
+    this.injections = new Injections(store);
     this.autoHandover = new AutoHandover(store, this);
     this.quotaResume = new QuotaResume(store, this, this.autoHandover);
     this.autoHandover.onSaved = settings => this.quotaResume.onSettings(settings.resume);
@@ -2150,16 +2154,18 @@ export class ThreadManager {
     const slashCommand = /^\/\S+/.test(rawText);
     // A collaboration member spoken to by the person directly answers the person, not the lead.
     const fromUser = Boolean(input.fromUser && !delivery && this.coordination?.isMember(threadId));
-    const coordinated = slashCommand ? rawText : rawText ? (this.coordination?.instructions(input.handoverFrom ?? threadId, rawText, fromUser) ?? rawText) : '';
+    // A resent prompt (a retry, a handover) carries its blocks already: they are not attached twice.
+    const gate: InjectionGate = (kind, block) => !rawText.includes(`<calli-${kind}>`) && this.injections.needed(threadId, kind, block);
+    const coordinated = slashCommand ? rawText : rawText ? (this.coordination?.instructions(input.handoverFrom ?? threadId, rawText, fromUser, gate) ?? rawText) : '';
     // A background question goes as asked: no hints, tools or progress request around it.
     const bare = this.backgroundThreads.has(threadId);
-    const discoverable = slashCommand || !rawText || bare ? coordinated : this.personal.instructions(threadId, this.borrowing?.instructions(threadId, coordinated) ?? coordinated);
+    const discoverable = slashCommand || !rawText || bare ? coordinated : this.personal.instructions(threadId, this.borrowing?.instructions(threadId, coordinated, gate) ?? coordinated, gate);
     // With the board's consent, the agent is asked to say where the work stands; read back at the end.
     // Writing mode's way of working for its stage; an edit the person made is mentioned once.
     const writing = !slashCommand && rawText ? thread.writing : null;
     const written = writing ? writingInstructions(discoverable, writing) : discoverable;
     const askProgress = !bare && !slashCommand && Boolean(rawText) && this.progressWanted();
-    const text = askProgress ? progressInstructions(written) : written;
+    const text = askProgress ? progressInstructions(written, gate) : written;
 
     if (rawImages.length > 0) {
       const adapter = this.adapters.get(thread.agent);
@@ -3081,11 +3087,13 @@ export class ThreadManager {
   private emitThreadEvent(threadId: string, turnId: string | null, type: EventType, data: Record<string, unknown>): void {
     if (type === 'turn.done' && turnId && this.quietTurns.has(turnId) && data.stopReason !== 'cancelled') data = { ...data, quiet: true };
     if (type === 'turn.started') {
-      if (!data.control && /<(?:calli|limi)-todo>/.test(String(data.text ?? ''))) this.personal.started(threadId);
+      if (!data.control) this.injections.started(threadId, String(data.text ?? ''));
       const agent = this.store.getThread(threadId)?.agent;
       const account = this.agentMeta().find(m => m.id === agent)?.account;
       if (account) data = { ...data, linkedAccount: account };
     }
+    // What the agent was told may have left its context, or never reached it: attach it again next time.
+    if (type === 'context.compaction' || type === 'turn.error') this.injections.forget(threadId);
     const stored = this.store.appendEvent(threadId, turnId, type, data);
     // Turn timing is computed once, when the turn ends; a deferred task keeps it off the turn's tail.
     if (turnId && (type === 'turn.done' || type === 'turn.error') && !data.imported && !data.fromTerminal) this.recordTurnStats(threadId, turnId);

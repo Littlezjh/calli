@@ -812,6 +812,30 @@ export class Store {
     this.db.prepare('INSERT INTO coordination (id, data) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data').run(id, data);
   }
 
+  private injectionsReady = false;
+  /** What was last attached to this thread's messages, per kind of protocol block; see injections.ts. */
+  injection(threadId: string, kind: string): { digest: string; session: string | null; turns: number } | null {
+    if (!this.injectionsReady) {
+      this.db.exec('CREATE TABLE IF NOT EXISTS injections (thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE, kind TEXT NOT NULL, digest TEXT NOT NULL, session TEXT, turns INTEGER NOT NULL, PRIMARY KEY (thread_id, kind))');
+      this.injectionsReady = true;
+    }
+    return (this.db.prepare('SELECT digest, session, turns FROM injections WHERE thread_id = ? AND kind = ?').get(threadId, kind) as { digest: string; session: string | null; turns: number } | undefined) ?? null;
+  }
+  saveInjection(threadId: string, kind: string, value: { digest: string; session: string | null; turns: number }): void {
+    this.injection(threadId, kind);
+    if (!this.getThread(threadId)) return;
+    this.db.prepare('INSERT INTO injections (thread_id, kind, digest, session, turns) VALUES (?, ?, ?, ?, ?) ON CONFLICT(thread_id, kind) DO UPDATE SET digest = excluded.digest, session = excluded.session, turns = excluded.turns')
+      .run(threadId, kind, value.digest, value.session, value.turns);
+  }
+  ageInjection(threadId: string, kind: string): void {
+    this.injection(threadId, kind);
+    this.db.prepare('UPDATE injections SET turns = turns + 1 WHERE thread_id = ? AND kind = ?').run(threadId, kind);
+  }
+  clearInjections(threadId: string): void {
+    this.injection(threadId, '');
+    this.db.prepare('DELETE FROM injections WHERE thread_id = ?').run(threadId);
+  }
+
   close(): void {
     this.history.close();
     this.db.close();

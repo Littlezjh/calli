@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -579,6 +580,33 @@ test('a member on another machine runs there and its answer comes back to the le
     await h.team.command(h.root.id, { op: 'send', target: 'far', text: 'SECOND_TASK', requestId: 'far-2' });
     await wait(() => h.team.view(h.root.id)!.messages.some(d => d.text === 'SECOND_TASK' && d.state === 'returned'));
     assert.equal(far.manager.listThreads().length, 1);
+  } finally { await h.close(); await far.close(); }
+});
+
+test('a member on another machine works in a temporary worktree of a git repository there, and the branch it was on stays', async () => {
+  const h = await setup();
+  const far = await otherMachine();
+  try {
+    h.team.hosts = far.hosts;
+    await h.team.enable(h.root.id);
+    const repo = join(far.cwd, 'repo'); mkdirSync(repo);
+    const git = (...args: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { cwd: repo, encoding: 'utf8' }).trim();
+    git('init', '-q', '-b', 'main'); writeFileSync(join(repo, 'a.txt'), 'one\n'); git('add', '.'); git('commit', '-q', '-m', 'one');
+    await h.team.command(h.root.id, spawn('far', 'pi@devbox', 'REMOTE_TASK', { cwd: repo }));
+    const member = h.team.view(h.root.id)!.members[0] as { id: string; worktree?: string };
+    const there = far.manager.threadView(member.id);
+    assert.ok(there.worktree, 'a worktree was made over there');
+    assert.ok(there.cwd.startsWith(join(repo, '.worktrees')), 'the member stands in it, not in the folder it was given');
+    assert.equal(member.worktree, there.worktree!.branch, 'the lead can see which branch it is');
+    assert.equal(git('rev-parse', '--abbrev-ref', 'HEAD'), 'main', 'the branch checked out there is untouched');
+    await wait(() => h.team.view(h.root.id)!.members[0].latest?.state === 'returned');
+    assert.match(h.team.view(h.root.id)!.members[0].latest!.result, /临时 git worktree/, 'and the member is told');
+    // A folder that is no repository there is used as it is.
+    mkdirSync(join(far.cwd, 'plain'));
+    await h.team.command(h.root.id, spawn('plain', 'pi@devbox', 'PLAIN_TASK', { cwd: join(far.cwd, 'plain') }));
+    const plain = h.team.view(h.root.id)!.members.find(m => m.name === 'plain') as { id: string; worktree?: string };
+    assert.equal(plain.worktree, undefined);
+    assert.equal(far.manager.threadView(plain.id).worktree, null);
   } finally { await h.close(); await far.close(); }
 });
 

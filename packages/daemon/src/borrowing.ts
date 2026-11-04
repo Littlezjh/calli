@@ -8,6 +8,7 @@ import { sniffImageType } from './attachments.js';
 import { turnAnswer } from './coordination.js';
 import { HttpError } from './errors.js';
 import type { StoredEvent } from './events.js';
+import type { InjectionGate } from './injections.js';
 import { turnOutcome } from './lifecycle.js';
 import type { PersonalBrowser } from './personal-browser.js';
 import { signalArchiveKey } from './personal.js';
@@ -40,7 +41,6 @@ export class BorrowingService {
   private readonly credentials = new Map<string, string>();
   private readonly byThread = new Map<string, string>();
   private readonly launches = new Set<Promise<void>>();
-  private readonly introduced = new Set<string>();
   private readonly unsubscribe: () => void;
   private stopped = false;
   /** The person's own browser, which agents drive directly with agent-browser. */
@@ -83,11 +83,11 @@ export class BorrowingService {
     return job ? this.tool(job.tool).spec.name : undefined;
   }
 
-  /** A single discovery hint per caller after startup; schemas and the Skill stay out of context. */
-  instructions(threadId: string, text: string): string {
-    if (this.byThread.has(threadId) || this.introduced.has(threadId)
-      || (!this.browser && ![...this.adapters.values()].some(a => a.borrowedTools?.length))) return text;
-    return `${text}\n\n<calli-tools>可按需借用其他 Agent 的能力：calli tools search 关键词。用 calli tools skill 读取使用说明。</calli-tools>`;
+  /** A discovery hint the agent reads once (see injections.ts); schemas and the Skill stay out of context. */
+  instructions(threadId: string, text: string, gate?: InjectionGate): string {
+    if (this.byThread.has(threadId) || (!this.browser && ![...this.adapters.values()].some(a => a.borrowedTools?.length))) return text;
+    const block = '<calli-tools>可按需借用其他 Agent 的能力：calli tools search 关键词。用 calli tools skill 读取使用说明。</calli-tools>';
+    return gate?.('tools', block) === false ? text : `${text}\n\n${block}`;
   }
 
   caller(key: string): string {
@@ -264,7 +264,6 @@ export class BorrowingService {
   }
 
   private onEvent(event: StoredEvent): void {
-    if (event.type === 'turn.started' && typeof event.data.text === 'string' && /<(?:calli|limi)-tools>/.test(event.data.text)) this.introduced.add(event.threadId);
     const id = this.byThread.get(event.threadId);
     const job = id ? this.store.toolJobs.get(id) : undefined;
     if (!job || !active(job) || event.data.imported || event.data.fromTerminal) return;

@@ -2,6 +2,7 @@
 import type { Attention } from '@calli/extension-api';
 import type { AgentInfo, Section, Thread } from './api';
 import { folderName } from './paths';
+import type { AgentMarkInfo } from './thread-cache';
 import { t } from './i18n';
 
 /** Desktop sidebar bounds keep the thread list useful without squeezing the conversation away. */
@@ -272,6 +273,8 @@ export interface HostSource {
   /** When `threads` was read; null when nothing was. */
   at: string | null;
   threads: Thread[];
+  /** That machine's agents, for the rows' marks; null while not known on this device. */
+  agents?: AgentMarkInfo[] | null;
 }
 
 export interface MergedModel {

@@ -1,7 +1,7 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { saveToken, type Thread } from '../src/api.js';
-import { cachedThreads, clearThreadCache, rememberThreads } from '../src/thread-cache.js';
+import { cachedAgentMarks, cachedThreads, clearThreadCache, rememberAgentMarks, rememberThreads } from '../src/thread-cache.js';
 
 function storage(t: TestContext) {
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
@@ -46,4 +46,18 @@ test('a list survives a reload, and another hub or signing out clears it', t => 
   assert.equal(cachedThreads(null), null);
   localStorage.setItem('calli.threads.v1', 'not json');
   assert.equal(cachedThreads(null), null, 'a broken store reads as nothing');
+});
+
+test('each machine keeps the marks of its agents, so its rows show icons before the live list arrives', t => {
+  const data = storage(t);
+  assert.equal(cachedAgentMarks('devbox'), null, 'never read is not known, not empty');
+  rememberAgentMarks(null, [{ id: 'claude-3', label: 'Claude 3', icon: 'M0 0h1' }]);
+  rememberAgentMarks('devbox', [{ id: 'codex', label: 'Codex', icon: 'M1 1h1', available: true } as never, { id: 'pi', label: 'Pi' }]);
+  assert.deepEqual(cachedAgentMarks('devbox'), [{ id: 'codex', label: 'Codex', icon: 'M1 1h1' }, { id: 'pi', label: 'Pi' }], 'only what a row needs is kept');
+  assert.deepEqual(cachedAgentMarks(null)?.map(a => a.id), ['claude-3'], 'machines do not share marks');
+  const saved = JSON.parse(data.get('calli.agentMarks.v1')!);
+  assert.deepEqual(Object.keys(saved).sort(), ['', 'devbox']);
+  clearThreadCache();
+  assert.equal(cachedAgentMarks('devbox'), null, 'another hub or signing out clears them');
+  assert.equal(data.get('calli.agentMarks.v1'), undefined);
 });

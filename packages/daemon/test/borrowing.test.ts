@@ -81,7 +81,11 @@ test('Claude ACP process borrows native image generation through the scoped CLI,
     const entry = events.find(e => e.type === 'turn.started')!;
     assert.equal(entry.data.displayText, 'borrow-image');
     assert.ok(String(entry.data.text).length < 180, 'only the short discovery hint is introduced');
-    assert.equal(h.service.instructions(h.root.id, 'next request'), 'next request', 'do not repeat the hint');
+    const again = await h.manager.startTurn(h.root.id, { text: 'next request' });
+    assert.ok('turnId' in again);
+    await wait(() => h.manager.threadView(h.root.id).status !== 'running');
+    const second = h.store.listEventsOfType(h.root.id, 'turn.started').at(-1)!;
+    assert.equal(second.data.text, 'next request', 'do not repeat the hint');
     assert.equal((await h.runCli(['tools', 'skill'])).name, 'calli-tools');
     const job = JSON.parse(turnAnswer(events, started.turnId));
     assert.equal(job.state, 'succeeded');

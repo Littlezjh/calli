@@ -48,6 +48,7 @@ const DEFAULTS: AutoTitleSettings = { agent: null, model: null, rules: DEFAULT_R
 const EXCERPT = 1500;
 const MAX_TITLE = 40;
 const MAX_RULES = 2000;
+const MAX_TRIES = 3;
 
 /** The first line of what the agent said, without labels, quotes and marks, at most MAX_TITLE characters. */
 export function cleanTitle(answer: string): string {
@@ -90,6 +91,8 @@ export class AutoTitle implements DaemonExtension {
   /** One naming at a time, in the order asked; a thread already waiting is not asked twice. */
   private chain: Promise<unknown> = Promise.resolve();
   private readonly waiting = new Set<string>();
+  /** Automatic namings tried per thread since the daemon started, so a failing naming agent is not asked every turn. */
+  private readonly tries = new Map<string, number>();
   /** A backlog pass running now; null when none is. */
   private pass: AutoTitlePass | null = null;
 
@@ -155,8 +158,11 @@ export class AutoTitle implements DaemonExtension {
     const index = this.userTurns(turn.threadId).findIndex(t => t.turnId === turn.turnId) + 1;
     let wanted = false;
     if (event.hook === 'turn.started') wanted = settings.trigger === 'sent' && index === 1;
-    else if (turn.outcome === 'ok') wanted = (settings.trigger === 'finished' && index === 1) || (settings.again && index === 3);
+    // A first turn that was stopped, failed or whose naming failed leaves the default title: the
+    // next turn that ends well names it instead, a few tries at most per thread.
+    else if (turn.outcome === 'ok') wanted = (this.manager.titleBy(turn.threadId) === 'default' && (this.tries.get(turn.threadId) ?? 0) < MAX_TRIES) || (settings.again && index === 3);
     if (!wanted || !this.renamable(turn.threadId, index === 3)) return;
+    this.tries.set(turn.threadId, (this.tries.get(turn.threadId) ?? 0) + 1);
     // On send the answer is still streaming: name from the message alone, as that setting says.
     void this.queue(turn.threadId, true, true, null, event.hook === 'turn.finished').catch(() => undefined);
   }

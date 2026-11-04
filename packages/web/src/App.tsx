@@ -82,7 +82,7 @@ import type { ConnectionState } from '@calli/extension-api/web';
 import { ExtensionView } from './extensions/ExtensionView';
 import { threadSummaries } from './extensions/project';
 import { createThreadFeed } from './extensions/thread-feed';
-import { cachedThreads, rememberThreads } from './thread-cache';
+import { cachedAgentMarks, cachedThreads, rememberAgentMarks, rememberThreads } from './thread-cache';
 import { clampSidebarWidth, defaultSidebarWidth, projectDir, savedSidebarWidth, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, type HostSource } from './sidebar';
 import { enabledViews, extensionHash, looksLikeExtensionRoute, resolveExtensionRoute } from './extensions/routes';
 import { AgentPicker, type DiscoveredAccount, type DiscoveredAgent, effortsForModel, imagesBlocked, imagesNote, modelName, speedsForModel, ModelPicker, PermissionPicker, UsageMeter, WorkspacePicker } from './components/Pickers';
@@ -423,6 +423,8 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const [draftTeam, setDraftTeam] = useState<string | null>(null);
   useEffect(() => setDraftTeam(null), [api]);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
+  /** Whether this machine's agents have been read: until then the sidebar marks rows from what this device last saw. */
+  const [agentsKnown, setAgentsKnown] = useState(false);
   /** CLIs on PATH that look like extra agents, offered in the picker. */
   const [discovered, setDiscovered] = useState<DiscoveredAgent[]>([]);
   /** Accounts of multi-account agents already signed in here, offered in the picker. */
@@ -479,6 +481,11 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     threadFeed.start();
     return () => threadFeed.dispose();
   }, [threadFeed]);
+  // The marks this device last saw on this machine stand in until its agents are read, so rows do
+  // not flash from text to icons on every switch.
+  const [keptMarks] = useState(() => (keepThreads ? cachedAgentMarks(hostId) : null));
+  const sidebarAgents = agentsKnown ? agents : keptMarks;
+  useEffect(() => { if (keepThreads && agentsKnown) rememberAgentMarks(hostId, agents); }, [keepThreads, agentsKnown, hostId, agents]);
   // Every machine's threads in one list. A device setting, so it stays on as the app starts over
   // on another machine; with no other machine there is nothing to merge.
   const [allHosts, setAllHosts] = useStoredFlag('calli.sidebar.allHosts');
@@ -496,9 +503,17 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     // What this device last read stands in at once; the machines are asked again behind it.
     setElsewhere(targets.map((x): HostSource => {
       const kept = cachedThreads(x.id);
-      return { hostId: x.id, label: x.label, state: !x.online ? 'offline' : kept ? 'cached' : 'loading', at: kept?.at ?? null, threads: kept?.threads ?? [] };
+      return { hostId: x.id, label: x.label, state: !x.online ? 'offline' : kept ? 'cached' : 'loading', at: kept?.at ?? null, threads: kept?.threads ?? [], agents: cachedAgentMarks(x.id) };
     }));
     const update = (id: string | null, change: (s: HostSource) => HostSource) => setElsewhere((prev) => prev.map((s) => (s.hostId === id ? change(s) : s)));
+    // Agents change rarely: read once per machine, not every round.
+    for (const x of targets.filter((x) => x.online)) {
+      new Api(token, '', x.id).agents().then((list) => {
+        if (!alive) return;
+        rememberAgentMarks(x.id, list);
+        update(x.id, (s) => ({ ...s, agents: list }));
+      }, () => undefined);
+    }
     const read = () => {
       for (const x of targets.filter((x) => x.online)) {
         new Api(token, '', x.id).threads().then(
@@ -1119,6 +1134,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         ]);
         if (cancelled) return;
         setAgents(a);
+        setAgentsKnown(true);
         applyWorkdirs(c);
         setSections(s);
         setSchedules(sc);
@@ -2360,7 +2376,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           threads={listedThreads}
           members={teamMembers}
           sections={sections}
-          agents={agents}
+          agents={sidebarAgents}
           selectedId={selectedId}
           onSelect={pick}
           onNew={() => newThread()}
@@ -2378,7 +2394,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           hostDown={Boolean(host) && !hostUp}
           loading={!threadsKnown}
           merged={merging ? [
-            { hostId, label: host?.label ?? t('hosts.local'), state: (Boolean(host) && !hostUp ? 'offline' : threadsKnown ? 'live' : 'loading') as HostSource['state'], at: observedAt, threads: routerThreadId ? threads.filter((t) => t.id !== routerThreadId) : threads },
+            { hostId, label: host?.label ?? t('hosts.local'), state: (Boolean(host) && !hostUp ? 'offline' : threadsKnown ? 'live' : 'loading') as HostSource['state'], at: observedAt, threads: routerThreadId ? threads.filter((t) => t.id !== routerThreadId) : threads, agents: sidebarAgents },
             ...elsewhere,
           ].sort((a, b) => (a.hostId === null ? -1 : b.hostId === null ? 1 : hosts.findIndex((h) => h.id === a.hostId) - hosts.findIndex((h) => h.id === b.hostId))) : null}
           onAll={keepThreads && hosts.length > 0 ? () => setAllHosts(true) : undefined}

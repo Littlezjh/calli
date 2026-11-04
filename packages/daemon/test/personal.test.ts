@@ -553,7 +553,9 @@ test('shell-only fake agent creates, writes, follows up in a fresh thread, propo
     await wait(() => h.manager.threadView(h.thread.id).status !== 'running');
     const todo = h.store.listTodos()[0]; assert.ok(todo.proposed); assert.ok(todo.followUpAt);
     const events = h.store.listEventsOfType(h.thread.id, 'turn.started'); assert.match(String(events[0].data.text), /由 Calli 附加/);
-    assert.equal(h.service.instructions(h.thread.id, 'next'), 'next');
+    await h.manager.startTurn(h.thread.id, { text: 'next' });
+    await wait(() => h.manager.threadView(h.thread.id).status !== 'running');
+    assert.equal(h.store.listEventsOfType(h.thread.id, 'turn.started').at(-1)!.data.text, 'next', 'the hint is not repeated');
     assert.match(h.service.context(h.thread.id), /Draft ready/);
     const suggestion = h.store.todoProposals(todo.id)[0];
     const accepted = await (await h.api(`/api/todos/${todo.id}/proposals/${suggestion.id}/accept`, 'POST', { rev: todo.rev })).json();

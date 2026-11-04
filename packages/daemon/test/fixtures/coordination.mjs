@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 
 // Deliberately use the same CLI a real agent would execute, with its injected environment.
 export function coordinationFixture(text) {
-  const body = text.split(/<calli-(?:coordination|team)>/)[0].trim();
+  const body = text.split(/<calli-(?:coordination(?:-note)?|team)>/)[0].trim();
   if (text.includes('<calli-team>')) {
     if (body.endsWith('TEAM_ENV')) return `calli-ready:${Boolean(process.env.CALLI_TEAM_SOCKET && process.env.CALLI_TEAM_KEY)}`;
     if (body.endsWith('TEAM_FINISH')) return 'Task finished after continuation.';

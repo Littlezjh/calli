@@ -1,6 +1,7 @@
 import brandIcon from '../assets/calli.svg';
 import { Fragment, useEffect, useState, type MouseEvent, type ReactNode } from 'react';
-import type { AgentInfo, HostInfo, SearchHit, Section, Thread } from '../api';
+import type { HostInfo, SearchHit, Section, Thread } from '../api';
+import type { AgentMarkInfo } from '../thread-cache';
 import { clockLabel } from '../timeline';
 import { useInTitlebar, useLongPress, useStoredFlag, useStoredSet } from '../hooks';
 import { attentionCount, threadMark, waitingLabel, type ThreadMark } from '../notices';
@@ -51,8 +52,8 @@ interface Props {
   /** Each lead thread's team members, by the lead's id: rows under the lead instead of threads of their own. */
   members?: Map<string, Thread[]>;
   sections: Section[];
-  /** For the mark each row shows in place of its agent's name. */
-  agents: AgentInfo[];
+  /** For the mark each row shows in place of its agent's name; null while not known, so no name stands in. */
+  agents: AgentMarkInfo[] | null;
   selectedId: string | null;
   onSelect: (id: string) => void;
   onNew: () => void;
@@ -103,7 +104,8 @@ interface Props {
 }
 
 /** In the merged list, the machine a row's thread is on when that is not the hub's own, and how to open it if it is not the one on screen. */
-interface Elsewhere { label?: string; open?: () => void }
+/** `agents`: that machine's, by id, when the row is another machine's; null while not known. */
+interface Elsewhere { label?: string; open?: () => void; agents?: Map<string, AgentMarkInfo> | null }
 
 /** Where a menu opened from a "more" button should appear: just under the button. */
 function below(e: MouseEvent<HTMLElement>): [number, number] {
@@ -208,8 +210,8 @@ export function Sidebar({
   const isOpen = (key: string) => Boolean(search.trim()) || !collapsed.has(key);
 
   const MARK_LABELS = { waiting: t('notices.unknown.label'), running: t('status.running'), error: t('status.error'), unread: t('sidebar.unread') } as const;
-  const agentById = new Map(agents.map((a) => [a.id, a]));
-  const tagged = taggedAgents(agents);
+  const agentById = new Map((agents ?? []).map((a) => [a.id, a]));
+  const tagged = taggedAgents(agents ?? []);
 
   /**
    * `chain`: the handover chain this row stands for, newest first, as `handoverGroups` gives it.
@@ -219,11 +221,16 @@ export function Sidebar({
   const row = (thread: Thread, title = thread.title, preview = thread.preview, chain?: Thread[], on?: Elsewhere) => {
     const open = on?.open;
     const mark = threadMark(thread, thread.id === selectedId);
-    const agent = agentById.get(thread.agent);
+    // A row of another machine is marked by that machine's agents, not by the ones on screen.
+    const theirs = on && on.agents !== undefined;
+    const known = theirs ? on.agents !== null : agents !== null;
+    const byId = theirs ? on.agents ?? new Map<string, AgentMarkInfo>() : agentById;
+    const tags = theirs ? taggedAgents([...byId.values()]) : tagged;
+    const agent = byId.get(thread.agent);
     // The agents the task passed through, first to last, and the one it came from.
-    const passed = chain ? [...chain].reverse().map((m) => agentById.get(m.agent)?.label ?? m.agent).join(' → ') : thread.handover ? `${agentById.get(thread.handover.agent)?.label ?? thread.handover.agent} → ${agent?.label ?? thread.agent}` : null;
-    const hint = [agent && tagged.has(agent.id) ? agent.label : null, thread.worktree ? t('sidebar.inWorktree', thread.worktree.branch) : null, thread.forkedFrom ? t('sidebar.fork') : null, passed ? t('sidebar.handover', passed) : null, thread.schedule ? t('sidebar.scheduleRun', thread.schedule.name) : null].filter(Boolean).join(' · ');
-    const from = chain ? agentById.get(chain.find((m) => m.id === thread.handover?.sourceId)?.agent ?? thread.handover?.agent ?? '') : undefined;
+    const passed = chain ? [...chain].reverse().map((m) => byId.get(m.agent)?.label ?? m.agent).join(' → ') : thread.handover ? `${byId.get(thread.handover.agent)?.label ?? thread.handover.agent} → ${agent?.label ?? thread.agent}` : null;
+    const hint = [agent && tags.has(agent.id) ? agent.label : null, thread.worktree ? t('sidebar.inWorktree', thread.worktree.branch) : null, thread.forkedFrom ? t('sidebar.fork') : null, passed ? t('sidebar.handover', passed) : null, thread.schedule ? t('sidebar.scheduleRun', thread.schedule.name) : null].filter(Boolean).join(' · ');
+    const from = chain ? byId.get(chain.find((m) => m.id === thread.handover?.sourceId)?.agent ?? thread.handover?.agent ?? '') : undefined;
     // Filed by project, the list is for scanning: a title per row, as in Codex. The latest ask
     // shows where it helps finding something, by activity and in a search. A thread that needs a
     // hand says so in every view.
@@ -248,7 +255,8 @@ export function Sidebar({
             {/* Beside the title, so the row stays one line like the rest. */}
             {note && <span className={`thread-note ${mark}`}>{note}</span>}
             {/* Out of its project group, a thread says where it is. */}
-            {flat && <span className="thread-dir">{on?.label ? `${on.label} · ` : ''}{folderName(projectDir(thread).cwd)}</span>}
+            {flat && on?.label && <span className="thread-host" title={on.label}>{on.label}</span>}
+            {flat && <span className="thread-dir">{folderName(projectDir(thread).cwd)}</span>}
           </span>
           {detail && <span className="thread-preview">{detail}</span>}
         </span>
@@ -263,10 +271,10 @@ export function Sidebar({
             <span className="agent-mark" role="img" aria-label={agent.label} title={agent.label}>
               <AgentMark path={agent.icon} size={compact ? 13 : 12} />
             </span>
-          ) : (
-            // An agent without a mark, or one this hub no longer has: its name, as before.
+          ) : known ? (
+            // An agent without a mark, or one this machine no longer has: its name, as before.
             <span className="agent-tag">{thread.agent}</span>
-          )}
+          ) : null}
           {mark && <span className={`dot ${mark}`} role="img" aria-label={mark === 'waiting' ? waitingLabel(thread) : MARK_LABELS[mark]} title={mark === 'waiting' ? waitingLabel(thread) : MARK_LABELS[mark]} />}
         </span>
       </button>
@@ -420,6 +428,7 @@ export function Sidebar({
     return sameDay ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
   };
   const labelOf = new Map((merged ?? []).map((s) => [s.hostId, s.label]));
+  const agentsOf = new Map((merged ?? []).map((s) => [s.hostId, s.agents ? new Map(s.agents.map((a) => [a.id, a])) : null]));
   const groups = mergedModel ? (
     <nav className="thread-groups activity merged" aria-label={t('sidebar.merged.label')}>
       {mergedModel.notes.map((n) => (
@@ -437,6 +446,7 @@ export function Sidebar({
                 // The hub's own machine is the usual one; only threads elsewhere are named.
                 label: on === null ? undefined : labelOf.get(on),
                 open: on === hostId ? undefined : () => onOpenElsewhere?.(on, thread.id),
+                agents: on === hostId ? undefined : agentsOf.get(on) ?? null,
               })}
             </Fragment>
           ))}

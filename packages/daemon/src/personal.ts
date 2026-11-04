@@ -15,6 +15,7 @@ import { PersonalRouter } from './personal-router.js';
 import { ProactiveService } from './proactive.js';
 import type { SignalRecord, Store, TodoImportance, TodoLane, TodoNote, TodoPatch, TodoRecord, TodoSource, TodoSubscription, TodoThread, TodoProposal } from './store.js';
 import { TODO_IMPORTANCES, TODO_LANES, TODO_SOURCE_TYPES, todoThread, urgencyOf } from './store.js';
+import type { InjectionGate } from './injections.js';
 import type { ThreadManager } from './threads.js';
 import { SummaryService } from './summary.js';
 
@@ -75,7 +76,6 @@ ${workflow}
 
 export class PersonalService {
   private readonly credentials = new Map<string, string>();
-  private readonly introduced = new Set<string>();
   /** The plan page's file mirror under the personal directory; the database stays the source of truth. */
   private readonly files = new PersonalFiles(() => this.directory());
   socket = '';
@@ -194,11 +194,11 @@ export class PersonalService {
     for (const [id, secret] of this.credentials) if (key === secret) { this.require(id); return id; }
     throw new HttpError(401, 'invalid personal credentials');
   }
-  instructions(threadId: string, text: string): string {
-    if (!this.allowed(threadId) || this.introduced.has(threadId)) return text;
-    return `${text}\n\n<calli-todo>由 Calli 附加：事项和跟进用 calli todo，用法 calli todo --help。改了事项的这一轮结束前，请写接续说明。</calli-todo>`;
+  instructions(threadId: string, text: string, gate?: InjectionGate): string {
+    if (!this.allowed(threadId)) return text;
+    const block = '<calli-todo>由 Calli 附加：事项和跟进用 calli todo，用法 calli todo --help。改了事项的这一轮结束前，请写接续说明。</calli-todo>';
+    return gate?.('todo', block) === false ? text : `${text}\n\n${block}`;
   }
-  started(threadId: string) { if (this.allowed(threadId)) this.introduced.add(threadId); }
   note(id: string) {
     if (!this.store.getTodo(id)) throw new HttpError(404, 'todo not found');
     return { ...this.store.todoNote(id), rev: this.store.getTodo(id)!.rev };
