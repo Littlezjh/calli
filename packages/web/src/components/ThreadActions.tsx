@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { ApiError, type AgentInfo, type Api, type Section, type Thread, type Todo } from '../api';
+import { ApiError, type AgentInfo, type Api, type HandoverTarget, type Section, type Thread, type Todo } from '../api';
 import { copyText } from '../clipboard';
 import { folderName } from '../paths';
 import { ChoiceDialog, Dialog } from './Dialog';
@@ -441,14 +441,14 @@ export function useThreadActions(deps: Deps) {
     /** Opens the handover, to pick who takes over or copy what it says. */
     handover: (thread: Thread) => setDialog({ kind: 'handover', thread }),
     /**
-     * Hands the thread to `agent` at once: the hub continues it in a new conversation in the same
+     * Hands the thread to `target` at once: the hub continues it in a new conversation in the same
      * place, with its queue and collaboration lead. For when the thread's own agent cannot go on, so
      * it is not asked. `note` is what the person adds for the successor.
      */
-    takeOver: async (thread: Thread, agent: string, note?: string) => {
+    takeOver: async (thread: Thread, target: string | HandoverTarget, note?: string) => {
       if (!api) return;
       try {
-        onThreadOpen(await api.takeOver(thread.id, agent, note));
+        onThreadOpen(await api.takeOver(thread.id, target, note));
       } catch (e) {
         onError(e);
         throw e;

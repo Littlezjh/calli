@@ -84,9 +84,9 @@ interface Props {
   onFork?: (turnId: string) => void;
   /**
    * When the last turn failed because the agent's plan ran out: hand the thread to another agent.
-   * `label` names the agent one click goes to; `choose` opens the handover to pick another.
+   * `label` names the quota-aware one-click target when one is available; `choose` opens the handover to pick another.
    */
-  takeover?: { label: string; go: () => void; choose: () => void; busy?: boolean } | null;
+  takeover?: { label?: string; go?: () => void; choose: () => void; busy?: boolean } | null;
   /**
    * When the last turn failed because the agent's plan ran out: wait for the quota to reset and
    * continue with the same agent. `armed` mirrors the daemon's watch; `onArm`/`onCancel` toggle it.
@@ -380,9 +380,9 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
                 {item.message}
                 {item.planExhausted && takeover && item === items[items.length - 1] && (
                   <div className="error-actions">
-                    <button className="primary" onClick={takeover.go} disabled={takeover.busy}>
+                    {takeover.go && takeover.label && <button className="primary" onClick={takeover.go} disabled={takeover.busy}>
                       <IconHand size={15} /> {takeover.busy ? t('view.handingOver') : t('view.handTo', takeover.label)}
-                    </button>
+                    </button>}
                     <button className="ghost" onClick={takeover.choose} disabled={takeover.busy}>{t('view.chooseOther')}</button>
                   </div>
                 )}

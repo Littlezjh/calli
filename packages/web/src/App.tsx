@@ -17,6 +17,7 @@ import {
   type PersonalSettings,
   type GeneralSettings,
   type GoalView,
+  type HandoverTarget,
   type ModelOption,
   type Section,
   type SlashCommand,
@@ -1034,6 +1035,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
 
   // A takeover under way, from the button on a turn that failed because the plan ran out.
   const [takingOver, setTakingOver] = useState(false);
+  const [takeoverTarget, setTakeoverTarget] = useState<{ threadId: string; target: HandoverTarget } | null>(null);
   // Arming or cancelling a "wait for the quota and continue" watch on that same turn.
   const [resumeBusy, setResumeBusy] = useState(false);
   const scrollerRef = useRef<HTMLDivElement>(null);
@@ -2263,15 +2265,22 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     />
   </>);
 
-  // Who takes over when the thread's agent has run out of plan: another instance of the same agent
-  // first (its own account, the same tools), otherwise any other agent that is up.
-  const current = agents.find((a) => a.id === selected?.agent);
-  const others = agents.filter((a) => a.available && !a.hidden && a.id !== selected?.agent);
-  const successor = others.find((a) => current?.adapter && a.adapter === current.adapter) ?? others[0] ?? null;
-  // The same moment, from the box: with the thread's agent out of plan, an @ hands it over.
+  // When the thread's agent has run out of plan, the one-click takeover must use the
+  // daemon's quota-aware order, not just the next visible instance in the list.
   const lastItem = timeline.items[timeline.items.length - 1];
   const outOfPlan = Boolean(selected && !running && lastItem?.kind === 'error' && lastItem.planExhausted
     && (!selected.coordination || selected.coordination.rootId === selected.id));
+  useEffect(() => {
+    if (!selected || !outOfPlan || api.demo) { setTakeoverTarget(null); return; }
+    let alive = true;
+    setTakeoverTarget(null);
+    void api.autoHandover(selected.id).then(value => {
+      if (alive) setTakeoverTarget(value.targets[0] ? { threadId: selected.id, target: value.targets[0] } : null);
+    }).catch(() => { if (alive) setTakeoverTarget(null); });
+    return () => { alive = false; };
+  }, [api, api.demo, outOfPlan, selected?.id]);
+  const takeoverChoice = selected && takeoverTarget?.threadId === selected.id ? takeoverTarget.target : null;
+  const takeoverLabel = takeoverChoice ? [agents.find(a => a.id === takeoverChoice.agent)?.label ?? takeoverChoice.agent, takeoverChoice.model].filter(Boolean).join(' · ') : undefined;
 
   const teamWaiting = Boolean(coordination?.members.some((m) => m.thread?.waiting));
   const teamRunning = coordination?.members.filter((m) => m.thread?.status === 'running').length ?? 0;
@@ -2708,13 +2717,13 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
                     }
                   : undefined
               }
-              takeover={successor ? {
-                label: successor.label,
+              takeover={outOfPlan ? {
+                label: takeoverLabel,
                 busy: takingOver,
-                go: () => {
+                go: takeoverChoice ? () => {
                   setTakingOver(true);
-                  void threadActions.takeOver(selected, successor.id).catch(() => undefined).finally(() => setTakingOver(false));
-                },
+                  void threadActions.takeOver(selected, takeoverChoice).catch(() => undefined).finally(() => setTakingOver(false));
+                } : undefined,
                 choose: () => threadActions.handover(selected),
               } : null}
               resume={!api.demo && selected.autoHandover?.resume !== undefined ? {
