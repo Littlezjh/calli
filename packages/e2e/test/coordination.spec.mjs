@@ -170,7 +170,9 @@ for (const phone of [false, true]) for (const colorScheme of ['light', 'dark']) 
       await page.screenshot({ path: `${shots}/${phone ? 'phone' : 'desktop'}-${colorScheme}-own-model.png` });
       await page.keyboard.press('Escape');
       await ownPanel.waitFor({ state: 'detached' });
-      assert.equal(await panel.locator('textarea').count(), 0);
+      // A member has a box of its own, saying whom it writes to.
+      await panel.getByRole('textbox', { name: '消息', exact: true }).waitFor();
+      assert.equal(await panel.getByRole('textbox', { name: '消息', exact: true }).getAttribute('placeholder'), '发给 文档审查…');
       assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), colorScheme);
       if (phone) {
         const rect = await panel.boundingBox();
@@ -220,6 +222,50 @@ for (const phone of [false, true]) for (const colorScheme of ['light', 'dark']) 
         await page.keyboard.press('Escape');
         await panel.waitFor({ state: 'detached' });
       }
+
+      // Written to directly: the member answers in its own thread, and the lead is not woken.
+      const leadTurns = async () => (await (await api(daemon, `/api/threads/${root.id}/events`)).json()).filter(e => e.type === 'turn.started').length;
+      const leadBefore = await leadTurns();
+      await page.getByRole('button', { name: '查看智能体', exact: true }).click();
+      await card.click();
+      const direct = panel.getByRole('textbox', { name: '消息', exact: true });
+      await direct.fill('slow 把结论压到三条');
+      const toMember = page.waitForRequest(req => req.url().endsWith(`/threads/${child}/turns`) && req.method() === 'POST');
+      await panel.getByRole('button', { name: '发送', exact: true }).click();
+      await toMember;
+      await panel.locator('.row.user .bubble', { hasText: '把结论压到三条' }).waitFor();
+      // Running, more is queued behind the turn, with stop where the lead's box has it.
+      await page.waitForFunction(() => document.querySelector('.agent-panel textarea')?.getAttribute('placeholder')?.includes('这一轮结束后'));
+      await direct.fill('再补一条风险');
+      await panel.getByRole('button', { name: /^排队发送|^发送/ }).click();
+      await panel.locator('.queue-item', { hasText: '再补一条风险' }).waitFor();
+      await direct.fill('先写一半');
+      await page.screenshot({ path: `${shots}/${phone ? 'phone' : 'desktop'}-${colorScheme}-direct-running.png` });
+      await panel.getByRole('button', { name: '停止', exact: true }).click();
+      // The stop hands what was waiting back to the box, ahead of what was being written.
+      await page.waitForFunction(() => document.querySelector('.agent-panel textarea')?.value.includes('再补一条风险'));
+      assert.match(await direct.inputValue(), /再补一条风险[\s\S]*先写一半/);
+      await waitIdle(child);
+      assert.equal(await leadTurns(), leadBefore, 'talking to a member does not wake the lead');
+      await panel.getByRole('button', { name: '返回智能体列表' }).click();
+      await panel.getByRole('tab', { name: /^消息/ }).click();
+      assert.match(await panel.locator('.talk').last().innerText(), /你[\s\S]*发给 文档审查[\s\S]*把结论压到三条/);
+      await page.screenshot({ path: `${shots}/${phone ? 'phone' : 'desktop'}-${colorScheme}-direct-talk.png` });
+      await panel.getByRole('tab', { name: /^成员/ }).click();
+      await card.click();
+      await direct.fill('补一条测试要求');
+      await page.screenshot({ path: `${shots}/${phone ? 'phone' : 'desktop'}-${colorScheme}-direct-idle.png` });
+      // Going through the lead instead carries the words along, and leaves the member's box empty.
+      await panel.getByRole('button', { name: '让主智能体调整', exact: true }).click();
+      await panel.waitFor({ state: 'detached' });
+      // The words land in the lead's box a render after the panel goes.
+      const carried = '请调整「文档审查」的任务：补一条测试要求\n\n保留这段主线程草稿';
+      for (let n = 0; n < 50 && await box.inputValue() !== carried; n++) await page.waitForTimeout(50);
+      assert.equal(await box.inputValue(), carried);
+      await page.screenshot({ path: `${shots}/${phone ? 'phone' : 'desktop'}-${colorScheme}-via-lead.png` });
+      await page.getByRole('button', { name: '查看智能体', exact: true }).click();
+      await card.click();
+      assert.equal(await direct.inputValue(), '');
       assert.deepEqual(errors, []);
     } finally { await context.close(); }
   });
