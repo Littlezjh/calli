@@ -1,9 +1,10 @@
 import { channelRows, hydrateHistoryFiles } from '../timeline';
 import { ApiError, type Api } from '../api';
 import { hydrateWork, HistoryClient, type HistoryDetail, type HistoryWork, type ResourceKind, type WorkFiles } from '../history';
-import { Children, createContext, Fragment, isValidElement, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { Children, createContext, Fragment, isValidElement, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type KeyboardEvent, type ReactNode } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { placeImages, stripPaths } from '../image-places';
 import { enlargeMermaidDiagram, renderMermaidDiagram } from '../mermaid';
 import { copyText } from '../clipboard';
 import { diffLines, numberLines } from '../diff';
@@ -20,7 +21,7 @@ import {
   deliveredPreview,
   durationLabel,
   groupByTurn,
-  imagePathsIn,
+  imagePlaces,
   liveWorkFromEvents,
   runSummary,
   splitThinking,
@@ -798,7 +799,7 @@ function CodeBlock({ children }: { children?: ReactNode }) {
 
 /**
  * An image in Markdown. One from the web is shown as it is. A local path cannot be loaded by the
- * browser (it is a file on the agent's host), so it is left out here and shown under the message.
+ * browser (it is a file on the agent's host), so it is left out here and shown after its passage.
  */
 function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
   if (!src || !/^(https?:|data:image\/)/i.test(src)) return null;
@@ -881,7 +882,23 @@ function MarkdownLink({ href, title, children }: { href?: string; title?: string
   );
 }
 
-const MARKDOWN_COMPONENTS = { pre: CodeBlock, img: MarkdownImage, a: MarkdownLink };
+/** How a finished answer's own pictures are fetched and opened, for the strips placed in its text. */
+const FileImages = createContext<{ roots: string[]; load: (path: string) => Promise<Blob>; onOpen: (url: string, name?: string) => void } | null>(null);
+
+/** A `div` in an answer is a strip of its pictures, put after the passage that names them. */
+function MarkdownDiv({ node: _node, ...props }: ComponentProps<'div'> & { node?: unknown }) {
+  const images = useContext(FileImages);
+  const paths = stripPaths(props as { className?: string; 'data-paths'?: unknown });
+  if (!paths) return <div {...props} />;
+  if (!images) return null;
+  return (
+    <div className="file-images">
+      {paths.map((path) => <FileImage key={path} path={path} roots={images.roots} load={images.load} onOpen={images.onOpen} />)}
+    </div>
+  );
+}
+
+const MARKDOWN_COMPONENTS = { pre: CodeBlock, img: MarkdownImage, a: MarkdownLink, div: MarkdownDiv };
 const MARKDOWN_PLUGINS = [remarkGfm];
 /**
  * Markdown drops addresses it does not know, `file://` among them, leaving a link that reloads
@@ -904,21 +921,20 @@ interface AssistantProps {
  */
 const AssistantMessage = memo(function AssistantMessage({ text, done, roots, loadFile, onOpen }: AssistantProps) {
   // Looked for once the message is complete: a path that is still being typed would not be found.
-  const images = useMemo(() => (done ? imagePathsIn(text, roots) : []), [done, text, roots]);
+  const plugins = useMemo(() => {
+    const places = done ? imagePlaces(text, roots) : [];
+    return places.length ? [...MARKDOWN_PLUGINS, placeImages(places)] : MARKDOWN_PLUGINS;
+  }, [done, text, roots]);
+  const images = useMemo(() => ({ roots, load: loadFile, onOpen }), [roots, loadFile, onOpen]);
   return (
     <div className="row assistant">
       <div className="markdown">
-        <Markdown remarkPlugins={MARKDOWN_PLUGINS} components={MARKDOWN_COMPONENTS} urlTransform={keepUrl}>
-          {text}
-        </Markdown>
+        <FileImages.Provider value={images}>
+          <Markdown remarkPlugins={plugins} components={MARKDOWN_COMPONENTS} urlTransform={keepUrl}>
+            {text}
+          </Markdown>
+        </FileImages.Provider>
       </div>
-      {images.length > 0 && (
-        <div className="file-images">
-          {images.map((path) => (
-            <FileImage key={path} path={path} roots={roots} load={loadFile} onOpen={onOpen} />
-          ))}
-        </div>
-      )}
     </div>
   );
 });

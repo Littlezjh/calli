@@ -7129,6 +7129,11 @@ div.file-card:hover { background: var(--surface); }
   display: none;
 }
 
+/* Placed after the passage that names them, they keep clear of the next one too. */
+.markdown .file-images {
+  margin-bottom: 14px;
+}
+
 .file-image {
   display: flex;
   flex-direction: column;
