@@ -9668,10 +9668,12 @@ div.file-card:hover { background: var(--surface); }
 .agent-panel-footer { padding: 14px 16px; border-top: 1px solid var(--border); display: flex; gap: 8px; flex-wrap: wrap; }
 .agent-panel-footer:not(.adjust) button, .agent-panel-latest { border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 7px 14px; background: var(--surface); color: var(--text); font: inherit; font-size: 12.5px; cursor: pointer; }
 /* A member's footer: one line shaped like the composer, to have the lead change its course; stop beside it. */
-.agent-panel-footer.adjust { flex-wrap: nowrap; align-items: center; padding: 12px 16px calc(12px + var(--safe-bottom)); border-top: 0; }
-.agent-adjust { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; height: 44px; padding: 0 16px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface); box-shadow: var(--shadow-card); color: var(--faint); font: inherit; font-size: 14px; text-align: left; cursor: pointer; transition: border-color 0.15s; }
-.agent-adjust span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-@media (hover: hover) { .agent-adjust:hover { border-color: var(--border-strong); color: var(--muted); } }
+.agent-panel-composer { flex: none; padding-top: 4px; }
+.agent-panel-composer .composer { max-width: none; }
+/* Going through the lead: one quiet control over the box, out of the way of writing. */
+.agent-panel-via { display: flex; justify-content: flex-end; margin: 0 2px 6px; }
+.agent-panel-via .text-btn { display: inline-flex; align-items: center; gap: 5px; min-height: 28px; padding: 0 8px; border-radius: var(--radius-sm); color: var(--muted); font-size: 12.5px; }
+.agent-panel-via .text-btn:hover { background: var(--hover); color: var(--text); }
 .coord-back { display: flex; transform: rotate(180deg); }
 /* The team's messages, read like a chat channel: who said it, when, then the words; answers fold under. */
 .agent-tabs { display: flex; gap: 4px; margin-bottom: 14px; padding: 3px; border-radius: var(--radius-sm); background: var(--hover); }

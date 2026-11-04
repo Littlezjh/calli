@@ -145,8 +145,11 @@ interface Props {
   planMode?: { active: boolean; disabled: boolean; onChange: (active: boolean) => void };
   /** Writing mode, offered next to plan mode. */
   writingMode?: WritingMode;
-  /** A band above the input, such as writing mode's stages. */
-  banner?: ReactNode;
+  /**
+   * A band above the input, such as writing mode's stages. As a function it is handed `take`, which
+   * empties the box and returns what was written, for a control that carries the draft elsewhere.
+   */
+  banner?: ReactNode | ((take: () => string) => ReactNode);
   /**
    * The thread's agent (`current`, shown as `from`) is out of plan: one instance brought in with @
    * takes the thread over through `go`, with what was written as its note, instead of being sent work.
@@ -466,6 +469,16 @@ export function Composer({
       keepDraft(draftKey, sendingRef.current ? null : draft);
     };
   }, [draftKey]);
+
+  const takeDraft = () => {
+    const message = asMessage(text, notes);
+    setText('');
+    setNotes([]);
+    // The box may be gone before it renders again; its last word on the draft must be the empty one.
+    draftRef.current = { ...draftRef.current, text: '', notes: [] };
+    if (draftKey !== undefined) keepDraft(draftKey, draftRef.current);
+    return message;
+  };
 
   // Written down shortly after typing pauses, so a reload keeps it. The timer reads the box as it
   // is when it fires, so a switch to another thread in between saves under the right one.
@@ -944,7 +957,7 @@ export function Composer({
           </div>
         )}
 
-        {banner}
+        {typeof banner === 'function' ? banner(takeDraft) : banner}
         {taker && <div className="takeover-note" role="status">
           <IconHand size={14} />
           <span>{t('composer.takeover', takeover!.from, taker.label)}</span>

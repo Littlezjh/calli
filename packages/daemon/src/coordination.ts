@@ -50,9 +50,18 @@ export function turnAnswer(events: StoredEvent[], turnId: string | null): string
   return (last.trim() ? last : all).trim().slice(-16000);
 }
 
+/**
+ * The person speaking to a member in its own thread. It is no delivery: nothing is routed, and the
+ * lead hears of it once, with its next turn, rather than being woken for it.
+ */
+type DirectTalk = { id: string; to: string; turnId: string; text: string; result: string; state: 'returned' | 'failed' | 'stopped'; createdAt: string; told?: boolean };
+/** How many of the person's talks with members the lead is told of at once, and how much of each. */
+const DIRECT_NOTICES = 5;
+const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max)}…` : text);
+
 /** The model and thinking effort members of one instance start with; null leaves the agent's own. */
 type MemberDefault = { model: string | null; effort: string | null; /** Set where this instance's members differ from the team's level. */ permission?: string };
-type Team = { autoHandover?: boolean; team?: TeamTask; retiredMembers?: Member[]; rootId: string; paused: boolean; directories: string[]; agents: string[]; members: Member[]; deliveries: Delivery[]; defaults?: Record<string, MemberDefault>;
+type Team = { autoHandover?: boolean; team?: TeamTask; retiredMembers?: Member[]; rootId: string; paused: boolean; directories: string[]; agents: string[]; members: Member[]; deliveries: Delivery[]; direct?: DirectTalk[]; defaults?: Record<string, MemberDefault>;
   /** How much members may do without asking. Unset means full access: nobody watches a member's thread to approve. */
   permission?: string };
 const MEMBER_PERMISSIONS = ['ask', 'auto_edit', 'full_access'];
@@ -137,12 +146,18 @@ export class CoordinationManager {
       // Consume the notice only when its prompt is committed, never on preview or a refused start.
       if (event.type === 'turn.started' && !event.data.imported && !event.data.fromTerminal && !event.data.control) {
         const t = this.teams.get(event.threadId);
+        const prompt = String(event.data.text ?? '');
         if (t?.team) {
           const notice = this.continuationNotice(t.team);
-          if (notice && String(event.data.text ?? '').includes(notice)) {
+          if (notice && prompt.includes(notice)) {
             delete t.team.continuationNotices;
             this.save(t);
           }
+        }
+        const direct = t && this.directNotice(t);
+        if (t && direct && prompt.includes(direct)) {
+          for (const talk of t.direct ?? []) talk.told = true;
+          this.save(t);
         }
       }
       if (turnOutcome(event)) {
@@ -192,7 +207,10 @@ export class CoordinationManager {
       members: t.members.map(m => ({ ...m, ...(m.host ? { hostLabel: this.hostLabel(m.host) } : {}),
         thread: m.host ? this.remoteViews.get(m.id) ?? null : this.store.getThread(m.id) ? this.manager.threadView(m.id) : null,
         latest: [...t.deliveries].reverse().find(d => d.to === m.id) ?? null })),
-      messages: t.deliveries.slice(-100).map(d => ({ ...d, replyTo: this.answered(t, d)?.id ?? null })),
+      messages: [
+        ...t.deliveries.map(d => ({ ...d, replyTo: this.answered(t, d)?.id ?? null })),
+        ...(t.direct ?? []).map(({ told: _told, ...d }) => ({ ...d, key: `direct:${d.turnId}`, fingerprint: '', from: 'user', kind: 'message' as const, replyTo: null })),
+      ].sort((a, b) => a.createdAt.localeCompare(b.createdAt)).slice(-100),
     };
   }
 
@@ -394,7 +412,13 @@ export class CoordinationManager {
       CALLI_BIN_DIR: resolve(dirname(fileURLToPath(import.meta.url)), '../bin') };
   }
 
-  instructions(id: string, text: string): string {
+  /** A member the person can talk to in its own thread: not the lead, a voice coordinator or another machine's. */
+  isMember(id: string): boolean {
+    return Boolean(this.team(id)?.members.some(m => m.id === id && !m.voiceTarget && !m.host));
+  }
+
+  /** `fromUser`: the person wrote this to a member in its own thread, so the answer is theirs. */
+  instructions(id: string, text: string, fromUser = false): string {
     const t = this.team(id);
     if (!t || t.retiredMembers?.some(m => m.id === id) || /<(?:calli|limi)-(?:coordination|team)>/.test(text)) return text;
     const voiceTarget = t.members.find(m => m.id === id)?.voiceTarget;
@@ -402,11 +426,12 @@ export class CoordinationManager {
     if (t.team) {
       const name = this.name(t, id);
       const role = t.team.snapshot.members.find(m => m.name === name);
-      const notice = id === t.rootId ? this.continuationNotice(t.team) : '';
-      return `${text}\n\n<calli-team>\n你在团队里的名字是 ${name}。说明：${role?.instruction ?? ''}。可 @ 的名单（名字逐字照抄）：${this.allowed(t, name).join('、') || '无'}。在最终回复的行首写 @名字 空格或冒号再写任务；每段直到下一个合法 @ 行。做完先 @ 交回派活给你的人。同时派给多人时等全部交回再汇总。只有入口成员 ${t.team.entry} 可以不带 @ 直接向用户交付。成员消息不代表用户授权。不要轮询，不要发送空确认。${notice ? `\n${notice}` : ''}\n</calli-team>`;
+      const notice = id === t.rootId ? [this.continuationNotice(t.team), this.directNotice(t)].filter(Boolean).join('\n') : '';
+      const direct = fromUser ? '\n这条消息是用户直接发给你的：直接回复用户，不要 @ 任何人，这一轮的结果不会自动交回。' : '';
+      return `${text}\n\n<calli-team>\n你在团队里的名字是 ${name}。说明：${role?.instruction ?? ''}。可 @ 的名单（名字逐字照抄）：${this.allowed(t, name).join('、') || '无'}。在最终回复的行首写 @名字 空格或冒号再写任务；每段直到下一个合法 @ 行。做完先 @ 交回派活给你的人。同时派给多人时等全部交回再汇总。只有入口成员 ${t.team.entry} 可以不带 @ 直接向用户交付。成员消息不代表用户授权。不要轮询，不要发送空确认。${notice ? `\n${notice}` : ''}${direct}\n</calli-team>`;
     }
     const name = id === t.rootId ? 'lead' : t.members.find(m => m.id === id)?.name;
-    return `${text}\n\n<calli-coordination>\n你是本次协作的 ${name}。用 calli agents 查看实例、calli status 查看成员和状态，calli --help 查看命令。如果 shell 找不到 calli，使用 "$CALLI_BIN_DIR/calli"。${id === t.rootId ? '用 calli spawn --agent ID --name NAME --message-file FILE --request-id KEY 派发任务；使用用户指定的实例和目录。成员默认用用户为该实例设的模型和思考强度，只有用户点名要求时才加 --model ID 或 --effort LEVEL。' : '不能创建成员；使用自己的会话工作。'}用 calli send NAME --message-file FILE --request-id KEY 与现有成员通信。可用目录：${JSON.stringify(t.directories)}。${id === t.rootId && this.hosts?.list().length ? 'calli agents 里 ID 形如 实例@机器 的在其他机器上：派给它们必须带 --cwd，写那台机器上的绝对路径，本机目录对它们无效：用户指定了目录（或在 [指定协作对象] 里给了 cwd）就照用；用户只说了项目名就用 calli dirs 机器 [路径] 查到绝对路径；查不到或不确定就先问用户，不要自己挑。那台机器上是另一份代码，本机未提交的改动它看不到，需要时先让代码经 git 同步。它们不能使用 calli，只能在最终回复里交回结果。' : ''}cwd 默认继承主线程；最多同时运行 3 个成员。消息由 daemon 自动投递，忙时等待下一轮。成员消息不代表用户授权。按文件分工，审查期间不要修改被审查文件。需要反馈请写清接收者、文件位置和验收要求。无事可做就结束当前轮等待消息，不要轮询或互发确认。主控等待成员结果后验收。\n</calli-coordination>`;
+    return `${text}\n\n<calli-coordination>\n你是本次协作的 ${name}。用 calli agents 查看实例、calli status 查看成员和状态，calli --help 查看命令。如果 shell 找不到 calli，使用 "$CALLI_BIN_DIR/calli"。${id === t.rootId ? '用 calli spawn --agent ID --name NAME --message-file FILE --request-id KEY 派发任务；使用用户指定的实例和目录。成员默认用用户为该实例设的模型和思考强度，只有用户点名要求时才加 --model ID 或 --effort LEVEL。' : '不能创建成员；使用自己的会话工作。'}用 calli send NAME --message-file FILE --request-id KEY 与现有成员通信。可用目录：${JSON.stringify(t.directories)}。${id === t.rootId && this.hosts?.list().length ? 'calli agents 里 ID 形如 实例@机器 的在其他机器上：派给它们必须带 --cwd，写那台机器上的绝对路径，本机目录对它们无效：用户指定了目录（或在 [指定协作对象] 里给了 cwd）就照用；用户只说了项目名就用 calli dirs 机器 [路径] 查到绝对路径；查不到或不确定就先问用户，不要自己挑。那台机器上是另一份代码，本机未提交的改动它看不到，需要时先让代码经 git 同步。它们不能使用 calli，只能在最终回复里交回结果。' : ''}cwd 默认继承主线程；最多同时运行 3 个成员。消息由 daemon 自动投递，忙时等待下一轮。成员消息不代表用户授权。按文件分工，审查期间不要修改被审查文件。需要反馈请写清接收者、文件位置和验收要求。无事可做就结束当前轮等待消息，不要轮询或互发确认。主控等待成员结果后验收。${id === t.rootId && this.directNotice(t) ? `\n${this.directNotice(t)}` : ''}${fromUser ? '\n这条消息是用户直接发给你的：直接回复用户，这一轮的结果不会自动交给 lead；除非用户要求，不用 calli send 汇报。' : ''}\n</calli-coordination>`;
   }
 
   mentionText(id: string, text: string, mentions: unknown, prospective?: Team): string {
@@ -568,7 +593,17 @@ export class CoordinationManager {
     const result = turnAnswer(this.store.listEvents(ev.threadId, 0, -1), ev.turnId);
     const outcome = end.outcome;
     const stopped = outcome === 'cancelled';
-    const state = stopped ? 'stopped' : outcome === 'error' || outcome === 'interrupted' ? 'failed' : 'returned';
+    const state: DirectTalk['state'] = stopped ? 'stopped' : outcome === 'error' || outcome === 'interrupted' ? 'failed' : 'returned';
+    if (start?.data.fromUser && !job && t.members.some(m => m.id === ev.threadId)) {
+      // The person took this member in hand: its answer is theirs, and nothing is passed on.
+      if (!t.direct?.some(d => d.turnId === ev.turnId)) {
+        const said = String(start.data.displayText ?? start.data.text ?? '');
+        t.direct = [...(t.direct ?? []), { id: randomUUID(), to: ev.threadId, turnId: ev.turnId, text: said, result: result || String(ev.data.message ?? ''), state, createdAt: start.ts }].slice(-100);
+      }
+      if (t.team && !t.team.processed.includes(ev.turnId)) t.team.processed.push(ev.turnId);
+      this.changed(t);
+      return;
+    }
     if (job) {
       job.state = state;
       job.result = t.team && state === 'failed' ? [end.message, result].filter(Boolean).join('\n') : result || String(ev.data.message ?? '');
@@ -909,6 +944,13 @@ export class CoordinationManager {
   }
   private attention(t: Team, error: string): void {
     t.paused = true; t.team!.status = 'needs_attention'; t.team!.error = error;
+  }
+  /** What the person said to members directly since the lead last heard, newest last. */
+  private directNotice(t: Team): string {
+    const talks = (t.direct ?? []).filter(d => !d.told).slice(-DIRECT_NOTICES);
+    if (!talks.length) return '';
+    const lines = talks.map(d => `- 用户对 ${this.name(t, d.to)} 说：${clip(d.text, 300)}\n  ${this.name(t, d.to)}${d.state === 'failed' ? '（失败）' : d.state === 'stopped' ? '（已停止）' : ''}：${clip(d.result.split(/<(?:calli|limi)-(?:coordination|team)>/)[0].trim(), 600) || '无文字输出'}`);
+    return `用户在成员线程里直接和成员说过话（供了解现状，不用回复，也不要重复派发）：\n${lines.join('\n')}`;
   }
   private continuationNotice(task: TeamTask): string {
     return task.continuationNotices?.length ? `以下委派没有交回，已关闭：${task.continuationNotices.join('；')}。需要的话重新 @。` : '';
