@@ -71,6 +71,17 @@ export interface GeneralSettings {
   autoArchiveDays: AutoArchiveDays;
 }
 
+export interface DraftModelPreference {
+  /** Null means the agent should use its own default model. */
+  model: string | null;
+  /** Null means the agent should use its own/default thinking effort. */
+  effort: EffortLevel | null;
+  /** Null means the agent should use its own/default speed. */
+  speed: string | null;
+}
+
+export type DraftModelPreferences = Record<string, DraftModelPreference>;
+
 function storedAutoArchiveDays(value: unknown): AutoArchiveDays {
   return AUTO_ARCHIVE_DAY_OPTIONS.includes(value as never) ? value as AutoArchiveDays : null;
 }
@@ -79,6 +90,12 @@ function parseAutoArchiveDays(value: unknown): AutoArchiveDays {
   if (value === null) return null;
   if (AUTO_ARCHIVE_DAY_OPTIONS.includes(value as never)) return value as AutoArchiveDays;
   throw new HttpError(400, 'invalid auto archive period');
+}
+
+const DRAFT_MODEL_PREFERENCES_KEY = 'draft.model.preferences';
+
+function hasDraftModelPreference(value: DraftModelPreference): boolean {
+  return Boolean(value.model || value.effort || value.speed);
 }
 
 /** What forking a thread can offer besides a copy in the same directory. */
@@ -948,6 +965,55 @@ export class ThreadManager {
     const value: GeneralSettings = { startupPage, autoArchiveDays };
     this.store.saveHubSetting('general.settings', value);
     return value;
+  }
+
+  async draftModelPreferences(): Promise<DraftModelPreferences> {
+    const stored = this.store.hubSetting<unknown>(DRAFT_MODEL_PREFERENCES_KEY, {});
+    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return {};
+    const out: DraftModelPreferences = {};
+    for (const [agent, value] of Object.entries(stored)) {
+      const preference = await this.sanitizeDraftModelPreference(agent, value);
+      if (preference) out[agent] = preference;
+    }
+    if (JSON.stringify(out) !== JSON.stringify(stored)) this.store.saveHubSetting(DRAFT_MODEL_PREFERENCES_KEY, out);
+    return out;
+  }
+
+  async saveDraftModelPreferences(input: unknown): Promise<DraftModelPreferences> {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new HttpError(400, 'invalid draft model preferences');
+    const out: DraftModelPreferences = {};
+    for (const [agent, value] of Object.entries(input)) {
+      const preference = await this.sanitizeDraftModelPreference(agent, value);
+      if (preference) out[agent] = preference;
+    }
+    this.store.saveHubSetting(DRAFT_MODEL_PREFERENCES_KEY, out);
+    return out;
+  }
+
+  private async sanitizeDraftModelPreference(agent: string, value: unknown): Promise<DraftModelPreference | null> {
+    if (!this.adapters.has(agent)) return null;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const source = value as { model?: unknown; effort?: unknown; speed?: unknown };
+    const model = typeof source.model === 'string' ? await this.validateModelOrNull(agent, source.model) : null;
+    const effort = typeof source.effort === 'string' ? await this.validateEffortOrNull(agent, model, source.effort) : null;
+    const speed = typeof source.speed === 'string' ? await this.validateSpeedOrNull(agent, model, source.speed) : null;
+    const preference = { model, effort, speed };
+    return hasDraftModelPreference(preference) ? preference : null;
+  }
+
+  private async validateModelOrNull(agent: string, model: string): Promise<string | null> {
+    try { return await this.validateModel(agent, model); }
+    catch { return null; }
+  }
+
+  private async validateEffortOrNull(agent: string, model: string | null, effort: string): Promise<EffortLevel | null> {
+    try { return await this.validateEffort(agent, model, effort); }
+    catch { return null; }
+  }
+
+  private async validateSpeedOrNull(agent: string, model: string | null, speed: string): Promise<string | null> {
+    try { return await this.validateSpeed(agent, model, speed); }
+    catch { return null; }
   }
 
   /** Periodic housekeeping only archives conversations that do not currently need attention. */

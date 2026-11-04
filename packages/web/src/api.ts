@@ -7,6 +7,14 @@ export interface GeneralSettings {
   /** Shared automatic archive window. Null means conversations stay in the sidebar. */
   autoArchiveDays: AutoArchiveDays;
 }
+export interface DraftModelPreference {
+  /** Null leaves the agent's own default model in charge. */
+  model: string | null;
+  /** Null leaves the agent's own/default thinking effort in charge. */
+  effort: string | null;
+  /** Null leaves the agent's own/default speed in charge. */
+  speed: string | null;
+}
 export interface UserQuestion { id: string; question: string; header?: string; options: Array<{ value: string; label: string; description?: string }>; multiple?: boolean; freeText?: boolean; required?: boolean }
 export type UserInputAnswer = { answers: Record<string, string[]> } | { cancelled: true };
 import type { UsageReport, AgentDiagnostic, CostReport, DailyUsage } from './observability';
@@ -890,15 +898,16 @@ export class Api {
     return this.base + (this.host ? hostPath(this.host, path) : path);
   }
 
-  private request<T>(method: string, path: string, body?: unknown): Promise<T> {
-    return this.send(method, this.url(path), body);
+  private request<T>(method: string, path: string, body?: unknown, opts: { keepalive?: boolean } = {}): Promise<T> {
+    return this.send(method, this.url(path), body, opts);
   }
 
-  protected async send<T>(method: string, url: string, body?: unknown): Promise<T> {
+  protected async send<T>(method: string, url: string, body?: unknown, opts: { keepalive?: boolean } = {}): Promise<T> {
     const res = await fetch(url, {
       method,
       headers: this.headers(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       body: body === undefined ? undefined : JSON.stringify(body),
+      keepalive: opts.keepalive,
     });
     if (res.status === 401) throw new AuthError('unauthorized');
     if (res.status === 204) return undefined as T;
@@ -981,6 +990,8 @@ export class Api {
 
   generalSettings(): Promise<GeneralSettings> { return this.request('GET', '/api/general-settings'); }
   saveGeneralSettings(value: GeneralSettings): Promise<GeneralSettings> { return this.request('PUT', '/api/general-settings', value); }
+  draftModelPreferences(): Promise<Record<string, DraftModelPreference>> { return this.request('GET', '/api/draft-model-preferences'); }
+  saveDraftModelPreferences(value: Record<string, DraftModelPreference>, opts: { keepalive?: boolean } = {}): Promise<Record<string, DraftModelPreference>> { return this.request('PUT', '/api/draft-model-preferences', value, opts); }
   personalSettings(): Promise<PersonalSettings> { return this.request('GET', '/api/personal/settings'); }
   savePersonalSettings(value: PersonalSettings): Promise<PersonalSettings> { return this.request('PUT', '/api/personal/settings', value); }
   personalBrief(kind: 'morning' | 'evening'): Promise<PersonalBrief | null> { return this.request('GET', `/api/personal/brief?kind=${kind}`); }
