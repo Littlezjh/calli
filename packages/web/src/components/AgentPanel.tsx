@@ -5,7 +5,9 @@ import type { AgentInfo, Api, Coordination, Thread } from '../api';
 import { buildTalks } from '../coordination';
 import { buildTimeline, clockLabel, deliveredPreview, type StoredEvent } from '../timeline';
 import { Prose, ThreadView } from './ThreadView';
-import { AgentMark, IconAgents, IconChevron, IconClose, IconEdit, IconExternal, IconHandover, IconStop } from './icons';
+import { Composer } from './Composer';
+import { restoreVideos } from '../videos';
+import { AgentMark, IconAgents, IconChevron, IconClose, IconExternal, IconHandover } from './icons';
 import { t } from '../i18n';
 
 /** The width the user dragged the panel to, on a wide screen. Unset, the panel keeps its own. */
@@ -91,7 +93,8 @@ export function AgentPanel({ api, memberApi, team, agents, leadAgent, memberMode
   /** The member to open on, when the panel is opened from that member's row elsewhere. */
   start?: string | null;
   phone: boolean; onClose: () => void; onOpen: (thread: Thread) => void;
-  onAdjust: (name: string) => void; onRefresh: () => void; onError: (err: unknown) => void;
+  /** Hands the member over to the lead, with what had been written to it so far. */
+  onAdjust: (name: string, draft: string) => void; onRefresh: () => void; onError: (err: unknown) => void;
 }) {
   const [memberId, setMemberId] = useState<string | null>(start ?? null);
   const [width, setWidth] = useState<number | null>(() => { const saved = Number(localStorage.getItem(WIDTH_KEY)); return saved > 0 ? clampWidth(saved) : null; });
@@ -121,12 +124,17 @@ export function AgentPanel({ api, memberApi, team, agents, leadAgent, memberMode
   const [opened, setOpened] = useState<Record<string, boolean>>({});
   const talks = useMemo(() => buildTalks(team.messages), [team.messages]);
   const speaker = (id: string): Speaker => {
+    if (id === 'user') return { name: t('team.you'), tag: '', icon: null, lead: false };
     const m = team.members.find(v => v.id === id);
     const agent = agents.find(a => a.id === (m ? m.thread?.agent : leadAgent));
     return m ? { name: m.name, tag: agent?.label ?? m.thread?.agent ?? t('team.member'), icon: agent?.icon ?? null, lead: false }
       : { name: team.team?.entry ?? t('team.lead'), tag: agent?.label ?? t('team.leadTag'), icon: agent?.icon ?? null, lead: true };
   };
   const [events, setEvents] = useState<StoredEvent[]>([]);
+  /** Messages that were waiting when a member was stopped, handed back to that member's box once. */
+  const [restore, setRestore] = useState<{ thread: string; text: string; nonce: number } | null>(null);
+  // A box opened again later reads its saved draft, which already holds them.
+  useEffect(() => setRestore(null), [memberId]);
   const [connected, setConnected] = useState(true);
   const [older, setOlder] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -239,16 +247,29 @@ export function AgentPanel({ api, memberApi, team, agents, leadAgent, memberMode
       </> : thread ? <ThreadView historyApi={threadApi} historyThreadId={thread.id} items={timeline.items} roots={[thread.cwd, thread.cwdReal]} loadImage={id => threadApi.attachment(thread.id, id)} loadFile={path => threadApi.threadFile(thread.id, path)} hasOlder={older} loadingOlder={loadingOlder} onLoadOlder={() => void loadOlder()} /> : <div className="agent-panel-empty">{t('team.childGone')}</div>}
     </div>
     {memberId && !atBottom && <button className="agent-panel-latest" onClick={() => { stick.current = true; if (body.current) body.current.scrollTop = body.current.scrollHeight; }}>{t('team.latest')}</button>}
-    {/* A member's way to change course goes through the lead: a line shaped like the composer's,
-        which opens the lead's composer with the member named; stop sits where the composer has it. */}
-    {member && thread ? <footer className="agent-panel-footer adjust">
-      <button className="agent-adjust" onClick={() => onAdjust(member.name)}>
-        <IconEdit size={15} /><span>{t('team.adjustPrompt', member.name)}</span>
-      </button>
-      {thread.status === 'running' && <button className="send-btn stop" aria-label={t('team.stopTask')} title={t('team.stopTask')} onClick={() => { threadApi.cancel(thread.id).then(onRefresh).catch(onError); }}>
-        <IconStop size={16} />
-      </button>}
-    </footer> : <footer className="agent-panel-footer">
+    {/* A member is written to directly, in a box like the lead's; going through the lead instead is
+        the quiet control above it, and carries what was written along. */}
+    {member && thread ? <div className="agent-panel-composer">
+      <Composer key={thread.id} draftKey={remote ? `host:${remote}:${thread.id}` : thread.id} running={thread.status === 'running'}
+        placeholder={thread.status === 'running' ? t('sideChat.queuePlaceholder') : t('team.directPlaceholder', member.name)}
+        banner={take => <div className="agent-panel-via"><button type="button" className="text-btn" onClick={() => onAdjust(member.name, take())}><IconAgents size={13} />{t('team.adjustViaLead')}</button></div>}
+        header={null} left={null} right={null} commands={[]} actions={[]} hiddenCommands={[]} onAction={() => {}}
+        attachBlocked={agents.find(a => a.id === thread.agent)?.capabilities?.images ? null : t('app.noImages', agents.find(a => a.id === thread.agent)?.label ?? thread.agent)}
+        note={null} restore={restore?.thread === thread.id ? restore : null} onError={onError}
+        onSend={async (text, images, mentions, videos = []) => {
+          try {
+            await threadApi.startTurn(thread.id, text, images.map(({ data, mimeType }) => ({ data, mimeType })), {
+              queue: true, mentions, videos: await Promise.all(videos.map(async video => (await threadApi.uploadVideo(thread.id, video.file)).id)),
+            });
+            stick.current = true; onRefresh();
+          } catch (error) { onError(error); throw error; }
+        }}
+        onStop={() => { void threadApi.cancel(thread.id).then(result => { if (result.dropped.length) setRestore({ thread: thread.id, text: result.dropped.join('\n\n'), nonce: Date.now() }); onRefresh(); }).catch(onError); }}
+        queued={thread.queued ?? []}
+        onRemoveQueued={id => { void threadApi.removeQueued(thread.id, id).then(onRefresh).catch(onError); }}
+        onEditQueued={async id => { const value = await threadApi.removeQueued(thread.id, id); onRefresh(); return { ...value, videos: restoreVideos(threadApi, thread.id, value.videos) }; }}
+        onSendQueuedNow={id => { void threadApi.sendQueuedNow(thread.id, id).then(onRefresh).catch(onError); }} />
+    </div> : <footer className="agent-panel-footer">
       <button title={team.paused ? t('team.resumeHint') : t('team.stopHint')} onClick={() => { api.configureCoordination(team.rootId, { action: team.paused ? 'resume' : 'stop' }).then(onRefresh).catch(onError); }}>{team.paused ? t('team.resume') : t('team.stopAll')}</button>
     </footer>}
   </aside>;

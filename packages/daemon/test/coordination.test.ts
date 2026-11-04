@@ -602,3 +602,70 @@ test('messages for a machine that is away wait for it, and the user can @ an ins
     await wait(() => h.team.view(h.root.id)!.messages.some(d => d.text === 'LATER' && d.state === 'returned'));
   } finally { await h.close(); await far.close(); }
 });
+
+test('the person talking to a member directly is answered there and told to the lead once, without waking it', async () => {
+  const h = await setup();
+  try {
+    await h.team.enable(h.root.id);
+    const worker = (await h.team.command(h.root.id, spawn('worker')) as { to: string }).to;
+    // The spawn's own result reaches the lead and is answered before the person steps in.
+    await wait(() => h.team.view(h.root.id)!.messages.some(d => d.to === h.root.id && d.state === 'returned'));
+    await wait(() => h.manager.threadView(h.root.id).status === 'idle' && h.manager.threadView(worker).status === 'idle');
+    const before = h.team.view(h.root.id)!.messages.filter(d => d.to === h.root.id).length;
+    const leadTurns = () => h.store.listEvents(h.root.id, 0, -1).filter(e => e.type === 'turn.started').length;
+    const turnsBefore = leadTurns();
+
+    const response = await h.api(`/api/threads/${worker}/turns`, { text: 'tighten the summary' });
+    assert.equal(response.status, 202);
+    const { turnId } = await response.json() as { turnId: string };
+    await wait(() => h.team.view(h.root.id)!.messages.some(d => d.from === 'user'));
+    const started = h.store.listEvents(worker, 0, -1).find(e => e.turnId === turnId && e.type === 'turn.started')!;
+    assert.equal(started.data.fromUser, true);
+    assert.equal(started.data.displayText, 'tighten the summary');
+    assert.match(String(started.data.text), /用户直接发给你的/);
+
+    const view = h.team.view(h.root.id)!;
+    const talk = view.messages.find(d => d.from === 'user')!;
+    assert.equal(talk.to, worker);
+    assert.equal(talk.text, 'tighten the summary');
+    assert.equal(talk.state, 'returned');
+    assert.match(talk.result, /there tighten the summary/);
+    assert.equal(talk.replyTo, null);
+    // Nothing went to the lead, and it did not run.
+    await new Promise(r => setTimeout(r, 200));
+    assert.equal(h.team.view(h.root.id)!.messages.filter(d => d.to === h.root.id).length, before);
+    assert.equal(leadTurns(), turnsBefore);
+
+    // The lead hears of it with its next turn, once.
+    await h.manager.startTurn(h.root.id, { text: 'how is it going' });
+    await wait(() => h.manager.threadView(h.root.id).status === 'idle');
+    const told = h.store.listEvents(h.root.id, 0, -1).filter(e => e.type === 'turn.started').at(-1)!;
+    assert.match(String(told.data.text), /用户对 worker 说：tighten the summary/);
+    await h.manager.startTurn(h.root.id, { text: 'and now' });
+    await wait(() => h.manager.threadView(h.root.id).status === 'idle');
+    const later = h.store.listEvents(h.root.id, 0, -1).filter(e => e.type === 'turn.started').at(-1)!;
+    assert.doesNotMatch(String(later.data.text), /用户对 worker 说/);
+  } finally { await h.close(); }
+});
+
+test('a message the person queues behind a member\'s task is still theirs when it goes out', async () => {
+  const h = await setup();
+  try {
+    await h.team.enable(h.root.id);
+    const worker = (await h.team.command(h.root.id, spawn('worker', 'pi', 'slow')) as { to: string }).to;
+    await wait(() => h.manager.threadView(worker).status === 'running');
+    const queued = await h.api(`/api/threads/${worker}/turns`, { text: 'after that, add tests', queue: true });
+    assert.equal(queued.status, 202);
+    const { id } = await queued.json() as { id: string };
+    await h.manager.sendQueuedNow(worker, id);
+    await wait(() => h.team.view(h.root.id)!.messages.some(d => d.from === 'user' && d.state === 'returned'));
+    const starts = h.store.listEvents(worker, 0, -1).filter(e => e.type === 'turn.started');
+    assert.equal(starts.length, 2);
+    assert.equal(starts[0].data.fromUser, undefined);
+    assert.equal(starts[1].data.fromUser, true);
+    // Turns the hub starts in a member stay deliveries; the lead's own thread is never "direct".
+    await h.api(`/api/threads/${h.root.id}/turns`, { text: 'lead turn' });
+    await wait(() => h.manager.threadView(h.root.id).status === 'idle');
+    assert.equal(h.store.listEvents(h.root.id, 0, -1).filter(e => e.type === 'turn.started').at(-1)!.data.fromUser, undefined);
+  } finally { await h.close(); }
+});
