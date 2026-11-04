@@ -1163,3 +1163,27 @@ test('first topic signal goes to Router; after subscribe and delegate later repl
     await h.manager.cancelTurn(worker.id);
   } finally { h.service.router.receiveSignals = original; await channel.dispose(); await h.close(); }
 });
+
+test('signals propose matters with archived provenance and never redefine approved work', async () => {
+  const h = await setup(); try {
+    h.store.insertSignal('lark-calendar:evt9', { summary: '评审会已结束', source: { type: 'lark-calendar', ref: 'evt9' }, thread: { kind: 'lark-thread', ref: 'omt_meet' }, meeting: { event: 'ended', meetingId: 'mtg9' } },
+      { outcome: 'router', pending: false }, new Date().toISOString());
+    const todo = h.service.create({ text: '会后跟进评审结论', signal: 'lark-calendar:evt9' }, h.thread.id);
+    assert.equal(todo.owner, 'me'); assert.equal(todo.state, 'open'); assert.equal(todo.proposed, true);
+    assert.deepEqual(todo.source, { type: 'lark-calendar', ref: 'evt9', thread: { kind: 'lark-thread', ref: 'omt_meet' } });
+    assert.ok(todo.subscriptions.some(s => s.ref === 'omt_meet'), 'the archived discussion auto-subscribes');
+    assert.deepEqual(h.store.getSignal('lark-calendar:evt9')?.disposition.matterIds, [todo.id]);
+    const rev = h.store.getTodo(todo.id)!.rev;
+    h.service.update(todo.id, { rev, signal: 'lark-calendar:evt9', note: '## 下一步\n补充评审材料' }, h.thread.id);
+    assert.equal(h.store.todoNote(todo.id).text, '## 下一步\n补充评审材料');
+    assert.equal(h.store.getTodo(todo.id)!.source?.ref, 'evt9', 'an update attaches provenance without redefining the matter');
+    assert.throws(() => h.service.update(todo.id, { rev: h.store.getTodo(todo.id)!.rev, signal: 'lark-calendar:evt9', state: 'done' }, h.thread.id), /signal updates/);
+    assert.throws(() => h.service.create({ text: '无凭证', signal: 'lark-calendar:evt9' }), /signal provenance requires private/);
+    assert.throws(() => h.service.create({ text: '越权', signal: 'lark-calendar:evt9', owner: 'agent' }, h.thread.id), /not authorization/);
+    assert.throws(() => h.service.create({ text: '不存在', signal: 'lark-calendar:absent' }, h.thread.id), /signal not found/);
+    assert.throws(() => h.service.create({ text: '冲突', signal: 'lark-calendar:evt9', source: { type: 'manual', ref: 'x' } }, h.thread.id), /mutually exclusive/);
+    const added = await h.cli(['todo', 'add', '--owner', 'me', '--text-file', h.file('sig.txt', '纪要待办'), '--signal', 'lark-calendar:evt9']);
+    assert.equal(added.proposed, true);
+    assert.deepEqual(h.store.getSignal('lark-calendar:evt9')?.disposition.matterIds, [todo.id, added.id]);
+  } finally { await h.close(); }
+});

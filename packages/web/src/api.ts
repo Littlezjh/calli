@@ -356,15 +356,52 @@ export interface BriefSettings { enabled: boolean; morning: string; evening: str
 export interface LarkChannelSettings {
   enabled: boolean; people: Array<{ id: string; name: string; role?: string }>; chats: Array<{ id: string; name: string }>;
   intervalMin: number; workHours?: { start: number; end: number; timeZone: string };
+  /** Missing on older hubs: the configured event list is unknown. */
+  events?: string[];
 }
 export interface LarkChannelStatus { cli: boolean; realtime?: LarkRealtime; topicErrors?: Array<{ ref: string; error: string }>; loggedIn: boolean; lastRunAt: string | null; nextRunAt: string | null; lastError: string | null; lastSignals: number }
 export type LarkRealtime = 'off' | 'connecting' | 'live' | 'busy-elsewhere' | 'console-off' | 'unavailable' | 'error';
+export interface SignalSource {
+  type: string;
+  ref: string;
+  url?: string;
+  from?: string;
+  at?: string;
+  thread?: { kind: string; ref: string };
+}
+export interface SignalMeeting {
+  event: 'ended' | 'note-generated' | 'minutes-generated';
+  meetingId?: string;
+  calendarEventId?: string;
+  noteId?: string;
+  noteDocToken?: string;
+  minuteToken?: string;
+  title?: string;
+  startedAt?: string;
+  endedAt?: string;
+}
+/** Metadata only; material bodies are read through a separate endpoint. */
+export interface SignalMaterial {
+  state: 'unread' | 'not-ready' | 'ready' | 'empty' | 'failed';
+  kind?: 'note' | 'minutes';
+  checkedAt?: string;
+  error?: string;
+  partial?: boolean;
+}
+export interface SignalMaterialRead {
+  key: string;
+  material: SignalMaterial;
+  content: string | null;
+}
 /** A signal the channel kept on a matter, and where it went. */
 export interface MatterSignal {
   key: string;
   at: string;
   summary: string | null;
   disposition: { outcome: 'filtered' | 'delivered' | 'router'; reason?: string; pending?: boolean };
+  source?: SignalSource | null;
+  meeting?: SignalMeeting | null;
+  material?: SignalMaterial | null;
 }
 export interface LarkSearchResult { id: string; name: string; hint?: string }
 export interface TodoNote { text: string; updatedAt: string | null; threadId: string | null; rev: number }
@@ -955,6 +992,7 @@ export class Api {
   runLark(): Promise<LarkChannelStatus> { return this.request('POST', '/api/personal/channels/lark/run'); }
   searchLark(kind: 'people' | 'chats', q: string): Promise<LarkSearchResult[]> { return this.request('GET', `/api/personal/channels/lark/search?kind=${kind}&q=${encodeURIComponent(q)}`); }
   matterSignals(matterId: string): Promise<{ signals: MatterSignal[] }> { return this.request('GET', `/api/personal/signals?matterId=${encodeURIComponent(matterId)}`); }
+  readSignalMaterial(key: string): Promise<SignalMaterialRead> { return this.request('GET', `/api/personal/signals/${encodeURIComponent(key)}/material`); }
   todoNote(id: string): Promise<TodoNote> { return this.request('GET', `/api/todos/${id}/note`); }
   /** The desk's companion: whether its frames are here yet. Always this hub's own, never another machine's. */
   pet(): Promise<PetStatus> { return this.send('GET', `${this.base}/api/pets`); }

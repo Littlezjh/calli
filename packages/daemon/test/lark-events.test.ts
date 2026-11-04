@@ -100,6 +100,46 @@ test('raw callback messages normalize IDs and JSON content; unrelated messages a
   } finally { await h.close(); }
 });
 
+test('flat meeting events keep delivery, meeting and calendar identities separate', () => {
+  const [signal] = eventSignals({ type: 'vc.meeting.participant_meeting_ended_v1', event_id: 'delivery_ended', timestamp: '1793498400000',
+    meeting_id: '90071992547409931234', meeting_no: '123456789', topic: '示例评审', calendar_event_id: 'calendar_fixture',
+    start_time: '2026-11-01T09:00:00+08:00', end_time: '2026-11-01T10:00:00+08:00', token: 'private_callback_token' }, 'vc.meeting.participant_meeting_ended_v1', settings);
+  assert.equal(signal.source.ref, 'delivery_ended');
+  assert.equal(signal.source.at, '2026-11-01T02:00:00.000Z');
+  assert.deepEqual(signal.thread, { kind: 'lark-calendar', ref: 'calendar_fixture' });
+  assert.deepEqual(signal.meeting, { event: 'ended', meetingId: '90071992547409931234', calendarEventId: 'calendar_fixture', title: '示例评审',
+    startedAt: '2026-11-01T01:00:00.000Z', endedAt: '2026-11-01T02:00:00.000Z' });
+  assert.equal(signal.dueAt, undefined, 'delivery and meeting times are not a commitment deadline');
+  assert.doesNotMatch(JSON.stringify(signal), /private_callback_token|123456789/);
+});
+
+test('flat note and minutes events use explicit meeting sources, never document or delivery IDs', () => {
+  const [note] = eventSignals({ event_id: 'delivery_note', note_id: 'note_fixture', note_token: 'doc_fixture', verbatim_token: 'excluded_transcript',
+    note_source: { source_type: 'meeting', source_entity_id: 'meeting_fixture' } }, 'vc.note.generated_v1', settings);
+  assert.deepEqual(note.meeting, { event: 'note-generated', meetingId: 'meeting_fixture', noteId: 'note_fixture', noteDocToken: 'doc_fixture' });
+  assert.equal(note.thread, undefined, 'a meeting ID is not a calendar subscription');
+  assert.doesNotMatch(JSON.stringify(note), /excluded_transcript/);
+  const [minute] = eventSignals({ event_id: 'delivery_minute', minute_token: 'minutefixture', title: '示例录制',
+    minute_source: { source_type: 'meeting', source_entity_id: 'meeting_fixture' } }, 'minutes.minute.generated_v1', settings);
+  assert.deepEqual(minute.meeting, { event: 'minutes-generated', meetingId: 'meeting_fixture', minuteToken: 'minutefixture', title: '示例录制' });
+  const [upload] = eventSignals({ event_id: 'delivery_upload', minute_token: 'minute_upload', title: '示例录制',
+    minute_source: { source_type: 'upload', source_entity_id: 'not_a_meeting' } }, 'minutes.minute.generated_v1', settings);
+  assert.equal(upload.meeting?.meetingId, undefined, 'matching titles do not associate an uploaded artifact');
+});
+
+test('callback envelopes remain supported and malformed resource IDs never become read targets', () => {
+  const [signal] = eventSignals({ header: { event_id: 'delivery_envelope', token: 'private_callback_token' }, event: { meeting_id: 'meeting_fixture',
+    calendar_event_id: 'calendar_fixture', topic: '示例评审' } }, 'vc.meeting.participant_meeting_ended_v1', settings);
+  assert.equal(signal.meeting?.meetingId, 'meeting_fixture');
+  assert.equal(signal.source.ref, 'delivery_envelope');
+  const [invalid] = eventSignals({ event_id: 'delivery_invalid', note_id: '--help', note_token: 'doc with spaces',
+    note_source: { source_type: 'meeting', source_entity_id: 9007199254740992 } }, 'vc.note.generated_v1', settings);
+  assert.equal(invalid.meeting?.noteId, undefined);
+  assert.equal(invalid.meeting?.noteDocToken, undefined);
+  assert.equal(invalid.meeting?.meetingId, undefined);
+  assert.doesNotMatch(JSON.stringify(signal), /private_callback_token/);
+});
+
 test('message bodies cannot spoof consumer errors or terminate the connection', async () => {
   const h = setup({ realtime: { events: [{ ...message, content: '请检查：another event bus is already connected to this app' }] } });
   try {

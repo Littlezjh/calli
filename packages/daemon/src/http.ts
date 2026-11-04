@@ -347,11 +347,17 @@ export function createHttpServer(deps: HttpDeps): Server {
     // What has reached a matter: the archive the channel keeps of every signal and where it went.
     if (path === '/api/personal/signals' && method === 'GET') {
       const matterId = url.searchParams.get('matterId') ?? undefined;
-      const rows = manager.personal.store.listSignals({ ...(matterId ? { matterId } : {}), limit: 50 });
+      const rows = manager.personal.store.listSignals({ ...(matterId ? { matterId } : {}), limit: 50, materialScope: manager.lark.materialScope() });
       return sendJson(res, 200, { signals: rows.map(({ payload, disposition, ...rest }) => {
-        const signal = payload as { summary?: unknown; source?: unknown };
-        return { ...rest, summary: signal.summary ?? null, source: signal.source ?? null, disposition };
+        const signal = payload as { summary?: unknown; source?: unknown; meeting?: unknown };
+        return { ...rest, summary: signal.summary ?? null, source: signal.source ?? null, ...(signal.meeting ? { meeting: signal.meeting } : {}), disposition };
       }) });
+    }
+    if (parts[1] === 'personal' && parts[2] === 'signals' && parts[3] && parts[4] === 'material' && parts.length === 5 && method === 'GET') {
+      let key: string;
+      try { key = decodeURIComponent(parts[3]); } catch { throw new HttpError(400, 'invalid signal key'); }
+      const read = await manager.lark.readMaterial(key);
+      return sendJson(res, 200, { key, ...read });
     }
     if (path === '/api/personal/channels/lark/run' && method === 'POST') return sendJson(res, 200, await manager.lark.run());
     if (path === '/api/personal/channels/lark/search' && method === 'GET') return sendJson(res, 200, await manager.lark.search(url.searchParams.get('kind'), url.searchParams.get('q')));

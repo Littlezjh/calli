@@ -16,6 +16,7 @@ import type { WritingState } from './writing.js';
 import { HistoryStore } from './history.js';
 import { ToolJobs } from './tool-jobs.js';
 import { MessageEdits } from './message-edits.js';
+import type { MeetingReference, SignalMaterial, SignalMaterialRead } from './channels/lark-material.js';
 
 /** Storage cap for one tool snapshot's output; see docs/tool-output-storage-design.md. */
 const MAX_OUTPUT_CHARS = 128 * 1024;
@@ -36,9 +37,11 @@ export interface SignalDisposition {
 }
 export interface SignalRecord {
   key: string; at: string; payload: unknown; disposition: SignalDisposition; updatedAt: string;
+  material?: SignalMaterial;
 }
-type SignalRow = { key: string; at: string; payload: string; disposition: string; updated_at: string };
-const toSignal = (row: SignalRow): SignalRecord => ({ key: row.key, at: row.at, payload: JSON.parse(row.payload), disposition: JSON.parse(row.disposition), updatedAt: row.updated_at });
+type SignalRow = { key: string; at: string; payload: string; disposition: string; updated_at: string; material?: string | null };
+const toSignal = (row: SignalRow): SignalRecord => ({ key: row.key, at: row.at, payload: JSON.parse(row.payload), disposition: JSON.parse(row.disposition), updatedAt: row.updated_at,
+  ...(row.material ? { material: JSON.parse(row.material) as SignalMaterial } : {}) });
 
 export interface ThreadRecord {
   id: string;
@@ -472,6 +475,11 @@ export class Store {
         disposition TEXT NOT NULL, updated_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS signals_at ON signals(at);
+      CREATE INDEX IF NOT EXISTS signals_meeting ON signals(json_extract(payload, '$.meeting.meetingId'));
+      CREATE TABLE IF NOT EXISTS signal_materials (
+        signal_key TEXT PRIMARY KEY REFERENCES signals(key) ON DELETE CASCADE,
+        scope TEXT NOT NULL, reference TEXT NOT NULL, material TEXT NOT NULL, content TEXT
+      );
       CREATE TABLE IF NOT EXISTS threads (
         id TEXT PRIMARY KEY,
         agent TEXT NOT NULL,
@@ -1056,22 +1064,74 @@ export class Store {
       .run(key, at, JSON.stringify(payload), JSON.stringify(disposition), at).changes > 0;
   }
 
-  getSignal(key: string): SignalRecord | null {
-    const row = this.db.prepare('SELECT * FROM signals WHERE key = ?').get(key) as SignalRow | undefined;
+  getSignal(key: string, materialScope?: string): SignalRecord | null {
+    // Only the small state crosses this join; the body has its own explicit read.
+    const row = this.db.prepare(`SELECT s.*, m.material FROM signals s LEFT JOIN signal_materials m
+      ON m.signal_key = s.key AND m.scope = ? WHERE s.key = ?`).get(materialScope ?? null, key) as SignalRow | undefined;
     return row ? toSignal(row) : null;
   }
 
   updateSignalDisposition(key: string, disposition: SignalDisposition, at = new Date().toISOString()): void {
-    this.db.prepare('UPDATE signals SET disposition = ?, updated_at = ? WHERE key = ?').run(JSON.stringify(disposition), at, key);
+    // A Router can associate a matter while a delivery is awaited. Never erase that provenance.
+    const previous = this.getSignal(key)?.disposition;
+    const matterIds = [...new Set([...(previous?.matterIds ?? []), ...(disposition.matterIds ?? [])])];
+    this.db.prepare('UPDATE signals SET disposition = ?, updated_at = ? WHERE key = ?')
+      .run(JSON.stringify({ ...disposition, ...(matterIds.length ? { matterIds } : {}) }), at, key);
   }
 
-  listSignals(options: { matterId?: string; pending?: boolean; limit?: number } = {}): SignalRecord[] {
-    return (this.db.prepare(`SELECT * FROM signals WHERE
-      (? IS NULL OR EXISTS (SELECT 1 FROM json_each(disposition, '$.matterIds') WHERE value = ?))
-      AND (? = 0 OR json_extract(disposition, '$.pending') = 1)
-      ORDER BY at DESC, key LIMIT ?`).all(options.matterId ?? null, options.matterId ?? null, options.pending ? 1 : 0,
-        Math.max(1, Math.min(options.limit ?? 100, 1000))) as SignalRow[]).map(toSignal);
+  listSignals(options: { matterId?: string; pending?: boolean; limit?: number; materialScope?: string } = {}): SignalRecord[] {
+    return (this.db.prepare(`SELECT s.*, m.material FROM signals s LEFT JOIN signal_materials m
+      ON m.signal_key = s.key AND m.scope = ? WHERE
+      (? IS NULL OR EXISTS (SELECT 1 FROM json_each(s.disposition, '$.matterIds') WHERE value = ?))
+      AND (? = 0 OR json_extract(s.disposition, '$.pending') = 1)
+      ORDER BY s.at DESC, s.key LIMIT ?`).all(options.materialScope ?? null, options.matterId ?? null, options.matterId ?? null,
+        options.pending ? 1 : 0, Math.max(1, Math.min(options.limit ?? 100, 1000))) as SignalRow[]).map(toSignal);
   }
+
+  /** Explicit meeting identity, not a title, document token, meeting number or delivery ID. */
+  meetingSignals(meetingId: string): SignalRecord[] {
+    return (this.db.prepare(`SELECT * FROM signals WHERE json_extract(payload, '$.meeting.meetingId') = ?
+      AND json_extract(disposition, '$.outcome') != 'filtered' ORDER BY at DESC, key LIMIT 1000`)
+      .all(meetingId) as SignalRow[]).map(toSignal);
+  }
+
+  updateSignalMeeting(key: string, meeting: MeetingReference, at = new Date().toISOString()): void {
+    const previous = this.getSignal(key)?.payload as { meeting?: MeetingReference } | undefined;
+    if (!previous || JSON.stringify(previous.meeting) === JSON.stringify(meeting)) return;
+    this.transaction(() => {
+      this.db.prepare("UPDATE signals SET payload = json_set(payload, '$.meeting', json(?)), updated_at = ? WHERE key = ?")
+        .run(JSON.stringify(meeting), at, key);
+      this.db.prepare('DELETE FROM signal_materials WHERE signal_key = ?').run(key);
+    });
+  }
+
+  /** Called inside the matter write transaction; late artifacts inherit the same provenance. */
+  associateSignal(key: string, matterId: string): void {
+    const record = this.getSignal(key);
+    if (!record) throw new HttpError(404, 'signal not found');
+    if (!this.getTodo(matterId)) throw new HttpError(404, 'todo not found');
+    const meetingId = (record.payload as { meeting?: MeetingReference }).meeting?.meetingId;
+    const related = typeof meetingId === 'string' ? this.meetingSignals(meetingId) : [];
+    this.transaction(() => {
+      for (const row of new Map([record, ...related].map(row => [row.key, row])).values()) {
+        this.updateSignalDisposition(row.key, { ...row.disposition, matterIds: [...new Set([...(row.disposition.matterIds ?? []), matterId])] });
+      }
+    });
+  }
+
+  getSignalMaterial(key: string, scope: string, reference: string): SignalMaterialRead | null {
+    const row = this.db.prepare('SELECT material, content FROM signal_materials WHERE signal_key = ? AND scope = ? AND reference = ?')
+      .get(key, scope, reference) as { material: string; content: string | null } | undefined;
+    return row ? { material: JSON.parse(row.material) as SignalMaterial, content: row.content } : null;
+  }
+
+  saveSignalMaterial(key: string, scope: string, reference: string, read: SignalMaterialRead): void {
+    this.db.prepare(`INSERT INTO signal_materials (signal_key, scope, reference, material, content) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(signal_key) DO UPDATE SET scope = excluded.scope, reference = excluded.reference,
+      material = excluded.material, content = excluded.content`).run(key, scope, reference, JSON.stringify(read.material), read.content);
+  }
+
+  clearSignalMaterials(): void { this.db.prepare('DELETE FROM signal_materials').run(); }
 
   pruneSignals(now = new Date()): void {
     this.db.prepare('DELETE FROM signals WHERE at < ?').run(new Date(now.getTime() - 90 * 86400000).toISOString());

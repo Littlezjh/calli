@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { Store } from '../src/store.js';
+import { HttpError } from '../src/errors.js';
 import { ThreadManager } from '../src/threads.js';
 import { AttachmentStore } from '../src/attachments.js';
 import { Workdirs } from '../src/workdirs.js';
@@ -271,4 +272,36 @@ test('runtime environments discard inherited scopes and administrator tokens', (
   assert.equal(env.CALLI_TOKEN, undefined);
   assert.equal(env.CALLI_TOKEN, undefined);
   assert.ok(env.PATH?.startsWith('/example/bin:'));
+});
+
+test('signals commands expose archived provenance only to the scoped thread', async () => {
+  const h = await setup();
+  try {
+    h.store.createTodo('m1', '事项 one', null, {});
+    h.store.linkTodoThread('m1', h.root.id);
+    const archive = (key: string, outcome: any, payload: Record<string, unknown> = { summary: '评审会已结束', source: { type: 'lark-calendar', ref: key } }) =>
+      h.store.insertSignal(key, payload, outcome, '2026-11-01T02:00:00.000Z');
+    archive('lark-calendar:evt1', { outcome: 'delivered', matterIds: ['m1'], deliveries: [{ matterId: 'm1', threadId: h.root.id }], threadId: h.root.id },
+      { summary: '评审会已结束', source: { type: 'lark-calendar', ref: 'evt1' }, meeting: { event: 'ended', meetingId: 'mtg1' } });
+    archive('lark-message:noise', { outcome: 'filtered', reason: 'not-a-request' });
+    const shown = await h.call({ op: 'signals.show', key: 'lark-calendar:evt1' });
+    assert.equal(shown.key, 'lark-calendar:evt1'); assert.equal(shown.payload.summary, '评审会已结束');
+    assert.deepEqual(shown.payload.meeting, { event: 'ended', meetingId: 'mtg1' }); assert.equal(shown.material, undefined);
+    assert.equal((await h.call({ op: 'signals.material', key: 'lark-calendar:evt1' })).material.error, 'lark_disabled');
+    const cli = await h.runCli(['signals', 'show', 'lark-calendar:evt1']);
+    assert.equal(cli.payload.summary, '评审会已结束');
+    assert.equal((await h.runCli(['signals', 'material', 'lark-calendar:evt1'])).material.error, 'lark_disabled');
+    const outsider = await h.manager.createThread({ agent: 'claude', cwd: h.cwd });
+    for (const [owner, key, status] of [
+      ['operator', 'lark-calendar:evt1', 403],
+      [outsider.id, 'lark-calendar:evt1', 404],
+      [h.root.id, 'lark-message:noise', 404],
+      [h.root.id, 'lark-calendar:absent', 404],
+      [h.root.id, 'bad\nkey', 400],
+    ] as const) {
+      const error = await h.service.command(owner, { op: 'signals.show', key }).then(() => null, (e: any) => e);
+      assert.ok(error instanceof HttpError && error.status === status, `${owner} ${key}`);
+    }
+    assert.equal((await h.api({ op: 'signals.show', key: 'lark-calendar:evt1' })).status, 403);
+  } finally { await h.close(); }
 });

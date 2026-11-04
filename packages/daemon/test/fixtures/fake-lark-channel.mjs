@@ -25,6 +25,26 @@ if (key === 'event consume') {
   setInterval(() => {}, 60_000);
   await new Promise(() => {});
 }
+const materialTargets = { 'vc +detail': '--meeting-ids', 'note +detail': '--note-id', 'minutes +detail': '--minute-tokens', 'docs +fetch': '--doc' };
+if (materialTargets[key]) {
+  const target = arg(materialTargets[key]);
+  if (typeof target !== 'string' || target.length > 200 || !(key === 'minutes +detail' ? /^[a-z0-9]+$/ : /^[A-Za-z0-9][A-Za-z0-9_-]*$/).test(target)) throw new Error('Invalid material target');
+  const expected = key === 'docs +fetch'
+    ? ['docs', '+fetch', '--doc', target, '--scope', 'keyword', '--keyword', arg('--keyword'), '--context-before', '1', '--context-after', '2', '--doc-format', 'markdown', '--as', 'user']
+    : [args[0], '+detail', materialTargets[key], target, ...(key === 'minutes +detail' ? ['--summary', '--todo'] : []), '--format', 'json', '--as', 'user'];
+  if (JSON.stringify(args) !== JSON.stringify(expected) || (key === 'docs +fetch' && !['待办', 'TODO'].includes(arg('--keyword')))) throw new Error('Only bounded readonly summary/TODO commands are allowed');
+  const material = config.material?.[key]?.[target] ?? {};
+  const response = key === 'docs +fetch' && material.keywords ? material.keywords[arg('--keyword')] ?? {} : material;
+  if (response.delay) await new Promise(r => setTimeout(r, response.delay));
+  if (response.stderr) console.error(response.stderr);
+  if (response.stdout !== undefined) console.log(response.stdout);
+  else console.log(JSON.stringify({ ok: response.ok ?? true, identity: response.identity ?? 'user', data: response.data ?? (
+    key === 'vc +detail' ? { meetings: [{ meeting_id: target }] }
+      : key === 'note +detail' ? { note: { note_id: target } }
+        : key === 'minutes +detail' ? { minutes: [{ minute_token: target, status: 'processing', retryable: true }] }
+          : { document: { document_id: target, content: '' } }) }));
+  process.exit(response.exitCode ?? 0);
+}
 const allowed = ['task +get-my-tasks', 'im +messages-search', 'im +flag-list', 'calendar +agenda', 'contact +search-user', 'im +chat-search', 'im +threads-messages-list'];
 if (!allowed.includes(key) || arg('--as') !== 'user') throw new Error('Only explicit readonly user commands are allowed');
 if (config.fail === key) { console.error('sensitive_cli_output_must_not_escape'); process.exit(1); }

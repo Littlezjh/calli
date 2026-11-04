@@ -6,13 +6,14 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { homeDirectory } from './config.js';
 import { fileURLToPath } from 'node:url';
 import type { AgentAdapter } from './adapters/types.js';
+import type { LarkSignal } from './channels/lark.js';
 import { isWithinWorkdirs } from './workdirs.js';
 import { HttpError } from './errors.js';
 import { PROFILE_TEMPLATE, PersonalFiles } from './personal-files.js';
 import { PersonalReview } from './personal-review.js';
 import { PersonalRouter } from './personal-router.js';
 import { ProactiveService } from './proactive.js';
-import type { Store, TodoImportance, TodoLane, TodoNote, TodoPatch, TodoRecord, TodoSource, TodoSubscription, TodoThread, TodoProposal } from './store.js';
+import type { SignalRecord, Store, TodoImportance, TodoLane, TodoNote, TodoPatch, TodoRecord, TodoSource, TodoSubscription, TodoThread, TodoProposal } from './store.js';
 import { TODO_IMPORTANCES, TODO_LANES, TODO_SOURCE_TYPES, todoThread, urgencyOf } from './store.js';
 import type { ThreadManager } from './threads.js';
 import { SummaryService } from './summary.js';
@@ -36,6 +37,11 @@ export interface PersonalSettings { directory: string | null; agent: string | nu
 export function personalText(value: unknown, limit: number, empty = false): string {
   if (typeof value !== 'string' || (!empty && !value.trim()) || [...value].length > limit) throw new HttpError(400, `text must contain ${empty ? '0' : '1'}–${limit} characters`);
   if (/-----BEGIN (?:[A-Z ]*PRIVATE KEY)-----|\b(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AKIA[A-Z0-9]{16})/.test(value)) throw new HttpError(400, 'text contains a credential; remove secrets before saving');
+  return value;
+}
+/** Archive keys are opaque JSON data, never document IDs or URL paths. */
+export function signalArchiveKey(value: unknown): string {
+  if (typeof value !== 'string' || !value || value.length > 240 || /[\u0000-\u001f\u007f]/.test(value)) throw new HttpError(400, 'invalid signal key');
   return value;
 }
 const time = (value: unknown): string | null => {
@@ -110,6 +116,8 @@ export class PersonalService {
       defaultDirectory, defaultDirectoryDisplay: display(defaultDirectory), routerThreadId: this.router.status().threadId };
   }
   putSettings(input: Record<string, unknown>): PersonalSettings {
+    // Compare the stored value, not the resolved directory: a broken path must stay resettable.
+    const previousDirectory = input.directory !== undefined ? this.storedSettings().directory : undefined;
     const next = { ...this.storedSettings() };
     if (input.directory !== undefined) {
       if (input.directory === null || input.directory === '') next.directory = null;
@@ -131,6 +139,7 @@ export class PersonalService {
       next.model = input.model ? String(input.model) : null;
     }
     this.store.saveHubSetting('personal', next);
+    if (previousDirectory !== undefined && previousDirectory !== next.directory) this.manager.lark?.invalidateMaterials?.();
     return next;
   }
   async delegate(id: string, input: { cwd?: unknown } = {}) {
@@ -271,6 +280,19 @@ export class PersonalService {
     if (value.thread !== undefined) out.thread = this.subscription(value.thread);
     return out;
   }
+  /** Only a private caller may attach provenance from the canonical, nonfiltered archive. */
+  private inputSignal(input: Record<string, unknown>, actor?: string): SignalRecord | undefined {
+    if (input.signal === undefined) return undefined;
+    if (!actor) throw new HttpError(403, 'signal provenance requires private thread credentials');
+    this.require(actor);
+    if (input.source !== undefined) throw new HttpError(400, 'signal and source are mutually exclusive');
+    return this.manager.lark.signal(signalArchiveKey(input.signal));
+  }
+  private signalSource(record: SignalRecord): TodoSource {
+    const signal = record.payload as LarkSignal;
+    // The discussion ID comes from the archived top-level reference, not supplied source JSON.
+    return this.source({ ...signal.source, thread: signal.thread });
+  }
   private subscription(value: unknown): TodoThread {
     const thread = todoThread(value);
     personalText(thread.ref, 200);
@@ -338,7 +360,13 @@ export class PersonalService {
   }
   create(input: Record<string, unknown>, actor?: string): TodoRecord {
     if (actor) this.require(actor);
-    const patch = this.patch(input), links = actor ? this.threadList(input.threads, 'threads') : [];
+    const signal = this.inputSignal(input, actor);
+    if (signal && ((input.owner !== undefined && input.owner !== 'me') || (input.state !== undefined && input.state !== 'open')
+      || (input.done !== undefined && input.done !== false) || (input.proposed !== undefined && input.proposed !== true) || input.doneAt != null)) {
+      throw new HttpError(403, 'signals can only propose open, human-owned matters; they are not authorization');
+    }
+    const patch = this.patch(signal ? { ...input, owner: 'me', source: this.signalSource(signal) } : input);
+    const links = actor ? this.threadList(input.threads, 'threads') : [];
     const text = personalText(input.text, 300).trim();
     let parentId: string | null = null;
     if (input.parentId != null) {
@@ -350,11 +378,14 @@ export class PersonalService {
     const todo = this.store.transaction(() => {
       // An agent's "me" item is a suggestion, unless it records existing threads or the person asked
       // for it through the plan page's summary: then it describes work that happened.
-      const recorded = links.some(id => id !== actor) || Boolean(actor && this.store.summaryThreadIds().has(actor));
-      const proposed = Boolean(actor && (patch.owner ?? 'me') === 'me' && !recorded);
+      // External provenance never inherits the summary/recorded-thread acceptance shortcuts.
+      const recorded = !signal && (links.some(id => id !== actor) || Boolean(actor && this.store.summaryThreadIds().has(actor)));
+      const proposed = Boolean(signal || (actor && (patch.owner ?? 'me') === 'me' && !recorded));
       const todo = this.store.createTodo(randomUUID(), text, parentId, { owner: patch.owner, dueAt: patch.dueAt, lane: patch.lane, importance: patch.importance, urgentUntil: patch.urgentUntil, source: patch.source, subscriptions: patch.subscriptions, proposed });
       if (this.recordsSelf(actor, links)) this.store.linkTodoThread(todo.id, actor!);
       for (const id of links) this.store.linkTodoThread(todo.id, id);
+      // Provenance lands in the archive's matter links; the source alone is not a delivery.
+      if (signal) this.store.associateSignal(signal.key, todo.id);
       // Work the person already marked done in every one of its threads is recorded as done.
       if (recorded && links.length && links.every(id => this.store.getThread(id)?.doneAt)) return this.store.updateTodo(todo.id, { done: true });
       if (proposed) this.store.saveTodoProposal({ id: randomUUID(), todoId: todo.id, kind: 'add', evidence: '', threadId: actor!, createdAt: new Date().toISOString(), state: 'open' });
@@ -377,7 +408,12 @@ export class PersonalService {
         return todo;
       }
     }
-    const current = this.store.checkTodoRev(id, input.rev === undefined && !actor ? this.store.getTodo(id)?.rev : input.rev), patch = this.patch(input, current.subscriptions);
+    const current = this.store.checkTodoRev(id, input.rev === undefined && !actor ? this.store.getTodo(id)?.rev : input.rev);
+    const signal = this.inputSignal(input, actor);
+    if (signal && Object.keys(input).some(key => input[key] !== undefined && !['rev', 'signal', 'note'].includes(key))) {
+      throw new HttpError(403, 'signal updates only attach provenance and a continuation note; change the matter itself without --signal');
+    }
+    const patch = this.patch(signal ? {} : input, current.subscriptions);
     if (actor && patch.owner !== undefined && patch.owner !== current.owner) throw new HttpError(403, 'agents cannot change ownership');
     if (actor && current.owner === 'me' && (patch.done === true || patch.state === 'done' || patch.owner === 'agent')) throw new HttpError(403, 'use calli todo propose-done for your personal commitments');
     if ((patch.state ?? current.state) === 'waiting' && !(patch.waitingOn ?? current.waitingOn)) throw new HttpError(400, 'waitingOn is required for waiting');
@@ -395,6 +431,7 @@ export class PersonalService {
       if (this.recordsSelf(actor, links)) this.store.linkTodoThread(id, actor!);
       for (const thread of links) this.store.linkTodoThread(id, thread);
       for (const thread of unlinks) this.store.unlinkTodoThread(id, thread);
+      if (signal) this.store.associateSignal(signal.key, id);
       return next;
     });
     this.manager.broadcastTodo();

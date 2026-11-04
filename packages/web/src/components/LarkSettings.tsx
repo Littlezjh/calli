@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { ApiError, type Api, type LarkChannelSettings, type LarkChannelStatus, type LarkSearchResult } from '../api';
 import { t } from '../i18n';
-import { LARK_INTERVALS, LARK_ROLES, larkHealth, realtimeLine } from '../lark';
+import { LARK_INTERVALS, LARK_ROLES, larkHealth, meetingEventCoverage, realtimeLine, withPostMeetingEvents } from '../lark';
 import { timeAgo } from '../sessions';
-import { IconChevron, IconClose, IconPlus, IconSearch } from './icons';
+import { IconChevron, IconClose, IconMinus, IconPlus, IconSearch } from './icons';
 import { Popover } from './Popover';
 
 /** The channel and how it is doing, for the settings section and the line on the desk. */
@@ -11,19 +11,34 @@ export function useLark(api: Api) {
   const [channel, setChannel] = useState<LarkChannelSettings | null>(null);
   const [status, setStatus] = useState<LarkChannelStatus | null>(null);
   const [loadError, setLoadError] = useState('');
+  const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState('');
+  const asked = useRef(0);
+  const ran = useRef(0);
   const load = useCallback(() => {
-    setLoadError('');
-    void Promise.all([api.larkChannel(), api.larkStatus()]).then(([nextChannel, nextStatus]) => { setChannel(nextChannel); setStatus(nextStatus); }).catch(e => setLoadError(e instanceof Error ? e.message : String(e)));
+    const ticket = ++asked.current;
+    setLoadError(''); setLoading(true);
+    void Promise.all([api.larkChannel(), api.larkStatus()]).then(([nextChannel, nextStatus]) => {
+      if (ticket === asked.current) { setChannel(nextChannel); setStatus(nextStatus); }
+    }).catch(e => {
+      if (ticket === asked.current) setLoadError(e instanceof Error ? e.message : String(e));
+    }).finally(() => { if (ticket === asked.current) setLoading(false); });
   }, [api]);
-  useEffect(load, [load]);
+  useEffect(() => {
+    setChannel(null); setStatus(null); setRunError(''); setRunning(false);
+    load();
+    return () => { ++asked.current; ++ran.current; };
+  }, [load]);
   const run = useCallback(() => {
     if (running) return;
+    const ticket = ++ran.current;
     setRunning(true); setRunError('');
-    void api.runLark().then(setStatus).catch(e => setRunError(e instanceof Error ? e.message : String(e))).finally(() => setRunning(false));
+    void api.runLark().then(next => { if (ticket === ran.current) setStatus(next); }).catch(e => {
+      if (ticket === ran.current) setRunError(e instanceof Error ? e.message : String(e));
+    }).finally(() => { if (ticket === ran.current) setRunning(false); });
   }, [api, running]);
-  return { channel, setChannel, status, loadError, load, run, running, runError };
+  return { channel, setChannel, status, loading, loadError, load, run, running, runError };
 }
 
 function LarkSearch({ api, kind, onPick }: { api: Api; kind: 'people' | 'chats'; onPick: (hit: LarkSearchResult) => void }) {
@@ -66,18 +81,29 @@ function RealtimeStatus({ status }: { status: LarkChannelStatus | null }) {
 
 /** The Lark section of the private settings. Changes wait for the dialog's Save; only reading now happens at once. */
 export function LarkSettings({ api, draft, onDraft }: { api: Api; draft: LarkChannelSettings | null; onDraft: (next: LarkChannelSettings) => void }) {
-  const { channel: savedChannel, setChannel, status, loadError, load, run, running, runError } = useLark(api);
-  const channel = draft ?? savedChannel;
+  const { channel: savedChannel, status, loadError, load, run, running, runError } = useLark(api);
+  // The parent stores drafts in a ref; subsequent edits must not be masked by its last render.
+  const [localDraft, setLocalDraft] = useState(draft);
+  useEffect(() => { setLocalDraft(draft); }, [api, draft]);
+  const meetingHintId = useId();
+  const channel = localDraft ?? savedChannel;
   if (loadError) return <div className="personal-setting-line"><span>{t('lark.name')}<small className="personal-warning" role="alert">{t('lark.loadFailed')}</small></span><button className="ghost" onClick={load}>{t('common.retry')}</button></div>;
   if (!channel) return <div className="personal-setting-line"><span>{t('lark.name')}<small role="status">{t('common.loading')}</small></span></div>;
   const save = (next: LarkChannelSettings) => {
-    setChannel(next);
+    setLocalDraft(next);
     onDraft(next);
   };
   const health = larkHealth(channel, status);
+  const coverage = meetingEventCoverage(channel.events);
   const known = (list: { id: string }[], id: string) => list.some(item => item.id === id);
   return <>
     <div className="personal-setting-line lark-head"><span>{t('lark.name')}<small>{t('lark.hint')}</small></span><button className="personal-switch" role="switch" aria-checked={channel.enabled} aria-label={t('lark.name')} onClick={() => save({ ...channel, enabled: !channel.enabled })}><span /></button></div>
+    <div className="personal-setting-line lark-meeting-events">
+      <span>{t('lark.meetingEvents')}<small id={meetingHintId}>{t(`lark.meetingEvents.${coverage}`)}</small></span>
+      <button className="personal-switch" role="checkbox" aria-checked={coverage === 'all' ? true : coverage === 'none' ? false : 'mixed'} aria-label={t('lark.meetingEvents')} aria-describedby={meetingHintId} disabled={coverage === 'unknown'} onClick={() => save(withPostMeetingEvents(channel, coverage !== 'all'))}>
+        <span>{(coverage === 'partial' || coverage === 'unknown') && <IconMinus size={11} />}</span>
+      </button>
+    </div>
     {channel.enabled && <div className="lark-body">
       <div className="lark-status" role="status">
         {health === 'no-cli' ? <p>{t('lark.noCli')}</p>

@@ -22,7 +22,7 @@ function responseError(text, status) {
   return text.trim().slice(0, 1000) || `HTTP ${status}`;
 }
 
-export async function transport(path, body, binary = false, personal = false) {
+export async function transport(path, body, binary = false, personal = false, socketOnly = false) {
   const socketPath = personal ? process.env.CALLI_TODO_SOCKET : process.env.CALLI_TOOLS_SOCKET;
   const key = personal ? process.env.CALLI_TODO_KEY : process.env.CALLI_TOOLS_KEY;
   if (socketPath || key) {
@@ -52,6 +52,7 @@ export async function transport(path, body, binary = false, personal = false) {
     });
   }
   if (personal) throw new Error('Personal commands require a new thread in the personal directory; see calli todo --help.');
+  if (socketOnly) throw new Error('Signal commands require thread-scoped Calli socket credentials; start a new Calli session.');
   const base = process.env.CALLI_URL;
   const token = process.env.CALLI_TOKEN;
   if (!base || !token) throw new Error('Run inside a new Calli agent session, or set CALLI_URL and CALLI_TOKEN.');

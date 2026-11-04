@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { larkProcess, messageCandidates, source, summary, withSender, type LarkChannel, type LarkChannelSettings, type LarkRealtimeStatus, type LarkSignal } from './lark.js';
+import { larkProcess, messageCandidates, source, summary, timestamp, withSender, type LarkChannel, type LarkChannelSettings, type LarkRealtimeStatus, type LarkSignal } from './lark.js';
+import { resourceId, type MeetingReference } from './lark-material.js';
 
 type ObjectValue = Record<string, any>;
 const object = (v: unknown): ObjectValue => v && typeof v === 'object' && !Array.isArray(v) ? v as ObjectValue : {};
@@ -21,12 +22,28 @@ export function eventSignals(input: unknown, key: string, settings: LarkChannelS
     return s ? [withSender({ summary: summary(`任务 ${guid}：${(Array.isArray(task.event_types) ? task.event_types : ['task_update']).join('、')}`),
       source: s, thread: { kind: 'lark-task', ref: guid } }, task, settings)] : [];
   }
-  // Meeting/minute events do not necessarily contain a calendar event ID. Do not guess one.
+  // Both CLI shortcuts and callback envelopes carry explicit resource identities.
   if (['vc.meeting.participant_meeting_ended_v1', 'minutes.minute.generated_v1', 'vc.note.generated_v1'].includes(key)) {
-    const s = source('lark-calendar', { create_time: header.create_time ?? row.timestamp }, header.event_id ?? row.event_id);
-    const calendarId = event.calendar_event_id;
-    return s ? [{ summary: summary(`${key}：${String(event.meeting_id ?? event.minute_token ?? event.note_id ?? s.ref)}`), source: s,
-      ...(typeof calendarId === 'string' && calendarId ? { thread: { kind: 'lark-calendar' as const, ref: calendarId } } : {}) }] : [];
+    const value = Object.keys(event).length ? event : row;
+    const ended = key === 'vc.meeting.participant_meeting_ended_v1';
+    const minutes = key === 'minutes.minute.generated_v1';
+    const artifactSource = object(minutes ? value.minute_source : value.note_source);
+    const meetingId = resourceId(value.meeting_id) ?? (artifactSource.source_type === 'meeting' ? resourceId(artifactSource.source_entity_id) : undefined);
+    const calendarId = resourceId(value.calendar_event_id);
+    const startedAt = timestamp(value.start_time), endedAt = timestamp(value.end_time);
+    const title = summary(value.topic ?? value.title, 200);
+    const fields: MeetingReference = {
+      event: ended ? 'ended' : minutes ? 'minutes-generated' : 'note-generated',
+      meetingId, calendarEventId: calendarId,
+      ...(!ended && !minutes ? { noteId: resourceId(value.note_id), noteDocToken: resourceId(value.note_doc_token ?? value.note_token) } : {}),
+      ...(minutes ? { minuteToken: resourceId(value.minute_token, 'minutes') } : {}),
+      ...(title ? { title } : {}), startedAt, endedAt,
+    };
+    const meeting = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined)) as unknown as MeetingReference;
+    // An ended meeting has an actual end time, but never an invented commitment deadline.
+    const s = source('lark-calendar', { create_time: ended && endedAt ? endedAt : header.create_time ?? row.timestamp }, header.event_id ?? row.event_id);
+    return s ? [{ summary: summary(`${ended ? '会议结束' : minutes ? '妙记已生成' : '会议纪要已生成'}：${title || meetingId || meeting.noteId || meeting.minuteToken || s.ref}`), source: s, meeting,
+      ...(calendarId ? { thread: { kind: 'lark-calendar' as const, ref: calendarId } } : {}) }] : [];
   }
   return [];
 }

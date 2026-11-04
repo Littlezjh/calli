@@ -10,7 +10,8 @@ import { HttpError } from './errors.js';
 import type { StoredEvent } from './events.js';
 import { turnOutcome } from './lifecycle.js';
 import type { PersonalBrowser } from './personal-browser.js';
-import type { Store } from './store.js';
+import { signalArchiveKey } from './personal.js';
+import type { SignalRecord, Store } from './store.js';
 import type { ThreadManager } from './threads.js';
 import type { ToolArtifact, ToolJob } from './tool-jobs.js';
 
@@ -136,6 +137,19 @@ export class BorrowingService {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new HttpError(400, 'command must be an object');
     const input = raw as Record<string, unknown>;
     switch (input.op) {
+      case 'signals.show': {
+        if (owner === 'operator') throw new HttpError(403, 'signals require thread-scoped credentials');
+        return this.scopedSignal(owner, signalArchiveKey(input.key));
+      }
+      case 'signals.material': {
+        if (owner === 'operator') throw new HttpError(403, 'signals require thread-scoped credentials');
+        const key = signalArchiveKey(input.key);
+        this.scopedSignal(owner, key);
+        const read = await this.manager.lark.readMaterial(key);
+        // A matter can be unlinked or the caller deleted while the bounded read is in flight.
+        this.scopedSignal(owner, key);
+        return { key, ...read };
+      }
       case 'quiet':
         if (owner === 'operator') throw new HttpError(403, 'quiet requires thread-scoped credentials');
         return this.manager.quiet(owner);
@@ -174,6 +188,19 @@ export class BorrowingService {
       }
       default: throw new HttpError(400, 'unknown tools command');
     }
+  }
+
+  /** Tools credentials grant one delivered/associated record, never private-archive access. */
+  private scopedSignal(owner: string, key: string): SignalRecord {
+    if (owner === 'operator') throw new HttpError(403, 'signals require thread-scoped credentials');
+    const record = this.store.getSignal(key);
+    if (!this.store.getThread(owner) || !record || record.disposition.outcome === 'filtered') throw new HttpError(404, 'signal not found');
+    const disposition = record.disposition;
+    const delivered = disposition.deliveries?.some(delivery => delivery.threadId === owner)
+      || (disposition.outcome === 'delivered' && (disposition.threadId === owner || disposition.threadIds?.includes(owner)));
+    const associated = disposition.matterIds?.some(id => this.store.getTodo(id) && this.store.todoThreadIds(id).includes(owner));
+    if (!delivered && !associated) throw new HttpError(404, 'signal not found');
+    return this.manager.lark.signal(key);
   }
 
   private owned(owner: string, id: unknown): ToolJob {

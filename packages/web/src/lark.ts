@@ -12,8 +12,37 @@ export function larkHealth(channel: LarkChannelSettings | null, status: LarkChan
   return status.lastError ? 'failed' : 'ok';
 }
 
+/** Null status still means off to larkHealth; loading and failed reads are separate page states. */
+export type LarkSourceState = 'loading' | 'unknown' | 'load-failed' | 'off' | 'ready';
+export function larkSourceState(channel: LarkChannelSettings | null, status: LarkChannelStatus | null, loading: boolean, loadError: string): LarkSourceState {
+  if (loadError) return 'load-failed';
+  if (loading) return 'loading';
+  if (!channel) return 'unknown';
+  if (!channel.enabled) return 'off';
+  return status ? 'ready' : 'unknown';
+}
+
 export const LARK_ROLES = ['boss', 'pm', 'other'] as const;
 export const LARK_INTERVALS = [15, 30, 60, 120];
+export const POST_MEETING_EVENTS = ['vc.meeting.participant_meeting_ended_v1', 'vc.note.generated_v1', 'minutes.minute.generated_v1'] as const;
+export type MeetingEventCoverage = 'unknown' | 'none' | 'partial' | 'all';
+
+/** Configuration only, not evidence that the realtime channel receives these events. */
+export function meetingEventCoverage(events: readonly string[] | undefined): MeetingEventCoverage {
+  if (!Array.isArray(events)) return 'unknown';
+  const count = POST_MEETING_EVENTS.filter(event => events.includes(event)).length;
+  return count === POST_MEETING_EVENTS.length ? 'all' : count > 0 ? 'partial' : 'none';
+}
+
+/** A draft edit: keep other event keys and the global switch, and never invent an unknown list. */
+export function withPostMeetingEvents(channel: LarkChannelSettings, enabled: boolean): LarkChannelSettings {
+  const current = channel.events;
+  if (!Array.isArray(current)) return channel;
+  const events = enabled
+    ? [...current, ...POST_MEETING_EVENTS.filter(event => !current.includes(event))]
+    : current.filter(event => !(POST_MEETING_EVENTS as readonly string[]).includes(event));
+  return events.length === current.length ? channel : { ...channel, events };
+}
 
 /** The realtime line: quiet when live, a warning when events are not coming in, nothing while it settles. */
 export function realtimeLine(realtime: LarkRealtime | undefined): { text: string; warn: boolean } | null {

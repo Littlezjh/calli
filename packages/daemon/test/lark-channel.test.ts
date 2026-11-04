@@ -220,8 +220,11 @@ test('one successful fan-out keeps Router informational; Router failure never ad
     h.failures.set('full', new HttpError(409, 'queue full')); h.fail(true);
     assert.equal((await h.channel.run()).lastError, 'lark_read_failed'); assert.throws(h.cursor, /ENOENT/);
     assert.equal(h.deliveries.length, 1); h.fail(false);
-    await h.channel.run(); assert.equal(JSON.parse(h.sent[0]).delivered, true);
-    assert.equal(JSON.parse(h.sent[0]).summary, '已交给在跟的线程：事项 one'); assert.equal(h.cursor().seen.length, 1);
+    await h.channel.run(); const lines = h.sent[0].split('\n').map(s => JSON.parse(s));
+    assert.equal(lines[0].delivered, true);
+    assert.equal(lines[0].summary, '已交给在跟的线程：事项 one'); assert.equal(h.cursor().seen.length, 1);
+    assert.deepEqual(lines[1].matterIds, ['two'], 'a queue-full matter falls back to the Router with its signal');
+    assert.equal(lines[1].source.ref, 'message');
   } finally { await h.close(); }
 });
 
@@ -305,4 +308,123 @@ test('root-ID subscriptions survive the CLI resolving their ID to a topic ID', a
     await h.channel.run(); assert.equal(h.deliveries.length, 1);
     assert.equal(h.store.getSignal('lark-message:om_reply')?.disposition.outcome, 'delivered');
   } finally { await h.close(); }
+});
+
+const minuteMaterial = (minute_token: string, over: Record<string, unknown> = {}) => ({ minutes: [{ minute_token, status: 'ready', ...over }] });
+const meetingSignal = (ref: string, meeting: Record<string, unknown>) => ({ summary: '评审会', source: { type: 'lark-calendar' as const, ref }, meeting: { meetingId: 'mtg1', ...meeting } });
+
+test('explicit material reads parse structured nonzero artifacts, reuse only complete caches and single-flight', async () => {
+  const minutes = (over: Record<string, unknown> = {}) => ({ 'minutes +detail': { min1: { ...over } } });
+  const h = setup({ material: minutes({ exitCode: 1, stderr: 'partial fetch diagnostics', data: minuteMaterial('min1', { artifacts: { summary: '三项结论', todos: [{ content: '补齐评审材料' }, { content: '  ' }, { content: '下周对齐排期' }] } }) }) });
+  try {
+    h.channel.save(settings);
+    await h.channel.receive([meetingSignal('evt_minutes', { event: 'minutes-generated', minuteToken: 'min1' })]);
+    assert.equal(JSON.parse(h.sent[0]).key, 'lark-calendar:evt_minutes');
+    const read = await h.channel.readMaterial('lark-calendar:evt_minutes');
+    assert.equal(read.material.state, 'ready'); assert.equal(read.material.kind, 'minutes'); assert.equal(read.material.partial, true);
+    assert.match(read.content!, /三项结论/); assert.match(read.content!, /- 补齐评审材料/); assert.match(read.content!, /- 下周对齐排期/);
+    assert.ok(!read.content!.includes('partial fetch diagnostics'), 'stderr never crosses the boundary');
+    const detail = () => h.calls().filter(a => a[0] === 'minutes').length;
+    await h.channel.readMaterial('lark-calendar:evt_minutes');
+    assert.equal(detail(), 2, 'a partial body is stored but never reused');
+    h.config({ material: minutes({ data: minuteMaterial('min1', { artifacts: { summary: '完整纪要', todos: [] } }) }) });
+    const complete = await h.channel.readMaterial('lark-calendar:evt_minutes');
+    assert.equal(complete.material.partial, undefined); assert.equal(complete.content, '完整纪要');
+    assert.equal((await h.channel.readMaterial('lark-calendar:evt_minutes')).content, '完整纪要');
+    assert.equal(detail(), 3, 'a complete body serves later reads without another CLI call');
+    h.channel.save({ ...settings, intervalMin: 45 });
+    h.config({ material: minutes({ delay: 150, data: minuteMaterial('min1', { artifacts: { summary: '并发读取', todos: [] } }) }) });
+    const pair = await Promise.all([h.channel.readMaterial('lark-calendar:evt_minutes'), h.channel.readMaterial('lark-calendar:evt_minutes')]);
+    assert.deepEqual(pair[0], pair[1]); assert.equal(detail(), 4, 'concurrent reads of one signal share a single flight');
+  } finally { await h.close(); }
+});
+
+test('note material resolves through its document token with keyword fallback and stays partial; processing minutes are not-ready', async () => {
+  const noteMaterial = (chinese: string, english: string) => ({ material: {
+    'note +detail': { note1: { data: { note: { note_id: 'note1', note_doc_token: 'doc1' } } } },
+    'docs +fetch': { doc1: { keywords: { '待办': { data: { document: { content: chinese } } }, 'TODO': { data: { document: { content: english } } } } } },
+  } });
+  const h = setup(noteMaterial('', '## TODO\n- 写会议纪要'));
+  try {
+    h.channel.save(settings);
+    await h.channel.receive([meetingSignal('evt_note', { event: 'note-generated', noteId: 'note1' })]);
+    const read = await h.channel.readMaterial('lark-calendar:evt_note');
+    assert.equal(read.material.state, 'ready'); assert.equal(read.material.kind, 'note'); assert.equal(read.material.partial, true);
+    assert.match(read.content!, /写会议纪要/);
+    assert.deepEqual(h.calls().filter(a => a[0] === 'docs').map(a => a[a.indexOf('--keyword') + 1]), ['待办', 'TODO'], 'an empty 待办 excerpt falls through to TODO');
+    h.config(noteMaterial('', ''));
+    const empty = await h.channel.readMaterial('lark-calendar:evt_note');
+    assert.equal(empty.material.state, 'empty'); assert.equal(empty.material.partial, true); assert.equal(empty.content, null);
+    await h.channel.receive([meetingSignal('evt_processing', { event: 'minutes-generated', minuteToken: 'tok2' })]);
+    const processing = await h.channel.readMaterial('lark-calendar:evt_processing');
+    assert.equal(processing.material.state, 'not-ready'); assert.equal(processing.content, null); assert.equal(processing.material.kind, 'minutes');
+    await h.channel.readMaterial('lark-calendar:evt_processing');
+    assert.equal(h.calls().filter(a => a[0] === 'minutes' && a.includes('tok2')).length, 2, 'not-ready is re-read on every explicit request');
+  } finally { await h.close(); }
+});
+
+test('material reads resolve meetings through vc detail, map CLI errors to stable codes, and validate keys', async () => {
+  const resolve = { 'vc +detail': { mtg1: { data: { meetings: [{ meeting_id: 'mtg1', note_id: 'note9' }] } } },
+    'note +detail': { note9: { data: { note: { note_id: 'note9', note_doc_token: 'doc9' } } } } };
+  const withDocs = (response: Record<string, unknown>) => ({ material: { ...resolve, 'docs +fetch': { doc9: { keywords: { '待办': response } } } } });
+  const h = setup(withDocs({ stdout: JSON.stringify({ ok: false, error: { code: 121005 } }) }));
+  try {
+    h.channel.save(settings);
+    await h.channel.receive([meetingSignal('evt_ended', { event: 'ended' })]);
+    const denied = await h.channel.readMaterial('lark-calendar:evt_ended');
+    assert.equal(denied.material.state, 'failed'); assert.equal(denied.material.error, 'material_permission_denied');
+    assert.ok(h.calls().some(a => a[1] === '+detail' && a[2] === '--meeting-ids'), 'a bare ended meeting resolves its Note through vc detail');
+    h.config(withDocs({ stdout: JSON.stringify({ ok: false, error: { code: '2091004' } }) }));
+    assert.equal((await h.channel.readMaterial('lark-calendar:evt_ended')).material.error, 'material_not_found');
+    h.config(withDocs({ exitCode: 1, stderr: 'SECRET diagnostics', stdout: 'not json' }));
+    const crashed = await h.channel.readMaterial('lark-calendar:evt_ended');
+    assert.equal(crashed.material.error, 'cli_failed'); assert.ok(!JSON.stringify(crashed).includes('SECRET'));
+    await h.channel.receive([{ summary: '任务', source: { type: 'lark-task' as const, ref: 'task7' } }]);
+    const bare = await h.channel.readMaterial('lark-task:task7');
+    assert.equal(bare.material.state, 'failed'); assert.equal(bare.material.error, 'material_unavailable');
+    await h.channel.receive([{ summary: '今天天气不错', source: { type: 'lark-message' as const, ref: 'noise1' }, message: { senderId: 'ou_watch', mentions: [], atMe: false, deleted: false } }]);
+    for (const [key, status] of [['', 400], ['x'.repeat(241), 400], ['bad\nkey', 400], ['lark-calendar:absent', 404], ['lark-message:noise1', 404]] as const) {
+      assert.throws(() => h.channel.signal(key), (error: unknown) => error instanceof HttpError && error.status === status, key);
+    }
+  } finally { await h.close(); }
+  const offline = setup({ loggedIn: false }); try {
+    offline.channel.save(settings);
+    await offline.channel.receive([meetingSignal('evt_offline', { event: 'minutes-generated', minuteToken: 'min1' })]);
+    const read = await offline.channel.readMaterial('lark-calendar:evt_offline');
+    assert.equal(read.material.error, 'lark_not_logged_in'); assert.equal(offline.channel.signal('lark-calendar:evt_offline').disposition.outcome, 'router');
+  } finally { await offline.close(); }
+});
+
+test('settings, identity or shutdown invalidates in-flight material reads; the overall budget bounds them', async () => {
+  const slow = (token: string) => ({ 'minutes +detail': { [token]: { delay: 150, data: minuteMaterial(token, { artifacts: { summary: '慢速返回', todos: [] } }) } } });
+  const seen = (h: ReturnType<typeof setup>, token: string) => { try { return h.calls().some(a => a[0] === 'minutes' && a.includes(token)); } catch { return false; } };
+  const settle = async (check: () => boolean) => { while (!check()) await new Promise(r => setTimeout(r, 5)); };
+  const h = setup({ material: slow('min3') });
+  try {
+    h.channel.save(settings);
+    await h.channel.receive([meetingSignal('evt_saved', { event: 'minutes-generated', minuteToken: 'min3' })]);
+    const saved = h.channel.readMaterial('lark-calendar:evt_saved');
+    await new Promise(r => setTimeout(r, 25));
+    h.channel.save({ ...settings, intervalMin: 45 });
+    assert.equal((await saved).material.error, 'lark_configuration_changed');
+    const flipped = h.channel.readMaterial('lark-calendar:evt_saved');
+    await settle(() => seen(h, 'min3'));
+    h.config({ identity: 'ou_other', material: slow('min3') });
+    assert.equal((await flipped).material.error, 'lark_identity_changed');
+    assert.equal((await h.channel.readMaterial('lark-calendar:evt_saved')).material.state, 'ready', 'the next read runs under the new identity');
+    const budget = new LarkChannel(h.store, h.personal, { ...h.opts, materialTimeoutMs: 120 });
+    try {
+      await h.channel.receive([meetingSignal('evt_budget', { event: 'minutes-generated', minuteToken: 'min4' })]);
+      h.config({ material: slow('min4') });
+      assert.equal((await budget.readMaterial('lark-calendar:evt_budget')).material.error, 'cli_timeout');
+    } finally { await budget.dispose(); }
+  } finally { await h.close(); }
+  const d = setup({ material: slow('min5') }); try {
+    d.channel.save(settings);
+    await d.channel.receive([meetingSignal('evt_gone', { event: 'minutes-generated', minuteToken: 'min5' })]);
+    const gone = d.channel.readMaterial('lark-calendar:evt_gone');
+    await new Promise(r => setTimeout(r, 25));
+    await d.channel.dispose();
+    assert.equal((await gone).material.error, 'lark_disabled');
+  } finally { await d.close(); }
 });
