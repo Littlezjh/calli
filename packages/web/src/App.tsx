@@ -1451,12 +1451,13 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     if (!force && lastFocusModelRefresh.current?.agent === activeAgent && now - lastFocusModelRefresh.current.at < 1000) return;
     lastFocusModelRefresh.current = { agent: activeAgent, at: now };
     const version = modelVersions.current[activeAgent] ?? 0;
+    // Opening the picker refreshes optional metadata instead of reusing the cached catalog.
     void api
-      .models(activeAgent)
+      .models(activeAgent, force)
       .then((list) => {
         if ((modelVersions.current[activeAgent] ?? 0) === version) setModelsByAgent(prev => ({ ...prev, [activeAgent]: list }));
       })
-      .catch(() => undefined);
+      .catch(error => { if (force) handleError(error); });
   }, [api, activeAgent]);
 
   // Models of an agent other than the thread's own, for choosing what its members start with.

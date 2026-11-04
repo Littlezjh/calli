@@ -9377,6 +9377,22 @@ div.file-card:hover { background: var(--surface); }
   text-overflow: ellipsis;
 }
 
+/* Leave the selected model name intact when the catalog also reports queue availability. */
+.model-status-line {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+}
+
+/* Keep the queue state first; a long localized observation age must not stretch the card. */
+.model-status-line .model-inline-queue {
+  min-width: 0;
+  flex-shrink: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .effort-model svg { flex-shrink: 0; }
 .effort-model:hover { background: var(--hover); color: var(--text); }
 .effort-reset:disabled { opacity: 0.4; }

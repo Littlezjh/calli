@@ -841,10 +841,10 @@ export class ThreadManager {
     return adapter.models(refresh);
   }
 
-  async listModels(agent: string): Promise<ModelOption[]> {
+  async listModels(agent: string, refresh = false): Promise<ModelOption[]> {
     const adapter = this.adapters.get(agent);
     if (!adapter) throw new HttpError(404, `unknown agent: ${agent}`);
-    return this.adapterModels(adapter);
+    return this.adapterModels(adapter, refresh);
   }
 
   /** Turns of any thread, archived ones too, in which the words were said. */

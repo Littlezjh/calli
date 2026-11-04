@@ -617,7 +617,7 @@ export function createHttpServer(deps: HttpDeps): Server {
 
     // GET /api/agents/:id/models
     if (method === 'GET' && parts[0] === 'api' && parts[1] === 'agents' && parts[2] && parts[3] === 'models') {
-      return sendJson(res, 200, await manager.listModels(parts[2]));
+      return sendJson(res, 200, await manager.listModels(parts[2], url.searchParams.get('refresh') === '1'));
     }
 
     // Skills: what each agent instance has, where it came from, and how a copy moves between
