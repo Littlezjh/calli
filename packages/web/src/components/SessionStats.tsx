@@ -15,7 +15,7 @@ export function compactTokens(value: number): string {
 /** 6.5% → 6.5%, 99.48% → 99.5%: one decimal is enough to read a share. */
 const percentLabel = (value: number): string => `${(Math.floor(value * 1000) / 10).toFixed(1)}%`;
 
-/** 1407594 ms → 23 分 28 秒, in the shared duration wording. */
+/** 1407594 ms -> 23m 28s, in the shared duration wording. */
 export function durationMsLabel(msValue: number): string {
   const secs = msValue / 1000;
   if (secs < 60) return t('duration.seconds', secs < 10 ? secs.toFixed(1) : String(Math.round(secs)));
@@ -74,7 +74,7 @@ function StatHead({ icon, title, value }: { icon: ReactNode; title: string; valu
   );
 }
 
-/** 12 轮 · 86 步 / 51 362 118 / 约 74 tok/s: the numbers a reading opens onto. */
+/** 12 turns · 86 steps / 51 362 118 / ~74 tok/s: the numbers a reading opens onto. */
 function SessionStatsPanel({ stats, onOpenTrace }: { stats: ThreadStats; onOpenTrace?: () => void }) {
   if (!stats.timing) return null;
   const approx = stats.timing.source === 'hub';

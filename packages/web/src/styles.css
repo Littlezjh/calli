@@ -3141,15 +3141,29 @@ html.list-open body {
 }
 
 .selection-menu.commenting.docked {
+  align-items: center;
+  padding: 4px 4px 4px 14px;
+  border-radius: var(--radius-pill);
+}
+
+.selection-menu.commenting.docked.tagged {
   flex-direction: column;
   align-items: stretch;
   gap: 6px;
-  padding: 10px 6px 6px 14px;
+  padding: 8px 6px 6px 14px;
   border-radius: var(--radius-lg);
+}
+
+.selection-menu.commenting.docked .selection-field {
+  flex: 1;
 }
 
 .app:has(.selection-menu.docked) .composer-box {
   visibility: hidden;
+}
+
+.app:has(.selection-menu.docked) .jump-anchor {
+  display: none;
 }
 
 .selection-quote {
