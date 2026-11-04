@@ -3,7 +3,7 @@ import { Fragment, useEffect, useState, type MouseEvent, type ReactNode } from '
 import type { AgentInfo, HostInfo, SearchHit, Section, Thread } from '../api';
 import { clockLabel } from '../timeline';
 import { useInTitlebar, useLongPress, useStoredFlag, useStoredSet } from '../hooks';
-import { attentionCount, threadMark, waitingLabel } from '../notices';
+import { attentionCount, threadMark, waitingLabel, type ThreadMark } from '../notices';
 import { folderName } from '../paths';
 import { buildActivity, buildMerged, buildSidebar, handoverGroups, markTerms, navOverflow, projectDir, SEARCH_MIN, taggedAgents, type HostSource } from '../sidebar';
 import { timeAgo } from '../sessions';
@@ -284,6 +284,24 @@ export function Sidebar({
   const busy = (thread: Thread) => (thread.waiting ? 2 : thread.status === 'running' ? 1 : 0);
   const teamOrder = (a: Thread, b: Thread) => busy(b) - busy(a) || b.updatedAt.localeCompare(a.updatedAt);
 
+  // One run of overlapping agent marks, the frontmost carrying the most urgency; the words stay in
+  // the button's label. Like Orca's crew stack. Null when any agent has no mark, so text takes over.
+  const stackLine = (list: Thread[], dimQuiet = true) => {
+    const chips = list.map((m) => ({ id: m.id, mark: agentById.get(m.agent)?.icon, quiet: busy(m) === 0 && !threadMark(m, m.id === selectedId) }));
+    if (chips.some((c) => !c.mark)) return null;
+    const shown = chips.slice(0, 3);
+    return <span className="stack-line">
+      {shown.map((c, i) => <span key={c.id} className={`stack-chip${dimQuiet && c.quiet ? ' dim' : ''}`} style={{ zIndex: shown.length - i }}><AgentMark path={c.mark as string} size={compact ? 14 : 13} /></span>)}
+      {chips.length > shown.length && <span className="stack-more" aria-hidden="true">+{chips.length - shown.length}</span>}
+    </span>;
+  };
+  // One dot stands for the whole run: waiting, then error, unread, running; none when all is quiet.
+  const runDot = (list: Thread[]) => {
+    const marks = [...new Set(list.map((m) => threadMark(m, m.id === selectedId)).filter(Boolean))] as ThreadMark[];
+    const mark = (['waiting', 'error', 'unread', 'running'] as const).find((m) => marks.includes(m));
+    return mark ? <span className={`dot ${mark}`} role="img" aria-label={MARK_LABELS[mark]} title={MARK_LABELS[mark]} /> : null;
+  };
+
   // Like Orca's agents under a task: the lead's row, then one line per member saying what it is doing.
   const entry = (thread: Thread, on?: Elsewhere) => {
     const team = members?.get(thread.id);
@@ -293,14 +311,19 @@ export function Sidebar({
     const open = Boolean(search.trim()) || (teamOpen.get(thread.id) ?? auto);
     const working = sorted.filter((m) => m.status === 'running').length;
     const waiting = sorted.filter((m) => m.waiting).length;
-    const marks = [...new Set(sorted.map((m) => threadMark(m, m.id === selectedId)).filter(Boolean))];
+    const stack = stackLine(sorted);
     const current = thread.id === selectedId || sorted.some((m) => m.id === selectedId);
     return <div key={thread.id} className={`handover-group team-group${open ? ' open' : ''}${current ? ' selected' : ''}`}>
       {row(thread, thread.title, thread.preview, undefined, on)}
-      <button className="handover-toggle" aria-label={open ? t('sidebar.collapseTeam', thread.title) : t('sidebar.expandTeam', thread.title)} aria-expanded={open} onClick={() => setTeamOpen((old) => new Map(old).set(thread.id, !open))}>
-        <span>{t('sidebar.agents', sorted.length)}</span>
-        {(waiting || working) > 0 && <span className="team-note">{waiting ? t('sidebar.waitingCount', waiting) : t('team.running', working)}</span>}
-        {!open && marks.length > 0 && <span className="handover-marks">{marks.map((mark) => <span key={mark} className={`dot ${mark}`} role="img" aria-label={MARK_LABELS[mark!]} title={MARK_LABELS[mark!]} />)}</span>}
+      <button className="handover-toggle" aria-expanded={open} onClick={() => setTeamOpen((old) => new Map(old).set(thread.id, !open))}
+        aria-label={[t('sidebar.agents', sorted.length), waiting ? t('sidebar.waitingCount', waiting) : working ? t('team.running', working) : null, open ? t('sidebar.collapseTeam', thread.title) : t('sidebar.expandTeam', thread.title)].filter(Boolean).join(' · ')}>
+        {stack ? <>
+          {runDot(sorted)}
+          {stack}
+        </> : <>
+          <span>{t('sidebar.agents', sorted.length)}</span>
+          {(waiting || working) > 0 && <span className="team-note">{waiting ? t('sidebar.waitingCount', waiting) : t('team.running', working)}</span>}
+        </>}
         <IconChevron size={13} open={open} />
       </button>
       {open && <div className="handover-members">{sorted.map((m) => {
@@ -328,18 +351,23 @@ export function Sidebar({
     if (members.length === 1) return entry(latest);
     const storageKey = `${hostId ?? 'local'}:${key}`;
     const expanded = Boolean(search.trim()) || expandedHandovers.has(storageKey);
-    const marks = [...new Set(members.filter((thread) => thread.id !== latest.id).map((thread) => threadMark(thread, thread.id === selectedId)).filter(Boolean))];
+    const marks = [...new Set(members.filter((thread) => thread.id !== latest.id).map((thread) => threadMark(thread, thread.id === selectedId)).filter(Boolean))] as ThreadMark[];
+    const chainStack = stackLine(members, false);
+    const chainDot = (['waiting', 'error', 'unread', 'running'] as const).find((m) => marks.includes(m));
     const current = members.some((thread) => thread.id === selectedId);
     // Like Orca's agents under a task: one card, the latest conversation on top, the chain folded below it.
     return <div key={key} className={`handover-group${expanded ? ' open' : ''}${current ? ' selected' : ''}`}>
       {row(latest, latest.title.replace(/(?:（接手）)+$/, ''), latest.preview, members)}
-      <button className="handover-toggle" aria-label={expanded ? t('sidebar.collapseHandover', latest.title) : t('sidebar.expandHandover', latest.title)} aria-expanded={expanded} onClick={() => setExpandedHandovers((old) => {
+      <button className="handover-toggle" aria-expanded={expanded} onClick={() => setExpandedHandovers((old) => {
         const next = new Set(old);
         if (next.has(storageKey)) next.delete(storageKey); else next.add(storageKey);
         return next;
-      })}>
-        <span>{t('sidebar.sessions', members.length)}</span>
-        {!expanded && marks.length > 0 && <span className="handover-marks">{marks.map((mark) => <span key={mark} className={`dot ${mark}`} role="img" aria-label={t('sidebar.otherHandover', MARK_LABELS[mark!])} title={t('sidebar.otherHandover', MARK_LABELS[mark!])} />)}</span>}
+      })}
+        aria-label={[t('sidebar.sessions', members.length), expanded ? t('sidebar.collapseHandover', latest.title) : t('sidebar.expandHandover', latest.title)].join(' · ')}>
+        {chainStack ? <>
+          {chainDot && <span className={`dot ${chainDot}`} role="img" aria-label={t('sidebar.otherHandover', MARK_LABELS[chainDot])} title={t('sidebar.otherHandover', MARK_LABELS[chainDot])} />}
+          {chainStack}
+        </> : <span>{t('sidebar.sessions', members.length)}</span>}
         <IconChevron size={13} open={expanded} />
       </button>
       {expanded && <div className="handover-members handover-chain">{members.map((thread) => {
