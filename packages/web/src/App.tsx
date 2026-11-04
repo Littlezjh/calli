@@ -99,6 +99,7 @@ import { NoteMarks, type NoteMark } from './components/NoteMarks';
 import { Toast, type ToastState } from './components/Toast';
 import { ConnectDialog, DemoBar } from './components/ConnectDialog';
 import { DemoApi, DemoError } from './demo/DemoApi';
+import { type DraftModelPreference, switchDraftModelPreference } from './draft-preferences';
 import { IconCheck, IconBell, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconSettings, IconMore, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconTrace, IconLanguage, IconWaveform } from './components/icons';
 import { StatReadings } from './components/SessionStats';
 import { ThreadTracePanel } from './components/TracePanel';
@@ -347,6 +348,15 @@ function savedMemberDefaults(key: string): Record<string, MemberDefault> {
   }
 }
 
+function fitDraftModelPreference(value: DraftModelPreference, models: ModelOption[], effortLevels: string[], canSpeed: boolean): DraftModelPreference {
+  const model = value.model && models.length > 0 && !models.some((option) => option.id === value.model) ? null : value.model;
+  const levels = effortsForModel(models, model, effortLevels);
+  const effort = value.effort && (levels.includes(value.effort) || (models.length === 0 && effortLevels.length === 0)) ? value.effort : null;
+  const speeds = speedsForModel(models, model);
+  const speed = canSpeed && value.speed && (models.length === 0 || speeds.some((option) => option.id === value.speed)) ? value.speed : null;
+  return { model, effort, speed };
+}
+
 /** The model and thinking effort for one instance's members: a quiet mark until something is chosen. */
 function MemberModel({ agent, models, value, permission, onNeed, onChange, onPermission }: {
   agent: AgentInfo; models: ModelOption[]; value: MemberDefault; onNeed: (agent: string) => void; onChange: (value: MemberDefault) => void;
@@ -590,6 +600,9 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const [draftModel, setDraftModel] = useState<string | null>(null);
   const [draftEffort, setDraftEffort] = useState<string | null>(null);
   const [draftSpeed, setDraftSpeed] = useState<string | null>(null);
+  const draftModelPreferences = useRef<Record<string, DraftModelPreference>>({});
+  const draftPreferencesApi = useRef<Api | null>(api);
+  const draftPreferenceSave = useRef<{ api: Api | null; pending: Record<string, DraftModelPreference> | null; running: boolean }>({ api, pending: null, running: false });
   const [modelsByAgent, setModelsByAgent] = useState<Record<string, ModelOption[]>>({});
   const modelVersions = useRef<Record<string, number>>({});
   const [commandsByKey, setCommandsByKey] = useState<Record<string, SlashCommand[]>>({});
@@ -826,6 +839,109 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const latestSegment = selected ? latestHandoverThread(selected, threads) : null;
   const viewingEarlier = Boolean(selected && latestSegment && latestSegment.id !== selected.id);
   const mergedHandover = !api.demo && singleSegmentId !== selectedId && Boolean(selected?.handover?.mode === 'continue' || viewingEarlier);
+  const flushDraftModelPreferences = (targetApi: Api) => {
+    const save = draftPreferenceSave.current;
+    if (save.api !== targetApi || save.running || targetApi.demo || !save.pending) return;
+    const preferences = save.pending;
+    save.pending = null;
+    save.running = true;
+    void targetApi.saveDraftModelPreferences(preferences)
+      .then((saved) => {
+        if (draftPreferencesApi.current === targetApi && draftPreferenceSave.current.api === targetApi && !draftPreferenceSave.current.pending) {
+          draftModelPreferences.current = saved;
+        }
+      })
+      .catch((e) => {
+        if (draftPreferencesApi.current === targetApi && draftPreferenceSave.current.api === targetApi) setError(message(e));
+      })
+      .finally(() => {
+        if (draftPreferenceSave.current.api !== targetApi) return;
+        draftPreferenceSave.current.running = false;
+        flushDraftModelPreferences(targetApi);
+      });
+  };
+  const persistDraftModelPreferences = (preferences: Record<string, DraftModelPreference>) => {
+    draftPreferencesApi.current = api;
+    draftModelPreferences.current = preferences;
+    if (!api.demo) {
+      if (draftPreferenceSave.current.api !== api) draftPreferenceSave.current = { api, pending: null, running: false };
+      draftPreferenceSave.current.pending = preferences;
+      flushDraftModelPreferences(api);
+    }
+  };
+  const flushDraftModelPreferencesOnExit = (targetApi: Api) => {
+    const save = draftPreferenceSave.current;
+    if (targetApi.demo || draftPreferencesApi.current !== targetApi || save.api !== targetApi || (!save.pending && !save.running)) return;
+    void targetApi.saveDraftModelPreferences(draftModelPreferences.current, { keepalive: true }).catch(() => undefined);
+  };
+  const ensureDraftPreferenceApi = () => {
+    if (draftPreferencesApi.current === api) return true;
+    draftPreferencesApi.current = api;
+    draftModelPreferences.current = {};
+    draftPreferenceSave.current = { api, pending: null, running: false };
+    return false;
+  };
+  const selectDraftAgent = (id: string, list = agents, rememberCurrent = true) => {
+    const sameDaemon = ensureDraftPreferenceApi();
+    const remembered = switchDraftModelPreference(
+      draftModelPreferences.current,
+      rememberCurrent && sameDaemon ? draftAgent : '',
+      { model: draftModel, effort: draftEffort, speed: draftSpeed },
+      id,
+    );
+    if (remembered.preferences !== draftModelPreferences.current) persistDraftModelPreferences(remembered.preferences);
+    const caps = list.find((item) => item.id === id)?.capabilities;
+    const fitted = fitDraftModelPreference(remembered.preference, modelsByAgent[id] ?? [], caps?.effortLevels ?? [], Boolean(caps?.speed));
+    setDraftAgent(id);
+    setDraftWorkMode('execute');
+    setDraftModel(fitted.model);
+    setDraftEffort(fitted.effort);
+    setDraftSpeed(fitted.speed);
+    // Each agent starts at its own level: one that cannot ask starts where it can work.
+    if (caps) setDraftPermission(startingPermission(caps));
+  };
+  const rememberActiveDraftModelPreference = (next: DraftModelPreference) => {
+    if (!draftAgent) return;
+    if (!ensureDraftPreferenceApi()) return;
+    persistDraftModelPreferences({
+      ...draftModelPreferences.current,
+      [draftAgent]: next,
+    });
+  };
+  const fitActiveDraftModelPreference = (agent: string, list: ModelOption[]) => {
+    if (selected || !agent || agent !== draftAgent) return;
+    const caps = agents.find((item) => item.id === agent)?.capabilities;
+    const fitted = fitDraftModelPreference(
+      { model: draftModel, effort: draftEffort, speed: draftSpeed },
+      list,
+      caps?.effortLevels ?? [],
+      Boolean(caps?.speed),
+    );
+    if (fitted.model !== draftModel) setDraftModel(fitted.model);
+    if (fitted.effort !== draftEffort) setDraftEffort(fitted.effort);
+    if (fitted.speed !== draftSpeed) setDraftSpeed(fitted.speed);
+    rememberActiveDraftModelPreference(fitted);
+  };
+  useEffect(() => {
+    if (selected || !draftAgent) return;
+    fitActiveDraftModelPreference(draftAgent, modelsByAgent[draftAgent] ?? []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.id, draftAgent, draftModel, draftEffort, draftSpeed, modelsByAgent, agents, hostId]);
+  useEffect(() => {
+    if (api.demo) return;
+    const flush = () => flushDraftModelPreferencesOnExit(api);
+    const flushWhenHidden = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+    window.addEventListener('pagehide', flush);
+    window.addEventListener('beforeunload', flush);
+    document.addEventListener('visibilitychange', flushWhenHidden);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      window.removeEventListener('beforeunload', flush);
+      document.removeEventListener('visibilitychange', flushWhenHidden);
+    };
+  }, [api]);
   useEffect(() => {
     let cancelled = false;
     if (!api || !selected?.coordination) { setCoordination(null); return; }
@@ -1110,22 +1226,24 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     let cancelled = false;
     (async () => {
       try {
-        const [a, c, , s, sc] = await Promise.all([
+        const [a, c, , s, sc, preferences] = await Promise.all([
           api.agents(),
           api.workdirs(),
           threadFeed.read(),
           api.sections(),
           api.schedules().catch(() => []),
+          api.draftModelPreferences().catch(() => ({} as Record<string, DraftModelPreference>)),
         ]);
         if (cancelled) return;
+        draftPreferencesApi.current = api;
+        draftModelPreferences.current = preferences;
         setAgents(a);
         applyWorkdirs(c);
         setSections(s);
         setSchedules(sc);
         setDraftCwd((cur) => cur || c.workdirs[0] || '');
         const first = a.find((x) => x.available && !x.hidden);
-        setDraftAgent(first?.id ?? '');
-        if (first) setDraftPermission(startingPermission(first.capabilities));
+        selectDraftAgent(first?.id ?? '', a, false);
         if (!demo) {
           const dismissed = localStorage.getItem('calli_onboard_dismissed') === '1';
           const needsOnboard = a.length === 0 || a.filter((x) => x.available).length === 0;
@@ -1817,7 +1935,9 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     if (!api) return;
     const list = await api.agents();
     setAgents(list);
-    setDraftAgent((prev) => (list.some((a) => a.id === prev && !a.hidden) ? prev : list.find((a) => a.available && !a.hidden)?.id ?? ''));
+    if (!list.some((a) => a.id === draftAgent && !a.hidden)) {
+      selectDraftAgent(list.find((a) => a.available && !a.hidden)?.id ?? '', list);
+    }
   };
 
   const openAgents = () => { setSelectedId(null); setView('agents'); setDrawer(false); void reloadAgents().catch(handleError); };
@@ -2014,14 +2134,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   };
 
   const pickAgent = (id: string) => {
-    setDraftAgent(id);
-    setDraftWorkMode('execute');
-    setDraftSpeed(null);
-    setDraftModel(null);
-    setDraftEffort(null);
-    // Each agent starts at its own level: one that cannot ask starts where it can work.
-    const caps = capsOf(id);
-    if (caps) setDraftPermission(startingPermission(caps));
+    selectDraftAgent(id);
   };
 
   // Adds a discovered CLI as its own instance and selects it for the new thread.
@@ -2046,8 +2159,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     setAgents(freshList);
     const first = freshList.find((x) => x.available && !x.hidden);
     if (!draftAgent || !freshList.some((x) => x.id === draftAgent && !x.hidden)) {
-      setDraftAgent(first?.id ?? '');
-      if (first) setDraftPermission(startingPermission(first.capabilities));
+      selectDraftAgent(first?.id ?? '', freshList);
     }
     if (api) {
       api.discoverAgents().then(setDiscovered).catch(() => undefined);
@@ -2280,22 +2392,25 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         compactDisabled={(selected.queued?.length ?? 0) >= MAX_QUEUED}
       />}
       <ModelPicker
-      models={models}
-      model={model}
-      efforts={effortLevels}
-      effort={effort}
-      speed={speed}
-      onSpeed={activeCaps?.speed ? v => selected ? updateSelected({ speed: v }) : setDraftSpeed(v) : undefined}
-      onDiagnose={() => openObservability('diagnostics', activeAgent)}
-      openSignal={modelSignal}
-      onOpen={() => refreshActiveModels(true)}
-      onModel={(v) => {
-        if (selected) return updateSelected({ model: v }); // the daemon drops an effort the new model lacks
-        setDraftModel(v);
-        if (draftSpeed && !speedsForModel(models, v).some(s => s.id === draftSpeed)) setDraftSpeed(null);
-        if (draftEffort && !effortsForModel(models, v, effortLevels).includes(draftEffort)) setDraftEffort(null);
-      }}
-      onEffort={(v) => (selected ? updateSelected({ effort: v }) : setDraftEffort(v))}
+        models={models}
+        model={model}
+        efforts={effortLevels}
+        effort={effort}
+        speed={speed}
+        onSpeed={activeCaps?.speed ? v => selected ? updateSelected({ speed: v }) : (rememberActiveDraftModelPreference({ model: draftModel, effort: draftEffort, speed: v }), setDraftSpeed(v)) : undefined}
+        onDiagnose={() => openObservability('diagnostics', activeAgent)}
+        openSignal={modelSignal}
+        onOpen={() => refreshActiveModels(true)}
+        onModel={(v) => {
+          if (selected) return updateSelected({ model: v }); // the daemon drops an effort the new model lacks
+          const nextSpeed = draftSpeed && speedsForModel(models, v).some(s => s.id === draftSpeed) ? draftSpeed : null;
+          const nextEffort = draftEffort && effortsForModel(models, v, effortLevels).includes(draftEffort) ? draftEffort : null;
+          rememberActiveDraftModelPreference({ model: v, effort: nextEffort, speed: nextSpeed });
+          setDraftModel(v);
+          if (draftSpeed !== nextSpeed) setDraftSpeed(nextSpeed);
+          if (draftEffort !== nextEffort) setDraftEffort(nextEffort);
+        }}
+        onEffort={(v) => selected ? updateSelected({ effort: v }) : (rememberActiveDraftModelPreference({ model: draftModel, effort: v, speed: draftSpeed }), setDraftEffort(v))}
       />
 
     </>

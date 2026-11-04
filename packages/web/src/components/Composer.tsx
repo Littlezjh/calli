@@ -491,6 +491,23 @@ export function Composer({
     }, SAVE_DELAY_MS);
     return () => clearTimeout(timer);
   }, [draftKey, text, notes, mentions]);
+  useEffect(() => {
+    if (draftKey === undefined) return;
+    const flush = () => {
+      if (keyRef.current !== undefined && !sendingRef.current) keepDraft(keyRef.current, draftRef.current);
+    };
+    const flushWhenHidden = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+    window.addEventListener('pagehide', flush);
+    window.addEventListener('beforeunload', flush);
+    document.addEventListener('visibilitychange', flushWhenHidden);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      window.removeEventListener('beforeunload', flush);
+      document.removeEventListener('visibilitychange', flushWhenHidden);
+    };
+  }, [draftKey]);
   // Whether that message arrived is for the thread to say. Once a new turn of the user's carries
   // this very text, it is no draft: left in the box it would look unsent, and be sent a second time.
   useEffect(() => {
