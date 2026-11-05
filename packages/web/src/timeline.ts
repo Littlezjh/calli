@@ -224,7 +224,7 @@ export type Item =
   /** The row under a finished answer. `text` is what "copy" copies; `at` is when the turn ended, where the hub saw it end. */
   | { kind: 'actions'; key: string; turnId: string; text: string; at?: string }
   /** `planExhausted`: the agent's account ran out of usage, so another agent can be asked to take over. */
-  | { kind: 'error'; key: string; turnId: string | null; message: string; planExhausted?: boolean }
+  | { kind: 'error'; key: string; turnId: string | null; message: string; planExhausted?: boolean; /** The raw agent text of a plan-exhausted failure, shown as the quiet card's second line. */ detail?: string }
   /** Where a fork begins: above it is the conversation it was copied from, below it its own. `branch` when it got a worktree. */
   | { kind: 'fork'; key: string; turnId: null; branch?: string };
 
@@ -792,7 +792,7 @@ export function buildTimeline(events: StoredEvent[], speech: readonly VoiceTrans
 
       case 'turn.error':
         closeTurn(ev.ts);
-        items.push({ kind: 'error', key, turnId: turn, message: errorText(ev.data), ...(ev.data.code === 'plan_exhausted' ? { planExhausted: true } : {}) });
+        items.push({ kind: 'error', key, turnId: turn, message: errorText(ev.data), ...(ev.data.code === 'plan_exhausted' ? { planExhausted: true, detail: String(ev.data.message ?? '').replace(/^Internal error:\s*/, '') } : {}) });
         running = false;
         break;
 

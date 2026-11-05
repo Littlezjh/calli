@@ -48,7 +48,7 @@ import {
 import { VoiceCloud } from './VoiceOrb';
 import { Lightbox } from './Lightbox';
 import { PlanCopyButton, PlanDownloadButton, PlanReader } from './PlanReader';
-import { IconBell, ActivityIcon, IconAgents, IconCheck, IconChevron, IconClose, IconCompact, IconCopy, IconEdit, IconFile, IconFork, IconHand, IconHandover, IconList, IconQuote, IconTray, IconWorktree } from './icons';
+import { IconBell, ActivityIcon, IconAgents, IconArrowRight, IconCheck, IconChevron, IconClose, IconCompact, IconCopy, IconEdit, IconFile, IconFork, IconHand, IconHandover, IconList, IconQuote, IconTray, IconWorktree } from './icons';
 import { t } from '../i18n';
 
 // The daemon's confirmation marker is replaced by the localized notice label.
@@ -373,35 +373,38 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
               )}
             </div>
           );
-        case 'error':
+        case 'error': {
+          // A plan that ran out reads as a quiet card: the conclusion leads, the agent's raw words
+          // shrink to a second line, and every way on is a text link, not a filled button.
+          if (item.planExhausted) return (
+            <div key={item.key} className="row">
+              <div className="exhausted-card" role="alert">
+                <div className="exhausted-title">{t('timeline.error.planExhaustedTitle')}</div>
+                {item.detail && <div className="exhausted-detail">{item.detail}</div>}
+                {item === items[items.length - 1] && (takeover || resume) && <div className="exhausted-actions">
+                  {takeover?.go && takeover.label && <button className="exhausted-hand" onClick={takeover.go} disabled={takeover.busy}>
+                    {takeover.busy ? t('view.handingOver') : t('view.handTo', takeover.label)}
+                    <IconArrowRight size={14} />
+                  </button>}
+                  {takeover && <button className="exhausted-quiet" onClick={takeover.choose} disabled={takeover.busy}>{t('view.chooseOtherShort')}</button>}
+                  {resume && !resume.armed && <button className="exhausted-quiet" onClick={resume.onArm} disabled={resume.busy}>{t('view.resumeArm')}</button>}
+                  {resume?.armed && <>
+                    <span role="status">{resume.resetsAt ? t('view.resumeArmedAt', resetClock(resume.resetsAt)) : t('view.resumeArmedAny')}</span>
+                    <button className="exhausted-quiet" onClick={resume.onCancel} disabled={resume.busy}>{t('view.resumeCancel')}</button>
+                  </>}
+                  {resume?.error && <small className="exhausted-error">{resume.error}</small>}
+                </div>}
+              </div>
+            </div>
+          );
           return (
             <div key={item.key} className="row">
               <div className="error-box">
                 {item.message}
-                {item.planExhausted && takeover && item === items[items.length - 1] && (
-                  <div className="error-actions">
-                    {takeover.go && takeover.label && <button className="primary" onClick={takeover.go} disabled={takeover.busy}>
-                      <IconHand size={15} /> {takeover.busy ? t('view.handingOver') : t('view.handTo', takeover.label)}
-                    </button>}
-                    <button className="ghost" onClick={takeover.choose} disabled={takeover.busy}>{t('view.chooseOther')}</button>
-                  </div>
-                )}
-                {/* The alternative to handing over: stay on this agent and let the daemon continue
-                    the thread once the quota resets. A quiet text link, not a third button. */}
-                {item.planExhausted && resume && item === items[items.length - 1] && (
-                  <div className="error-resume">
-                    {resume.armed ? <>
-                      <span role="status">{resume.resetsAt ? t('view.resumeArmedAt', resetClock(resume.resetsAt)) : t('view.resumeArmedAny')}
-                        {resume.error && <small>{resume.error}</small>}</span>
-                      <button className="text-btn" onClick={resume.onCancel} disabled={resume.busy}>{t('view.resumeCancel')}</button>
-                    </> : (
-                      <button className="text-btn" onClick={resume.onArm} disabled={resume.busy}>{t('view.resumeArm')}</button>
-                    )}
-                  </div>
-                )}
               </div>
             </div>
           );
+        }
         case 'fork':
           return (
             <div key={item.key} className="row fork-mark" role="separator" aria-label={item.branch ? t('view.forkedInWorktree', item.branch) : t('view.forkedHere')}>

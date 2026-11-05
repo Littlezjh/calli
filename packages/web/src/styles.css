@@ -2049,18 +2049,25 @@ html.list-open body {
   overflow-wrap: anywhere;
 }
 
-/* A plan that ran out: the way on is another agent, offered right where the failure is read. */
-.error-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; white-space: normal; }
-.error-actions button { gap: 6px; min-height: 32px; padding: 0 14px; font-size: 13px; }
-.error-actions .ghost { border-color: color-mix(in srgb, var(--danger) 30%, transparent); color: var(--text); }
-.error-actions button:disabled { opacity: 0.6; }
-
-/* The other way on: stay on this agent and let the quota come back. A quiet link, not a button,
- * so the row above keeps its two choices at any width. */
-.error-resume { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; color: var(--muted); font-size: 13px; }
-.error-resume .text-btn { min-height: 30px; padding: 0 8px; font-size: 13px; color: var(--muted); text-decoration: underline; text-underline-offset: 3px; }
-.error-resume .text-btn:hover { color: var(--text); }
-.error-resume small { display: block; color: var(--danger); }
+/* A plan that ran out is a quiet card: neutral surface, one red line saying where it hurts, the
+ * agent's raw words shrunk to a second line, and every way on is a text link. */
+.exhausted-card {
+  padding: 12px 14px;
+  border-left: 3px solid var(--danger);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.exhausted-title { font-size: 14px; font-weight: 650; }
+.exhausted-detail { margin-top: 3px; color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
+.exhausted-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 14px; margin-top: 11px; white-space: normal; }
+.exhausted-actions > button { min-height: 30px; padding: 0; border: 0; background: none; font: inherit; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; }
+.exhausted-hand { color: var(--accent); font-weight: 600; }
+.exhausted-hand:hover:not(:disabled) { text-decoration: underline; text-underline-offset: 3px; }
+.exhausted-quiet { color: var(--muted); }
+.exhausted-quiet:hover:not(:disabled) { color: var(--text); }
+.exhausted-actions > span { color: var(--muted); font-size: 12.5px; }
+.exhausted-actions > button:disabled { opacity: 0.6; }
+.exhausted-error { color: var(--danger); font-size: 12.5px; overflow-wrap: anywhere; }
 
 .empty {
   display: grid;
