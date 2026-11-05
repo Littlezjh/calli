@@ -356,7 +356,7 @@ export const zh = {
   "auto.global": "全局自动交接",
   "auto.threshold": "已用额度阈值（%）",
   "auto.order": "接手顺序",
-  "auto.defaultOrder": "同类型另一实例优先",
+  "auto.defaultOrder": "同类型另一实例接替",
   "auto.noTargets": "没有接手目标",
   "auto.add": "添加接手目标",
   "auto.up": "上移",

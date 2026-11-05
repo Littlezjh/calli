@@ -118,8 +118,11 @@ function HandoverBoundary({ api, thread, agentLabel, turnId }: { api: Api; threa
   }, [api, thread.id, turnId, open, attempt]);
   const reason = info?.reason === 'plan_exhausted' ? t('handover.chain.exhausted') : info?.reason === 'interrupted' ? t('handover.chain.interrupted') : info?.reason ? t('handover.chain.error') : '';
   return <div className="row handover-boundary" data-handover-thread={thread.id} data-turn={turnId}>
-    <button type="button" className="context-compaction handover-divider" aria-expanded={open} onClick={() => setOpen(value => !value)}>
-      <IconHandover size={16} /><span>{t('handover.trail.from', agentLabel(thread.handover!.agent))}{reason ? ` · ${reason}` : ''}</span><IconChevron size={12} />
+    <button type="button" className="fork-mark handover-divider" aria-expanded={open} onClick={() => setOpen(value => !value)}>
+      <span className="fork-mark-label">
+        <IconHandover size={15} />{t('handover.trail.from', agentLabel(thread.handover!.agent))}{reason ? ` · ${reason}` : ''}
+        <IconChevron size={12} />
+      </span>
     </button>
     {failed && <div className="history-status" role="alert">{t('handover.chain.detailFailed')} <button className="text-btn" onClick={() => setAttempt(n => n + 1)}>{t('common.retry')}</button></div>}
     {open && !failed && <div className="handover-summary" role="region" aria-label={t('handover.chain.summary')}>

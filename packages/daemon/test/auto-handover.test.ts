@@ -31,7 +31,12 @@ async function setup(summaryFail = false, hidden?: string) {
     }));
   }
   adapters.set('offline', new AgyAdapter(['nonexistent-handover-fixture']));
-  const manager = new ThreadManager(store, adapters, [dir], new AttachmentStore(dir), () => [...adapters.keys()].map(id => ({ id, adapter: 'agy', ...(id === hidden ? { hidden: true } : {}) })));
+  // A healthy instance of a different product: it passes every availability and quota check, so
+  // only the same-adapter default can keep an automatic handover from crossing products.
+  writeFileSync(join(dir, 'other.json'), JSON.stringify({ 'Gemini Models': 10 }));
+  adapters.set('other', new AgyAdapter([process.execPath, join(fixtures, 'fake-agy.mjs')], { FAKE_HANDOVER_QUOTA: join(dir, 'other.json') }));
+  const kinds: Record<string, string> = { other: 'traex' };
+  const manager = new ThreadManager(store, adapters, [dir], new AttachmentStore(dir), () => [...adapters.keys()].map(id => ({ id, adapter: kinds[id] ?? 'agy', ...(id === hidden ? { hidden: true } : {}) })));
   Object.defineProperty(manager.autoHandover, 'delayMs', { value: 80 });
   const team = new CoordinationManager(store, manager, join(dir, 'calli.sock'));
   const server = createHttpServer({ manager, token: 'test-token', webDir: null, version: 'test' });
@@ -253,6 +258,25 @@ test('no successor stops queued work, and a previously exhausted source is not s
     const other = await h.manager.createThread({ agent: 'agy2', cwd: h.dir, model: 'gemini-pro' });
     h.manager.autoHandover.configure({ enabled: true, threshold: 90, orders: { agy2: [{ agent: 'agy' }, { agent: 'agy', model: 'gemini-pro' }] } });
     assert.deepEqual(await h.manager.autoHandover.targets(other.id), []);
+  } finally { await h.close(); }
+});
+
+test('the default order hands over within the same product only', async () => {
+  const h = await setup();
+  try {
+    h.manager.autoHandover.configure({ enabled: true, threshold: 90, orders: {} });
+    writeFileSync(join(h.dir, 'agy2.json'), JSON.stringify({ 'Gemini Models': 95 }));
+    writeFileSync(join(h.dir, 'agy3.json'), JSON.stringify({ 'Gemini Models': 95 }));
+    await h.manager.startTurn(h.thread.id, { text: 'quota-exhausted' }); await h.done();
+    assert.equal(h.manager.autoHandover.view(h.thread.id).state, 'stopped');
+    assert.equal(h.manager.listThreads().length, 1);
+    // An explicitly listed cross-product target is still honored as configured.
+    const second = await h.manager.createThread({ agent: 'agy2', cwd: h.dir, model: 'gemini-pro' });
+    h.manager.autoHandover.configure({ enabled: true, threshold: 90, orders: { agy2: [{ agent: 'other' }] } });
+    await h.manager.startTurn(second.id, { text: 'quota-exhausted' }); await h.done(second.id);
+    const next = h.manager.listThreads().find(t => t.handover?.sourceId === second.id);
+    assert.equal(next?.agent, 'other');
+    await h.done(next!.id);
   } finally { await h.close(); }
 });
 

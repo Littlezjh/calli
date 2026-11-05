@@ -356,7 +356,7 @@ export const en: Messages = {
   "auto.global": "Enable globally",
   "auto.threshold": "Used quota threshold (%)",
   "auto.order": "Successor order",
-  "auto.defaultOrder": "Prefer another instance of the same type",
+  "auto.defaultOrder": "Another instance of the same type",
   "auto.noTargets": "No successors configured",
   "auto.add": "Add successor",
   "auto.up": "Move up",

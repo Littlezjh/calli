@@ -152,8 +152,10 @@ export class AutoHandover {
     const thread = this.manager.getThread(id);
     const agents = await this.manager.listAgents();
     const kind = agents.find(a => a.id === thread.agent)?.adapter;
-    const order = this.settings().orders[thread.agent] ?? agents.filter(a => a.id !== thread.agent)
-      .sort((a, b) => Number(b.adapter === kind) - Number(a.adapter === kind)).map(a => ({ agent: a.id }));
+    // The default stays within the same product: another account of the same adapter. A different
+    // agent takes over only when the order lists it explicitly.
+    const order = this.settings().orders[thread.agent] ?? agents.filter(a => a.id !== thread.agent && a.adapter === kind)
+      .map(a => ({ agent: a.id }));
     const model = await this.manager.handoverModel(thread.agent, thread.model);
     const out: HandoverTarget[] = [];
     for (const target of order) {

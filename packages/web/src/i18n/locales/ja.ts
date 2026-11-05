@@ -354,7 +354,7 @@ export const ja: Messages = {
   "auto.global": "全体で有効にする",
   "auto.threshold": "使用率のしきい値（%）",
   "auto.order": "引き継ぎ順序",
-  "auto.defaultOrder": "同じ種類の別インスタンスを優先",
+  "auto.defaultOrder": "同じ種類の別インスタンスが引き継ぐ",
   "auto.noTargets": "引き継ぎ先がありません",
   "auto.add": "引き継ぎ先を追加",
   "auto.up": "上へ",
