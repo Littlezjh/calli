@@ -125,6 +125,12 @@ const GESTURE_GRACE_MS = 1500;
 /** How often, at most, the page asks whether a newer build is being served. */
 const UPDATE_CHECK_MS = 30_000;
 
+/**
+ * How often the plan-exhausted card retries the quota-aware takeover target while no target is
+ * available: quota windows move fast enough that the next sample may have one again.
+ */
+const TAKEOVER_RETRY_MS = 30_000;
+
 const isNearBottom = (el: HTMLElement) => el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
 
 /** The plan page's address. Threads have none: the main area showing a thread is the plain URL. */
@@ -2273,11 +2279,21 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   useEffect(() => {
     if (!selected || !outOfPlan || api.demo) { setTakeoverTarget(null); return; }
     let alive = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     setTakeoverTarget(null);
-    void api.autoHandover(selected.id).then(value => {
-      if (alive) setTakeoverTarget(value.targets[0] ? { threadId: selected.id, target: value.targets[0] } : null);
-    }).catch(() => { if (alive) setTakeoverTarget(null); });
-    return () => { alive = false; };
+    // Quota windows move fast (a running successor can cross the threshold and come back within
+    // minutes), so an empty answer is retried while the card is up instead of hiding the button
+    // until the thread is reopened.
+    const probe = () => {
+      if (!alive) return;
+      void api.autoHandover(selected.id).then(value => {
+        if (!alive) return;
+        if (value.targets[0]) setTakeoverTarget({ threadId: selected.id, target: value.targets[0] });
+        else timer = setTimeout(probe, TAKEOVER_RETRY_MS);
+      }).catch(() => { if (alive) timer = setTimeout(probe, TAKEOVER_RETRY_MS); });
+    };
+    probe();
+    return () => { alive = false; if (timer) clearTimeout(timer); };
   }, [api, api.demo, outOfPlan, selected?.id]);
   const takeoverChoice = selected && takeoverTarget?.threadId === selected.id ? takeoverTarget.target : null;
   const takeoverLabel = takeoverChoice ? [agents.find(a => a.id === takeoverChoice.agent)?.label ?? takeoverChoice.agent, takeoverChoice.model].filter(Boolean).join(' · ') : undefined;

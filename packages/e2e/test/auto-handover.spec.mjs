@@ -153,6 +153,25 @@ test('manual exhausted takeover button uses the quota-aware target', async () =>
   } finally { await context.close(); quota('agy2'); }
 });
 
+test('the exhausted takeover button comes back on its own when a target recovers', async () => {
+  quota('agy'); quota('agy2', 95); quota('agy3', 95); await configure([{ agent: 'agy2', model: 'gemini-pro' }, { agent: 'agy3', model: 'gemini-pro' }], false);
+  const source = await create('接手目标恢复按钮回归');
+  const context = await browser.newContext({ viewport: { width: 1440, height: 960 } });
+  const page = await context.newPage();
+  try {
+    await openUi(page, daemon); await select(page, source.title);
+    await send(source.id, 'quota-exhausted'); await idle(source.id);
+    await page.getByRole('button', { name: '选择其他智能体', exact: true }).waitFor();
+    await page.waitForTimeout(1500); // the first target probe answers empty and arms the retry
+    assert.equal(await page.getByRole('button', { name: /^交给 Agent/ }).count(), 0);
+    quota('agy3');
+    await page.getByRole('button', { name: '交给 Agent 3 · gemini-pro 接手', exact: true }).waitFor({ timeout: 45_000 });
+    await page.getByRole('button', { name: '交给 Agent 3 · gemini-pro 接手', exact: true }).click();
+    const next = await wait(async () => (await request('/api/threads')).find(t => t.handover?.sourceId === source.id));
+    assert.equal(next.agent, 'agy3'); assert.equal(next.model, 'gemini-pro');
+  } finally { await context.close(); quota('agy2'); quota('agy3'); }
+});
+
 for (const mobile of [false, true]) for (const theme of ['light', 'dark']) {
   test(`settings and conversation override: ${mobile ? 'phone' : 'desktop'} ${theme}`, async () => {
     await configure([{ agent: 'agy', model: 'gemini-pro' }, { agent: 'agy', model: 'claude-sonnet' }, { agent: 'agy2', model: 'gemini-pro' }]);

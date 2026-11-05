@@ -33,7 +33,7 @@
 - 守候记录 `{ agent, failedTurn, origin, resetsAt, nextCheckAt, probes, createdAt }` 存 `hub_settings`（`handover.resumes`），daemon 重启后仍在；恢复动作必须以一次新鲜的额度读数为准，不盲信重置时间。
 - 唤醒：按额度窗口的 `resetsAt`（加 2 分钟余量）唤醒；未知则退避轮询（5/15/30/60/120 分钟）。探测有成本（Claude 要起一次 CLI），不空转。探测 10 次或等待超过 24 小时仍未恢复则放弃，卡片上的入口重新出现。
 - 恢复：清掉停止提示 → 时间线记 `handover.resume` 分隔行 → 原样重发失败那一轮（同模型切换重试的路径）→ 释放排队消息。手动交接、删除线程、归档或线程自己跑起来时丢弃守候。
-- 界面：出错卡片在「交给 X 接手 / 选择其他智能体」下面加一行安静的文字链接，不挤按钮行；已守候时变成「额度恢复后自动继续 · 预计 {时间}」加「取消等待」。手机上独立一行。
+- 界面：出错卡片在「交给 X 接手 / 选择其他智能体」下面加一行安静的文字链接，不挤按钮行；已守候时变成「额度恢复后自动继续 · 预计 {时间}」加「取消等待」。手机上独立一行。一键接手目标按最新额度即时计算；暂时没有可用目标时出错卡片每 30 秒重查，额度回落或目标恢复后按钮自己出现，不必重开线程。
 - 接口：`PUT /api/handover-settings` 增加 `resume: boolean`；`PATCH /api/threads/:id/auto-handover` 接受 `resume: boolean`（true = 本会话守候，false = 取消）。`GET` 与会话视图返回 `autoHandover.resume`。
 - 测试杠杆：`CALLI_RESUME_TICK_MS`、`CALLI_RESUME_GRACE_MS` 环境变量可在测试里缩短周期，生产默认 30 秒 / 2 分钟不变。
 
