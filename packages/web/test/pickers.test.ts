@@ -247,3 +247,12 @@ test('fast controls accept older Hub catalogs without treating economy or unknow
   for (const id of ['default', 'flex', 'custom-tier']) assert.equal(isFastSpeed({ id, label: id }), false);
   assert.equal(isFastSpeed({ id: 'custom-tier', label: 'Custom', isFast: true }), true);
 });
+
+test('a CLI without a native catalog exposes no model or effort picker, including member controls', async () => {
+  const { createElement } = await import('react');
+  const { renderToStaticMarkup } = await import('react-dom/server');
+  const { ModelPicker } = await import('../src/components/Pickers.js');
+  const props = { catalog: false, models: [], model: null, efforts: [], effort: null, onModel: () => undefined, onEffort: () => undefined };
+  assert.equal(renderToStaticMarkup(createElement(ModelPicker, props)), '');
+  assert.equal(renderToStaticMarkup(createElement(ModelPicker, { ...props, quietFor: 'CLI instance' })), '');
+});

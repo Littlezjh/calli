@@ -551,11 +551,13 @@ export function createHttpServer(deps: HttpDeps): Server {
       return sendJson(res, 201, await registry.add(body));
     }
 
-    // PATCH /api/agents/:id: rename an instance. The id is what threads store, so it stays.
+    // PATCH /api/agents/:id: change hub-owned settings without changing the instance id.
     if (method === 'PATCH' && parts[0] === 'api' && parts[1] === 'agents' && parts[2] && !parts[3]) {
       if (!registry) throw new HttpError(404, 'this daemon has no agent registry');
       const body = await readJson(req);
-      return sendJson(res, 200, await registry.update(parts[2], { label: body.label, hidden: body.hidden }));
+      const instance = await registry.update(parts[2], { label: body.label, hidden: body.hidden, streamBridge: body.streamBridge });
+      if (body.streamBridge !== undefined) manager.agentSettingsChanged(parts[2]);
+      return sendJson(res, 200, instance);
     }
 
     // DELETE /api/agents/:id: remove only the hub's registration. Native files stay untouched.

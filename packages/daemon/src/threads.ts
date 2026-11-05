@@ -260,6 +260,7 @@ export interface AgentInfo {
   /** The account this instance runs as, when it is a linked second login (an email). */
   account?: string | null;
   available: boolean;
+  streamBridgeEnabled?: boolean;
   /** How it can be signed in from the hub, when its adapter can start the CLI's login. */
   login?: 'terminal' | 'wizard';
   capabilities: AgentAdapter['capabilities'];
@@ -422,9 +423,15 @@ export class ThreadManager {
         available: await a.available(),
         ...(a.startLogin ? { login: 'wizard' as const } : a.loginCommand ? { login: 'terminal' as const } : {}),
         capabilities: a.capabilities,
+        ...(a.capabilities.streamBridge ? { streamBridgeEnabled: a.streamBridgeEnabled ?? false } : {}),
       });
     }
     return out;
+  }
+
+  /** Invalidate only metadata; running turns keep their existing adapter until they finish. */
+  agentSettingsChanged(agent: string): void {
+    this.diagnosticCache.delete(agent);
   }
 
   /** Commands for an agent. `cwd` selects project-level commands and must be an allowed workdir. */
@@ -852,6 +859,10 @@ export class ThreadManager {
       try {
         if (!await adapter.available()) return { ...base, checkedAt: new Date().toISOString(), state: 'missing', message: '没有找到 CLI，请检查该实例的命令和 PATH。', version: null, protocol: null, models: [] };
         const runtime = await adapter.diagnose?.().catch(() => null);
+        if (adapter.capabilities.modelCatalog === false) return {
+          ...base, ...runtime, checkedAt: new Date().toISOString(), state: 'cli_only', models: [],
+          message: 'CLI 可启动；原生接口不提供模型目录，沿用 CLI 默认设置。登录有效性以实际请求结果为准。',
+        };
         try {
           const models = await this.adapterModels(adapter, refresh);
           return { ...base, ...runtime, checkedAt: new Date().toISOString(), state: models.length ? 'ready' : 'empty',
@@ -2942,19 +2953,24 @@ export class ThreadManager {
 
   private async createSession(thread: ThreadRecord): Promise<AgentSession> {
     const personalScope = Boolean(this.personal.environment(thread.id));
-    if (this.sessions.has(thread.id) && this.personalScopes.get(thread.id) !== personalScope) await this.dropSession(thread.id);
+    const adapter = this.adapters.get(thread.agent);
+    if (!adapter) throw new Error(`unknown agent: ${thread.agent}`);
+    if (this.sessions.has(thread.id) && (this.personalScopes.get(thread.id) !== personalScope || this.sessionAdapters.get(thread.id) !== adapter)) await this.dropSession(thread.id);
     const existing = this.sessions.get(thread.id);
     if (existing) {
       if (existing.setWorkMode) await existing.setWorkMode(thread.workMode ?? 'execute');
       return existing;
     }
-    const adapter = this.adapters.get(thread.agent);
-    if (!adapter) throw new Error(`unknown agent: ${thread.agent}`);
     const session = await adapter.start({
       borrowedTool: this.borrowing?.toolForThread(thread.id),
       coordinationEnv: this.backgroundThreads.has(thread.id) ? {} : { ...this.coordination?.environment(thread.id), ...this.borrowing?.environment(thread.id), ...this.personal.environment(thread.id) },
       cwd: thread.cwd,
       resumeId: thread.agentSessionId ?? undefined,
+      onSessionId: (id) => {
+        if (!id || !this.store.getThread(thread.id)) return;
+        this.store.updateThread(thread.id, { agentSessionId: id });
+        this.emitThreadEvent(thread.id, null, 'thread.updated', {});
+      },
       permissionMode: thread.permissionMode as PermissionMode,
       speed: thread.speed,
       workMode: thread.workMode ?? 'execute',
@@ -3017,7 +3033,7 @@ export class ThreadManager {
     this.personalScopes.set(thread.id, personalScope);
     this.sessions.set(thread.id, session);
     this.sessionAdapters.set(thread.id, adapter);
-    if (session.agentSessionId !== thread.agentSessionId) {
+    if (session.agentSessionId && session.agentSessionId !== thread.agentSessionId) {
       this.store.updateThread(thread.id, { agentSessionId: session.agentSessionId });
     }
     return session;

@@ -379,6 +379,7 @@ function MemberModel({ agent, models, value, permission, onNeed, onChange, onPer
     {permission && onPermission && <PermissionPicker quietFor={agent.label} modes={agent.capabilities.permissionModes} value={permission} canAsk={agent.capabilities.approvals ?? true} onChange={onPermission} />}
     <ModelPicker
       quietFor={agent.label}
+      catalog={agent.capabilities.modelCatalog}
       models={models}
       model={value.model}
       efforts={efforts}
@@ -2403,6 +2404,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         compactDisabled={(selected.queued?.length ?? 0) >= MAX_QUEUED}
       />}
       <ModelPicker
+        catalog={activeCaps?.modelCatalog}
         models={models}
         model={model}
         efforts={effortLevels}

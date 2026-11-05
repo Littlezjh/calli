@@ -8,7 +8,7 @@ export const PERMISSION_LABELS: Record<string, { label: string; short: string; h
 
 /**
  * What a level means for this agent. An agent that cannot ask (it runs without a terminal) refuses
- * whatever it would have asked about, so "auto" there means edits only.
+ * whatever it would have asked about. The native policy decides which actions need approval.
  */
 export function permissionHint(mode: string, canAsk: boolean): string {
   if (mode === 'auto_edit' && !canAsk) return t('permission.auto_edit.noAsk');

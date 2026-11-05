@@ -274,6 +274,8 @@ export interface StartOptions {
   cwd: string;
   /** Agent-side session id to resume, if the thread already has one. */
   resumeId?: string;
+  /** A lazily created native conversation announced its id during a real prompt. */
+  onSessionId?: (id: string) => void;
   /** Permission level for this session. Adapters without permission modes ignore it. */
   permissionMode?: PermissionMode;
   model?: string;
@@ -286,6 +288,13 @@ export interface MemoryReader {
   root(): Promise<string>;
   list(): Promise<MemoryIndex>;
   read(id: string): Promise<MemoryDocument>;
+}
+
+/** Compatibility information for an opt-in bridge that patches a private runtime copy. */
+export interface StreamBridgeCapability {
+  version: string;
+  platform: string;
+  temporaryMegabytes: number;
 }
 
 export interface AgentAdapter {
@@ -306,6 +315,10 @@ export interface AgentAdapter {
     coordination?: boolean;
     /** Changing model preserves the native conversation, including through a resumed process. */
     modelSwitch?: boolean;
+    /** False when the native CLI has no model catalog; keep its defaults without a picker. */
+    modelCatalog?: boolean;
+    /** User-controlled experimental streaming bridge, not a native protocol capability. */
+    streamBridge?: StreamBridgeCapability;
     resume: boolean;
     approvals: boolean;
     /** Permission levels this agent supports. Empty means the UI shows no permission picker. */
@@ -351,6 +364,10 @@ export interface AgentAdapter {
      */
     realtimeVoice?: boolean;
   };
+  /** Effective setting, including this instance's environment and an inherited hub default. */
+  readonly streamBridgeEnabled?: boolean;
+  /** Validate opt-in compatibility and return only the adapter-owned setting environment. */
+  streamBridgeEnvironment?(enabled: boolean): Promise<Record<string, string>>;
   memoryReader?(): MemoryReader;
   /** Whether the agent can be started on this host. */
   available(): Promise<boolean>;

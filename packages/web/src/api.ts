@@ -591,6 +591,13 @@ export interface AgentReferences {
   handoverOrders: number;
 }
 
+/** A version-limited opt-in bridge that changes only a private runtime copy. */
+export interface StreamBridgeCapability {
+  version: string;
+  platform: string;
+  temporaryMegabytes: number;
+}
+
 export interface AgentInfo {
   id: string;
   label: string;
@@ -604,6 +611,7 @@ export interface AgentInfo {
   available: boolean;
   /** How it can be signed in from the hub, when its adapter can start the CLI's login. */
   login?: 'terminal' | 'wizard';
+  streamBridgeEnabled?: boolean;
   capabilities: {
     workModes?: WorkMode[];
     speed?: boolean;
@@ -614,6 +622,9 @@ export interface AgentInfo {
     permissionModes: string[];
     /** The level a new thread starts at. Missing: `auto_edit`. */
     defaultPermissionMode?: string;
+    /** False when native model discovery is unavailable; no model picker is offered. */
+    modelCatalog?: boolean;
+    streamBridge?: StreamBridgeCapability;
     effortLevels: string[];
     images: boolean;
     deleteSession: boolean;
@@ -650,7 +661,7 @@ export interface SupportedAgent {
   label: string;
   icon?: string;
   installGuide?: string;
-  capabilities?: { createAccount: boolean };
+  capabilities?: { createAccount: boolean; streamBridge?: StreamBridgeCapability };
 }
 
 /** One window of a plan's usage, as the agent itself reports it. */
@@ -1496,12 +1507,12 @@ export class Api {
   }
 
   /** Adds an agent instance (another CLI, another account). */
-  addAgent(input: { id?: string; adapter: string; label?: string; command?: string[]; env?: Record<string, string>; account?: string }): Promise<{ id: string }> {
+  addAgent(input: { id?: string; adapter: string; label?: string; command?: string[]; env?: Record<string, string>; account?: string; streamBridge?: boolean }): Promise<{ id: string }> {
     return this.request('POST', '/api/agents', input);
   }
 
-  /** Updates an instance's presentation; its id, which threads store, does not change. */
-  updateAgent(id: string, patch: { label?: string; hidden?: boolean }): Promise<{ id: string; label?: string; hidden?: boolean }> {
+  /** Updates hub-owned settings; its id, which threads store, does not change. */
+  updateAgent(id: string, patch: { label?: string; hidden?: boolean; streamBridge?: boolean }): Promise<{ id: string; label?: string; hidden?: boolean }> {
     return this.request('PATCH', `/api/agents/${encodeURIComponent(id)}`, patch);
   }
 

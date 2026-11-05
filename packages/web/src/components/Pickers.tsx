@@ -87,6 +87,8 @@ export function PermissionPicker({ modes, value, onChange, canAsk, openSignal, q
 
 interface ModelProps {
   onDiagnose?: () => void;
+  /** False when the CLI does not expose a model catalog at all, rather than one that failed to load. */
+  catalog?: boolean;
   models: ModelOption[];
   model: string | null;
   efforts: string[];
@@ -210,6 +212,7 @@ export function speedsForModel(models: ModelOption[], model: string | null): Non
 export function ModelPicker(props: ModelProps) {
   const { models, model, efforts, effort, openSignal, quietFor } = props;
   const narrow = useIsNarrow();
+  if (props.catalog === false) return null;
   if (models.length === 0 && efforts.length === 0 && quietFor === undefined) {
     return (
       <Popover
