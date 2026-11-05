@@ -1,7 +1,7 @@
 import type { ExtensionManifest, ExtensionState, Permission } from '@calli/extension-api';
-import { Api, ApiError, type FolderListing, type SearchHit, type TextFile, type Thread, type VideoRef } from '../api';
+import { Api, ApiError, type FolderListing, type SearchHit, type TextFile, type Thread, type ThreadOutputs, type VideoRef } from '../api';
 import { BUILTIN_MANIFESTS } from '../extensions/catalog';
-import type { DemoData } from './data';
+import { demoPicture, type DemoData } from './data';
 import { t } from '../i18n';
 
 /**
@@ -99,14 +99,18 @@ export class DemoApi extends Api {
     return Promise.reject(new DemoError(true));
   }
 
-  override threadFile(_threadId: string, _path: string): Promise<Blob> {
-    return Promise.reject(new DemoError(false));
+  override threadFile(_threadId: string, path: string): Promise<Blob> {
+    const picture = demoPicture(path);
+    return picture ? Promise.resolve(new Blob([picture], { type: 'image/svg+xml' })) : Promise.reject(new DemoError(false));
   }
 
   override attachment(_threadId: string, _attachmentId: string): Promise<Blob> {
     return Promise.reject(new DemoError(false));
   }
 }
+
+/** What a thread with nothing to show is answered with: an overview that exists but is empty. */
+const NO_OUTPUTS: ThreadOutputs = { changes: { files: [], added: 0, removed: 0, total: 0 }, images: [], files: [], seq: 0 };
 
 /** The demo's answer to one request, or undefined when it has none. Exported for the tests. */
 export function route(data: DemoData, method: string, url: string, body?: unknown): unknown {
@@ -178,7 +182,9 @@ export function route(data: DemoData, method: string, url: string, body?: unknow
         return events.filter((ev) => ev.seq > after && ev.seq < before);
       }
       case 'coordination':
-        return null;
+        return data.coordinations[t.id] ?? null;
+      case 'outputs':
+        return data.outputs[t.id] ?? NO_OUTPUTS;
       case 'fork-options':
         return { worktree: { available: false } };
       case 'tree': {

@@ -1,4 +1,5 @@
 import { PersonalBriefSchedule } from './personal-brief-schedule.js';
+import { changedFiles, mentionedFiles, MAX_OUTPUT_ITEMS, type ThreadOutputs } from './outputs.js';
 import { LarkChannel } from './channels/lark.js';
 import { PersonalService } from './personal.js';
 import { AutoHandover, type AutoHandoverView, type HandoverTarget, type SettledOutcome } from './auto-handover.js';
@@ -697,6 +698,29 @@ export class ThreadManager {
   usageDaily(agent: string, timeZone?: string) { return this.store.telemetry.daily(agent, timeZone); }
 
   activityReport(days: number, agent: string) { return this.store.activity.read(days, agent); }
+
+  /** The last overview read for each thread, kept while its log has not grown. */
+  private readonly outputsCache = new Map<string, ThreadOutputs>();
+
+  /** What the thread has produced over all its turns: changed files, and the pictures and files its answers name. */
+  async threadOutputs(threadId: string): Promise<ThreadOutputs> {
+    const thread = this.getThread(threadId);
+    const latest = this.store.history.latest(threadId);
+    const cached = this.outputsCache.get(threadId);
+    if (cached && cached.seq === latest) return cached;
+    const { diffs, answers, seq } = await this.store.outputSources(threadId);
+    let cwdReal = thread.cwd;
+    try { cwdReal = realpathSync(thread.cwd); } catch { /* The directory may have been removed. */ }
+    const changes = changedFiles(diffs, thread.cwd, cwdReal);
+    const outputs: ThreadOutputs = {
+      ...mentionedFiles(answers, thread.cwd, changes.files, cwdReal), seq,
+      changes: { ...changes, files: changes.files.slice(0, MAX_OUTPUT_ITEMS).map(({ seq: _seq, ...file }) => file) },
+    };
+    this.outputsCache.delete(threadId);
+    this.outputsCache.set(threadId, outputs);
+    if (this.outputsCache.size > 50) this.outputsCache.delete(this.outputsCache.keys().next().value!);
+    return outputs;
+  }
 
   /**
    * The thread's session statistics: stored per-turn timing, tokens summed from the native usage

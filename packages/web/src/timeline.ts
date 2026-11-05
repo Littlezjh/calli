@@ -122,10 +122,68 @@ export function deliveredPreview(text: string): string {
   return text
     .split('\n')
     .map((line) => line.replace(/^\s*(#{1,6}|[-*+>]|\d+\.)\s+/, '').replace(/[*_`]/g, '').trim())
-    .filter((line) => line && !line.startsWith('|') && !/^[-=]+$/.test(line))
+    // The report's own bookkeeping — tables, rules, the [进度] line — is not its words.
+    .filter((line) => line && !line.startsWith('|') && !/^[-=]+$/.test(line) && !line.startsWith('[进度]'))
     .slice(0, 3)
     .join(' ')
     .slice(0, 200);
+}
+
+/** The state a member ends its report with, in the team protocol the last line carries. */
+export type DeliveredState = 'progress' | 'review' | 'need' | 'failed' | null;
+
+/**
+ * The `[进度] 进行中|待验收|需要你：…` line the team's report protocol puts at the very end. Only
+ * the last line that says anything counts, so words quoted in the middle of a report stay words.
+ */
+export function progressState(text: string): Exclude<DeliveredState, 'failed'> {
+  const lines = text.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    const m = /^\[进度\]\s*(进行中|待验收|需要你)(?:\s*[：:]|$)/.exec(line);
+    return m ? (m[1] === '进行中' ? 'progress' : m[1] === '待验收' ? 'review' : 'need') : null;
+  }
+  return null;
+}
+
+/** A line of Markdown as the plain words it says: links keep their text, marks and quotes go. */
+const plainWords = (line: string) => line
+  .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+  .replace(/^\s*(#{1,6}|[-*+>]|\d+\.)\s+/, '')
+  .replace(/[*_`]/g, '')
+  .trim();
+
+/**
+ * What a delivered message opens with, as one plain line for the row it folds into: the first
+ * sentence of its body, the report protocol's `[进度]` line left out. Empty when nothing says.
+ */
+export function firstSentence(text: string): string {
+  const lines = text.split('\n').map(plainWords);
+  const usable = lines.filter((line) => line && !line.startsWith('|') && !/^[-=]+$/.test(line) && !line.startsWith('[进度]'));
+  if (!usable.length) return '';
+  let out = '';
+  // A sentence that hands over with a colon is not done saying what it means: the next line's
+  // opening is spliced on, list marks and all the rest already gone, until one of them lands.
+  for (const line of usable) {
+    const cut = line.search(/[。！？]/);
+    const piece = cut >= 0 ? line.slice(0, cut + 1) : line;
+    out = out ? `${out} ${piece}` : piece;
+    if (!/[：:]$/.test(out)) break;
+  }
+  return out.slice(0, 200);
+}
+
+/**
+ * The body without the report protocol's `[进度]` line: the row's dot and word already say what it
+ * said, so the person reading the message itself does not read the bookkeeping twice.
+ */
+export function withoutProgress(text: string): string {
+  return text
+    .split('\n')
+    .filter((line) => !/^\s*[*_`>-]*\s*\[进度\]\s*(进行中|待验收|需要你)(?:\s*[：:\-—]|$)/.test(line))
+    .join('\n')
+    .trim();
 }
 
 export type { TurnChannel, TurnPart };

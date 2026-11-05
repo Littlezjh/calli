@@ -14,6 +14,7 @@ import { referencesFile } from './artifacts.js';
 import type { ProgressReport } from './progress-report.js';
 import type { WritingState } from './writing.js';
 import { HistoryStore } from './history.js';
+import type { Answer, DiffEvent } from './outputs.js';
 import { ToolJobs } from './tool-jobs.js';
 import { MessageEdits } from './message-edits.js';
 import type { MeetingReference, SignalMaterial, SignalMaterialRead } from './channels/lark-material.js';
@@ -699,6 +700,34 @@ export class Store {
     this.db
       .prepare('INSERT INTO turn_text (thread_id, turn_id, role, ts, text) VALUES (?, ?, ?, ?, ?) ON CONFLICT(thread_id, turn_id, role) DO UPDATE SET ts = excluded.ts, text = excluded.text')
       .run(threadId, turnId, role, ts, text);
+  }
+
+  /** Reuse small tool projections. Cold/forked logs build only tools, yielding between batches. */
+  async outputSources(threadId: string): Promise<{ diffs: DiffEvent[]; answers: Answer[]; seq: number }> {
+    await this.history.ensure(threadId, 1, this.history.latest(threadId) + 1, true);
+    const diffs = (this.db.prepare("SELECT turn_id, seq, ts, data FROM history_rows WHERE thread_id = ? AND type IN ('history.tool.start', 'history.tool.update', 'history.tool.end') ORDER BY seq").all(threadId) as Array<{ turn_id: string; seq: number; ts: string; data: string }>)
+      .map(r => {
+        const data = JSON.parse(r.data) as DiffEvent['data'];
+        if (data.files?.some(f => f.created === undefined)) {
+          // Projections from older hubs already have counts. Read only creation flags in SQLite,
+          // never transfer old/new text (or the tool output) back into JS, then keep the upgrade.
+          const flags = this.db.prepare(`SELECT json_type(p.value, '$.oldText') IS NOT 'text' AS created
+            FROM events e, json_each(e.data, '$.content') p WHERE e.thread_id=? AND e.seq=?
+            AND json_extract(p.value, '$.type')='diff'`).all(threadId, r.seq) as Array<{ created: number }>;
+          data.files.forEach((f, i) => { f.created = Boolean(flags[i]?.created); });
+          this.db.prepare('UPDATE history_rows SET data=? WHERE thread_id=? AND seq=?').run(JSON.stringify(data), threadId, r.seq);
+        }
+        return { turnId: r.turn_id, seq: r.seq, ts: r.ts, data };
+      });
+    // turn_text.ts is the first chunk's timestamp. Use the final message's log position instead,
+    // so an answer that spans an edit, an import or a copied turn cannot be sorted before it.
+    const answers = (this.db.prepare(`SELECT tt.turn_id, e.seq, e.ts, tt.text FROM turn_text tt
+      JOIN events e ON e.thread_id=tt.thread_id AND e.seq=(SELECT MAX(seq) FROM events
+        WHERE thread_id=tt.thread_id AND turn_id=tt.turn_id AND type IN ('message.delta', 'message.replace'))
+      WHERE tt.thread_id=? AND tt.role='assistant' ORDER BY e.seq`).all(threadId) as Array<{ turn_id: string; seq: number; ts: string; text: string }>)
+      .map(r => ({ turnId: r.turn_id, seq: r.seq, ts: r.ts, text: r.text }));
+    const seq = this.history.latest(threadId);
+    return { diffs, answers, seq };
   }
 
   /** Completed answers are already assembled for search, including imported and older turns. */

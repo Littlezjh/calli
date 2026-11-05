@@ -1101,6 +1101,11 @@ export function createHttpServer(deps: HttpDeps): Server {
         return sendJson(res, 200, manager.threadStats(threadId));
       }
 
+      if (method === 'GET' && sub === 'outputs') {
+        // The overview beside the conversation: names and counts only, details are read when opened.
+        return sendJson(res, 200, await manager.threadOutputs(threadId));
+      }
+
       if (method === 'GET' && sub === 'system-prompt') {
         return sendJson(res, 200, await manager.threadSystemPrompt(threadId));
       }

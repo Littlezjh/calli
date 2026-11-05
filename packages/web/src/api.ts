@@ -341,6 +341,17 @@ export interface Schedule {
 }
 
 /** A request the daemon refused. `details` is whatever it sent besides the message, for errors the page handles itself. */
+/** A file the thread's agents changed, summed over every turn that touched it. */
+export interface ChangedFile { path: string; added: number; removed: number; created: boolean; turns: number; turnId: string; at: string }
+/** A picture or file an answer named, or the thread created; the last turn that did. */
+export interface OutputFile { path: string; turnId: string; at: string }
+export interface ThreadOutputs {
+  changes: { files: ChangedFile[]; added: number; removed: number; total: number };
+  images: OutputFile[];
+  files: OutputFile[];
+  seq: number;
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -1238,6 +1249,11 @@ export class Api {
   /** One turn of a thread as a trace; the last turn when none is named. */
   trace(threadId: string, turnId?: string): Promise<TurnTrace> {
     return this.request('GET', `/api/threads/${threadId}/trace${turnId ? `?turn=${encodeURIComponent(turnId)}` : ''}`);
+  }
+
+  /** What the thread produced over all its turns: changed files, pictures and files. Names and counts only. */
+  outputs(threadId: string): Promise<ThreadOutputs> {
+    return this.request('GET', `/api/threads/${threadId}/outputs`);
   }
 
   /** The thread's session statistics: summary numbers only, timing from per-turn storage. */

@@ -148,6 +148,12 @@ export const IconFile = (p: { size?: number }) => (
     <path d="M7 3h7l5 5v13H7zM14 3v5h5" />
   </Svg>
 );
+export const IconImage = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M4 5h16v14H4zM4 16l5-5 4 4 2-2 5 5" />
+    <circle cx="15.5" cy="9" r="1.5" />
+  </Svg>
+);
 export const IconRead = (p: { size?: number }) => (
   <Svg {...p}>
     <path d="M12 6.5C9.5 4.6 6.5 4 3.5 4.5v14c3-.5 6 .1 8.5 2 2.5-1.9 5.5-2.5 8.5-2v-14c-3-.5-6 .1-8.5 2ZM12 6.5v14M7 4.5v11" />

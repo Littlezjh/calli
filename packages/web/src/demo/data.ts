@@ -6,7 +6,7 @@
  * Nothing here is anyone's real project, path or machine.
  */
 import { CLAUDE_ICON, CODEX_ICON, PI_ICON } from '../../../daemon/src/adapters/icons';
-import type { ActivityDay, AgentInfo, FolderListing, ModelOption, Schedule, Section, SystemPrompt, TextFile, Thread, ThreadStats, Todo, TurnTrace, WorkdirsConfig } from '../api';
+import type { ActivityDay, AgentInfo, Coordination, CoordinationMessage, FolderListing, ModelOption, Schedule, Section, SystemPrompt, TextFile, Thread, ThreadOutputs, ThreadStats, Todo, TurnTrace, WorkdirsConfig } from '../api';
 import type { StoredEvent } from '../timeline';
 
 export interface DemoData {
@@ -18,9 +18,13 @@ export interface DemoData {
   schedules: Schedule[];
   models: Record<string, ModelOption[]>;
   events: Record<string, StoredEvent[]>;
+  /** The teams threads belong to, as the coordination endpoint would answer them. */
+  coordinations: Record<string, Coordination>;
   /** Folder listings by thread directory and path inside it ('' for the top). */
   folders: Record<string, FolderListing['entries']>;
   files: Record<string, string>;
+  /** What each thread produced, as the outputs endpoint would answer it. */
+  outputs: Record<string, ThreadOutputs>;
   /** The daily digest, as the activity endpoint would answer it. */
   activity: ActivityDay[];
   /** The whole prompt of a conversation, by thread, for the demo's system-prompt dialog. */
@@ -149,6 +153,38 @@ const LIST_AFTER = `  // Rows are measured once their images load; until then ea
   const rowHeight = useStableHeight(measureRow, items);
 `;
 
+/** The two preview pictures the dark-mode thread drew of its settings page: neutral greys, no real project. */
+const settingsMock = (page: string, card: string, line: string, edge: string, filled: string) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 200">
+<rect width="280" height="200" rx="12" fill="${page}"/>
+<rect x="20" y="18" width="132" height="12" rx="6" fill="${line}"/>
+<g fill="${card}" stroke="${edge}">
+<rect x="20" y="44" width="240" height="40" rx="8"/>
+<rect x="20" y="92" width="240" height="40" rx="8"/>
+<rect x="20" y="140" width="240" height="40" rx="8"/>
+</g>
+<g fill="${edge}">
+<circle cx="40" cy="64" r="5"/><circle cx="40" cy="112" r="5"/><circle cx="40" cy="160" r="5"/>
+</g>
+<g fill="${line}">
+<rect x="56" y="59" width="72" height="10" rx="5"/><rect x="56" y="107" width="56" height="10" rx="5"/><rect x="56" y="155" width="64" height="10" rx="5"/>
+</g>
+<rect x="178" y="55" width="74" height="18" rx="9" fill="${page}" stroke="${edge}"/>
+<rect x="206" y="55" width="44" height="18" rx="9" fill="${filled}"/>
+<circle cx="240" cy="112" r="9" fill="${page}" stroke="${edge}"/>
+<circle cx="251" cy="112" r="4" fill="${card}"/>
+<rect x="196" y="151" width="56" height="18" rx="9" fill="${page}" stroke="${edge}"/>
+</svg>
+`;
+const PREVIEW_LIGHT = settingsMock('#f8f6f1', '#ffffff', '#1f1e1c', '#e5e2da', '#1f1e1c');
+const PREVIEW_DARK = settingsMock('#171614', '#242220', '#f2f0ea', '#3a3835', '#f2f0ea');
+
+/** The demo's answer to a request for one of its pictures, by the path it is known by. */
+export function demoPicture(path: string): string | null {
+  if (path.endsWith('preview-light.svg')) return PREVIEW_LIGHT;
+  if (path.endsWith('preview-dark.svg')) return PREVIEW_DARK;
+  return null;
+}
+
 export function demoData(now = Date.now()): DemoData {
   const at = (minutesAgo: number) => new Date(now - minutesAgo * 60_000).toISOString();
   const thread = (t: Partial<Thread> & Pick<Thread, 'id' | 'agent' | 'cwd' | 'title'>, updated: number): Thread => ({
@@ -208,15 +244,27 @@ export function demoData(now = Date.now()): DemoData {
         '',
         '- `src/theme.ts`：新增 `darkTokens`，`applyTheme` 接受用户的选择，没选时看系统设置。',
         '- `src/pages/Settings.tsx`：加了分段选择器，选择存在 `localStorage`。',
+        '- [主题说明](docs/theme.md)：主题变量的用法，给后来的人。',
         '',
         '```ts',
         "applyTheme(document.documentElement, loadThemeChoice() ?? 'system');",
         '```',
         '',
-        '测试 17 个全部通过。系统切换深浅色时页面会跟着变，不用刷新。',
+        '测试 17 个全部通过。系统切换深浅色时页面会跟着变，不用刷新。两种外观的预览：',
+        '',
+        '![浅色外观](docs/preview-light.svg)',
+        '',
+        '![深色外观](docs/preview-dark.svg)',
       ].join('\n'),
     });
     dark.add(turn, at(38), 'usage.updated', { used: 46_000, size: 258_000 });
+    // The plan the answer worked from, one step still on it: a finished step, the one under way,
+    // and one not started, all three where the card shows them apart.
+    dark.add(turn, at(38), 'plan.updated', { entries: [
+      { content: '读一遍现有的主题实现', status: 'completed' },
+      { content: '设置页接入 prefers-color-scheme', status: 'in_progress' },
+      { content: '补齐两种外观的预览截图', status: 'pending' },
+    ] });
     dark.add(turn, at(38), 'turn.done', { stopReason: 'end_turn' });
   }
 
@@ -237,6 +285,12 @@ export function demoData(now = Date.now()): DemoData {
       content: [{ type: 'diff', path: `${STOREFRONT}/src/components/ProductList.tsx`, oldText: LIST_BEFORE, newText: LIST_AFTER }],
     });
     scroll.add(turn, at(7), 'tool.end', { id: 's2', status: 'completed' });
+    // The plan it is working from, still under way — the turn has not finished, so one step is on.
+    scroll.add(turn, at(7), 'plan.updated', { entries: [
+      { content: '找出跳动的来源', status: 'completed' },
+      { content: '跑商品列表的 e2e 验证', status: 'in_progress' },
+      { content: '整理成改动说明', status: 'pending' },
+    ] });
     scroll.add(turn, at(6), 'approval.request', {
       approvalId: 'demo-approval',
       title: '运行 npm run e2e -- product-list',
@@ -329,9 +383,75 @@ export function demoData(now = Date.now()): DemoData {
     tests.add(turn, at(16), 'turn.done', { stopReason: 'end_turn' });
   }
 
+  // A lead with three members: one reporting back for review, one blocked on the person, one whose
+  // turn died. Their deliveries reach the lead as the quiet lines the timeline draws them into.
+  const wrapup = log('demo-wrapup');
+  {
+    const turn = 'turn-wrapup-1';
+    wrapup.add(null, at(50), 'thread.created');
+    wrapup.add(turn, at(49), 'turn.started', { text: '上线前把三块收尾分出去：接口审查、深色核对、统计补齐，收齐了汇总给我。' });
+    wrapup.add(turn, at(47), 'message.delta', { text: '分好了。三块都派出去了，交回后我在这里汇总。' });
+    wrapup.add(turn, at(47), 'turn.done', { stopReason: 'end_turn' });
+    // A member's result, as the daemon shows it in the lead's own log: who it is from, how the
+    // turn went, then the member's words — the protocol lines the row reads back.
+    const relay = (key: string, minutesAgo: number, from: string, text: string) => {
+      const relayTurn = `turn-wrapup-${key}`;
+      wrapup.add(relayTurn, at(minutesAgo), 'turn.started', { text: `[协作消息 ${key}｜${from} → 主智能体]`, displayText: `来自 ${from} 的结果\n\n${text}`, coordination: true });
+      wrapup.add(relayTurn, at(minutesAgo), 'turn.done', { stopReason: 'end_turn' });
+    };
+    relay('review', 41, '接口审查', [
+      '状态：本轮已返回，仍需验收',
+      '核对完了 `packages/daemon/` 下的接口约定：',
+      '',
+      '- `src/outputs.ts`：汇总、路径解析、按 seq 排序',
+      '- `src/history.ts`、`src/store.ts`：复用轻量摘要',
+      '- 异常处理补了重启后的恢复步骤',
+      '',
+      '全量测试 1084 项，1083 通过，1 跳过。',
+      '',
+      '[进度] 待验收：接口和测试都交回，请统一验收',
+    ].join('\n'));
+    relay('colors', 27, '深色核对', [
+      '状态：本轮已返回，仍需验收',
+      '概况卡的截图都齐了，深色下 diff 里 +12 的绿色偏亮。',
+      '',
+      '想改成 `--positive` 混 70% 正文色，需要你确认取值。',
+      '',
+      '[进度] 需要你：深色下的取值需要确认',
+    ].join('\n'));
+    relay('stats', 12, '统计补齐', [
+      '状态：失败',
+      '跑 e2e 时手机 390 尺寸第 3 步超时（30s），桌面全过。日志保留在 /tmp/overview-390.log，回头接着查。',
+    ].join('\n'));
+  }
+  // The members' own threads: each opens on the task the lead handed it. The answer closes the
+  // turn, or an error does — a member that failed never said anything of its own.
+  const member = (id: string, minutesAgo: number, task: string, close?: string | { error: string }) => {
+    const events = log(id);
+    const turn = `turn-${id}`;
+    events.add(null, at(minutesAgo + 1), 'thread.created');
+    events.add(turn, at(minutesAgo), 'turn.started', { text: task, displayText: `来自 主智能体 的任务\n\n${task}`, coordination: true });
+    if (typeof close === 'string') {
+      events.add(turn, at(minutesAgo - 6), 'message.delta', { text: close });
+      events.add(turn, at(minutesAgo - 6), 'turn.done', { stopReason: 'end_turn' });
+    } else if (close) {
+      events.add(turn, at(minutesAgo - 20), 'turn.error', { message: close.error });
+    }
+    return events.events;
+  };
+  const wrapupEvents = {
+    'demo-wrapup-review': member('demo-wrapup-review', 48, '核对接口约定、目录分工和异常处理，结果写进 out/stats.md。', '核对完了，接口和测试都交回，请验收。\n[进度] 待验收：接口和测试都交回，请统一验收'),
+    'demo-wrapup-colors': member('demo-wrapup-colors', 34, '把概况卡的截图补齐，深色的取值先别定。', '截图都齐了，深色取值等你确认。\n[进度] 需要你：深色下的取值需要确认'),
+    'demo-wrapup-stats': member('demo-wrapup-stats', 20, '把统计口径补齐，结果写回 out/stats.md。', { error: 'e2e 在手机 390 尺寸第 3 步超时（30s），重试后仍失败。' }),
+  };
+
   const sections: Section[] = [{ id: 'demo-reports', name: '周报', position: 0 }];
 
   const threads: Thread[] = [
+    thread({ id: 'demo-wrapup', agent: 'claude', cwd: NOTES_API, title: '上线前收尾', preview: '接口审查交回了，统计补齐失败了', coordination: { rootId: 'demo-wrapup', children: 3, paused: false, doing: '等统计补齐重跑' } }, 12),
+    thread({ id: 'demo-wrapup-review', agent: 'codex', cwd: NOTES_API, title: '接口审查', preview: '核对完了，接口和测试都交回', coordination: { rootId: 'demo-wrapup', children: 0, paused: false, doing: '已交回，待验收' }, report: { stage: 'review', note: '接口和测试都交回', at: at(41) } }, 42),
+    thread({ id: 'demo-wrapup-colors', agent: 'claude', cwd: NOTES_API, title: '深色核对', preview: '深色取值等你确认', coordination: { rootId: 'demo-wrapup', children: 0, paused: false, doing: '需要你确认取值' }, report: { stage: 'blocked', note: '深色下的取值需要确认', at: at(27) } }, 28),
+    thread({ id: 'demo-wrapup-stats', agent: 'pi', cwd: NOTES_API, title: '统计补齐', status: 'error', preview: '手机尺寸超时，待重跑', coordination: { rootId: 'demo-wrapup', children: 0, paused: false, doing: '手机尺寸超时' } }, 12),
     thread({ id: 'demo-scroll-fix', agent: 'claude', cwd: STOREFRONT, title: '修复商品列表滚动跳动', status: 'running', waiting: true, waitingReason: 'approval', preview: '商品列表往下滚的时候会跳一下', model: 'opus' }, 6),
     thread({ id: 'demo-tests', agent: 'codex', cwd: NOTES_API, title: '补齐 /users 接口测试', unread: true, preview: '给 /users 接口补上缺的测试。', report: { stage: 'review', note: '补了 12 个用例，本地全部通过', at: at(16) } }, 16),
     thread({ id: 'demo-dark-mode', agent: 'codex', cwd: STOREFRONT, title: '设置页加深色模式', preview: '设置页加一个深色模式开关', model: 'gpt-5.5', effort: 'high', doneAt: at(30) }, 38),
@@ -339,6 +459,30 @@ export function demoData(now = Date.now()): DemoData {
     thread({ id: 'demo-weekly', agent: 'pi', cwd: NOTES_API, title: '上周周报', sectionId: 'demo-reports', permissionMode: 'full_access', preview: '整理上周的提交记录', schedule: { id: 'demo-schedule', name: '每周一周报' } }, 60 * 26 - 1),
   ];
   const byId = (id: string) => threads.filter((t) => t.id === id);
+
+  // The wrapup thread's team, as the coordination endpoint would answer it: what each member was
+  // asked and where its last turn ended.
+  const message = (id: string, to: string, minutesAgo: number, task: string, state: CoordinationMessage['state'], result: string): CoordinationMessage => ({
+    id, from: 'demo-wrapup', to, text: task, kind: 'task', state, result, createdAt: at(minutesAgo), turnId: `turn-${to}`,
+  });
+  const teamMember = (id: string, name: string, minutesAgo: number, task: string, state: CoordinationMessage['state'], result: string) => ({
+    id, name, thread: threads.find((t) => t.id === id) ?? null,
+    latest: message(`demo-cm-${id}`, id, minutesAgo, task, state, result),
+  });
+  const coordinations: Record<string, Coordination> = {
+    'demo-wrapup': {
+      rootId: 'demo-wrapup',
+      paused: false,
+      directories: [NOTES_API],
+      agents: ['claude', 'codex', 'pi'],
+      members: [
+        teamMember('demo-wrapup-review', '接口审查', 48, '核对接口约定、目录分工和异常处理，结果写进 out/stats.md。', 'returned', '核对完了，接口和测试都交回，请验收。\n[进度] 待验收：接口和测试都交回，请统一验收'),
+        teamMember('demo-wrapup-colors', '深色核对', 34, '把概况卡的截图补齐，深色的取值先别定。', 'returned', '截图都齐了，深色取值等你确认。\n[进度] 需要你：深色下的取值需要确认'),
+        teamMember('demo-wrapup-stats', '统计补齐', 20, '把统计口径补齐，结果写回 out/stats.md。', 'failed', ''),
+      ],
+      messages: [],
+    },
+  };
 
   const todo = (t: Partial<Todo> & Pick<Todo, 'id' | 'text' | 'position'>): Todo => ({
     done: false,
@@ -407,6 +551,33 @@ export function demoData(now = Date.now()): DemoData {
     [`${STOREFRONT}:src/theme.ts`]: THEME_AFTER,
     [`${STOREFRONT}:README.md`]: '# storefront\n\n示例项目：一个网店的前端。\n\n```sh\nnpm install\nnpm run dev\n```\n',
     [`${NOTES_API}:README.md`]: '# notes-api\n\n示例项目：笔记服务的接口。\n',
+    [`${STOREFRONT}:docs/theme.md`]: '# 主题\n\n页面从 `src/theme.ts` 取颜色变量。要支持新的外观，加一组 token 并在 `applyTheme` 里注册。\n\n- `light`：默认。\n- `dark`：深色，跟随系统时由 `prefers-color-scheme` 决定。\n\n选择本身存在 `localStorage` 的 `theme` 键里。\n',
+  };
+
+  // What the dark-mode thread's turn produced, as the daemon's overview would gather it: the
+  // pictures and the doc its answer hands over, and the files its edits touched, newest first.
+  // One file is new — the pair shows only what it added — and two carry names and folders longer
+  // than the card has room for.
+  const outputs: DemoData['outputs'] = {
+    'demo-dark-mode': {
+      changes: {
+        files: [
+          { path: `${STOREFRONT}/src/components/settings/appearance-theme-provider.test.tsx`, added: 34, removed: 0, created: true, turns: 1, turnId: 'turn-dark-1', at: at(40) },
+          { path: `${STOREFRONT}/src/lib/follow-system-color-scheme.ts`, added: 8, removed: 3, created: false, turns: 1, turnId: 'turn-dark-1', at: at(40) },
+          { path: `${STOREFRONT}/src/pages/Settings.tsx`, added: 6, removed: 1, created: false, turns: 1, turnId: 'turn-dark-1', at: at(40) },
+          { path: `${STOREFRONT}/src/theme.ts`, added: 12, removed: 2, created: false, turns: 1, turnId: 'turn-dark-1', at: at(40) },
+        ],
+        added: 60,
+        removed: 6,
+        total: 4,
+      },
+      images: [
+        { path: `${STOREFRONT}/docs/preview-dark.svg`, turnId: 'turn-dark-1', at: at(38) },
+        { path: `${STOREFRONT}/docs/preview-light.svg`, turnId: 'turn-dark-1', at: at(38) },
+      ],
+      files: [{ path: `${STOREFRONT}/docs/theme.md`, turnId: 'turn-dark-1', at: at(38) }],
+      seq: dark.events.length,
+    },
   };
 
   const dayKey = (minutesAgo: number) => {
@@ -528,8 +699,11 @@ export function demoData(now = Date.now()): DemoData {
     sections,
     todos,
     schedules,
+    coordinations,
     models: MODELS,
     events: {
+      'demo-wrapup': wrapup.events,
+      ...wrapupEvents,
       'demo-dark-mode': dark.events,
       'demo-scroll-fix': scroll.events,
       'demo-routes': routes.events,
@@ -538,6 +712,7 @@ export function demoData(now = Date.now()): DemoData {
     },
     folders,
     files,
+    outputs,
     activity,
     systemPrompts,
     traces,

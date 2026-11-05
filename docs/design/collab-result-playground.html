@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="zh" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>协作结果卡片 · Playground</title>
+<style>
+/* Tokens copied from packages/web/src/styles.css (paper palette), so the mock reads like the app. */
+:root {
+  --bg: #f8f6f1; --surface: #ffffff; --surface-2: #fbfaf7; --text: #1f1e1c; --muted: #827f77; --faint: #a9a69e;
+  --border: #e5e2da; --border-strong: #d6d2c8; --hover: rgba(31, 30, 28, 0.045); --accent: #1f1e1c; --accent-fg: #fff;
+  --positive: #2f7d5b; --positive-bg: #e6f3eb; --warn: #c2410c; --danger: #b42318; --danger-bg: #fdecea;
+  --user-bg: #eceae4; --code-bg: #efede7;
+  --shadow-pop: 0 14px 40px rgba(31, 30, 28, 0.14), 0 2px 6px rgba(31, 30, 28, 0.06);
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Noto Sans CJK SC', sans-serif;
+  --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+  --radius-pill: 999px;
+  /* What the playground varies. */
+  --radius-card: 16px;
+  --radius-sheet: 24px;
+  --pad: 6px;
+  --radius-inner: max(0px, calc(var(--radius-card) - var(--pad) - 1px));
+}
+[data-theme='dark'] {
+  --bg: #1b1a18; --surface: #252422; --surface-2: #201f1d; --text: #ecebe7; --muted: #9a978f; --faint: #6f6c65;
+  --border: #32302c; --border-strong: #423f3a; --hover: rgba(236, 235, 231, 0.06); --accent: #ecebe7; --accent-fg: #1b1a18;
+  --positive: #3f9a72; --positive-bg: #1d3327; --warn: #f0935a; --danger: #f97066; --danger-bg: #3b1f1c;
+  --user-bg: #2c2b28; --code-bg: #262522;
+  --shadow-pop: 0 14px 40px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font); -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; }
+
+/* Controls */
+.controls { position: sticky; top: 0; z-index: 10; display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; padding: 12px 20px; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); }
+.ctl { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.seg { display: inline-flex; padding: 2px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface); }
+.seg button { border: 0; background: none; padding: 4px 10px; border-radius: var(--radius-pill); font-size: 12px; color: var(--muted); cursor: pointer; white-space: nowrap; }
+.seg button[aria-pressed='true'] { background: var(--accent); color: var(--accent-fg); }
+.pick { display: flex; align-items: center; gap: 8px; width: 100%; font-size: 12px; color: var(--muted); }
+.pick code { padding: 3px 8px; border-radius: var(--radius-pill); background: var(--surface); border: 1px solid var(--border); color: var(--text); font-family: var(--mono); font-size: 11.5px; }
+.pick button { border: 0; background: none; color: var(--muted); text-decoration: underline; cursor: pointer; font-size: 12px; }
+.note { margin: 14px auto 0; max-width: 760px; padding: 0 20px; font-size: 12.5px; color: var(--muted); line-height: 1.6; }
+
+/* Stage */
+.stage { display: flex; justify-content: center; padding: 20px 20px 80px; }
+.desktop { width: 100%; max-width: 760px; }
+.phone { width: 390px; min-height: 780px; padding: 0 16px 16px; border: 1px solid var(--border-strong); border-radius: 44px; background: var(--bg); overflow: hidden; }
+.phone .bar { height: 52px; }
+
+/* Conversation */
+.tl { display: flex; flex-direction: column; gap: 14px; padding-bottom: 20px; }
+.user { align-self: flex-end; max-width: 78%; padding: 9px 15px; border-radius: 18px; background: var(--user-bg); font-size: 15px; line-height: 1.6; }
+.answer { font-size: 15px; line-height: 1.7; }
+.answer p { margin: 0 0 8px; }
+.work { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 13px; }
+.chev { display: inline-block; width: 12px; height: 12px; flex: none; }
+.ic { width: 15px; height: 15px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.code { border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--code-bg); padding: 12px 14px; font-family: var(--mono); font-size: 13px; line-height: 1.6; white-space: pre; overflow: auto; }
+.changes { border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--surface-2); padding: var(--pad); }
+.changes-head { display: flex; gap: 8px; padding: 6px 8px 8px; font-size: 13.5px; font-weight: 600; }
+.changes-row { display: flex; gap: 8px; align-items: center; padding: 7px 8px; border-radius: var(--radius-inner); font-size: 13px; }
+.changes-row:hover { background: var(--hover); }
+.changes-row .path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12.5px; }
+.add { color: var(--positive); font-variant-numeric: tabular-nums; font-size: 12px; }
+.del { color: var(--danger); font-variant-numeric: tabular-nums; font-size: 12px; }
+.composer { position: sticky; bottom: 16px; margin-top: 18px; border: 1px solid var(--border); border-radius: var(--radius-sheet); background: var(--surface); box-shadow: var(--shadow-pop); padding: 12px 12px 10px 16px; }
+.composer .ph { color: var(--faint); font-size: 15px; padding: 2px 0 14px; }
+.composer .row { display: flex; justify-content: space-between; align-items: center; color: var(--muted); font-size: 13px; }
+.send { width: 32px; height: 32px; border-radius: 50%; background: var(--accent); }
+
+/* Agent mark: a letter in a circle stands in for each agent's own icon. */
+.mark { flex: none; display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--border-strong); font-size: 10px; font-weight: 700; color: var(--muted); background: var(--surface); }
+.status { flex: none; font-size: 12.5px; color: var(--muted); }
+.status.need { color: var(--warn); }
+.status.failed { color: var(--danger); }
+.nums { flex: none; margin-left: auto; color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.iconbtn { flex: none; display: inline-grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: var(--radius-pill); background: none; color: var(--faint); cursor: pointer; }
+.iconbtn:hover { background: var(--hover); color: var(--text); }
+.phone .iconbtn { width: 36px; height: 36px; margin: -4px -6px -4px 0; }
+.toggle { display: inline-grid; place-items: center; color: var(--faint); transition: transform .15s; }
+.open > .r-head .toggle, .open > .d-line .toggle { transform: rotate(180deg); }
+.body { font-size: 14.5px; line-height: 1.7; color: var(--text); }
+.body p { margin: 0 0 8px; } .body ul { margin: 0 0 8px; padding-left: 20px; } .body code { font-family: var(--mono); font-size: 12.5px; padding: 1px 5px; border-radius: 5px; background: var(--code-bg); }
+.body .meta { color: var(--muted); font-size: 12.5px; margin-bottom: 8px; }
+.body .foot { display: flex; justify-content: flex-end; }
+.body .foot button { border: 0; background: none; color: var(--muted); font-size: 12.5px; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; padding: 4px 6px; border-radius: var(--radius-pill); }
+.body .foot button:hover { background: var(--hover); color: var(--text); }
+
+/* A: what it is today */
+.a-card { border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); }
+.a-head { display: flex; flex-direction: column; gap: 4px; width: 100%; padding: 10px 14px; border: 0; background: none; text-align: left; cursor: pointer; }
+.a-title { display: flex; align-items: center; gap: 6px; font-size: 13.5px; color: var(--muted); }
+.a-title b { color: var(--text); }
+.a-title > :last-child { margin-left: auto; }
+.a-preview { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: 13.5px; line-height: 1.55; color: var(--muted); }
+.a-card .body { padding: 12px 14px 14px; border-top: 1px solid var(--border); }
+
+/* B: a quiet row, like the work row; C: the same, in a card */
+.r { border-radius: var(--radius-card); }
+.r-head { display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 8px 10px; border: 0; background: none; text-align: left; cursor: pointer; border-radius: var(--radius-inner); }
+.r-head:hover { background: var(--hover); }
+.r-line { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13.5px; }
+.r-line .name { font-weight: 600; white-space: nowrap; }
+.r-line .what { color: var(--muted); white-space: nowrap; }
+.r-sum { padding-left: 26px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--muted); }
+.r .body { padding: 6px 12px 10px 36px; }
+.styleB .r { margin: 0 -10px; }
+.styleC .r, .styleC .group { border: 1px solid var(--border); background: var(--surface-2); padding: var(--pad); }
+.styleC .group .r { border: 0; padding: 0; background: none; }
+.styleC .r .body, .styleC .group .body { margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--border); }
+
+/* D: one line like Claude Code's Task row */
+.d { font-size: 13.5px; }
+.d-line { display: flex; align-items: center; gap: 8px; width: 100%; padding: 4px 0; border: 0; background: none; text-align: left; cursor: pointer; min-width: 0; }
+.d-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+.d-dot.need { background: var(--warn); } .d-dot.failed { background: var(--danger); } .d-dot.review { background: var(--positive); }
+.d-line .name { font-weight: 600; white-space: nowrap; }
+.d-line .sum { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.d-sub { padding-left: 15px; color: var(--faint); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.d .body { padding: 8px 0 4px 15px; }
+
+/* Grouped */
+.group { border-radius: var(--radius-card); }
+.g-head { display: flex; align-items: center; gap: 8px; padding: 4px 10px 6px; font-size: 12.5px; color: var(--muted); }
+.styleB .group { margin: 0 -10px; }
+.styleB .group .r { margin: 0; }
+.styleC .group .r + .r { border-top: 1px solid var(--border); border-radius: 0; }
+.styleC .group .r + .r .r-head { margin-top: 4px; }
+.styleD .group .g-head { padding-left: 0; }
+
+.toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 8px 14px; border-radius: var(--radius-pill); background: var(--accent); color: var(--accent-fg); font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+.toast.on { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="controls" id="controls"></div>
+<p class="note">点卡片可以展开全文；↗ 是"进入成员线程"（这里只是示意）。底部这串代号就是你的选择，复制给我即可。上方的代码块、变更卡和输入框用来对照圆角是否统一。</p>
+<div class="stage"><div id="frame"></div></div>
+<div class="toast" id="toast"></div>
+<script>
+const OPTIONS = [
+  { key: 'theme', label: '外观', values: [['light', '亮色'], ['dark', '深色']] },
+  { key: 'size', label: '尺寸', values: [['desktop', '桌面'], ['phone', '手机']] },
+  { key: 'style', label: '卡片样式', values: [['A', 'A 现在'], ['B', 'B 安静行'], ['C', 'C 轻卡'], ['D', 'D 单行']] },
+  { key: 'summary', label: '第二行', values: [['progress', '[进度] 那句'], ['first', '正文首句']] },
+  { key: 'group', label: '多个交回', values: [['merge', '合并'], ['split', '分开']] },
+  { key: 'nums', label: '数字', values: [['on', '显示'], ['off', '不显示']] },
+  { key: 'card', label: '卡片圆角', values: [['12', '12'], ['16', '16']] },
+  { key: 'sheet', label: '输入框/浮层', values: [['24', '24（大一档）'], ['same', '同卡片']] },
+];
+const state = Object.fromEntries(OPTIONS.map(o => [o.key, o.values[0][0]]));
+state.style = 'C';
+state.card = '12';
+try { Object.assign(state, Object.fromEntries(new URLSearchParams(location.hash.slice(1)))); } catch {}
+const open = new Set();
+
+const MEMBERS = [
+  { id: 'be', name: '后端', mark: 'C', status: 'review', statusText: '待验收', time: '13 分', steps: 42, files: 9,
+    progress: 'daemon 接口、fixture 和测试已交回，请 lead 统一验收。',
+    first: 'daemon 改动待验收，未提交，未修改 web。修改了 packages/daemon/ 下 9 个文件：src/outputs.ts：汇总、路径解析…',
+    body: '<p>修改了 <code>packages/daemon/</code> 下 9 个文件：</p><ul><li><code>src/outputs.ts</code>：汇总、路径解析、seq 排序</li><li><code>src/history.ts</code>、<code>src/store.ts</code>：复用轻量摘要</li><li>测试：边界、代理、预览与 <code>make outputs</code></li></ul><p>全量测试 1084 项，1083 通过，1 跳过。</p>' },
+  { id: 'fe', name: '前端', mark: 'M', status: 'need', statusText: '需要你', time: '21 分', steps: 67, files: 6,
+    progress: '概况卡截图已就绪，深色下 diff 颜色偏亮，需要你确认取值。',
+    first: '改了 ThreadOverview.tsx、App.tsx、styles.css 和三语文案，截图在 packages/e2e/shots/overview/ 下，共 14 张…',
+    body: '<p>截图 14 张，覆盖桌面 1440/1920、亮暗、满卡、只有变更、全部折叠、失败态。</p><p>深色下 <code>+12</code> 的绿色偏亮，想改成 <code>--positive</code> 混 70% 正文色，需要你确认。</p>' },
+  { id: 'qa', name: '测试', mark: 'P', status: 'failed', statusText: '失败', time: '4 分', steps: 11, files: 0,
+    progress: 'e2e 在手机尺寸超时，已保留日志。',
+    first: '跑 overview.spec.mjs 时手机 390 尺寸第 3 步超时（30s），桌面通过。日志在 /tmp/…',
+    body: '<p>手机 390 尺寸第 3 步等待 <code>.thread-overview</code> 超时：手机本来就不显示这张卡，用例条件写错了。</p>' },
+];
+const ORDER = { need: 0, failed: 1, running: 2, review: 3 };
+
+const icon = {
+  agents: '<svg class="ic" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.6-3 2.8-4.6 5.5-4.6s4.9 1.6 5.5 4.6"/><path d="M15.5 5.2a3 3 0 0 1 0 5.6M17.5 14.6c1.6.6 2.7 2 3 4.4"/></svg>',
+  down: '<svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="M6 9l6 6 6-6"/></svg>',
+  right: '<svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="M9 6l6 6-6 6"/></svg>',
+  out: '<svg class="ic" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M14 4h6v6M20 4l-8 8M18 14v5H5V6h5"/></svg>',
+};
+
+function nums(m) {
+  if (state.nums === 'off') return '';
+  const parts = [m.time, `${m.steps} 步`, m.files ? `${m.files} 个文件` : null].filter(Boolean);
+  return parts.join(' · ');
+}
+const summary = m => state.summary === 'progress' ? m.progress : m.first;
+const phone = () => state.size === 'phone';
+
+function body(m) {
+  const meta = phone() && state.nums === 'on' ? `<div class="meta">${nums(m)}</div>` : '';
+  return `<div class="body">${meta}${m.body}<div class="foot"><button data-out="${m.name}">打开成员线程 ${icon.out}</button></div></div>`;
+}
+
+function cardA(m) {
+  const o = open.has(m.id);
+  return `<div class="a-card${o ? ' open' : ''}"><button class="a-head" data-toggle="${m.id}"><span class="a-title">${icon.agents}<b>${m.name}</b><span>的结果</span>${m.status === 'failed' ? '<span class="status failed">失败</span>' : ''}<span class="toggle">${icon.right}</span></span>${o ? '' : `<span class="a-preview">${m.first}</span>`}</button>${o ? body(m) : ''}</div>`;
+}
+
+function rowR(m, grouped) {
+  const o = open.has(m.id);
+  const n = phone() ? '' : nums(m);
+  return `<div class="r${o ? ' open' : ''}"><div class="r-head" role="button" tabindex="0" data-toggle="${m.id}">
+    <span class="r-line"><span class="mark">${m.mark}</span><span class="name">${m.name}</span>${grouped ? '' : '<span class="what">交回结果</span>'}<span class="status ${m.status}">${grouped ? '' : '· '}${m.statusText}</span>
+    <span class="nums">${n}</span><span class="toggle">${icon.down}</span><button class="iconbtn" data-out="${m.name}" aria-label="进入成员线程">${icon.out}</button></span>
+    ${o ? '' : `<span class="r-sum">${summary(m)}</span>`}</div>${o ? body(m) : ''}</div>`;
+}
+
+function rowD(m) {
+  const o = open.has(m.id);
+  const n = nums(m);
+  return `<div class="d${o ? ' open' : ''}"><button class="d-line" data-toggle="${m.id}"><span class="d-dot ${m.status}"></span><span class="name">${m.name}</span><span class="status ${m.status}">${m.statusText}</span><span class="sum">${summary(m)}</span><span class="toggle" style="margin-left:auto">${icon.down}</span></button>
+    ${n && !o ? `<div class="d-sub">⎿ ${n}</div>` : ''}${o ? body(m) : ''}</div>`;
+}
+
+function results() {
+  const one = { A: cardA, B: rowR, C: rowR, D: rowD }[state.style];
+  if (state.group === 'split' || state.style === 'A') return MEMBERS.map(one).join('');
+  const sorted = [...MEMBERS].sort((a, b) => ORDER[a.status] - ORDER[b.status]);
+  const need = MEMBERS.filter(m => m.status === 'need').length, failed = MEMBERS.filter(m => m.status === 'failed').length;
+  const tally = [need && `<span class="status need">${need} 需要你</span>`, failed && `<span class="status failed">${failed} 失败</span>`].filter(Boolean).join('<span>·</span>');
+  return `<div class="group"><div class="g-head">${icon.agents}<span>${MEMBERS.length} 个成员交回结果</span>${tally ? '<span>·</span>' + tally : ''}</div>${sorted.map(m => one(m, true)).join('')}</div>`;
+}
+
+function render() {
+  const root = document.documentElement;
+  root.dataset.theme = state.theme;
+  root.style.setProperty('--radius-card', `${state.card}px`);
+  root.style.setProperty('--radius-sheet', state.sheet === 'same' ? `${state.card}px` : '24px');
+  document.getElementById('controls').innerHTML = OPTIONS.map(o => `<div class="ctl"><span>${o.label}</span><div class="seg">${o.values.map(([v, l]) => `<button data-key="${o.key}" data-value="${v}" aria-pressed="${state[o.key] === v}">${l}</button>`).join('')}</div></div>`).join('')
+    + `<div class="pick">你的选择：<code id="code">${code()}</code><button id="copy">复制</button></div>`;
+  const frame = document.getElementById('frame');
+  frame.className = `${phone() ? 'phone' : 'desktop'} style${state.style}`;
+  frame.innerHTML = `${phone() ? '<div class="bar"></div>' : ''}<div class="tl">
+    <div class="user">把概况卡和协作结果卡都改得好看一点，后端、前端、测试分头做。</div>
+    <div class="work">用时 2 分 14 秒 · 9 步 ${icon.right}</div>
+    <div class="answer"><p>已分派三位成员，结果会陆续交回。</p></div>
+    ${results()}
+    <div class="work">用时 13 秒 · 1 步 ${icon.right}</div>
+    <div class="answer"><p>后端可以验收；前端需要你确认一个颜色；测试的失败是用例条件写错，已让它修。</p></div>
+    <div class="code">const radiusInner = max(0, radiusCard - pad - border);</div>
+    <div class="changes"><div class="changes-head">已更改 3 个文件 <span class="add">+161</span><span class="del">−12</span></div>
+      <div class="changes-row"><span class="path">src/components/ThreadOverview.tsx</span><span class="add">+98</span><span class="del">−8</span></div>
+      <div class="changes-row"><span class="path">src/styles.css</span><span class="add">+47</span><span class="del">−4</span></div>
+      <div class="changes-row"><span class="path">src/i18n/locales/zh.ts</span><span class="add">+16</span><span class="del">−0</span></div></div>
+  </div>
+  <div class="composer"><div class="ph">继续这个线程</div><div class="row"><span>＋</span><span class="send"></span></div></div>`;
+  location.replace('#' + new URLSearchParams(state).toString());
+}
+function code() {
+  return `样式${state.style} · 第二行${state.summary === 'progress' ? '[进度]' : '首句'} · ${state.group === 'merge' ? '合并' : '分开'} · 数字${state.nums === 'on' ? '显示' : '隐藏'} · 卡片${state.card} · 浮层${state.sheet === 'same' ? '同卡片' : '24'}`;
+}
+function toast(text) {
+  const el = document.getElementById('toast');
+  el.textContent = text; el.classList.add('on');
+  clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('on'), 1600);
+}
+document.addEventListener('click', e => {
+  const t = e.target.closest('button, [data-toggle]');
+  if (!t) return;
+  if (t.dataset.key) { state[t.dataset.key] = t.dataset.value; render(); return; }
+  if (t.id === 'copy') { navigator.clipboard?.writeText(code()).then(() => toast('已复制'), () => toast('复制失败，手动选中即可')); return; }
+  if (t.dataset.out) { e.stopPropagation(); toast(`进入「${t.dataset.out}」的线程（示意）`); return; }
+  if (t.dataset.toggle) { open.has(t.dataset.toggle) ? open.delete(t.dataset.toggle) : open.add(t.dataset.toggle); render(); }
+});
+render();
+</script>
+</body>
+</html>

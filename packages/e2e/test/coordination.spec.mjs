@@ -204,7 +204,7 @@ for (const phone of [false, true]) for (const colorScheme of ['light', 'dark']) 
       const delivered = page.locator('.row.delivered', { hasText: '文档审查' });
       await delivered.waitFor();
       assert.equal(await delivered.locator('.delivered-body').count(), 0);
-      assert.match(await delivered.locator('.delivered-preview').innerText(), /^文档审查完成。/);
+      assert.match(await delivered.locator('.delivered-sum').innerText(), /^文档审查完成。/);
       await page.screenshot({ path: `${shots}/${phone ? 'phone' : 'desktop'}-${colorScheme}-result.png` });
       await delivered.getByRole('button').click();
       assert.equal(await delivered.locator('.delivered-body p').count(), 2);

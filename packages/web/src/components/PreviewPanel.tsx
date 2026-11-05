@@ -7,7 +7,8 @@ import { t } from '../i18n';
  * A page an agent wrote, rendered: the file is served from the thread's directory through a
  * short-lived signed URL, and the iframe is sandboxed to scripts only — the page cannot reach the
  * hub's storage or API, open popups, or navigate away. Refresh re-signs and reloads, so it always
- * shows what is on disk right now.
+ * shows what is on disk right now. Nothing else reloads it: events streaming into the thread
+ * re-render the parent, and that must not disturb the page the person is reading.
  */
 
 interface Props {
@@ -22,6 +23,11 @@ export function PreviewPanel({ api, threadId, path, onClose, onError }: Props) {
   const [url, setUrl] = useState<string | null>(null);
   const [refreshedAt, setRefreshedAt] = useState(0);
   const alive = useRef(true);
+  // The parent renders anew with every event the thread streams, handing in a fresh onError each
+  // time. Through the ref that no longer changes `load`, which would re-sign the page and remount
+  // the frame below — the page the person is reading would start over every few seconds.
+  const failure = useRef(onError);
+  failure.current = onError;
 
   const load = useCallback(async () => {
     try {
@@ -30,9 +36,9 @@ export function PreviewPanel({ api, threadId, path, onClose, onError }: Props) {
       setUrl(signed);
       setRefreshedAt(Date.now());
     } catch (e) {
-      if (alive.current) onError(e);
+      if (alive.current) failure.current(e);
     }
-  }, [api, threadId, path, onError]);
+  }, [api, threadId, path]);
 
   useEffect(() => {
     alive.current = true;

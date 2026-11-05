@@ -11,7 +11,7 @@ if (process.argv.includes('--version')) { process.stdout.write('fixture 1.2.3\n'
 import { claudeUsage } from './live-usage.mjs';
 import { personalFixture } from './personal.mjs';
 import { coordinationFixture } from './coordination.mjs';
-import { appendFileSync, existsSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 import { createInterface } from 'node:readline';
 import { recordSession } from './fake-session-store.mjs';
@@ -451,6 +451,20 @@ rl.on('line', (line) => {
           content: [{ type: 'diff', path: `${process.cwd()}/src/app.ts`, oldText: 'const a = 1;\nconst b = 2;', newText: 'const a = 1;\nconst b = 3;\nconst c = 4;' }],
         });
         update({ sessionUpdate: 'tool_call_update', toolCallId: 'e1', status: 'completed', rawOutput: 'ok' });
+      }
+      if (text.includes('make outputs')) {
+        mkdirSync(join(process.cwd(), 'out'), { recursive: true });
+        const files = [
+          { path: 'out/report.html', newText: '<!doctype html>\n<html lang="en"><meta charset="utf-8"><title>Report</title>\n<body><h1>Thread report</h1><p>Two files generated.</p></body></html>\n' },
+          { path: 'out/chart.svg', newText: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 160">\n<rect width="320" height="160" fill="#f4f4f5"/>\n<path d="M40 120V80h50v40zm80 0V50h50v70zm80 0V25h50v95z" fill="#6366f1"/>\n</svg>\n' },
+        ];
+        for (const [index, file] of files.entries()) {
+          writeFileSync(join(process.cwd(), file.path), file.newText);
+          const toolCallId = `output-${index}`;
+          update({ sessionUpdate: 'tool_call', toolCallId, title: `Create ${file.path}`, kind: 'edit', status: 'pending' });
+          update({ sessionUpdate: 'tool_call_update', toolCallId, status: 'completed', content: [{ type: 'diff', ...file, oldText: null }] });
+        }
+        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '[报告](out/report.html)\n\n![图](out/chart.svg)\n\n' } });
       }
       if (text.includes('streamed command')) {
         // Like Claude's bridge: the call surfaces while its input still streams, as "Terminal" with

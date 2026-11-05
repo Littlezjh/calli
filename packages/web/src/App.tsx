@@ -59,9 +59,10 @@ import { OnboardingDialog } from './components/OnboardingDialog';
 import { ObservabilityPage } from './components/ObservabilityPage';
 import { QuotaBoard } from './components/QuotaBoard';
 import { SelectionMenu } from './components/SelectionMenu';
-import { AgentPanel, TeamCard } from './components/AgentPanel';
+import { AgentPanel } from './components/AgentPanel';
+import { ThreadOverview } from './components/ThreadOverview';
 import { AgentsPage } from './components/AgentsPage';
-import type { AgentMention, Coordination, MemberDefault, SearchHit } from './api';
+import type { AgentMention, Coordination, MemberDefault, SearchHit, ThreadOutputs } from './api';
 import { Popover as CoordinationPopover } from './components/Popover';
 import { SideChat } from './components/SideChat';
 import { McpPage } from './components/McpPage';
@@ -1053,7 +1054,8 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     if (!el) return;
     const read = () => {
       const column = parseFloat(getComputedStyle(el).getPropertyValue('--content-w')) || 780;
-      setRoomy((el.clientWidth - column) / 2 >= 272);
+      // The overview card (248px) with its offset from the edge and a gap to the conversation.
+      setRoomy((el.clientWidth - column) / 2 >= 288);
       // What the column's lean toward the middle of the screen is worked out from (see styles.css).
       // clientWidth includes the padding the lean adds, so the two do not chase each other.
       el.style.setProperty('--main-w', `${el.clientWidth}px`);
@@ -2301,6 +2303,27 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const teamWaiting = Boolean(coordination?.members.some((m) => m.thread?.waiting));
   const teamRunning = coordination?.members.filter((m) => m.thread?.status === 'running').length ?? 0;
   const teamShown = Boolean(selected?.coordination && (selected.coordination.rootId !== selected.id || selected.coordination.children > 0) && !onPage && hostUp);
+  // The overview in the margin a wide screen leaves beside the conversation: the team, the plan and
+  // what the thread produced. Read only while it can be seen; the daemon keeps it until the log grows.
+  const marginFree = Boolean(selected && roomy && !agentsOpen && !files && !onPage && hostUp);
+  const teamInMargin = marginFree && teamShown && Boolean(coordination) && coordination!.rootId === selected!.id;
+  const [outputs, setOutputs] = useState<{ threadId: string; data: ThreadOutputs | null; failed: boolean } | null>(null);
+  const [outputsTry, setOutputsTry] = useState(0);
+  useEffect(() => {
+    if (!marginFree || !api || !selected) return;
+    const id = selected.id;
+    const timer = setTimeout(() => {
+      api.outputs(id)
+        .then(data => setOutputs({ threadId: id, data, failed: false }))
+        // A daemon from before the endpoint has no overview to read: that is empty, not a failure.
+        .catch((e: unknown) => setOutputs(prev => ({ threadId: id, data: prev?.threadId === id ? prev.data : null, failed: !(e instanceof ApiError && e.status === 404) })));
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [marginFree, api, selected?.id, selected?.updatedAt, outputsTry]);
+  const shownOutputs = outputs?.threadId === selected?.id ? outputs : null;
+  const outputsAny = Boolean(shownOutputs?.data && (shownOutputs.data.changes.total || shownOutputs.data.images.length || shownOutputs.data.files.length));
+  const planInMargin = marginFree && Boolean(topPlan);
+  const overviewShown = marginFree && (teamInMargin || planInMargin || outputsAny || Boolean(shownOutputs?.failed));
   // A member's own thread: it was sent from the lead's, which is where its way back goes.
   const atMember = Boolean(teamShown && selected!.coordination!.rootId !== selected!.id);
   // Where the thread runs, beside its title; a page or a team task names itself instead.
@@ -2508,16 +2531,16 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           {selected && (
             <div className="topbar-actions">
               {/* The team, as one more icon: how many with a badge, orange when one of them needs you. */}
-              {teamShown && !atMember && !(roomy && !agentsOpen && !files && coordination) && (
+              {teamShown && !atMember && !(overviewShown && teamInMargin) && (
                 <button className={`icon-btn topbar-agents${teamWaiting ? ' attention' : ''}${agentsOpen ? ' on' : ''}`} aria-label={t('team.view')} aria-pressed={agentsOpen} title={teamNote || t('sidebar.agents', selected.coordination!.children)} onClick={() => { setAgentsStart(null); setAgentsOpen((v) => !v); setFiles(null); }}>
                   <IconAgents />
                   <span className="topbar-badge">{selected.coordination!.children}</span>
                 </button>
               )}
-              {teamShown && !atMember && teamNote && !compact && !(roomy && !agentsOpen && !files && coordination) && (
+              {teamShown && !atMember && teamNote && !compact && !(overviewShown && teamInMargin) && (
                 <span className={`topbar-team-note${teamWaiting ? ' attention' : ''}`}>{teamNote}</span>
               )}
-              {topPlan && !onPage && <PlanButton item={topPlan} />}
+              {topPlan && !onPage && !(overviewShown && planInMargin) && <PlanButton item={topPlan} />}
               {/* The session's numbers, quiet pills beside the trace button; a phone reads them in the trace page. */}
               {!compact && <StatReadings api={api} threadId={selected.id} active={selected.status === 'running'} onOpenTrace={() => { setAgentsOpen(false); setFiles(null); setTraceOpen(true); }} />}
               <button
@@ -2711,6 +2734,14 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
               loadFile={loadFile}
               onOpenFile={openFileLink}
               onPreview={selected ? (path) => setPreview({ threadId: selected.id, path }) : undefined}
+              // A delivery names its sender; the team roster says which thread is theirs, and the
+              // body's footer can offer to go there — the person's own navigation, nothing sideways.
+              memberThreadId={coordination ? (name) => coordination.members.find(m => m.name === name)?.id ?? null : undefined}
+              onOpenMemberThread={(id) => {
+                const known = threads.find(t => t.id === id);
+                if (known) { openThread(known); return; }
+                if (api) void api.thread(id).then(openThread).catch(handleError);
+              }}
               hasOlder={hasOlder}
               loadingOlder={loadingOlder}
               onLoadOlder={loadOlder}
@@ -2773,10 +2804,18 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           )}
         </div>
 
-        {/* A team at work is shown where there is room to spare: a card in the margin on a wide
-            screen, otherwise a mark in the top bar. Nothing is added above the composer. */}
-        {teamShown && roomy && !agentsOpen && !files && coordination && coordination.rootId === selected!.id && (
-          <TeamCard team={coordination} agents={agents} onOpen={(member) => { setAgentsStart(member ?? null); setAgentsOpen(true); setFiles(null); }} />
+        {/* Where there is room to spare, the team, the plan and what the thread produced sit in one
+            card in the margin; otherwise the team and the plan are marks in the top bar. */}
+        {overviewShown && (
+          <ThreadOverview
+            team={teamInMargin ? coordination : null} agents={agents} plan={planInMargin ? topPlan : null}
+            outputs={shownOutputs?.data ?? null} failed={Boolean(shownOutputs?.failed)} roots={threadRoots}
+            onOpenMember={(member) => { setAgentsStart(member ?? null); setAgentsOpen(true); setFiles(null); }}
+            onRetry={() => setOutputsTry(n => n + 1)}
+            onJumpTurn={(turnId) => setJump({ threadId: selected!.id, turnId })}
+            onOpenFile={async (path) => { if (/\.html?$/i.test(path)) setPreview({ threadId: selected!.id, path }); else await openFileLink(path); }}
+            loadFile={loadFile}
+          />
         )}
 
         {!onPage && !(host && !hostUp) && (

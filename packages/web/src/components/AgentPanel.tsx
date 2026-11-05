@@ -25,33 +25,6 @@ export function memberStatus(m: Coordination['members'][number]): string {
   return labels[m.latest?.state ?? ''] ?? t('team.notDispatched');
 }
 
-/**
- * The team at a glance, for the empty margin beside a conversation on a wide screen: who is in it,
- * what each is on and how that stands. A row opens that member; the heading opens the whole panel.
- */
-export function TeamCard({ team, agents, onOpen }: { team: Coordination; agents: AgentInfo[]; onOpen: (memberId?: string) => void }) {
-  const running = team.members.filter(m => m.thread?.status === 'running').length;
-  return <aside className="team-card" aria-label={t('team.collaborators')}>
-    <button type="button" className="team-card-head" aria-label={t('team.view')} onClick={() => onOpen()}>
-      <IconAgents size={15} /><strong>{t('team.agents')}</strong>
-      <span>{team.paused ? t('team.paused') : running ? t('team.running', running) : t('team.count', team.members.length)}</span>
-    </button>
-    {team.members.map(m => {
-      const icon = agents.find(a => a.id === m.thread?.agent)?.icon;
-      const state = m.thread?.waiting ? 'waiting' : m.thread?.status === 'running' ? 'running' : m.latest?.state === 'failed' ? 'failed' : 'idle';
-      // What it was last asked, or what it last answered once it has.
-      const doing = deliveredPreview(state === 'running' || state === 'waiting' ? m.latest?.text ?? '' : m.latest?.result || m.latest?.text || '');
-      return <button type="button" className="team-card-row" key={m.id} title={doing} onClick={() => onOpen(m.id)}>
-        <span className="team-card-mark">{icon ? <AgentMark path={icon} size={14} /> : <IconAgents size={14} />}</span>
-        <span className="team-card-text">
-          <span className="team-card-line"><strong>{m.name}{m.thread?.handover && <span className="auto-member-mark" role="img" aria-label={t('auto.transferred')} title={t('auto.transferred')}><IconHandover size={13} /></span>}</strong><span className={`team-card-state ${state}`}>{memberStatus(m)}</span></span>
-          {doing && <span className="team-card-doing">{doing}</span>}
-        </span>
-      </button>;
-    })}
-  </aside>;
-}
-
 /** Who said something in the team: the name it goes by, and the agent behind it for its mark and tag. */
 interface Speaker { name: string; tag: string; icon: string | null; lead: boolean }
 

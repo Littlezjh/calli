@@ -194,7 +194,7 @@ export class HistoryStore {
         .run(Math.max(seq, detail.version), inputSeq, outputSeq, diffSeq, Math.max(seq, detail.end_seq), threadId, turnId, detail.id);
       const projected: Record<string, unknown> = { id: data.id, detail: { turnId, id: detail.id, version: seq } };
       for (const field of ['kind', 'status', 'title']) if (data[field]) projected[field] = String(data[field]).slice(0, 240);
-      if (diffs.length) projected.files = diffs.map(p => ({ path: String(p.path ?? ''), ...diffStats(typeof p.oldText === 'string' ? p.oldText : null, typeof p.newText === 'string' ? p.newText : ''), detail: { turnId, id: detail!.id, version: seq } }));
+      if (diffs.length) projected.files = diffs.map(p => ({ path: String(p.path ?? ''), created: typeof p.oldText !== 'string', ...diffStats(typeof p.oldText === 'string' ? p.oldText : null, typeof p.newText === 'string' ? p.newText : ''), detail: { turnId, id: detail!.id, version: seq } }));
       view = { ...ev, type: `history.${ev.type}`, data: projected };
     } else if (ev.type === 'reasoning.delta' && turnId) {
       const prior = this.db.prepare("SELECT * FROM history_details WHERE thread_id=? AND turn_id=? AND kind='thought' AND end_seq=?")
@@ -231,9 +231,9 @@ export class HistoryStore {
     return { start: row.seq, end: next?.seq ?? this.latest(thread) + 1 };
   }
   /** Cold histories are built in bounded batches; concurrent readers share the same job. */
-  async ensure(thread: string, start: number, end: number): Promise<void> {
+  async ensure(thread: string, start: number, end: number, toolsOnly = false): Promise<void> {
     if (start >= end || this.db.prepare('SELECT 1 FROM history_coverage WHERE thread_id=? AND start_seq<=? AND end_seq>=?').get(thread, start, end - 1)) return;
-    const key = `${thread}:${start}:${end}`;
+    const key = `${thread}:${start}:${end}:${toolsOnly}`;
     const existing = this.pending.get(key);
     if (existing) return existing;
     const run = async () => {
@@ -241,6 +241,7 @@ export class HistoryStore {
       while (!this.closed) {
         const missing = this.db.prepare(`SELECT e.* FROM events e LEFT JOIN history_rows h ON h.thread_id=e.thread_id AND h.seq=e.seq
           WHERE e.thread_id=? AND e.seq>? AND e.seq<? AND h.seq IS NULL
+          ${toolsOnly ? "AND e.type IN ('tool.start', 'tool.update', 'tool.end') AND e.turn_id IS NOT NULL" : ''}
           AND NOT EXISTS (SELECT 1 FROM history_details d WHERE d.thread_id=e.thread_id AND d.kind='thought' AND e.type='reasoning.delta' AND e.seq BETWEEN d.id AND d.end_seq)
           ORDER BY e.seq LIMIT 64`).iterate(thread, after, end) as unknown as Iterable<Row>;
         let count = 0;
@@ -250,7 +251,7 @@ export class HistoryStore {
           this.record(eventOf(row) as StoredEvent); after = row.seq; count++; bytes += row.data.length;
           if (bytes > 1024 * 1024 || performance.now() - began > 8) break;
         }
-        if (!count) { this.cover(thread, start, end - 1); break; }
+        if (!count) { if (!toolsOnly) this.cover(thread, start, end - 1); break; }
         await new Promise<void>(resolve => setImmediate(resolve));
       }
     };

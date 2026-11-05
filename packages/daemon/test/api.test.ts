@@ -19,6 +19,7 @@ import { createHttpServer, tokenMatches } from '../src/http.js';
 import { Store } from '../src/store.js';
 import { matchTurns, ThreadManager } from '../src/threads.js';
 import { contentHash } from '../src/writing.js';
+import type { ThreadOutputs } from '../src/outputs.js';
 import { Workdirs } from '../src/workdirs.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -2926,4 +2927,109 @@ test('edit refuses a stale page, a running turn, and an agent with no way to cop
   });
   assert.equal(refused.status, 400);
   assert.match(((await refused.json()) as { error: string }).error, /cannot edit/);
+});
+
+test('outputs gather what a thread changed and the pictures and files its answers name', async () => {
+  const created = await api('/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'claude', cwd: workdir }) });
+  const thread = (await created.json()) as { id: string };
+  await api(`/api/threads/${thread.id}/turns`, { method: 'POST', body: JSON.stringify({ text: 'edit file, then look at ![shot](shot.png) and [report](/srv/out/report.html)' }) });
+  await waitFor(async () => {
+    const t = (await (await api(`/api/threads/${thread.id}`)).json()) as { status: string };
+    return t.status === 'idle' ? t : null;
+  });
+  type Outputs = { changes: { files: Array<{ path: string; added: number; removed: number }>; total: number }; images: Array<{ path: string }>; files: Array<{ path: string }>; seq: number };
+  const res = await api(`/api/threads/${thread.id}/outputs`);
+  assert.equal(res.status, 200);
+  const outputs = (await res.json()) as Outputs;
+  assert.equal(outputs.changes.total, 1);
+  assert.match(outputs.changes.files[0].path, /src\/app\.ts$/);
+  assert.deepEqual([outputs.changes.files[0].added, outputs.changes.files[0].removed], [2, 1]);
+  assert.deepEqual(outputs.images.map(i => i.path), [join(workdir, 'shot.png')]);
+  assert.deepEqual(outputs.files.map(f => f.path), ['/srv/out/report.html']);
+  assert.equal((await api('/api/threads/does-not-exist/outputs')).status, 404);
+});
+
+test('outputs ignore closing tags when the fake agent echoes injected instructions', async () => {
+  const thread = await newThread({ agent: 'claude' });
+  await post(`/api/threads/${thread.id}/turns`, { text: 'hello\n<calli-tools>Use calli tools search.</calli-tools>' });
+  await untilIdle(thread.id);
+  assert.ok(store.listEventsOfType(thread.id, 'message.delta').some(ev => String(ev.data.text).includes('</calli-tools>')));
+  const response = await api(`/api/threads/${thread.id}/outputs`);
+  assert.equal(response.status, 200);
+  const outputs = await response.json() as ThreadOutputs;
+  assert.deepEqual(outputs.files, []);
+  assert.deepEqual(outputs.images, []);
+});
+
+test('outputs fixture creates previewable files, canonicalizes cwd and refreshes the overview cache', async () => {
+  const real = join(workdir, 'outputs-real');
+  const alias = join(workdir, 'outputs-alias');
+  mkdirSync(real);
+  symlinkSync(real, alias);
+  const thread = await newThread({ agent: 'claude', cwd: alias });
+  const path = `/api/threads/${thread.id}/outputs`;
+  assert.deepEqual((await (await api(path)).json() as ThreadOutputs).changes.files, []);
+  await post(`/api/threads/${thread.id}/turns`, { text: 'make outputs' });
+  await untilIdle(thread.id);
+  const response = await api(path);
+  assert.equal(response.status, 200);
+  const outputs = await response.json() as ThreadOutputs;
+  assert.equal(outputs.changes.total, 2);
+  assert.deepEqual(outputs.changes.files.map(f => [f.path, f.created]), [[join(real, 'out/chart.svg'), true], [join(real, 'out/report.html'), true]]);
+  assert.deepEqual(outputs.images.map(f => f.path), [join(real, 'out/chart.svg')]);
+  assert.deepEqual(outputs.files.map(f => f.path), [join(real, 'out/report.html')]);
+  assert.deepEqual(await (await api(path)).json(), outputs, 'cached reads keep the same metadata');
+  assert.equal((await api(path, {}, false)).status, 401);
+  assert.ok(!JSON.stringify(outputs).includes('oldText'));
+  assert.ok(!JSON.stringify(outputs).includes('<svg'));
+  const image = await api(`/api/threads/${thread.id}/files?path=${encodeURIComponent(outputs.images[0].path)}`);
+  assert.equal(image.status, 200);
+  assert.equal(image.headers.get('content-type'), 'image/svg+xml');
+  assert.equal(await image.text(), readFileSync(join(real, 'out/chart.svg'), 'utf8'));
+  const report = await api(`/api/threads/${thread.id}/text?path=${encodeURIComponent(outputs.files[0].path)}`);
+  assert.equal(report.status, 200);
+  assert.equal((await report.json()).text, readFileSync(join(real, 'out/report.html'), 'utf8'));
+  const fork = await post(`/api/threads/${thread.id}/fork`, {});
+  assert.equal(fork.status, 201);
+  const forked = await fork.json() as { id: string };
+  const copied = await (await api(`/api/threads/${forked.id}/outputs`)).json() as ThreadOutputs;
+  assert.deepEqual(copied.changes, outputs.changes);
+  assert.deepEqual(copied.images, outputs.images);
+  assert.deepEqual(copied.files, outputs.files);
+});
+
+test('outputs include imported edits and every turn beyond the history page', async () => {
+  const sessions = existsSync(process.env.FAKE_ACP_SESSIONS_FILE!) ? JSON.parse(readFileSync(process.env.FAKE_ACP_SESSIONS_FILE!, 'utf8')) as unknown[] : [];
+  writeFileSync(process.env.FAKE_ACP_SESSIONS_FILE!, JSON.stringify([...sessions, { sessionId: 'hist-outputs', cwd: workdir, title: 'outputs' }]));
+  const imported = await post('/api/threads/import', { agent: 'claude', sessionId: 'hist-outputs' });
+  assert.equal(imported.status, 201);
+  const thread = await imported.json() as { id: string };
+  const read = async () => await (await api(`/api/threads/${thread.id}/outputs`)).json() as ThreadOutputs;
+  assert.deepEqual((await read()).changes.files.map(f => [f.path, f.added, f.removed, f.created]), [[join(workdir, 'notes.md'), 1, 1, false]]);
+  for (let i = 0; i < 12; i++) {
+    const turn = `output-${i}`;
+    store.appendEvent(thread.id, turn, 'turn.started', { text: 'generate' });
+    store.appendEvent(thread.id, turn, 'tool.update', { id: 'edit', content: [{ type: 'diff', path: `out/${i}.md`, oldText: null, newText: 'line\n' }] });
+    store.appendEvent(thread.id, turn, 'message.delta', { text: `[file](out/${i}.md)` });
+    store.appendEvent(thread.id, turn, 'turn.done', {});
+  }
+  const outputs = await read();
+  assert.equal(outputs.changes.total, 13);
+  assert.equal(outputs.files.length, 12);
+  assert.equal(outputs.files.at(-1)?.path, join(workdir, 'out/0.md'));
+});
+
+test('outputs cap lists after aggregation without dropping older generated images', async () => {
+  const thread = await newThread({ agent: 'claude' });
+  store.appendEvent(thread.id, 't', 'turn.started', { text: 'generate' });
+  for (let i = 0; i < 205; i++) {
+    store.appendEvent(thread.id, 't', 'tool.update', { id: `e${i}`, content: [{ type: 'diff', path: i === 0 ? 'old.png' : `out/${i}.txt`, oldText: null, newText: 'line\n' }] });
+  }
+  store.appendEvent(thread.id, 't', 'turn.done', {});
+  const outputs = await (await api(`/api/threads/${thread.id}/outputs`)).json() as ThreadOutputs;
+  assert.equal(outputs.changes.total, 205);
+  assert.equal(outputs.changes.added, 205);
+  assert.equal(outputs.changes.files.length, 200);
+  assert.equal(outputs.files.length, 200);
+  assert.deepEqual(outputs.images.map(f => f.path), [join(workdir, 'old.png')]);
 });

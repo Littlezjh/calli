@@ -19,11 +19,13 @@ import {
   type DetailRef,
   clockLabel,
   compactionLabel,
-  deliveredPreview,
   durationLabel,
+  firstSentence,
+  withoutProgress,
   groupByTurn,
   imagePlaces,
   liveWorkFromEvents,
+  progressState,
   runSummary,
   splitThinking,
   splitNotes,
@@ -36,6 +38,7 @@ import {
   workSections,
   type ApprovalOption,
   type CoordinationNote,
+  type DeliveredState,
   type FileChange,
   type FileDiff,
   type ImageRef,
@@ -48,7 +51,7 @@ import {
 import { VoiceCloud } from './VoiceOrb';
 import { Lightbox } from './Lightbox';
 import { PlanCopyButton, PlanDownloadButton, PlanReader } from './PlanReader';
-import { IconBell, ActivityIcon, IconAgents, IconCheck, IconChevron, IconClose, IconCompact, IconCopy, IconEdit, IconFile, IconFork, IconHand, IconHandover, IconList, IconQuote, IconTray, IconWorktree } from './icons';
+import { IconBell, ActivityIcon, IconCheck, IconChevron, IconClose, IconCompact, IconCopy, IconEdit, IconExternal, IconFile, IconFork, IconHand, IconHandover, IconList, IconQuote, IconTray, IconWorktree } from './icons';
 import { t } from '../i18n';
 
 // The daemon's confirmation marker is replaced by the localized notice label.
@@ -100,6 +103,14 @@ interface Props {
    * cannot copy a conversation up to just before a message.
    */
   onEdit?: (turnId: string, edit: { text: string; images: string[]; revision: number; requestId: string }) => Promise<void>;
+  /**
+   * A delivery names the member who sent it; this maps that name to the member's own thread, so
+   * the body's footer can offer a way in. `null` when the name is not on the team any more, and
+   * the button stays away.
+   */
+  memberThreadId?: (name: string) => string | null;
+  /** Opens a member's thread, resolved above, as the person's own navigation would. */
+  onOpenMemberThread?: (threadId: string) => void;
   /** The history this view was built from; an edit is sent against it. */
   revision?: number;
 }
@@ -112,7 +123,7 @@ const RECENT_TURNS = 30;
 /** Scrolling up to within this distance of the top unfolds or fetches the earlier turns. */
 const NEAR_TOP_PX = 600;
 
-export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, beforeItems, olderLabel, olderError, revealTurnId, historyApi, historyThreadId, items: originalItems, roots, loadImage, loadFile, onOpenFile, onPreview, hasOlder, loadingOlder, onLoadOlder, onFork, forkAnyTurn, onEdit, revision = 0, takeover, resume }: Props) {
+export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, beforeItems, olderLabel, olderError, revealTurnId, historyApi, historyThreadId, items: originalItems, roots, loadImage, loadFile, onOpenFile, onPreview, hasOlder, loadingOlder, onLoadOlder, onFork, forkAnyTurn, onEdit, revision = 0, takeover, resume, memberThreadId, onOpenMemberThread }: Props) {
   const [loadedFiles, setLoadedFiles] = useState<{ client?: HistoryClient; files: Map<string, WorkFiles> }>({ files: new Map() });
   const historyClient = useMemo(() => {
     if (!historyApi || !historyThreadId) return undefined;
@@ -269,7 +280,7 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
           if (item.channel) return channelRows(item.channel, item.text).map((row, index) => row.kind === 'person'
             ? <div key={`${item.key}:${index}`} className="row user" data-turn={item.turnId}><div className="bubble">{row.text}</div></div>
             : <div key={`${item.key}:${index}`} className="row channel-note" data-turn={item.turnId}><IconTray size={13} /><span>{row.text}</span></div>);
-          if (item.coordination) return <DeliveredNote key={item.key} turnId={item.turnId} note={item.coordination} text={item.text} />;
+          if (item.coordination) return <DeliveredNote key={item.key} turnId={item.turnId} note={item.coordination} text={item.text} memberThreadId={memberThreadId} onOpenMemberThread={onOpenMemberThread} />;
           // Notes (and the older single quote) ride in the message text; drawn apart here.
           const noted = splitNotes(item.text);
           const { quote, body } = noted.notes.length ? { quote: null, body: noted.body } : splitUserQuote(item.text);
@@ -974,24 +985,45 @@ export function Prose({ text, className = '' }: { text: string; className?: stri
 
 /**
  * What another agent of the team sent into this thread. It is not the user's words, so it is not
- * a bubble: a card folded to who sent it and how it opens, and read as Markdown once opened.
+ * a bubble: one quiet line — who, how it stands, the first of what they said — that folds out in
+ * place to the message itself as Markdown, with a way into the member's own thread.
  */
-const DeliveredNote = memo(function DeliveredNote({ turnId, note, text }: { turnId: string; note: CoordinationNote; text: string }) {
+const DeliveredNote = memo(function DeliveredNote({ turnId, note, text, memberThreadId, onOpenMemberThread }: {
+  turnId: string; note: CoordinationNote; text: string;
+  memberThreadId?: (name: string) => string | null; onOpenMemberThread?: (threadId: string) => void;
+}) {
   const [open, setOpen] = useState(false);
-  const preview = useMemo(() => deliveredPreview(text), [text]);
+  const state: DeliveredState = note.failed ? 'failed' : progressState(text);
+  // The protocol's closing line said what the dot and the word say; the message itself goes without.
+  const body = useMemo(() => withoutProgress(text), [text]);
+  const member = note.from && memberThreadId ? memberThreadId(note.from) : null;
+  const word = state === 'failed' ? t('team.failed')
+    : state === 'progress' ? t('view.deliveredProgress')
+    : state === 'review' ? t('view.deliveredReview')
+    : state === 'need' ? t('view.deliveredNeed')
+    : note.kind === 'task' ? t('view.deliveredTask')
+    : null;
   return (
     <div className={`row delivered${open ? ' open' : ''}`} data-turn={turnId}>
-      <button type="button" className="delivered-head" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
-        <span className="delivered-title">
-          <IconAgents size={15} />
-          <span className="delivered-from">{note.from || t('team.member')}</span>
-          <span className="muted">{note.kind === 'result' ? t('view.deliveredResult') : t('view.deliveredTask')}</span>
-          {note.failed && <span className="delivered-failed">{t('team.failed')}</span>}
-          <IconChevron size={14} open={open} />
-        </span>
-        {!open && preview && <span className="delivered-preview">{preview}</span>}
+      <button type="button" className="delivered-line" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        <span className={`delivered-dot${state ? ` ${state}` : ''}`} />
+        <span className="delivered-from">{note.from || t('team.member')}</span>
+        {word && <span className={`delivered-status${state ? ` ${state}` : ''}`}>{word}</span>}
+        <span className="delivered-sum">{firstSentence(body) || t('team.noText')}</span>
+        <span className={`delivered-toggle${open ? ' open' : ''}`}><IconChevron size={13} open /></span>
       </button>
-      {open && <Prose className="delivered-body" text={text || t('team.noText')} />}
+      {open && (
+        <div className="delivered-body">
+          <Prose text={body || t('team.noText')} />
+          {member && onOpenMemberThread && (
+            <div className="delivered-foot">
+              <button type="button" className="text-btn" onClick={() => onOpenMemberThread(member)}>
+                <IconExternal size={13} />{t('view.openMember')}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 });

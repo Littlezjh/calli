@@ -258,6 +258,10 @@ test('adding a machine by its ssh name connects it; its daemon answers through t
   assert.equal(created.status, 201);
   const thread = (await created.json()) as { id: string; cwd: string };
   assert.equal(thread.cwd, node.workdir);
+  const outputs = await hubApi(`/api/hosts/devbox/proxy/threads/${thread.id}/outputs`);
+  assert.equal(outputs.status, 200);
+  assert.deepEqual((await outputs.json() as { changes: unknown }).changes, { files: [], added: 0, removed: 0, total: 0 });
+  assert.equal((await hubApi('/api/hosts/devbox/proxy/threads/nope/outputs')).status, 404);
   const there = (await (await hubApi('/api/hosts/devbox/proxy/threads?archived=0')).json()) as Array<{ id: string }>;
   assert.deepEqual(there.map((t) => t.id), [thread.id]);
   assert.deepEqual(await (await hubApi('/api/threads')).json(), [], "not among the hub's own");
