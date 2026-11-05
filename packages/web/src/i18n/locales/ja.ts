@@ -672,7 +672,6 @@ export const ja: Messages = {
   'handover.chain.viewingEarlier': '前の区間は閲覧専用です。送信先は最新の区間です',
   'handover.chain.goLatest': '最新の区間へ',
   'handover.trail.from': (agent: string) => `${agent} から引き継ぎ`,
-  'handover.trail.to': (agent: string) => `${agent} に引き継ぎ済み`,
   'handover.trail.title': '引き継ぎ履歴',
   'handover.trail.successor': '引き継ぎ先のセッション',
   'handover.trail.original': '元のセッション',

@@ -9612,18 +9612,15 @@ div.file-card:hover { background: var(--surface); }
 .team-member-text { flex: 1; }
 .team-note { color: var(--positive); }
 .handover-member-time { flex: none; margin-left: auto; padding-left: 6px; font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.handover-trail { padding: 0 24px 8px; color: var(--muted); font-size: 12px; }
-.handover-link { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 4px 0; font: inherit; }
-.handover-link:hover { color: var(--text); }
-.handover-trail .handover-panel { top: 100%; bottom: auto; max-height: min(480px, 65dvh); overflow-y: auto; width: 320px; max-width: calc(100vw - 32px); }
-.handover-panel-title { padding: 10px 12px; color: var(--muted); font-size: 12px; }
+.handover-chain { width: min(420px, calc(100vw - 32px)); }
+.handover-chain .dialog-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.handover-chain .dialog-head .dialog-title { margin: 0; }
+.handover-chain-body { display: flex; flex-direction: column; gap: 2px; max-height: min(480px, 65dvh); overflow-y: auto; }
 .handover-entry { display: flex; flex-direction: column; gap: 5px; width: 100%; text-align: left; padding: 12px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--text); cursor: pointer; }
 .handover-entry:hover, .handover-entry.current { background: var(--hover); }
 .handover-entry small { color: var(--muted); overflow-wrap: anywhere; }
 .handover-missing { padding: 12px; color: var(--muted); font-size: 12px; }
 @media (max-width: 700px) {
-  .handover-trail { padding: 0 16px 6px; }
-  .handover-trail .handover-panel { top: auto; bottom: 0; width: auto; max-width: none; }
   .handover-toggle { min-height: 32px; font-size: 13px; }
   .handover-member { min-height: 38px; }
   .handover-member-name { font-size: 14px; }

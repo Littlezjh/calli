@@ -4,6 +4,11 @@ import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { api, startDaemon, openUi, launchBrowser, repoRoot } from '../harness.mjs';
+const chainDialog = async page => {
+  await page.getByLabel('这个线程的更多操作').click();
+  await page.getByRole('menuitem', { name: '交接记录', exact: true }).click();
+  await page.getByRole('dialog', { name: '交接记录', exact: true }).waitFor();
+};
 
 let dir, daemon, browser;
 const quota = (agent, gemini = 10, claude = 20) => writeFileSync(join(dir, `${agent}.json`), JSON.stringify({ 'Gemini Models': gemini, 'Claude Models': claude }));
@@ -81,7 +86,7 @@ test('near quota refreshes at turn end, writes summary, counts down, then hands 
     assert.equal(await page.locator('.sidebar .thread-fork').count(), 0);
     const starts = (await request(`/api/threads/${next.id}/events`)).filter(e => e.type === 'turn.started');
     assert.match(starts[0].data.text, /请写一份交接摘要/); assert.equal(starts[1].data.text, 'next queued step');
-    await page.locator('.handover-trail button').click();
+    await chainDialog(page);
     await page.getByRole('menuitem', { name: '只看这一段', exact: true }).click();
     const singleMarker = page.locator('.handover-summary-turn');
     await singleMarker.getByRole('button', { name: '交接摘要 · 交给 Agent 2', exact: true }).waitFor();

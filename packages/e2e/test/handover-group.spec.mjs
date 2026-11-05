@@ -50,16 +50,17 @@ test('handover groups and bidirectional navigation on desktop and phone in both 
       await page.waitForTimeout(250);
       await page.screenshot({ path: `/tmp/calli-handover-shots/${phone ? 'phone' : 'desktop'}-${theme}-sidebar.png` });
       await page.locator('.handover-group > .thread-row .thread-item').click();
-      await page.getByRole('button', { name: `接手自 ${label('claude')} · 交接记录`, exact: true }).waitFor();
-      await page.locator('.handover-link').click();
-      await page.getByRole('menu', { name: '交接记录' }).waitFor();
+      await page.getByLabel('这个线程的更多操作').click();
+      await page.getByRole('menuitem', { name: '交接记录', exact: true }).click();
+      await page.getByRole('dialog', { name: '交接记录', exact: true }).waitFor();
       await page.waitForTimeout(250);
       await page.screenshot({ path: `/tmp/calli-handover-shots/${phone ? 'phone' : 'desktop'}-${theme}-trail.png` });
       await page.locator('.handover-entry').filter({ hasText: '原始会话' }).click();
-      await page.getByRole('button', { name: /已交接给.*交接记录/ }).waitFor();
-      await page.locator('.handover-link').click();
+      await page.locator('.topbar-title').filter({ hasText: original.title }).waitFor();
+      await page.getByLabel('这个线程的更多操作').click();
+      await page.getByRole('menuitem', { name: '交接记录', exact: true }).click();
       await page.locator('.handover-entry').filter({ hasText: '接手会话' }).first().click();
-      await page.getByRole('button', { name: /接手自 .* · 交接记录/ }).waitFor();
+      await page.locator('.topbar-title').filter({ hasText: next.title }).waitFor();
       assert.deepEqual(errors, []);
       assert.ok(next.handover.sourceId === original.id);
       assert.ok(last.handover.sourceId === next.id);
@@ -71,8 +72,12 @@ test('handover groups and bidirectional navigation on desktop and phone in both 
   }
 });
 
-test('a turn stopped by a plan that ran out offers another agent, which takes over in one click', async () => {
-  const hub = await startDaemon();
+test('a turn stopped by a plan that ran out offers another account of the same type, which takes over in one click', async () => {
+  // One product with two accounts: the one-click suggestion stays inside the same adapter.
+  const hub = await startDaemon({ CALLI_AGENTS_JSON: JSON.stringify({ agents: [
+    { id: 'claude', adapter: 'claude', command: ['fake-claude'] },
+    { id: 'claude2', adapter: 'claude', label: 'Claude 备用', command: ['fake-claude'] },
+  ] }) });
   let browser;
   try {
     const res = await api(hub, '/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'claude', cwd: hub.workdir, title: '额度用完的任务' }) });
@@ -97,12 +102,14 @@ test('a turn stopped by a plan that ran out offers another agent, which takes ov
       await page.waitForTimeout(400);
       await page.screenshot({ path: `/tmp/calli-handover-shots/${phone ? 'phone' : 'desktop'}-${theme}-exhausted.png` });
       if (phone || theme === 'light') { await context.close(); continue; }
-      const [takeover] = await Promise.all([page.waitForResponse(r => r.url().endsWith('/handover-thread') && r.request().method() === 'POST'), go.click()]);
-      assert.equal(takeover.request().postDataJSON().mode, 'continue');
+      const [takeover] = await Promise.all([page.waitForResponse(r => r.url().endsWith('/takeover') && r.request().method() === 'POST'), go.click()]);
+      assert.equal(takeover.request().postDataJSON().agent, 'claude2');
+      assert.equal((await takeover.json()).agent, 'claude2');
       assert.equal((await takeover.json()).handover.mode, 'continue');
       await page.locator('.topbar-title').filter({ hasText: '（接手）' }).waitFor();
-      await page.locator('.handover-divider').click();
-      await page.locator('.handover-summary').filter({ hasText: '来源机器' }).waitFor();
+      // A same-type relay leaves no seam: the merged conversation reads as one.
+      await page.locator('.merged-history').waitFor();
+      assert.equal(await page.locator('.handover-boundary').count(), 0);
       assert.deepEqual(errors, []);
       await context.close();
     }

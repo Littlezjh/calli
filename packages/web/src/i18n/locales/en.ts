@@ -674,7 +674,6 @@ export const en: Messages = {
   'handover.chain.viewingEarlier': 'Earlier segment is read-only; messages go to the latest segment',
   'handover.chain.goLatest': 'Go to latest segment',
   'handover.trail.from': (agent: string) => `Taken over from ${agent}`,
-  'handover.trail.to': (agent: string) => `Handed over to ${agent}`,
   'handover.trail.title': 'Handover history',
   'handover.trail.successor': 'Successor session',
   'handover.trail.original': 'Original session',

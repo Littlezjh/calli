@@ -6,6 +6,11 @@ import { join } from 'node:path';
 import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
 
 const shots = '/tmp/calli-handover-merged-shots';
+const chainDialog = async page => {
+  await page.getByLabel('这个线程的更多操作').click();
+  await page.getByRole('menuitem', { name: '交接记录', exact: true }).click();
+  await page.getByRole('dialog', { name: '交接记录', exact: true }).waitFor();
+};
 test('three handover segments load on upward navigation, keep their action targets and send to the latest recipient', async () => {
   const hub = await startDaemon();
   let browser;
@@ -108,11 +113,11 @@ test('three handover segments load on upward navigation, keep their action targe
         assert.ok(forkRequest.url.endsWith(`/threads/${a.id}/fork`));
         assert.ok(JSON.stringify(forkRequest.body).includes('A-4'));
         await openLatest();
-        await page.locator('.handover-link').click(); await page.getByRole('menuitem', { name: '只看这一段', exact: true }).click();
+        await chainDialog(page); await page.getByRole('menuitem', { name: '只看这一段', exact: true }).click();
         await page.getByText('C 问题 10', { exact: true }).waitFor();
         await scrollUp(); await page.locator('.bubble', { hasText: 'DEFERRED_HANDOVER' }).waitFor();
         assert.equal(await page.locator('.handover-boundary').count(), 0);
-        await page.locator('.handover-link').click(); await page.getByRole('menuitem', { name: '显示整条链', exact: true }).click();
+        await chainDialog(page); await page.getByRole('menuitem', { name: '显示整条链', exact: true }).click();
         await page.getByText('C 问题 10', { exact: true }).waitFor();
         assert.equal(await page.locator('.bubble', { hasText: 'DEFERRED_HANDOVER' }).count(), 0);
         // Sidebar member navigation opens that segment's merged view, with C as input recipient.

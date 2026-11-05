@@ -4,6 +4,11 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+const chainDialog = async page => {
+  await page.getByLabel('这个线程的更多操作').click();
+  await page.getByRole('menuitem', { name: '交接记录', exact: true }).click();
+  await page.getByRole('dialog', { name: '交接记录', exact: true }).waitFor();
+};
 import { startDaemon, openUi, api, launchBrowser, repoRoot } from '../harness.mjs';
 
 let root, daemon, browser, thread, configDir;
@@ -112,12 +117,12 @@ for (const mobile of [false,true]) {
       const edited=summary+'\n\n补充：先运行测试。';await box.fill(edited);
       if(process.env.CALLI_SCREENSHOTS==='1')await page.screenshot({path:join(repoRoot,'e2e','shots',`handover-${mobile?'phone-light':'desktop-dark'}-draft.png`),animations:'disabled'});
       // Manual handovers keep both drafts and composers independent, despite sidebar grouping.
-      await page.locator('.handover-trail button').click();
+      await chainDialog(page);
       await page.getByRole('menuitem').filter({hasText:'Claude 工作号'}).click();
       assert.equal(await page.locator('.handover-readonly, .merged-history').count(), 0);
       assert.equal(await box.inputValue(),'原线程未发送的草稿');
       assert.equal(await page.evaluate(id=>JSON.parse(localStorage.getItem('calli.drafts'))[id].text,source.id),'原线程未发送的草稿');
-      await page.locator('.handover-trail button').click();
+      await chainDialog(page);
       await page.getByRole('menuitem').filter({hasText:'Claude 个人号'}).click();
       assert.equal(await box.inputValue(),edited);
       await page.reload();await box.waitFor();

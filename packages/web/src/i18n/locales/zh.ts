@@ -674,7 +674,6 @@ export const zh = {
   'handover.chain.viewingEarlier': '前段只读；消息发送给最新一段',
   'handover.chain.goLatest': '前往最新一段',
   'handover.trail.from': (agent: string) => `接手自 ${agent}`,
-  'handover.trail.to': (agent: string) => `已交接给 ${agent}`,
   'handover.trail.title': '交接记录',
   'handover.trail.successor': '接手会话',
   'handover.trail.original': '原始会话',
