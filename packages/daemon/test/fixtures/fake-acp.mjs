@@ -323,9 +323,9 @@ rl.on('line', (line) => {
       // `later name` answers after a moment, so a test can act while the naming agent thinks.
       if (text.includes('给下面这段对话起一个线程标题')) {
         if (text.includes('slow name')) { pendingPrompt = { id: msg.id }; return; }
-        // A rule that forbids the blanket robot emoji gets a fitting one instead; a plain emoji rule
-        // still gets the robot; no emoji rule gets none.
-        const emoji = text.includes('不要一律用 🤖') ? '🐛 ' : text.includes('emoji') ? '🤖 ' : '';
+        // A rule that asks for distinct emojis gets a fitting one instead of the robot; a plain emoji
+        // rule still gets the robot; no emoji rule gets none.
+        const emoji = text.includes('注意区分度') ? '🐛 ' : text.includes('emoji') ? '🤖 ' : '';
         const title = `${emoji}修复登录超时`;
         const answer = () => {
           update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `标题：「${title}」\n` } });

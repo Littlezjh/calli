@@ -77,7 +77,7 @@ test('the naming request carries the rules as written, the conversation start, a
   assert.equal((emoji.match(/🐛/g) ?? []).length, 1500, 'the cut does not take an emoji apart');
   // Empty rules fall back to the shipped defaults, which ask for one emoji that fits the work.
   assert.match(namingPrompt('', '帮我修登录超时', null), /开头放一个贴切/);
-  assert.match(namingPrompt('', '帮我修登录超时', null), /不要一律用 🤖/);
+  assert.match(namingPrompt('', '帮我修登录超时', null), /注意区分度/);
 });
 
 test('the settings endpoint serves the shipped defaults, and saving keeps the person\'s own rules', async (t) => {
