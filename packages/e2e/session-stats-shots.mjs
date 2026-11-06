@@ -31,9 +31,9 @@ async function makeTurns(page) {
   await page.waitForTimeout(3_600);
 }
 
-/** Opens the overview from the top bar and waits for its footer readings to arrive. */
+/** Opens the overview (a desktop dock opens by itself) and waits for its footer readings. */
 async function openOverview(page) {
-  await page.locator('.topbar-overview').click();
+  if (!(await page.locator('.overview-panel').count())) await page.locator('.topbar-overview').click();
   await page.locator('.overview-panel').waitFor();
   await page.waitForFunction(() => document.querySelector('.overview-readings')?.textContent?.trim(), null, { timeout: 10_000 });
   await page.waitForTimeout(300);

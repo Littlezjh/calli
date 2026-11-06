@@ -2278,6 +2278,8 @@ export const zh = {
   'overview.changes': '变更',
   'overview.images': '图片',
   'overview.files': '文件',
+  'overview.loading': '读取中…',
+  'overview.empty': '还没有产出',
   'overview.waiting': (n: number) => `${n} 待处理`,
   'overview.needsYou': (n: number) => `${n} 需要你`,
   'overview.created': '新建',

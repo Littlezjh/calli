@@ -37,7 +37,8 @@ try {
     // A phone keeps its thread list in a drawer behind the conversation.
     if (context._options.viewport.width < 900) await page.locator('.menu-btn').click();
     await page.locator('.thread-row', { hasText: '上线前收尾' }).click();
-    await page.locator('.topbar-overview').click();
+    // The desktop panel stands open by itself; a phone opens its sheet from the button.
+    if (context._options.viewport.width < 1240) await page.locator('.topbar-overview').click();
     await page.locator('.overview-panel').waitFor();
     await page.locator('.overview-member', { hasText: '深色核对' }).waitFor();
     // The outputs are read only once the panel is open, after a short debounce.

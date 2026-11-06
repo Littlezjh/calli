@@ -27,7 +27,7 @@ import {
 } from './api';
 import type { HubAction } from './commands';
 import { buildProjectOptions } from './projects';
-import { useAppearance, useInTitlebar, useIsCompact, useListSwipe, useStoredFlag } from './hooks';
+import { useAppearance, useInTitlebar, useIsCompact, useListSwipe, useMinWidth, useStoredFlag } from './hooks';
 import { mergeAgentChoice, parseAgentChoices, type AgentChoices } from './agent-choice';
 import { useHosts } from './hosts';
 import type { PreparedImage } from './images';
@@ -183,6 +183,16 @@ const SIDEBAR_HIDDEN_KEY = 'calli.sidebar.hidden';
 /** The width a person last dragged the desktop thread list to. */
 const SIDEBAR_WIDTH_KEY = 'calli.sidebar.width';
 const SIDEBAR_KEYBOARD_STEP = 16;
+
+/**
+ * How wide a window must be for the overview to stand beside the conversation instead of opening
+ * over it. The panel needs 364px to the right of the column; making that room costs the column
+ * 348px, and below this width what is left reads like a phone column (under 550px at the line),
+ * so a narrower window gets the old popover, closed by default, instead.
+ */
+export const OVERVIEW_DOCK_MIN_WIDTH = 1240;
+/** The overview's standing panel, remembered on this device: open until the person closes it. */
+const OVERVIEW_OPEN_KEY = 'calli.overview.open';
 
 /** What members of each instance start with, remembered on this device for the next team. */
 const MEMBER_DEFAULTS_KEY = 'calli.coord.defaults';
@@ -1601,6 +1611,17 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const [traceOpen, setTraceOpen] = useState(false);
   const filesSeq = useRef(0);
   useEffect(() => { setFiles(null); setFilesThreadId(null); setTraceOpen(false); }, [selectedId]);
+
+  // The overview: a popover on narrow screens and the pages, a standing panel beside the
+  // conversation on a wide one. Its switch is remembered here, and starts open.
+  const overviewDock = useMinWidth(OVERVIEW_DOCK_MIN_WIDTH) && !onPage;
+  const [overviewOpen, setOverviewOpen] = useStoredFlag(OVERVIEW_OPEN_KEY, true);
+  /** A side panel takes the same edge as the overview, so the panel steps aside while one is open —
+   *  but the person's own switch is left alone: it comes back when the side panel closes. */
+  const sideOpen = Boolean(agentsOpen && coordination) || Boolean(files) || traceOpen;
+  const overviewShown = overviewDock && overviewOpen && !sideOpen && Boolean(selected) && hostUp;
+  /** Only the person turns the standing panel off; the switch above remembers it. */
+  const closeOverview = useCallback(() => { if (overviewDock) setOverviewOpen(false); }, [overviewDock, setOverviewOpen]);
   // A page the agent wrote, rendered in a sandboxed iframe.
   const [preview, setPreview] = useState<{ threadId: string; path: string } | null>(null);
   const openFileLink = useCallback(
@@ -2432,6 +2453,25 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     </>
   );
 
+  // The same body in both shapes: the standing panel beside the conversation, and the popover a
+  // narrow window still gets. Only the standing one keeps itself open behind its own rows.
+  const overviewBody = (close: () => void, persistent: boolean) => selected && api && (
+    <ThreadOverview
+      api={api} threadId={selected.id} updatedAt={selected.updatedAt} active={selected.status === 'running'}
+      team={overviewTeam} agents={agents} plan={topPlan} roots={threadRoots} turnOrder={turnOrder}
+      loadFile={loadFile} persistent={persistent}
+      onOpenMember={(member) => { setAgentsStart(member ?? null); setAgentsOpen(true); setFiles(null); }}
+      onOpenDiff={(file) => setDiffFile({ threadId: selected.id, file })}
+      onOpenFile={async (path) => {
+        if (/\.html?$/i.test(path)) setPreview({ threadId: selected.id, path });
+        else await openFileLink(path);
+      }}
+      onPreview={(path) => setPreview({ threadId: selected.id, path })}
+      onOpenTrace={() => { setAgentsOpen(false); setFiles(null); setTraceOpen(true); }}
+      onClose={close}
+    />
+  );
+
   return (
     <div
       className={`app${listOpen ? ' drawer-open' : ''}${sidebarHidden && !compact ? ' sidebar-hidden' : ''}${sidebarDrag ? ' sidebar-resizing' : ''}`}
@@ -2552,7 +2592,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
 
       {/* A conversation under way leans toward the middle of the screen, as in Codex; a new
           thread, and the pages, stay centred where they are. */}
-      <main className={`main${selected && !onPage && hostUp && !compact ? ' lean' : ''}`} ref={mainRef}>
+      <main className={`main${selected && !onPage && hostUp && !compact ? ' lean' : ''}${overviewShown ? ' overview-room' : ''}`} ref={mainRef}>
         {compact && selected && !listOpen && !onPage && hostUp && (
           <ThreadQuickSwitch threads={topLevelThreads} selectedId={selected.id} agents={agents} onSelect={pick} />
         )}
@@ -2599,7 +2639,19 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
             <div className="topbar-actions">
               {/* The thread at a glance: one panel for the team, the plan, the changes, the pictures
                   and the files. The badge is only ever what needs the person. */}
-              {api && hostUp && (
+              {api && hostUp && (overviewDock ? (
+                <button
+                  type="button"
+                  className={`icon-btn topbar-overview${overviewOpen ? ' on' : ''}${teamNeeds ? ' attention' : ''}`}
+                  aria-label={t('overview.label')}
+                  aria-pressed={overviewOpen}
+                  title={teamNeeds ? t('overview.needsYou', teamNeeds) : t('overview.label')}
+                  onClick={() => setOverviewOpen(!overviewOpen)}
+                >
+                  <IconOverview />
+                  {teamNeeds > 0 && <span className="topbar-badge">{teamNeeds}</span>}
+                </button>
+              ) : (
                 <Popover
                   label={t('overview.label')}
                   triggerClassName={`icon-btn topbar-overview${teamNeeds ? ' attention' : ''}`}
@@ -2610,19 +2662,9 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
                   panelClassName="overview-panel"
                   trigger={<><IconOverview />{teamNeeds > 0 && <span className="topbar-badge">{teamNeeds}</span>}</>}
                 >
-                  {(close) => <ThreadOverview
-                    api={api} threadId={selected.id} updatedAt={selected.updatedAt} active={selected.status === 'running'}
-                    team={overviewTeam} agents={agents} plan={topPlan} roots={threadRoots} turnOrder={turnOrder}
-                    loadFile={loadFile}
-                    onOpenMember={(member) => { setAgentsStart(member ?? null); setAgentsOpen(true); setFiles(null); }}
-                    onOpenDiff={(file) => setDiffFile({ threadId: selected.id, file })}
-                    onOpenFile={async (path) => { if (/\.html?$/i.test(path)) setPreview({ threadId: selected.id, path }); else await openFileLink(path); }}
-                    onPreview={(path) => setPreview({ threadId: selected.id, path })}
-                    onOpenTrace={() => { setAgentsOpen(false); setFiles(null); setTraceOpen(true); }}
-                    onClose={close}
-                  />}
+                  {(close) => overviewBody(close, false)}
                 </Popover>
-              )}
+              ))}
               {/* A phone keeps its plan button: it has no margin card, and the lead's list of what
                   leaves the bar was the desktop's. The overview has the plan too, one tap away. */}
               {compact && topPlan && !onPage && <PlanButton item={topPlan} />}
@@ -2985,6 +3027,14 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         </div>
         )}
       </main>
+
+      {/* The overview standing beside the conversation: a layer of its own, put away only by the
+          button directly above it. It sits below the top bar on the window's right edge. */}
+      {overviewShown && (
+        <div className="pop-panel overview-panel overview-dock" role="menu" aria-label={t('overview.label')}>
+          {overviewBody(closeOverview, true)}
+        </div>
+      )}
 
       {agentsOpen && coordination && <AgentPanel key={`${coordination.rootId}:${agentsStart ?? ''}`} start={agentsStart} api={api} memberApi={(id) => new Api(token ?? '', '', id)} team={coordination} agents={agents} memberModel={(thread) => {
         const a = agents.find((v) => v.id === thread.agent);

@@ -4,6 +4,19 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { startDaemon, openUi, api, launchBrowser, repoRoot } from '../harness.mjs';
 
+/** The desktop dock opens by itself; the phone sheet and a reopened panel need the button. */
+async function openOverview(page) {
+  if (!(await page.locator('.overview-panel').count())) await page.locator('.topbar-overview').click();
+  await page.locator('.overview-panel').waitFor();
+}
+
+/** The standing panel's switch closes it; the phone sheet closes from Escape. */
+async function closeOverview(page, mobile) {
+  if (mobile) await page.keyboard.press('Escape');
+  else await page.locator('.topbar-overview').click();
+  await page.locator('.overview-panel').waitFor({ state: 'detached' });
+}
+
 test('the newest plan lives in the overview panel, opens to the whole list, and older plans go back to the conversation', { timeout: 120000 }, async () => {
   const daemon = await startDaemon({ CALLI_AGENTS_JSON: JSON.stringify({ agents: [{ id: 'codex', adapter: 'codex', command: [process.execPath, join(repoRoot, 'daemon/test/fixtures/fake-codex.mjs')] }] }) });
   const shots = process.env.CALLI_E2E_SHOTS_DIR;
@@ -31,7 +44,8 @@ test('the newest plan lives in the overview panel, opens to the whole list, and 
         await page.locator('.topbar-overview').waitFor();
         if (mobile) await page.locator('.topbar-plan').waitFor();
         else assert.equal(await page.locator('.topbar-plan').count(), 0, 'no separate plan button on the desktop');
-        await page.locator('.topbar-overview').click();
+        // A desktop panel stands open by itself; a phone opens its sheet from the button.
+        await openOverview(page);
         const panel = page.locator('.overview-panel');
         await panel.waitFor();
         const plan = panel.locator('.overview-plan');
@@ -42,22 +56,19 @@ test('the newest plan lives in the overview panel, opens to the whole list, and 
         if (shots) await page.screenshot({ path: join(shots, `plan-line-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
 
         // Stopped: nothing is in progress any more.
-        await page.keyboard.press('Escape');
-        await panel.waitFor({ state: 'detached' });
+        await closeOverview(page, mobile);
         await page.getByRole('button', { name: '停止', exact: true }).click();
-        await page.locator('.topbar-overview').click();
-        await panel.waitFor();
+        await openOverview(page);
         await panel.locator('.overview-plan .plan-entry.active').waitFor({ state: 'detached' });
-        await page.keyboard.press('Escape');
+        await closeOverview(page, mobile);
 
         // A new message: the old plan goes back into the conversation, where its turn is.
         await page.locator('.composer textarea').fill('hello');
         await page.getByRole('button', { name: '发送', exact: true }).click();
         await page.locator('.plan-toggle').filter({ hasText: '计划 1/5' }).waitFor();
-        await page.locator('.topbar-overview').click();
-        await panel.waitFor();
+        await openOverview(page);
         assert.equal(await panel.locator('.overview-plan').count(), 0, 'the old plan is not shown twice');
-        await page.keyboard.press('Escape');
+        await closeOverview(page, mobile);
         assert.deepEqual(errors, []);
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'no horizontal overflow');
       } finally { await context.close(); }

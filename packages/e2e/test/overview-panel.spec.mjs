@@ -46,10 +46,20 @@ test('the overview panel reads the thread from one top-bar button, and a change 
     assert.equal(await page.locator('.topbar-actions button.icon-btn').count(), 3, 'three top-bar buttons');
     assert.equal(await page.locator('.topbar-agents, .topbar-plan, .topbar-trace').count(), 0, 'no old buttons came back');
 
-    // The panel: plan, changes, images and files, in that order.
-    await page.locator('.topbar-overview').click();
-    const panel = page.locator('.overview-panel');
+    // The panel: open by default, standing beside the conversation, plan, changes, images and
+    // files in that order.
+    const panel = page.locator('.overview-panel.overview-dock');
     await panel.waitFor();
+    assert.equal(await page.locator('.topbar-overview').getAttribute('aria-pressed'), 'true');
+    // The column's move lasts 0.3s; measure it at rest.
+    await page.waitForTimeout(450);
+    // It does not lie over the conversation: the column made room for it.
+    const room = await page.evaluate(() => {
+      const column = document.querySelector('.thread').getBoundingClientRect();
+      const dock = document.querySelector('.overview-panel').getBoundingClientRect();
+      return { gap: dock.left - column.right, dockLeft: dock.left, columnRight: column.right };
+    });
+    assert.ok(room.gap >= 12, `the panel leaves ${room.gap}px beside the column`);
     await panel.locator('.overview-row', { hasText: 'app.ts' }).waitFor();
     const groups = await panel.locator('.overview-toggle strong').allTextContents();
     assert.deepEqual(groups.slice(0, 4), ['计划', '变更', '图片', '文件']);
@@ -70,8 +80,8 @@ test('the overview panel reads the thread from one top-bar button, and a change 
     await diff.locator('.change-diff-head .icon-btn').click();
     await diff.waitFor({ state: 'detached' });
 
-    // The page has its own preview button beside the row, apart from opening the file.
-    await page.locator('.topbar-overview').click();
+    // The page has its own preview button beside the row, apart from opening the file. The dock
+    // stayed where it was when the dialog closed.
     const htmlRow = page.locator('.overview-rowwrap', { hasText: 'report.html' }).first();
     await htmlRow.locator('.overview-row').waitFor();
     await htmlRow.locator('.overview-row').hover();
@@ -86,6 +96,46 @@ test('the overview panel reads the thread from one top-bar button, and a change 
     await page.getByRole('menuitem', { name: '打开终端', exact: true }).waitFor();
     await page.getByRole('menuitem', { name: '轨迹', exact: true }).waitFor();
     await page.keyboard.press('Escape');
+
+    // The standing panel stays through the conversation, the input and Escape; only its own
+    // button above it puts it away, and the choice survives a reload.
+    await page.locator('.thread .row.user .bubble').last().click();
+    await panel.waitFor();
+    await page.locator('.composer textarea').click();
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(250);
+    await panel.waitFor();
+    assert.equal(await page.locator('.topbar-overview').getAttribute('aria-pressed'), 'true');
+
+    // A side panel takes the same edge: the overview steps aside while it is open, but the
+    // person's switch is untouched — it comes back when the side panel closes.
+    await page.locator('.topbar-files').click();
+    await page.locator('.files-panel').waitFor();
+    await panel.waitFor({ state: 'detached' });
+    assert.notEqual(await page.evaluate(() => localStorage.getItem('calli.overview.open')), '0', 'a side panel does not record the panel as closed');
+    await page.locator('.files-panel .files-head button[aria-label="关闭文件"]').click();
+    await page.locator('.files-panel').waitFor({ state: 'detached' });
+    await panel.waitFor();
+    assert.equal(await page.locator('.topbar-overview').getAttribute('aria-pressed'), 'true');
+
+    await page.locator('.topbar-overview').click();
+    await panel.waitFor({ state: 'detached' });
+    assert.equal(await page.locator('.topbar-overview').getAttribute('aria-pressed'), 'false');
+    assert.equal(await page.evaluate(() => localStorage.getItem('calli.overview.open')), '0');
+
+    await page.reload();
+    await page.locator('.thread-row', { hasText: '概况面板' }).click();
+    await page.locator('.topbar-overview').waitFor();
+    await page.waitForTimeout(300);
+    assert.equal(await page.locator('.overview-panel').count(), 0, 'a closed panel stays closed');
+    assert.equal(await page.locator('.topbar-overview').getAttribute('aria-pressed'), 'false');
+
+    await page.locator('.topbar-overview').click();
+    await page.locator('.overview-panel.overview-dock').waitFor();
+    await page.reload();
+    await page.locator('.thread-row', { hasText: '概况面板' }).click();
+    await page.locator('.overview-panel.overview-dock').waitFor({ timeout: 15000 });
+    assert.equal(await page.locator('.topbar-overview').getAttribute('aria-pressed'), 'true');
 
     assert.deepEqual(errors, []);
     await context.close();
@@ -105,8 +155,7 @@ test('a full team and thirteen changes fold into the room the panel has, with no
     const page = await context.newPage();
     await page.goto(`${daemon.base}/`);
     await page.locator('.thread-row', { hasText: '上线前收尾' }).click();
-    await page.locator('.topbar-overview').click();
-    const panel = page.locator('.overview-panel');
+    const panel = page.locator('.overview-panel.overview-dock');
     await panel.waitFor();
     await panel.locator('.overview-member', { hasText: '深色核对' }).waitFor();
     // The badge counts only what asks for the person.
@@ -121,6 +170,48 @@ test('a full team and thirteen changes fold into the room the panel has, with no
     // The groups that folded say so by not showing their rows; the agents never fold.
     assert.ok(await panel.locator('.overview-group.open .overview-member').count() >= 3, 'the agents stay open');
     await context.close();
+  } finally {
+    await browser.close();
+    await daemon.stop();
+  }
+});
+
+test('below the dock width the overview is the old popover, and a phone tap outside puts it away', { timeout: 120000 }, async () => {
+  const daemon = await startDaemon();
+  const browser = await launchBrowser();
+  try {
+    // Below the dock width the overview is the popover again, closed by default even on a device
+    // that last left the standing panel open.
+    const wide = await browser.newContext({ viewport: { width: 1100, height: 900 } });
+    await wide.addInitScript(() => localStorage.setItem('calli.overview.open', '1'));
+    const page = await wide.newPage();
+    await page.goto(`${daemon.base}/`);
+    await page.locator('.thread-row', { hasText: '上线前收尾' }).click();
+    await page.waitForTimeout(500);
+    assert.equal(await page.locator('.overview-panel').count(), 0, 'the popover starts closed');
+    assert.equal(await page.locator('.topbar-overview').getAttribute('aria-pressed'), null);
+    assert.equal(await page.locator('.topbar-overview').getAttribute('aria-expanded'), 'false');
+    await page.locator('.topbar-overview').click();
+    const panel = page.locator('.overview-panel');
+    await panel.waitFor();
+    assert.ok(!(await panel.getAttribute('class')).includes('overview-dock'), 'not the standing panel');
+    await page.mouse.click(200, 500);
+    await panel.waitFor({ state: 'detached' });
+    await wide.close();
+
+    // A phone keeps the bottom sheet; a tap outside it puts it away.
+    const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    const small = await phone.newPage();
+    await small.goto(`${daemon.base}/`);
+    await small.locator('.menu-btn').click();
+    await small.locator('.thread-row', { hasText: '上线前收尾' }).click();
+    await small.waitForTimeout(500);
+    assert.equal(await small.locator('.overview-panel').count(), 0, 'the phone starts collapsed');
+    await small.locator('.topbar-overview').click();
+    await small.locator('.overview-panel').waitFor();
+    await small.locator('.pop-scrim').click({ position: { x: 20, y: 20 } });
+    await small.locator('.overview-panel').waitFor({ state: 'detached' });
+    await phone.close();
   } finally {
     await browser.close();
     await daemon.stop();

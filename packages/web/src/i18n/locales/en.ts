@@ -2278,6 +2278,8 @@ export const en: Messages = {
   'overview.changes': 'Changes',
   'overview.images': 'Images',
   'overview.files': 'Files',
+  'overview.loading': 'Reading…',
+  'overview.empty': 'Nothing produced yet',
   'overview.waiting': (n: number) => `${n} waiting`,
   'overview.needsYou': (n: number) => n === 1 ? '1 needs you' : `${n} need you`,
   'overview.created': 'New',

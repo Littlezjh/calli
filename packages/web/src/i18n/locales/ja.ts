@@ -2276,6 +2276,8 @@ export const ja: Messages = {
   'overview.changes': '変更',
   'overview.images': '画像',
   'overview.files': 'ファイル',
+  'overview.loading': '読み取り中…',
+  'overview.empty': 'まだ何も出力されていません',
   'overview.waiting': (n: number) => `${n} 件対応待ち`,
   'overview.needsYou': (n: number) => `${n} 件要対応`,
   'overview.created': '新規',

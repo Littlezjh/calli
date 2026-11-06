@@ -6841,6 +6841,18 @@ div.file-card:hover { background: var(--surface); }
     --column-shift: 0px;
   }
 
+  /* The overview stands 12px off the window's right edge and is 340px wide, so the column needs
+     364px of blank to its right. Where the lean does not free that much, the column moves further
+     left — up to the 174px (348px of padding) that leaves 12px between text and panel even when
+     the window is only just wide enough to offer the panel at all. The constant is the window
+     width whose natural centring leaves exactly 364px; above it the panel clears the column
+     without help. */
+  .main.lean.overview-room {
+    --column-shift: clamp(0px, calc((1500px - var(--main-w, 0px)) / 2), 174px);
+    /* All the freed room goes to the panel; code and tables must not grow under it. */
+    --column-extra: 0px;
+  }
+
   .main > .topbar {
     margin-right: calc(-2 * var(--column-shift));
     transition: margin-right 0.3s ease;
@@ -9798,6 +9810,8 @@ div.file-card:hover { background: var(--surface); }
    keeps the rest behind one more line. The panel folds its last groups, rather than growing a
    scrollbar, to the room a phone or a desktop actually leaves under the top bar. */
 .topbar-overview { position: relative; }
+/* Standing open: the same pressed ground as the files and team buttons in this bar. */
+.topbar-overview.on { background: var(--active); }
 .topbar-overview.attention .topbar-badge { background: var(--warn); color: var(--on-color); }
 /* The panel lines up 12px from the window's right edge, under the top bar; a phone gets the usual
    bottom sheet from the shared Popover rules. It is 340 wide rather than the mock's 300 because the
@@ -9805,8 +9819,22 @@ div.file-card:hover { background: var(--surface); }
    "キャッシュ 97%", which needs the extra 40px (Chinese and English would fit at 300). */
 @media (min-width: 641px) {
   .pop-panel.overview-panel { left: auto; right: 12px; width: 340px; min-width: 340px; max-height: min(70vh, var(--pop-height)); padding: 5px 5px 7px; }
+  /* The standing shape of the same panel: fixed under the top bar, not anchored to its button, and
+     without the popover's scrim — clicks elsewhere, scrolling and Escape leave it alone. The
+     top-bar button above it is its only switch. */
+  .pop-panel.overview-dock {
+    position: fixed;
+    top: calc(var(--titlebar-row, calc(52px + env(safe-area-inset-top))) + 6px);
+    right: 12px;
+    bottom: auto;
+    left: auto;
+    max-height: min(70vh, calc(100vh - var(--titlebar-row, calc(52px + env(safe-area-inset-top))) - 24px));
+    overflow-y: auto;
+  }
 }
 .thread-overview { display: flex; flex-direction: column; }
+/* A standing panel with nothing to report is one faint line, not a card that failed to draw. */
+.overview-empty { padding: 6px 7px; color: var(--faint); font-size: 12.5px; }
 /* Groups sit on one quiet line each, the title carrying the count the body would repeat. */
 .overview-group { display: flex; flex-direction: column; }
 .overview-group + .overview-group { margin-top: 3px; padding-top: 3px; border-top: 1px solid var(--border); }
@@ -9901,8 +9929,10 @@ div.file-card:hover { background: var(--surface); }
 .overview-failed .text-btn { min-height: 0; padding: 0 2px; font-size: 12.5px; color: var(--muted); text-decoration: underline; text-underline-offset: 3px; }
 .overview-failed .text-btn:hover { background: none; color: var(--text); }
 /* The readings and the way to the trace share one faint line at the bottom. Readings that have
-   not been measured leave the line to the trace alone. */
-.overview-foot { display: flex; align-items: center; gap: 6px; margin-top: 3px; padding: 6px 7px 0; border-top: 1px solid var(--border); color: var(--faint); font-size: 11px; }
+   not been measured leave the line to the trace alone. The separator belongs to a line that has
+   groups above it; readings on their own are the panel's only line, with normal padding. */
+.overview-foot { display: flex; align-items: center; gap: 6px; margin-top: 3px; padding: 6px 7px 0; color: var(--faint); font-size: 11px; }
+.overview-group + .overview-foot { border-top: 1px solid var(--border); }
 .overview-readings { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .overview-trace { flex: none; display: inline-flex; align-items: center; gap: 1px; margin-left: auto; padding: 2px 3px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--muted); font: inherit; font-size: 11px; cursor: pointer; }
 .overview-trace:hover { background: var(--hover); color: var(--text); }

@@ -140,7 +140,7 @@ try {
   for (const look of ['light', 'dark']) {
     const context = await wcoContext(1440, 900, look);
     const page = await openThread(context);
-    await page.locator('.topbar-overview').click();
+    // The standing panel is open already; only a phone opens its sheet from the button.
     await page.locator('.overview-panel').waitFor();
     const report = page.locator('.overview-rowwrap', { hasText: 'report.html' }).first();
     await report.locator('.overview-row').hover();
@@ -153,7 +153,7 @@ try {
     if (look === 'light') {
       // The lightbox over the same window: its close sits a row down and left of the system's.
       await page.locator('.preview-bar button').last().click();
-      await page.locator('.topbar-overview').click();
+      // The dock stayed behind the preview, so the picture is one click away.
       await page.locator('.overview-picture').first().waitFor();
       await page.evaluate(() => document.querySelector('.overview-picture').click());
       await page.locator('.lightbox-close').waitFor();

@@ -33,6 +33,11 @@ export function useIsCompact(): boolean {
   return !useMediaQuery('(min-width: 900px)');
 }
 
+/** True when the window is at least `width` CSS pixels wide. */
+export function useMinWidth(width: number): boolean {
+  return useMediaQuery(`(min-width: ${width}px)`);
+}
+
 /** How close to the left edge a swipe has to start to open the thread list. */
 const EDGE_PX = 28;
 /** How far sideways a finger travels before the swipe counts. */
@@ -162,20 +167,24 @@ export function useStoredSet(key: string): [Set<string>, (value: string) => void
   return [set, toggle];
 }
 
-/** A switch kept in localStorage, for a choice about how this device shows things. */
-export function useStoredFlag(key: string): [boolean, (on: boolean) => void] {
+/**
+ * A switch kept in localStorage, for a choice about how this device shows things. `initial` is what
+ * a device that has never made the choice gets; both answers are written, so changing the default
+ * later never overrides someone who already chose.
+ */
+export function useStoredFlag(key: string, initial = false): [boolean, (on: boolean) => void] {
   const [on, setOn] = useState(() => {
     try {
-      return localStorage.getItem(key) === '1';
+      const saved = localStorage.getItem(key);
+      return saved === null ? initial : saved === '1';
     } catch {
-      return false;
+      return initial;
     }
   });
   const save = (next: boolean) => {
     setOn(next);
     try {
-      if (next) localStorage.setItem(key, '1');
-      else localStorage.removeItem(key);
+      localStorage.setItem(key, next ? '1' : '0');
     } catch {
       // Storage unavailable: the choice lasts until the page reloads.
     }

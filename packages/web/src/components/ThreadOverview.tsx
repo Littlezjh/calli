@@ -93,6 +93,15 @@ export const missingImages = (images: OutputFile[]) => images.filter((image) => 
 /** A page or a drawing can be shown in the preview, as long as it is still on disk. */
 export const previewable = (file: { path: string; missing?: true }): boolean => !file.missing && /\.(html?|svg)$/i.test(file.path);
 
+/** What a thread with nothing to report answers: a daemon that cannot list outputs is read the same
+ *  way, so the panel says the thread is empty rather than waiting forever. */
+const EMPTY_OUTPUTS: ThreadOutputs = {
+  changes: { files: [], added: 0, removed: 0, total: 0 },
+  images: [],
+  files: [],
+  seq: 0,
+};
+
 const baseName = (path: string) => path.replace(/\/+$/, '').split('/').pop() || path;
 const dirName = (path: string) => { const at = path.lastIndexOf('/'); return at > 0 ? path.slice(0, at) : ''; };
 
@@ -106,8 +115,12 @@ const pictureLines = (shown: number, total: number) => 1 + Math.ceil(shown / 4) 
  * team, the plan, what changed, the pictures and the files. The outputs and the readings are read
  * only while the panel is open. Each group folds; long ones show their first few. When the panel is
  * taller than the room it has, groups give way from the bottom — the agents never do.
+ *
+ * A persistent panel is the one standing beside the conversation: its own rows open other panels
+ * without putting it away, and only its button or its close mark does. The popover version still
+ * closes behind every row it sends the person to.
  */
-export function ThreadOverview({ api, threadId, updatedAt, active, team, agents, plan, roots, turnOrder, loadFile, onOpenMember, onOpenDiff, onOpenFile, onPreview, onOpenTrace, onClose }: {
+export function ThreadOverview({ api, threadId, updatedAt, active, team, agents, plan, roots, turnOrder, loadFile, onOpenMember, onOpenDiff, onOpenFile, onPreview, onOpenTrace, onClose, persistent = false }: {
   api: Api; threadId: string; updatedAt: string; active: boolean;
   team: Coordination | null; agents: AgentInfo[]; plan: PlanItem | null; roots: string[]; turnOrder: string[];
   loadFile: (path: string) => Promise<Blob>;
@@ -117,6 +130,8 @@ export function ThreadOverview({ api, threadId, updatedAt, active, team, agents,
   onPreview: (path: string) => void;
   onOpenTrace: () => void;
   onClose: () => void;
+  /** Standing beside the conversation rather than opening over it: rows do not put it away. */
+  persistent?: boolean;
 }) {
   const [outputs, setOutputs] = useState<ThreadOutputs | null>(null);
   const [failed, setFailed] = useState(false);
@@ -125,13 +140,24 @@ export function ThreadOverview({ api, threadId, updatedAt, active, team, agents,
   const [expanded, setExpanded] = useState<Set<Section>>(new Set());
   const [viewport, setViewport] = useState(() => ({ w: window.innerWidth, h: window.innerHeight }));
 
+  // A standing panel outlives the thread it describes: the last thread's outputs must not stand in
+  // for the new thread's while that one is being read.
+  useEffect(() => {
+    setOutputs(null);
+    setFailed(false);
+  }, [threadId]);
+
   useEffect(() => {
     let live = true;
     const timer = setTimeout(() => {
       api.outputs(threadId).then(
         (value) => { if (live) { setOutputs(value); setFailed(false); } },
         // A daemon from before the endpoint has no overview to read: that is empty, not a failure.
-        (error: unknown) => { if (live && !(error instanceof ApiError && error.status === 404)) setFailed(true); },
+        (error: unknown) => {
+          if (!live) return;
+          if (error instanceof ApiError && error.status === 404) setOutputs(EMPTY_OUTPUTS);
+          else setFailed(true);
+        },
       );
     }, 400);
     return () => { live = false; clearTimeout(timer); };
@@ -198,7 +224,14 @@ export function ThreadOverview({ api, threadId, updatedAt, active, team, agents,
   });
 
   const footer = readings(stats);
-  const openAndClose = (run: () => void) => () => { onClose(); run(); };
+  const openAndClose = (run: () => void) => persistent ? run : () => { onClose(); run(); };
+
+  // Before the first answer, and when the answer is nothing, the panel says which of the two it is
+  // in one faint line instead of looking like a card that failed to draw.
+  const hasGroups = lines.length > 0;
+  const loading = outputs === null && !failed;
+  const empty = !loading && !failed && !hasGroups && !footer;
+  const placeholder = loading && !hasGroups && !footer ? t('overview.loading') : empty ? t('overview.empty') : null;
 
   return <div className="thread-overview">
     {team && members.length > 0 && <Group id="agents" open={open.agents} onToggle={toggle} icon={<IconAgents size={14} />} label={t('overview.agents')}
@@ -244,13 +277,15 @@ export function ThreadOverview({ api, threadId, updatedAt, active, team, agents,
 
     {failed && <div className="overview-failed" role="status"><span>{t('overview.failed')}</span><button type="button" className="text-btn" onClick={() => setAttempt((n) => n + 1)}>{t('common.retry')}</button></div>}
 
-    <div className="overview-foot">
+    {placeholder && <div className="overview-empty" role="status">{placeholder}</div>}
+
+    {!placeholder && <div className="overview-foot">
       <span className="overview-readings">{footer}</span>
       <button type="button" className="overview-trace" onClick={openAndClose(onOpenTrace)}>
         {t('overview.trace')}
         <IconChevronRight size={12} />
       </button>
-    </div>
+    </div>}
   </div>;
 }
 
