@@ -128,6 +128,25 @@ export function larkProcess(options: { executable?: string; env?: NodeJS.Process
   return { executable, env };
 }
 
+/** Shared readonly CLI transport. Never expose stderr or exec errors, which can contain tokens. */
+export function executeLark(args: string[], options: { executable?: string; env?: NodeJS.ProcessEnv; timeoutMs?: number; signal?: AbortSignal } = {}): Promise<string> {
+  const { executable, env } = larkProcess(options);
+  return new Promise((resolve, reject) => {
+    execFile(executable, args, { env, timeout: options.timeoutMs ?? 20_000, maxBuffer: 4 * 1024 * 1024, signal: options.signal }, (error, stdout) => {
+      if (options.signal?.aborted) { reject(options.signal.reason); return; }
+      if (error) reject(new Error((error as NodeJS.ErrnoException).code === 'ENOENT' ? 'cli_missing' : error.killed ? 'cli_timeout' : 'cli_failed'));
+      else resolve(stdout);
+    }).stdin?.end();
+  });
+}
+
+export function parseLarkOutput(text: string): ObjectValue {
+  let value: unknown;
+  try { value = JSON.parse(text); } catch { throw new Error('cli_unexpected_output'); }
+  if (!value || typeof value !== 'object' || Array.isArray(value) || (value as ObjectValue).ok === false) throw new Error('cli_failed');
+  return value as ObjectValue;
+}
+
 export function calendarSignals(events: ObjectValue[], now: Date, settings?: LarkChannelSettings): LarkSignal[] {
   const active = events.filter(e => e.status !== 'cancelled' && e.is_cancelled !== true && e.attendee_status !== 'declined');
   const range = (e: ObjectValue) => [Date.parse(timestamp(e.start_time ?? e.start) ?? ''), Date.parse(timestamp(e.end_time ?? e.end) ?? '')];
@@ -381,21 +400,10 @@ export class LarkChannel {
     });
   }
   private execute(args: string[]): Promise<string> {
-    const { executable, env } = larkProcess(this.options);
-    return new Promise((resolve, reject) => {
-      execFile(executable, args, { env, timeout: this.options.timeoutMs ?? 20_000, maxBuffer: 4 * 1024 * 1024, signal: this.abort.signal }, (error, stdout) => {
-        // CLI stderr and exec errors can contain tokens. Only stable error codes leave this wrapper.
-        if (error) reject(new Error((error as NodeJS.ErrnoException).code === 'ENOENT' ? 'cli_missing' : error.killed ? 'cli_timeout' : 'cli_failed'));
-        else resolve(stdout);
-      }).stdin?.end();
-    });
+    return executeLark(args, { ...this.options, signal: this.abort.signal });
   }
   private async json(args: string[]): Promise<ObjectValue> {
-    const text = await this.execute(args);
-    let value: ObjectValue;
-    try { value = JSON.parse(text); } catch { throw new Error('cli_unexpected_output'); }
-    if (!value || value.ok === false) throw new Error('cli_failed');
-    return value;
+    return parseLarkOutput(await this.execute(args));
   }
   private async probe(): Promise<void> {
     try { await this.execute(['--help']); this.cli = true; }

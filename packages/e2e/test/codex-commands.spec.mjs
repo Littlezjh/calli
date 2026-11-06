@@ -33,24 +33,19 @@ test('Codex quota, commands and skills work on desktop and phone in both themes'
         await input.fill('/usage');
         assert.equal(await page.getByRole('option').count(), 1);
         await input.press('Enter');
-        const panel = page.getByRole('dialog', { name: /Codex 的额度|额度看板/ });
-        await panel.waitFor();
-        const boardRow = panel.locator('.quota-board-row').filter({ hasText: 'Codex' });
-        const quotaData = await boardRow.count() ? boardRow : panel;
-        // What is left of each window: 5 hours and weekly on Codex's own line, then the review limit's.
-        await quotaData.locator('.quota-cell:not(.quota-none)').first().waitFor();
-        assert.equal(await quotaData.locator('.quota-cell:not(.quota-none)').count(), 3);
-        assert.deepEqual(await quotaData.locator('.quota-percent').allTextContents(), ['75%', '18%', '90%']);
-        assert.deepEqual(await quotaData.locator('.quota-cell.low .quota-percent').allTextContents(), ['18%'], 'only a window running out is red');
-        assert.deepEqual(await panel.locator('.quota-columns span').allTextContents(), ['', '5 小时', '每周']);
-        await page.waitForTimeout(400);
-        const bounds = await panel.boundingBox();
-        assert.ok(bounds && bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= page.viewportSize().width + 1 && bounds.y + bounds.height <= page.viewportSize().height + 1);
+        const list = page.getByRole('region', { name: '额度', exact: true });
+        await list.getByRole('button', { name: '查看 Codex 的额度详情', exact: true }).click();
+        const panel = page.getByRole('region', { name: 'Codex', exact: true });
+        await panel.getByRole('meter').first().waitFor();
+        assert.equal(await panel.getByRole('meter').count(), 3);
+        assert.deepEqual(await panel.getByRole('meter').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-valuenow'))), ['75', '18', '90']);
+        assert.deepEqual(await panel.locator('.quota-meter.low .quota-percent').allTextContents(), ['剩余 18%']);
         if (process.env.CALLI_E2E_SHOTS_DIR) {
           mkdirSync(process.env.CALLI_E2E_SHOTS_DIR, { recursive: true });
           await page.screenshot({ path: join(process.env.CALLI_E2E_SHOTS_DIR, `codex-quota-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
         }
-        await panel.getByRole('button', { name: '关闭' }).click();
+        await page.locator('.settings-topbar').getByRole('button', { name: '返回', exact: true }).click();
+        await page.locator('.settings-topbar').getByRole('button', { name: '返回', exact: true }).click();
         await input.fill('/review 检查错误处理');
         await page.getByRole('button', { name: '发送', exact: true }).click();
         await page.getByText('审查完成：检查错误处理', { exact: true }).waitFor();

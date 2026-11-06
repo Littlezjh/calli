@@ -32,10 +32,10 @@ test('the quota board shows each account plan beside its name', { timeout: 18000
         if (phone) await page.locator('.menu-btn').click();
         await page.getByRole('button', { name: '配置', exact: true }).click();
         await page.locator('.settings-nav').getByRole('button', { name: '额度', exact: true }).click();
-        const board = page.getByRole('dialog', { name: '额度看板', exact: true });
-        const plan = (agent) => board.locator('.quota-board-row', { has: page.locator('.quota-board-name', { hasText: new RegExp(`^${agent}$`) }) }).locator(phone ? '.quota-plan.under' : '.quota-plan.beside');
+        const board = page.getByRole('region', { name: '额度', exact: true });
+        const plan = (agent) => board.locator('.quota-board-row', { has: page.locator('.quota-board-name', { hasText: new RegExp(`^${agent}$`) }) }).locator('.quota-account-plan');
         await plan('Claude Code').filter({ hasText: 'Max 20x' }).waitFor({ timeout: 30_000 });
-        assert.equal(await board.locator(phone ? '.quota-plan.beside' : '.quota-plan.under').first().isVisible(), false, 'shown once, in the place that fits');
+        assert.equal(await plan('Claude Code').count(), 1, 'the plan is shown once');
         await plan('Codex').filter({ hasText: 'Pro 5x' }).waitFor({ timeout: 30_000 });
         assert.equal(await plan('Codex').getAttribute('title'), 'prolite', "the agent's own word for it, on hover");
         assert.equal(await plan('pi').count(), 0, 'an agent without a plan shows none');

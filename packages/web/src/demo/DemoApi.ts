@@ -38,7 +38,7 @@ export class DemoApi extends Api {
     return (this.data ??= this.load());
   }
 
-  protected override async send<T>(method: string, url: string, body?: unknown): Promise<T> {
+  protected override async send<T>(method: string, url: string, body?: unknown, _opts: { keepalive?: boolean } = {}): Promise<T> {
     const extensions = this.extensionAnswer(method, url, body);
     if (extensions !== undefined) return structuredClone(extensions) as T;
     const data = await this.workspace();
@@ -102,6 +102,17 @@ export class DemoApi extends Api {
   override threadFile(_threadId: string, path: string): Promise<Blob> {
     const picture = demoPicture(path);
     return picture ? Promise.resolve(new Blob([picture], { type: 'image/svg+xml' })) : Promise.reject(new DemoError(false));
+  }
+
+  /** A page the demo wrote: a small stand-in with its name, served the way a signed link would be. */
+  override previewLink(_threadId: string, path: string): Promise<{ url: string }> {
+    const picture = demoPicture(path);
+    const name = path.split('/').pop() ?? path;
+    // The demo's stand-in page is written by an agent, not by the interface, so it stays in the
+    // demo's own words: a real hub serves the page the agent left in the thread's folder.
+    const page = picture ?? `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${name}</title></head><body style="font:16px/1.6 system-ui,sans-serif;margin:0;padding:40px;color:#1f1e1c;background:#f8f6f1"><h1 style="margin:0 0 8px;font-size:22px">${name}</h1><p style="margin:0;color:#6d6a63">Example page: in a real hub this is the page the agent wrote into the thread's folder.</p></body></html>`;
+    const type = picture ? 'image/svg+xml' : 'text/html';
+    return Promise.resolve({ url: `data:${type};charset=utf-8,${encodeURIComponent(page)}` });
   }
 
   override attachment(_threadId: string, _attachmentId: string): Promise<Blob> {
@@ -185,6 +196,15 @@ export function route(data: DemoData, method: string, url: string, body?: unknow
         return data.coordinations[t.id] ?? null;
       case 'outputs':
         return data.outputs[t.id] ?? NO_OUTPUTS;
+      case 'history': {
+        // The one change row opens each of its turns' diffs; the demo reads them from the very
+        // tool events the made-up thread ran.
+        if (parts[3] !== 'detail') return undefined;
+        const turn = q.get('turn') ?? '';
+        const id = Number(q.get('id'));
+        const start = events.find((ev) => ev.turnId === turn && ev.type === 'tool.start' && ev.data.id === id);
+        return start ? { version: Number(q.get('version') ?? 1), content: start.data.content ?? null, nextCursor: null } : undefined;
+      }
       case 'fork-options':
         return { worktree: { available: false } };
       case 'tree': {

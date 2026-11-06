@@ -86,6 +86,13 @@ export async function startDaemon(env = {}, opts = {}) {
   shim(binDir, 'fake-pi', 'fake-pi.mjs');
   shim(binDir, 'fake-claude', 'fake-acp.mjs');
   shim(binDir, 'fake-agy', 'fake-agy.mjs');
+  shim(binDir, 'fake-doubao', 'fake-doubao.mjs');
+  let doubaoRuntime = '';
+  if (env.CALLI_DOUBAO_STREAM === '1' || env.CALLI_E2E_DOUBAO_RUNTIME === '1') {
+    const { createFakeDoubaoRuntime } = await import('../daemon/test/fixtures/doubao-runtime.mjs');
+    doubaoRuntime = join(dataDir, 'doubao-runtime');
+    createFakeDoubaoRuntime(doubaoRuntime);
+  }
   // The dsh adapter wants the same fake ACP agent shaped the way DeepSeek Harness answers.
   writeFileSync(
     join(binDir, 'fake-dsh'),
@@ -96,6 +103,7 @@ export async function startDaemon(env = {}, opts = {}) {
   shim(binDir, 'fake-ssh', 'fake-ssh.mjs');
   // An extra CLI for the discovery tests: looks like another copy of agy on PATH.
   if (env.CALLI_E2E_DISCOVER_AGY2 === '1') shim(binDir, 'agy2', 'fake-agy.mjs');
+  if (env.CALLI_E2E_DISCOVER_DOUBAO2 === '1') shim(binDir, 'doubao2', 'fake-doubao.mjs');
 
   const port = await freePort();
   const daemonEnv = {
@@ -114,6 +122,9 @@ export async function startDaemon(env = {}, opts = {}) {
     CALLI_CLAUDE_ACP_BIN: 'fake-claude',
     CALLI_AGY_BIN: 'fake-agy',
     CALLI_DSH_BIN: 'fake-dsh',
+    CALLI_DOUBAO_BIN: 'fake-doubao',
+    CALLI_DOUBAO_STREAM: '',
+    CALLI_DOUBAO_RUNTIME: doubaoRuntime,
     PI_CODING_AGENT_DIR: join(dataDir, 'pi-agent'),
     CALLI_AGY_HOME: join(dataDir, 'agy-home'),
     ZCODE_DATA_BASE_DIR: dataDir,
@@ -123,6 +134,11 @@ export async function startDaemon(env = {}, opts = {}) {
     CALLI_SOCKET: join(dataDir, 'daemon.sock'),
     ...env,
   };
+  if (opts.agents !== undefined) {
+    // A seeded file exercises persistent registry writes; inline JSON intentionally stays read-only.
+    writeFileSync(join(dataDir, 'agents.json'), JSON.stringify({ agents: opts.agents }, null, 2) + '\n', { mode: 0o600 });
+    delete daemonEnv.CALLI_AGENTS_JSON;
+  }
   const child = spawn(process.execPath, [join(repoRoot, 'daemon', 'dist', 'index.js')], {
     env: daemonEnv,
     stdio: ['ignore', 'pipe', 'pipe'],

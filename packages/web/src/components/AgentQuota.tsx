@@ -1,10 +1,13 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import type { Api, PlanQuota, QuotaWindow } from '../api';
 import { formatDateTime, t } from '../i18n';
-import { formatReset, quotaLevel } from '../quota';
-import { IconClock, QuotaRing } from './icons';
+import { formatReset, quotaLeft, quotaLevel } from '../quota';
+import { useAgentQuota, useQuotaNavigation } from '../quota-reading';
+import { QuotaWindows, quotaStale, quotaWindowName } from './QuotaReadout';
+import { Popover } from './Popover';
+import { createPortal } from 'react-dom';
+import { IconClock, IconGauge, QuotaRing } from './icons';
 
-type Reading = { api: Api; agent: string; quota: PlanQuota | null; loading: boolean; failed: boolean };
 
 /** Space between chips and before the "+N" chip, in px. Matches the gap in styles.css. */
 const CHIP_GAP = 10;
@@ -36,7 +39,7 @@ function windowsOf(quota: PlanQuota): Window[] {
     key: `${w.label}-${w.scope ?? ''}-${index}`,
     ...periodNames(w.label),
     scope: w.scope,
-    remaining: Math.round(Math.max(0, Math.min(100, 100 - w.usedPercent)) * 10) / 10,
+    remaining: quotaLeft(w),
     low: quotaLevel(w.usedPercent) === 'danger',
     reset: formatReset(w),
   }));
@@ -68,47 +71,27 @@ function pickVisible(windows: Window[], widths: number[], plusWidth: number, roo
  * Sits beside the account's select button, never inside it, so opening details never picks the account.
  */
 export function AgentQuota({ api, agent }: { api: Api; agent: string }) {
-  const [reading, setReading] = useState<Reading>(() => ({ api, agent, quota: api.cachedAgentQuota(agent), loading: true, failed: false }));
+  const reading = useAgentQuota(api, agent);
+  const { quota, loading, error } = reading;
+  const failed = Boolean(error);
   const [pinned, setPinned] = useState(false);
   const [preview, setPreview] = useState(false);
+  useEffect(() => { setPinned(false); setPreview(false); }, [api, agent]);
 
-  useEffect(() => {
-    let alive = true;
-    setPinned(false);
-    setPreview(false);
-    const read = async () => {
-      setReading({ api, agent, quota: api.cachedAgentQuota(agent), loading: true, failed: false });
-      try {
-        const quota = await api.agentQuota(agent);
-        if (alive) setReading({ api, agent, quota, loading: false, failed: false });
-      } catch {
-        if (alive) setReading({ api, agent, quota: api.cachedAgentQuota(agent), loading: false, failed: true });
-      }
-    };
-    void read();
-    const timer = setInterval(() => { void read(); }, 60_000);
-    return () => { alive = false; clearInterval(timer); };
-  }, [api, agent]);
-
-  // A host switch must never show the previous host's account values, even for one render.
-  const { quota, loading, failed } = reading.api === api && reading.agent === agent
-    ? reading : { quota: api.cachedAgentQuota(agent), loading: true, failed: false };
-
-  if (!quota?.windows.length) return <div className="agent-quota">
-    <span className="agent-quota-note">{loading ? t('quota.loading') : failed ? t('quota.unavailable') : t('quota.none')}</span>
-  </div>;
+  if (!quota?.windows.length) return <div className="agent-quota"><button type="button" className="agent-quota-note" disabled={loading} onClick={() => void reading.refresh()}>{loading ? t('quota.loading') : failed ? t('quota.unavailable') : t('quota.empty')}</button><QuotaActions reading={reading} agent={agent} /></div>;
 
   const windows = windowsOf(quota);
-  const stale = failed || Date.now() - Date.parse(quota.checkedAt) > 60_000;
+  const stale = quotaStale(reading);
   const updated = t('quota.updatedAt', formatDateTime(new Date(quota.checkedAt), {
     month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit',
   }));
   const status = failed ? `${t('quota.cached')} · ${updated}` : loading ? `${t('quota.updating')} · ${updated}` : updated;
-  return <QuotaView windows={windows} stale={stale} status={status}
+  return <QuotaView windows={windows} stale={stale} status={status} reading={reading} agent={agent}
     pinned={pinned} setPinned={setPinned} preview={preview} setPreview={setPreview} />;
 }
 
-function QuotaView({ windows, stale, status, pinned, setPinned, preview, setPreview }: {
+function QuotaView({ windows, stale, status, pinned, setPinned, preview, setPreview, reading, agent }: {
+  reading: ReturnType<typeof useAgentQuota>; agent: string;
   windows: Window[]; stale: boolean; status: string;
   pinned: boolean; setPinned: (v: boolean) => void; preview: boolean; setPreview: (v: boolean) => void;
 }) {
@@ -169,7 +152,7 @@ function QuotaView({ windows, stale, status, pinned, setPinned, preview, setPrev
     <span className="agent-quota-percent">{w.remaining}%</span>
   </span>;
 
-  return <div className={`agent-quota${stale ? ' stale' : ''}`} ref={rootRef}
+  return <div className={`agent-quota${stale ? ' stale' : ''}`} ref={rootRef} data-menu-disclosure={pinned || preview ? 'open' : undefined}
     onPointerEnter={() => clearTimeout(previewTimer.current)}
     onPointerLeave={(e) => {
       if (e.pointerType === 'mouse') previewTimer.current = setTimeout(() => setPreview(false), 150);
@@ -186,15 +169,16 @@ function QuotaView({ windows, stale, status, pinned, setPinned, preview, setPrev
       aria-expanded={pinned} aria-controls={pinned ? detailsId : undefined} aria-label={label}
       aria-describedby={preview && !pinned ? `${detailsId}-preview` : undefined}
       onClick={() => { setPinned(!pinned); setPreview(false); }}
-      onPointerEnter={(e) => { if (e.pointerType === 'mouse' && !pinned) setPreview(true); }}
-      onFocus={(e) => { if (!pinned && e.currentTarget.matches(':focus-visible')) setPreview(true); }}
+      onPointerEnter={(e) => { if (e.pointerType === 'mouse' && matchMedia('(hover: hover)').matches && !pinned) setPreview(true); }}
+      onFocus={(e) => { if (!pinned && matchMedia('(hover: hover)').matches && e.currentTarget.matches(':focus-visible')) setPreview(true); }}
       onBlur={() => setPreview(false)}>
       {visible.map((i) => chip(windows[i]))}
       {hidden > 0 && <span className={`agent-quota-more${windows.some((w, i) => w.low && !visible.includes(i)) ? ' low' : ''}`}>+{hidden}</span>}
       {stale && <span className="agent-quota-stale"><IconClock size={11} /></span>}
     </button>
-    {pinned && <QuotaDetails id={detailsId} windows={windows} status={status} />}
-    {preview && !pinned && <QuotaPreview id={`${detailsId}-preview`} anchor={summaryRef}><QuotaDetails windows={windows} status={status} /></QuotaPreview>}
+    {pinned && <><QuotaDetails id={detailsId} windows={windows} status={status} /><QuotaActions reading={reading} agent={agent} /></>}
+    {preview && !pinned && <QuotaPreview id={`${detailsId}-preview`} anchor={summaryRef}
+      onEnter={() => clearTimeout(previewTimer.current)} onLeave={() => { previewTimer.current = setTimeout(() => setPreview(false), 150); }}><QuotaDetails windows={windows} status={status} /></QuotaPreview>}
   </div>;
 }
 
@@ -221,7 +205,7 @@ function QuotaDetails({ id, windows, status }: { id?: string; windows: Window[];
  * The details as a card that floats beside the picker while the pointer or keyboard focus rests
  * on the summary. A short leave delay lets the pointer cross the gap to read or scroll the card.
  */
-function QuotaPreview({ id, anchor, children }: { id: string; anchor: RefObject<HTMLElement>; children: ReactNode }) {
+function QuotaPreview({ id, anchor, children, onEnter, onLeave }: { id: string; anchor: RefObject<HTMLElement>; children: ReactNode; onEnter: () => void; onLeave: () => void }) {
   const cardRef = useRef<HTMLDivElement>(null);
   const [style, setStyle] = useState<CSSProperties>({ visibility: 'hidden' });
   useLayoutEffect(() => {
@@ -248,5 +232,30 @@ function QuotaPreview({ id, anchor, children }: { id: string; anchor: RefObject<
       window.removeEventListener('scroll', position, true);
     };
   }, [anchor]);
-  return <div className="agent-quota-preview" id={id} role="tooltip" ref={cardRef} style={style}>{children}</div>;
+  return createPortal(<div className="agent-quota-preview" id={id} role="tooltip" ref={cardRef} style={style} onPointerEnter={onEnter} onPointerLeave={onLeave}>{children}</div>, document.body);
+}
+
+function QuotaActions({ reading, agent, onOpen }: { reading: ReturnType<typeof useAgentQuota>; agent: string; onOpen?: () => void }) {
+  const open = useQuotaNavigation();
+  return <div className="quota-quick-actions">
+    {open && <button type="button" className="text-btn" onClick={() => { onOpen?.(); open(); }}>{t('quota.all')}</button>}
+    <button type="button" className="text-btn" aria-disabled={reading.loading} aria-label={t('quota.refreshAgent', agent)} onClick={() => { if (!reading.loading) void reading.refresh(); }}>{t(reading.error ? 'common.retry' : 'quota.refresh')}</button>
+  </div>;
+}
+
+/** A current account can be inspected without opening the account picker or leaving the chat. */
+export function ChatQuota({ api, agent }: { api: Api; agent: string }) {
+  const reading = useAgentQuota(api, agent);
+  const windows = reading.quota?.windows ?? [];
+  const limiting = windows.reduce<(typeof windows)[number] | undefined>((prev, window) => !prev || window.usedPercent > prev.usedPercent ? window : prev, undefined);
+  const stale = quotaStale(reading);
+  const label = limiting ? `${quotaWindowName(limiting)} · ${t('quota.remaining', quotaLeft(limiting))}`
+    : t(reading.loading ? 'quota.loading' : reading.error ? 'quota.unavailable' : 'quota.empty');
+  return <Popover label={t('quota.quickTitle')} triggerLabel={`${t('quota.quickTitle')}：${label}`} triggerTitle={label} placement="above"
+    triggerClassName={`context-btn chat-quota-trigger${limiting && limiting.usedPercent >= 80 || reading.error ? ' attention' : ''}`}
+    panelClassName="quota-quick-panel" trigger={<>{limiting ? <QuotaRing remaining={quotaLeft(limiting)} size={14} /> : <IconGauge size={14} />}
+      {limiting && <span className="chat-quota-period">{quotaWindowName(limiting)}</span>}
+      <span className="chat-quota-value">{limiting ? `${quotaLeft(limiting)}%` : '—'}</span>{stale && <IconClock size={11} />}</>}>
+    {close => <><QuotaWindows reading={reading} /><QuotaActions reading={reading} agent={agent} onOpen={close} /></>}
+  </Popover>;
 }

@@ -123,13 +123,12 @@ test('effort slider, model subview, reset and compression work in both themes an
       assert.equal(await input.inputValue(), '这段草稿需要保留');
       await input.fill('/usage');
       await input.press('Enter');
-      const quota = page.getByRole('dialog', { name: /Codex 的额度|额度看板/ });
+      const list = page.getByRole('region', { name: '额度', exact: true });
+      await list.getByRole('button', { name: '查看 Codex 的额度详情', exact: true }).click();
+      const quota = page.getByRole('region', { name: 'Codex', exact: true });
       await quota.getByText('本次仅返回每周额度，服务端未提供 5 小时窗口。').waitFor();
-      const boardRow = quota.locator('.quota-board-row').filter({ hasText: 'Codex' });
-      const quotaData = await boardRow.count() ? boardRow : quota;
-      // Only the weekly window came back: one cell, in the weekly column.
-      assert.equal(await quotaData.locator('.quota-cell:not(.quota-none)').count(), 1);
-      assert.match(await quotaData.locator('.quota-cell:not(.quota-none)').getAttribute('aria-label'), /^每周/);
+      assert.equal(await quota.getByRole('meter').count(), 1);
+      assert.match(await quota.getByRole('meter').getAttribute('aria-label'), /^每周/);
       await shot(page, `quota-weekly-${tag}`);
     } finally { await context.close(); }
   }

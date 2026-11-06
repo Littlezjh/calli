@@ -100,7 +100,7 @@ function UsageView({ api, agents }: { api: Api; agents: AgentInfo[] }) {
   </>;
 }
 
-const states: Record<string, string> = { ready: t('diag.ready'), missing: t('diag.missing'), empty: t('diag.empty'), authentication: t('diag.authentication'), unsupported: t('diag.unsupported'), timeout: t('diag.timeout'), failed: t('diag.failed') };
+const states: Record<string, string> = { ready: t('diag.ready'), cli_only: t('diag.cliOnly'), missing: t('diag.missing'), empty: t('diag.empty'), authentication: t('diag.authentication'), unsupported: t('diag.unsupported'), timeout: t('diag.timeout'), failed: t('diag.failed') };
 const capabilities: Array<[string, string]> = [['resume', t('diag.cap.resume')], ['approvals', t('diag.cap.approvals')], ['images', t('diag.cap.images')], ['history', t('diag.cap.history')], ['fork', t('diag.cap.fork')], ['compact', t('diag.cap.compact')], ['quota', t('diag.cap.quota')], ['coordination', t('diag.cap.coordination')], ['goal', t('diag.cap.goal')]];
 
 function DiagnosticRow({ api, agent, onResult }: { api: Api; agent: AgentInfo; onResult?: (data: AgentDiagnostic) => void }) {
@@ -126,7 +126,7 @@ function DiagnosticRow({ api, agent, onResult }: { api: Api; agent: AgentInfo; o
     {error && <p className="obs-error" role="alert">{error}</p>}
     {data && <>
       <p>{data.message}</p>
-      <dl className="obs-details"><div><dt>{t('diag.version')}</dt><dd>{data.version ?? t('diag.versionUnknown')}</dd></div><div><dt>{t('diag.protocol')}</dt><dd>{data.protocol ?? t('diag.protocolUnknown')}</dd></div><div><dt>{t('diag.models')}</dt><dd>{data.models.length}</dd></div><div><dt>{t('diag.checkedAt')}</dt><dd>{time(data.checkedAt)}</dd></div></dl>
+      <dl className="obs-details"><div><dt>{t('diag.version')}</dt><dd>{data.version ?? t('diag.versionUnknown')}</dd></div><div><dt>{t('diag.protocol')}</dt><dd>{data.protocol ?? t('diag.protocolUnknown')}</dd></div><div><dt>{t('diag.models')}</dt><dd>{data.capabilities.modelCatalog === false ? t('diag.unsupportedCap') : data.models.length}</dd></div><div><dt>{t('diag.checkedAt')}</dt><dd>{time(data.checkedAt)}</dd></div></dl>
       <div className="obs-capabilities">{capabilities.map(([key, label]) => <span key={key} className={(data.capabilities as unknown as Record<string, unknown>)[key] ? 'supported' : ''}>{label} · {(data.capabilities as unknown as Record<string, unknown>)[key] ? t('diag.supported') : t('diag.unsupportedCap')}</span>)}</div>
       {data.models.length > 0 && <details><summary>{t('diag.modelList')}</summary><div className="obs-models">{data.models.map(m => <span key={m.id}>{m.label}</span>)}</div></details>}
     </>}

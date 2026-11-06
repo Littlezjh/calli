@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
+import { startDaemon, openUi, api, launchBrowser, closeSettings } from '../harness.mjs';
 
 let root, hub, remote, browser, page;
 const envFor = (home) => ({ HOME: home, CLAUDE_CONFIG_DIR: join(home, '.claude'), CODEX_HOME: join(home, '.codex'), PI_CODING_AGENT_DIR: join(home, '.pi/agent'), CALLI_AGY_HOME: join(home, '.agy') });
@@ -64,6 +64,7 @@ test('machine matrix, search, instructions, and remote selection retain the hub'
   await page.getByTitle('查看说明', { exact: true }).click();
   await page.getByRole('heading', { name: '代码审查', exact: true }).waitFor();
   await page.getByRole('dialog').getByLabel('关闭').click();
+  await closeSettings(page);
   await page.getByRole('tab', { name: '开发机' }).click();
   await openSkills(page);
   await page.locator('.skills-differs').waitFor();

@@ -12,7 +12,6 @@ import { DeskMeta } from './DeskMeta';
 import { MatterSignals } from './MatterSignals';
 import { ProactiveCard, ProactiveList, useProactive, type ProactiveState } from './ProactiveRuns';
 import { isDecision, matterRuns, proactiveCount } from '../proactive';
-import { Pet } from './Pet';
 
 interface Props {
   api: Api;
@@ -27,12 +26,18 @@ interface Props {
   onReload: () => void;
   onPersonalChange: (value: PersonalSettings) => void;
   onPersonalRetry: () => void;
-  onPetStatusChange: (status: PetStatus) => void;
   onOpenThread: (id: string) => void;
+  /** A pile is spread out: the companion steps back while it is. */
+  onSpreadChange?: (open: boolean) => void;
+  /** A matter her conversation named, to spread here wherever the person tapped it from. */
+  revealTodoId?: string | null;
+  onRevealTodo?: () => void;
   /** Lay the new finds out once they are in, then say so. */
   openFinds?: boolean;
   onFindsOpened?: () => void;
   onOpenPlans: () => void;
+  setupNeeded?: boolean | null;
+  onExplore?: () => void;
 }
 
 const ORDER_KEY = 'calli.desk.order';
@@ -44,7 +49,7 @@ const rotation = (id: string) => ({ '--desk-tilt': `${tilt(id)}deg` } as CSSProp
 
 /** The same plans, laid out as a personal desk. Only an open pile fetches its continuation note. */
 export function DeskPage(props: Props) {
-  const { api, todos, loading, error, threads, agents, personal, personalError, refreshKey, onReload, onPersonalChange, onPersonalRetry, onPetStatusChange, onOpenThread, onOpenPlans, openFinds, onFindsOpened } = props;
+  const { api, todos, loading, error, threads, agents, personal, personalError, refreshKey, onReload, onPersonalChange, onPersonalRetry, onOpenThread, onOpenPlans, openFinds, onFindsOpened, onSpreadChange, revealTodoId, onRevealTodo } = props;
   const [now, setNow] = useState(() => new Date());
   useEffect(() => { const timer = setInterval(() => setNow(new Date()), 60_000); return () => clearInterval(timer); }, []);
   const desk = useMemo(() => buildDesk(todos, now), [todos, now]);
@@ -94,6 +99,15 @@ export function DeskPage(props: Props) {
     if (source && desk.inbox.length) show('inbox', source);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openFinds, loading, desk.inbox.length]);
+  // The companion has the floor when no pile is spread out; the desk tells her which it is.
+  useEffect(() => { onSpreadChange?.(open !== null); }, [open, onSpreadChange]);
+  // A matter she named in a reply: once the desk and its piles are in, it spreads that pile.
+  useEffect(() => {
+    if (!revealTodoId || loading) return;
+    onRevealTodo?.();
+    showTodo(revealTodoId);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revealTodoId, loading]);
   const act = async (fn: () => Promise<unknown>, close = false) => {
     if (busy) return;
     setBusy(true); setActionError('');
@@ -122,7 +136,7 @@ export function DeskPage(props: Props) {
   const laterPiles = matrix ? desk.quadrants.later : desk.lanes.later;
   const stack = (list: Pile[]) => <StackButton id="later" count={list.length} label={t('desk.laterCount', list.length)} onOpen={source => show('later', source)}><strong>{t('desk.laterCount', list.length)}</strong><span className="desk-stack-preview">{list.map(pile => pile.todo.text).join(' · ')}</span></StackButton>;
   const title = open?.id === 'inbox' ? t('desk.inbox') : open?.id === 'later' ? t('desk.later') : selected?.todo.text ?? '';
-  if (settingsOpen) return <AssistantSettings api={api} agents={agents} onClose={() => { setSettingsOpen(false); setPendingDelegate(null); }} onSave={value => { onPersonalChange(value); setSettingsOpen(false); setSettingsSaved(n => n + 1); if (pendingDelegate) void delegate(pendingDelegate, true); }} />;
+  if (settingsOpen) return <AssistantSettings api={api} agents={agents} setupNeeded={props.setupNeeded} onExplore={props.onExplore ? () => { setSettingsOpen(false); props.onExplore?.(); } : undefined} onClose={() => { setSettingsOpen(false); setPendingDelegate(null); }} onSave={value => { onPersonalChange(value); setSettingsOpen(false); setSettingsSaved(n => n + 1); if (pendingDelegate) void delegate(pendingDelegate, true); }} />;
   return <div className="desk-page">
     <header className="desk-header">
       <div><h1>{formatDate(now, { month: 'long', day: 'numeric', weekday: 'long' })}</h1>
@@ -178,7 +192,6 @@ export function DeskPage(props: Props) {
         : selected ? <MatterCards api={api} pile={selected} busy={busy} proactive={proactive} onChange={(todo, done) => void act(() => api.updateTodo(todo.id, { done }))} onUnsubscribe={(todo, { kind, ref }) => void act(() => api.updateTodo(todo.id, { unsubscribe: [{ kind, ref }] }))} onResolve={resolve} onOpenThread={onOpenThread} /> : <p className="desk-empty">{t('desk.solved')}</p>}
     </Spread>}
     {linkRequest && createPortal(<TodoThreadPicker todos={todos} threads={threads} todoId={linkRequest.id} busy={busy} onClose={() => setLinkRequest(null)} onPick={threadId => void act(async () => { await api.linkTodo(linkRequest.id!, threadId); setLinkRequest(null); })} />, document.body)}
-    {!api.demo && <Pet api={api} greeting={loading || error ? null : { you: desk.quadrants.now.length, first: desk.first[0]?.todo.text ?? null }} spreadOpen={Boolean(open)} todos={todos.filter(todo => !todo.done)} onOpenTodo={showTodo} onOpenThread={onOpenThread} onStatusChange={onPetStatusChange} onConfigure={() => { setSettingsOpen(true); if (!personal) onPersonalRetry(); }} />}
   </div>;
 }
 

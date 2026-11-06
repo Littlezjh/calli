@@ -138,7 +138,7 @@ test('cancel suppresses this episode; exhausted fallback skips unavailable and d
     const next = (await request('/api/threads')).find(t => t.handover?.sourceId === source.id);
     assert.equal(next.agent, 'agy3'); await idle(next.id);
     const prompt = (await request(`/api/threads/${next.id}/events`)).find(e => e.type === 'turn.started').data.text;
-    assert.match(prompt, /hub 从过程记录合成/); assert.match(prompt, /继续未完成的这一轮\n\nquota-exhausted/);
+    assert.match(prompt, /hub 从记录整理/); assert.match(prompt, /继续未完成的这一轮\n\nquota-exhausted/);
   } finally { await context.close(); quota('agy2'); }
 });
 
@@ -166,7 +166,7 @@ test('the exhausted takeover button comes back on its own when a target recovers
   try {
     await openUi(page, daemon); await select(page, source.title);
     await send(source.id, 'quota-exhausted'); await idle(source.id);
-    await page.getByRole('button', { name: '选择其他智能体', exact: true }).waitFor();
+    await page.getByRole('button', { name: '选择其他', exact: true }).waitFor();
     await page.waitForTimeout(1500); // the first target probe answers empty and arms the retry
     assert.equal(await page.getByRole('button', { name: /^交给 Agent/ }).count(), 0);
     quota('agy3');
@@ -268,6 +268,8 @@ test('collaboration default and overrides; lead CLI sends to the replacement mem
     await notification.getByRole('button').click();
     await notification.locator('.delivered-body').waitFor();
     await page.screenshot({ path: join(shots, 'lead-notification-desktop-dark.png'), animations: 'disabled' });
+    await page.locator('.coord-tool').click();
+    await page.getByRole('button', { name: '协作设置', exact: true }).click();
     await page.getByRole('button', { name: '查看智能体', exact: true }).click();
     const panel = page.getByRole('region', { name: '智能体面板' });
     await panel.locator('.auto-member-mark').waitFor();

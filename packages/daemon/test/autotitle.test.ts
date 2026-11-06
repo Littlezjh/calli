@@ -75,16 +75,31 @@ test('the naming request carries the rules as written, the conversation start, a
   assert.match(prompt.trim().split('\n').at(-1)!, /只输出标题本身/);
   const emoji = namingPrompt('', '🐛'.repeat(1600), null);
   assert.equal((emoji.match(/🐛/g) ?? []).length, 1500, 'the cut does not take an emoji apart');
+  // Empty rules fall back to the shipped defaults, which ask for one emoji that fits the work.
+  assert.match(namingPrompt('', '帮我修登录超时', null), /开头放一个贴切/);
+  assert.match(namingPrompt('', '帮我修登录超时', null), /注意区分度/);
+});
+
+test('the settings endpoint serves the shipped defaults, and saving keeps the person\'s own rules', async (t) => {
+  const h = await setup();
+  t.after(() => h.close());
+  const served = (await (await h.api('/api/extensions/autotitle/settings')).json()) as { settings: { rules: string }; defaultRules: string };
+  assert.equal(served.settings.rules, served.defaultRules, 'a fresh install starts from the rules in git');
+  assert.match(served.defaultRules, /emoji/);
+  await h.api('/api/extensions/autotitle/settings', 'PUT', { rules: '- 我自己的规则' });
+  const after = (await (await h.api('/api/extensions/autotitle/settings')).json()) as { settings: { rules: string }; defaultRules: string };
+  assert.equal(after.settings.rules, '- 我自己的规则', 'what the person saved stays theirs');
+  assert.match(after.defaultRules, /emoji/, 'the defaults stay reachable for 恢复默认规则');
 });
 
 test('after the first turn the chosen agent names the thread by the rules; the question leaves no thread in the list', async () => {
   const h = await setup();
   try {
-    assert.equal((await h.api('/api/extensions/autotitle/settings', 'PUT', { agent: 'claude', rules: '- 开头放一个贴切的 emoji' })).status, 200);
+    assert.equal((await h.api('/api/extensions/autotitle/settings', 'PUT', { agent: 'claude', rules: '- 开头放一个 emoji，用 🤖' })).status, 200);
     const thread = await h.manager.createThread({ agent: 'claude', cwd: h.cwd });
     await h.send(thread.id, '登录接口总是超时，帮我查一下');
     assert.equal(h.manager.titleBy(thread.id), 'default');
-    await wait(() => h.manager.threadView(thread.id).title === '🐛 修复登录超时');
+    await wait(() => h.manager.threadView(thread.id).title === '🤖 修复登录超时');
     assert.equal(h.manager.titleBy(thread.id), 'auto');
     const listed = h.manager.listThreads().map(t => t.id);
     assert.deepEqual(listed, [thread.id], 'the naming question ran in an archived thread');
@@ -94,7 +109,7 @@ test('after the first turn the chosen agent names the thread by the rules; the q
     assert.match(question, /登录接口总是超时/);
     assert.doesNotMatch(question, /calli-tools|calli-progress/, 'nothing is added around the question');
     const status = await (await h.api('/api/extensions/autotitle/settings')).json() as { status: { last: { title: string } } };
-    assert.equal(status.status.last.title, '🐛 修复登录超时');
+    assert.equal(status.status.last.title, '🤖 修复登录超时');
     // Later turns do not rename again unless asked for.
     await h.send(thread.id, '再看看 2'); await h.send(thread.id, '再看看 3');
     await new Promise(r => setTimeout(r, 200));
@@ -167,7 +182,7 @@ test('naming on send uses only the message; nothing happens without a chosen age
     await h.api('/api/extensions/autotitle/settings', 'PUT', { agent: 'claude', trigger: 'sent' });
     const early = await h.manager.createThread({ agent: 'claude', cwd: h.cwd });
     await h.manager.startTurn(early.id, { text: 'slow 登录总是超时' });
-    await wait(() => h.manager.threadView(early.id).title === '修复登录超时');
+    await wait(() => h.manager.threadView(early.id).title === '🐛 修复登录超时');
     assert.equal(h.manager.threadView(early.id).status, 'running', 'named while its first turn still runs');
     const asked = h.manager.listThreads({ archived: true })[0];
     assert.doesNotMatch(String(h.store.listEventsOfType(asked.id, 'turn.started')[0].data.text), /回复：/, 'on send, the answer is not sent');
@@ -186,11 +201,11 @@ test('「重新取名」 renames any thread at once, the preview renames nothing
     await h.manager.updateThread(thread.id, { title: '旧名字' });
     await h.api('/api/extensions/autotitle/settings', 'PUT', { agent: 'claude' });
     const preview = await (await h.api('/api/extensions/autotitle/preview', 'POST', { threadId: thread.id })).json() as { title: string };
-    assert.equal(preview.title, '修复登录超时');
+    assert.equal(preview.title, '🐛 修复登录超时');
     assert.equal(h.manager.threadView(thread.id).title, '旧名字', 'a preview renames nothing');
     const named = await (await h.api(`/api/threads/${thread.id}/autotitle`, 'POST')).json() as { title: string };
-    assert.equal(named.title, '修复登录超时');
-    assert.equal(h.manager.threadView(thread.id).title, '修复登录超时');
+    assert.equal(named.title, '🐛 修复登录超时');
+    assert.equal(h.manager.threadView(thread.id).title, '🐛 修复登录超时');
   } finally { await h.close(); }
 });
 
@@ -278,9 +293,9 @@ test('「整理现有线程」 names the backlog, one title the person set stays
     assert.equal(first.queued, 2, 'the default-titled pair, not the person\u2019s own');
     assert.equal((await h.api('/api/extensions/autotitle/organize', 'POST')).status, 409, 'a pass already runs');
     await wait(() => h.autotitle.passState() === null, 20000);
-    assert.equal(h.manager.threadView(old1.id).title, '修复登录超时');
+    assert.equal(h.manager.threadView(old1.id).title, '🐛 修复登录超时');
     assert.equal(h.manager.titleBy(old1.id), 'auto');
-    assert.equal(h.manager.threadView(old2.id).title, '修复登录超时');
+    assert.equal(h.manager.threadView(old2.id).title, '🐛 修复登录超时');
     assert.equal(h.manager.threadView(mine.id).title, '我的名字', 'the person\u2019s title is never touched');
     const again = await (await h.api('/api/extensions/autotitle/organize', 'POST')).json() as { queued: number };
     assert.equal(again.queued, 0, 'a finished pass leaves nothing to do');

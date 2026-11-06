@@ -94,6 +94,8 @@ export function Popover({
       if (rootRef.current && !e.composedPath().includes(rootRef.current) && (!panelRef.current || !e.composedPath().includes(panelRef.current))) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
+      // An open inline disclosure consumes Escape before its containing menu.
+      if (e.key === 'Escape' && e.target instanceof Element && e.target.closest('[data-menu-disclosure="open"]')) return;
       if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key) && e.target instanceof HTMLElement && !e.target.matches('input, textarea')) {
         const rows = [...(panelRef.current?.querySelectorAll<HTMLElement>('[role^="menuitem"]:not(:disabled), button:not(:disabled)') ?? [])].filter(el => el.getClientRects().length > 0);
         if (rows.length) { e.preventDefault(); const i = rows.indexOf(document.activeElement as HTMLElement); rows[e.key === 'Home' ? 0 : e.key === 'End' ? rows.length - 1 : (i + (e.key === 'ArrowDown' ? 1 : -1) + rows.length) % rows.length]?.focus(); }

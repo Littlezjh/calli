@@ -8,6 +8,7 @@ import { ClaudeAcpAdapter, CLAUDE_METADATA } from './adapters/claude.js';
 import { ZcodeAdapter, ZCODE_METADATA } from './adapters/zcode.js';
 import { CodexAppServerAdapter, CODEX_METADATA } from './adapters/codex.js';
 import { DshAcpAdapter, DSH_METADATA } from './adapters/dsh.js';
+import { DoubaoAdapter, DOUBAO_METADATA } from './adapters/doubao.js';
 import { PiRpcAdapter, PI_METADATA } from './adapters/pi.js';
 import { TraexAcpAdapter, TRAEX_METADATA } from './adapters/traex.js';
 import type { AgentAdapter, DiscoveredAccount, LoginSession } from './adapters/types.js';
@@ -21,7 +22,7 @@ import { HttpError } from './errors.js';
 export interface AgentInstance {
   /** What threads store; also the key in the adapter map. */
   id: string;
-  adapter: 'claude' | 'pi' | 'agy' | 'traex' | 'codex' | 'zcode' | 'dsh';
+  adapter: 'claude' | 'pi' | 'agy' | 'traex' | 'codex' | 'zcode' | 'dsh' | 'doubao';
   label?: string;
   /** Hidden from the new-thread picker; threads and settings keep working. */
   hidden?: boolean;
@@ -45,6 +46,7 @@ const ADAPTER_LABELS: Record<AgentInstance['adapter'], string> = {
   codex: 'Codex',
   zcode: 'ZCode',
   dsh: 'DeepSeek Harness',
+  doubao: DOUBAO_METADATA.label,
 };
 
 /** How each adapter is built. One line per protocol; instances differ only in command and env. */
@@ -78,6 +80,9 @@ function buildAdapter(
     case 'dsh':
       adapter = new DshAcpAdapter(command, env);
       break;
+    case 'doubao':
+      adapter = new DoubaoAdapter(command, env);
+      break;
   }
   // An instance may carry its own name ("Claude 工作号"); otherwise the adapter's own label stands.
   if (instance.label) (adapter as { label: string }).label = instance.label;
@@ -93,6 +98,7 @@ export function defaultInstances(opts: {
   codexCommand: string[];
   zcodeCommand?: string[];
   dshCommand?: string[];
+  doubaoCommand?: string[];
 }): AgentInstance[] {
   return [
     { id: 'claude', adapter: 'claude', command: opts.claudeCommand },
@@ -102,6 +108,7 @@ export function defaultInstances(opts: {
     { id: 'codex', adapter: 'codex', command: opts.codexCommand },
     { id: 'zcode', adapter: 'zcode', command: opts.zcodeCommand ?? ['zcode', 'app-server'] },
     { id: 'dsh', adapter: 'dsh', command: opts.dshCommand ?? ['dsh', '--profile', 'acp'] },
+    { id: 'doubao', adapter: 'doubao', command: opts.doubaoCommand ?? ['doubao'] },
   ];
 }
 
@@ -110,7 +117,7 @@ export interface SupportedAgent {
   label: string;
   icon?: string;
   installGuide?: string;
-  capabilities?: { createAccount: boolean };
+  capabilities?: { createAccount: boolean; streamBridge?: AgentAdapter['capabilities']['streamBridge'] };
 }
 
 export const SUPPORTED_AGENTS: SupportedAgent[] = [
@@ -121,6 +128,7 @@ export const SUPPORTED_AGENTS: SupportedAgent[] = [
   TRAEX_METADATA,
   ZCODE_METADATA,
   DSH_METADATA,
+  DOUBAO_METADATA,
 ];
 
 /** An executable on PATH that looks like another copy of a known agent CLI. */
@@ -158,6 +166,7 @@ const KNOWN_PREFIXES: Array<[AgentInstance['adapter'], RegExp]> = [
   ['codex', copyOf('codex')],
   ['zcode', copyOf('zcode')],
   ['dsh', copyOf('dsh')],
+  ['doubao', copyOf('doubao')],
   // traex and the compatibility names its installer creates for the same CLI
   ['traex', copyOf('traex')],
   ['traex', copyOf('traecli')],
@@ -176,6 +185,7 @@ const PREFERRED_NAMES: Record<AgentInstance['adapter'], string[]> = {
   codex: ['codex'],
   zcode: ['zcode'],
   dsh: ['dsh'],
+  doubao: ['doubao'],
 };
 
 /**
@@ -248,12 +258,12 @@ export class AgentRegistry {
     return instance;
   }
 
-  /** Updates an instance's presentation. Its id is what threads store, so it never changes. */
-  async update(id: string, patch: { label?: unknown; hidden?: unknown }): Promise<AgentInstance> {
+  /** Updates hub-owned settings. Its id is what threads store, so it never changes. */
+  async update(id: string, patch: { label?: unknown; hidden?: unknown; streamBridge?: unknown }): Promise<AgentInstance> {
     return this.mutate(async () => {
       const instance = this.get(id);
-      if (patch.label === undefined && patch.hidden === undefined) throw new HttpError(400, 'a label or hidden is required');
-      const next = { ...instance };
+      if (patch.label === undefined && patch.hidden === undefined && patch.streamBridge === undefined) throw new HttpError(400, 'a setting is required');
+      let next = { ...instance };
       if (patch.label !== undefined) {
         const label = typeof patch.label === 'string' ? patch.label.trim().slice(0, 60) : '';
         if (!label) throw new HttpError(400, 'a label is required');
@@ -263,10 +273,12 @@ export class AgentRegistry {
         if (typeof patch.hidden !== 'boolean') throw new HttpError(400, 'hidden must be a boolean');
         next.hidden = patch.hidden;
       }
+      if (patch.streamBridge !== undefined) next = await this.withStreamBridge(next, patch.streamBridge);
       await this.persist(this.list().map((i) => (i.id === id ? next : i)));
       this.instances.set(id, next);
       const adapter = this.adapters.get(id) as { label: string } | undefined;
-      if (adapter && patch.label !== undefined) adapter.label = next.label!;
+      if (patch.streamBridge !== undefined) this.adapters.set(id, buildAdapter(next, this.defaultCommands));
+      else if (adapter && patch.label !== undefined) adapter.label = next.label!;
       return next;
     });
   }
@@ -285,9 +297,13 @@ export class AgentRegistry {
   }
 
   supported(): SupportedAgent[] {
-    return SUPPORTED_AGENTS.map(meta => ({ ...meta, capabilities: {
-      createAccount: !!buildAdapter({ id: meta.adapter, adapter: meta.adapter }, this.defaultCommands).createAccount,
-    } }));
+    return SUPPORTED_AGENTS.map(meta => {
+      const adapter = buildAdapter({ id: meta.adapter, adapter: meta.adapter }, this.defaultCommands);
+      return { ...meta, capabilities: {
+        createAccount: !!adapter.createAccount,
+        ...(adapter.capabilities.streamBridge ? { streamBridge: adapter.capabilities.streamBridge } : {}),
+      } };
+    });
   }
 
   /** Serialize allocation so simultaneous clicks cannot choose the same instance id. */
@@ -423,6 +439,7 @@ export class AgentRegistry {
     label?: unknown;
     command?: unknown;
     env?: unknown;
+    streamBridge?: unknown;
     /** The login when this instance is a linked account (an email). */
     account?: unknown;
   }): Promise<AgentInstance> {
@@ -444,7 +461,7 @@ export class AgentRegistry {
           ? Object.fromEntries(Object.entries(input.env as Record<string, unknown>).map(([k, v]) => [String(k), String(v)]))
           : undefined;
 
-      const instance: AgentInstance = {
+      let instance: AgentInstance = {
         id,
         adapter: adapter as AgentInstance['adapter'],
         // Without a name it would inherit the adapter's own ("Antigravity"), which every copy of
@@ -454,10 +471,22 @@ export class AgentRegistry {
         ...(env ? { env } : {}),
         ...(account !== undefined ? { account } : {}),
       };
+      if (input.streamBridge !== undefined) instance = await this.withStreamBridge(instance, input.streamBridge);
       await this.persist([...this.list(), instance]);
       this.register(instance);
       return instance;
     });
+  }
+
+  /** Adapter-owned settings stay in the instance environment, never the agent's native config. */
+  private async withStreamBridge(instance: AgentInstance, enabled: unknown): Promise<AgentInstance> {
+    if (typeof enabled !== 'boolean') throw new HttpError(400, 'streamBridge must be a boolean');
+    const adapter = buildAdapter(instance, this.defaultCommands);
+    if (!adapter.capabilities.streamBridge || !adapter.streamBridgeEnvironment) throw new HttpError(400, 'this agent has no experimental stream bridge');
+    let environment: Record<string, string>;
+    try { environment = await adapter.streamBridgeEnvironment(enabled); }
+    catch (error) { throw new HttpError(400, error instanceof Error ? error.message : String(error)); }
+    return { ...instance, env: { ...instance.env, ...environment } };
   }
 
   /** Keep disk snapshots and the live registry in the same order, including login callbacks. */

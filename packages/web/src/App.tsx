@@ -30,15 +30,16 @@ import {
 } from './api';
 import type { HubAction } from './commands';
 import { buildProjectOptions } from './projects';
-import { useAppearance, useInTitlebar, useIsCompact, useListSwipe, useStoredFlag } from './hooks';
+import { useAppearance, useInTitlebar, useIsCompact, useListSwipe, useMinWidth, useStoredFlag } from './hooks';
+import { mergeAgentChoice, parseAgentChoices, type AgentChoices } from './agent-choice';
 import { useHosts } from './hosts';
 import type { PreparedImage } from './images';
 import { restoreVideos, type PreparedVideo } from './videos';
-import { attentionCount, pageTitle, threadNotices } from './notices';
+import { attentionCount, pageTitle } from './notices';
 import { folderName } from './paths';
 import { ThreadPlace } from './components/ThreadPlace';
 import { PERMISSION_LABELS, PERMISSION_ORDER, permissionHint, startingPermission } from './permissions';
-import { buildTimeline, toMarkdown, turnPreviews, type StoredEvent } from './timeline';
+import { buildTimeline, toMarkdown, turnPreviews, type StoredEvent, type Timeline } from './timeline';
 import { newerBuildAvailable } from './version';
 import { AppearancePanel } from './components/AppearancePanel';
 import { ActionSheet, type SheetTarget } from './components/ActionSheet';
@@ -60,18 +61,25 @@ import { AddAgentDialog } from './components/AddAgentDialog';
 import { OnboardingDialog } from './components/OnboardingDialog';
 import { ObservabilityPage } from './components/ObservabilityPage';
 import { QuotaBoard } from './components/QuotaBoard';
+import { ChatQuota } from './components/AgentQuota';
+import { QuotaNavigation } from './quota-reading';
 import { SelectionMenu } from './components/SelectionMenu';
 import { AgentPanel } from './components/AgentPanel';
-import { ThreadOverview } from './components/ThreadOverview';
+import { memberProgress, ThreadOverview } from './components/ThreadOverview';
+import { ChangeDiffDialog } from './components/ChangeDiffDialog';
 import { AgentsPage } from './components/AgentsPage';
-import type { AgentMention, Coordination, MemberDefault, SearchHit, ThreadOutputs } from './api';
-import { Popover as CoordinationPopover } from './components/Popover';
+import type { AgentMention, ChangedFile, Coordination, MemberDefault, SearchHit } from './api';
+import { Popover } from './components/Popover';
 import { SideChat } from './components/SideChat';
 import { McpPage } from './components/McpPage';
 import { TeamsPage } from './components/TeamsPage';
 import { teamRecipient } from './teams';
 import type { PetStatus, TeamSummary } from './api';
-import { PetBustImage, PetPortrait, usePetBust } from './components/Pet';
+import { ExploreDialog } from './components/ExploreDialog';
+import { needsExplore, exploreSummary } from './personal-explore';
+import { Pet, PetBustImage, PetPortrait, usePetBust } from './components/Pet';
+import { PersonalSettingsDialog } from './components/PersonalSettingsDialog';
+import { buildDesk } from './desk';
 import { SkillsPage } from './components/SkillsPage';
 import { SchedulesPage } from './components/SchedulesPage';
 import { DeskPage } from './components/DeskPage';
@@ -99,10 +107,10 @@ import { handoverHistoryKey, latestHandoverThread } from './handover';
 import { TurnRuler } from './components/TurnRuler';
 import { NewProjectDialog, ProjectPicker, RootsDialog } from './components/Projects';
 import { NoteMarks, type NoteMark } from './components/NoteMarks';
-import { Toast, type ToastState } from './components/Toast';
 import { ConnectDialog, DemoBar } from './components/ConnectDialog';
 import { DemoApi, DemoError } from './demo/DemoApi';
-import { IconCheck, IconBell, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconSettings, IconMore, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconTrace, IconLanguage, IconWaveform } from './components/icons';
+import { type DraftModelPreference, switchDraftModelPreference } from './draft-preferences';
+import { IconCheck, IconBell, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconSettings, IconMore, IconOverview, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconTrace, IconLanguage, IconWaveform } from './components/icons';
 import { StatReadings } from './components/SessionStats';
 import { ThreadTracePanel } from './components/TracePanel';
 import { chooseLocale, locale, LOCALES, localeChoice, t } from './i18n';
@@ -133,6 +141,16 @@ const UPDATE_CHECK_MS = 30_000;
  */
 const TAKEOVER_RETRY_MS = 30_000;
 
+const timelineCache = new WeakMap<StoredEvent[], Timeline>();
+function buildCachedTimeline(events: StoredEvent[], speech: Parameters<typeof buildTimeline>[1]): Timeline {
+  if (speech?.length) return buildTimeline(events, speech);
+  const cached = timelineCache.get(events);
+  if (cached) return cached;
+  const timeline = buildTimeline(events);
+  timelineCache.set(events, timeline);
+  return timeline;
+}
+
 const isNearBottom = (el: HTMLElement) => el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
 
 /** The plan page's address. Threads have none: the main area showing a thread is the plain URL. */
@@ -150,6 +168,11 @@ const EXTENSIONS_HASH = '#/extensions';
 const CORE_ROUTES = ['#/settings', AGENTS_HASH, TEAMS_HASH, TODOS_HASH, DESK_HASH, SKILLS_HASH, MCP_HASH, SCHEDULES_HASH, ACTIVITY_HASH, OBSERVABILITY_HASH, EXTENSIONS_HASH];
 
 type MainView = 'settings' | 'agents' | 'teams' | 'thread' | 'todos' | 'desk' | 'schedules' | 'activity' | 'observability' | 'skills' | 'mcp' | 'extensions' | 'ext';
+
+function quotaAccount(path: string): string | undefined {
+  if (!path.startsWith('quota/')) return undefined;
+  try { return decodeURIComponent(path.slice('quota/'.length)); } catch { return path.slice('quota/'.length); }
+}
 
 /** The page an address opens; null for none (a thread). Skills and MCP are the hub's own machinery, which the demo has none of. */
 function viewForHash(hash: string, connected: boolean): MainView | null {
@@ -187,8 +210,26 @@ const SIDEBAR_HIDDEN_KEY = 'calli.sidebar.hidden';
 const SIDEBAR_WIDTH_KEY = 'calli.sidebar.width';
 const SIDEBAR_KEYBOARD_STEP = 16;
 
+/**
+ * How wide a window must be for the overview to stand beside the conversation instead of opening
+ * over it. The panel needs 364px to the right of the column; making that room costs the column
+ * 348px, and below this width what is left reads like a phone column (under 550px at the line),
+ * so a narrower window gets the old popover, closed by default, instead.
+ */
+export const OVERVIEW_DOCK_MIN_WIDTH = 1240;
+/** The overview's standing panel, remembered on this device: open until the person closes it. */
+const OVERVIEW_OPEN_KEY = 'calli.overview.open';
+
 /** What members of each instance start with, remembered on this device for the next team. */
 const MEMBER_DEFAULTS_KEY = 'calli.coord.defaults';
+/** The model, effort and speed last chosen per instance: its next new thread starts there. */
+const AGENT_CHOICE_KEY = 'calli.agent.choice';
+const readAgentChoices = (): AgentChoices => parseAgentChoices(localStorage.getItem(AGENT_CHOICE_KEY));
+const rememberAgentChoice = (agent: string, choice: Partial<Record<'model' | 'effort' | 'speed', string | null>>) => {
+  try {
+    localStorage.setItem(AGENT_CHOICE_KEY, JSON.stringify(mergeAgentChoice(readAgentChoices(), agent, choice)));
+  } catch { /* a full or blocked store just stops remembering */ }
+};
 
 /** A plan the user chose to leave be, by thread: the proposal's key, so a reload does not ask again. */
 const PLAN_SKIP_KEY = 'calli:plan-skipped';
@@ -209,7 +250,8 @@ function ThreadQuickSwitch({ threads, selectedId, agents, onSelect }: {
   const panel = useRef<HTMLDivElement>(null);
   const timer = useRef<number | null>(null);
   const lastY = useRef(0);
-  const tapOpenAtPointerDown = useRef(false);
+  const startX = useRef(0);
+  const startY = useRef(0);
   const [tapOpen, setTapOpen] = useState(false);
   const [press, setPress] = useState<{ pointerId: number; open: boolean; targetId: string } | null>(null);
   const agentById = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
@@ -266,18 +308,29 @@ function ThreadQuickSwitch({ threads, selectedId, agents, onSelect }: {
     };
   }, [tapOpen]);
   if (selectedIndex < 0 || items.length <= 1) return null;
+  /** A plain tap on the strip is not ours: hand the click to whatever interactive piece sits under it. */
+  const forwardTap = (x: number, y: number) => {
+    const strip = root.current;
+    if (!strip) return;
+    strip.style.visibility = 'hidden';
+    const hit = document.elementFromPoint(x, y);
+    strip.style.visibility = '';
+    hit?.closest('button, a, input, textarea, label, [role="option"], [role="menuitem"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+  };
   return (
-    <div className={`quick-switch${open ? ' open' : ''}`} ref={root}>
-      <button
-        type="button"
-        className="quick-switch-button"
-        aria-label={t('quickSwitch.handle')}
-        aria-expanded={open}
+    <div className="quick-switch" ref={root}>
+      {/* An invisible strip along the right edge, mirroring the left edge's list gesture: swipe it
+          left to summon the panel, hold to scrub through the sessions, and a plain tap falls
+          through to the interface underneath. */}
+      <div
+        className="quick-switch-edge"
+        aria-hidden="true"
         onPointerDown={(e) => {
           if (e.pointerType === 'mouse' && e.button !== 0) return;
           e.preventDefault();
           e.currentTarget.setPointerCapture(e.pointerId);
-          tapOpenAtPointerDown.current = tapOpen;
+          startX.current = e.clientX;
+          startY.current = e.clientY;
           lastY.current = e.clientY;
           setPress({ pointerId: e.pointerId, open: false, targetId: selectedId });
           clearTimer();
@@ -289,28 +342,40 @@ function ThreadQuickSwitch({ threads, selectedId, agents, onSelect }: {
         }}
         onPointerMove={(e) => {
           if (press?.pointerId !== e.pointerId) return;
-          e.preventDefault();
           lastY.current = e.clientY;
-          updateTarget(e.clientY);
+          const dx = startX.current - e.clientX;
+          const dy = Math.abs(e.clientY - startY.current);
+          // A vertical drag is a scroll, not a summon: give up before the hold timer fires.
+          if (!press.open && !tapOpen && dy > 10 && dx <= 24) {
+            clearTimer();
+            reset(e.currentTarget, e.pointerId);
+            return;
+          }
+          // A pull past the threshold summons the panel for tapping; holding keeps its scrub.
+          if (!press.open && !tapOpen && dx > 24 && dx > dy) {
+            clearTimer();
+            reset(e.currentTarget, e.pointerId);
+            setTapOpen(true);
+            return;
+          }
+          if (press.open) { e.preventDefault(); updateTarget(e.clientY); }
         }}
         onPointerUp={(e) => {
           if (press?.pointerId !== e.pointerId) return;
-          e.preventDefault();
           const targetId = press.open ? press.targetId : null;
+          const tap = Math.abs(e.clientX - startX.current) < 6 && Math.abs(e.clientY - startY.current) < 6;
           reset(e.currentTarget, e.pointerId);
           if (targetId) {
             setTapOpen(false);
             if (targetId !== selectedId) onSelect(targetId);
-          } else {
-            setTapOpen(!tapOpenAtPointerDown.current);
+            return;
           }
+          if (tap) forwardTap(e.clientX, e.clientY);
         }}
         onPointerCancel={(e) => {
           if (press?.pointerId === e.pointerId) reset(e.currentTarget, e.pointerId);
         }}
-      >
-        <IconList size={20} />
-      </button>
+      />
       {open && (
         <div className="quick-switch-panel" ref={panel} role="listbox" aria-label={t('quickSwitch.sessions')}>
           {items.map((thread) => {
@@ -358,6 +423,15 @@ function savedMemberDefaults(key: string): Record<string, MemberDefault> {
   }
 }
 
+function fitDraftModelPreference(value: DraftModelPreference, models: ModelOption[], effortLevels: string[], canSpeed: boolean): DraftModelPreference {
+  const model = value.model && models.length > 0 && !models.some((option) => option.id === value.model) ? null : value.model;
+  const levels = effortsForModel(models, model, effortLevels);
+  const effort = value.effort && (levels.includes(value.effort) || (models.length === 0 && effortLevels.length === 0)) ? value.effort : null;
+  const speeds = speedsForModel(models, model);
+  const speed = canSpeed && value.speed && (models.length === 0 || speeds.some((option) => option.id === value.speed)) ? value.speed : null;
+  return { model, effort, speed };
+}
+
 /** The model and thinking effort for one instance's members: a quiet mark until something is chosen. */
 function MemberModel({ agent, models, value, permission, onNeed, onChange, onPermission }: {
   agent: AgentInfo; models: ModelOption[]; value: MemberDefault; onNeed: (agent: string) => void; onChange: (value: MemberDefault) => void;
@@ -370,6 +444,7 @@ function MemberModel({ agent, models, value, permission, onNeed, onChange, onPer
     {permission && onPermission && <PermissionPicker quietFor={agent.label} modes={agent.capabilities.permissionModes} value={permission} canAsk={agent.capabilities.approvals ?? true} onChange={onPermission} />}
     <ModelPicker
       quietFor={agent.label}
+      catalog={agent.capabilities.modelCatalog}
       models={models}
       model={value.model}
       efforts={efforts}
@@ -478,7 +553,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const [threadLink, setThreadLink] = useState(() => window.location.hash.startsWith('#/thread/') ? window.location.hash : null);
   const [schedulePath, setSchedulePath] = useState(() => window.location.hash.startsWith('#/schedules/') ? window.location.hash.slice('#/schedules/'.length) : '');
   const [settingsPath, setSettingsPath] = useState(() => start === 'machines' ? 'machines' : window.location.hash.replace(/^#\/settings\/?/, ''));
-  const settingsOrigin = useRef<{ view: MainView; thread: string | null; hash: string; scroll: number; pinned: boolean } | null>(null);
+  const settingsOrigin = useRef<{ view: MainView; thread: string | null; hash: string; scroll: number; pinned: boolean; entry: string } | null>(null);
   const [view, setView] = useState<MainView>(() => start === 'machines' ? 'settings' : viewForHash(window.location.hash, Boolean(token)) ?? 'thread');
   /** The address of the extension view asked for. Which view that is waits for the list of extensions. */
   const [extTarget, setExtTarget] = useState<string | null>(() => (viewForHash(window.location.hash, Boolean(token)) === 'ext' ? window.location.hash : null));
@@ -619,6 +694,9 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const [draftModel, setDraftModel] = useState<string | null>(null);
   const [draftEffort, setDraftEffort] = useState<string | null>(null);
   const [draftSpeed, setDraftSpeed] = useState<string | null>(null);
+  const draftModelPreferences = useRef<Record<string, DraftModelPreference>>({});
+  const draftPreferencesApi = useRef<Api | null>(api);
+  const draftPreferenceSave = useRef<{ api: Api | null; pending: Record<string, DraftModelPreference> | null; running: boolean }>({ api, pending: null, running: false });
   const [modelsByAgent, setModelsByAgent] = useState<Record<string, ModelOption[]>>({});
   const modelVersions = useRef<Record<string, number>>({});
   const [commandsByKey, setCommandsByKey] = useState<Record<string, SlashCommand[]>>({});
@@ -733,11 +811,15 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const [errorState, setErrorState] = useState<{ text: string; thread: string | null } | null>(null);
   const setError = (text: string | null) => setErrorState(text ? { text, thread: selectedId } : null);
   const error = errorState && errorState.thread === selectedId ? errorState.text : null;
-  const [toast, setToast] = useState<ToastState | null>(null);
+  // What a thread is busy with that has no trace of its own yet (naming it, copying it): a quiet
+  // line by its title until the result lands. Confirmations that the screen already shows are not said.
+  const [busyLine, setBusyLine] = useState<{ threadId: string; message: string } | null>(null);
+  // A thread just archived: its row is gone, so the undo is offered where the row was noticed.
+  const [archivedUndo, setArchivedUndo] = useState<{ thread: Thread; nonce: number } | null>(null);
+  // The daemon serves a newer build than the page runs: a row under the header offers the reload.
+  const [newVersion, setNewVersion] = useState(false);
   const [showDirPicker, setShowDirPicker] = useState(false);
-  const [archiveOpen, setArchiveOpen] = useState(false);
   const [archiveKey, setArchiveKey] = useState(0);
-  const [importOpen, setImportOpen] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
   const [termOpen, setTermOpen] = useState(false);
   // Minimized keeps the connection: coming back shows the same desktop at once, without reconnecting.
@@ -756,9 +838,6 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   }, [api, demo]);
   /** The terminal a login started; null attaches to the newest live one. */
   const [terminalTarget, setTerminalTarget] = useState<string | null>(null);
-  /** The agent whose plan usage the quota panel shows. */
-  /** The quota dashboard, over every agent that can report usage. */
-  const [quotaOpen, setQuotaOpen] = useState(false);
   const [observabilityTab, setObservabilityTab] = useState<'usage' | 'diagnostics'>('usage');
   const [observabilityFocus, setObservabilityFocus] = useState<string | undefined>(undefined);
   // Bumped on every visit so the page opens on the requested tab, even when it is already showing.
@@ -807,10 +886,9 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const [pendingSend, setPendingSend] = useState<{ text: string; images: PreparedImage[]; videos?: PreparedVideo[]; mentions?: AgentMention[]; resolve: () => void; reject: (e: unknown) => void } | null>(null);
   const [pageHidden, setPageHidden] = useState(() => document.hidden);
   const baseTitle = useRef(document.title);
-  const seenThreads = useRef<Thread[] | null>(null);
 
   const voice = useVoiceSession(api, selectedId, hostId);
-  const timeline = useMemo(() => buildTimeline(events,
+  const timeline = useMemo(() => buildCachedTimeline(events,
     voice.state.messagesThreadId === selectedId ? voice.state.messages : []),
   [events, selectedId, voice.state.messages, voice.state.messagesThreadId]);
   const turnPreviewMap = useMemo(() => turnPreviews(timeline.items), [timeline.items]);
@@ -851,6 +929,109 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const latestSegment = selected ? latestHandoverThread(selected, threads) : null;
   const viewingEarlier = Boolean(selected && latestSegment && latestSegment.id !== selected.id);
   const mergedHandover = !api.demo && singleSegmentId !== selectedId && Boolean(selected?.handover?.mode === 'continue' || viewingEarlier);
+  const flushDraftModelPreferences = (targetApi: Api) => {
+    const save = draftPreferenceSave.current;
+    if (save.api !== targetApi || save.running || targetApi.demo || !save.pending) return;
+    const preferences = save.pending;
+    save.pending = null;
+    save.running = true;
+    void targetApi.saveDraftModelPreferences(preferences)
+      .then((saved) => {
+        if (draftPreferencesApi.current === targetApi && draftPreferenceSave.current.api === targetApi && !draftPreferenceSave.current.pending) {
+          draftModelPreferences.current = saved;
+        }
+      })
+      .catch((e) => {
+        if (draftPreferencesApi.current === targetApi && draftPreferenceSave.current.api === targetApi) setError(message(e));
+      })
+      .finally(() => {
+        if (draftPreferenceSave.current.api !== targetApi) return;
+        draftPreferenceSave.current.running = false;
+        flushDraftModelPreferences(targetApi);
+      });
+  };
+  const persistDraftModelPreferences = (preferences: Record<string, DraftModelPreference>) => {
+    draftPreferencesApi.current = api;
+    draftModelPreferences.current = preferences;
+    if (!api.demo) {
+      if (draftPreferenceSave.current.api !== api) draftPreferenceSave.current = { api, pending: null, running: false };
+      draftPreferenceSave.current.pending = preferences;
+      flushDraftModelPreferences(api);
+    }
+  };
+  const flushDraftModelPreferencesOnExit = (targetApi: Api) => {
+    const save = draftPreferenceSave.current;
+    if (targetApi.demo || draftPreferencesApi.current !== targetApi || save.api !== targetApi || (!save.pending && !save.running)) return;
+    void targetApi.saveDraftModelPreferences(draftModelPreferences.current, { keepalive: true }).catch(() => undefined);
+  };
+  const ensureDraftPreferenceApi = () => {
+    if (draftPreferencesApi.current === api) return true;
+    draftPreferencesApi.current = api;
+    draftModelPreferences.current = {};
+    draftPreferenceSave.current = { api, pending: null, running: false };
+    return false;
+  };
+  const selectDraftAgent = (id: string, list = agents, rememberCurrent = true) => {
+    const sameDaemon = ensureDraftPreferenceApi();
+    const remembered = switchDraftModelPreference(
+      draftModelPreferences.current,
+      rememberCurrent && sameDaemon ? draftAgent : '',
+      { model: draftModel, effort: draftEffort, speed: draftSpeed },
+      id,
+    );
+    if (remembered.preferences !== draftModelPreferences.current) persistDraftModelPreferences(remembered.preferences);
+    const caps = list.find((item) => item.id === id)?.capabilities;
+    const fitted = fitDraftModelPreference(remembered.preference, modelsByAgent[id] ?? [], caps?.effortLevels ?? [], Boolean(caps?.speed));
+    setDraftAgent(id);
+    setDraftWorkMode('execute');
+    setDraftModel(fitted.model);
+    setDraftEffort(fitted.effort);
+    setDraftSpeed(fitted.speed);
+    // Each agent starts at its own level: one that cannot ask starts where it can work.
+    if (caps) setDraftPermission(startingPermission(caps));
+  };
+  const rememberActiveDraftModelPreference = (next: DraftModelPreference) => {
+    if (!draftAgent) return;
+    if (!ensureDraftPreferenceApi()) return;
+    persistDraftModelPreferences({
+      ...draftModelPreferences.current,
+      [draftAgent]: next,
+    });
+  };
+  const fitActiveDraftModelPreference = (agent: string, list: ModelOption[]) => {
+    if (selected || !agent || agent !== draftAgent) return;
+    const caps = agents.find((item) => item.id === agent)?.capabilities;
+    const fitted = fitDraftModelPreference(
+      { model: draftModel, effort: draftEffort, speed: draftSpeed },
+      list,
+      caps?.effortLevels ?? [],
+      Boolean(caps?.speed),
+    );
+    if (fitted.model !== draftModel) setDraftModel(fitted.model);
+    if (fitted.effort !== draftEffort) setDraftEffort(fitted.effort);
+    if (fitted.speed !== draftSpeed) setDraftSpeed(fitted.speed);
+    rememberActiveDraftModelPreference(fitted);
+  };
+  useEffect(() => {
+    if (selected || !draftAgent) return;
+    fitActiveDraftModelPreference(draftAgent, modelsByAgent[draftAgent] ?? []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.id, draftAgent, draftModel, draftEffort, draftSpeed, modelsByAgent, agents, hostId]);
+  useEffect(() => {
+    if (api.demo) return;
+    const flush = () => flushDraftModelPreferencesOnExit(api);
+    const flushWhenHidden = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+    window.addEventListener('pagehide', flush);
+    window.addEventListener('beforeunload', flush);
+    document.addEventListener('visibilitychange', flushWhenHidden);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      window.removeEventListener('beforeunload', flush);
+      document.removeEventListener('visibilitychange', flushWhenHidden);
+    };
+  }, [api]);
   useEffect(() => {
     let cancelled = false;
     if (!api || !selected?.coordination) { setCoordination(null); return; }
@@ -1057,16 +1238,11 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   // Arming or cancelling a "wait for the quota and continue" watch on that same turn.
   const [resumeBusy, setResumeBusy] = useState(false);
   const scrollerRef = useRef<HTMLDivElement>(null);
-  // Whether the margin beside the conversation is wide enough to hold the team's card.
   const mainRef = useRef<HTMLElement>(null);
-  const [roomy, setRoomy] = useState(false);
   useEffect(() => {
     const el = mainRef.current;
     if (!el) return;
     const read = () => {
-      const column = parseFloat(getComputedStyle(el).getPropertyValue('--content-w')) || 780;
-      // The overview card (248px) with its offset from the edge and a gap to the conversation.
-      setRoomy((el.clientWidth - column) / 2 >= 288);
       // What the column's lean toward the middle of the screen is worked out from (see styles.css).
       // clientWidth includes the padding the lean adds, so the two do not chase each other.
       el.style.setProperty('--main-w', `${el.clientWidth}px`);
@@ -1138,7 +1314,6 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     () => api?.schedules().then(setSchedules).catch(() => setSchedules([])),
     [api],
   );
-  const dismissToast = useCallback(() => setToast(null), []);
 
   // Initial data once we have a token.
   useEffect(() => {
@@ -1146,14 +1321,17 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     let cancelled = false;
     (async () => {
       try {
-        const [a, c, , s, sc] = await Promise.all([
+        const [a, c, , s, sc, preferences] = await Promise.all([
           api.agents(),
           api.workdirs(),
           threadFeed.read(),
           api.sections(),
           api.schedules().catch(() => []),
+          api.draftModelPreferences().catch(() => ({} as Record<string, DraftModelPreference>)),
         ]);
         if (cancelled) return;
+        draftPreferencesApi.current = api;
+        draftModelPreferences.current = preferences;
         setAgents(a);
         setAgentsKnown(true);
         applyWorkdirs(c);
@@ -1161,8 +1339,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         setSchedules(sc);
         setDraftCwd((cur) => cur || c.workdirs[0] || '');
         const first = a.find((x) => x.available && !x.hidden);
-        setDraftAgent(first?.id ?? '');
-        if (first) setDraftPermission(startingPermission(first.capabilities));
+        selectDraftAgent(first?.id ?? '', a, false);
         if (!demo) {
           const dismissed = localStorage.getItem('calli_onboard_dismissed') === '1';
           const needsOnboard = a.length === 0 || a.filter((x) => x.available).length === 0;
@@ -1257,9 +1434,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     if (showcase) return;
     if (Date.now() - updateAskedAt.current < UPDATE_CHECK_MS) return;
     updateAskedAt.current = Date.now();
-    void newerBuildAvailable().then((newer) => {
-      if (newer) setToast({ message: t('app.newVersion'), action: { label: t('preview.refresh'), run: () => window.location.reload() }, sticky: true });
-    });
+    void newerBuildAvailable().then((newer) => { if (newer) setNewVersion(true); });
   };
 
   const historyCursor = useRef<number | null>(null);
@@ -1500,12 +1675,13 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     if (!force && lastFocusModelRefresh.current?.agent === activeAgent && now - lastFocusModelRefresh.current.at < 1000) return;
     lastFocusModelRefresh.current = { agent: activeAgent, at: now };
     const version = modelVersions.current[activeAgent] ?? 0;
+    // Opening the picker refreshes optional metadata instead of reusing the cached catalog.
     void api
-      .models(activeAgent)
+      .models(activeAgent, force)
       .then((list) => {
         if ((modelVersions.current[activeAgent] ?? 0) === version) setModelsByAgent(prev => ({ ...prev, [activeAgent]: list }));
       })
-      .catch(() => undefined);
+      .catch(error => { if (force) handleError(error); });
   }, [api, activeAgent]);
 
   // Models of an agent other than the thread's own, for choosing what its members start with.
@@ -1597,6 +1773,17 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const [traceOpen, setTraceOpen] = useState(false);
   const filesSeq = useRef(0);
   useEffect(() => { setFiles(null); setFilesThreadId(null); setTraceOpen(false); }, [selectedId]);
+
+  // The overview: a popover on narrow screens and the pages, a standing panel beside the
+  // conversation on a wide one. Its switch is remembered here, and starts open.
+  const overviewDock = useMinWidth(OVERVIEW_DOCK_MIN_WIDTH) && !onPage;
+  const [overviewOpen, setOverviewOpen] = useStoredFlag(OVERVIEW_OPEN_KEY, true);
+  /** A side panel takes the same edge as the overview, so the panel steps aside while one is open —
+   *  but the person's own switch is left alone: it comes back when the side panel closes. */
+  const sideOpen = Boolean(agentsOpen && coordination) || Boolean(files) || traceOpen;
+  const overviewShown = overviewDock && overviewOpen && !sideOpen && Boolean(selected) && hostUp;
+  /** Only the person turns the standing panel off; the switch above remembers it. */
+  const closeOverview = useCallback(() => { if (overviewDock) setOverviewOpen(false); }, [overviewDock, setOverviewOpen]);
   // A page the agent wrote, rendered in a sandboxed iframe.
   const [preview, setPreview] = useState<{ threadId: string; path: string } | null>(null);
   const openFileLink = useCallback(
@@ -1625,27 +1812,21 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
 
   // The thread on screen is being read. With the page in the background, nothing is.
   const viewingId = pageHidden ? null : selectedId;
+  // Threads away from this one that want a look: counted in the tab title, dotted on the list button.
+  const attention = attentionCount(threads, viewingId);
 
-  // Say so when something happens in a thread that is not on screen, and keep a count in the tab title.
+  // Keep a count of threads that want attention in the tab title; the sidebar rows and the dot on
+  // the list button carry it inside the app. What happens off-screen is not announced over the page.
   useEffect(() => {
-    const before = seenThreads.current;
-    seenThreads.current = threads;
     document.title = pageTitle(baseTitle.current, attentionCount(threads, viewingId));
-    if (!before) return;
-    const notice = threadNotices(before, threads, viewingId).at(-1);
-    if (notice) {
-      setToast({
-        message: notice.message,
-        action: {
-          label: notice.action,
-          run: () => {
-            setSelectedId(notice.threadId);
-            setDrawer(false);
-          },
-        },
-      });
-    }
   }, [threads, viewingId]);
+
+  // The undo for an archive waits a while, then the offer goes; the archive page still has the thread.
+  useEffect(() => {
+    if (!archivedUndo) return;
+    const timer = window.setTimeout(() => setArchivedUndo(null), 8000);
+    return () => window.clearTimeout(timer);
+  }, [archivedUndo]);
 
   // Looking at a thread marks it read, on every device.
   const selectedUnread = Boolean(selected?.unread);
@@ -1699,8 +1880,12 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       void refreshThreads();
     },
     onOpenTerminal: () => (demo ? askToConnect() : openTerminal()),
+    // The bar hands its trace mark to the menu on a wide screen; a phone reaches it from the
+    // overview panel's foot.
+    onOpenTrace: compact ? undefined : () => { setAgentsOpen(false); setFiles(null); setTraceOpen(true); },
     onError: handleError,
-    toast: setToast,
+    onBusy: setBusyLine,
+    onArchived: (thread) => setArchivedUndo({ thread, nonce: Date.now() }),
     // The handover chain record lives in the thread menu, not as chrome above the conversation.
     chain: api.demo ? undefined : {
       threads,
@@ -1834,7 +2019,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const openSettings = (path = '') => {
     if (onSettings && settingsPath === path) return;
     navigate(() => {
-      if (!onSettings) settingsOrigin.current = { view, thread: selectedId, hash: window.location.hash, scroll: scrollerRef.current?.scrollTop ?? 0, pinned: stickToBottom.current };
+      if (!onSettings) settingsOrigin.current = { view, thread: selectedId, hash: window.location.hash, scroll: scrollerRef.current?.scrollTop ?? 0, pinned: stickToBottom.current, entry: path };
       setThreadLink(null); setView('settings'); setSettingsPath(path); setDrawer(false);
       const hash = `#/settings${path ? `/${path}` : ''}`;
       if (window.location.hash !== hash) window.history.pushState(window.history.state, '', hash);
@@ -1862,6 +2047,32 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const openDesk = (finds = false) => navigate(() => {
     setSelectedId(null); setView('desk'); setDrawer(false); setDeskFinds(finds);
   });
+  // She now sits over every page; the desk still feeds her what to say and what to step back from.
+  const petGreeting = useMemo(() => {
+    if (!onDesk || todosLoading || todosError) return null;
+    const desk = buildDesk(todos, new Date());
+    return { you: desk.quadrants.now.length, first: desk.first[0]?.todo.text ?? null };
+  }, [onDesk, todos, todosLoading, todosError]);
+  const [deskSpread, setDeskSpread] = useState(false);
+  // A matter her reply named: the desk opens that pile, wherever the person is when they tap it.
+  const [revealTodo, setRevealTodo] = useState<string | null>(null);
+  const openTodoFromPet = (id: string) => {
+    if (!onDesk) openDesk(false);
+    setRevealTodo(id);
+  };
+  const [exploreOpen, setExploreOpen] = useState(false);
+  const [setupNeeded, setSetupNeeded] = useState<boolean | null>(null);
+  const [setupNotice, setSetupNotice] = useState<{ text: string; at: number } | null>(null);
+  useEffect(() => {
+    let live = true;
+    setSetupNeeded(needsExplore(personal, null, null));
+    if (api.demo || !personal?.agent) return;
+    void Promise.all([api.personalProfile(), api.larkChannel()]).then(([profile, lark]) => {
+      if (live) setSetupNeeded(needsExplore(personal, profile.isTemplate, lark));
+    }).catch(() => undefined);
+    return () => { live = false; };
+  }, [api, personal]);
+  const openExplore = () => navigate(() => setExploreOpen(true));
   const openTodos = () => navigate(() => {
     setSelectedId(null);
     setView('todos');
@@ -1895,7 +2106,9 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     if (!api) return;
     const list = await api.agents();
     setAgents(list);
-    setDraftAgent((prev) => (list.some((a) => a.id === prev && !a.hidden) ? prev : list.find((a) => a.available && !a.hidden)?.id ?? ''));
+    if (!list.some((a) => a.id === draftAgent && !a.hidden)) {
+      selectDraftAgent(list.find((a) => a.available && !a.hidden)?.id ?? '', list);
+    }
   };
 
   const openAgents = () => { openSettings('agents'); void reloadAgents().catch(handleError); };
@@ -1907,7 +2120,6 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     const { terminalId } = await api.loginAgentTerminal(agent.id);
     setTerminalTarget(terminalId);
     setTermOpen(true);
-    setToast({ message: t('agents.loginStarted') });
   };
 
   const openTeams = () => { openSettings('teams'); reloadTeams(); };
@@ -1958,7 +2170,6 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       if (thread.archivedAt) {
         thread = await api.updateThread(hit.threadId, { archived: false });
         setArchiveKey((k) => k + 1);
-        setToast({ message: t('app.unarchived') });
       }
       openThread(thread);
       setJump({ threadId: hit.threadId, turnId: hit.turnId });
@@ -1982,7 +2193,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       }
       if (active) openThread(thread);
     }).catch(() => {
-      if (active) setToast({ message: t('app.threadNotFound') });
+      if (active) setError(t('app.threadNotFound'));
     }).finally(() => {
       if (active) {
         setThreadLink(null);
@@ -1999,10 +2210,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       if (thread.archivedAt) {
         thread = await api.updateThread(threadId, { archived: false });
         setArchiveKey((k) => k + 1);
-        setToast({ message: t('app.unarchived') });
       }
       openThread(thread);
-      setImportOpen(false);
     } catch (e) {
       handleError(e);
     }
@@ -2061,9 +2270,32 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   };
 
   const permission = selected ? selected.permissionMode : draftPermission;
+  // A remembered model can be gone from the instance's list (an update, a removed plan): fall
+  // back to its default rather than offering a model that cannot be started.
+  const draftModels = modelsByAgent[draftAgent];
+  useEffect(() => {
+    if (draftModels?.length && draftModel && !draftModels.some((m) => m.id === draftModel)) setDraftModel(null);
+  }, [draftModels, draftModel]);
   const model = selected ? selected.model : draftModel;
   const effort = selected ? selected.effort : draftEffort;
   const speed = selected ? selected.speed ?? null : draftSpeed;
+
+  // A new thread starts where the last one of that instance was left: the remembered model,
+  // effort and speed. Applied once on mount; pickAgent does the same for every switch.
+  useEffect(() => {
+    const remembered = readAgentChoices()[draftAgent];
+    if (remembered) {
+      if (remembered.model) setDraftModel(remembered.model);
+      if (remembered.effort) setDraftEffort(remembered.effort);
+      if (remembered.speed) setDraftSpeed(remembered.speed);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // The choice made in the draft is remembered while it is the draft being composed.
+  useEffect(() => {
+    if (!selected && draftAgent) rememberAgentChoice(draftAgent, { model: draftModel, effort: draftEffort, speed: draftSpeed });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftModel, draftEffort, draftSpeed, draftAgent, selected?.id]);
 
   const updateSelected = (patch: { speed?: string | null; permissionMode?: string; model?: string | null; effort?: string | null }) => {
     if (!selected) return;
@@ -2073,7 +2305,12 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     setThreads((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
     api
       .updateThread(id, patch)
-      .then((updated) => setThreads((prev) => prev.map((t) => (t.id === updated.id ? updated : t))))
+      .then((updated) => {
+        setThreads((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+        if (patch.model !== undefined || patch.effort !== undefined || patch.speed !== undefined) {
+          rememberAgentChoice(updated.agent, { model: updated.model, effort: updated.effort, speed: updated.speed });
+        }
+      })
       .catch((e) => {
         setThreads((prev) => prev.map((t) => (t.id === id ? { ...t, ...before } : t)));
         handleError(e);
@@ -2081,14 +2318,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   };
 
   const pickAgent = (id: string) => {
-    setDraftAgent(id);
-    setDraftWorkMode('execute');
-    setDraftSpeed(null);
-    setDraftModel(null);
-    setDraftEffort(null);
-    // Each agent starts at its own level: one that cannot ask starts where it can work.
-    const caps = capsOf(id);
-    if (caps) setDraftPermission(startingPermission(caps));
+    selectDraftAgent(id);
   };
 
   // Adds a discovered CLI as its own instance and selects it for the new thread.
@@ -2113,8 +2343,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     setAgents(freshList);
     const first = freshList.find((x) => x.available && !x.hidden);
     if (!draftAgent || !freshList.some((x) => x.id === draftAgent && !x.hidden)) {
-      setDraftAgent(first?.id ?? '');
-      if (first) setDraftPermission(startingPermission(first.capabilities));
+      selectDraftAgent(first?.id ?? '', freshList);
     }
     if (api) {
       api.discoverAgents().then(setDiscovered).catch(() => undefined);
@@ -2172,7 +2401,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     if (id === 'status') return setStatusOpen(true);
     if (id === 'term') return openTerminal();
     if (id === 'desktop') return setDesktop('open');
-    if (id === 'usage') return setQuotaOpen(true);
+    if (id === 'usage') return openSettings('quota');
     if (id === 'activity') return openActivity();
     if (id === 'skills') return openSkills();
     if (id === 'mcp') return openMcp();
@@ -2180,7 +2409,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     if (id === 'export' && selected) return threadActions.copyConversation(selected);
     if (id === 'model') return setModelSignal((n) => n + 1);
     if (id === 'permission') return setPermissionSignal((n) => n + 1);
-    if (id === 'import') return setImportOpen(true);
+    if (id === 'import') return openSettings('import');
     if (id === 'appearance') return openSettings('appearance');
     if (selected && (id === 'rename' || id === 'pin' || id === 'fork' || id === 'archive')) threadActions.run(id, selected);
   };
@@ -2273,7 +2502,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           ] : [];
   const collaborationIcon = (m: AgentMention) => [...agents, ...remoteAgents].find((a) => a.id === (m.kind === 'agent' ? m.id : coordination?.members.find((v) => v.id === m.id)?.thread?.agent))?.icon;
 
-  const collaborationControl = (select: (mention: AgentMention) => void, chosen: AgentMention[]) => (!draftTeam && !selected?.coordination?.team && (activeCaps?.coordination || selected?.coordination) && <CoordinationPopover label={t('app.collab')} panelClassName="coord-picker-panel" triggerClassName={`tool-btn coord-tool${selected?.coordination || draftCollaboration ? ' on' : ''}`} triggerLabel={t('app.collab')} triggerTitle={selected?.coordination || draftCollaboration ? t('app.collabOn') : t('app.collab')} trigger={<><IconAgents size={16} /><span>{t('app.collab')}</span></>}>
+  const collaborationControl = (select: (mention: AgentMention) => void, chosen: AgentMention[]) => (!draftTeam && !selected?.coordination?.team && (activeCaps?.coordination || selected?.coordination) && <Popover label={t('app.collab')} panelClassName="coord-picker-panel" triggerClassName={`tool-btn coord-tool${selected?.coordination || draftCollaboration ? ' on' : ''}`} triggerLabel={t('app.collab')} triggerTitle={selected?.coordination || draftCollaboration ? t('app.collabOn') : t('app.collab')} trigger={<><IconAgents size={16} /><span>{t('app.collab')}</span></>}>
       {close => <CollaborationMenu options={collaborationOptions} selected={chosen} icon={collaborationIcon}
         onSelect={mention => { close(); select(mention); }}
         unavailable={selected?.coordination && !leading ? t('app.collabBack') : t('app.collabNone')}
@@ -2302,9 +2531,10 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         </>}
         {selected?.coordination && <button className="pop-item compact" onClick={() => { setAgentsOpen(true); setFiles(null); close(); }}>{t('team.view')}</button>}
       </div>} />}
-    </CoordinationPopover>);
+    </Popover>);
 
   const left = (<>
+    {activeCaps?.quota && <ChatQuota api={api} agent={activeAgent} />}
     <PermissionPicker
       modes={permissionModes}
       value={permission}
@@ -2342,35 +2572,29 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const takeoverLabel = takeoverChoice ? [agents.find(a => a.id === takeoverChoice.agent)?.label ?? takeoverChoice.agent, takeoverChoice.model].filter(Boolean).join(' · ') : undefined;
 
   const teamWaiting = Boolean(coordination?.members.some((m) => m.thread?.waiting));
-  const teamRunning = coordination?.members.filter((m) => m.thread?.status === 'running').length ?? 0;
   const teamShown = Boolean(selected?.coordination && (selected.coordination.rootId !== selected.id || selected.coordination.children > 0) && !onPage && hostUp);
-  // The overview in the margin a wide screen leaves beside the conversation: the team, the plan and
-  // what the thread produced. Read only while it can be seen; the daemon keeps it until the log grows.
-  const marginFree = Boolean(selected && roomy && !agentsOpen && !files && !onPage && hostUp);
-  const teamInMargin = marginFree && teamShown && Boolean(coordination) && coordination!.rootId === selected!.id;
-  const [outputs, setOutputs] = useState<{ threadId: string; data: ThreadOutputs | null; failed: boolean } | null>(null);
-  const [outputsTry, setOutputsTry] = useState(0);
-  useEffect(() => {
-    if (!marginFree || !api || !selected) return;
-    const id = selected.id;
-    const timer = setTimeout(() => {
-      api.outputs(id)
-        .then(data => setOutputs({ threadId: id, data, failed: false }))
-        // A daemon from before the endpoint has no overview to read: that is empty, not a failure.
-        .catch((e: unknown) => setOutputs(prev => ({ threadId: id, data: prev?.threadId === id ? prev.data : null, failed: !(e instanceof ApiError && e.status === 404) })));
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [marginFree, api, selected?.id, selected?.updatedAt, outputsTry]);
-  const shownOutputs = outputs?.threadId === selected?.id ? outputs : null;
-  const outputsAny = Boolean(shownOutputs?.data && (shownOutputs.data.changes.total || shownOutputs.data.images.length || shownOutputs.data.files.length));
-  const planInMargin = marginFree && Boolean(topPlan);
-  const overviewShown = marginFree && (teamInMargin || planInMargin || outputsAny || Boolean(shownOutputs?.failed));
+  // The overview is a panel from one top-bar button now; the button carries only what asks for the
+  // person. The team it opens is the lead's own (a member's thread has none to show).
+  const overviewTeam = teamShown && coordination?.rootId === selected?.id ? coordination : null;
+  const teamNeeds = overviewTeam?.members.filter((member) => memberProgress(member) === 'need').length ?? 0;
+  // The conversation's turns, for naming the section each change belongs to in the diff dialog.
+  const turnOrder = useMemo(() => {
+    const seen = new Set<string>();
+    const order: string[] = [];
+    for (const item of timeline.items) {
+      if (!item.turnId || seen.has(item.turnId)) continue;
+      seen.add(item.turnId);
+      order.push(item.turnId);
+    }
+    return order;
+  }, [timeline.items]);
+  // One file's whole change history, opened from the changes group; read only while it is open.
+  const [diffFile, setDiffFile] = useState<{ threadId: string; file: ChangedFile } | null>(null);
   // A member's own thread: it was sent from the lead's, which is where its way back goes.
   const atMember = Boolean(teamShown && selected!.coordination!.rootId !== selected!.id);
   // Where the thread runs, beside its title; a page or a team task names itself instead.
   const placeShown = Boolean(selected && !viewTitle && !(host && !hostUp) && !selected.coordination?.team && !atMember);
   const leadTitle = atMember ? threads.find((v) => v.id === selected!.coordination!.rootId)?.title ?? '' : '';
-  const teamNote = teamWaiting ? t('app.teamWaiting') : teamRunning ? t('team.running', teamRunning) : selected?.coordination?.paused ? t('team.paused') : '';
 
   // Older daemons advertise /compact before they expose the dedicated capability.
   const canCompact = activeCaps?.compact ?? (commandsByKey[commandsKey] ?? []).some((command) => command.name === 'compact' && command.kind !== 'skill');
@@ -2385,22 +2609,26 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         compactDisabled={(selected.queued?.length ?? 0) >= MAX_QUEUED}
       />}
       <ModelPicker
-      models={models}
-      model={model}
-      efforts={effortLevels}
-      effort={effort}
-      speed={speed}
-      onSpeed={activeCaps?.speed ? v => selected ? updateSelected({ speed: v }) : setDraftSpeed(v) : undefined}
-      onDiagnose={() => openObservability('diagnostics', activeAgent)}
-      openSignal={modelSignal}
-      onOpen={() => refreshActiveModels(true)}
-      onModel={(v) => {
-        if (selected) return updateSelected({ model: v }); // the daemon drops an effort the new model lacks
-        setDraftModel(v);
-        if (draftSpeed && !speedsForModel(models, v).some(s => s.id === draftSpeed)) setDraftSpeed(null);
-        if (draftEffort && !effortsForModel(models, v, effortLevels).includes(draftEffort)) setDraftEffort(null);
-      }}
-      onEffort={(v) => (selected ? updateSelected({ effort: v }) : setDraftEffort(v))}
+        catalog={activeCaps?.modelCatalog}
+        models={models}
+        model={model}
+        efforts={effortLevels}
+        effort={effort}
+        speed={speed}
+        onSpeed={activeCaps?.speed ? v => selected ? updateSelected({ speed: v }) : (rememberActiveDraftModelPreference({ model: draftModel, effort: draftEffort, speed: v }), setDraftSpeed(v)) : undefined}
+        onDiagnose={() => openObservability('diagnostics', activeAgent)}
+        openSignal={modelSignal}
+        onOpen={() => refreshActiveModels(true)}
+        onModel={(v) => {
+          if (selected) return updateSelected({ model: v }); // the daemon drops an effort the new model lacks
+          const nextSpeed = draftSpeed && speedsForModel(models, v).some(s => s.id === draftSpeed) ? draftSpeed : null;
+          const nextEffort = draftEffort && effortsForModel(models, v, effortLevels).includes(draftEffort) ? draftEffort : null;
+          rememberActiveDraftModelPreference({ model: v, effort: nextEffort, speed: nextSpeed });
+          setDraftModel(v);
+          if (draftSpeed !== nextSpeed) setDraftSpeed(nextSpeed);
+          if (draftEffort !== nextEffort) setDraftEffort(nextEffort);
+        }}
+        onEffort={(v) => selected ? updateSelected({ effort: v }) : (rememberActiveDraftModelPreference({ model: draftModel, effort: v, speed: draftSpeed }), setDraftEffort(v))}
       />
 
     </>
@@ -2415,7 +2643,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       </div></SettingsSection> },
       ...(!demo ? [
         { id: 'push', label: t('push.title'), icon: IconBell, render: () => <PushSettingsDialog api={api} onClose={closeSettings} /> },
-        { id: 'assistant', label: t('personal.settings'), icon: IconSparkle, render: () => <AssistantSettingsPage api={api} agents={agents} path={settingsPath || 'assistant'} onNavigate={openSettings} onSave={setPersonal} /> },
+        { id: 'assistant', label: t('personal.settings'), icon: IconSparkle, render: () => <AssistantSettingsPage api={api} agents={agents} setupNeeded={setupNeeded} onExplore={openExplore} path={settingsPath || 'assistant'} onNavigate={openSettings} onSave={setPersonal} /> },
         { id: 'handover', label: t('auto.title'), icon: IconAgents, render: () => <HandoverSettingsDialog api={api} agents={agents} onClose={closeSettings} /> },
       ] : []),
     ] },
@@ -2430,9 +2658,9 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       { id: 'extensions', label: t('extensions.title'), icon: IconPuzzle, render: () => <ExtensionsPage api={api} demo={demo} extensions={extensions} threads={threads} onReload={() => void reloadExtensions()} onChange={changeExtension} onOpenView={openExtensionView} onError={handleError} /> },
     ] },
     { label: t('settings.history'), entries: [
-      { id: 'archive', label: t('archive.title'), icon: IconArchive, onOpen: () => setArchiveOpen(true) },
-      ...(importAgents.length ? [{ id: 'import', label: t('import.title'), icon: IconImport, onOpen: () => setImportOpen(true) }] : []),
-      ...(agents.some(a => !a.hidden && a.capabilities.quota) ? [{ id: 'quota', label: t('app.quota'), icon: IconGauge, onOpen: () => setQuotaOpen(true) }] : []),
+      { id: 'archive', label: t('archive.title'), icon: IconArchive, render: () => <ArchivePanel api={api} agents={agents} refreshKey={archiveKey} onRestore={thread => threadActions.run('restore', thread)} onDelete={thread => threadActions.run('delete', thread)} onError={handleError} /> },
+      ...(importAgents.length ? [{ id: 'import', label: t('import.title'), icon: IconImport, render: () => <ImportPanel api={api} agents={importAgents} onImported={openThread} onOpen={threadId => void openImported(threadId)} onError={handleError} /> }] : []),
+      ...(agents.some(a => !a.hidden && a.capabilities.quota) ? [{ id: 'quota', label: t('app.quota'), icon: IconGauge, render: () => <QuotaBoard api={api} agents={agents} current={activeAgent} account={quotaAccount(settingsPath)} onAccount={id => openSettings(`quota/${encodeURIComponent(id)}`)} /> }] : []),
       { id: 'activity', label: t('activity.title'), icon: IconActivity, render: () => <ActivityPage api={api} agents={agents} onOpenThread={pick} onError={handleError} /> },
       ...(!demo ? [{ id: 'observability', label: t('obs.title'), icon: IconGauge, render: () => <ObservabilityPage api={api} agents={agents} initial="usage" /> }] : []),
       ...enabledViews(extensions ?? []).filter(v => v.view.sidebar?.pinned === false).map(v => ({ id: `ext:${v.extensionId}/${v.view.id}`, label: v.view.title[locale()], icon: (props: { size?: number }) => <HostIcon name={v.view.icon} {...props} />, onOpen: () => openExtensionView(extensionHash(v)) })),
@@ -2442,9 +2670,27 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       : { id: 'sign-out', label: t('app.signOut'), icon: IconSignOut, onOpen: () => setConfirmSignOut(true) }],
     },
   ];
+  // The same body in both shapes: the standing panel beside the conversation, and the popover a
+  // narrow window still gets. Only the standing one keeps itself open behind its own rows.
+  const overviewBody = (close: () => void, persistent: boolean) => selected && api && (
+    <ThreadOverview
+      api={api} threadId={selected.id} updatedAt={selected.updatedAt} active={selected.status === 'running'}
+      team={overviewTeam} agents={agents} plan={topPlan} roots={threadRoots} turnOrder={turnOrder}
+      loadFile={loadFile} persistent={persistent}
+      onOpenMember={(member) => { setAgentsStart(member ?? null); setAgentsOpen(true); setFiles(null); }}
+      onOpenDiff={(file) => setDiffFile({ threadId: selected.id, file })}
+      onOpenFile={async (path) => {
+        if (/\.html?$/i.test(path)) setPreview({ threadId: selected.id, path });
+        else await openFileLink(path);
+      }}
+      onPreview={(path) => setPreview({ threadId: selected.id, path })}
+      onOpenTrace={() => { setAgentsOpen(false); setFiles(null); setTraceOpen(true); }}
+      onClose={close}
+    />
+  );
 
   return (
-    <div
+    <QuotaNavigation.Provider value={() => openSettings('quota')}><div
       className={`app${listOpen ? ' drawer-open' : ''}${sidebarHidden && !compact ? ' sidebar-hidden' : ''}${sidebarDrag ? ' sidebar-resizing' : ''}`}
       style={{ '--sidebar-w': `${sidebarWidth}px` } as CSSProperties}
       onPointerDownCapture={() => { startupPending.current = false; }}
@@ -2489,11 +2735,13 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
             setProjectDialog(null);
             setDraftCwd(path);
             setDraftScratch(false);
-            setToast({ message: t('app.projectCreated', folderName(path)) });
           }}
         />
       )}
       {projectDialog === 'roots' && <RootsDialog api={api} roots={roots} onChange={applyWorkdirs} onCancel={() => setProjectDialog(null)} />}
+      {/* The sidebar, the conversation and the panels beside it are one sheet of paper on a
+          desktop; the window's band shows around it. Overlays stay outside, over the window. */}
+      <div className="shell">
       <aside className="sidebar">
         <Sidebar
           personalDirectory={personal?.directory}
@@ -2563,7 +2811,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
 
       {/* A conversation under way leans toward the middle of the screen, as in Codex; a new
           thread, and the pages, stay centred where they are. */}
-      <main className={`main${selected && !onPage && hostUp && !compact ? ' lean' : ''}`} ref={mainRef}>
+      <main className={`main${selected && !onPage && hostUp && !compact ? ' lean' : ''}${overviewShown ? ' overview-room' : ''}`} ref={mainRef}>
         {compact && selected && !listOpen && !onPage && hostUp && (
           <ThreadQuickSwitch threads={topLevelThreads} selectedId={selected.id} agents={agents} onSelect={pick} />
         )}
@@ -2576,6 +2824,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           ) : (
             <button className="icon-btn menu-btn" aria-label={t('app.openList')} aria-expanded={listOpen} onClick={() => setDrawer((v) => !v)}>
               {compact ? <IconBack size={22} /> : <IconMenu />}
+              {attention > 0 && <span className="menu-dot" aria-hidden="true" />}
             </button>
           )}
           {/* With the list put away, the way back and a new thread move up here. */}
@@ -2600,6 +2849,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
             )}
             {selected?.coordination?.team && <div className={`team-task-status${['awaiting_confirm', 'needs_attention'].includes(selected.coordination.team.status) ? ' attention' : ''}`}><span className="team-task-name">{selected.coordination.team.name}</span><span> · {t(`teams.${selected.coordination.team.status}`)}</span></div>}
             {!selected && host && hostUp && <div className="topbar-sub">{host.label}</div>}
+            {busyLine && busyLine.threadId === selected?.id && <div className="topbar-sub topbar-busy">{busyLine.message}</div>}
             {atMember && (
               <button className="topbar-sub topbar-lead-link" title={t('app.backToLead')} onClick={() => pick(selected!.coordination!.rootId)}>
                 {agentLabel(selected!.agent)} · {t('app.leadThread', leadTitle)}
@@ -2608,28 +2858,37 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           </div>
           {selected && (
             <div className="topbar-actions">
-              {/* The team, as one more icon: how many with a badge, orange when one of them needs you. */}
-              {teamShown && !atMember && !(overviewShown && teamInMargin) && (
-                <button className={`icon-btn topbar-agents${teamWaiting ? ' attention' : ''}${agentsOpen ? ' on' : ''}`} aria-label={t('team.view')} aria-pressed={agentsOpen} title={teamNote || t('sidebar.agents', selected.coordination!.children)} onClick={() => { setAgentsStart(null); setAgentsOpen((v) => !v); setFiles(null); }}>
-                  <IconAgents />
-                  <span className="topbar-badge">{selected.coordination!.children}</span>
+              {/* The thread at a glance: one panel for the team, the plan, the changes, the pictures
+                  and the files. The badge is only ever what needs the person. */}
+              {api && hostUp && (overviewDock ? (
+                <button
+                  type="button"
+                  className={`icon-btn topbar-overview${overviewOpen ? ' on' : ''}${teamNeeds ? ' attention' : ''}`}
+                  aria-label={t('overview.label')}
+                  aria-pressed={overviewOpen}
+                  title={teamNeeds ? t('overview.needsYou', teamNeeds) : t('overview.label')}
+                  onClick={() => setOverviewOpen(!overviewOpen)}
+                >
+                  <IconOverview />
+                  {teamNeeds > 0 && <span className="topbar-badge">{teamNeeds}</span>}
                 </button>
-              )}
-              {teamShown && !atMember && teamNote && !compact && !(overviewShown && teamInMargin) && (
-                <span className={`topbar-team-note${teamWaiting ? ' attention' : ''}`}>{teamNote}</span>
-              )}
-              {topPlan && !onPage && !(overviewShown && planInMargin) && <PlanButton item={topPlan} />}
-              {/* The session's numbers, quiet pills beside the trace button; a phone reads them in the trace page. */}
-              {!compact && <StatReadings api={api} threadId={selected.id} active={selected.status === 'running'} onOpenTrace={() => { setAgentsOpen(false); setFiles(null); setTraceOpen(true); }} />}
-              <button
-                className={`icon-btn topbar-trace${traceOpen ? ' on' : ''}`}
-                aria-label={t('trace.openTrace')}
-                aria-pressed={traceOpen}
-                title={t('trace.openTrace')}
-                onClick={() => { setAgentsOpen(false); setFiles(null); setTraceOpen((v) => !v); }}
-              >
-                <IconTrace />
-              </button>
+              ) : (
+                <Popover
+                  label={t('overview.label')}
+                  triggerClassName={`icon-btn topbar-overview${teamNeeds ? ' attention' : ''}`}
+                  triggerLabel={t('overview.label')}
+                  triggerTitle={teamNeeds ? t('overview.needsYou', teamNeeds) : t('overview.label')}
+                  align="end"
+                  placement="below"
+                  panelClassName="overview-panel"
+                  trigger={<><IconOverview />{teamNeeds > 0 && <span className="topbar-badge">{teamNeeds}</span>}</>}
+                >
+                  {(close) => overviewBody(close, false)}
+                </Popover>
+              ))}
+              {/* A phone keeps its plan button: it has no margin card, and the lead's list of what
+                  leaves the bar was the desktop's. The overview has the plan too, one tap away. */}
+              {compact && topPlan && !onPage && <PlanButton item={topPlan} />}
               <button
                 className={`icon-btn topbar-files${files ? ' on' : ''}`}
                 aria-label={t('files.files')}
@@ -2639,14 +2898,11 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
               >
                 <IconFiles />
               </button>
-              {!compact && (
-                <button className="icon-btn topbar-term" aria-label={t('actions.terminal')} title={t('term.title')} onClick={() => (demo ? askToConnect() : openTerminal())}>
-                  <IconTerminal />
+              {compact && (
+                <button className="icon-btn topbar-new" aria-label={t('sidebar.newThread')} onClick={() => newThread()}>
+                  <IconEdit />
                 </button>
               )}
-              <button className="icon-btn topbar-new" aria-label={t('sidebar.newThread')} onClick={() => newThread()}>
-                <IconEdit />
-              </button>
               <button
                 className="icon-btn topbar-more"
                 aria-label={t('app.threadMore')}
@@ -2661,6 +2917,31 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           )}
         </header>}
 
+        {/* Rows that wait for a decision, in the flow of the page rather than over it: a newer
+            build to load, a just-archived thread to bring back. */}
+        {newVersion && (
+          <div className="notice-row" role="status">
+            <span>{t('app.newVersion')}</span>
+            <button className="notice-act" onClick={() => window.location.reload()}>{t('preview.refresh')}</button>
+            <button className="notice-x" aria-label={t('app.dismiss')} onClick={() => setNewVersion(false)}>×</button>
+          </div>
+        )}
+        {archivedUndo && (
+          <div className="notice-row" role="status" key={archivedUndo.nonce}>
+            <span>{t('actions.archivedNotice', archivedUndo.thread.title)}</span>
+            <button
+              className="notice-act"
+              onClick={() => {
+                threadActions.run('restore', archivedUndo.thread);
+                setArchivedUndo(null);
+              }}
+            >
+              {t('actions.undo')}
+            </button>
+            <button className="notice-x" aria-label={t('app.dismiss')} onClick={() => setArchivedUndo(null)}>×</button>
+          </div>
+        )}
+
         {demo && (showcase ? showcase.notice(selectedId, extWant) : <DemoBar compact={compact} onConnect={askToConnect} />)}
 
         {error && (
@@ -2673,7 +2954,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         )}
 
         {onSettings ? (
-          <SettingsPage groups={settingsGroups} path={settingsPath} onNavigate={openSettings} onClose={closeSettings}
+          <SettingsPage groups={settingsGroups} path={settingsPath} onNavigate={openSettings} onClose={closeSettings} closeOnRoot={settingsOrigin.current?.entry === 'quota' && settingsPath === 'quota'}
             detailTitle={settingsPath.startsWith('assistant') ? assistantTitle(settingsPath) : undefined} />
         ) : host && !hostUp ? (
           // The machine's threads are over there; until it is back there is only this to say.
@@ -2754,11 +3035,11 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           </div>
         ) : onDesk ? (
           <div key="desk" className="scroller">
-            <DeskPage api={api} todos={todos} loading={todosLoading} error={todosError} threads={threads} agents={agents}
+            <DeskPage key={setupNotice?.at} setupNeeded={setupNeeded} onExplore={openExplore} api={api} todos={todos} loading={todosLoading} error={todosError} threads={threads} agents={agents}
               personal={personal} personalError={personalError} refreshKey={todosKey} onReload={reloadTodos}
-              onPetStatusChange={setPetStatus}
               onPersonalChange={setPersonal} onPersonalRetry={reloadPersonal} onOpenThread={pick} onOpenPlans={openTodos}
-              openFinds={deskFinds} onFindsOpened={() => setDeskFinds(false)} />
+              openFinds={deskFinds} onFindsOpened={() => setDeskFinds(false)}
+              onSpreadChange={setDeskSpread} revealTodoId={revealTodo} onRevealTodo={() => setRevealTodo(null)} />
           </div>
         ) : onTodos ? (
           // A scroller of its own: the thread's one pins itself to the bottom, a document starts at the top.
@@ -2885,20 +3166,6 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           )}
         </div>
 
-        {/* Where there is room to spare, the team, the plan and what the thread produced sit in one
-            card in the margin; otherwise the team and the plan are marks in the top bar. */}
-        {overviewShown && (
-          <ThreadOverview
-            team={teamInMargin ? coordination : null} agents={agents} plan={planInMargin ? topPlan : null}
-            outputs={shownOutputs?.data ?? null} failed={Boolean(shownOutputs?.failed)} roots={threadRoots}
-            onOpenMember={(member) => { setAgentsStart(member ?? null); setAgentsOpen(true); setFiles(null); }}
-            onRetry={() => setOutputsTry(n => n + 1)}
-            onJumpTurn={(turnId) => setJump({ threadId: selected!.id, turnId })}
-            onOpenFile={async (path) => { if (/\.html?$/i.test(path)) setPreview({ threadId: selected!.id, path }); else await openFileLink(path); }}
-            loadFile={loadFile}
-          />
-        )}
-
         {!onPage && !(host && !hostUp) && (
         <div className={`composer-slot${voice.state.active || voice.state.error ? ' voice-mode' : ''}`}>
         {selectedId && <WorkSummary items={workSources} />}
@@ -3012,6 +3279,14 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         )}
       </main>
 
+      {/* The overview standing beside the conversation: a layer of its own, put away only by the
+          button directly above it. It sits below the top bar on the window's right edge. */}
+      {overviewShown && (
+        <div className="pop-panel overview-panel overview-dock" role="menu" aria-label={t('overview.label')}>
+          {overviewBody(closeOverview, true)}
+        </div>
+      )}
+
       {agentsOpen && coordination && <AgentPanel key={`${coordination.rootId}:${agentsStart ?? ''}`} start={agentsStart} api={api} memberApi={(id) => new Api(token ?? '', '', id)} team={coordination} agents={agents} memberModel={(thread) => {
         const a = agents.find((v) => v.id === thread.agent);
         return a ? <MemberModel agent={a} models={modelsByAgent[a.id] ?? []} value={{ model: thread.model ?? null, effort: thread.effort ?? null }} onNeed={needModels} onChange={({ model, effort }) => { void api.updateThread(thread.id, { model, effort }).then(() => refreshThreads()).catch(handleError); }}
@@ -3028,6 +3303,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           onClose={() => setTraceOpen(false)}
         />
       )}
+      </div>
       {preview && api && (
         <PreviewPanel api={api} threadId={preview.threadId} path={preview.path} onClose={() => setPreview(null)} onError={handleError} />
       )}
@@ -3039,19 +3315,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           api={api}
           cwd={selected?.cwd || draftCwd || workdirs[0] || ''}
           terminalId={terminalTarget}
-          toast={setToast}
           onClose={() => { setTermOpen(false); setTerminalTarget(null); }}
-          onError={handleError}
-        />
-      )}
-      {archiveOpen && (
-        <ArchivePanel
-          api={api}
-          agents={agents}
-          refreshKey={archiveKey}
-          onRestore={(t) => threadActions.run('restore', t)}
-          onDelete={(t) => threadActions.run('delete', t)}
-          onClose={() => setArchiveOpen(false)}
           onError={handleError}
         />
       )}
@@ -3064,12 +3328,31 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           directory={activeCwd}
           usage={selected ? timeline.usage : null}
           usageCommand={['usage', 'cost', 'session'].find((name) => (commandsByKey[commandsKey] ?? []).some((c) => c.name === name)) ?? null}
-          onOpenQuota={agents.some((a) => !a.hidden && a.capabilities.quota) ? () => setQuotaOpen(true) : undefined}
+          onOpenQuota={agents.some((a) => !a.hidden && a.capabilities.quota) ? () => openSettings('quota') : undefined}
           onRunCommand={(text) => void send(text, []).catch(() => undefined)}
           onClose={() => setStatusOpen(false)}
         />
       )}
-      {quotaOpen && api && <QuotaBoard api={api} agents={agents} current={onPage ? undefined : activeAgent} onClose={() => setQuotaOpen(false)} onError={handleError} />}
+      {exploreOpen && <ExploreDialog api={api} onClose={() => setExploreOpen(false)} onApplied={(draft, saved) => {
+        setPersonal(saved.personal); setSetupNeeded(false); setExploreOpen(false);
+        setSetupNotice({ text: exploreSummary(draft), at: Date.now() });
+      }} />}
+      {api && (
+        <Pet
+          api={api}
+          greeting={petGreeting}
+          setupNeeded={setupNeeded} onExplore={openExplore} setupNotice={setupNotice}
+          spreadOpen={deskSpread}
+          desk={onDesk}
+          place={!onPage ? 'thread' : 'corner'}
+          threads={threads}
+          onOpenThread={pick}
+          onStatusChange={setPetStatus}
+          onConfigure={() => openSettings('assistant')}
+          todos={todos.filter(todo => !todo.done)}
+          onOpenTodo={openTodoFromPet}
+        />
+      )}
       {onboardOpen && (
         <OnboardingDialog
           api={api}
@@ -3090,20 +3373,6 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           onClose={() => {
             setAddAgentOpen(false);
           }}
-        />
-      )}
-      {importOpen && (
-        <ImportPanel
-          api={api}
-          agents={importAgents}
-          onImported={(thread) => {
-            openThread(thread);
-            setImportOpen(false);
-            setToast({ message: t('import.imported') });
-          }}
-          onOpen={(threadId) => void openImported(threadId)}
-          onClose={() => setImportOpen(false)}
-          onError={handleError}
         />
       )}
       {pendingSend && (
@@ -3154,8 +3423,17 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           onThreadCreated={(t) => setThreads((prev) => [t, ...prev.filter((x) => x.id !== t.id)])}
         />
       )}
+      {api && diffFile && diffFile.threadId === selected?.id && (
+        <ChangeDiffDialog
+          api={api}
+          threadId={diffFile.threadId}
+          file={diffFile.file}
+          turnOrder={turnOrder}
+          onClose={() => setDiffFile(null)}
+          onJumpTurn={(turnId) => { setDiffFile(null); setJump({ threadId: diffFile.threadId, turnId }); }}
+        />
+      )}
       {threadActions.layer}
-      <Toast toast={toast} onDismiss={dismissToast} />
       <NoteMarks marks={noteMarks} scrollerRef={scrollerRef} />
       <SelectionMenu
         onNote={(quote, comment, range, file) => {
@@ -3169,6 +3447,6 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           else setSideAsk({ text, nonce: Date.now() });
         }}
       />
-    </div>
+    </div></QuotaNavigation.Provider>
   );
 }

@@ -190,6 +190,14 @@ export interface ModelOption {
   description?: string;
   /** How busy this model is right now; above 100 means overloaded. */
   loadPercent?: number;
+  /** Total queued requests when reported. Null means unavailable, not zero; absent means no queue metadata. */
+  queueSize?: number | null;
+  /** Observed request position, not total queue size. Zero means observed nonqueued; null means unknown/stale. */
+  queuePosition?: number | null;
+  /** Queue observation time in epoch milliseconds; absent when no valid observation exists. */
+  queueObservedAt?: number;
+  /** The upstream load query failed; distinguish a failed read from unreported metadata. */
+  loadError?: boolean;
   /**
    * Thinking effort levels this model accepts. An empty list means the model has no effort setting.
    * Left out when the agent does not say, in which case the agent-wide list applies.
@@ -268,6 +276,8 @@ export interface StartOptions {
   cwd: string;
   /** Agent-side session id to resume, if the thread already has one. */
   resumeId?: string;
+  /** A lazily created native conversation announced its id during a real prompt. */
+  onSessionId?: (id: string) => void;
   /** Permission level for this session. Adapters without permission modes ignore it. */
   permissionMode?: PermissionMode;
   model?: string;
@@ -280,6 +290,13 @@ export interface MemoryReader {
   root(): Promise<string>;
   list(): Promise<MemoryIndex>;
   read(id: string): Promise<MemoryDocument>;
+}
+
+/** Compatibility information for an opt-in bridge that patches a private runtime copy. */
+export interface StreamBridgeCapability {
+  version: string;
+  platform: string;
+  temporaryMegabytes: number;
 }
 
 export interface AgentAdapter {
@@ -300,6 +317,10 @@ export interface AgentAdapter {
     coordination?: boolean;
     /** Changing model preserves the native conversation, including through a resumed process. */
     modelSwitch?: boolean;
+    /** False when the native CLI has no model catalog; keep its defaults without a picker. */
+    modelCatalog?: boolean;
+    /** User-controlled experimental streaming bridge, not a native protocol capability. */
+    streamBridge?: StreamBridgeCapability;
     resume: boolean;
     approvals: boolean;
     /** Permission levels this agent supports. Empty means the UI shows no permission picker. */
@@ -345,6 +366,10 @@ export interface AgentAdapter {
      */
     realtimeVoice?: boolean;
   };
+  /** Effective setting, including this instance's environment and an inherited hub default. */
+  readonly streamBridgeEnabled?: boolean;
+  /** Validate opt-in compatibility and return only the adapter-owned setting environment. */
+  streamBridgeEnvironment?(enabled: boolean): Promise<Record<string, string>>;
   memoryReader?(): MemoryReader;
   /** Whether the agent can be started on this host. */
   available(): Promise<boolean>;

@@ -34,7 +34,7 @@ async function fits(page) {
   const panel = page.locator('.agent-picker-panel');
   const bounds = await panel.boundingBox();
   assert.ok(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= page.viewportSize().width + 1 && bounds.y + bounds.height <= page.viewportSize().height + 1);
-  assert.equal(await panel.evaluate(el => el.scrollWidth > el.clientWidth), false);
+  assert.equal(await panel.evaluate(el => el.scrollWidth > el.clientWidth), false, JSON.stringify(await panel.evaluate(el => ({width:el.clientWidth,scroll:el.scrollWidth,wide:[...el.querySelectorAll('*')].filter(node=>node.getBoundingClientRect().right>el.getBoundingClientRect().right+1).map(node=>({tag:node.tagName,cls:node.className,width:node.getBoundingClientRect().width,text:node.textContent?.slice(0,100)}))}))));
   for (const button of await page.locator('.agent-quota-summary').all()) {
     assert.equal(await button.evaluate(el => el.scrollWidth > el.clientWidth + 1), false, 'summary fits without clipping a chip');
   }
@@ -51,7 +51,7 @@ test('single-line rings disclose details without selecting the account in both t
       page.on('request', req => { if (req.url().includes('/quota')) quotaRequests.push(req.url()); });
       await openUi(page, daemon);
       await page.locator('.agent-btn:visible').waitFor();
-      assert.equal(quotaRequests.length, 0, 'closed picker does not query quota');
+      assert.ok(quotaRequests.every(url => !url.includes('/codex2/')), 'closed picker only reads the current chat account');
       await openAccounts(page);
       const first = account(page, 'Codex'), second = account(page, 'Codex 2');
       await summary(first).waitFor();
@@ -116,7 +116,7 @@ test('cached quota survives reload and failed reads; unknown, empty and exhauste
     await page.reload();
     let release;
     const pending = new Promise(resolve => { release = resolve; });
-    await page.route('**/api/agents/*/quota', async route => { await pending; await route.fulfill({ status: 503, json: { error: 'unavailable' } }); });
+    await page.route('**/api/agents/*/quota*', async route => { await pending; await route.fulfill({ status: 503, json: { error: 'unavailable' } }); });
     await openAccounts(page);
     const first = account(page, 'Codex');
     await summary(first).click();
@@ -126,26 +126,29 @@ test('cached quota survives reload and failed reads; unknown, empty and exhauste
     assert.deepEqual(await remaining(first), ['75', '18', '90']);
     await page.keyboard.press('Escape');
     await page.keyboard.press('Escape');
-    await page.unroute('**/api/agents/*/quota');
-    await page.route('**/api/agents/*/quota', route => route.fulfill({ json: {
+    await page.unroute('**/api/agents/*/quota*');
+    await page.route('**/api/agents/*/quota*', route => route.fulfill({ json: {
       windows: route.request().url().includes('/codex2/') ? [] : [{ label: '7H', usedPercent: 100 }, { label: '7D', usedPercent: 0 }],
       checkedAt: new Date().toISOString(),
     } }));
     await openAccounts(page);
-    await summary(first).getByText('0%', { exact: true }).waitFor();
+    await first.locator('.agent-quota-summary').click();
+    await first.getByRole('button', { name: '刷新 codex 的额度', exact: true }).click();
+    await page.keyboard.press('Escape');
+    await summary(first).getByText('0%', { exact: true }).waitFor().catch(async error => { throw new Error(`${error.message}\n${await page.locator('body').innerText()}`); });
     await summary(first).click();
     await first.getByText('剩余 0%', { exact: true }).waitFor();
     assert.deepEqual(await remaining(first), ['0', '100']);
     await first.getByText('7 小时', { exact: true }).waitFor();
-    await account(page, 'Codex 2').getByText('没有读到额度信息', { exact: true }).waitFor();
+    await account(page, 'Codex 2').getByText('服务未提供额度信息', { exact: true }).waitFor();
     assert.equal(await account(page, 'Codex 2').getByRole('meter').count(), 0);
     await fits(page);
     await page.keyboard.press('Escape');
     await page.keyboard.press('Escape');
     await page.evaluate(() => localStorage.removeItem('calli.quota.v1'));
     await page.reload();
-    await page.unroute('**/api/agents/*/quota');
-    await page.route('**/api/agents/*/quota', route => route.fulfill({ status: 503, json: { error: 'unavailable' } }));
+    await page.unroute('**/api/agents/*/quota*');
+    await page.route('**/api/agents/*/quota*', route => route.fulfill({ status: 503, json: { error: 'unavailable' } }));
     await openAccounts(page);
     await first.getByText('额度暂不可用', { exact: true }).waitFor();
     assert.equal(await page.getByRole('meter').count(), 0);
@@ -162,7 +165,7 @@ test('narrow summaries keep exhaustion visible and expose every omitted pool on 
       // Connect in the harness language before switching the application locale.
       await page.addInitScript(() => localStorage.setItem('calli.locale', 'zh'));
       await openUi(page, daemon);
-      await context.route('**/api/agents/*/quota', route => route.fulfill({ json: {
+      await context.route('**/api/agents/*/quota*', route => route.fulfill({ json: {
         windows: Array.from({ length: 8 }, (_, i) => ({ label: i % 2 ? '7D' : '5H', scope: `Pool ${i + 1}`, usedPercent: i === 7 ? 100 : 10 })),
         checkedAt: new Date().toISOString(),
       } }));

@@ -5,6 +5,8 @@ import { compactDeltas, replaceMessageTail, toolText } from './events.js';
 import { turnOutcome } from './lifecycle.js';
 import { HttpError } from './errors.js';
 import { diffStats } from './history-diff.js';
+import { realpath } from 'node:fs/promises';
+import { outputPath } from './outputs.js';
 
 /** Read-model events are explicitly distinct from the complete event log. */
 export interface HistoryEvent extends Omit<StoredEvent, 'type'> { type: string }
@@ -563,7 +565,11 @@ export class HistoryStore {
     }
     if (path !== undefined) {
       const content = read(d.diff_seq).content;
-      return { version: d.version, content: Array.isArray(content) ? content.filter((p: any) => p?.type === 'diff' && p.path === path) : [], nextCursor: null };
+      const cwd = String(this.db.prepare('SELECT cwd FROM threads WHERE id=?').get(thread)?.cwd ?? '');
+      let cwdReal = cwd;
+      try { cwdReal = await realpath(cwd); } catch { /* Deleted files still have readable recorded diffs. */ }
+      const requested = outputPath(path, cwd, cwdReal);
+      return { version: d.version, content: Array.isArray(content) ? content.filter((p: any) => p?.type === 'diff' && typeof p.path === 'string' && outputPath(p.path, cwd, cwdReal) === requested) : [], nextCursor: null };
     }
     const output = read(d.output_seq);
     const text = toolText(output.output, output.content);

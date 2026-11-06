@@ -23,10 +23,10 @@ test('settings pages preserve navigation, guard drafts and load details on entry
       if (mobile) await page.getByRole('button', { name: '打开线程列表', exact: true }).click();
       await page.locator('.sidebar').getByRole('button', { name: '配置', exact: true }).click();
       await page.locator('.settings-page').waitFor();
-      await page.waitForFunction(() => Math.abs(document.querySelector('.main').getBoundingClientRect().x) < 1);
+      await page.waitForFunction(() => Math.abs(document.querySelector('.main').getBoundingClientRect().x - document.querySelector('.shell').getBoundingClientRect().x) < 2);
       assert.equal(await page.locator('.sidebar').isVisible(), false, 'settings replaces the conversation sidebar');
       assert.equal(await page.locator('.sidebar-resize-handle').isVisible(), false);
-      assert.ok(Math.abs((await page.locator('.settings-page').boundingBox()).width - page.viewportSize().width) < 1, 'settings fills the window');
+      assert.ok(Math.abs((await page.locator('.settings-page').boundingBox()).width - await page.locator('.shell').evaluate(el => el.clientWidth)) < 1, 'settings fills the application sheet');
       if (!mobile) await page.keyboard.press('Control+Shift+S');
       else {
         const touch = await context.newCDPSession(page);

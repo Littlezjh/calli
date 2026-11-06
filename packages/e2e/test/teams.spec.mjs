@@ -37,12 +37,12 @@ for (const phone of [false, true]) for (const theme of ['light', 'dark']) test(`
     await roles.first().getByRole('button', { name: '模型', exact: true }).click();
     await page.getByRole('menu', { name: '模型', exact: true }).getByRole('button', { name: '默认', exact: true }).click();
     await page.screenshot({ path: `${shots}/${label}-editor-detail.png`, fullPage: true, animations: 'disabled' });
-    await page.locator('.scroller').evaluate(el => el.scrollTop = 0);
+    await page.locator('.settings-detail, .scroller').evaluate(el => el.scrollTop = 0);
     await page.screenshot({ path: `${shots}/${label}-editor.png`, fullPage: true, animations: 'disabled' });
     await page.getByRole('button', { name: '保存团队', exact: true }).click();
     await page.locator('.team-definition', { hasText: `Coding ${label}` }).waitFor();
     await page.waitForFunction(() => [...document.querySelectorAll('.teams-actions button')].every(el => !el.disabled));
-    await page.locator('.scroller').evaluate(el => el.scrollTop = 0);
+    await page.locator('.settings-detail, .scroller').evaluate(el => el.scrollTop = 0);
     await page.screenshot({ path: `${shots}/${label}-list.png`, fullPage: true, animations: 'disabled' });
     assert.equal(await page.locator('.teams-page').evaluate(el => el.scrollWidth <= el.clientWidth + 1), true);
     await page.goto(daemon.base);

@@ -60,8 +60,9 @@ Calli 不动 agent 本身的目录、配置和会话，装好即用。Calli 是�
 | TRAE CLI | app-server 执行，ACP 模型与历史接口 | 有 | 有 | 有 |
 | zcode | `zcode app-server` 精简接入 | 有 | 按原生模型能力 | 暂无 |
 | DeepSeek Harness | `dsh --profile acp`（ACP） | 有（仅允许一次/拒绝） | 有（按当前模型路由） | 暂无 |
+| Doubao CLI | `doubao -p` / `--resume`，可选实验流式桥 | 无（无界面下需要批准的操作由 CLI 拒绝） | 暂无 | 暂无 |
 
-各家 agent CLI 需要先在主机上装好并完成登录或鉴权。没装的 agent 在界面里显示为不可用；各家的能力和接入边界见 [架构说明](docs/PLAN.md)。
+各家 agent CLI 需要先在主机上装好并完成登录或鉴权。没装的 agent 在界面里显示为不可用；各家的能力和接入边界见 [架构说明](docs/PLAN.md)。Doubao CLI 使用原生默认模型，可通过 `CALLI_DOUBAO_BIN` 指定入口；已有安装可从 Agent 管理的添加入口接入，在添加页或实例「接入设置」里可开启版本限定的实验流式桥（2.31.2 / Linux x64，原安装不变）；也支持 `CALLI_DOUBAO_STREAM=1`，具体范围见 [Doubao CLI 接入](docs/doubao-cli-design.md)。
 
 ## 插件与参与
 
@@ -134,7 +135,7 @@ GitHub Pages 通过 `.github/workflows/pages.yml` 发布：推送到 `main` 后�
 
 添加流程读取的是 **hub 所在机器**的 SSH 配置，不是手机或电脑浏览器的配置。目标上的 daemon 要先启动；第一期不自动安装和启动。远端 daemon 负责调用该机器上的 agent、读取会话与文件，浏览器仍只访问主 hub；远端无需单独部署前端或开放 HTTP 端口。
 
-更新主 hub 不会自动更新远端 daemon，每台机器需要分别更新。源码安装先同步代码、安装依赖，再运行 `scripts/restart.sh` 构建并等待线程空闲后重启；仅安装运行包的机器需要同步新版 daemon 构建产物，依赖有变化时安装生产依赖，再运行 `scripts/restart.sh --no-build`。保留原有配置和数据目录即可保留 token、线程与会话。涉及新接口的功能（例如新建接手对话）需要目标机器的 daemon 也更新。
+更新主 hub 不会自动更新远端 daemon，但可以用 `scripts/update-hosts.sh` 一次把各台机器带上去：先把代码推到它们能拉取的远端（例如 GitHub），再在主 hub 上运行。脚本对 hosts.json 里的每台机器（或 `scripts/update-hosts.sh 机器ID` 只指定一台）通过 SSH 快进拉取那台机器的仓库克隆，构建一个新快照目录，等那台机器所有线程空闲后（同 `restart.sh`）把服务切过去，健康检查失败自动切回旧快照。全程不强制：连不上、克隆与远端分叉、构建失败都只报告并跳过，那台机器的 daemon 保持原样。加 `--check` 先看每台机器会更新到什么。远端布局与手工部署一致：克隆在 `~/code/calli`（hosts.json 里写 `"repo": "<路径>"` 可改），服务运行在 `~/.local/share/calli-<短sha>` 快照上。涉及新接口的功能（例如新建接手对话）需要目标机器的 daemon 也更新。
 
 | 配置 | 默认与用途 |
 | --- | --- |

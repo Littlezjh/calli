@@ -1078,7 +1078,7 @@ export function stepCommand(step: Pick<Step, 'kind' | 'input'>): string | null {
 /** A row shows timing; failure belongs to the tool's expanded detail, not the conversation. */
 export function stepStatusLabel(step: Step): string {
   if (stepActive(step)) return t('step.running');
-  return stepDurationLabel(step.startedAt, step.endedAt) || (step.status === 'failed' ? t('step.ended') : t('step.done'));
+  return stepDurationLabel(step.startedAt, step.endedAt) || (step.status === 'completed' ? t('step.done') : t('step.ended'));
 }
 
 /** A call that has started and not come back yet. */

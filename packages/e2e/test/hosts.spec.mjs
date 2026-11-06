@@ -156,7 +156,8 @@ test('images sent through the hub are stored and displayed on the other machine'
 });
 
 test('a terminal opened through the hub runs in the other machine directory', async () => {
-  await page.getByLabel('打开终端').click();
+  await page.getByLabel('这个线程的更多操作').click();
+  await page.getByRole('menuitem', { name: '打开终端', exact: true }).click();
   await page.locator('.term-panel').waitFor();
   await page.locator('.term-body').click();
   await page.keyboard.type('pwd');
@@ -205,7 +206,7 @@ test('handover creates and persists a draft only on the selected remote machine'
   await page.locator('.sidebar .thread-title',{hasText:'本机的线程'}).waitFor();
   assert.equal(await page.locator('.composer textarea').inputValue(),'');
   await page.getByRole('tab',{name:'devbox'}).click();
-  await page.locator('.sidebar .thread-item',{hasText:'开发机上的线程（接手）'}).click();
+  await page.locator('.sidebar .handover-group .thread-item',{hasText:'开发机上的线程'}).click();
   assert.equal(await page.locator('.composer textarea').inputValue(),summary);
 });
 

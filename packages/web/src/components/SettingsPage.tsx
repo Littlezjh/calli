@@ -9,8 +9,8 @@ export type SettingsEntry = {
 };
 export type SettingsGroup = { label: string; entries: SettingsEntry[] };
 
-export function SettingsPage({ groups, path, onNavigate, onClose, detailTitle }: {
-  groups: SettingsGroup[]; path: string; onNavigate: (path: string) => void; onClose: () => void; detailTitle?: string;
+export function SettingsPage({ groups, path, onNavigate, onClose, detailTitle, closeOnRoot = false }: {
+  groups: SettingsGroup[]; path: string; onNavigate: (path: string) => void; onClose: () => void; detailTitle?: string; closeOnRoot?: boolean;
 }) {
   const compact = useIsCompact();
   const entries = groups.flatMap(group => group.entries);
@@ -28,7 +28,7 @@ export function SettingsPage({ groups, path, onNavigate, onClose, detailTitle }:
   }, [path]);
   const back = () => {
     if (path.includes('/')) onNavigate(path.slice(0, path.lastIndexOf('/')));
-    else if (compact && showingDetail) onNavigate('');
+    else if (compact && showingDetail && !closeOnRoot) onNavigate('');
     else onClose();
   };
   return <div className={`settings-page${showingDetail ? ' has-detail' : ''}`}>

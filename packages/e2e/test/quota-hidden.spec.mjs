@@ -33,8 +33,9 @@ test('hidden accounts disappear from quota and are not queried; restoring brings
           await page.getByRole('button', { name: '配置', exact: true }).click();
         };
         const openBoard = async () => { await settings(); await page.locator('.settings-nav').getByRole('button', { name: '额度', exact: true }).click(); };
-        const board = page.getByRole('dialog', { name: '额度看板', exact: true });
+        const board = page.getByRole('region', { name: '额度', exact: true });
         await toggle('Primary', true);
+        requests.length = 0;
         await openBoard();
         await board.locator('.quota-percent').first().waitFor();
         assert.deepEqual(await board.locator('.quota-board-name').allTextContents(), ['Backup']);
@@ -47,13 +48,15 @@ test('hidden accounts disappear from quota and are not queried; restoring brings
           mkdirSync(process.env.CALLI_E2E_SHOTS_DIR, { recursive: true });
           await page.screenshot({ path: join(process.env.CALLI_E2E_SHOTS_DIR, `quota-hidden-${phone ? 'phone' : 'desktop'}-${theme}.png`), animations: 'disabled' });
         }
-        await board.getByRole('button', { name: '关闭', exact: true }).click();
+        await page.locator('.settings-topbar').getByRole('button', { name: '返回', exact: true }).click();
+        if (phone) await page.locator('.settings-topbar').getByRole('button', { name: '返回', exact: true }).click();
         await toggle('Primary', false);
         await openBoard();
         await board.locator('.quota-board-row').filter({ hasText: 'Primary' }).locator('.quota-percent').first().waitFor();
         assert.deepEqual((await board.locator('.quota-board-name').allTextContents()).sort(), ['Backup', 'Primary']);
         assert.equal(requests.includes('/api/agents/primary/quota'), true);
-        await board.getByRole('button', { name: '关闭', exact: true }).click();
+        await page.locator('.settings-topbar').getByRole('button', { name: '返回', exact: true }).click();
+        if (phone) await page.locator('.settings-topbar').getByRole('button', { name: '返回', exact: true }).click();
         await toggle('Primary', true);
         await toggle('Backup', true);
         await settings();

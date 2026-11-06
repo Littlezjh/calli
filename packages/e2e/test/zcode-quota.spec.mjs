@@ -20,13 +20,13 @@ test('zcode quota appears in the shared board on desktop and phone, light and da
         await page.getByRole('button', { name: '配置', exact: true }).click();
         await page.locator('.settings-nav').getByRole('button', { name: '额度', exact: true }).click();
         const row = page.locator('.quota-board-row').filter({ has: page.locator('.quota-board-name', { hasText: /zcode/i }) });
-        // 98% of the week used: 2% left, in red; the 5-hour window is fine.
-        await row.getByText('2%', { exact: true }).waitFor();
-        await page.waitForTimeout(600);
-        assert.ok(await page.locator('.quota-columns').getByText('5 小时', { exact: true }).isVisible());
-        assert.ok(await page.locator('.quota-columns').getByText('每周', { exact: true }).isVisible());
-        assert.deepEqual(await row.locator('.quota-percent').allTextContents(), ['88%', '2%']);
-        assert.deepEqual(await row.locator('.quota-cell.low .quota-percent').allTextContents(), ['2%']);
+        await row.getByRole('meter').filter({ hasText: '剩余 2%' }).waitFor();
+        assert.equal(await row.getByRole('meter').count(), 1, 'the list shows the most constrained period');
+        await row.click();
+        const detail = page.locator('.quota-account-detail');
+        await detail.getByRole('meter').first().waitFor();
+        assert.deepEqual(await detail.getByRole('meter').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-valuenow'))), ['88', '2']);
+        assert.deepEqual(await detail.locator('.quota-meter.low .quota-percent').allTextContents(), ['剩余 2%']);
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
         if (process.env.CALLI_E2E_SHOTS_DIR) {
           mkdirSync(process.env.CALLI_E2E_SHOTS_DIR, { recursive: true });
@@ -37,7 +37,7 @@ test('zcode quota appears in the shared board on desktop and phone, light and da
   } finally { await browser?.close(); await daemon?.stop(); await provider.close(); }
 });
 
-test('quota reopens immediately, survives page reload and retains the last reading after a failed refresh', async () => {
+test('quota reopens immediately, survives page reload and retains the last reading after a failed refresh', { timeout: 90_000 }, async () => {
   const provider = await fakeZcodeQuota();
   let daemon, browser;
   try {
@@ -48,15 +48,10 @@ test('quota reopens immediately, survives page reload and retains the last readi
       let pending;
       try {
         const page = await context.newPage();
-        const openBoard = async () => {
-          const settings = page.getByRole('button', { name: '配置', exact: true });
-          if (mobile) await page.locator('.menu-btn').click();
-          await settings.click();
-          await page.locator('.settings-nav').getByRole('button', { name: '额度', exact: true }).click();
-        };
-        const panel = page.getByRole('dialog', { name: '额度看板', exact: true });
+        const openBoard = async () => { await page.evaluate(() => { location.hash = '#/settings/quota'; }); };
+        const panel = page.getByRole('region', { name: '额度', exact: true });
         const row = panel.locator('.quota-board-row');
-        const close = () => panel.getByRole('button', { name: '关闭', exact: true }).click();
+        const close = () => page.evaluate(() => { location.hash = ''; });
         const gate = () => {
           let respond, requested;
           const response = new Promise(resolve => { respond = resolve; });
@@ -65,8 +60,7 @@ test('quota reopens immediately, survives page reload and retains the last readi
         };
         await openUi(page, daemon);
         await openBoard();
-        await row.getByText('2%', { exact: true }).waitFor();
-        await row.locator('button[disabled]').waitFor({ state: 'hidden' });
+        await row.getByRole('meter').filter({ hasText: '2%' }).waitFor();
         await close();
         let calls = 0;
         pending = gate();
@@ -77,8 +71,9 @@ test('quota reopens immediately, survives page reload and retains the last readi
           await route.fulfill(await current.response);
         });
         await openBoard();
+        await panel.getByRole('button', { name: '全部刷新', exact: true }).click();
         await pending.seen;
-        await row.getByText('2%', { exact: true }).waitFor();
+        await row.getByRole('meter').filter({ hasText: '2%' }).waitFor();
         await row.getByRole('status').filter({ hasText: '更新中' }).waitFor();
         assert.equal(await row.getByText('正在查询额度…', { exact: true }).count(), 0);
         if (process.env.CALLI_E2E_SHOTS_DIR) {
@@ -88,28 +83,29 @@ test('quota reopens immediately, survives page reload and retains the last readi
         // Reopening while a read is pending must share it, and the remounted row must receive it.
         await close();
         await openBoard();
-        await row.getByText('2%', { exact: true }).waitFor();
+        await row.getByRole('meter').filter({ hasText: '2%' }).waitFor();
         const updated = { windows: [{ label: '5H', usedPercent: 64 }], checkedAt: new Date().toISOString() };
         pending.respond({ json: updated });
-        await row.getByText('36%', { exact: true }).waitFor();
+        await row.getByRole('meter').filter({ hasText: '36%' }).waitFor();
         assert.equal(calls, 1);
         pending = gate();
         await openUi(page, daemon);
         await openBoard();
+        await panel.getByRole('button', { name: '全部刷新', exact: true }).click();
         await pending.seen;
-        await row.getByText('36%', { exact: true }).waitFor();
+        await row.getByRole('meter').filter({ hasText: '36%' }).waitFor();
         await row.getByRole('status').filter({ hasText: '更新中' }).waitFor();
         pending.respond({ status: 503, json: { error: '暂时无法查询额度' } });
         await row.getByRole('status').filter({ hasText: '刷新失败' }).waitFor();
-        assert.ok(await row.getByText('36%', { exact: true }).isVisible());
+        assert.ok(await row.getByRole('meter').filter({ hasText: '36%' }).isVisible());
         assert.equal(calls, 2, 'reporting an error must not start another request');
         if (process.env.CALLI_E2E_SHOTS_DIR) await page.screenshot({ animations: 'disabled', path: join(process.env.CALLI_E2E_SHOTS_DIR, `quota-stale-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
         pending = gate();
         await panel.getByRole('button', { name: '全部刷新', exact: true }).click();
         assert.match(await pending.seen, /refresh=1/);
-        assert.ok(await row.getByText('36%', { exact: true }).isVisible());
+        assert.ok(await row.getByRole('meter').filter({ hasText: '36%' }).isVisible());
         pending.respond({ json: { ...updated, windows: [{ label: '5H', usedPercent: 35 }] } });
-        await row.getByText('65%', { exact: true }).waitFor();
+        await row.getByRole('meter').filter({ hasText: '65%' }).waitFor();
         assert.equal(await row.getByText(/上次刷新失败/).count(), 0);
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
       } finally {

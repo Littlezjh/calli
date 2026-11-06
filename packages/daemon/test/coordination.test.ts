@@ -12,6 +12,7 @@ import { AttachmentStore } from '../src/attachments.js';
 import { PiRpcAdapter } from '../src/adapters/pi.js';
 import { ClaudeAcpAdapter } from '../src/adapters/claude.js';
 import { DshAcpAdapter } from '../src/adapters/dsh.js';
+import { DoubaoAdapter } from '../src/adapters/doubao.js';
 import { CodexAppServerAdapter } from '../src/adapters/codex.js';
 import { AgyAdapter } from '../src/adapters/agy.js';
 import { TraexAcpAdapter } from '../src/adapters/traex.js';
@@ -36,6 +37,7 @@ async function setup() {
     ['agy', new AgyAdapter([process.execPath, join(fixtures, 'fake-agy.mjs')])],
     ['traex', new TraexAcpAdapter([process.execPath, join(fixtures, 'fake-acp.mjs')])],
     ['dsh', new DshAcpAdapter([process.execPath, join(fixtures, 'fake-acp.mjs')], { FAKE_ACP_FLAVOR: 'dsh' })],
+    ['doubao', new DoubaoAdapter([process.execPath, join(fixtures, 'fake-doubao.mjs')])],
   ]);
   const store = new Store(dir);
   const manager = new ThreadManager(store, adapters, [cwd, other], new AttachmentStore(dir));
@@ -85,7 +87,7 @@ test('coordination preserves slash commands and their arguments while enriching 
 test('each advertised adapter passes the runtime environment to its fixture', async () => {
   const h = await setup();
   try {
-    for (const agent of ['pi', 'claude', 'codex', 'agy', 'traex', 'dsh']) {
+    for (const agent of ['pi', 'claude', 'codex', 'agy', 'traex', 'dsh', 'doubao']) {
       const thread = await h.manager.createThread({ agent, cwd: h.cwd });
       await h.team.enable(thread.id);
       await h.manager.startTurn(thread.id, { text: 'CALLI_ENV' });

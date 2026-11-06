@@ -9,7 +9,8 @@ let root, hub, remote, browser, page;
 const envFor = (home) => ({ HOME: home, CLAUDE_CONFIG_DIR: join(home, '.claude'), CODEX_HOME: join(home, '.codex'), PI_CODING_AGENT_DIR: join(home, '.pi/agent'), CALLI_AGY_HOME: join(home, '.agy') });
 
 function seedLocal(home) {
-  writeFileSync(join(home, '.claude.json'), JSON.stringify({ numStartups: 42, mcpServers: { botmux: { command: 'botmux', args: ['--stdio'], env: { TOKEN: 't' } } } }, null, 2));
+  mkdirSync(join(home, '.claude'), { recursive: true });
+  writeFileSync(join(home, '.claude/.claude.json'), JSON.stringify({ numStartups: 42, mcpServers: { botmux: { command: 'botmux', args: ['--stdio'], env: { TOKEN: 't' } } } }, null, 2));
   mkdirSync(join(home, '.codex'), { recursive: true });
   writeFileSync(join(home, '.codex', 'config.toml'), `model = "gpt-5.2-codex"\n\n[mcp_servers.github]\nurl = "https://api.githubcopilot.com/mcp/"\nbearer_token_env_var = "GITHUB_PAT"\n`);
 }
@@ -97,7 +98,7 @@ test('install crosses machines through the proxy and asks before overwriting a d
   await dialog.locator('.skill-target-row', { hasText: '本机' }).getByRole('button', { name: 'Claude Code', exact: true }).click();
   await dialog.getByRole('button', { name: '安装到 1 个 agent' }).click();
   await dialog.getByRole('button', { name: '完成', exact: true }).waitFor();
-  const doc = JSON.parse(readFileSync(join(root, 'local/.claude.json'), 'utf8'));
+  const doc = JSON.parse(readFileSync(join(root, 'local/.claude/.claude.json'), 'utf8'));
   // The config travels verbatim: pi's own `exposure` field comes along, the way a copy does.
   assert.deepEqual(doc.mcpServers.playwright, { command: 'npx', args: ['-y', '@playwright/mcp@latest', '--headless'], exposure: 'direct' });
   assert.equal(doc.numStartups, 42, "Claude's own state survives the write");

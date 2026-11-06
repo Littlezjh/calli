@@ -1,5 +1,5 @@
 import { PersonalBriefSchedule } from './personal-brief-schedule.js';
-import { changedFiles, mentionedFiles, MAX_OUTPUT_ITEMS, type ThreadOutputs } from './outputs.js';
+import { changedFiles, mentionedFiles, checkMissingFiles, MAX_OUTPUT_ITEMS, type ThreadOutputs } from './outputs.js';
 import { LarkChannel } from './channels/lark.js';
 import { PersonalService } from './personal.js';
 import { AutoHandover, type AutoHandoverView, type HandoverTarget, type SettledOutcome } from './auto-handover.js';
@@ -73,6 +73,17 @@ export interface GeneralSettings {
   autoArchiveDays: AutoArchiveDays;
 }
 
+export interface DraftModelPreference {
+  /** Null means the agent should use its own default model. */
+  model: string | null;
+  /** Null means the agent should use its own/default thinking effort. */
+  effort: EffortLevel | null;
+  /** Null means the agent should use its own/default speed. */
+  speed: string | null;
+}
+
+export type DraftModelPreferences = Record<string, DraftModelPreference>;
+
 function storedAutoArchiveDays(value: unknown): AutoArchiveDays {
   return AUTO_ARCHIVE_DAY_OPTIONS.includes(value as never) ? value as AutoArchiveDays : null;
 }
@@ -81,6 +92,12 @@ function parseAutoArchiveDays(value: unknown): AutoArchiveDays {
   if (value === null) return null;
   if (AUTO_ARCHIVE_DAY_OPTIONS.includes(value as never)) return value as AutoArchiveDays;
   throw new HttpError(400, 'invalid auto archive period');
+}
+
+const DRAFT_MODEL_PREFERENCES_KEY = 'draft.model.preferences';
+
+function hasDraftModelPreference(value: DraftModelPreference): boolean {
+  return Boolean(value.model || value.effort || value.speed);
 }
 
 /** What forking a thread can offer besides a copy in the same directory. */
@@ -245,6 +262,7 @@ export interface AgentInfo {
   /** The account this instance runs as, when it is a linked second login (an email). */
   account?: string | null;
   available: boolean;
+  streamBridgeEnabled?: boolean;
   /** How it can be signed in from the hub, when its adapter can start the CLI's login. */
   login?: 'terminal' | 'wizard';
   capabilities: AgentAdapter['capabilities'];
@@ -295,6 +313,9 @@ export class ThreadManager {
   private readonly nativeTurns = new Map<string, Map<string, string>>();
   private readonly voiceThreads = new Set<string>();
   private readonly sessions = new Map<string, AgentSession>();
+  /** Threads whose model/effort/speed was changed mid-turn: the setting is stored, the session that
+   *  turn still runs in is stale. It is dropped when the turn ends, never interrupted mid-turn. */
+  private readonly refreshAfterTurn = new Set<string>();
   /** Turns in flight. `cancelRequested` covers cancels that arrive before the agent session exists. */
   private readonly running = new Map<string, { turnId: string; cancelRequested: boolean; since: string }>();
   readonly inputs = new UserInputs((thread, turn, type, data) => this.emitThreadEvent(thread, turn, type, data));
@@ -305,6 +326,8 @@ export class ThreadManager {
   private readonly reportTurns = new Set<string>();
   /** Archived threads asking an agent one question (askOnce): they may run, and get nothing added. */
   private readonly backgroundThreads = new Set<string>();
+  /** Questions whose input must not enter hub history or search indexes. */
+  private readonly unrecordedQuestions = new Set<string>();
   /** Which protocol blocks each thread's agent has read, so a block is not attached to every message. */
   private readonly injections: Injections;
   /** Whether an enabled extension holds `progress.report`. Wired by the daemon's entry point. */
@@ -410,9 +433,15 @@ export class ThreadManager {
         available: await a.available(),
         ...(a.startLogin ? { login: 'wizard' as const } : a.loginCommand ? { login: 'terminal' as const } : {}),
         capabilities: a.capabilities,
+        ...(a.capabilities.streamBridge ? { streamBridgeEnabled: a.streamBridgeEnabled ?? false } : {}),
       });
     }
     return out;
+  }
+
+  /** Invalidate only metadata; running turns keep their existing adapter until they finish. */
+  agentSettingsChanged(agent: string): void {
+    this.diagnosticCache.delete(agent);
   }
 
   /** Commands for an agent. `cwd` selects project-level commands and must be an allowed workdir. */
@@ -541,7 +570,8 @@ export class ThreadManager {
     const adapter = this.adapters.get(thread.agent);
     if (!adapter?.capabilities.fork || !adapter.forkSession) throw new HttpError(400, `${thread.agent} cannot fork a conversation`);
     if (!thread.agentSessionId) throw new HttpError(400, 'there is nothing to fork yet; send a message first');
-    if (this.running.has(id)) throw new HttpError(409, 'wait for the running turn to finish before forking');
+    const running = this.running.has(id);
+    if (running && !opts.turnId) throw new HttpError(409, 'wait for the running turn to finish before forking');
 
     // Where the hub's copy stops, and which of its turns that is. Null: the whole thread.
     let cut: { upToSeq: number; hubIndex: number; hubKeys: string[] } | null = null;
@@ -551,9 +581,12 @@ export class ThreadManager {
       if (hubIndex < 0) throw new HttpError(404, 'no such turn in this thread');
       // A turn the user stopped is not a place to go on from: the agent may not have kept it at all.
       const end = this.store.listEventsOfType(id, 'turn.done').find((ev) => ev.turnId === opts.turnId);
+      if (running && !end) throw new HttpError(409, 'wait for this turn to finish before forking from it');
       if (end?.data.stopReason === 'cancelled') throw new HttpError(409, 'this turn was stopped, so a copy cannot end there');
       if (hubIndex < starts.length - 1) {
-        cut = { upToSeq: starts[hubIndex + 1].seq - 1, hubIndex, hubKeys: starts.map((ev) => turnKey(String(ev.data.text ?? ''))) };
+        // Match only through the requested boundary. Later turns may be running or divergent, and
+        // they are not part of the copy being made.
+        cut = { upToSeq: starts[hubIndex + 1].seq - 1, hubIndex, hubKeys: starts.slice(0, hubIndex + 1).map((ev) => turnKey(String(ev.data.text ?? ''))) };
       }
     }
 
@@ -657,14 +690,27 @@ export class ThreadManager {
     if (!adapter.capabilities.forkAt || !adapter.loadHistory || !thread.agentSessionId) {
       throw new HttpError(400, `${thread.agent} can only fork a whole conversation`);
     }
-    const agentTurns = await adapter.loadHistory(thread.agentSessionId, thread.cwd);
-    const matched = matchTurns(agentTurns.map((t) => turnKey(t.text)), hubKeys, ThreadManager.SYNC_SKIP_TOLERANCE);
-    const agentIndex = matched?.hubToAgent[hubIndex] ?? -1;
-    if (agentIndex < 0) throw new HttpError(409, `this turn is not in ${thread.agent}'s own history, so a copy cannot stop there`);
-    if (agentIndex === agentTurns.length - 1) return undefined;
-    const ref = agentTurns[agentIndex].forkRef;
-    if (!ref) throw new HttpError(409, `${thread.agent} cannot stop a copy at this turn`);
-    return ref;
+    const active = this.running.has(thread.id);
+    const retryDelays = active ? [0, 50, 150] : [0];
+    for (const delayMs of retryDelays) {
+      // A second app-server can briefly see the active writer's history one turn behind. Only
+      // retry that prefix case; a real text disagreement still fails immediately.
+      if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
+      const agentTurns = await adapter.loadHistory(thread.agentSessionId, thread.cwd);
+      const matched = matchTurns(agentTurns.map((t) => turnKey(t.text)), hubKeys, ThreadManager.SYNC_SKIP_TOLERANCE);
+      const agentIndex = matched?.hubToAgent[hubIndex] ?? -1;
+      if (agentIndex < 0) {
+        if (matched && delayMs !== retryDelays.at(-1)) continue;
+        break;
+      }
+      // During a live turn the read snapshot may end at this older boundary even though the writer
+      // has already started another turn. Pass the explicit ref instead of cloning its moving tip.
+      if (!active && agentIndex === agentTurns.length - 1) return undefined;
+      const ref = agentTurns[agentIndex].forkRef;
+      if (!ref) throw new HttpError(409, `${thread.agent} cannot stop a copy at this turn`);
+      return ref;
+    }
+    throw new HttpError(409, `this turn is not in ${thread.agent}'s own history, so a copy cannot stop there`);
   }
 
   /** Where a stored image is on disk, for the HTTP layer to stream. */
@@ -699,27 +745,41 @@ export class ThreadManager {
 
   activityReport(days: number, agent: string) { return this.store.activity.read(days, agent); }
 
-  /** The last overview read for each thread, kept while its log has not grown. */
-  private readonly outputsCache = new Map<string, ThreadOutputs>();
+  /** Keep log summaries until they change; disk checks expire after 30 seconds and share in-flight reads. */
+  private readonly outputsCache = new Map<string, { seq: number; checkedAt: number | null; value: Promise<ThreadOutputs> }>();
 
   /** What the thread has produced over all its turns: changed files, and the pictures and files its answers name. */
   async threadOutputs(threadId: string): Promise<ThreadOutputs> {
     const thread = this.getThread(threadId);
     const latest = this.store.history.latest(threadId);
     const cached = this.outputsCache.get(threadId);
-    if (cached && cached.seq === latest) return cached;
-    const { diffs, answers, seq } = await this.store.outputSources(threadId);
-    let cwdReal = thread.cwd;
-    try { cwdReal = realpathSync(thread.cwd); } catch { /* The directory may have been removed. */ }
-    const changes = changedFiles(diffs, thread.cwd, cwdReal);
-    const outputs: ThreadOutputs = {
-      ...mentionedFiles(answers, thread.cwd, changes.files, cwdReal), seq,
-      changes: { ...changes, files: changes.files.slice(0, MAX_OUTPUT_ITEMS).map(({ seq: _seq, ...file }) => file) },
+    if (cached && cached.seq === latest && (cached.checkedAt === null || Date.now() - cached.checkedAt < 30_000)) return cached.value;
+    const read = async () => {
+      if (cached && cached.seq === latest) return checkMissingFiles(await cached.value);
+      const { diffs, answers, seq } = await this.store.outputSources(threadId);
+      let cwdReal = thread.cwd;
+      try { cwdReal = realpathSync(thread.cwd); } catch { /* The directory may have been removed. */ }
+      const changes = changedFiles(diffs, thread.cwd, cwdReal);
+      return checkMissingFiles({
+        ...mentionedFiles(answers, thread.cwd, changes.files, cwdReal), seq,
+        changes: { ...changes, files: changes.files.slice(0, MAX_OUTPUT_ITEMS).map(({ seq: _seq, ...file }) => file) },
+      });
+    };
+    const entry: NonNullable<typeof cached> = {
+      seq: latest, checkedAt: null,
+      value: read().then(outputs => {
+        entry.seq = outputs.seq;
+        entry.checkedAt = Date.now();
+        return outputs;
+      }).catch(error => {
+        if (this.outputsCache.get(threadId) === entry) this.outputsCache.delete(threadId);
+        throw error;
+      }),
     };
     this.outputsCache.delete(threadId);
-    this.outputsCache.set(threadId, outputs);
+    this.outputsCache.set(threadId, entry);
     if (this.outputsCache.size > 50) this.outputsCache.delete(this.outputsCache.keys().next().value!);
-    return outputs;
+    return entry.value;
   }
 
   /**
@@ -846,6 +906,10 @@ export class ThreadManager {
       try {
         if (!await adapter.available()) return { ...base, checkedAt: new Date().toISOString(), state: 'missing', message: '没有找到 CLI，请检查该实例的命令和 PATH。', version: null, protocol: null, models: [] };
         const runtime = await adapter.diagnose?.().catch(() => null);
+        if (adapter.capabilities.modelCatalog === false) return {
+          ...base, ...runtime, checkedAt: new Date().toISOString(), state: 'cli_only', models: [],
+          message: 'CLI 可启动；原生接口不提供模型目录，沿用 CLI 默认设置。登录有效性以实际请求结果为准。',
+        };
         try {
           const models = await this.adapterModels(adapter, refresh);
           return { ...base, ...runtime, checkedAt: new Date().toISOString(), state: models.length ? 'ready' : 'empty',
@@ -869,10 +933,10 @@ export class ThreadManager {
     return adapter.models(refresh);
   }
 
-  async listModels(agent: string): Promise<ModelOption[]> {
+  async listModels(agent: string, refresh = false): Promise<ModelOption[]> {
     const adapter = this.adapters.get(agent);
     if (!adapter) throw new HttpError(404, `unknown agent: ${agent}`);
-    return this.adapterModels(adapter);
+    return this.adapterModels(adapter, refresh);
   }
 
   /** Turns of any thread, archived ones too, in which the words were said. */
@@ -884,9 +948,12 @@ export class ThreadManager {
    * One question to an agent, answered in a thread of its own that is archived from the start: it
    * never shows in the list, and the asking thread's agent and session are not touched. The answer
    * comes back as plain text. A turn that asks for an approval or a reply is stopped, since nobody
-   * is there to give one; so is one that takes longer than `timeoutMs`.
+   * is there to give one; so is one that takes longer than `timeoutMs`. An AbortSignal stops this
+   * exact question, including startup. `recordPrompt: false` omits its input from hub history;
+   * native agent session retention is still owned by the adapter.
    */
-  async askOnce(agent: string, text: string, opts: { model?: string | null; title?: string; timeoutMs?: number } = {}): Promise<string> {
+  async askOnce(agent: string, text: string, opts: { model?: string | null; title?: string; timeoutMs?: number; signal?: AbortSignal; recordPrompt?: boolean } = {}): Promise<string> {
+    opts.signal?.throwIfAborted();
     const adapter = this.adapters.get(agent);
     if (!adapter) throw new HttpError(400, `unknown agent: ${agent}`);
     const modes = adapter.capabilities.permissionModes;
@@ -896,10 +963,14 @@ export class ThreadManager {
     });
     await this.updateThread(thread.id, { archived: true });
     this.backgroundThreads.add(thread.id);
+    if (opts.recordPrompt === false) this.unrecordedQuestions.add(thread.id);
+    const cancel = () => { void this.cancelTurn(thread.id).catch(() => undefined); };
+    opts.signal?.addEventListener('abort', cancel, { once: true });
     let turnId: string | null = null;
     let stop: (() => void) | null = null;
     let timedOut = false;
     try {
+      opts.signal?.throwIfAborted();
       const ended = new Promise<StoredEvent>((resolve, reject) => {
         // On timeout the turn is cancelled and its recorded end — `cancelled`, not a session error —
         // is awaited before the process is dropped in the finally below. The safety timer answers
@@ -922,15 +993,19 @@ export class ThreadManager {
       const started = await this.startTurn(thread.id, { text });
       if (!('turnId' in started) || !started.turnId) throw new HttpError(500, 'the question was not sent');
       turnId = started.turnId;
+      if (opts.signal?.aborted) cancel();
       // The turn may have ended before its id was known here.
       const done = this.store.listTurnEvents(thread.id, turnId).find(e => turnOutcome(e));
       const end = done ?? await ended;
       const outcome = turnOutcome(end)!;
+      opts.signal?.throwIfAborted();
       if (timedOut) throw new HttpError(504, 'the agent took too long to answer');
       if (outcome.outcome !== 'ok') throw new HttpError(502, outcome.message ?? `the agent's turn ended: ${outcome.outcome}`);
       return turnAnswer(this.store.listEvents(thread.id, 0, -1), turnId).trim();
     } finally {
       (stop as (() => void) | null)?.();
+      opts.signal?.removeEventListener('abort', cancel);
+      this.unrecordedQuestions.delete(thread.id);
       this.backgroundThreads.delete(thread.id);
       // The answer is read from the store: the agent process and its scratch folder can go now, so
       // one question does not leave a resident process behind.
@@ -976,6 +1051,55 @@ export class ThreadManager {
     const value: GeneralSettings = { startupPage, autoArchiveDays };
     this.store.saveHubSetting('general.settings', value);
     return value;
+  }
+
+  async draftModelPreferences(): Promise<DraftModelPreferences> {
+    const stored = this.store.hubSetting<unknown>(DRAFT_MODEL_PREFERENCES_KEY, {});
+    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return {};
+    const out: DraftModelPreferences = {};
+    for (const [agent, value] of Object.entries(stored)) {
+      const preference = await this.sanitizeDraftModelPreference(agent, value);
+      if (preference) out[agent] = preference;
+    }
+    if (JSON.stringify(out) !== JSON.stringify(stored)) this.store.saveHubSetting(DRAFT_MODEL_PREFERENCES_KEY, out);
+    return out;
+  }
+
+  async saveDraftModelPreferences(input: unknown): Promise<DraftModelPreferences> {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new HttpError(400, 'invalid draft model preferences');
+    const out: DraftModelPreferences = {};
+    for (const [agent, value] of Object.entries(input)) {
+      const preference = await this.sanitizeDraftModelPreference(agent, value);
+      if (preference) out[agent] = preference;
+    }
+    this.store.saveHubSetting(DRAFT_MODEL_PREFERENCES_KEY, out);
+    return out;
+  }
+
+  private async sanitizeDraftModelPreference(agent: string, value: unknown): Promise<DraftModelPreference | null> {
+    if (!this.adapters.has(agent)) return null;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const source = value as { model?: unknown; effort?: unknown; speed?: unknown };
+    const model = typeof source.model === 'string' ? await this.validateModelOrNull(agent, source.model) : null;
+    const effort = typeof source.effort === 'string' ? await this.validateEffortOrNull(agent, model, source.effort) : null;
+    const speed = typeof source.speed === 'string' ? await this.validateSpeedOrNull(agent, model, source.speed) : null;
+    const preference = { model, effort, speed };
+    return hasDraftModelPreference(preference) ? preference : null;
+  }
+
+  private async validateModelOrNull(agent: string, model: string): Promise<string | null> {
+    try { return await this.validateModel(agent, model); }
+    catch { return null; }
+  }
+
+  private async validateEffortOrNull(agent: string, model: string | null, effort: string): Promise<EffortLevel | null> {
+    try { return await this.validateEffort(agent, model, effort); }
+    catch { return null; }
+  }
+
+  private async validateSpeedOrNull(agent: string, model: string | null, speed: string): Promise<string | null> {
+    try { return await this.validateSpeed(agent, model, speed); }
+    catch { return null; }
   }
 
   /** Periodic housekeeping only archives conversations that do not currently need attention. */
@@ -1485,7 +1609,9 @@ export class ThreadManager {
 
   /**
    * Applies a model or effort change. If the live session cannot change it in place, the session is
-   * closed and the next turn resumes the same agent session with the new setting.
+   * closed and the next turn resumes the same agent session with the new setting. A turn in flight
+   * is never interrupted: the change is remembered and the session is refreshed for the next turn,
+   * the way Claude Code's /model takes effect for the next message.
    */
   private async applyLive(
     thread: ThreadRecord,
@@ -1497,7 +1623,8 @@ export class ThreadManager {
     const inPlace = await apply(session).catch(() => false);
     if (inPlace) return;
     if (this.running.has(thread.id)) {
-      throw new HttpError(409, `cannot change ${what} while a turn is running; try again after it finishes`);
+      this.refreshAfterTurn.add(thread.id);
+      return;
     }
     await this.dropSession(thread.id);
   }
@@ -1505,7 +1632,8 @@ export class ThreadManager {
   private async restartForChange(thread: ThreadRecord, what: 'model' | 'effort'): Promise<void> {
     if (!this.sessions.has(thread.id)) return;
     if (this.running.has(thread.id)) {
-      throw new HttpError(409, `cannot change ${what} while a turn is running; try again after it finishes`);
+      this.refreshAfterTurn.add(thread.id);
+      return;
     }
     await this.dropSession(thread.id);
   }
@@ -2595,6 +2723,7 @@ export class ThreadManager {
 
   /** Closes live agent processes. Threads and events stay in the store. */
   async shutdown(): Promise<void> {
+    await this.personal.explore.dispose();
     await this.lark.dispose();
     this.autoHandover.close();
     this.quotaResume.dispose();
@@ -2663,6 +2792,12 @@ export class ThreadManager {
       if (nativeTurn && !this.running.has(thread.id)) {
         this.running.set(thread.id, { turnId: nativeTurn, cancelRequested: false, since: new Date().toISOString() });
         finalStatus = 'running';
+      }
+      // A model/effort/speed change arrived while this turn ran: now that nothing runs in the
+      // session (a native takeover keeps it busy, and its own finish hook retries), drop it so
+      // the next turn resumes the agent session with the new setting.
+      if (!this.running.has(thread.id) && this.refreshAfterTurn.delete(thread.id)) {
+        await this.dropSession(thread.id).catch(() => undefined);
       }
       // The thread may have been deleted while its last turn was winding down.
       if (this.store.getThread(thread.id)) {
@@ -2889,19 +3024,24 @@ export class ThreadManager {
 
   private async createSession(thread: ThreadRecord): Promise<AgentSession> {
     const personalScope = Boolean(this.personal.environment(thread.id));
-    if (this.sessions.has(thread.id) && this.personalScopes.get(thread.id) !== personalScope) await this.dropSession(thread.id);
+    const adapter = this.adapters.get(thread.agent);
+    if (!adapter) throw new Error(`unknown agent: ${thread.agent}`);
+    if (this.sessions.has(thread.id) && (this.personalScopes.get(thread.id) !== personalScope || this.sessionAdapters.get(thread.id) !== adapter)) await this.dropSession(thread.id);
     const existing = this.sessions.get(thread.id);
     if (existing) {
       if (existing.setWorkMode) await existing.setWorkMode(thread.workMode ?? 'execute');
       return existing;
     }
-    const adapter = this.adapters.get(thread.agent);
-    if (!adapter) throw new Error(`unknown agent: ${thread.agent}`);
     const session = await adapter.start({
       borrowedTool: this.borrowing?.toolForThread(thread.id),
       coordinationEnv: this.backgroundThreads.has(thread.id) ? {} : { ...this.coordination?.environment(thread.id), ...this.borrowing?.environment(thread.id), ...this.personal.environment(thread.id) },
       cwd: thread.cwd,
       resumeId: thread.agentSessionId ?? undefined,
+      onSessionId: (id) => {
+        if (!id || !this.store.getThread(thread.id)) return;
+        this.store.updateThread(thread.id, { agentSessionId: id });
+        this.emitThreadEvent(thread.id, null, 'thread.updated', {});
+      },
       permissionMode: thread.permissionMode as PermissionMode,
       speed: thread.speed,
       workMode: thread.workMode ?? 'execute',
@@ -2935,7 +3075,7 @@ export class ThreadManager {
         this.emitThreadEvent(thread.id, turnId, 'turn.started', { text: '', source: opts?.background ? 'background' : 'voice', nativeTurnId: nativeId });
         return this.hooksFor(thread.id, turnId);
       },
-      turnFinished: (nativeId, result) => {
+      turnFinished: async (nativeId, result) => {
         const turns = this.nativeTurns.get(thread.id);
         const turnId = turns?.get(nativeId);
         if (!turnId) return;
@@ -2957,6 +3097,8 @@ export class ThreadManager {
           this.store.updateThread(thread.id, { status: result.stopReason === 'error' ? 'error' : 'idle', ...(result.stopReason !== 'cancelled' && (result.stopReason === 'error' || !this.quietTurns.has(turnId)) ? { unread: true } : {}) }, { touch: true });
           this.quietTurns.delete(turnId);
           this.emitThreadEvent(thread.id, null, 'thread.updated', {});
+          // Same end-of-turn refresh as a hub turn: a setting changed mid-turn waits for this moment.
+          if (this.refreshAfterTurn.delete(thread.id)) await this.dropSession(thread.id).catch(() => undefined);
           this.startNextQueued(thread.id);
         }
       },
@@ -2964,7 +3106,7 @@ export class ThreadManager {
     this.personalScopes.set(thread.id, personalScope);
     this.sessions.set(thread.id, session);
     this.sessionAdapters.set(thread.id, adapter);
-    if (session.agentSessionId !== thread.agentSessionId) {
+    if (session.agentSessionId && session.agentSessionId !== thread.agentSessionId) {
       this.store.updateThread(thread.id, { agentSessionId: session.agentSessionId });
     }
     return session;
@@ -3118,6 +3260,9 @@ export class ThreadManager {
     }
     // What the agent was told may have left its context, or never reached it: attach it again next time.
     if (type === 'context.compaction' || type === 'turn.error') this.injections.forget(threadId);
+    if (type === 'turn.started' && this.unrecordedQuestions.has(threadId)) {
+      data = { ...data, text: '', displayText: '', promptOmitted: true };
+    }
     const stored = this.store.appendEvent(threadId, turnId, type, data);
     // Turn timing is computed once, when the turn ends; a deferred task keeps it off the turn's tail.
     if (turnId && (type === 'turn.done' || type === 'turn.error') && !data.imported && !data.fromTerminal) this.recordTurnStats(threadId, turnId);

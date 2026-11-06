@@ -23,7 +23,8 @@ export function assistantTitle(path: string) {
 }
 
 /** Each feature mounts on entry; its status and full configuration are not loaded for the index. */
-export function AssistantSettingsPage({ api, agents, path, onNavigate, onSave }: {
+export function AssistantSettingsPage({ api, agents, path, onNavigate, onSave, setupNeeded, onExplore }: {
+  setupNeeded?: boolean | null; onExplore?: () => void;
   api: Api; agents: AgentInfo[]; path: string; onNavigate: (path: string) => void; onSave: (value: PersonalSettings) => void;
 }) {
   const [value, setValue] = useState<PersonalSettings | null>(null);
@@ -38,7 +39,7 @@ export function AssistantSettingsPage({ api, agents, path, onNavigate, onSave }:
   }, [api, feature, retry]);
   if (feature === 'profile') return <ProfileDialog inline api={api} onClose={() => onNavigate('assistant')} onSaved={() => {}} />;
   if (feature === 'lark' || feature === 'brief' || feature === 'proactive') return <AssistantFeature key={feature} api={api} feature={feature} />;
-  if (value) return <PersonalSettingsDialog api={api} agents={agents} initial={value} onSave={next => { setValue(next); onSave(next); }} onClose={() => onNavigate('')} onNavigate={onNavigate} />;
+  if (value) return <PersonalSettingsDialog api={api} agents={agents} initial={value} setupNeeded={setupNeeded} onExplore={onExplore} onSave={next => { setValue(next); onSave(next); }} onClose={() => onNavigate('')} onNavigate={onNavigate} />;
   return <SettingsSection title={t('personal.settings')}>
     {error ? <p role="alert" className="panel-error">{error} <button className="ghost" onClick={() => setRetry(n => n + 1)}>{t('common.retry')}</button></p> : <p role="status">{t('common.loading')}</p>}
   </SettingsSection>;
@@ -87,7 +88,8 @@ function AssistantFeature({ api, feature }: { api: Api; feature: 'lark' | 'brief
 }
 
 /** The desk keeps its pending delegation while the same settings pages take its place. */
-export function AssistantSettings({ api, agents, onSave, onClose }: {
+export function AssistantSettings({ api, agents, onSave, onClose, setupNeeded, onExplore }: {
+  setupNeeded?: boolean | null; onExplore?: () => void;
   api: Api; agents: AgentInfo[]; onSave: (value: PersonalSettings) => void; onClose: () => void;
 }) {
   const [path, setPath] = useState('assistant');
@@ -95,6 +97,6 @@ export function AssistantSettings({ api, agents, onSave, onClose }: {
   return <div className="settings-standalone"><SettingsPage path={path} detailTitle={assistantTitle(path)} onClose={() => navigate(onClose)}
     onNavigate={next => navigate(() => setPath(next))} groups={[{ label: t('settings.preferences'), entries: [{
       id: 'assistant', label: t('personal.settings'), icon: IconSparkle,
-      render: () => <AssistantSettingsPage api={api} agents={agents} path={path} onNavigate={next => navigate(() => setPath(next))} onSave={onSave} />,
+      render: () => <AssistantSettingsPage api={api} agents={agents} path={path} setupNeeded={setupNeeded} onExplore={onExplore ? () => navigate(onExplore) : undefined} onNavigate={next => navigate(() => setPath(next))} onSave={onSave} />,
     }] }]} /></div>;
 }

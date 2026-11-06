@@ -46,7 +46,7 @@ for (const mobile of [false, true]) {
         if (mobile) await page.locator('.menu-btn').click();
         await page.locator('.sidebar').getByRole('button', { name: '配置', exact: true }).click();
         await page.locator('.settings-nav').getByRole('button', { name: '导入历史', exact: true }).click();
-        const panel = page.getByRole('dialog', { name: '导入历史' });
+        const panel = page.getByRole('region', { name: '导入历史', exact: true });
         await panel.getByText('历史会话 0', { exact: true }).waitFor();
         assert.equal(await panel.locator('.panel-row').count(), 100);
         await panel.getByLabel('搜索会话').fill('历史会话 5100');
@@ -55,7 +55,8 @@ for (const mobile of [false, true]) {
         const box = await panel.boundingBox();
         const viewport = page.viewportSize();
         assert.ok(box.x >= 0 && box.x + box.width <= viewport.width + 1);
-        assert.ok(box.y >= 0 && box.y + box.height <= viewport.height + 1);
+        assert.ok(box.y >= 0);
+        assert.equal(await page.getByRole('dialog').count(), 0);
         if (process.env.CALLI_HISTORY_SHOTS) {
           await page.screenshot({ path: join(process.env.CALLI_HISTORY_SHOTS, `history-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
         }

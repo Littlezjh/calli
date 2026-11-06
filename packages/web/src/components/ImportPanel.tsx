@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 import { AuthError, type AgentInfo, type AgentSession, type Api, type Thread } from '../api';
 import { folderName } from '../paths';
 import { filterSessions, SESSION_LIMIT, sessionTitle, timeAgo } from '../sessions';
-import { IconClose, IconFolder, IconImport, IconSearch } from './icons';
+import { IconFolder, IconSearch } from './icons';
 import { t } from '../i18n';
+import { SettingsSection, usePageDraft } from './PageNavigation';
 
 interface Props {
   api: Api;
@@ -12,7 +13,6 @@ interface Props {
   onImported: (thread: Thread) => void;
   /** Open a session that is already a thread here. */
   onOpen: (threadId: string) => void;
-  onClose: () => void;
   onError: (e: unknown) => void;
 }
 
@@ -22,12 +22,13 @@ type Load = { state: 'loading' } | { state: 'ready'; sessions: AgentSession[] } 
  * Conversations the agents already have, started in a terminal or anywhere else.
  * Importing one makes it a thread here; the agent session stays the same, so both sides can carry on.
  */
-export function ImportPanel({ api, agents, onImported, onOpen, onClose, onError }: Props) {
+export function ImportPanel({ api, agents, onImported, onOpen, onError }: Props) {
   const [agent, setAgent] = useState(agents[0]?.id ?? '');
   const [loads, setLoads] = useState<Record<string, Load>>({});
   const [search, setSearch] = useState('');
   const [importing, setImporting] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  const release = usePageDraft(false, importing !== null);
 
   // A problem here is shown in the panel, where the user is looking. Only a bad token goes up.
   const report = (e: unknown, show: (message: string) => void) => {
@@ -49,19 +50,14 @@ export function ImportPanel({ api, agents, onImported, onOpen, onClose, onError 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
 
   const importOne = async (session: AgentSession) => {
     setFailure(null);
     setImporting(session.id);
     try {
-      onImported(await api.importSession(agent, session.id));
+      const thread = await api.importSession(agent, session.id);
+      release();
+      onImported(thread);
     } catch (e) {
       report(e, setFailure);
     } finally {
@@ -77,17 +73,7 @@ export function ImportPanel({ api, agents, onImported, onOpen, onClose, onError 
   const now = Date.now();
 
   return (
-    <div className="dialog-scrim" onClick={onClose}>
-      <div className="panel" role="dialog" aria-modal="true" aria-labelledby="import-title" onClick={(e) => e.stopPropagation()}>
-        <header className="panel-head">
-          <h2 id="import-title" className="panel-title">
-            <IconImport size={20} /> {t('import.title')}
-          </h2>
-          <button className="icon-btn" aria-label={t('common.close')} onClick={onClose}>
-            <IconClose size={18} />
-          </button>
-        </header>
-        <p className="panel-hint">{t('import.hint')}</p>
+    <SettingsSection title={t('import.title')} hint={t('import.hint')} className="history-settings">
 
         {agents.length > 1 && (
           <div className="segmented panel-tabs" role="tablist" aria-label="Agent">
@@ -163,7 +149,6 @@ export function ImportPanel({ api, agents, onImported, onOpen, onClose, onError 
             <p className="panel-more">{t('import.more', matching.length - shown.length)}</p>
           )}
         </div>
-      </div>
-    </div>
+    </SettingsSection>
   );
 }

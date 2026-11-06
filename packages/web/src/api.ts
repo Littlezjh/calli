@@ -7,6 +7,14 @@ export interface GeneralSettings {
   /** Shared automatic archive window. Null means conversations stay in the sidebar. */
   autoArchiveDays: AutoArchiveDays;
 }
+export interface DraftModelPreference {
+  /** Null leaves the agent's own default model in charge. */
+  model: string | null;
+  /** Null leaves the agent's own/default thinking effort in charge. */
+  effort: string | null;
+  /** Null leaves the agent's own/default speed in charge. */
+  speed: string | null;
+}
 export interface UserQuestion { id: string; question: string; header?: string; options: Array<{ value: string; label: string; description?: string }>; multiple?: boolean; freeText?: boolean; required?: boolean }
 export type UserInputAnswer = { answers: Record<string, string[]> } | { cancelled: true };
 import type { UsageReport, AgentDiagnostic, CostReport, DailyUsage } from './observability';
@@ -342,9 +350,32 @@ export interface Schedule {
 
 /** A request the daemon refused. `details` is whatever it sent besides the message, for errors the page handles itself. */
 /** A file the thread's agents changed, summed over every turn that touched it. */
-export interface ChangedFile { path: string; added: number; removed: number; created: boolean; turns: number; turnId: string; at: string }
+export interface ChangedFile {
+  path: string;
+  added: number;
+  removed: number;
+  created: boolean;
+  turns: number;
+  turnId: string;
+  at: string;
+  /**
+   * The diff references that touched it, in the order the log reported them, for the dialog to read
+   * on demand. The daemon always sends it; a change it could not reference is an empty list.
+   */
+  details: Array<{ turnId: string; id: number; version: number }>;
+  /** How many references there are, when `details` holds only the newest 20. */
+  detailsTotal?: number;
+  /** The last disk check found no ordinary file at this path. */
+  missing?: true;
+}
 /** A picture or file an answer named, or the thread created; the last turn that did. */
-export interface OutputFile { path: string; turnId: string; at: string }
+export interface OutputFile {
+  path: string;
+  turnId: string;
+  at: string;
+  /** The last disk check found no ordinary file at this path. */
+  missing?: true;
+}
 export interface ThreadOutputs {
   changes: { files: ChangedFile[]; added: number; removed: number; total: number };
   images: OutputFile[];
@@ -403,6 +434,42 @@ export interface Section {
 }
 
 /** One entry on the plan page. `parentId` is a top-level todo or null: one level of nesting. */
+export interface ExploreRecommendation {
+  agent: { agent: string; model: string | null; options: Array<{ agent: string; model: string | null; label: string; why: string; recommended?: boolean }> };
+  profile: { draft: string; why: string; replace: boolean };
+  people: Array<{ id: string; name: string; role: 'boss' | 'pm' | 'other'; selected: boolean; why: string; evidence: string[] }>;
+  chats: Array<{ id: string; name: string; selected: boolean; why: string; evidence: string[] }>;
+  meetings: { on: boolean; why: string; examples: string[] };
+  intervalMin: { value: 15 | 30 | 60 | 120; why: string };
+  brief: { enabled: boolean; morning: string; evening: string; why: string };
+  push: { enabled: boolean; available: boolean; why: string };
+  proactive: { mode: 'off' | 'observe' | 'auto'; why: string };
+}
+
+export interface ExploreStep {
+  source: string;
+  state: 'pending' | 'running' | 'done' | 'skipped' | 'failed';
+  /** One human conclusion, shown as-is by the interface. */
+  line?: string;
+  /** How much this source read, shown as-is by the interface. */
+  read?: string;
+  reason?: string;
+}
+
+export interface ExploreStatus {
+  id: string;
+  state: 'collecting' | 'judging' | 'ready' | 'failed' | 'cancelled';
+  steps: ExploreStep[];
+  recommendation?: ExploreRecommendation;
+  model?: 'ok' | 'fallback';
+  error?: string;
+  startedAt: string;
+  finishedAt?: string;
+}
+
+export type ExploreSourceId = 'lark-profile' | 'lark-chats' | 'lark-messages' | 'lark-calendar' | 'calli-threads';
+export interface ExploreSource { id: ExploreSourceId; available: boolean; reason?: string }
+
 export interface PersonalSettings { routerThreadId?: string | null; directoryIsDefault?: boolean; defaultDirectory?: string; defaultDirectoryDisplay?: string; directoryDisplay?: string | null; directory: string | null; agent: string | null; model: string | null }
 export interface PersonalBrief { title: string; lines: string[]; text: string }
 export interface LastPersonalBrief { text: string; sentAt: string }
@@ -599,6 +666,14 @@ export interface ModelOption {
   description?: string;
   /** How busy this model is right now; above 100 means overloaded. */
   loadPercent?: number;
+  /** Total queued requests. Null means unavailable, not zero; absent means no queue metadata. */
+  queueSize?: number | null;
+  /** Observed request position, not total queue size. Zero means observed nonqueued; null means unknown/stale. */
+  queuePosition?: number | null;
+  /** Queue observation time in epoch milliseconds; absent when no valid observation exists. */
+  queueObservedAt?: number;
+  /** True when reading the upstream load failed, rather than the upstream omitting it. */
+  loadError?: boolean;
   /** Effort levels this model accepts. Empty: none. Missing: use the agent-wide list. */
   efforts?: string[];
   speeds?: Array<{ id: string; label: string; description?: string; isFast?: boolean }>;
@@ -623,6 +698,13 @@ export interface AgentReferences {
   handoverOrders: number;
 }
 
+/** A version-limited opt-in bridge that changes only a private runtime copy. */
+export interface StreamBridgeCapability {
+  version: string;
+  platform: string;
+  temporaryMegabytes: number;
+}
+
 export interface AgentInfo {
   id: string;
   label: string;
@@ -636,6 +718,7 @@ export interface AgentInfo {
   available: boolean;
   /** How it can be signed in from the hub, when its adapter can start the CLI's login. */
   login?: 'terminal' | 'wizard';
+  streamBridgeEnabled?: boolean;
   capabilities: {
     workModes?: WorkMode[];
     speed?: boolean;
@@ -646,6 +729,9 @@ export interface AgentInfo {
     permissionModes: string[];
     /** The level a new thread starts at. Missing: `auto_edit`. */
     defaultPermissionMode?: string;
+    /** False when native model discovery is unavailable; no model picker is offered. */
+    modelCatalog?: boolean;
+    streamBridge?: StreamBridgeCapability;
     effortLevels: string[];
     images: boolean;
     deleteSession: boolean;
@@ -682,7 +768,7 @@ export interface SupportedAgent {
   label: string;
   icon?: string;
   installGuide?: string;
-  capabilities?: { createAccount: boolean };
+  capabilities?: { createAccount: boolean; streamBridge?: StreamBridgeCapability };
 }
 
 /** One window of a plan's usage, as the agent itself reports it. */
@@ -938,15 +1024,16 @@ export class Api {
     return this.base + (this.host ? hostPath(this.host, path) : path);
   }
 
-  private request<T>(method: string, path: string, body?: unknown): Promise<T> {
-    return this.send(method, this.url(path), body);
+  private request<T>(method: string, path: string, body?: unknown, opts: { keepalive?: boolean } = {}): Promise<T> {
+    return this.send(method, this.url(path), body, opts);
   }
 
-  protected async send<T>(method: string, url: string, body?: unknown): Promise<T> {
+  protected async send<T>(method: string, url: string, body?: unknown, opts: { keepalive?: boolean } = {}): Promise<T> {
     const res = await fetch(url, {
       method,
       headers: this.headers(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       body: body === undefined ? undefined : JSON.stringify(body),
+      keepalive: opts.keepalive,
     });
     if (res.status === 401) throw new AuthError('unauthorized');
     if (res.status === 204) return undefined as T;
@@ -1029,6 +1116,12 @@ export class Api {
 
   generalSettings(): Promise<GeneralSettings> { return this.request('GET', '/api/general-settings'); }
   saveGeneralSettings(value: GeneralSettings): Promise<GeneralSettings> { return this.request('PUT', '/api/general-settings', value); }
+  exploreSources(): Promise<ExploreSource[]> { return this.request('GET', '/api/personal/explore/sources'); }
+  startExplore(sources: ExploreSourceId[]): Promise<{ id: string }> { return this.request('POST', '/api/personal/explore', { sources }); }
+  exploreStatus(): Promise<ExploreStatus | null> { return this.request('GET', '/api/personal/explore'); }
+  cancelExplore(): Promise<{ cancelled: boolean }> { return this.request('DELETE', '/api/personal/explore'); }
+  draftModelPreferences(): Promise<Record<string, DraftModelPreference>> { return this.request('GET', '/api/draft-model-preferences'); }
+  saveDraftModelPreferences(value: Record<string, DraftModelPreference>, opts: { keepalive?: boolean } = {}): Promise<Record<string, DraftModelPreference>> { return this.request('PUT', '/api/draft-model-preferences', value, opts); }
   personalSettings(): Promise<PersonalSettings> { return this.request('GET', '/api/personal/settings'); }
   savePersonalSettings(value: PersonalSettings): Promise<PersonalSettings> { return this.request('PUT', '/api/personal/settings', value); }
   personalBrief(kind: 'morning' | 'evening'): Promise<PersonalBrief | null> { return this.request('GET', `/api/personal/brief?kind=${kind}`); }
@@ -1533,12 +1626,12 @@ export class Api {
   }
 
   /** Adds an agent instance (another CLI, another account). */
-  addAgent(input: { id?: string; adapter: string; label?: string; command?: string[]; env?: Record<string, string>; account?: string }): Promise<{ id: string }> {
+  addAgent(input: { id?: string; adapter: string; label?: string; command?: string[]; env?: Record<string, string>; account?: string; streamBridge?: boolean }): Promise<{ id: string }> {
     return this.request('POST', '/api/agents', input);
   }
 
-  /** Updates an instance's presentation; its id, which threads store, does not change. */
-  updateAgent(id: string, patch: { label?: string; hidden?: boolean }): Promise<{ id: string; label?: string; hidden?: boolean }> {
+  /** Updates hub-owned settings; its id, which threads store, does not change. */
+  updateAgent(id: string, patch: { label?: string; hidden?: boolean; streamBridge?: boolean }): Promise<{ id: string; label?: string; hidden?: boolean }> {
     return this.request('PATCH', `/api/agents/${encodeURIComponent(id)}`, patch);
   }
 
@@ -1795,8 +1888,8 @@ export class Api {
     return this.request('DELETE', `/api/terminals/${id}`);
   }
 
-  models(agent: string): Promise<ModelOption[]> {
-    return this.request('GET', `/api/agents/${agent}/models`);
+  models(agent: string, refresh = false): Promise<ModelOption[]> {
+    return this.request('GET', `/api/agents/${encodeURIComponent(agent)}/models${refresh ? '?refresh=1' : ''}`);
   }
 
   listDirectory(path: string): Promise<DirectoryInfo> {
