@@ -715,60 +715,34 @@ button:disabled {
   }
 
   .quick-switch {
-    --quick-switch-bottom: calc(176px + var(--safe-bottom));
-    --quick-switch-button-size: 44px;
-    --quick-switch-panel-gap: 10px;
-    position: absolute;
-    display: flex;
-    right: calc(14px + env(safe-area-inset-right));
-    bottom: var(--quick-switch-bottom);
+    /* Pinned to the physical right edge: the conversation column can be laid out wider than
+       the viewport, and the summon strip must stay at the screen's edge regardless. */
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    width: 22px;
     z-index: 62;
     pointer-events: none;
   }
 
-  .quick-switch-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: var(--quick-switch-button-size);
-    height: var(--quick-switch-button-size);
-    padding: 0;
-    border: 1px solid color-mix(in srgb, var(--border-strong) 70%, transparent);
-    border-radius: 50%;
-    background: color-mix(in srgb, var(--surface) 92%, transparent);
-    color: var(--text);
-    box-shadow: var(--shadow-pop);
+  /* The invisible summon strip: vertical scrolls pass through (pan-y), horizontal pulls and
+   * holds are ours, and taps are handed back to whatever sits underneath. */
+  .quick-switch-edge {
+    position: absolute;
+    inset: 0;
     pointer-events: auto;
-    touch-action: none;
-    -webkit-backdrop-filter: blur(18px);
-    backdrop-filter: blur(18px);
-    transition:
-      transform 0.14s ease,
-      background 0.14s ease,
-      border-color 0.14s ease;
-  }
-
-  .quick-switch-button > svg {
-    color: var(--muted);
-  }
-
-  .quick-switch.open .quick-switch-button,
-  .quick-switch-button:active {
-    transform: scale(0.97);
-    border-color: var(--accent);
-    background: var(--surface);
+    touch-action: pan-y;
   }
 
   .quick-switch-panel {
     position: absolute;
-    right: 0;
-    bottom: calc(100% + var(--quick-switch-panel-gap));
+    right: calc(10px + env(safe-area-inset-right));
+    bottom: calc(170px + var(--safe-bottom));
     width: min(286px, calc(100vw - 54px - env(safe-area-inset-left)));
-    /* visualViewport height follows keyboard resizing; subtract the trigger offsets and topbar
-       clearance so the panel stays in the visible app even when the browser pans it. */
-    max-height: min(620px, max(0px, calc(
-      var(--vvh, 100dvh) - var(--quick-switch-bottom) - var(--quick-switch-button-size)
-      - var(--quick-switch-panel-gap) - 60px - env(safe-area-inset-top) - 12px
+    /* visualViewport height follows keyboard resizing; keep the panel inside the visible app. */
+    max-height: min(560px, max(0px, calc(
+      var(--vvh, 100dvh) - 250px - env(safe-area-inset-top)
     )));
     padding: 7px;
     overflow-y: auto;
