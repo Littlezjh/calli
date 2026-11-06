@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyPetStarter, clearPetHaze, petBustBox, nextPetFrame, petCacheKey, petCacheName, petErrorDetail, petLicenseUrl, petReplyParts, petRing, parsePetPending, petDay, petGreetingLine, petReplyPreview, PET_GIVE_UP_MS, PET_QUIET_POLLS, readPetRouter, yawnDelay } from '../src/pet.js';
+import { applyPetStarter, clearPetHaze, petBustBox, nextPetFrame, petCacheKey, petCacheName, petClampPosition, petErrorDetail, petLicenseUrl, petNotableThreads, petReplyParts, petRing, parsePetPending, petDay, petGreetingLine, petReplyPreview, petThreadState, PET_GIVE_UP_MS, PET_QUIET_POLLS, readPetRouter, yawnDelay } from '../src/pet.js';
 
 test('a looping clip wraps and a one-shot clip ends', () => {
   assert.equal(nextPetFrame(0, 121, true), 1);
@@ -109,4 +109,37 @@ test('a small portrait keeps her head and upper body, trimmed to her outline', (
   paint(9, 0, 3); // haze does not count
   assert.deepEqual(petBustBox(pixels, width, height, 0.5), { x: 3, y: 2, width: 3, height: 4 });
   assert.equal(petBustBox(new Uint8ClampedArray(16), 2, 2), null);
+});
+
+test('a thread is read by what it needs from the person, and a team member outranks the thread', () => {
+  const base = { status: 'idle', waiting: false, unread: false, updatedAt: '2026-11-06T10:00:00Z' } as const;
+  assert.equal(petThreadState({ ...base }), 'idle');
+  assert.equal(petThreadState({ ...base, status: 'running' }), 'running');
+  assert.equal(petThreadState({ ...base, unread: true }), 'review');
+  assert.equal(petThreadState({ ...base, status: 'error' }), 'failed');
+  assert.equal(petThreadState({ ...base, waiting: true }), 'waiting');
+  assert.equal(petThreadState({ ...base, coordination: { team: { status: 'awaiting_confirm' } } }), 'waiting');
+  assert.equal(petThreadState({ ...base, coordination: { team: { status: 'needs_attention' } } }), 'failed');
+  assert.equal(petThreadState({ ...base, status: 'running', coordination: { team: { status: 'done' } } }), 'running');
+});
+
+test('the tray holds what needs the person, most needing first, most recent breaking ties', () => {
+  const at = (minutes: number) => `2026-11-06T10:${String(minutes).padStart(2, '0')}:00Z`;
+  const threads = [
+    { id: 'run', status: 'running', waiting: false, unread: false, updatedAt: at(3) },
+    { id: 'wait', status: 'idle', waiting: true, unread: false, updatedAt: at(1) },
+    { id: 'done', status: 'idle', waiting: false, unread: true, updatedAt: at(5) },
+    { id: 'stuck', status: 'error', waiting: false, unread: false, updatedAt: at(2) },
+    { id: 'quiet', status: 'idle', waiting: false, unread: false, updatedAt: at(4) },
+    { id: 'wait2', status: 'idle', waiting: true, unread: false, updatedAt: at(6) },
+  ] as const;
+  assert.deepEqual(petNotableThreads(threads).map(t => t.id), ['wait2', 'wait', 'stuck', 'done', 'run']);
+  assert.deepEqual(petNotableThreads([]), []);
+});
+
+test('wherever she is left, she stays whole inside the viewport', () => {
+  assert.deepEqual(petClampPosition(-50, 900, 62, 80, 1280, 800), { x: 8, y: 712 });
+  assert.deepEqual(petClampPosition(30, 100, 62, 80, 1280, 800), { x: 30, y: 100 });
+  // A viewport smaller than she is: she keeps to the top-left corner, not to negative numbers.
+  assert.deepEqual(petClampPosition(10, 10, 200, 300, 100, 100), { x: 8, y: 8 });
 });

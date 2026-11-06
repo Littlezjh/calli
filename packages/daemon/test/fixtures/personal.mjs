@@ -9,11 +9,20 @@ export function personalFixture(text) {
   if (router && command === 'router-fixture-fail' && existsSync('.calli/router-retry-ready')) return JSON.stringify({ intro: text.includes('<calli-personal-router>'), profile: text.includes('<calli-personal-profile>') });
   if (router && ['router-fixture-slow', 'router-fixture-fail'].includes(command)) return null;
   const proactive = ['由 Calli 发起的提前准备。', '由 Calli 发起的沙盒动手。'].includes(command);
+  const explore = command === '由 Calli 发起的一键配置探索。';
   const clarification = process.env.FAKE_PERSONAL_DELEGATE_CLARIFY === '1' && command.startsWith('这是一件新交给你的事，不是交接');
   const review = process.env.FAKE_PERSONAL_REVIEW && (command === '由 Calli 发起的私人事项盘点。' || command.startsWith('开始 '));
-  if (!router && !review && !clarification && !proactive && !['personal-ui', 'personal-start', 'personal-notify', 'personal-quiet', 'personal-wish', '由 Calli 发起的事项跟进。', '由 Calli 发起的近期总结。', '# 交接信息', '# 接手'].includes(command)) return null;
+  if (!router && !review && !clarification && !proactive && !explore && !['personal-ui', 'personal-start', 'personal-notify', 'personal-quiet', 'personal-wish', '由 Calli 发起的事项跟进。', '由 Calli 发起的近期总结。', '# 交接信息', '# 接手'].includes(command)) return null;
   // A handover first turn, in the old coordinate format or the clean brief, carrying open todos.
   if ((command === '# 交接信息' || command === '# 接手') && !text.includes('## 关联事项与接续说明')) return null;
+  if (explore) {
+    // The onboarding explore's one judgement. 'hold' never settles, so a cancellation can be observed.
+    const mode = process.env.FAKE_PI_EXPLORE_MODE;
+    if (mode === 'hold') return '__hold__';
+    if (mode === 'error') return '__explore_error__';
+    if (mode === 'invalid') return '抱歉，我没能按格式回答。';
+    return process.env.FAKE_PI_EXPLORE_REPLY ?? JSON.stringify({ peopleRoles: [], why: {}, profileDraft: '' });
+  }
   const cli = (args, input = '') => JSON.parse(execFileSync(process.execPath, [join(process.env.CALLI_BIN_DIR, 'calli'), ...args], { input, encoding: 'utf8' }));
   if (proactive) {
     const id = text.match(/^ID：(.+)$/m)?.[1];

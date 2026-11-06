@@ -767,6 +767,18 @@ export class Store {
     flush();
   }
 
+  /** Read only recent human display text; background prompts and assistant/tool bodies stay unread. */
+  userTurns(threadId: string, limit = 20, since = ''): Array<{ ts: string; text: string }> {
+    return this.db.prepare(`SELECT tt.ts, substr(tt.text, 1, 120) AS text FROM turn_text tt
+      WHERE tt.thread_id = ? AND tt.role = 'user' AND tt.ts >= ?
+        AND EXISTS (SELECT 1 FROM events e WHERE e.thread_id = tt.thread_id AND e.turn_id = tt.turn_id
+          AND e.type = 'turn.started' AND NOT (
+            coalesce(json_extract(e.data, '$.background'), 0) OR coalesce(json_extract(e.data, '$.scheduled'), 0)
+            OR coalesce(json_extract(e.data, '$.review'), 0) OR coalesce(json_extract(e.data, '$.proactive'), 0)
+            OR json_type(e.data, '$.coordination') IS NOT NULL OR json_type(e.data, '$.handover') IS NOT NULL))
+      ORDER BY tt.ts DESC, tt.rowid DESC LIMIT ?`).all(threadId, since, limit) as Array<{ ts: string; text: string }>;
+  }
+
   /**
    * Turns in which every word of the query was said, newest first: at most three a thread, so one
    * long thread does not crowd out the rest. Words are matched as they are written, anywhere in

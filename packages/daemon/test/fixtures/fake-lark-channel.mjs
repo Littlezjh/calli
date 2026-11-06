@@ -6,7 +6,9 @@ const config = process.env.FAKE_LARK_DATA ? JSON.parse(readFileSync(process.env.
 if (process.env.FAKE_LARK_LOG) appendFileSync(process.env.FAKE_LARK_LOG, JSON.stringify(args) + '\n');
 const key = args.slice(0, 2).join(' ');
 const arg = name => args[args.indexOf(name) + 1];
-if (config.delay) await new Promise(r => setTimeout(r, config.delay));
+/** An optional flag's value: undefined when the flag is absent, never args[0]. */
+const optional = name => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
+await new Promise(r => setTimeout(r, (config.delays ?? {})[key] ?? config.delay ?? 0));
 if (args[0] === '--help') { console.log('Readonly Lark fixture'); process.exit(0); }
 if (key === 'auth status') { console.log(JSON.stringify({ identities: { user: { available: config.loggedIn !== false, status: 'needs_refresh', openId: config.identity ?? 'ou_self' } } })); process.exit(0); }
 if (key === 'event consume') {
@@ -45,7 +47,7 @@ if (materialTargets[key]) {
           : { document: { document_id: target, content: '' } }) }));
   process.exit(response.exitCode ?? 0);
 }
-const allowed = ['task +get-my-tasks', 'im +messages-search', 'im +flag-list', 'calendar +agenda', 'contact +search-user', 'im +chat-search', 'im +threads-messages-list'];
+const allowed = ['task +get-my-tasks', 'im +messages-search', 'im +flag-list', 'calendar +agenda', 'contact +search-user', 'im +chat-search', 'im +threads-messages-list', 'contact +get-user', 'im +chat-list'];
 if (!allowed.includes(key) || arg('--as') !== 'user') throw new Error('Only explicit readonly user commands are allowed');
 if (config.fail === key) { console.error('sensitive_cli_output_must_not_escape'); process.exit(1); }
 const tasks = config.tasks ?? [{ guid: 'task_fixture', summary: '准备季度评审材料', due: { timestamp: String(Date.now() + 36e5) } }];
@@ -54,9 +56,12 @@ if (key === 'task +get-my-tasks') {
   if (!args.includes('--complete=false')) throw new Error('Only incomplete tasks');
   data = { tasks: args.includes('--page-token') ? config.taskPage2 ?? [] : tasks, has_more: !args.includes('--page-token') && Boolean(config.taskPage2), page_token: 'tasks-page-2' };
 } else if (key === 'im +messages-search') {
-  if (!args.includes('--sender') && !args.includes('--chat-id')) throw new Error('Unscoped message search');
+  if (!args.includes('--sender') && !args.includes('--chat-id') && !args.includes('--is-at-me')) throw new Error('Unscoped message search');
   if (!args.includes('--start') || !args.includes('--end')) throw new Error('Missing message cursor');
-  data = { messages: config.messages ?? (config.threaded ? [{ message_id: 'message_fixture', thread_id: 'omt_fixture', root_id: 'om_fixture_root', sender: { id: 'ou_watch' }, content: '请确认材料' }, { message_id: 'reply_fixture', root_id: 'om_fixture_root', sender: { id: 'ou_watch' }, content: '请看回复链' }] : []), has_more: false };
+  // The live CLI rejects a bare Z here: the bounds must name an explicit offset.
+  for (const flag of ['--start', '--end']) if (config.explore && !/[+-]\d{2}:\d{2}$/.test(arg(flag) ?? '')) throw new Error(`field validation failed: ${flag}`);
+  const messages = args.includes('--is-at-me') ? config.atMeMessages ?? [] : config.messages ?? (config.threaded ? [{ message_id: 'message_fixture', thread_id: 'omt_fixture', root_id: 'om_fixture_root', sender: { id: 'ou_watch' }, content: '请确认材料' }, { message_id: 'reply_fixture', root_id: 'om_fixture_root', sender: { id: 'ou_watch' }, content: '请看回复链' }] : []);
+  data = { messages, has_more: false };
 } else if (key === 'im +threads-messages-list') {
   if (!args.includes('--thread') || arg('--order') !== 'asc') throw new Error('Missing thread or ascending order');
   const topic = config.topics?.[arg('--thread')] ?? {};
@@ -66,5 +71,13 @@ if (key === 'task +get-my-tasks') {
 } else if (key === 'im +flag-list') data = { flag_items: config.flags ?? [], messages: config.flagMessages ?? [], has_more: false };
 else if (key === 'calendar +agenda') data = { events: config.events ?? [] };
 else if (key === 'contact +search-user') data = { users: [{ open_id: 'ou_fixture', localized_name: '示例同事', department: '示例团队' }] };
-else data = { chats: [{ chat_id: 'oc_fixture', name: '示例项目群', description: '测试用群' }] };
+else if (key === 'contact +get-user') {
+  const id = optional('--user-id');
+  const user = id === undefined ? config.self ?? { open_id: config.identity ?? 'ou_self', name: '示例我' }
+    : (config.contacts ?? {})[id] ?? { open_id: id, name: '未知同事' };
+  data = { user };
+} else if (key === 'im +chat-list') {
+  if (arg('--types') !== 'p2p,group' || arg('--sort') !== 'active_time') throw new Error('Explore expects p2p plus group chats sorted by active_time');
+  data = { chats: config.chatList ?? [], has_more: false };
+} else data = { chats: [{ chat_id: 'oc_fixture', name: '示例项目群', description: '测试用群' }] };
 console.log(JSON.stringify({ ok: true, identity: 'user', data }));

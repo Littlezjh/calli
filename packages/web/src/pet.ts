@@ -1,6 +1,55 @@
 import { t } from './i18n';
+import type { TeamStatus } from './api';
 
 export type PetClip = 'idle' | 'thinking' | 'success' | 'poke' | 'head_pat' | 'idle_yawn';
+
+/** How she shows up away from the desk: always there, only when something needs the person, or off. */
+export type PetPresence = 'always' | 'event' | 'off';
+
+/** A thread as her status bar reads it. Only the fields the bar needs; `Thread` satisfies this. */
+export interface PetThreadLike {
+  status: 'idle' | 'running' | 'error';
+  waiting: boolean;
+  unread: boolean;
+  updatedAt: string;
+  coordination?: { team?: { status: TeamStatus } } | null;
+}
+
+/** What a thread is doing, as the bar names it: waiting for the person, stuck, finished and unread, running, or nothing. */
+export type PetThreadState = 'waiting' | 'failed' | 'review' | 'running' | 'idle';
+
+/** The order the bar and the tray put them in: what needs the person first. */
+export const PET_THREAD_ORDER: Record<PetThreadState, number> = { waiting: 0, failed: 1, review: 2, running: 3, idle: 4 };
+
+/** Reads a thread's state from what the page already holds; a team member's word outranks the thread's own. */
+export function petThreadState(thread: PetThreadLike): PetThreadState {
+  const team = thread.coordination?.team?.status;
+  if (team === 'awaiting_confirm' || thread.waiting) return 'waiting';
+  if (team === 'needs_attention' || thread.status === 'error') return 'failed';
+  if (thread.unread) return 'review';
+  if (team === 'running' || thread.status === 'running') return 'running';
+  return 'idle';
+}
+
+/** The threads worth a place under her, most needing first; what changed most recently breaks ties. */
+export function petNotableThreads<T extends PetThreadLike>(threads: readonly T[]): T[] {
+  return threads
+    .map(thread => ({ thread, state: petThreadState(thread) }))
+    .filter(entry => entry.state !== 'idle')
+    .sort((a, b) => PET_THREAD_ORDER[a.state] - PET_THREAD_ORDER[b.state] || b.thread.updatedAt.localeCompare(a.thread.updatedAt))
+    .map(entry => entry.thread);
+}
+
+/** A reply starts fading after this long and is gone a moment after that. */
+export const PET_BUBBLE_FADE_MS = 8_000;
+export const PET_BUBBLE_GONE_MS = 11_000;
+
+/** Keeps her whole self inside the viewport, however it is resized. */
+export function petClampPosition(x: number, y: number, w: number, h: number, viewW: number, viewH: number): { x: number; y: number } {
+  const maxX = Math.max(8, viewW - w - 8);
+  const maxY = Math.max(8, viewH - h - 8);
+  return { x: Math.min(Math.max(8, x), maxX), y: Math.min(Math.max(8, y), maxY) };
+}
 
 /** What the desk knows when she speaks. Null until the matters have loaded: no data is not "nothing urgent". */
 export type PetGreeting = { you: number; first: string | null } | null;
