@@ -7,7 +7,6 @@ import { HandoverChainDialog } from './HandoverTrail';
 import { HandoverDialog } from './HandoverDialog';
 import { Menu, type MenuEntry } from './Menu';
 import { IconArchive, IconCheck, IconCopy, IconDot, IconEdit, IconFork, IconHand, IconHandover, IconList, IconPin, IconPlus, IconSparkle, IconTerminal, IconTrace, IconTrash, IconWorktree } from './icons';
-import type { ToastState } from './Toast';
 import { formatList, t } from '../i18n';
 
 interface Deps {
@@ -33,7 +32,10 @@ interface Deps {
    *  reaches it from the overview instead). */
   onOpenTrace?: () => void;
   onError: (e: unknown) => void;
-  toast: (t: ToastState | null) => void;
+  /** Says what the thread is busy with, as a line by its title until it is done; null clears it. */
+  onBusy: (busy: { threadId: string; message: string } | null) => void;
+  /** A thread was archived: its row is gone, so an undo is offered where it was noticed. */
+  onArchived: (thread: Thread) => void;
   /** The whole conversation as Markdown, for the copy menu. */
   markdownOf: (thread: Thread) => Promise<string>;
   /** The auto-titles extension is installed and on: threads get "name it again". */
@@ -80,22 +82,23 @@ export function forkBlocked(thread: Thread): string | null {
  * the archive and the slash menu, so an action behaves the same wherever it is started.
  */
 export function useThreadActions(deps: Deps) {
-  const { api, agents, sections, todos, chain, onTodosChange, onThreadChange, onThreadRemove, onThreadOpen, onMarkedUnread, onSectionsChange, onOpenTerminal, onOpenTrace, onError, toast, markdownOf, autotitle } = deps;
+  const { api, agents, sections, todos, chain, onTodosChange, onThreadChange, onThreadRemove, onThreadOpen, onMarkedUnread, onSectionsChange, onOpenTerminal, onOpenTrace, onError, onBusy, onArchived, markdownOf, autotitle } = deps;
   /** The chain record when this thread belongs to any handover chain, automatic or manual. */
   const chainOf = (thread: Thread) => chain && (thread.handover
     || chain.threads.some(x => x.handover?.sourceId === thread.id)) ? chain : undefined;
 
-  // The agent chosen in the auto-titles settings names the thread now, by the person's rules.
+  // The agent chosen in the auto-titles settings names the thread now, by the person's rules. The
+  // title itself says when it lands; until then the thread says it is busy naming it.
   const autoName = async (thread: Thread) => {
     if (!api) return;
-    toast({ message: t('actions.autotitling'), busy: true });
+    onBusy({ threadId: thread.id, message: t('actions.autotitling') });
     try {
       const { title } = await api.autotitle(thread.id);
       onThreadChange({ ...thread, title });
-      toast({ message: t('actions.autotitled', title) });
     } catch (e) {
-      toast(null);
       onError(e);
+    } finally {
+      onBusy(null);
     }
   };
   const [menu, setMenu] = useState<MenuState | null>(null);
@@ -119,7 +122,7 @@ export function useThreadActions(deps: Deps) {
   const fork = async (thread: Thread, turnId?: string, where?: 'here' | 'worktree') => {
     if (!api) return;
     const blocked = forkBlocked(thread);
-    if (blocked) return toast({ message: blocked });
+    if (blocked) return onError(blocked);
     if (!where && agents.find((a) => a.id === thread.agent)?.capabilities.forkInto) {
       // An older daemon has no such question to answer; then the copy is made in place, as before.
       const options = await api.forkOptions(thread.id).catch(() => null);
@@ -127,19 +130,19 @@ export function useThreadActions(deps: Deps) {
         return setDialog({ kind: 'fork', thread, turnId, branch: options.worktree.branch ?? null, changes: options.worktree.changes ?? 0 });
       }
     }
-    toast({ message: where === 'worktree' ? t('actions.forkingWorktree') : t('actions.forking'), busy: true });
+    onBusy({ threadId: thread.id, message: where === 'worktree' ? t('actions.forkingWorktree') : t('actions.forking') });
     try {
       const copy = await api.forkThread(thread.id, { turnId, worktree: where === 'worktree' });
       onThreadOpen(copy);
-      toast({ message: where === 'worktree' && copy.worktree ? t('actions.forkedWorktree', copy.worktree.branch) : t('actions.forked') });
     } catch (e) {
-      toast(null);
       // The agent keeps its own record of the conversation. A turn it has no record of (one that
       // never reached it, say) is not a place its copy can stop.
       if (turnId && e instanceof Error && /own history|cannot stop a copy|whole conversation/.test(e.message)) {
-        return toast({ message: t('actions.forkMismatch') });
+        return onError(t('actions.forkMismatch'));
       }
       onError(e);
+    } finally {
+      onBusy(null);
     }
   };
 
@@ -152,21 +155,21 @@ export function useThreadActions(deps: Deps) {
       case 'pin':
         return void patch(thread, { pinned: !thread.pinned });
       case 'archive':
-        return void patch(thread, { archived: true }, () =>
-          toast({ message: t('archive.title'), action: { label: t('actions.undo'), run: () => void patch(thread, { archived: false }) } }),
-        );
+        // The row is about to vanish; the undo is offered where the thread was noticed.
+        return void patch(thread, { archived: true }, () => onArchived(thread));
       case 'restore':
-        return void patch(thread, { archived: false }, () => toast({ message: t('actions.restored') }));
+        return void patch(thread, { archived: false });
       case 'delete':
         return setDialog({ kind: 'delete', thread });
     }
   };
 
-  const copy = async (value: string | null | Promise<string>, what: string) => {
+  const copy = async (value: string | null | Promise<string>) => {
     try {
       const text = await value;
       if (!text) return;
-      toast({ message: (await copyText(text)) ? t('actions.copied', what) : t('actions.copyFailed') });
+      // The clipboard holds the result; only a failure needs saying.
+      if (!(await copyText(text))) onError(t('actions.copyFailed'));
     } catch (e) {
       onError(e);
     }
@@ -243,20 +246,20 @@ export function useThreadActions(deps: Deps) {
         label: t('common.copy'),
         icon: IconCopy,
         submenu: [
-          { id: 'copy-md', label: t('actions.copyMarkdown'), onSelect: () => void copy(markdownOf(thread), t('actions.what.conversation')) },
+          { id: 'copy-md', label: t('actions.copyMarkdown'), onSelect: () => void copy(markdownOf(thread)) },
           {
             id: 'copy-resume',
             label: t('actions.resumeCommand'),
             disabled: !thread.resumeCommand,
-            onSelect: () => void copy(thread.resumeCommand, t('actions.what.resumeCommand')),
+            onSelect: () => void copy(thread.resumeCommand),
           },
           {
             id: 'copy-id',
             label: t('statusPanel.sessionId'),
             disabled: !thread.agentSessionId,
-            onSelect: () => void copy(thread.agentSessionId, t('actions.what.sessionId')),
+            onSelect: () => void copy(thread.agentSessionId),
           },
-          { id: 'copy-cwd', label: t('actions.cwd'), onSelect: () => void copy(thread.cwd, t('actions.what.cwd')) },
+          { id: 'copy-cwd', label: t('actions.cwd'), onSelect: () => void copy(thread.cwd) },
         ],
       },
       ...(agents.find((a) => a.id === thread.agent)?.capabilities.fork
@@ -292,15 +295,14 @@ export function useThreadActions(deps: Deps) {
     try {
       await api.deleteThread(thread.id, opts);
       onThreadRemove(thread.id);
-      toast({ message: opts.worktree ? t('actions.deletedWorktree') : t('actions.deleted') });
     } catch (e) {
       const details = e instanceof ApiError ? e.details : {};
       // Nothing has been deleted in either case; the thread is still there to decide about.
       if (details.code === 'worktree_dirty') {
         return setDialog({ kind: 'delete-worktree', thread, agentSession: opts.agentSession, changes: Number(details.changes) || 0, commits: Number(details.commits) || 0 });
       }
-      if (details.code === 'worktree_shared') toast({ message: t('actions.worktreeShared') });
-      else onError(e);
+      // A shared worktree refuses the delete: the thread stays, so the refusal is said beside it.
+      onError(details.code === 'worktree_shared' ? t('actions.worktreeShared') : e);
     }
     close();
   };
@@ -463,7 +465,7 @@ export function useThreadActions(deps: Deps) {
   return {
     openThreadMenu: (thread: Thread, x: number, y: number) => setMenu({ thread, x, y }),
     openSectionMenu: (section: Section, x: number, y: number) => setMenu({ section, x, y }),
-    copyConversation: (thread: Thread) => void copy(markdownOf(thread), t('actions.what.conversation')),
+    copyConversation: (thread: Thread) => void copy(markdownOf(thread)),
     newSection: () => setDialog({ kind: 'new-section', thread: null }),
     /** Opens the handover, to pick who takes over or copy what it says. */
     handover: (thread: Thread) => setDialog({ kind: 'handover', thread }),

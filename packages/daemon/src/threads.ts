@@ -295,6 +295,9 @@ export class ThreadManager {
   private readonly nativeTurns = new Map<string, Map<string, string>>();
   private readonly voiceThreads = new Set<string>();
   private readonly sessions = new Map<string, AgentSession>();
+  /** Threads whose model/effort/speed was changed mid-turn: the setting is stored, the session that
+   *  turn still runs in is stale. It is dropped when the turn ends, never interrupted mid-turn. */
+  private readonly refreshAfterTurn = new Set<string>();
   /** Turns in flight. `cancelRequested` covers cancels that arrive before the agent session exists. */
   private readonly running = new Map<string, { turnId: string; cancelRequested: boolean; since: string }>();
   readonly inputs = new UserInputs((thread, turn, type, data) => this.emitThreadEvent(thread, turn, type, data));
@@ -1512,7 +1515,9 @@ export class ThreadManager {
 
   /**
    * Applies a model or effort change. If the live session cannot change it in place, the session is
-   * closed and the next turn resumes the same agent session with the new setting.
+   * closed and the next turn resumes the same agent session with the new setting. A turn in flight
+   * is never interrupted: the change is remembered and the session is refreshed for the next turn,
+   * the way Claude Code's /model takes effect for the next message.
    */
   private async applyLive(
     thread: ThreadRecord,
@@ -1524,7 +1529,8 @@ export class ThreadManager {
     const inPlace = await apply(session).catch(() => false);
     if (inPlace) return;
     if (this.running.has(thread.id)) {
-      throw new HttpError(409, `cannot change ${what} while a turn is running; try again after it finishes`);
+      this.refreshAfterTurn.add(thread.id);
+      return;
     }
     await this.dropSession(thread.id);
   }
@@ -1532,7 +1538,8 @@ export class ThreadManager {
   private async restartForChange(thread: ThreadRecord, what: 'model' | 'effort'): Promise<void> {
     if (!this.sessions.has(thread.id)) return;
     if (this.running.has(thread.id)) {
-      throw new HttpError(409, `cannot change ${what} while a turn is running; try again after it finishes`);
+      this.refreshAfterTurn.add(thread.id);
+      return;
     }
     await this.dropSession(thread.id);
   }
@@ -2692,6 +2699,12 @@ export class ThreadManager {
         this.running.set(thread.id, { turnId: nativeTurn, cancelRequested: false, since: new Date().toISOString() });
         finalStatus = 'running';
       }
+      // A model/effort/speed change arrived while this turn ran: now that nothing runs in the
+      // session (a native takeover keeps it busy, and its own finish hook retries), drop it so
+      // the next turn resumes the agent session with the new setting.
+      if (!this.running.has(thread.id) && this.refreshAfterTurn.delete(thread.id)) {
+        await this.dropSession(thread.id).catch(() => undefined);
+      }
       // The thread may have been deleted while its last turn was winding down.
       if (this.store.getThread(thread.id)) {
         const writing = this.store.getThread(thread.id)!.writing;
@@ -2963,7 +2976,7 @@ export class ThreadManager {
         this.emitThreadEvent(thread.id, turnId, 'turn.started', { text: '', source: opts?.background ? 'background' : 'voice', nativeTurnId: nativeId });
         return this.hooksFor(thread.id, turnId);
       },
-      turnFinished: (nativeId, result) => {
+      turnFinished: async (nativeId, result) => {
         const turns = this.nativeTurns.get(thread.id);
         const turnId = turns?.get(nativeId);
         if (!turnId) return;
@@ -2985,6 +2998,8 @@ export class ThreadManager {
           this.store.updateThread(thread.id, { status: result.stopReason === 'error' ? 'error' : 'idle', ...(result.stopReason !== 'cancelled' && (result.stopReason === 'error' || !this.quietTurns.has(turnId)) ? { unread: true } : {}) }, { touch: true });
           this.quietTurns.delete(turnId);
           this.emitThreadEvent(thread.id, null, 'thread.updated', {});
+          // Same end-of-turn refresh as a hub turn: a setting changed mid-turn waits for this moment.
+          if (this.refreshAfterTurn.delete(thread.id)) await this.dropSession(thread.id).catch(() => undefined);
           this.startNextQueued(thread.id);
         }
       },

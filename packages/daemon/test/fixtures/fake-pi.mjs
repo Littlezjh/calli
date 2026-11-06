@@ -178,8 +178,14 @@ rl.on('line', (line) => {
     case 'set_model':
       currentModel = MODELS.find(m => m.provider === cmd.provider && m.id === cmd.modelId) ?? currentModel;
       return reply(currentModel);
-    case 'set_thinking_level':
+    case 'set_thinking_level': {
+      // Some agents refuse a mid-turn change; FAKE_PI_EFFORT_BUSY simulates one, and
+      // FAKE_PI_EFFORT_LOG records every attempt so a test can see which reached the agent.
+      const entry = JSON.stringify({ level: cmd.level, running }) + '\n';
+      if (process.env.FAKE_PI_EFFORT_LOG) appendFileSync(process.env.FAKE_PI_EFFORT_LOG, entry);
+      if (process.env.FAKE_PI_EFFORT_BUSY === '1' && running) return reply(null, false, 'a turn is running');
       return reply({});
+    }
     case 'get_messages':
       // A slow read lets a test start a hub turn while /sync is still reading the session.
       if (process.env.FAKE_PI_MESSAGES_DELAY_MS) return setTimeout(() => reply({ messages: messagesOf(sessionId) }), Number(process.env.FAKE_PI_MESSAGES_DELAY_MS));
@@ -192,7 +198,10 @@ rl.on('line', (line) => {
       const point = forkPoints(sessionId).find((m) => m.entryId === cmd.entryId);
       if (!point) return reply(null, false, `no entry ${cmd.entryId}`);
       sessionId = `${sessionId}-fork-${cmd.entryId}`;
-      return reply({ text: point.text, cancelled: false });
+      // A copy can take a moment; FAKE_PI_FORK_DELAY_MS holds one open so a busy state is visible.
+      const answer = () => reply({ text: point.text, cancelled: false });
+      const delay = Number(process.env.FAKE_PI_FORK_DELAY_MS);
+      return delay ? setTimeout(answer, delay) : answer();
     }
     case 'compact':
       if (cmd.customInstructions === 'explode') return reply(null, false, 'nothing to compact');
@@ -225,7 +234,12 @@ rl.on('line', (line) => {
     case 'clone':
       if (sessionId === 'uncloneable') return reply({ cancelled: true });
       sessionId = `${sessionId}-clone`;
-      return reply({ cancelled: false });
+      // FAKE_PI_FORK_DELAY_MS holds a copy open too, so a busy state is visible.
+      {
+        const answer = () => reply({ cancelled: false });
+        const delay = Number(process.env.FAKE_PI_FORK_DELAY_MS);
+        return delay ? setTimeout(answer, delay) : answer();
+      }
     case 'get_state':
       if (++stateReads > 1 && process.env.FAKE_PI_IMAGE_CHECK_DELAY_MS) {
         return setTimeout(() => reply({ sessionId, isStreaming: running, model: currentModel }), Number(process.env.FAKE_PI_IMAGE_CHECK_DELAY_MS));
