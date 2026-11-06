@@ -5,13 +5,11 @@ import { t } from '../i18n';
 export type GoalCapability = NonNullable<AgentInfo['capabilities']['goal']>;
 export type GoalAction = NonNullable<GoalCapability['actions']>[number];
 
-/** Keep native controls reachable even when no live goal card is available. */
-export function goalMenuActions(goal: GoalCapability, hasCard: boolean, running: boolean, plan: boolean) {
-  return (goal.actions ?? []).filter(action => action === 'set' || !hasCard).map(action => ({
-    action,
-    blocked: running && !goal.controls.some(control => control === action) ? t('composerMenu.afterTurn')
-      : plan && (action === 'set' || action === 'resume') ? t('composerMenu.planFirst') : '',
-  }));
+/** The menu only starts a goal; view, pause and clear live on the goal card. */
+export function goalMenuActions(goal: GoalCapability, running: boolean, plan: boolean) {
+  return (goal.actions ?? []).includes('set')
+    ? [{ action: 'set' as const, blocked: running ? t('composerMenu.afterTurn') : plan ? t('composerMenu.planFirst') : '' }]
+    : [];
 }
 
 interface Props {
@@ -20,7 +18,6 @@ interface Props {
   writingMode?: WritingMode;
   goal?: GoalCapability;
   running: boolean;
-  goalHasCard?: boolean;
   attachTitle: string;
   attachDisabled?: boolean;
   onAttach: () => void;
@@ -33,7 +30,7 @@ interface Props {
 export interface WritingMode { active: boolean; disabled: boolean; onChange: (active: boolean) => void }
 
 /** A compact phone menu. Browsing opens the composer's full-width command palette. */
-export function ComposerMenu({ commands, planMode, writingMode, goal, running, goalHasCard = false, attachTitle, attachDisabled, onAttach, onBrowse, onGoal, close }: Props) {
+export function ComposerMenu({ commands, planMode, writingMode, goal, running, attachTitle, attachDisabled, onAttach, onBrowse, onGoal, close }: Props) {
   const unknownKinds = commands.some(c => !c.kind);
   const skillTitle = unknownKinds ? t('composerMenu.skillsAndCommands') : t('composerMenu.skills');
   const pick = (action: () => void) => { close(); action(); };
@@ -57,9 +54,9 @@ export function ComposerMenu({ commands, planMode, writingMode, goal, running, g
       <span className="pop-item-text"><span className="pop-item-label">{t('writing.mode')}</span><small className="pop-item-hint">{t('writing.modeHint')}</small></span>
       {writingMode.active && <span className="pop-item-check"><IconCheck size={16} /></span>}
     </button>}
-    {goal && goalMenuActions(goal, goalHasCard, running, !!planMode?.active).map(({ action, blocked }) => (
+    {goal && goalMenuActions(goal, running, !!planMode?.active).map(({ action, blocked }) => (
       <button key={action} type="button" role="menuitem" className="pop-item" disabled={!!blocked}
-        title={blocked || (action === 'set' ? t('composer.goalSetHint') : t(`goal.${action}`))}
+        title={blocked || t('composer.goalSetHint')}
         onClick={() => pick(() => onGoal(action))}>
         <span className="pop-item-icon"><IconTarget size={19} /></span>
         <span className="pop-item-text"><span className="pop-item-label">{t(`goal.${action}`)}</span>{blocked && <small className="pop-item-hint">{blocked}</small>}</span>

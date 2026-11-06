@@ -354,7 +354,7 @@ export const ja: Messages = {
   "auto.global": "全体で有効にする",
   "auto.threshold": "使用率のしきい値（%）",
   "auto.order": "引き継ぎ順序",
-  "auto.defaultOrder": "同じ種類の別インスタンスを優先",
+  "auto.defaultOrder": "同じ種類の別インスタンスが引き継ぐ",
   "auto.noTargets": "引き継ぎ先がありません",
   "auto.add": "引き継ぎ先を追加",
   "auto.up": "上へ",
@@ -605,6 +605,7 @@ export const ja: Messages = {
 
   // Conversation timeline
   'timeline.error.interrupted': 'hub の再起動時にこのターンが実行中だったため、中断されました。もう一度メッセージを送ると続きから再開できます。',
+  'timeline.error.planExhaustedTitle': '利用枠を使い切りました',
   'timeline.error.planExhausted': (detail: string) => `このアカウントの利用枠を使い切りました（${detail}）。別のエージェントに引き継げます。`,
   'timeline.error.permissionRefused': (what: string) => `この手順には承認が必要でした${what ? `（${what}）` : ''}が、バックグラウンド実行中のエージェントは確認できないため、拒否して停止しました。入力欄の下の権限を「フルアクセス」に切り替えて、もう一度送信してください。`,
   'timeline.contextUsed': (used: string, size: string) => `コンテキスト使用量 ${used} / ${size}`,
@@ -672,7 +673,6 @@ export const ja: Messages = {
   'handover.chain.viewingEarlier': '前の区間は閲覧専用です。送信先は最新の区間です',
   'handover.chain.goLatest': '最新の区間へ',
   'handover.trail.from': (agent: string) => `${agent} から引き継ぎ`,
-  'handover.trail.to': (agent: string) => `${agent} に引き継ぎ済み`,
   'handover.trail.title': '引き継ぎ履歴',
   'handover.trail.successor': '引き継ぎ先のセッション',
   'handover.trail.original': '元のセッション',
@@ -788,7 +788,6 @@ export const ja: Messages = {
   'collab.pickAndWrite': '選んでタスクを書く',
 
   // Composer menu
-  'goal.show': '目標を表示',
   'goal.set': '目標を設定',
   'goal.pause': '目標を一時停止',
   'goal.resume': '目標を再開',
@@ -1814,7 +1813,7 @@ export const ja: Messages = {
   'view.forkHere': 'フォーク：このターンのあとから別の道を進み、それ以降は持っていかない',
   'view.handingOver': '引き継ぎ中…',
   'view.handTo': (agent: string) => `${agent} に引き継ぐ`,
-  'view.chooseOther': '別のエージェントを選ぶ',
+  'view.chooseOtherShort': '別を選ぶ',
   'view.resumeArm': '枠が回復したら自動で再開',
   'view.resumeArmedAt': (time: string) => `枠回復後に自動再開 · ${time} 頃`,
   'view.resumeArmedAny': '枠が回復したら自動で再開（定期的に確認）',

@@ -5,8 +5,7 @@ import { useWorkSources, WorkSummary } from './extensions/work';
 import { HostIcon } from './extensions/ui';
 import { historyPage, mergeHistory, watchHistory } from './history';
 import type { WorkMode, WritingStage } from './api';
-import { HandoverTrail } from './components/HandoverTrail';
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { forkBlocked, useThreadActions } from './components/ThreadActions';import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import type { Theme } from './appearance';
 import {
   Api,
@@ -89,7 +88,6 @@ import { clampSidebarWidth, defaultSidebarWidth, projectDir, savedSidebarWidth, 
 import { enabledViews, extensionHash, looksLikeExtensionRoute, resolveExtensionRoute } from './extensions/routes';
 import { AgentPicker, type DiscoveredAccount, type DiscoveredAgent, effortsForModel, imagesBlocked, imagesNote, modelName, speedsForModel, ModelPicker, PermissionPicker, UsageMeter, WorkspacePicker } from './components/Pickers';
 import { Sidebar, SIDEBAR_SHORTCUT } from './components/Sidebar';
-import { forkBlocked, useThreadActions } from './components/ThreadActions';
 import { MergedHistory } from './components/MergedHistory';
 import { currentPlan, PlanButton } from './components/PlanPanel';
 import { HandoverComposer } from './components/HandoverComposer';
@@ -1678,6 +1676,19 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     onOpenTerminal: () => (demo ? askToConnect() : openTerminal()),
     onError: handleError,
     toast: setToast,
+    // The handover chain record lives in the thread menu, not as chrome above the conversation.
+    chain: api.demo ? undefined : {
+      threads,
+      isMerged: (thread) => (thread.id === selectedId ? mergedHandover : singleSegmentId !== thread.id),
+      onToggle: (thread) => {
+        setSingleSegmentId((thread.id === selectedId ? mergedHandover : singleSegmentId !== thread.id) ? thread.id : null);
+        setSelectedId(thread.id);
+        setView('thread');
+        setDrawer(false);
+      },
+      onSelect: (id) => pick(id),
+      onRefresh: () => { setSingleSegmentId(null); void refreshThreads(); },
+    },
     // The open thread is already in memory; copying it straight away keeps the browser's
     // "this came from a click" window, which the plain-http copy fallback depends on.
     // Only when all of it is: a long thread has older turns that were never loaded, and the copy
@@ -1970,6 +1981,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
 
   const importAgents = agents.filter((a) => a.available && a.capabilities.history);
   const agentLabel = (id: string) => agents.find((a) => a.id === id)?.label ?? id;
+  const agentAdapter = (id: string) => agents.find((a) => a.id === id)?.adapter;
   const capsOf = (id: string) => agents.find((a) => a.id === id)?.capabilities;
   const activeCaps = capsOf(activeAgent);
   const models = modelsByAgent[activeAgent] ?? [];
@@ -2585,8 +2597,6 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
 
         {demo && (showcase ? showcase.notice(selectedId, extWant) : <DemoBar compact={compact} onConnect={askToConnect} />)}
 
-        {selected && !onPage && hostUp && <HandoverTrail api={api} merged={mergedHandover} onToggle={() => setSingleSegmentId(mergedHandover ? selected.id : null)} thread={selected} threads={threads} agentLabel={agentLabel} onSelect={pick} onRefresh={() => { setSingleSegmentId(null); void refreshThreads(); }} />}
-
         {error && (
           <div className="banner" role="alert">
             <span>{error}</span>
@@ -2713,7 +2723,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           {selected ? (
             <MergedHistory
               key={`${handoverHistoryKey(selected, threads)}:${mergedHandover}`}
-              api={api} thread={selected} merged={mergedHandover} ready={historyReady} agentLabel={agentLabel}
+              api={api} thread={selected} merged={mergedHandover} ready={historyReady} agentLabel={agentLabel} agentAdapter={agentAdapter}
               onOpenFinds={onRouterThread ? () => openDesk(true) : undefined}
               onBrowseOlder={() => { stickToBottom.current = false; setAtBottom(false); }}
               canFork={thread => ({ enabled: Boolean(thread.agentSessionId && capsOf(thread.agent)?.fork), any: Boolean(capsOf(thread.agent)?.forkAt) })}

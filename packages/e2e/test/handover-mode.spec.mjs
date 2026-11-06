@@ -44,8 +44,13 @@ const uiSend = async (page, id, text) => {
   await wait(async () => (await request(`/api/threads/${id}/events`)).some(e => e.type === 'turn.started' && e.data.text === text));
   await idle(id);
 };
+const chainDialog = async page => {
+  await page.getByLabel('这个线程的更多操作').click();
+  await page.getByRole('menuitem', { name: '交接记录', exact: true }).click();
+  await page.getByRole('dialog', { name: '交接记录', exact: true }).waitFor();
+};
 const origin = async page => {
-  await page.locator('.handover-trail button').click();
+  await chainDialog(page);
   await page.getByRole('menuitem').filter({ hasText: '原始会话' }).click();
 };
 before(async () => {
@@ -87,10 +92,10 @@ for (const mobile of [false, true]) for (const theme of ['light', 'dark']) {
       assert.equal(await page.locator('.handover-readonly, .merged-history').count(), 0);
       await uiSend(page, source.id, '原会话继续工作');
       assert.ok(!(await request(`/api/threads/${branch.id}/events`)).some(e => e.type === 'turn.started' && e.data.text === '原会话继续工作'));
-      await page.locator('.handover-trail button').click();
+      await chainDialog(page);
       await page.getByRole('menuitem').filter({ hasText: '接手会话' }).click();
       await uiSend(page, branch.id, '新会话再次独立工作');
-      await page.locator('.handover-trail button').click();
+      await chainDialog(page);
       await page.getByRole('menuitem').filter({ hasText: '手动交接' }).waitFor();
       assert.equal(await page.locator('.handover-mode').count(), 0);
       await page.screenshot({ path: join(shots, `manual-history-${name}.png`), animations: 'disabled' });
@@ -120,7 +125,7 @@ for (const mobile of [false, true]) for (const theme of ['light', 'dark']) {
       await uiSend(page, continued.id, '从前段输入也发给接手方');
       await origin(page);
       await page.locator('.handover-readonly').waitFor();
-      await page.locator('.handover-trail button').click();
+      await chainDialog(page);
       await page.locator('.handover-entry small').filter({ hasText: /^自动接力 ·/ }).waitFor();
       await page.keyboard.press('Escape');
       await page.screenshot({ path: join(shots, `continue-source-${name}.png`), animations: 'disabled' });
@@ -137,11 +142,11 @@ for (const mobile of [false, true]) for (const theme of ['light', 'dark']) {
       assert.equal((await request(`/api/threads/${continued.id}`)).autoHandover.override, null);
       await uiSend(page, relay.id, '取消接力后发回原会话');
       assert.ok(!(await request(`/api/threads/${continued.id}/events`)).some(e => e.type === 'turn.started' && e.data.text === '取消接力后发回原会话'));
-      await page.locator('.handover-trail button').click();
+      await chainDialog(page);
       await page.getByRole('menuitem').filter({ hasText: '接手会话' }).click();
       await uiSend(page, continued.id, '取消接力后接手会话也能发送');
       assert.ok(!(await request(`/api/threads/${relay.id}/events`)).some(e => e.type === 'turn.started' && e.data.text === '取消接力后接手会话也能发送'));
-      await page.locator('.handover-trail button').click();
+      await chainDialog(page);
       await page.locator('.handover-entry small').filter({ hasText: /^已取消接力 ·/ }).waitFor();
       await page.keyboard.press('Escape');
       await sidebar(page, mobile);

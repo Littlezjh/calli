@@ -356,7 +356,7 @@ export const en: Messages = {
   "auto.global": "Enable globally",
   "auto.threshold": "Used quota threshold (%)",
   "auto.order": "Successor order",
-  "auto.defaultOrder": "Prefer another instance of the same type",
+  "auto.defaultOrder": "Another instance of the same type",
   "auto.noTargets": "No successors configured",
   "auto.add": "Add successor",
   "auto.up": "Move up",
@@ -607,6 +607,7 @@ export const en: Messages = {
 
   // Conversation timeline
   'timeline.error.interrupted': 'The hub restarted while this turn was running, so it was interrupted. Send another message to pick up where it left off.',
+  'timeline.error.planExhaustedTitle': 'Usage limit reached',
   'timeline.error.planExhausted': (detail: string) => `This account has used up its quota (${detail}). Another agent can take over from here.`,
   'timeline.error.permissionRefused': (what: string) => `This step needed approval${what ? ` (${what})` : ''}, but the agent cannot ask while it runs in the background, so it refused and stopped. Switch the permission below the composer to "Full access" and send again.`,
   'timeline.contextUsed': (used: string, size: string) => `Context used ${used} / ${size}`,
@@ -674,7 +675,6 @@ export const en: Messages = {
   'handover.chain.viewingEarlier': 'Earlier segment is read-only; messages go to the latest segment',
   'handover.chain.goLatest': 'Go to latest segment',
   'handover.trail.from': (agent: string) => `Taken over from ${agent}`,
-  'handover.trail.to': (agent: string) => `Handed over to ${agent}`,
   'handover.trail.title': 'Handover history',
   'handover.trail.successor': 'Successor session',
   'handover.trail.original': 'Original session',
@@ -790,7 +790,6 @@ export const en: Messages = {
   'collab.pickAndWrite': 'Choose and write a task',
 
   // Composer menu
-  'goal.show': 'View goal',
   'goal.set': 'Set goal',
   'goal.pause': 'Pause goal',
   'goal.resume': 'Resume goal',
@@ -1816,7 +1815,7 @@ export const en: Messages = {
   'view.forkHere': 'Fork: take another path after this turn, leaving what follows behind',
   'view.handingOver': 'Handing over…',
   'view.handTo': (agent: string) => `Hand over to ${agent}`,
-  'view.chooseOther': 'Choose another agent',
+  'view.chooseOtherShort': 'Choose another',
   'view.resumeArm': 'Continue automatically when the quota resets',
   'view.resumeArmedAt': (time: string) => `Continues automatically around ${time}`,
   'view.resumeArmedAny': 'Continues automatically once the quota is back (checked periodically)',

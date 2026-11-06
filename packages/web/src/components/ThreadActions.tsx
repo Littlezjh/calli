@@ -3,9 +3,10 @@ import { ApiError, type AgentInfo, type Api, type HandoverTarget, type Section, 
 import { copyText } from '../clipboard';
 import { folderName } from '../paths';
 import { ChoiceDialog, Dialog } from './Dialog';
+import { HandoverChainDialog } from './HandoverTrail';
 import { HandoverDialog } from './HandoverDialog';
 import { Menu, type MenuEntry } from './Menu';
-import { IconArchive, IconCheck, IconCopy, IconDot, IconEdit, IconFork, IconHand, IconList, IconPin, IconPlus, IconSparkle, IconTerminal, IconTrash, IconWorktree } from './icons';
+import { IconArchive, IconCheck, IconCopy, IconDot, IconEdit, IconFork, IconHand, IconHandover, IconList, IconPin, IconPlus, IconSparkle, IconTerminal, IconTrash, IconWorktree } from './icons';
 import type { ToastState } from './Toast';
 import { formatList, t } from '../i18n';
 
@@ -34,6 +35,14 @@ interface Deps {
   markdownOf: (thread: Thread) => Promise<string>;
   /** The auto-titles extension is installed and on: threads get "name it again". */
   autotitle?: boolean;
+  /** The handover chain record, offered on threads that belong to one. */
+  chain?: {
+    threads: Thread[];
+    isMerged: (thread: Thread) => boolean;
+    onToggle: (thread: Thread) => void;
+    onSelect: (id: string) => void;
+    onRefresh: () => void;
+  };
 }
 
 type MenuState = { x: number; y: number } & ({ thread: Thread } | { section: Section });
@@ -49,7 +58,9 @@ type DialogState =
   | { kind: 'rename-section'; section: Section }
   | { kind: 'delete-section'; section: Section }
   /** Get source-session coordinates and progress for another agent to continue in the same directory. */
-  | { kind: 'handover'; thread: Thread };
+  | { kind: 'handover'; thread: Thread }
+  /** The audit trail of a handover chain this thread belongs to. */
+  | { kind: 'chain'; thread: Thread };
 
 export type ThreadAction = 'rename' | 'pin' | 'fork' | 'archive' | 'restore' | 'delete';
 
@@ -66,7 +77,10 @@ export function forkBlocked(thread: Thread): string | null {
  * the archive and the slash menu, so an action behaves the same wherever it is started.
  */
 export function useThreadActions(deps: Deps) {
-  const { api, agents, sections, todos, onTodosChange, onThreadChange, onThreadRemove, onThreadOpen, onMarkedUnread, onSectionsChange, onOpenTerminal, onError, toast, markdownOf, autotitle } = deps;
+  const { api, agents, sections, todos, chain, onTodosChange, onThreadChange, onThreadRemove, onThreadOpen, onMarkedUnread, onSectionsChange, onOpenTerminal, onError, toast, markdownOf, autotitle } = deps;
+  /** The chain record when this thread belongs to any handover chain, automatic or manual. */
+  const chainOf = (thread: Thread) => chain && (thread.handover
+    || chain.threads.some(x => x.handover?.sourceId === thread.id)) ? chain : undefined;
 
   // The agent chosen in the auto-titles settings names the thread now, by the person's rules.
   const autoName = async (thread: Thread) => {
@@ -245,6 +259,7 @@ export function useThreadActions(deps: Deps) {
         ? [{ id: 'fork', label: t('sidebar.fork'), icon: IconFork, disabled: forkBlocked(thread) !== null, onSelect: () => run('fork', thread) }]
         : []),
       { id: 'handover', label: t('handover.title'), icon: IconHand, onSelect: () => setDialog({ kind: 'handover', thread }) },
+      ...(chainOf(thread) ? [{ id: 'chain', label: t('handover.trail.title'), icon: IconHandover, onSelect: () => setDialog({ kind: 'chain', thread }) }] : []),
       'separator',
       thread.archivedAt
         ? { id: 'restore', label: t('archive.restore'), icon: IconArchive, onSelect: () => run('restore', thread) }
@@ -397,6 +412,14 @@ export function useThreadActions(deps: Deps) {
       const { thread } = dialog;
       dialogNode = (
         <HandoverDialog api={api} thread={thread} agents={agents} onOpen={onThreadOpen} onClose={close} />
+      );
+    } else if (dialog.kind === 'chain') {
+      const record = chainOf(dialog.thread);
+      const { thread } = dialog;
+      dialogNode = record && (
+        <HandoverChainDialog api={api} thread={thread} threads={record.threads} agentLabel={(id) => agents.find(a => a.id === id)?.label ?? id}
+          merged={record.isMerged(thread)} onToggle={() => record.onToggle(thread)} onSelect={record.onSelect}
+          onRefresh={record.onRefresh} onClose={close} />
       );
     } else {
       const { section } = dialog;

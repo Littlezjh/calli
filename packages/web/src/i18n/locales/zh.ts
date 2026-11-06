@@ -356,7 +356,7 @@ export const zh = {
   "auto.global": "全局自动交接",
   "auto.threshold": "已用额度阈值（%）",
   "auto.order": "接手顺序",
-  "auto.defaultOrder": "同类型另一实例优先",
+  "auto.defaultOrder": "同类型另一实例接替",
   "auto.noTargets": "没有接手目标",
   "auto.add": "添加接手目标",
   "auto.up": "上移",
@@ -607,6 +607,7 @@ export const zh = {
 
   // Conversation timeline
   'timeline.error.interrupted': 'hub 重启时这一轮还在运行，被中断了。再发一条消息可以接着做。',
+  'timeline.error.planExhaustedTitle': '额度用完了',
   'timeline.error.planExhausted': (detail: string) => `这个账号的额度用完了（${detail}）。可以交给另一个智能体接着做。`,
   'timeline.error.permissionRefused': (what: string) => `这一步需要批准${what ? `（${what}）` : ''}，但这个 agent 在后台运行时没法询问，所以拒绝后停下了。把输入框下方的权限切到"完全访问"，再发一次。`,
   'timeline.contextUsed': (used: string, size: string) => `上下文已用 ${used} / ${size}`,
@@ -674,7 +675,6 @@ export const zh = {
   'handover.chain.viewingEarlier': '前段只读；消息发送给最新一段',
   'handover.chain.goLatest': '前往最新一段',
   'handover.trail.from': (agent: string) => `接手自 ${agent}`,
-  'handover.trail.to': (agent: string) => `已交接给 ${agent}`,
   'handover.trail.title': '交接记录',
   'handover.trail.successor': '接手会话',
   'handover.trail.original': '原始会话',
@@ -790,7 +790,6 @@ export const zh = {
   'collab.pickAndWrite': '选择并填写任务',
 
   // Composer menu
-  'goal.show': '查看目标',
   'goal.set': '设置目标',
   'goal.pause': '暂停目标',
   'goal.resume': '继续目标',
@@ -1816,7 +1815,7 @@ export const zh = {
   'view.forkHere': '分叉：从这一轮之后另走一条路，后面的不带过去',
   'view.handingOver': '正在交接…',
   'view.handTo': (agent: string) => `交给 ${agent} 接手`,
-  'view.chooseOther': '选择其他智能体',
+  'view.chooseOtherShort': '选择其他',
   'view.resumeArm': '等额度恢复后自动继续',
   'view.resumeArmedAt': (time: string) => `额度恢复后自动继续 · 预计 ${time}`,
   'view.resumeArmedAny': '额度恢复后自动继续，将定期检查',

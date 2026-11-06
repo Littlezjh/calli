@@ -357,8 +357,8 @@ export function Composer({
     if (planMode) additions.push({ id: 'composer:plan', label: t('composerMenu.planMode'), hint: planMode.disabled ? t('composer.planAfterTurn') : planMode.active ? t('composer.planActive') : t('composerMenu.planOn'), keywords: ['plan', '计划'], disabled: planMode.disabled });
     if (writingMode) additions.push({ id: 'composer:writing', label: t('writing.mode'), hint: writingMode.active ? t('writing.off') : t('writing.modeHint'), keywords: ['writing', 'write', '写作', '文章'], disabled: writingMode.disabled });
     if (goal) {
-      for (const { action, blocked } of goalMenuActions(goal, !!(goal.live && goalState), running, !!planMode?.active)) {
-        additions.push({ id: `composer:goal:${action}`, label: t(`goal.${action}`), hint: blocked || (action === 'set' ? t('composer.goalSetHint') : ''), keywords: ['goal', '目标', 'target'], disabled: !!blocked });
+      for (const { action, blocked } of goalMenuActions(goal, running, !!planMode?.active)) {
+        additions.push({ id: `composer:goal:${action}`, label: t(`goal.${action}`), hint: blocked || t('composer.goalSetHint'), keywords: ['goal', '目标', 'target'], disabled: !!blocked });
       }
     }
     const group = (label: string, entries: HubAction[]): MenuRow[] => searchCommands(query, entries, []).map(row => row.type === 'heading' ? { ...row, label } : row);
@@ -367,7 +367,7 @@ export function Composer({
       ...(!narrow ? group(t('composer.add'), additions) : []),
       ...searchCommands(query, actions, commands, hiddenCommands),
     ];
-  }, [addOpen, addQuery, catalog, text, narrow, actions, commands, hiddenCommands, planMode, writingMode, goal, goalState, running]);
+  }, [addOpen, addQuery, catalog, text, narrow, actions, commands, hiddenCommands, planMode, writingMode, goal, running]);
   const selectable = useMemo(() => rows.filter((r): r is Selectable => r.type !== 'heading' && !(r.type === 'action' && r.action.disabled)), [rows]);
   const menuOpen = addOpen || (rows.length > 0 && !dismissed);
 
@@ -1180,7 +1180,7 @@ export function Composer({
               trigger={<IconPlus size={20} />}
               disabled={disabled || menuBusy || busy}
             >
-              {close => <ComposerMenu close={close} commands={commands} planMode={planMode} writingMode={writingMode} goal={goal} running={running} goalHasCard={!!(goal?.live && goalState)}
+              {close => <ComposerMenu close={close} commands={commands} planMode={planMode} writingMode={writingMode} goal={goal} running={running}
                 attachDisabled={Boolean(attachmentsBlocked)}
                 attachTitle={attachBlocked ? t('composer.attachBlocked', attachBlocked) : attachNote ?? t('composer.attachHint')}
                 onAttach={() => fileRef.current?.click()} onGoal={chooseGoal} onBrowse={browse} />}
