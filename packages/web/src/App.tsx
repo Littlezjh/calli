@@ -31,7 +31,7 @@ import { useAppearance, useInTitlebar, useIsCompact, useListSwipe, useStoredFlag
 import { useHosts } from './hosts';
 import type { PreparedImage } from './images';
 import { restoreVideos, type PreparedVideo } from './videos';
-import { attentionCount, pageTitle, threadNotices } from './notices';
+import { attentionCount, pageTitle } from './notices';
 import { folderName } from './paths';
 import { ThreadPlace } from './components/ThreadPlace';
 import { PERMISSION_LABELS, PERMISSION_ORDER, permissionHint, startingPermission } from './permissions';
@@ -96,7 +96,6 @@ import { handoverHistoryKey, latestHandoverThread } from './handover';
 import { TurnRuler } from './components/TurnRuler';
 import { NewProjectDialog, ProjectPicker, RootsDialog } from './components/Projects';
 import { NoteMarks, type NoteMark } from './components/NoteMarks';
-import { Toast, type ToastState } from './components/Toast';
 import { ConnectDialog, DemoBar } from './components/ConnectDialog';
 import { DemoApi, DemoError } from './demo/DemoApi';
 import { IconCheck, IconBell, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconSettings, IconMore, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconTrace, IconLanguage, IconWaveform } from './components/icons';
@@ -744,7 +743,13 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const [errorState, setErrorState] = useState<{ text: string; thread: string | null } | null>(null);
   const setError = (text: string | null) => setErrorState(text ? { text, thread: selectedId } : null);
   const error = errorState && errorState.thread === selectedId ? errorState.text : null;
-  const [toast, setToast] = useState<ToastState | null>(null);
+  // What a thread is busy with that has no trace of its own yet (naming it, copying it): a quiet
+  // line by its title until the result lands. Confirmations that the screen already shows are not said.
+  const [busyLine, setBusyLine] = useState<{ threadId: string; message: string } | null>(null);
+  // A thread just archived: its row is gone, so the undo is offered where the row was noticed.
+  const [archivedUndo, setArchivedUndo] = useState<{ thread: Thread; nonce: number } | null>(null);
+  // The daemon serves a newer build than the page runs: a row under the header offers the reload.
+  const [newVersion, setNewVersion] = useState(false);
   const [showDirPicker, setShowDirPicker] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [archiveKey, setArchiveKey] = useState(0);
@@ -819,7 +824,6 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const [pendingSend, setPendingSend] = useState<{ text: string; images: PreparedImage[]; videos?: PreparedVideo[]; mentions?: AgentMention[]; resolve: () => void; reject: (e: unknown) => void } | null>(null);
   const [pageHidden, setPageHidden] = useState(() => document.hidden);
   const baseTitle = useRef(document.title);
-  const seenThreads = useRef<Thread[] | null>(null);
 
   const voice = useVoiceSession(api, selectedId, hostId);
   const timeline = useMemo(() => buildTimeline(events,
@@ -1141,7 +1145,6 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     () => api?.schedules().then(setSchedules).catch(() => setSchedules([])),
     [api],
   );
-  const dismissToast = useCallback(() => setToast(null), []);
 
   // Initial data once we have a token.
   useEffect(() => {
@@ -1260,9 +1263,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     if (showcase) return;
     if (Date.now() - updateAskedAt.current < UPDATE_CHECK_MS) return;
     updateAskedAt.current = Date.now();
-    void newerBuildAvailable().then((newer) => {
-      if (newer) setToast({ message: t('app.newVersion'), action: { label: t('preview.refresh'), run: () => window.location.reload() }, sticky: true });
-    });
+    void newerBuildAvailable().then((newer) => { if (newer) setNewVersion(true); });
   };
 
   const historyCursor = useRef<number | null>(null);
@@ -1616,27 +1617,21 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
 
   // The thread on screen is being read. With the page in the background, nothing is.
   const viewingId = pageHidden ? null : selectedId;
+  // Threads away from this one that want a look: counted in the tab title, dotted on the list button.
+  const attention = attentionCount(threads, viewingId);
 
-  // Say so when something happens in a thread that is not on screen, and keep a count in the tab title.
+  // Keep a count of threads that want attention in the tab title; the sidebar rows and the dot on
+  // the list button carry it inside the app. What happens off-screen is not announced over the page.
   useEffect(() => {
-    const before = seenThreads.current;
-    seenThreads.current = threads;
     document.title = pageTitle(baseTitle.current, attentionCount(threads, viewingId));
-    if (!before) return;
-    const notice = threadNotices(before, threads, viewingId).at(-1);
-    if (notice) {
-      setToast({
-        message: notice.message,
-        action: {
-          label: notice.action,
-          run: () => {
-            setSelectedId(notice.threadId);
-            setDrawer(false);
-          },
-        },
-      });
-    }
   }, [threads, viewingId]);
+
+  // The undo for an archive waits a while, then the offer goes; the archive page still has the thread.
+  useEffect(() => {
+    if (!archivedUndo) return;
+    const timer = window.setTimeout(() => setArchivedUndo(null), 8000);
+    return () => window.clearTimeout(timer);
+  }, [archivedUndo]);
 
   // Looking at a thread marks it read, on every device.
   const selectedUnread = Boolean(selected?.unread);
@@ -1691,7 +1686,8 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     },
     onOpenTerminal: () => (demo ? askToConnect() : openTerminal()),
     onError: handleError,
-    toast: setToast,
+    onBusy: setBusyLine,
+    onArchived: (thread) => setArchivedUndo({ thread, nonce: Date.now() }),
     // The handover chain record lives in the thread menu, not as chrome above the conversation.
     chain: api.demo ? undefined : {
       threads,
@@ -1882,7 +1878,6 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     const { terminalId } = await api.loginAgentTerminal(agent.id);
     setTerminalTarget(terminalId);
     setTermOpen(true);
-    setToast({ message: t('agents.loginStarted') });
   };
 
   const openTeams = () => { setSelectedId(null); setView('teams'); setDrawer(false); reloadTeams(); };
@@ -1945,7 +1940,6 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       if (thread.archivedAt) {
         thread = await api.updateThread(hit.threadId, { archived: false });
         setArchiveKey((k) => k + 1);
-        setToast({ message: t('app.unarchived') });
       }
       openThread(thread);
       setJump({ threadId: hit.threadId, turnId: hit.turnId });
@@ -1969,7 +1963,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       }
       if (active) openThread(thread);
     }).catch(() => {
-      if (active) setToast({ message: t('app.threadNotFound') });
+      if (active) setError(t('app.threadNotFound'));
     }).finally(() => {
       if (active) {
         setThreadLink(null);
@@ -1986,7 +1980,6 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       if (thread.archivedAt) {
         thread = await api.updateThread(threadId, { archived: false });
         setArchiveKey((k) => k + 1);
-        setToast({ message: t('app.unarchived') });
       }
       openThread(thread);
       setImportOpen(false);
@@ -2439,7 +2432,6 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
             setProjectDialog(null);
             setDraftCwd(path);
             setDraftScratch(false);
-            setToast({ message: t('app.projectCreated', folderName(path)) });
           }}
         />
       )}
@@ -2526,6 +2518,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           ) : (
             <button className="icon-btn menu-btn" aria-label={t('app.openList')} aria-expanded={listOpen} onClick={() => setDrawer((v) => !v)}>
               {compact ? <IconBack size={22} /> : <IconMenu />}
+              {attention > 0 && <span className="menu-dot" aria-hidden="true" />}
             </button>
           )}
           {/* With the list put away, the way back and a new thread move up here. */}
@@ -2550,6 +2543,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
             )}
             {selected?.coordination?.team && <div className={`team-task-status${['awaiting_confirm', 'needs_attention'].includes(selected.coordination.team.status) ? ' attention' : ''}`}><span className="team-task-name">{selected.coordination.team.name}</span><span> · {t(`teams.${selected.coordination.team.status}`)}</span></div>}
             {!selected && host && hostUp && <div className="topbar-sub">{host.label}</div>}
+            {busyLine && busyLine.threadId === selected?.id && <div className="topbar-sub topbar-busy">{busyLine.message}</div>}
             {atMember && (
               <button className="topbar-sub topbar-lead-link" title={t('app.backToLead')} onClick={() => pick(selected!.coordination!.rootId)}>
                 {agentLabel(selected!.agent)} · {t('app.leadThread', leadTitle)}
@@ -2610,6 +2604,31 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
             </div>
           )}
         </header>
+
+        {/* Rows that wait for a decision, in the flow of the page rather than over it: a newer
+            build to load, a just-archived thread to bring back. */}
+        {newVersion && (
+          <div className="notice-row" role="status">
+            <span>{t('app.newVersion')}</span>
+            <button className="notice-act" onClick={() => window.location.reload()}>{t('preview.refresh')}</button>
+            <button className="notice-x" aria-label={t('app.dismiss')} onClick={() => setNewVersion(false)}>×</button>
+          </div>
+        )}
+        {archivedUndo && (
+          <div className="notice-row" role="status" key={archivedUndo.nonce}>
+            <span>{t('actions.archivedNotice', archivedUndo.thread.title)}</span>
+            <button
+              className="notice-act"
+              onClick={() => {
+                threadActions.run('restore', archivedUndo.thread);
+                setArchivedUndo(null);
+              }}
+            >
+              {t('actions.undo')}
+            </button>
+            <button className="notice-x" aria-label={t('app.dismiss')} onClick={() => setArchivedUndo(null)}>×</button>
+          </div>
+        )}
 
         {demo && (showcase ? showcase.notice(selectedId, extWant) : <DemoBar compact={compact} onConnect={askToConnect} />)}
 
@@ -2984,7 +3003,6 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           api={api}
           cwd={selected?.cwd || draftCwd || workdirs[0] || ''}
           terminalId={terminalTarget}
-          toast={setToast}
           onClose={() => { setTermOpen(false); setTerminalTarget(null); }}
           onError={handleError}
         />
@@ -3047,7 +3065,6 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           onImported={(thread) => {
             openThread(thread);
             setImportOpen(false);
-            setToast({ message: t('import.imported') });
           }}
           onOpen={(threadId) => void openImported(threadId)}
           onClose={() => setImportOpen(false)}
@@ -3232,7 +3249,6 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         />
       )}
       {threadActions.layer}
-      <Toast toast={toast} onDismiss={dismissToast} />
       <NoteMarks marks={noteMarks} scrollerRef={scrollerRef} />
       <SelectionMenu
         onNote={(quote, comment, range, file) => {

@@ -4327,45 +4327,81 @@ input.picker-search {
   color: var(--muted);
 }
 
-/* ---------- Toast ---------- */
+/* ---------- Notice rows ---------- */
 
-.toast {
-  position: fixed;
-  /* At the top: the bottom of the screen belongs to the composer and, on phones, the keyboard. */
-  top: calc(60px + env(safe-area-inset-top));
-  left: 50%;
-  z-index: 90;
+/* A decision that waits (a newer build, an archive to undo): in the flow of the page under the
+   header, not over it. Neutral: the row is an offer, not an alarm. */
+.notice-row {
   display: flex;
   align-items: center;
-  gap: 12px;
-  max-width: calc(100vw - 32px);
-  padding: 9px 16px;
-  border-radius: 999px;
-  background: var(--accent);
-  color: var(--accent-fg);
-  box-shadow: var(--shadow-pop);
-  font-size: 14px;
-  transform: translateX(-50%);
-  animation: toast-in 0.18s ease-out;
+  justify-content: center;
+  gap: 14px;
+  width: min(var(--content-w), calc(100% - 32px));
+  margin: 6px auto 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--p-bg);
+  font-size: 13.5px;
+  animation: notice-in 0.18s ease-out;
 }
 
-.toast-action {
+.notice-row > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.notice-act {
+  flex: none;
   padding: 0;
   border: 0;
   background: none;
-  color: inherit;
+  color: var(--text);
   font-weight: 600;
   text-decoration: underline;
   text-underline-offset: 3px;
-  flex: none;
   white-space: nowrap;
 }
 
-@keyframes toast-in {
+.notice-x {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 22px;
+  text-align: center;
+}
+
+@keyframes notice-in {
   from {
     opacity: 0;
-    transform: translate(-50%, -8px);
+    transform: translateY(-4px);
   }
+}
+
+/* Something away from this page wants a look: a dot on the way back to the list. */
+.menu-btn {
+  position: relative;
+}
+
+.menu-dot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warn);
+  box-shadow: 0 0 0 2px var(--bg);
+  pointer-events: none;
 }
 
 /* ---------- Dialog extras and panels ---------- */
