@@ -273,7 +273,7 @@ test('collaboration default and overrides; lead CLI sends to the replacement mem
     await page.getByRole('button', { name: '查看智能体', exact: true }).click();
     const panel = page.getByRole('region', { name: '智能体面板' });
     await panel.locator('.auto-member-mark').waitFor();
-    assert.match(await page.locator('.sidebar .team-group .handover-toggle').innerText(), /1 个智能体/);
+    assert.match(await page.locator('.sidebar .team-group .handover-toggle').getAttribute('aria-label'), /1 个智能体/);
     assert.equal(await panel.getByRole('switch').getAttribute('aria-checked'), 'false');
     await page.screenshot({ path: join(shots, 'members-desktop-dark.png') });
   } finally { await context.close(); }

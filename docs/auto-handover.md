@@ -26,6 +26,20 @@
 
 新接口延用本机鉴权和多机器代理边界。会话列表随 SSE 提供简短状态，设置页逐个展开实例时才加载模型选项。
 
+## 额度读数的三个来源
+
+参考 magpie（yetone/magpie）的三层方案，同名常量与解析对齐：
+
+1. **随回答上报（首选）**：Claude Code 应答时经 ACP `usage_update` 的 `_meta._claude/rateLimit`（即它的 rate_limit_event，来自 Anthropic `anthropic-ratelimit-unified-*` 响应头）带出 `unifiedWindows`。适配器经 `onQuotaObserved` 上报，daemon 写入额度缓存（`observeQuota`）：零探测成本、每轮新鲜，探测被 429 挡住也可用。
+2. **后台轮询**：活跃实例每 3 分钟探测一次（`refreshQuotas`，走各适配器自己的 `fetchQuota`）。
+3. **快照兜底**：探测失败时接受 15 分钟内的最近读数（`decisionQuota`），避免“快没额度也不动作”；压缩与交接的轮间判定都走它。
+
+## 自动压缩（额度阈值）
+
+- 全局默认关，`GET/PUT /api/autocompact-settings` 读写 `{ enabled, threshold, agent, model, minChars, chunkChars, maxChars }`；阈值须低于交接阈值（默认 85% < 90%）。
+- 轮次结束、额度达到阈值且转录不短于 `minChars`（默认 24 万字符）时：配置了压缩 agent（如 magpie 桥接的第三方模型）则由它把转录压成富摘要，同账号新会话带摘要继续；未配置则原地 `/compact`。一个会话只压一次；压缩不消耗官方账号额度。
+- 压缩后交接复制的就是小会话：resume 首轮只重读摘要体积，而不是压缩前的整段历史。
+
 ## 额度恢复自动续跑
 
 额度耗尽后没被交接走的会话（自动交接关闭、没有可用目标、或取消了倒计时）停在原实例上。可在出错卡片上点「等额度恢复后自动继续」，daemon 记一条守候；设置页「额度恢复后自动继续」开关（默认关）则让之后所有这样停下的会话自动进入守候。已交接的会话不接回：工作已经移到接手方，接回会双跑。

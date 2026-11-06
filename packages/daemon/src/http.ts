@@ -626,6 +626,13 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (method === 'PUT') return sendJson(res, 200, manager.autoHandover.configure(await readJson(req)));
     }
 
+    // Auto-compact: quota-aware context compression ahead of the handover. The agent named in the
+    // settings writes the brief (a bridge to third-party models spends no official-account quota).
+    if (parts.join('/') === 'api/autocompact-settings') {
+      if (method === 'GET') return sendJson(res, 200, { settings: manager.autoCompact.settings(), status: manager.autoCompact.status() });
+      if (method === 'PUT') return sendJson(res, 200, manager.autoCompact.configure(await readJson(req)));
+    }
+
     // GET /api/agents/:id/quota: plan usage, read outside any session and cached briefly.
     // ?refresh=1 skips the cache: the dashboard's refresh button means "ask again now".
     if (method === 'GET' && parts[0] === 'api' && parts[1] === 'agents' && parts[2] && parts[3] === 'quota') {

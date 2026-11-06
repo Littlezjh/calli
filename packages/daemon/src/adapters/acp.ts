@@ -1,5 +1,5 @@
 import { formQuestions } from './questions.js';
-import type { WorkMode } from './types.js';
+import type { PlanQuota, QuotaWindow, WorkMode } from './types.js';
 import { acpUsage } from './usage.js';
 import { timedUsage, type LiveUsage } from './live-usage.js';
 import type { UsageSample } from '../telemetry.js';
@@ -48,6 +48,46 @@ interface ConfigOption {
  * Maps one ACP `session/update` payload to a unified event.
  * Returns null for updates the UI does not need (commands, user echoes).
  */
+/** Window labels for the kinds Claude Code's rate_limit_event names, mirroring what its /usage
+ *  prints (5H/7D); the scoped weekly pools keep their scope so model decisions can use them. */
+const RATE_LIMIT_KINDS: Record<string, { label: string; scope?: string; modelIds?: string[] }> = {
+  five_hour: { label: '5H' },
+  seven_day: { label: '7D', scope: '全部模型' },
+  seven_day_opus: { label: '7D', scope: 'Opus', modelIds: ['opus'] },
+  seven_day_sonnet: { label: '7D', scope: 'Sonnet', modelIds: ['sonnet'] },
+};
+
+const percent = (v: unknown): number | null => {
+  const n = typeof v === 'number' && Number.isFinite(v) ? v : NaN;
+  return Number.isFinite(n) && n >= 0 && n <= 1 ? Math.round(n * 100) : null;
+};
+
+/** The account's plan usage as Claude Code tells it while answering (its rate_limit_event, on a
+ *  usage_update's `_meta._claude/rateLimit`): free, current, and there even when the usage endpoint
+ *  keeps turning a probe away. What cannot be read is left out, not guessed. */
+export function acpRateLimitQuota(meta: unknown): PlanQuota | null {
+  if (!meta || typeof meta !== 'object') return null;
+  const info = meta as { status?: unknown; rateLimitType?: unknown; utilization?: unknown; resetsAt?: unknown; unifiedWindows?: Record<string, { utilization?: unknown; resetsAt?: unknown }> };
+  const windows: QuotaWindow[] = [];
+  const resetOf = (v: unknown): string | undefined => {
+    const s = typeof v === 'number' && Number.isFinite(v) && v > 0 ? v * 1000 : NaN;
+    return Number.isFinite(s) ? new Date(s).toISOString() : undefined;
+  };
+  for (const [kind, w] of Object.entries(info.unifiedWindows ?? {})) {
+    const used = percent(w?.utilization);
+    if (used === null) continue;
+    const known = RATE_LIMIT_KINDS[kind];
+    windows.push({ ...(known ?? { label: kind }), usedPercent: used, ...(resetOf(w?.resetsAt) ? { resetsAt: resetOf(w?.resetsAt)! } : {}) });
+  }
+  // The window a rejection was about may not be among the unified ones; it is as good as full.
+  const about = typeof info.rateLimitType === 'string' ? info.rateLimitType : '';
+  if (about && !info.unifiedWindows?.[about]) {
+    const used = percent(info.utilization) ?? (info.status === 'rejected' ? 100 : null);
+    if (used !== null) windows.push({ ...(RATE_LIMIT_KINDS[about] ?? { label: about }), usedPercent: used, ...(resetOf(info.resetsAt) ? { resetsAt: resetOf(info.resetsAt)! } : {}) });
+  }
+  return windows.length ? { windows, checkedAt: new Date().toISOString() } : null;
+}
+
 export function mapAcpUpdate(update: any): EmittedEvent | null {
   // Claude's bridge uses an explicit compaction entity or a tagged synthetic tool call.
   const compactMeta = update?._meta?.jetbrains?.air?.contextCompaction;
@@ -223,6 +263,8 @@ export class AcpSession implements AgentSession {
   private costReported = false;
   private costBefore: { amount: number; currency: string } | null = null;
   controlGoal?: AgentSession['controlGoal'];
+  /** Plan usage observed in-band, as the agent answers (Claude Code's rate_limit_event). */
+  onQuota?: (quota: PlanQuota) => void;
   private hooks: TurnHooks | null = null;
   private sessionHooks?: SessionHooks;
   /**
@@ -269,6 +311,12 @@ export class AcpSession implements AgentSession {
   /** Called by the peer for every session/update notification. */
   onUpdate(update: unknown): void {
     const value = update as any;
+    // The account's plan usage, told as the agent answers: account-level, so it counts even during
+    // replay or background work, when no turn hooks would carry it anywhere.
+    if (value?.sessionUpdate === 'usage_update' && value._meta?.['_claude/rateLimit'] !== undefined) {
+      const quota = acpRateLimitQuota(value._meta['_claude/rateLimit']);
+      if (quota) this.onQuota?.(quota);
+    }
     if (value?.sessionUpdate === 'tool_call' && typeof value.toolCallId === 'string') {
       if (this.toolCalls.size >= 100) this.toolCalls.delete(this.toolCalls.keys().next().value!);
       this.toolCalls.set(value.toolCallId, { title: value.title, kind: value.kind, rawInput: value.rawInput, content: value.content });
@@ -496,6 +544,8 @@ export class AcpSession implements AgentSession {
 /** Everything an ACP agent has in common. The agent-specific parts are the abstract members. */
 export abstract class AcpAdapter implements AgentAdapter {
   protected liveUsage(_id: string, _cwd: string, _emit: (sample: UsageSample) => void): LiveUsage | undefined { return undefined; }
+  /** Plan usage observed in-band, as the agent answers; wired by whoever owns the adapter. */
+  onQuotaObserved?: (quota: PlanQuota) => void;
   /** Optional protocol extensions supplied by a concrete adapter. */
   protected configureSession(_session: AcpSession, _peer: JsonRpcPeer): void {}
   /** Agent-specific options that must be present when a fresh native session is created. */
@@ -721,6 +771,7 @@ export abstract class AcpAdapter implements AgentAdapter {
       const configOptions: ConfigOption[] = info?.configOptions ?? [];
 
       const session = new AcpSession(sessionId, peer, this.modeIds, offeredModes, effortConfigIdOf(configOptions), emit => this.liveUsage(sessionId, opts.cwd, emit), configOptions);
+      session.onQuota = quota => this.onQuotaObserved?.(quota);
       this.configureSession(session, peer);
       holder.session = session;
       // An agent without session modes (DeepSeek Harness) has no permission level to set; set_mode

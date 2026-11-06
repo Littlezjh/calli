@@ -379,6 +379,9 @@ export interface AgentAdapter {
   models(refresh?: boolean): Promise<ModelOption[]>;
   /** A background catalog or capability probe changed the last published list. */
   onModelsChanged?: (models: ModelOption[]) => void;
+  /** Plan usage observed in-band as the agent answers (Claude Code's rate_limit_event): free and
+   *  fresher than any probe, so it feeds the between-turn quota decisions and the cache it reads. */
+  onQuotaObserved?: (quota: PlanQuota) => void;
   /** Resolve deferred image capabilities before accepting an image attachment. */
   modelForImages?(model: string | null): Promise<ModelOption | undefined>;
   /** Read-only runtime identity; no prompt, login or config write. */
