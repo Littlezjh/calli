@@ -42,7 +42,12 @@ export interface AutoTitlePass {
   at: string;
 }
 
-export const DEFAULT_RULES = ['- 8 到 20 个字，和对话用同一种语言', '- 说清楚要做的事，不要客套话', '- 不加标点和引号'].join('\n');
+export const DEFAULT_RULES = [
+  '- 开头放一个贴切这件事本身的 emoji，只放一个，不要一律用 🤖',
+  '- 8 到 20 个字，和对话用同一种语言',
+  '- 说清楚要做的事，不要客套话',
+  '- 不加标点和引号',
+].join('\n');
 const DEFAULTS: AutoTitleSettings = { agent: null, model: null, rules: DEFAULT_RULES, trigger: 'finished', again: false };
 /** How much of the first message and of its answer the naming agent reads. */
 const EXCERPT = 1500;
