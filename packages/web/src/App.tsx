@@ -296,8 +296,16 @@ function ThreadQuickSwitch({ threads, selectedId, agents, onSelect }: {
         onPointerMove={(e) => {
           if (press?.pointerId !== e.pointerId) return;
           lastY.current = e.clientY;
+          const dx = startX.current - e.clientX;
+          const dy = Math.abs(e.clientY - startY.current);
+          // A vertical drag is a scroll, not a summon: give up before the hold timer fires.
+          if (!press.open && !tapOpen && dy > 10 && dx <= 24) {
+            clearTimer();
+            reset(e.currentTarget, e.pointerId);
+            return;
+          }
           // A pull past the threshold summons the panel for tapping; holding keeps its scrub.
-          if (!press.open && !tapOpen && startX.current - e.clientX > 24) {
+          if (!press.open && !tapOpen && dx > 24 && dx > dy) {
             clearTimer();
             reset(e.currentTarget, e.pointerId);
             setTapOpen(true);

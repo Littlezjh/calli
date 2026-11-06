@@ -4,6 +4,7 @@ import { hydrateWork, HistoryClient, type HistoryDetail, type HistoryWork, type 
 import { Children, createContext, Fragment, isValidElement, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type KeyboardEvent, type ReactNode } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { trimAutolinkJunk } from '../markdown-links';
 import { placeImages, stripPaths } from '../image-places';
 import { highlightLanguage, languageName } from '../code-language';
 import { enlargeMermaidDiagram, renderMermaidDiagram } from '../mermaid';
@@ -923,7 +924,7 @@ function MarkdownDiv({ node: _node, ...props }: ComponentProps<'div'> & { node?:
 }
 
 const MARKDOWN_COMPONENTS = { pre: CodeBlock, img: MarkdownImage, a: MarkdownLink, div: MarkdownDiv };
-const MARKDOWN_PLUGINS = [remarkGfm];
+const MARKDOWN_PLUGINS = [remarkGfm, trimAutolinkJunk];
 /**
  * Markdown drops addresses it does not know, `file://` among them, leaving a link that reloads
  * the page. Every address is kept instead: links and images are drawn by the components above,
