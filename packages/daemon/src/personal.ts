@@ -10,6 +10,7 @@ import type { LarkSignal } from './channels/lark.js';
 import { isWithinWorkdirs } from './workdirs.js';
 import { HttpError } from './errors.js';
 import { PROFILE_TEMPLATE, PersonalFiles } from './personal-files.js';
+import { PersonalExplore } from './personal-explore.js';
 import { PersonalReview } from './personal-review.js';
 import { PersonalRouter } from './personal-router.js';
 import { ProactiveService } from './proactive.js';
@@ -83,11 +84,14 @@ export class PersonalService {
   readonly review: PersonalReview;
   readonly router: PersonalRouter;
   readonly proactive: ProactiveService;
+  /** The one-shot onboarding explore; mutable so tests can substitute a fixture-backed instance. */
+  explore: PersonalExplore;
   constructor(readonly store: Store, readonly manager: ThreadManager, private readonly adapters: Map<string, AgentAdapter>) {
     this.summary = new SummaryService(store, manager, this, adapters);
     this.review = new PersonalReview(store);
     this.router = new PersonalRouter(store, manager, this, adapters);
     this.proactive = new ProactiveService(store, manager, this, adapters);
+    this.explore = new PersonalExplore(store, manager, this);
   }
   private storedSettings(): PersonalSettings { return this.store.hubSetting('personal', { directory: null, agent: null, model: null }); }
   directory(): string {

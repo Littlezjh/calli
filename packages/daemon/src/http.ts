@@ -367,6 +367,16 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (method === 'GET') return sendJson(res, 200, manager.personal.profile());
       if (method === 'PUT') return sendJson(res, 200, await manager.personal.saveProfile(await readJson(req)));
     }
+    // The onboarding explore: readonly sources, one model judgement, a validated recommendation.
+    if (path === '/api/personal/explore/sources' && method === 'GET') return sendJson(res, 200, await manager.personal.explore.sources());
+    if (path === '/api/personal/explore') {
+      if (method === 'GET') return sendJson(res, 200, manager.personal.explore.status());
+      if (method === 'POST') {
+        const started = manager.personal.explore.start(await readJson(req));
+        return sendJson(res, started.running ? 200 : 202, { id: started.id });
+      }
+      if (method === 'DELETE') return sendJson(res, 200, manager.personal.explore.cancel());
+    }
     if (path === '/api/wishes' && method === 'GET') return sendJson(res, 200, url.searchParams.get('summary') === 'true' ? { count: manager.personal.store.wishCount() } : manager.personal.store.listWishes());
     if (path === '/api/todos/summary') {
       if (method === 'GET') return sendJson(res, 200, manager.personal.summary.status());

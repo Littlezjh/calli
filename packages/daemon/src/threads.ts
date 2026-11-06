@@ -305,6 +305,8 @@ export class ThreadManager {
   private readonly reportTurns = new Set<string>();
   /** Archived threads asking an agent one question (askOnce): they may run, and get nothing added. */
   private readonly backgroundThreads = new Set<string>();
+  /** Questions whose input must not enter hub history or search indexes. */
+  private readonly unrecordedQuestions = new Set<string>();
   /** Which protocol blocks each thread's agent has read, so a block is not attached to every message. */
   private readonly injections: Injections;
   /** Whether an enabled extension holds `progress.report`. Wired by the daemon's entry point. */
@@ -898,9 +900,12 @@ export class ThreadManager {
    * One question to an agent, answered in a thread of its own that is archived from the start: it
    * never shows in the list, and the asking thread's agent and session are not touched. The answer
    * comes back as plain text. A turn that asks for an approval or a reply is stopped, since nobody
-   * is there to give one; so is one that takes longer than `timeoutMs`.
+   * is there to give one; so is one that takes longer than `timeoutMs`. An AbortSignal stops this
+   * exact question, including startup. `recordPrompt: false` omits its input from hub history;
+   * native agent session retention is still owned by the adapter.
    */
-  async askOnce(agent: string, text: string, opts: { model?: string | null; title?: string; timeoutMs?: number } = {}): Promise<string> {
+  async askOnce(agent: string, text: string, opts: { model?: string | null; title?: string; timeoutMs?: number; signal?: AbortSignal; recordPrompt?: boolean } = {}): Promise<string> {
+    opts.signal?.throwIfAborted();
     const adapter = this.adapters.get(agent);
     if (!adapter) throw new HttpError(400, `unknown agent: ${agent}`);
     const modes = adapter.capabilities.permissionModes;
@@ -910,10 +915,14 @@ export class ThreadManager {
     });
     await this.updateThread(thread.id, { archived: true });
     this.backgroundThreads.add(thread.id);
+    if (opts.recordPrompt === false) this.unrecordedQuestions.add(thread.id);
+    const cancel = () => { void this.cancelTurn(thread.id).catch(() => undefined); };
+    opts.signal?.addEventListener('abort', cancel, { once: true });
     let turnId: string | null = null;
     let stop: (() => void) | null = null;
     let timedOut = false;
     try {
+      opts.signal?.throwIfAborted();
       const ended = new Promise<StoredEvent>((resolve, reject) => {
         // On timeout the turn is cancelled and its recorded end — `cancelled`, not a session error —
         // is awaited before the process is dropped in the finally below. The safety timer answers
@@ -936,15 +945,19 @@ export class ThreadManager {
       const started = await this.startTurn(thread.id, { text });
       if (!('turnId' in started) || !started.turnId) throw new HttpError(500, 'the question was not sent');
       turnId = started.turnId;
+      if (opts.signal?.aborted) cancel();
       // The turn may have ended before its id was known here.
       const done = this.store.listTurnEvents(thread.id, turnId).find(e => turnOutcome(e));
       const end = done ?? await ended;
       const outcome = turnOutcome(end)!;
+      opts.signal?.throwIfAborted();
       if (timedOut) throw new HttpError(504, 'the agent took too long to answer');
       if (outcome.outcome !== 'ok') throw new HttpError(502, outcome.message ?? `the agent's turn ended: ${outcome.outcome}`);
       return turnAnswer(this.store.listEvents(thread.id, 0, -1), turnId).trim();
     } finally {
       (stop as (() => void) | null)?.();
+      opts.signal?.removeEventListener('abort', cancel);
+      this.unrecordedQuestions.delete(thread.id);
       this.backgroundThreads.delete(thread.id);
       // The answer is read from the store: the agent process and its scratch folder can go now, so
       // one question does not leave a resident process behind.
@@ -2609,6 +2622,7 @@ export class ThreadManager {
 
   /** Closes live agent processes. Threads and events stay in the store. */
   async shutdown(): Promise<void> {
+    await this.personal.explore.dispose();
     await this.lark.dispose();
     this.autoHandover.close();
     this.quotaResume.dispose();
@@ -3132,6 +3146,9 @@ export class ThreadManager {
     }
     // What the agent was told may have left its context, or never reached it: attach it again next time.
     if (type === 'context.compaction' || type === 'turn.error') this.injections.forget(threadId);
+    if (type === 'turn.started' && this.unrecordedQuestions.has(threadId)) {
+      data = { ...data, text: '', displayText: '', promptOmitted: true };
+    }
     const stored = this.store.appendEvent(threadId, turnId, type, data);
     // Turn timing is computed once, when the turn ends; a deferred task keeps it off the turn's tail.
     if (turnId && (type === 'turn.done' || type === 'turn.error') && !data.imported && !data.fromTerminal) this.recordTurnStats(threadId, turnId);
