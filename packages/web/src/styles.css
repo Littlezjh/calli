@@ -470,6 +470,43 @@ button:disabled {
   overflow: hidden;
 }
 
+/* The sidebar and the conversation, together, are one sheet of paper on a desktop: an 8px band of
+   the window's own colour runs round it, and the sheet's corners are the window's shape. A phone
+   keeps the full-bleed layout. */
+.shell {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+
+@media (min-width: 641px) {
+  .app {
+    padding: 8px;
+    background: var(--sidebar);
+  }
+
+  .shell {
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg);
+  }
+}
+
+/* Installed with the window's controls drawn over the page: the top bar already fills that band,
+   so the paper starts at the window's top edge under it; its top corners stay square. */
+@media (display-mode: window-controls-overlay) {
+  .app {
+    padding-top: 0;
+  }
+
+  .shell {
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+  }
+}
+
 .sidebar {
   display: flex;
   flex-direction: column;
@@ -6831,14 +6868,25 @@ div.file-card:hover { background: var(--surface); }
   }
 
   .main.lean {
-    --column-shift: clamp(0px, calc((var(--main-w, 0px) - var(--content-w)) / 4 - 32px), calc(var(--sidebar-w) / 4));
+    /* The lean on its own, kept apart so the standing overview can ask for whichever is farther
+       left: the lean, or the room the panel needs. */
+    --lean-shift: clamp(0px, calc((var(--main-w, 0px) - var(--content-w)) / 4 - 32px), calc(var(--sidebar-w) / 4));
+    --column-shift: var(--lean-shift);
     --column-extra: clamp(0px, calc((var(--main-w, 0px) - var(--content-w)) / 2 + var(--column-shift) - 48px), 160px);
     padding-right: calc(2 * var(--column-shift));
   }
 
   /* With the list put away the column is already in the middle of the screen. */
   .app.sidebar-hidden .main.lean {
+    --lean-shift: 0px;
     --column-shift: 0px;
+  }
+
+  /* Centred in the window, the column still has to clear the standing panel: half the column,
+     plus the panel's 340px and its 20px inset and a 12px gap, less the paper's 8px band. The
+     result is at most 142px at the narrowest window that offers the dock, so no cap is needed. */
+  .app.sidebar-hidden .main.lean.overview-room {
+    --column-shift: max(0px, calc(var(--content-w, 780px) / 2 + 364px - var(--main-w, 0px) / 2));
   }
 
   /* The overview stands 12px off the window's right edge and is 340px wide, so the column needs
@@ -6846,9 +6894,10 @@ div.file-card:hover { background: var(--surface); }
      left — up to the 174px (348px of padding) that leaves 12px between text and panel even when
      the window is only just wide enough to offer the panel at all. The constant is the window
      width whose natural centring leaves exactly 364px; above it the panel clears the column
-     without help. */
+     without help. On a wide window the lean is the larger of the two, and must not be lost: the
+     panel asks for a shift, it does not replace the lean. */
   .main.lean.overview-room {
-    --column-shift: clamp(0px, calc((1500px - var(--main-w, 0px)) / 2), 174px);
+    --column-shift: max(var(--lean-shift), clamp(0px, calc((1500px - var(--main-w, 0px)) / 2), 174px));
     /* All the freed room goes to the panel; code and tables must not grow under it. */
     --column-extra: 0px;
   }
@@ -9821,16 +9870,32 @@ div.file-card:hover { background: var(--surface); }
   .pop-panel.overview-panel { left: auto; right: 12px; width: 340px; min-width: 340px; max-height: min(70vh, var(--pop-height)); padding: 5px 5px 7px; }
   /* The standing shape of the same panel: fixed under the top bar, not anchored to its button, and
      without the popover's scrim — clicks elsewhere, scrolling and Escape leave it alone. The
-     top-bar button above it is its only switch. */
+     top-bar button above it is its only switch. The 8px band and the paper's 12px margin put its
+     edge 20px from the window. */
   .pop-panel.overview-dock {
     position: fixed;
-    top: calc(var(--titlebar-row, calc(52px + env(safe-area-inset-top))) + 6px);
-    right: 12px;
+    top: calc(var(--titlebar-row, calc(52px + env(safe-area-inset-top))) + 14px);
+    right: 20px;
     bottom: auto;
     left: auto;
-    max-height: min(70vh, calc(100vh - var(--titlebar-row, calc(52px + env(safe-area-inset-top))) - 24px));
+    max-height: min(70vh, calc(100vh - var(--titlebar-row, calc(52px + env(safe-area-inset-top))) - 32px));
     overflow-y: auto;
   }
+}
+
+@media (display-mode: window-controls-overlay) {
+  /* The paper starts at the window's top edge here, so the panel hangs 8px higher. */
+  .pop-panel.overview-dock {
+    top: calc(var(--titlebar-row, 40px) + 6px);
+    max-height: min(70vh, calc(100vh - var(--titlebar-row, 40px) - 24px));
+  }
+}
+/* The overview is the quietest card on the page: barely a shade over the paper, a hairline, and
+   the card shadow rather than the popover's lift. Its own text stays small and plain; colour is
+   kept for what asks for the person, failed, running, and the adds and removals. */
+.pop-panel.overview-panel {
+  background: color-mix(in srgb, var(--surface) 40%, var(--bg));
+  box-shadow: var(--shadow-card);
 }
 .thread-overview { display: flex; flex-direction: column; }
 /* A standing panel with nothing to report is one faint line, not a card that failed to draw. */
@@ -9841,8 +9906,8 @@ div.file-card:hover { background: var(--surface); }
 .overview-head { display: flex; align-items: center; }
 .overview-toggle { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; min-height: 28px; padding: 0 7px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--muted); font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; }
 .overview-toggle:hover { background: var(--hover); }
-.overview-toggle strong { color: var(--muted); font-size: 12.5px; font-weight: 500; }
-.overview-head-icon { flex: none; display: inline-flex; color: var(--faint); }
+.overview-toggle strong { color: var(--muted); font-size: 12px; font-weight: 400; }
+.overview-head-icon { flex: none; display: inline-flex; color: var(--muted); }
 .overview-summary { margin-left: auto; display: inline-flex; align-items: baseline; gap: 5px; color: var(--faint); font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .overview-dot { color: var(--faint); }
 .overview-chevron { flex: none; display: inline-flex; color: var(--faint); transition: transform 0.12s ease; }
@@ -9854,7 +9919,7 @@ div.file-card:hover { background: var(--surface); }
 .overview-member { display: flex; align-items: center; gap: 7px; width: 100%; min-height: 30px; padding: 0 7px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
 .overview-member:hover { background: var(--hover); }
 .overview-member-mark { flex: none; display: inline-flex; color: var(--muted); }
-.overview-member-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.overview-member-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; }
 .overview-state { flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 11.5px; }
 .overview-state.running { color: var(--positive); }
 .overview-state.waiting, .overview-state.need { color: var(--warn); }
@@ -9874,7 +9939,7 @@ div.file-card:hover { background: var(--surface); }
 /* The cut a row makes is against its own width, not a budget counted in characters: the stem of
    the name folds first, its extension never folds, and the folder — shrinking a hundred times
    faster — gives way before the name gives up anything at all. */
-.overview-name { flex: 0 1 auto; min-width: 0; display: flex; align-items: baseline; overflow: hidden; white-space: nowrap; font-size: 13px; }
+.overview-name { flex: 0 1 auto; min-width: 0; display: flex; align-items: baseline; overflow: hidden; white-space: nowrap; font-size: 13.5px; }
 .overview-stem { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .overview-ext { flex: none; }
 .overview-dir { flex: 1 100 auto; min-width: 4ch; overflow: hidden; direction: rtl; unicode-bidi: plaintext; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 11.5px; }

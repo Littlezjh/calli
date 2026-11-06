@@ -2523,6 +2523,9 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         />
       )}
       {projectDialog === 'roots' && <RootsDialog api={api} roots={roots} onChange={applyWorkdirs} onCancel={() => setProjectDialog(null)} />}
+      {/* The sidebar, the conversation and the panels beside it are one sheet of paper on a
+          desktop; the window's band shows around it. Overlays stay outside, over the window. */}
+      <div className="shell">
       <aside className="sidebar">
         <Sidebar
           personalDirectory={personal?.directory}
@@ -3052,6 +3055,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           onClose={() => setTraceOpen(false)}
         />
       )}
+      </div>
       {preview && api && (
         <PreviewPanel api={api} threadId={preview.threadId} path={preview.path} onClose={() => setPreview(null)} onError={handleError} />
       )}
