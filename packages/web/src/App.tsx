@@ -28,6 +28,7 @@ import {
 import type { HubAction } from './commands';
 import { buildProjectOptions } from './projects';
 import { useAppearance, useInTitlebar, useIsCompact, useListSwipe, useStoredFlag } from './hooks';
+import { mergeAgentChoice, parseAgentChoices, type AgentChoices } from './agent-choice';
 import { useHosts } from './hosts';
 import type { PreparedImage } from './images';
 import { restoreVideos, type PreparedVideo } from './videos';
@@ -185,6 +186,14 @@ const SIDEBAR_KEYBOARD_STEP = 16;
 
 /** What members of each instance start with, remembered on this device for the next team. */
 const MEMBER_DEFAULTS_KEY = 'calli.coord.defaults';
+/** The model, effort and speed last chosen per instance: its next new thread starts there. */
+const AGENT_CHOICE_KEY = 'calli.agent.choice';
+const readAgentChoices = (): AgentChoices => parseAgentChoices(localStorage.getItem(AGENT_CHOICE_KEY));
+const rememberAgentChoice = (agent: string, choice: Partial<Record<'model' | 'effort' | 'speed', string | null>>) => {
+  try {
+    localStorage.setItem(AGENT_CHOICE_KEY, JSON.stringify(mergeAgentChoice(readAgentChoices(), agent, choice)));
+  } catch { /* a full or blocked store just stops remembering */ }
+};
 
 /** A plan the user chose to leave be, by thread: the proposal's key, so a reload does not ask again. */
 const PLAN_SKIP_KEY = 'calli:plan-skipped';
@@ -298,8 +307,16 @@ function ThreadQuickSwitch({ threads, selectedId, agents, onSelect }: {
         onPointerMove={(e) => {
           if (press?.pointerId !== e.pointerId) return;
           lastY.current = e.clientY;
+          const dx = startX.current - e.clientX;
+          const dy = Math.abs(e.clientY - startY.current);
+          // A vertical drag is a scroll, not a summon: give up before the hold timer fires.
+          if (!press.open && !tapOpen && dy > 10 && dx <= 24) {
+            clearTimer();
+            reset(e.currentTarget, e.pointerId);
+            return;
+          }
           // A pull past the threshold summons the panel for tapping; holding keeps its scrub.
-          if (!press.open && !tapOpen && startX.current - e.clientX > 24) {
+          if (!press.open && !tapOpen && dx > 24 && dx > dy) {
             clearTimer();
             reset(e.currentTarget, e.pointerId);
             setTapOpen(true);
@@ -2047,9 +2064,32 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   };
 
   const permission = selected ? selected.permissionMode : draftPermission;
+  // A remembered model can be gone from the instance's list (an update, a removed plan): fall
+  // back to its default rather than offering a model that cannot be started.
+  const draftModels = modelsByAgent[draftAgent];
+  useEffect(() => {
+    if (draftModels?.length && draftModel && !draftModels.some((m) => m.id === draftModel)) setDraftModel(null);
+  }, [draftModels, draftModel]);
   const model = selected ? selected.model : draftModel;
   const effort = selected ? selected.effort : draftEffort;
   const speed = selected ? selected.speed ?? null : draftSpeed;
+
+  // A new thread starts where the last one of that instance was left: the remembered model,
+  // effort and speed. Applied once on mount; pickAgent does the same for every switch.
+  useEffect(() => {
+    const remembered = readAgentChoices()[draftAgent];
+    if (remembered) {
+      if (remembered.model) setDraftModel(remembered.model);
+      if (remembered.effort) setDraftEffort(remembered.effort);
+      if (remembered.speed) setDraftSpeed(remembered.speed);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // The choice made in the draft is remembered while it is the draft being composed.
+  useEffect(() => {
+    if (!selected && draftAgent) rememberAgentChoice(draftAgent, { model: draftModel, effort: draftEffort, speed: draftSpeed });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftModel, draftEffort, draftSpeed, draftAgent, selected?.id]);
 
   const updateSelected = (patch: { speed?: string | null; permissionMode?: string; model?: string | null; effort?: string | null }) => {
     if (!selected) return;
@@ -2059,7 +2099,12 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     setThreads((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
     api
       .updateThread(id, patch)
-      .then((updated) => setThreads((prev) => prev.map((t) => (t.id === updated.id ? updated : t))))
+      .then((updated) => {
+        setThreads((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+        if (patch.model !== undefined || patch.effort !== undefined || patch.speed !== undefined) {
+          rememberAgentChoice(updated.agent, { model: updated.model, effort: updated.effort, speed: updated.speed });
+        }
+      })
       .catch((e) => {
         setThreads((prev) => prev.map((t) => (t.id === id ? { ...t, ...before } : t)));
         handleError(e);
@@ -2069,9 +2114,10 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const pickAgent = (id: string) => {
     setDraftAgent(id);
     setDraftWorkMode('execute');
-    setDraftSpeed(null);
-    setDraftModel(null);
-    setDraftEffort(null);
+    const remembered = readAgentChoices()[id] ?? {};
+    setDraftSpeed(remembered.speed ?? null);
+    setDraftModel(remembered.model ?? null);
+    setDraftEffort(remembered.effort ?? null);
     // Each agent starts at its own level: one that cannot ask starts where it can work.
     const caps = capsOf(id);
     if (caps) setDraftPermission(startingPermission(caps));

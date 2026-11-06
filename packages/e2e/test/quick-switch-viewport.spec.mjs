@@ -23,18 +23,20 @@ after(async () => {
   await daemon?.stop();
 });
 
-/** The invisible right-edge strip: pull it leftwards to summon the panel. */
-const window_innerWidth = page => page.evaluate(() => window.innerWidth);
-async function summon(page, y = 300) {
+/** The invisible bottom-right pad: pull it leftwards to summon the panel. */
+async function summon(page) {
+  // Let the closing drawer finish: through its transition the main column is unpointable and
+  // the fixed pad can be laid out a few pixels off before it settles.
+  await page.waitForTimeout(450);
+  const box = await page.locator('.quick-switch-edge').boundingBox();
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
   // The closing drawer keeps the main column unpointable through its transition; wait until
-  // the strip itself is the topmost element where the drag starts.
-  await page.waitForFunction(y => document.elementFromPoint(window.innerWidth - 3, y)?.closest('.quick-switch-edge') != null, y);
-  // Anchor the drag to the screen edge, not the strip's box: a transformed ancestor can shift
-  // the fixed strip a few pixels off-screen, and the gesture must still land.
-  const w = await window_innerWidth(page);
-  await page.mouse.move(w - 2, y);
+  // the pad itself is the topmost element where the drag starts.
+  await page.waitForFunction(([x, y]) => document.elementFromPoint(x, y)?.closest('.quick-switch-edge') != null, [x, y]);
+  await page.mouse.move(x, y);
   await page.mouse.down();
-  await page.mouse.move(w - 46, y, { steps: 4 });
+  await page.mouse.move(x - 46, y, { steps: 4 });
   await page.mouse.up();
   await page.locator('.quick-switch-panel').waitFor();
 }
@@ -48,7 +50,7 @@ async function openSession(context) {
   return page;
 }
 
-test('the edge strip ignores plain taps and hands them to the interface underneath', async () => {
+test('the pad ignores plain taps and vertical drags; only a leftward pull summons it', async () => {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   try {
     const page = await context.newPage();
@@ -57,9 +59,16 @@ test('the edge strip ignores plain taps and hands them to the interface undernea
     await page.locator('.thread-row').filter({ has: page.getByText('viewport-session-3', { exact: true }) }).click();
     const edge = page.locator('.quick-switch-edge');
     const box = await edge.boundingBox();
-    await page.mouse.click(box.x + box.width - 3, box.y + 300);
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
     await page.waitForTimeout(250);
     assert.equal(await page.locator('.quick-switch-panel').count(), 0, 'a plain tap must not summon the panel');
+    // A vertical drag over the pad is a scroll, not a summon.
+    await page.mouse.move(box.x + box.width / 2, box.y + 10);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height - 10, { steps: 4 });
+    await page.mouse.up();
+    await page.waitForTimeout(250);
+    assert.equal(await page.locator('.quick-switch-panel').count(), 0, 'a vertical drag must not summon the panel');
     await summon(page);
   } finally { await context.close(); }
 });

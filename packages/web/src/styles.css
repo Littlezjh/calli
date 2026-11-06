@@ -715,34 +715,35 @@ button:disabled {
   }
 
   .quick-switch {
-    /* Pinned to the physical right edge: the conversation column can be laid out wider than
-       the viewport, and the summon strip must stay at the screen's edge regardless. */
+    /* A fixed pad at the bottom-right, inset from the screen edge: iOS owns the outermost
+       band for its history gestures, and the pad sits clear of it. Tapping falls through. */
     position: fixed;
-    top: 0;
-    bottom: 0;
-    right: 0;
-    width: 22px;
+    right: 16px;
+    bottom: calc(168px + var(--safe-bottom));
+    width: 96px;
+    height: 160px;
     z-index: 62;
     pointer-events: none;
   }
 
-  /* The invisible summon strip: vertical scrolls pass through (pan-y), horizontal pulls and
-   * holds are ours, and taps are handed back to whatever sits underneath. */
   .quick-switch-edge {
     position: absolute;
     inset: 0;
+    border-radius: 20px;
     pointer-events: auto;
     touch-action: pan-y;
   }
 
   .quick-switch-panel {
-    position: absolute;
+    /* Above the summon pad while there is room; with the keyboard up the visual viewport
+       shrinks, and the panel drops toward its bottom edge to stay inside the visible app. */
+    --qs-anchor: min(336px, max(0px, calc(var(--vvh, 100dvh) - 460px)));
+    position: fixed;
     right: calc(10px + env(safe-area-inset-right));
-    bottom: calc(170px + var(--safe-bottom));
+    bottom: calc(var(--qs-anchor) + var(--safe-bottom));
     width: min(286px, calc(100vw - 54px - env(safe-area-inset-left)));
-    /* visualViewport height follows keyboard resizing; keep the panel inside the visible app. */
-    max-height: min(560px, max(0px, calc(
-      var(--vvh, 100dvh) - 250px - env(safe-area-inset-top)
+    max-height: min(480px, max(0px, calc(
+      var(--vvh, 100dvh) - 72px - var(--qs-anchor) - env(safe-area-inset-top)
     )));
     padding: 7px;
     overflow-y: auto;
@@ -754,6 +755,14 @@ button:disabled {
     pointer-events: auto;
     -webkit-backdrop-filter: blur(18px);
     backdrop-filter: blur(18px);
+  }
+
+  /* Landscape phones are short: let the panel reach down toward the pad. */
+  @media (max-height: 520px) {
+    .quick-switch-panel {
+      bottom: calc(190px + var(--safe-bottom));
+      max-height: max(0px, calc(var(--vvh, 100dvh) - 260px - env(safe-area-inset-top)));
+    }
   }
 
   .quick-switch-card {
