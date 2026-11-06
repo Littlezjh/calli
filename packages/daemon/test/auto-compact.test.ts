@@ -115,6 +115,27 @@ test('a small transcript or a healthy quota compacts nothing', async () => {
   } finally { await h.close(); }
 });
 
+test('a relayed thread compacts the whole chain, not its own small tail', async () => {
+  const h = await setup();
+  try {
+    h.manager.autoHandover.configure({ enabled: true, threshold: 95, orders: {} });
+    h.compact(); // minChars 100
+    // The source generation carries the bulk of the work...
+    await h.manager.startTurn(h.thread.id, { text: '把视频渲染出来，然后用飞书发给我，注意音画同步，别丢字幕' });
+    await wait(() => h.manager.threadView(h.thread.id).status !== 'running');
+    // ...the work relays, and the successor's own generation is tiny.
+    const successor = await h.manager.createHandoverThread(h.thread.id, 'agy');
+    writeFileSync(join(h.dir, 'agy.json'), JSON.stringify({ 'Gemini Models': 90 }));
+    await h.manager.startTurn(successor.id, { text: '继续' });
+    await wait(() => h.manager.threadView(successor.id).status !== 'running');
+    await wait(() => h.manager.autoCompact.status().last);
+    const last = h.manager.autoCompact.status().last!;
+    assert.ok(last.successorId, 'the inherited chain is long enough to compact even though this generation is not');
+    const first = h.store.listEvents(last.successorId!, 0, -1).find(e => e.type === 'turn.started')!;
+    assert.ok(String(first.data.text).includes('把视频渲染出来'), 'the brief builds on the whole chain');
+  } finally { await h.close(); }
+});
+
 test('a failing quota probe still compacts on the last good reading', async () => {
   const h = await setup();
   try {
@@ -124,6 +145,9 @@ test('a failing quota probe still compacts on the last good reading', async () =
     // reading at 90%, and the probe breaks before the turn that should compact.
     await h.manager.startTurn(h.thread.id, { text: '你好' });
     await wait(() => h.manager.threadView(h.thread.id).status !== 'running');
+    // The handover decision probes the account after the turn; while it runs the thread is held
+    // and a fresh send is refused. Let that window close before racing the second turn in.
+    await wait(() => !h.manager.autoHandover.held(h.thread.id));
     writeFileSync(join(h.dir, 'agy.json'), JSON.stringify({ 'Gemini Models': 90 }));
     await h.manager.refreshQuotas();
     writeFileSync(join(h.dir, 'agy.json'), 'not json');

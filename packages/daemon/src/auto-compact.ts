@@ -8,7 +8,8 @@ import { HttpError } from './errors.js';
 /**
  * Quota-aware context compression: when the account a thread runs on is close to its plan limit
  * (85%, say) but the handover has not moved the work yet, the thread's transcript — the hub event
- * log, readable for free — is compressed into a brief by *another* agent (a bridge to third-party
+ * log, readable for free, followed back through handover links so a relayed thread brings the
+ * generations it inherited — is compressed into a brief by *another* agent (a bridge to third-party
  * models, so official-account quota buys no summarizing), and the work continues in a fresh session
  * of the same account carrying that brief instead of half a million tokens of context. Without a
  * compression agent the thread is natively `/compact`ed in place, which spends one turn of the same
@@ -135,6 +136,25 @@ export class AutoCompact {
    * After a turn ended: compact when the account is near its plan limit and the conversation is
    * long, unless the handover is already moving the work. Returns true when something was started.
    */
+  /** The thread's transcript, followed back through handover links: a relayed thread's own events
+   *  are only its generation, while the session it would hand a successor carries the whole chain.
+   *  Newest part kept, capped at the compressor's input budget. */
+  private async chainTranscript(threadId: string, maxChars: number): Promise<string> {
+    const parts: string[] = [];
+    let before: number | undefined;
+    let total = 0;
+    for (let i = 0; i < 500; i++) {
+      const page = await this.store.history.page(threadId, before, 0, true);
+      const text = transcript(page.events as StoredEvent[]);
+      parts.unshift(text);
+      total += text.length;
+      if (total >= maxChars || page.nextCursor === null) break;
+      before = page.nextCursor;
+    }
+    const all = parts.join('\n');
+    return all.length > maxChars ? all.slice(all.length - maxChars) : all;
+  }
+
   async settled(threadId: string, turnId: string): Promise<boolean> {
     const settings = this.settings();
     if (!settings.enabled) return false;
@@ -154,7 +174,7 @@ export class AutoCompact {
     if (!quota) return false;
     const model = await this.manager.handoverModel(thread.agent, thread.model);
     if (!instanceWindows(quota, model).some(w => w.usedPercent >= settings.threshold)) return false;
-    const text = transcript(events);
+    const text = await this.chainTranscript(threadId, settings.maxChars);
     if (text.length < settings.minChars) {
       this.report({ ...this.status(), skipped: { threadId, reason: 'transcript-too-small', chars: text.length, at: new Date().toISOString() } });
       return false;
