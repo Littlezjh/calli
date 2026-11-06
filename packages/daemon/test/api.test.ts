@@ -3033,3 +3033,118 @@ test('outputs cap lists after aggregation without dropping older generated image
   assert.equal(outputs.files.length, 200);
   assert.deepEqual(outputs.images.map(f => f.path), [join(workdir, 'old.png')]);
 });
+
+test('outputs refresh only disk state after 30 seconds and rebuild when the log changes', async t => {
+  const now = Date.now();
+  t.mock.timers.enable({ apis: ['Date'], now });
+  const thread = await newThread({ agent: 'claude' });
+  const present = join(workdir, 'outputs-present.png');
+  const absent = join(workdir, 'outputs-restored.html');
+  const directory = join(workdir, 'outputs-directory');
+  writeFileSync(present, 'image');
+  mkdirSync(directory);
+  store.appendEvent(thread.id, 't', 'turn.started', { text: 'report' });
+  store.appendEvent(thread.id, 't', 'tool.update', { id: 'e', content: [present, absent, directory].map(path => ({ type: 'diff', path, oldText: null, newText: 'line' })) });
+  store.appendEvent(thread.id, 't', 'message.delta', { text: [present, absent, directory].map(path => `[file](${path})`).join(' ') });
+  store.appendEvent(thread.id, 't', 'turn.done', {});
+  const sources = t.mock.method(store, 'outputSources');
+  const read = async () => {
+    const res = await api(`/api/threads/${thread.id}/outputs`);
+    assert.equal(res.status, 200);
+    return await res.json() as ThreadOutputs;
+  };
+  const [first, parallel] = await Promise.all([read(), read()]);
+  assert.deepEqual(parallel, first);
+  assert.equal(sources.mock.callCount(), 1, 'concurrent readers share one build');
+  assert.equal(Object.hasOwn(first.images[0], 'missing'), false);
+  assert.deepEqual(first.files.map(f => f.missing), [true, true]);
+  assert.equal(first.changes.files.find(f => f.path === absent)?.missing, true);
+  assert.equal(first.changes.files.find(f => f.path === directory)?.missing, true);
+  writeFileSync(absent, 'restored');
+  rmSync(present);
+  t.mock.timers.setTime(now + 29_999);
+  assert.deepEqual(await read(), first, 'fresh metadata avoids checking the disk again');
+  t.mock.timers.setTime(now + 30_001);
+  const refreshed = await read();
+  assert.equal(refreshed.seq, first.seq);
+  assert.equal(refreshed.images[0].missing, true);
+  assert.equal(Object.hasOwn(refreshed.files.find(f => f.path === absent)!, 'missing'), false);
+  assert.equal(refreshed.changes.files.find(f => f.path === present)?.missing, true);
+  assert.equal(Object.hasOwn(refreshed.changes.files.find(f => f.path === absent)!, 'missing'), false);
+  assert.equal(sources.mock.callCount(), 1, 'expiry reuses summaries when the log is unchanged');
+  store.appendEvent(thread.id, 'next', 'turn.started', { text: 'follow-up' });
+  store.appendEvent(thread.id, 'next', 'message.delta', { text: '[new](new.md)' });
+  store.appendEvent(thread.id, 'next', 'turn.done', {});
+  const latest = await read();
+  assert.ok(latest.seq > refreshed.seq);
+  assert.equal(latest.files[0].path, join(workdir, 'new.md'));
+  assert.equal(latest.files[0].missing, true);
+  assert.equal(sources.mock.callCount(), 2);
+});
+
+test('outputs expand home paths and their exact referenced images can be previewed', async () => {
+  const dir = mkdtempSync(join(homedir(), 'outputs-home-'));
+  const path = join(dir, 'chart.png');
+  const sibling = join(dir, 'sibling.png');
+  writeFileSync(path, Buffer.from(PNG, 'base64'));
+  writeFileSync(sibling, Buffer.from(PNG, 'base64'));
+  try {
+    const thread = await newThread({ agent: 'claude' });
+    store.appendEvent(thread.id, 't', 'turn.started', { text: 'generate' });
+    store.appendEvent(thread.id, 't', 'message.delta', { text: `![chart](~/${path.slice(homedir().length + 1)})` });
+    store.appendEvent(thread.id, 't', 'turn.done', {});
+    const outputs = await (await api(`/api/threads/${thread.id}/outputs`)).json() as ThreadOutputs;
+    assert.equal(outputs.images.length, 1);
+    assert.equal(outputs.images[0].path, path);
+    assert.equal(Object.hasOwn(outputs.images[0], 'missing'), false);
+    assert.equal((await api(`/api/threads/${thread.id}/files?path=${encodeURIComponent(path)}`)).status, 200);
+    assert.equal((await api(`/api/threads/${thread.id}/files?path=${encodeURIComponent(sibling)}`)).status, 403);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('outputs diff references read each call through history detail using the canonical file path', async () => {
+  const dir = join(workdir, 'outputs-diff-real');
+  const alias = join(workdir, 'outputs-diff-alias');
+  mkdirSync(dir);
+  symlinkSync(dir, alias);
+  const thread = await newThread({ agent: 'claude', cwd: alias });
+  const expected = [
+    { turn: 'first', id: 'a', path: 'report.html', oldText: null, newText: 'first body' },
+    { turn: 'first', id: 'b', path: join(alias, 'report.html'), oldText: 'first body', newText: 'second body' },
+    { turn: 'second', id: 'a', path: join(dir, 'report.html'), oldText: 'second body', newText: 'final body' },
+  ];
+  const refs: ThreadOutputs['changes']['files'][number]['details'] = [];
+  let previousTurn = '';
+  for (const edit of expected) {
+    if (edit.turn !== previousTurn) {
+      if (previousTurn) store.appendEvent(thread.id, previousTurn, 'turn.done', {});
+      store.appendEvent(thread.id, edit.turn, 'turn.started', { text: 'edit' });
+      previousTurn = edit.turn;
+    }
+    const start = store.appendEvent(thread.id, edit.turn, 'tool.start', { id: edit.id, kind: 'edit' });
+    store.appendEvent(thread.id, edit.turn, 'tool.update', { id: edit.id, content: [{ type: 'diff', path: edit.path, oldText: edit.oldText, newText: 'partial' }] });
+    const update = store.appendEvent(thread.id, edit.turn, 'tool.update', { id: edit.id, content: [
+      { type: 'diff', path: edit.path, oldText: edit.oldText, newText: edit.newText },
+      { type: 'diff', path: 'other.txt', oldText: 'unrelated old', newText: 'unrelated new' },
+    ], output: 'unrelated tool output' });
+    store.appendEvent(thread.id, edit.turn, 'tool.end', { id: edit.id, status: 'completed' });
+    refs.push({ turnId: edit.turn, id: start.seq, version: update.seq });
+  }
+  store.appendEvent(thread.id, previousTurn, 'turn.done', {});
+  const res = await api(`/api/threads/${thread.id}/outputs`);
+  assert.equal(res.status, 200);
+  const outputs = await res.json() as ThreadOutputs;
+  const file = outputs.changes.files.find(f => f.path === join(dir, 'report.html'))!;
+  assert.equal(file.missing, true, 'recorded diffs survive missing disk files');
+  assert.deepEqual(file.details, refs);
+  assert.equal(Object.hasOwn(file, 'detailsTotal'), false);
+  assert.ok(!JSON.stringify(outputs).includes('oldText'));
+  for (const [i, ref] of file.details.entries()) {
+    const detail = await api(`/api/threads/${thread.id}/history/detail?turn=${ref.turnId}&id=${ref.id}&path=${encodeURIComponent(file.path)}`);
+    assert.equal(detail.status, 200);
+    const body = await detail.json() as { content: unknown[]; output?: string };
+    const edit = expected[i];
+    assert.deepEqual(body.content, [{ type: 'diff', path: edit.path, oldText: edit.oldText, newText: edit.newText }]);
+    assert.equal(body.output, undefined);
+  }
+});

@@ -13,7 +13,7 @@ export function compactTokens(value: number): string {
 }
 
 /** 6.5% → 6.5%, 99.48% → 99.5%: one decimal is enough to read a share. */
-const percentLabel = (value: number): string => `${(Math.floor(value * 1000) / 10).toFixed(1)}%`;
+export const percentLabel = (value: number): string => `${(Math.floor(value * 1000) / 10).toFixed(1)}%`;
 
 /** 1407594 ms -> 23m 28s, in the shared duration wording. */
 export function durationMsLabel(msValue: number): string {
@@ -24,7 +24,7 @@ export function durationMsLabel(msValue: number): string {
   return t('duration.hours', Math.floor(minutes / 60), minutes % 60, Math.round(secs % 60));
 }
 
-const speedLabel = (tokPerSec: number, approx: boolean): string => {
+export const speedLabel = (tokPerSec: number, approx: boolean): string => {
   const n = tokPerSec >= 10 ? String(Math.round(tokPerSec)) : tokPerSec.toFixed(1);
   return approx ? t('trace.approxTps', n) : t('trace.tps', n);
 };

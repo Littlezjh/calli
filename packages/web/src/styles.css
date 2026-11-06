@@ -3274,6 +3274,27 @@ html.list-open body {
   border-bottom: 1px solid var(--border);
 }
 
+/* Installed as a desktop app (window-controls-overlay), the preview's bar is the window's title
+   bar, the way the app's own top row is: tall as the title bar, clear of the system buttons on
+   both sides, and dragging the window wherever it shows nothing to click. */
+@media (display-mode: window-controls-overlay) {
+  .preview-scrim { padding: 0 16px 16px; }
+  .preview { border-top-left-radius: 0; border-top-right-radius: 0; }
+  .preview-bar {
+    height: var(--titlebar-row);
+    /* Out to the window's edges: the scrim's 16px paid back on both sides, one band across. */
+    margin: 0 -16px;
+    padding: 0 calc(10px + var(--titlebar-right)) 0 calc(14px + var(--titlebar-left));
+    -webkit-app-region: drag;
+    app-region: drag;
+  }
+  .preview-bar button,
+  .preview-bar a {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
+}
+
 .preview-name {
   min-width: 0;
   overflow: hidden;
@@ -5061,6 +5082,23 @@ input.picker-search {
   border-bottom: 1px solid var(--border);
 }
 
+/* Docked the full height of the window, the side chat's head meets the installed app's title bar
+   the same way. */
+@media (display-mode: window-controls-overlay) {
+  .side-chat-head {
+    min-height: var(--titlebar-row);
+    padding: 0 calc(10px + var(--titlebar-right)) 0 calc(20px + var(--titlebar-left));
+    -webkit-app-region: drag;
+    app-region: drag;
+  }
+  .side-chat-head button,
+  .side-chat-head input,
+  .side-chat-head a {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
+}
+
 .side-chat-heading {
   min-width: 0;
 }
@@ -6046,7 +6084,7 @@ div.file-card:hover { background: var(--surface); }
   flex-direction: column;
   align-items: center;
   gap: 12px;
-  padding: calc(16px + env(safe-area-inset-top)) 16px calc(14px + var(--safe-bottom));
+  padding: calc(16px + env(safe-area-inset-top) + var(--titlebar-row, 0px)) 16px calc(14px + var(--safe-bottom));
   background: var(--lightbox);
   overflow: hidden;
   cursor: zoom-out;
@@ -6155,11 +6193,12 @@ div.file-card:hover { background: var(--surface); }
   transform: translateX(-50%);
 }
 
+/* Clear of the installed app's title bar: below its height, and left of the system's buttons. */
 .lightbox-close {
   position: absolute;
   z-index: 1;
-  top: calc(12px + env(safe-area-inset-top));
-  right: 12px;
+  top: calc(12px + env(safe-area-inset-top) + var(--titlebar-row, 0px));
+  right: calc(12px + var(--titlebar-right));
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -7368,6 +7407,23 @@ div.file-card:hover { background: var(--surface); }
   position: relative;
   z-index: 1;
   padding: 10px 12px 6px 18px;
+}
+
+/* Filling the window in the installed app, the head is the title bar — the terminal's and the
+   remote desktop's alike: tall as it, clear of the system buttons, dragging between its controls. */
+@media (display-mode: window-controls-overlay) {
+  .term-panel .panel-head {
+    height: var(--titlebar-row);
+    padding: 0 calc(12px + var(--titlebar-right)) 0 calc(18px + var(--titlebar-left));
+    -webkit-app-region: drag;
+    app-region: drag;
+  }
+  .term-panel .panel-head button,
+  .term-panel .panel-head input,
+  .term-panel .panel-head a {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
 }
 
 .term-head-main {
@@ -8633,6 +8689,23 @@ div.file-card:hover { background: var(--surface); }
   gap: 2px;
 }
 
+/* The files page over everything — the writing page inside it shares the same head — meets the
+   installed app's title bar: the head grows to it and keeps its buttons clear of the system's. */
+@media (display-mode: window-controls-overlay) {
+  .files-panel.phone .files-head {
+    height: max(54px, var(--titlebar-row));
+    padding: 0 calc(6px + var(--titlebar-right)) 0 calc(6px + var(--titlebar-left));
+    -webkit-app-region: drag;
+    app-region: drag;
+  }
+  .files-panel.phone .files-head button,
+  .files-panel.phone .files-head input,
+  .files-panel.phone .files-head a {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
+}
+
 .files-back {
   display: inline-flex;
   transform: rotate(180deg);
@@ -9711,47 +9784,55 @@ div.file-card:hover { background: var(--surface); }
 /* A member's subtitle names the lead's thread it came from, and goes back there. */
 .topbar-lead-link { display: block; max-width: 100%; padding: 0; border: 0; background: none; font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; }
 @media (hover: hover) { .topbar-lead-link:hover { color: var(--text); } }
-/* The thread at a glance, in the margin a wide screen leaves beside the conversation: the team,
-   the plan, what changed, the pictures and the files. The shell is the old team card's. */
-.team-card { position: absolute; top: 76px; right: 20px; z-index: 2; width: 248px; max-height: calc(100% - 260px); overflow-y: auto; padding: 6px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }
-.thread-overview { display: flex; flex-direction: column; gap: 6px; }
-.team-card-row { display: flex; align-items: flex-start; gap: 9px; width: 100%; padding: 7px 8px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
-.team-card-row:hover { background: var(--hover); }
-.team-card-mark { flex: none; display: inline-flex; margin-top: 3px; color: var(--muted); }
-.team-card-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.team-card-line { display: flex; align-items: baseline; gap: 8px; }
-.team-card-line strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
-.team-card-state { flex: none; font-size: 11.5px; color: var(--faint); white-space: nowrap; }
-.team-card-state.running { color: var(--positive); }
-.team-card-state.waiting, .team-card-state.need { color: var(--warn); }
-.team-card-state.failed { color: var(--danger); }
-/* The words a member's own report ended with carry the conversation's plainness unless they ask. */
-.team-card-state.review, .team-card-state.progress { color: var(--muted); }
-.team-card-doing { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: 12px; line-height: 1.5; color: var(--muted); overflow-wrap: anywhere; }
-/* One kind of thing in the thread, folding to its title line; the line keeps the summary either way. */
+/* The thread at a glance: one top-bar button opens a narrow panel with the team, the plan, what
+   changed, the pictures and the files. Every row is one line, a long group shows its first few and
+   keeps the rest behind one more line. The panel folds its last groups, rather than growing a
+   scrollbar, to the room a phone or a desktop actually leaves under the top bar. */
+.topbar-overview { position: relative; }
+.topbar-overview.attention .topbar-badge { background: var(--warn); color: var(--on-color); }
+/* The panel lines up 12px from the window's right edge, under the top bar; a phone gets the usual
+   bottom sheet from the shared Popover rules. It is 340 wide rather than the mock's 300 because the
+   foot has to hold four readings and the trace link on one line: Japanese writes the cache share as
+   "キャッシュ 97%", which needs the extra 40px (Chinese and English would fit at 300). */
+@media (min-width: 641px) {
+  .pop-panel.overview-panel { left: auto; right: 12px; width: 340px; min-width: 340px; max-height: min(70vh, var(--pop-height)); padding: 5px 5px 7px; }
+}
+.thread-overview { display: flex; flex-direction: column; }
+/* Groups sit on one quiet line each, the title carrying the count the body would repeat. */
 .overview-group { display: flex; flex-direction: column; }
-.overview-head { display: flex; align-items: center; gap: 2px; }
-.overview-toggle { display: flex; align-items: center; gap: 7px; flex: 1; min-width: 0; min-height: 30px; padding: 0 8px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--muted); font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; }
+.overview-group + .overview-group { margin-top: 3px; padding-top: 3px; border-top: 1px solid var(--border); }
+.overview-head { display: flex; align-items: center; }
+.overview-toggle { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; min-height: 28px; padding: 0 7px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--muted); font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; }
 .overview-toggle:hover { background: var(--hover); }
-.overview-toggle strong { color: var(--text); font-size: 13px; font-weight: 600; }
-.overview-head-icon { flex: none; display: inline-flex; color: var(--muted); }
-.overview-summary { margin-left: auto; display: inline-flex; align-items: baseline; gap: 6px; color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.overview-toggle strong { color: var(--muted); font-size: 12.5px; font-weight: 500; }
+.overview-head-icon { flex: none; display: inline-flex; color: var(--faint); }
+.overview-summary { margin-left: auto; display: inline-flex; align-items: baseline; gap: 5px; color: var(--faint); font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .overview-dot { color: var(--faint); }
-/* The adds and removals of every row ride as one pair on the right, each side in its own column,
-   so the + and the − of the rows line up under the pair in the title. */
-.overview-nums { flex: none; display: inline-flex; align-items: baseline; gap: 4px; min-width: 56px; margin-left: auto; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.overview-add, .overview-del { flex: none; font-family: var(--mono); font-size: 11px; }
-.overview-add { min-width: 30px; color: var(--positive); }
-.overview-del { min-width: 22px; color: var(--danger); }
-.overview-chevron { flex: none; display: inline-flex; color: var(--faint); }
-/* The whole agents panel opens from its own button, apart from folding and unfolding. */
-.overview-icon { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: var(--radius-sm); background: none; color: var(--faint); cursor: pointer; }
-.overview-icon:hover { background: var(--hover); color: var(--muted); }
+.overview-chevron { flex: none; display: inline-flex; color: var(--faint); transition: transform 0.12s ease; }
+.overview-group.open > .overview-head .overview-chevron { transform: rotate(90deg); }
+.overview-danger { color: var(--danger); }
 .overview-body { display: flex; flex-direction: column; }
-/* A file the thread touched or named: the name first, the folder it is in faint after it. The
-   folder never shrinks below a few characters — one letter would read as broken. */
-.overview-row { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 30px; padding: 0 8px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+/* One member, one line: its mark, its name, and the word its last report ended with. What it was
+   last doing stays on hover, so the panel never grows to explain a row. */
+.overview-member { display: flex; align-items: center; gap: 7px; width: 100%; min-height: 30px; padding: 0 7px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.overview-member:hover { background: var(--hover); }
+.overview-member-mark { flex: none; display: inline-flex; color: var(--muted); }
+.overview-member-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.overview-state { flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 11.5px; }
+.overview-state.running { color: var(--positive); }
+.overview-state.waiting, .overview-state.need { color: var(--warn); }
+.overview-state.failed { color: var(--danger); }
+/* The words a member's own report ended with carry the conversation's plainness unless they ask. */
+.overview-state.review, .overview-state.progress { color: var(--muted); }
+/* A file the thread touched or named: one line, the name first, the folder faint after it, what
+   changed at the end. A page or a drawing carries a preview button of its own, apart from the row. */
+.overview-rowwrap { display: flex; align-items: center; gap: 1px; }
+.overview-rowwrap .overview-row { flex: 1; }
+.overview-row { display: flex; align-items: center; gap: 7px; width: 100%; min-width: 0; min-height: 30px; padding: 0 7px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
 .overview-row:hover { background: var(--hover); }
+.overview-row:disabled { cursor: default; }
+.overview-rowwrap.missing .overview-row { color: var(--faint); }
+.overview-rowwrap.missing .overview-row:hover { background: none; }
 .overview-path { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 6px; overflow: hidden; }
 /* The cut a row makes is against its own width, not a budget counted in characters: the stem of
    the name folds first, its extension never folds, and the folder — shrinking a hundred times
@@ -9761,31 +9842,76 @@ div.file-card:hover { background: var(--surface); }
 .overview-ext { flex: none; }
 .overview-dir { flex: 1 100 auto; min-width: 4ch; overflow: hidden; direction: rtl; unicode-bidi: plaintext; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 11.5px; }
 /* A new file needs no frame around the word; the quiet text says it. */
-.overview-tag { flex: none; color: var(--faint); font-size: 11.5px; }
-.overview-note { flex: none; color: var(--warn); font-size: 11px; white-space: nowrap; }
-.overview-attention { color: var(--warn); }
-.overview-more { align-self: flex-start; min-height: 26px; padding: 0 8px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
+.overview-tag, .overview-gone { flex: none; color: var(--faint); font-size: 11.5px; white-space: nowrap; }
+/* The adds and removals of every row ride as one pair on the right, each side in its own column,
+   so the + and the − of the rows line up under the pair in the title. */
+.overview-nums { flex: none; display: inline-flex; align-items: baseline; gap: 4px; margin-left: auto; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.overview-add, .overview-del { flex: none; font-family: var(--mono); font-size: 11px; }
+.overview-add { min-width: 28px; color: var(--positive); }
+.overview-del { min-width: 20px; color: var(--danger); }
+/* A file that is gone keeps its line and says why it can no longer be opened. */
+.overview-gone { color: var(--faint); }
+/* The preview button stays out of the row's way until the pointer or the keyboard is on it; a
+   phone has no hover, so it shows always and takes a thumb-sized 36px. */
+.overview-preview { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: var(--radius-sm); background: none; color: var(--faint); cursor: pointer; opacity: 0; }
+.overview-rowwrap:hover .overview-preview { opacity: 1; }
+.overview-preview:focus-visible { opacity: 1; outline: 2px solid color-mix(in srgb, var(--text) 30%, transparent); outline-offset: -2px; }
+.overview-preview:hover { background: var(--hover); color: var(--text); }
+@media (hover: none) {
+  .overview-preview { opacity: 1; }
+}
+/* A bottom sheet is read with a thumb: the rows and the buttons beside them grow to a full target. */
+@media (max-width: 640px) {
+  .overview-member, .overview-row { min-height: 36px; }
+  .overview-preview { width: 36px; height: 36px; opacity: 1; }
+  .overview-more { min-height: 32px; }
+}
+.overview-more { align-self: flex-start; min-height: 26px; padding: 0 7px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
 .overview-more:hover { background: var(--hover); color: var(--text); }
-/* The plan hangs under its title the way it does under the top-bar button, one step smaller. A
-   finished step fades, the current one carries the weight, the rest wait quietly. */
-.overview-plan { padding: 2px 10px 5px 12px; }
-.overview-plan .plan-list { margin: 0; padding: 2px 0 2px 11px; gap: 6px; }
-.overview-plan .plan-entry { font-size: 12.5px; }
+/* The plan hangs under its title one step smaller: a finished step fades, the current one carries
+   the weight, the rest wait quietly. Every step stays on one line. */
+.overview-plan { padding: 1px 7px 3px; }
+.overview-plan .plan-list { margin: 0; padding: 0; gap: 0; }
+.overview-plan .plan-entry { min-height: 24px; padding: 0; font-size: 12.5px; }
+.overview-plan .plan-entry .plan-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .overview-plan .plan-entry.completed { color: var(--faint); }
 .overview-plan .plan-entry.active { color: var(--text); font-weight: 600; }
-/* Square thumbnails, three across; the file itself is read only while the group is open. A photo
+/* Square thumbnails, four across; the file itself is read only while the group is open. A photo
    fills the square; a drawing sits whole on the picture background, with room around it. */
-.overview-pictures { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 3px 8px 4px; }
-.overview-picture { aspect-ratio: 1; display: flex; align-items: center; justify-content: center; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--faint); overflow: hidden; cursor: pointer; }
+.overview-pictures { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; padding: 0 7px 4px; }
+.overview-picture { aspect-ratio: 1; display: flex; align-items: center; justify-content: center; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--faint); overflow: hidden; cursor: pointer; }
 .overview-picture img { width: 100%; height: 100%; object-fit: cover; }
-.overview-picture.vector { padding: 4px; background: var(--picture-bg); }
+.overview-picture.vector { padding: 3px; background: var(--picture-bg); }
 .overview-picture.vector img { object-fit: contain; }
 .overview-picture:disabled { cursor: default; }
 .overview-picture.failed { background: var(--surface-2); }
+/* A picture that left the disk keeps one faint line instead of a square that cannot be read. */
+.overview-missing-line { padding: 1px 7px 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 11.5px; }
 /* The one line that says the overview could not be read, kept apart from an honestly empty card. */
-.overview-failed { display: flex; align-items: center; gap: 6px; padding: 6px 8px; color: var(--muted); font-size: 12.5px; }
+.overview-failed { display: flex; align-items: center; gap: 6px; padding: 6px 7px; color: var(--muted); font-size: 12.5px; }
 .overview-failed .text-btn { min-height: 0; padding: 0 2px; font-size: 12.5px; color: var(--muted); text-decoration: underline; text-underline-offset: 3px; }
 .overview-failed .text-btn:hover { background: none; color: var(--text); }
+/* The readings and the way to the trace share one faint line at the bottom. Readings that have
+   not been measured leave the line to the trace alone. */
+.overview-foot { display: flex; align-items: center; gap: 6px; margin-top: 3px; padding: 6px 7px 0; border-top: 1px solid var(--border); color: var(--faint); font-size: 11px; }
+.overview-readings { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.overview-trace { flex: none; display: inline-flex; align-items: center; gap: 1px; margin-left: auto; padding: 2px 3px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--muted); font: inherit; font-size: 11px; cursor: pointer; }
+.overview-trace:hover { background: var(--hover); color: var(--text); }
+/* One file's whole history, turned by turn: the path and its numbers stay on top while the diff
+   scrolls under them. */
+.change-diff-dialog { display: flex; flex-direction: column; width: min(720px, 100%); max-height: min(82vh, 900px); padding: 0; overflow: hidden; }
+.change-diff-head { display: flex; align-items: center; gap: 9px; padding: 13px 12px 12px 20px; border-bottom: 1px solid var(--border); }
+.change-diff-path { flex: 1; min-width: 0; font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere; }
+.change-diff-turns { flex: none; color: var(--faint); font-size: 12.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.change-diff-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.change-diff-turn { padding: 2px 0 4px; }
+.change-diff-turn + .change-diff-turn { border-top: 1px solid var(--border); }
+.change-diff-turn h3 { margin: 0; padding: 8px 20px 6px; color: var(--muted); font-size: 12.5px; font-weight: 500; }
+.change-diff-body .history-status { padding: 10px 20px; }
+.change-diff-foot { display: flex; justify-content: flex-end; align-items: center; gap: 6px; padding: 9px 14px; border-top: 1px solid var(--border); }
+/* A file edited more often than the daemon keeps references for says so at the foot, left of the
+   actions: a header that counts every turn above a shorter list would otherwise read as a bug. */
+.change-diff-note { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 12px; }
 .agent-panel { position: relative; width: var(--agent-panel-width, min(390px, 45vw)); flex: 0 0 auto; display: flex; flex-direction: column; background: var(--bg); border-left: 1px solid var(--border); min-height: 0; overflow: hidden; }
 .agent-panel.detail { width: var(--agent-panel-width, min(600px, 50vw)); }
 .agent-panel-resize { position: absolute; top: 0; bottom: 0; left: 0; z-index: 3; width: 7px; cursor: col-resize; }
@@ -9921,6 +10047,28 @@ button.coord-row-name { cursor: pointer; }
   .agent-panel, .agent-panel.detail { position: absolute; inset: 0; width: 100%; z-index: 45; border-left: 0; }
   .agent-panel-resize { display: none; }
   .agent-panel-head { padding: 16px; }
+}
+
+/* The agents panel over a narrow window of the installed app covers the whole screen, so its head
+   meets the window's title bar there — tall as it, its buttons clear of the system's. */
+@media (display-mode: window-controls-overlay) and (max-width: 900px) {
+  .agent-panel-head {
+    min-height: var(--titlebar-row);
+    padding: 12px calc(12px + var(--titlebar-right)) 12px calc(16px + var(--titlebar-left));
+    -webkit-app-region: drag;
+    app-region: drag;
+    /* A member's head carries its permission and model pickers beside the back, open and close
+       buttons; a 390px window minus the 138px the system buttons own cannot hold them on one row,
+       and flex would push the buttons into that band. The pickers take a second row, under it. */
+    flex-wrap: wrap;
+  }
+  .agent-panel-head > .pop { order: 5; }
+  .agent-panel-head button,
+  .agent-panel-head input,
+  .agent-panel-head a {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
 }
 
 /* ---------- Scheduled tasks ---------- */
@@ -10892,6 +11040,11 @@ button.coord-row-name { cursor: pointer; }
 /* ---------- Trace: one turn, step by step ---------- */
 
 .trace-panel { width: min(880px, calc(100vw - 40px)); max-height: calc(100dvh - 60px); }
+/* Under the installed app's title bar the panel centres lower, its close clear of the system
+   buttons: the room it takes gives the row the title bar owns back first. */
+@media (display-mode: window-controls-overlay) {
+  .trace-panel { max-height: calc(100dvh - 60px - var(--titlebar-row)); }
+}
 .trace-panel .panel-head { flex-shrink: 0; }
 .trace-empty { margin: 0; padding: 28px 22px; color: var(--muted); font-size: 13.5px; list-style: none; }
 
@@ -12793,6 +12946,22 @@ button.pet-summon:hover { background: var(--surface-2); color: var(--text); }
   margin: 0;
   font-size: 15px;
   font-weight: 600;
+}
+
+/* The trace page over a narrow window of the installed app meets the window's title bar: the head
+   grows to it, its close clear of the system buttons, the empty of it dragging the window. */
+@media (display-mode: window-controls-overlay) {
+  .trace-phone-head {
+    height: max(56px, var(--titlebar-row));
+    padding: 0 calc(12px + var(--titlebar-right)) 0 calc(12px + var(--titlebar-left));
+    -webkit-app-region: drag;
+    app-region: drag;
+  }
+  .trace-phone-head button,
+  .trace-phone-head a {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
 }
 
 .trace-scroll {

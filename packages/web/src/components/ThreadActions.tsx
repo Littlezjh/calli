@@ -6,7 +6,7 @@ import { ChoiceDialog, Dialog } from './Dialog';
 import { HandoverChainDialog } from './HandoverTrail';
 import { HandoverDialog } from './HandoverDialog';
 import { Menu, type MenuEntry } from './Menu';
-import { IconArchive, IconCheck, IconCopy, IconDot, IconEdit, IconFork, IconHand, IconHandover, IconList, IconPin, IconPlus, IconSparkle, IconTerminal, IconTrash, IconWorktree } from './icons';
+import { IconArchive, IconCheck, IconCopy, IconDot, IconEdit, IconFork, IconHand, IconHandover, IconList, IconPin, IconPlus, IconSparkle, IconTerminal, IconTrace, IconTrash, IconWorktree } from './icons';
 import type { ToastState } from './Toast';
 import { formatList, t } from '../i18n';
 
@@ -29,6 +29,9 @@ interface Deps {
   onSectionsChange: () => void;
   /** Opens the web terminal, from a menu item tied to the thread's directory. */
   onOpenTerminal: () => void;
+  /** Opens the thread's trace, where the top bar no longer keeps a button of its own (a phone
+   *  reaches it from the overview instead). */
+  onOpenTrace?: () => void;
   onError: (e: unknown) => void;
   toast: (t: ToastState | null) => void;
   /** The whole conversation as Markdown, for the copy menu. */
@@ -77,7 +80,7 @@ export function forkBlocked(thread: Thread): string | null {
  * the archive and the slash menu, so an action behaves the same wherever it is started.
  */
 export function useThreadActions(deps: Deps) {
-  const { api, agents, sections, todos, chain, onTodosChange, onThreadChange, onThreadRemove, onThreadOpen, onMarkedUnread, onSectionsChange, onOpenTerminal, onError, toast, markdownOf, autotitle } = deps;
+  const { api, agents, sections, todos, chain, onTodosChange, onThreadChange, onThreadRemove, onThreadOpen, onMarkedUnread, onSectionsChange, onOpenTerminal, onOpenTrace, onError, toast, markdownOf, autotitle } = deps;
   /** The chain record when this thread belongs to any handover chain, automatic or manual. */
   const chainOf = (thread: Thread) => chain && (thread.handover
     || chain.threads.some(x => x.handover?.sourceId === thread.id)) ? chain : undefined;
@@ -175,6 +178,7 @@ export function useThreadActions(deps: Deps) {
     const planChoices = todos.filter((todo) => !todo.parentId).slice(0, 30);
     return [
       { id: 'terminal', label: t('actions.terminal'), icon: IconTerminal, onSelect: onOpenTerminal },
+      ...(onOpenTrace ? [{ id: 'trace', label: t('trace.openTrace'), icon: IconTrace, onSelect: onOpenTrace }] : []),
       { id: 'rename', label: t('actions.rename'), icon: IconEdit, onSelect: () => run('rename', thread) },
       ...(autotitle ? [{ id: 'autotitle', label: t('actions.autotitle'), icon: IconSparkle, onSelect: () => void autoName(thread) }] : []),
       { id: 'pin', label: thread.pinned ? t('actions.unpin') : t('actions.pin'), icon: IconPin, onSelect: () => run('pin', thread) },

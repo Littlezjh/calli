@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { changedFiles, mentionedFiles, pathsIn, type DiffEvent } from '../src/outputs.js';
+import { changedFiles, mentionedFiles, pathsIn, checkMissingFiles, type DiffEvent, type ThreadOutputs } from '../src/outputs.js';
 import { diffStats } from '../src/history-diff.js';
 import { DatabaseSync } from 'node:sqlite';
 import { Store } from '../src/store.js';
@@ -30,6 +30,36 @@ test('changed files sum every tool call over all turns, once per call, newest fi
   assert.equal(changes.removed, 2);
 });
 
+test('diff references retain three calls across two turns in final log order', () => {
+  const edit = (turnId: string, id: number, seq: number): DiffEvent => ({
+    turnId, seq, ts: String(100 - seq), data: { id: String(id), files: [{ ...summary('a.ts', 'old', 'new'), detail: { turnId, id, version: seq } }] },
+  });
+  const last = edit('t1', 1, 3);
+  last.data.files!.push({ ...last.data.files![0], path: '/w/a.ts' });
+  const [file] = changedFiles([edit('t1', 1, 1), edit('t1', 2, 2), last, edit('t2', 1, 4)], '/w').files;
+  assert.deepEqual(file.details, [
+    { turnId: 't1', id: 2, version: 2 },
+    { turnId: 't1', id: 1, version: 3 },
+    { turnId: 't2', id: 1, version: 4 },
+  ]);
+  assert.equal(file.turns, 2);
+  assert.equal(Object.hasOwn(file, 'detailsTotal'), false);
+});
+
+test('diff references retain the latest 20 and count omitted calls, not repeated reports', () => {
+  const events: DiffEvent[] = Array.from({ length: 25 }, (_, i) => ({
+    turnId: 't', seq: i + 1, ts: 'same', data: { id: String(i), files: [{ ...summary('a.ts', 'old', 'new'), detail: { turnId: 't', id: i + 1, version: i + 1 } }] },
+  }));
+  const exact = changedFiles(events.slice(0, 20), '/w').files[0];
+  assert.equal(exact.details.length, 20);
+  assert.equal(Object.hasOwn(exact, 'detailsTotal'), false);
+  events.push({ turnId: 't', seq: 26, ts: 'same', data: { id: '0', files: [{ ...summary('a.ts', 'old', 'final'), detail: { turnId: 't', id: 1, version: 26 } }] } });
+  const [file] = changedFiles(events, '/w').files;
+  assert.equal(file.detailsTotal, 25);
+  assert.deepEqual(file.details.map(d => d.version), Array.from({ length: 20 }, (_, i) => i + 7));
+  assert.equal(file.details.at(-1)!.id, 1);
+});
+
 test('answers yield pictures by any mention and files only when handed over', () => {
   assert.deepEqual(pathsIn('see [a](<my file.md>), `/w/b.ts:12` and https://x.io/c.png').map(p => p.path), ['my file.md', '/w/b.ts']);
   assert.deepEqual(pathsIn('`/tmp/中文 图 (1).png` and /tmp/README; <file:///tmp/my%20report.md#L2> [remote](file://host/a.png)').map(p => p.path), ['/tmp/中文 图 (1).png', '/tmp/my report.md', '/tmp/README']);
@@ -51,11 +81,85 @@ test('closing markup tags are not file references; explicit paths remain support
   assert.deepEqual(pathsIn('</srv/out/report.html> <file:///tmp/a b.png> </srv/README> </report.html> <file:///README>').map(f => f.path), ['/srv/out/report.html', '/tmp/a b.png', '/srv/README', '/report.html', '/README']);
 });
 
+test('directory and abbreviated paths are not output files', () => {
+  const omitted = [
+    '.', '..', '…', '...', './', '../', '/', '/a/b/', '/a/b/.', '/a/b/..', '/data/…', '/a/b/...',
+    '/a/…/b.py', '/a/truncated…name/b.py', '/a/.../b', '/a/.../b.py', 'out/.../report.html',
+    '/a/---', '/a/___', '/a/📄', '/a/.#L2', '/a/...:12',
+  ];
+  for (const path of omitted) {
+    for (const text of [path, '`' + path + '`', `[x](<${path}>)`]) {
+      assert.deepEqual(pathsIn(text), [], text);
+      assert.deepEqual(mentionedFiles([{ turnId: 't1', seq: 1, ts: '1', text }], '/w'), { images: [], files: [] }, text);
+    }
+    if (path.startsWith('/')) assert.deepEqual(pathsIn(`[x](file://${encodeURI(path)})`), [], path);
+  }
+});
+
+test('ordinary paths retain letters, numbers, dotfiles and real parent-directory segments', () => {
+  assert.deepEqual(pathsIn('/a/b.py [x](out/report.html)').map(f => f.path), ['out/report.html', '/a/b.py']);
+  for (const path of ['/a/b.py', 'out/report.html', './out/report.html', '../report.html', '/a/../b.py', '/a/.env', '/a/报告', '/a/123', '/a/report...html']) {
+    assert.deepEqual(pathsIn(`[x](<${path}>)`), [{ path, linked: true }], path);
+  }
+});
+
+test('wildcard expressions are never output paths, including encoded and unquoted patterns', () => {
+  for (const path of ['/tmp/codex-preview-*.png', '/tmp/chart?.png', '/tmp/chart.png?', '/tmp/chart[12].png', '/tmp/{first,second}.png', 'out/chart*.png', 'out/chart.png?', 'out/chart[12].png']) {
+    for (const text of [path, '`' + path + '`', `[x](${path})`, `[x](${encodeURI(path).replaceAll('?', '%3F')})`]) {
+      assert.deepEqual(pathsIn(text), [], text);
+    }
+  }
+});
+
+test('home-relative paths expand before resolving against the thread directory', () => {
+  for (const text of ['~/out/chart.png', '`~/out/chart.png`', '[chart](~/out/chart.png)', '[chart](%7E/out/chart.png)']) {
+    assert.equal(pathsIn(text)[0].path, join(homedir(), 'out/chart.png'));
+    assert.equal(mentionedFiles([{ turnId: 't', seq: 1, ts: '1', text }], '/w').images[0].path, join(homedir(), 'out/chart.png'));
+  }
+  assert.deepEqual(pathsIn('~/README'), [{ path: join(homedir(), 'README'), linked: false }]);
+  assert.deepEqual(pathsIn('`~/my report.md`'), [{ path: join(homedir(), 'my report.md'), linked: false }]);
+  assert.deepEqual(pathsIn('[home](~) ~ `~`'), []);
+  assert.equal(mentionedFiles([{ turnId: 't', seq: 1, ts: '1', text: '~/README' }], '/w').files[0].path, join(homedir(), 'README'));
+  const changes = changedFiles([{ turnId: 't', seq: 1, ts: '1', data: { id: 'e', files: [summary('~/out/report.html', null, 'new')] } }], '/w');
+  assert.equal(changes.files[0].path, join(homedir(), 'out/report.html'));
+});
+
+test('disk checks mark missing files and directories, then clear stale missing flags', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'calli-outputs-disk-'));
+  const present = join(dir, 'present.txt');
+  const absent = join(dir, 'absent.txt');
+  const folder = join(dir, 'folder');
+  writeFileSync(present, 'present');
+  mkdirSync(folder);
+  const paths = [present, absent, folder, join(present, 'child.txt')];
+  const outputs: ThreadOutputs = {
+    changes: { total: paths.length, added: 4, removed: 0, files: paths.map(path => ({ path, added: 1, removed: 0, created: true, turns: 1, turnId: 't', at: '1', details: [] })) },
+    images: paths.map(path => ({ path, turnId: 't', at: '1' })),
+    files: paths.map(path => ({ path, turnId: 't', at: '1' })), seq: 1,
+  };
+  try {
+    const checked = await checkMissingFiles(outputs);
+    for (const list of [checked.changes.files, checked.images, checked.files]) {
+      assert.equal(Object.hasOwn(list[0], 'missing'), false);
+      assert.deepEqual(list.slice(1).map(f => f.missing), [true, true, true]);
+    }
+    assert.equal(Object.hasOwn(outputs.files[1], 'missing'), false, 'checks do not mutate a previously returned snapshot');
+    writeFileSync(absent, 'restored');
+    rmSync(present);
+    const refreshed = await checkMissingFiles(checked);
+    for (const list of [refreshed.changes.files, refreshed.images, refreshed.files]) {
+      assert.equal(list[0].missing, true);
+      assert.equal(Object.hasOwn(list[1], 'missing'), false);
+    }
+    assert.equal(checked.files[1].missing, true);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('files the thread created count as output even when no answer names them', () => {
   const created = [
-    { seq: 1, path: '/w/gen/logo.png', added: 0, removed: 0, created: true, turns: 1, turnId: 't1', at: '2026-01-01T00:00:00Z' },
-    { seq: 2, path: '/w/notes.md', added: 3, removed: 0, created: true, turns: 1, turnId: 't2', at: '2026-01-02T00:00:00Z' },
-    { seq: 2, path: '/w/src/a.ts', added: 1, removed: 1, created: false, turns: 1, turnId: 't2', at: '2026-01-02T00:00:00Z' },
+    { seq: 1, path: '/w/gen/logo.png', added: 0, removed: 0, created: true, turns: 1, turnId: 't1', at: '2026-01-01T00:00:00Z', details: [] },
+    { seq: 2, path: '/w/notes.md', added: 3, removed: 0, created: true, turns: 1, turnId: 't2', at: '2026-01-02T00:00:00Z', details: [] },
+    { seq: 2, path: '/w/src/a.ts', added: 1, removed: 1, created: false, turns: 1, turnId: 't2', at: '2026-01-02T00:00:00Z', details: [] },
   ];
   const { images, files } = mentionedFiles([{ turnId: 't3', seq: 10, ts: '2026-01-03T00:00:00Z', text: 'see [notes](/w/notes.md)' }], '/w', created);
   assert.deepEqual(images.map(i => i.path), ['/w/gen/logo.png']);
@@ -148,6 +252,7 @@ test('forks and cold histories build only tools and keep all copied turns in ord
     const fork = await store.outputSources('fork');
     const source = await store.outputSources('source');
     assert.deepEqual(changedFiles(fork.diffs, dir), changedFiles(source.diffs, dir));
+    assert.ok(changedFiles(fork.diffs, dir).files.every(f => f.details.length === 1));
     assert.equal(fork.answers.length, 12);
     assert.equal((await store.outputSources('cut')).answers.length, 2);
     assert.equal(changedFiles((await store.outputSources('cut')).diffs, dir).total, 2);

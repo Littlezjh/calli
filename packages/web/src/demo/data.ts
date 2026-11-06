@@ -178,10 +178,62 @@ const settingsMock = (page: string, card: string, line: string, edge: string, fi
 const PREVIEW_LIGHT = settingsMock('#f8f6f1', '#ffffff', '#1f1e1c', '#e5e2da', '#1f1e1c');
 const PREVIEW_DARK = settingsMock('#171614', '#242220', '#f2f0ea', '#3a3835', '#f2f0ea');
 
+/** A row of bars: the shape of a statistics or plan screenshot, in the same neutral greys. */
+const barsMock = (page: string, card: string, line: string, edge: string, ok: string, bad: string) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 200">
+<rect width="280" height="200" rx="12" fill="${page}"/>
+<rect x="20" y="18" width="104" height="12" rx="6" fill="${line}"/>
+<g fill="${card}" stroke="${edge}">
+<rect x="20" y="44" width="240" height="136" rx="8"/>
+</g>
+<g fill="${ok}">
+<rect x="42" y="132" width="22" height="30" rx="4"/>
+<rect x="78" y="96" width="22" height="66" rx="4"/>
+<rect x="114" y="72" width="22" height="90" rx="4"/>
+<rect x="150" y="108" width="22" height="54" rx="4"/>
+</g>
+<rect x="186" y="60" width="22" height="102" rx="4" fill="${bad}"/>
+<rect x="42" y="62" width="112" height="9" rx="4" fill="${line}"/>
+</svg>
+`;
+/** Two tinted bands: a diff screenshot at a readable size. */
+const diffMock = (page: string, add: string, del: string, line: string) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 200">
+<rect width="280" height="200" rx="12" fill="${page}"/>
+<rect x="20" y="18" width="140" height="10" rx="5" fill="${line}"/>
+<g fill="${del}">
+<rect x="20" y="44" width="240" height="16" rx="4"/>
+<rect x="20" y="64" width="200" height="16" rx="4"/>
+<rect x="20" y="84" width="220" height="16" rx="4"/>
+</g>
+<g fill="${add}">
+<rect x="20" y="108" width="240" height="16" rx="4"/>
+<rect x="20" y="128" width="176" height="16" rx="4"/>
+</g>
+<g fill="${line}">
+<rect x="20" y="156" width="120" height="10" rx="5"/>
+<rect x="20" y="174" width="86" height="10" rx="5"/>
+</g>
+</svg>
+`;
+
+const OVERVIEW_WIDE = settingsMock('#f8f6f1', '#ffffff', '#1f1e1c', '#e5e2da', '#1f1e1c');
+const OVERVIEW_PHONE = settingsMock('#f4f2ed', '#ffffff', '#24231f', '#e2dfd6', '#24231f');
+const E2E_PHONE = settingsMock('#f8f6f1', '#efece4', '#1f1e1c', '#dcd8ce', '#1f1e1c');
+const PLAN_BOARD = barsMock('#f8f6f1', '#ffffff', '#1f1e1c', '#e5e2da', '#8b8a85', '#c4c1b9');
+const STATS_TABLE = barsMock('#171614', '#242220', '#f2f0ea', '#3a3835', '#c9c6be', '#6d6a63');
+const DIFF_COLORS = diffMock('#f8f6f1', '#e6f4ea', '#fcecec', '#1f1e1c');
+const TRACE = diffMock('#171614', '#1f3528', '#3a2324', '#f2f0ea');
+
 /** The demo's answer to a request for one of its pictures, by the path it is known by. */
 export function demoPicture(path: string): string | null {
   if (path.endsWith('preview-light.svg')) return PREVIEW_LIGHT;
   if (path.endsWith('preview-dark.svg')) return PREVIEW_DARK;
+  if (path.endsWith('overview-wide.svg')) return OVERVIEW_WIDE;
+  if (path.endsWith('overview-390.svg')) return OVERVIEW_PHONE;
+  if (path.endsWith('e2e-phone.svg')) return E2E_PHONE;
+  if (path.endsWith('plan-board.svg')) return PLAN_BOARD;
+  if (path.endsWith('stats-table.svg')) return STATS_TABLE;
+  if (path.endsWith('diff-colors.svg')) return DIFF_COLORS;
+  if (path.endsWith('trace.svg')) return TRACE;
   return null;
 }
 
@@ -220,20 +272,22 @@ export function demoData(now = Date.now()): DemoData {
     dark.add(turn, at(41), 'reasoning.delta', { text: '先找到主题变量在哪里定义，再看设置页的布局，开关放在「语言」下面比较顺。' });
     dark.add(turn, at(41), 'tool.start', { id: 'c1', title: 'rg -n "prefers-color-scheme|themes" src', kind: 'execute', input: { command: 'rg -n "prefers-color-scheme|themes" src' } });
     dark.add(turn, at(41), 'tool.end', { id: 'c1', status: 'completed', output: 'src/theme.ts:1:export const themes = {\nsrc/main.tsx:8:applyTheme(document.documentElement);' });
+    // The two edits carry the numeric reference the overview reports in `details`, so the demo's
+    // history/detail can answer them from these very events.
     dark.add(turn, at(40), 'tool.start', {
-      id: 'c2',
+      id: 2,
       title: 'src/theme.ts',
       kind: 'edit',
       content: [{ type: 'diff', path: `${STOREFRONT}/src/theme.ts`, oldText: THEME_BEFORE, newText: THEME_AFTER }],
     });
-    dark.add(turn, at(40), 'tool.end', { id: 'c2', status: 'completed' });
+    dark.add(turn, at(40), 'tool.end', { id: 2, status: 'completed' });
     dark.add(turn, at(40), 'tool.start', {
-      id: 'c3',
+      id: 3,
       title: 'src/pages/Settings.tsx',
       kind: 'edit',
       content: [{ type: 'diff', path: `${STOREFRONT}/src/pages/Settings.tsx`, oldText: SETTINGS_BEFORE, newText: SETTINGS_AFTER }],
     });
-    dark.add(turn, at(40), 'tool.end', { id: 'c3', status: 'completed' });
+    dark.add(turn, at(40), 'tool.end', { id: 3, status: 'completed' });
     dark.add(turn, at(39), 'tool.start', { id: 'c4', title: 'npm test', kind: 'execute', input: { command: 'npm test' } });
     dark.add(turn, at(38), 'tool.end', { id: 'c4', status: 'completed', output: '✓ theme.test.ts (6)\n✓ settings.test.tsx (11)\n\nTest Files  2 passed\nTests  17 passed' });
     dark.add(turn, at(38), 'message.delta', {
@@ -383,12 +437,36 @@ export function demoData(now = Date.now()): DemoData {
     tests.add(turn, at(16), 'turn.done', { stopReason: 'end_turn' });
   }
 
-  // A lead with three members: one reporting back for review, one blocked on the person, one whose
-  // turn died. Their deliveries reach the lead as the quiet lines the timeline draws them into.
+  // A lead with four members: one reporting back for review, one blocked on the person, one whose
+  // turn died, and one still working. Their deliveries reach the lead as the quiet lines the
+  // timeline draws them into.
   const wrapup = log('demo-wrapup');
   {
+    const prep = 'turn-wrapup-0';
     const turn = 'turn-wrapup-1';
-    wrapup.add(null, at(50), 'thread.created');
+    wrapup.add(null, at(52), 'thread.created');
+    wrapup.add(prep, at(51), 'turn.started', { text: '上线前我先落发布页、说明和几个接口的小修，再分给三个人核对。' });
+    // Each edit is a tool the overview's change row reads back, turn and id and all: the demo
+    // answers history/detail from these very events.
+    const edit = (id: number, path: string, before: string | null, after: string) => {
+      wrapup.add(prep, at(51), 'tool.start', { id, title: path, kind: 'edit', content: [{ type: 'diff', path, oldText: before, newText: after }] });
+      wrapup.add(prep, at(51), 'tool.end', { id, status: 'completed' });
+    };
+    edit(1, `${NOTES_API}/docs/release-notes.html`, null, '<!doctype html>\n<html lang="zh">\n<head>\n  <meta charset="utf-8" />\n  <title>2.0 发布说明</title>\n</head>\n<body>\n  <h1>2.0</h1>\n  <p>概况卡、深色模式和接口测试一起上线。</p>\n</body>\n</html>\n');
+    edit(2, `${NOTES_API}/docs/overview.html`, null, '<!doctype html>\n<html lang="zh">\n<head>\n  <meta charset="utf-8" />\n  <title>概况面板</title>\n</head>\n<body>\n  <h1>概况</h1>\n  <p>顶栏一个按钮，团队、计划、变更、图片和文件都在里面。</p>\n</body>\n</html>\n');
+    edit(3, `${NOTES_API}/docs/overview.svg`, null, '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200">\n  <rect width="320" height="200" rx="12" fill="#f8f6f1"/>\n  <rect x="16" y="16" width="120" height="10" rx="5" fill="#1f1e1c"/>\n  <g fill="#e5e2da">\n    <rect x="16" y="40" width="288" height="26" rx="6"/>\n    <rect x="16" y="72" width="288" height="26" rx="6"/>\n    <rect x="16" y="104" width="288" height="26" rx="6"/>\n  </g>\n</svg>\n');
+    edit(4, `${NOTES_API}/out/stats.md`, '# 统计\n\n- 轮次：11\n- 输入：48.2M\n', '# 统计\n\n- 轮次：12\n- 输入：51.4M\n- 缓存命中：97.4%\n- 输出速度：74.2 tok/s（约）\n');
+    edit(5, `${NOTES_API}/src/outputs.ts`, 'export function outputs(events: StoredEvent[]) {\n  return { files: [], images: [], seq: 0 };\n}\n', 'export function outputs(events: StoredEvent[]) {\n  const files = changedFiles(events);\n  const images = imageFiles(events);\n  return { changes: summarize(files), images, files, seq: events.at(-1)?.seq ?? 0 };\n}\n\nexport function changedFiles(events: StoredEvent[]) {\n  return events.filter(isEdit).map(toChangedFile);\n}\n');
+    edit(6, `${NOTES_API}/src/history.ts`, 'export async function detail(ref: DetailRef) {\n  return read(ref);\n}\n', 'export async function detail(ref: DetailRef, cursor?: number, path?: string) {\n  const page = await read(ref, cursor);\n  return path ? pickPath(page, path) : page;\n}\n');
+    edit(7, `${NOTES_API}/src/threads.ts`, 'export function thread(id: string) {\n  return store.get(id);\n}\n', 'export function thread(id: string) {\n  const found = store.get(id);\n  if (!found) throw new ApiError(`no such thread: ${id}`, {}, 404);\n  return found;\n}\n');
+    edit(8, `${NOTES_API}/src/store.ts`, 'const rows = new Map();\n', 'const rows = new Map();\n// Newest first, so the overview does not sort on every read.\nexport const latest = () => [...rows.values()].sort((a, b) => b.seq - a.seq);\n');
+    edit(9, `${NOTES_API}/README.md`, '# notes-api\n\n示例项目：笔记服务的接口。\n', '# notes-api\n\n示例项目：笔记服务的接口。\n\n概况与统计的读法见 `docs/overview.html`。\n');
+    edit(10, `${NOTES_API}/package.json`, '  "scripts": {\n    "test": "node --test"\n  }\n', '  "scripts": {\n    "test": "node --test",\n    "e2e": "node e2e/run.mjs"\n  }\n');
+    edit(11, `${NOTES_API}/test/outputs.test.ts`, null, "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\nimport { changedFiles, outputs } from '../src/outputs.js';\n\ntest('a change is grouped by path, newest turn wins', () => {\n  const events = [\n    { type: 'tool.start', turnId: 't1', data: { id: 1, kind: 'edit', content: [{ type: 'diff', path: '/a.ts', oldText: 'a', newText: 'b' }] } },\n  ];\n  assert.equal(changedFiles(events as any).length, 1);\n  assert.equal(outputs(events as any).changes.total, 1);\n});\n");
+    edit(12, `${NOTES_API}/docs/old-plan.md`, '# 旧的上线计划\n\n- 先做概况卡\n- 再做统计\n- 截图最后补\n- 深色放二期\n- 发布页复用周报\n', '');
+    edit(13, `${NOTES_API}/docs/theme.md`, '# 主题\n\n页面从 `src/theme.ts` 取颜色变量。\n', '# 主题\n\n页面从 `src/theme.ts` 取颜色变量。要支持新的外观，加一组 token 并在 `applyTheme` 里注册。\n\n- `light`：默认。\n- `dark`：深色，跟随系统时由 `prefers-color-scheme` 决定。\n');
+    wrapup.add(prep, at(51), 'message.delta', { text: '发布页、说明和接口的小修都落好了，旧计划删掉，接着分给三个人核对。' });
+    wrapup.add(prep, at(51), 'turn.done', { stopReason: 'end_turn' });
     wrapup.add(turn, at(49), 'turn.started', { text: '上线前把三块收尾分出去：接口审查、深色核对、统计补齐，收齐了汇总给我。' });
     wrapup.add(turn, at(47), 'message.delta', { text: '分好了。三块都派出去了，交回后我在这里汇总。' });
     wrapup.add(turn, at(47), 'turn.done', { stopReason: 'end_turn' });
@@ -423,6 +501,14 @@ export function demoData(now = Date.now()): DemoData {
       '状态：失败',
       '跑 e2e 时手机 390 尺寸第 3 步超时（30s），桌面全过。日志保留在 /tmp/overview-390.log，回头接着查。',
     ].join('\n'));
+    // The lead's own list, last, so the overview is where the newest plan lives.
+    wrapup.add('turn-wrapup-stats', at(12), 'plan.updated', { entries: [
+      { content: '发布页与说明的收尾改动', status: 'completed' },
+      { content: '接口审查交回', status: 'completed' },
+      { content: '深色取值确认', status: 'in_progress' },
+      { content: '统计补齐重跑', status: 'pending' },
+      { content: '汇总上线清单', status: 'pending' },
+    ] });
   }
   // The members' own threads: each opens on the task the lead handed it. The answer closes the
   // turn, or an error does — a member that failed never said anything of its own.
@@ -443,15 +529,18 @@ export function demoData(now = Date.now()): DemoData {
     'demo-wrapup-review': member('demo-wrapup-review', 48, '核对接口约定、目录分工和异常处理，结果写进 out/stats.md。', '核对完了，接口和测试都交回，请验收。\n[进度] 待验收：接口和测试都交回，请统一验收'),
     'demo-wrapup-colors': member('demo-wrapup-colors', 34, '把概况卡的截图补齐，深色的取值先别定。', '截图都齐了，深色取值等你确认。\n[进度] 需要你：深色下的取值需要确认'),
     'demo-wrapup-stats': member('demo-wrapup-stats', 20, '把统计口径补齐，结果写回 out/stats.md。', { error: 'e2e 在手机 390 尺寸第 3 步超时（30s），重试后仍失败。' }),
+    // The fourth member is still working: no answer, no error, just its turn left open.
+    'demo-wrapup-shots': member('demo-wrapup-shots', 15, '把发布页、概况面板和手机尺寸的截图补齐，深色也来一张。'),
   };
 
   const sections: Section[] = [{ id: 'demo-reports', name: '周报', position: 0 }];
 
   const threads: Thread[] = [
-    thread({ id: 'demo-wrapup', agent: 'claude', cwd: NOTES_API, title: '上线前收尾', preview: '接口审查交回了，统计补齐失败了', coordination: { rootId: 'demo-wrapup', children: 3, paused: false, doing: '等统计补齐重跑' } }, 12),
+    thread({ id: 'demo-wrapup', agent: 'claude', cwd: NOTES_API, title: '上线前收尾', preview: '接口审查交回了，统计补齐失败了', coordination: { rootId: 'demo-wrapup', children: 4, paused: false, doing: '等统计补齐重跑，截图还在补' } }, 12),
     thread({ id: 'demo-wrapup-review', agent: 'codex', cwd: NOTES_API, title: '接口审查', preview: '核对完了，接口和测试都交回', coordination: { rootId: 'demo-wrapup', children: 0, paused: false, doing: '已交回，待验收' }, report: { stage: 'review', note: '接口和测试都交回', at: at(41) } }, 42),
     thread({ id: 'demo-wrapup-colors', agent: 'claude', cwd: NOTES_API, title: '深色核对', preview: '深色取值等你确认', coordination: { rootId: 'demo-wrapup', children: 0, paused: false, doing: '需要你确认取值' }, report: { stage: 'blocked', note: '深色下的取值需要确认', at: at(27) } }, 28),
     thread({ id: 'demo-wrapup-stats', agent: 'pi', cwd: NOTES_API, title: '统计补齐', status: 'error', preview: '手机尺寸超时，待重跑', coordination: { rootId: 'demo-wrapup', children: 0, paused: false, doing: '手机尺寸超时' } }, 12),
+    thread({ id: 'demo-wrapup-shots', agent: 'codex', cwd: NOTES_API, title: '截图补齐', status: 'running', preview: '正在补发布页和手机尺寸的截图', coordination: { rootId: 'demo-wrapup', children: 0, paused: false, doing: '正在补截图' } }, 12),
     thread({ id: 'demo-scroll-fix', agent: 'claude', cwd: STOREFRONT, title: '修复商品列表滚动跳动', status: 'running', waiting: true, waitingReason: 'approval', preview: '商品列表往下滚的时候会跳一下', model: 'opus' }, 6),
     thread({ id: 'demo-tests', agent: 'codex', cwd: NOTES_API, title: '补齐 /users 接口测试', unread: true, preview: '给 /users 接口补上缺的测试。', report: { stage: 'review', note: '补了 12 个用例，本地全部通过', at: at(16) } }, 16),
     thread({ id: 'demo-dark-mode', agent: 'codex', cwd: STOREFRONT, title: '设置页加深色模式', preview: '设置页加一个深色模式开关', model: 'gpt-5.5', effort: 'high', doneAt: at(30) }, 38),
@@ -479,6 +568,7 @@ export function demoData(now = Date.now()): DemoData {
         teamMember('demo-wrapup-review', '接口审查', 48, '核对接口约定、目录分工和异常处理，结果写进 out/stats.md。', 'returned', '核对完了，接口和测试都交回，请验收。\n[进度] 待验收：接口和测试都交回，请统一验收'),
         teamMember('demo-wrapup-colors', '深色核对', 34, '把概况卡的截图补齐，深色的取值先别定。', 'returned', '截图都齐了，深色取值等你确认。\n[进度] 需要你：深色下的取值需要确认'),
         teamMember('demo-wrapup-stats', '统计补齐', 20, '把统计口径补齐，结果写回 out/stats.md。', 'failed', ''),
+        teamMember('demo-wrapup-shots', '截图补齐', 15, '把发布页、概况面板和手机尺寸的截图补齐，深色也来一张。', 'returned', '深色和手机 390 的截图正在出，发布页的已经好了。\n[进度] 进行中'),
       ],
       messages: [],
     },
@@ -562,10 +652,11 @@ export function demoData(now = Date.now()): DemoData {
     'demo-dark-mode': {
       changes: {
         files: [
-          { path: `${STOREFRONT}/src/components/settings/appearance-theme-provider.test.tsx`, added: 34, removed: 0, created: true, turns: 1, turnId: 'turn-dark-1', at: at(40) },
-          { path: `${STOREFRONT}/src/lib/follow-system-color-scheme.ts`, added: 8, removed: 3, created: false, turns: 1, turnId: 'turn-dark-1', at: at(40) },
-          { path: `${STOREFRONT}/src/pages/Settings.tsx`, added: 6, removed: 1, created: false, turns: 1, turnId: 'turn-dark-1', at: at(40) },
-          { path: `${STOREFRONT}/src/theme.ts`, added: 12, removed: 2, created: false, turns: 1, turnId: 'turn-dark-1', at: at(40) },
+          // Two of the four were reported without a reference the history can read back.
+          { path: `${STOREFRONT}/src/components/settings/appearance-theme-provider.test.tsx`, added: 34, removed: 0, created: true, turns: 1, turnId: 'turn-dark-1', at: at(40), details: [] },
+          { path: `${STOREFRONT}/src/lib/follow-system-color-scheme.ts`, added: 8, removed: 3, created: false, turns: 1, turnId: 'turn-dark-1', at: at(40), details: [] },
+          { path: `${STOREFRONT}/src/pages/Settings.tsx`, added: 6, removed: 1, created: false, turns: 1, turnId: 'turn-dark-1', at: at(40), details: [{ turnId: 'turn-dark-1', id: 3, version: 1 }] },
+          { path: `${STOREFRONT}/src/theme.ts`, added: 12, removed: 2, created: false, turns: 1, turnId: 'turn-dark-1', at: at(40), details: [{ turnId: 'turn-dark-1', id: 2, version: 1 }] },
         ],
         added: 60,
         removed: 6,
@@ -577,6 +668,52 @@ export function demoData(now = Date.now()): DemoData {
       ],
       files: [{ path: `${STOREFRONT}/docs/theme.md`, turnId: 'turn-dark-1', at: at(38) }],
       seq: dark.events.length,
+    },
+    // The lead's own gate before delegating: enough changes to make the panel's three-row cap and
+    // its auto-fold visible, a page and a drawing, a file gone from the disk, and every row
+    // pointing back at the tool event its diff dialog reads.
+    'demo-wrapup': {
+      changes: {
+        files: [
+          { path: `${NOTES_API}/docs/release-notes.html`, added: 68, removed: 0, created: true, turns: 1, turnId: 'turn-wrapup-0', at: at(51), details: [{ turnId: 'turn-wrapup-0', id: 1, version: 1 }] },
+          { path: `${NOTES_API}/docs/overview.html`, added: 44, removed: 0, created: true, turns: 1, turnId: 'turn-wrapup-0', at: at(51), details: [{ turnId: 'turn-wrapup-0', id: 2, version: 1 }] },
+          { path: `${NOTES_API}/docs/overview.svg`, added: 22, removed: 0, created: true, turns: 1, turnId: 'turn-wrapup-0', at: at(51), details: [{ turnId: 'turn-wrapup-0', id: 3, version: 1 }] },
+          { path: `${NOTES_API}/out/stats.md`, added: 16, removed: 4, created: false, turns: 1, turnId: 'turn-wrapup-0', at: at(51), details: [{ turnId: 'turn-wrapup-0', id: 4, version: 1 }] },
+          { path: `${NOTES_API}/src/outputs.ts`, added: 31, removed: 9, created: false, turns: 1, turnId: 'turn-wrapup-0', at: at(51), details: [{ turnId: 'turn-wrapup-0', id: 5, version: 1 }] },
+          { path: `${NOTES_API}/src/history.ts`, added: 12, removed: 6, created: false, turns: 1, turnId: 'turn-wrapup-0', at: at(51), details: [{ turnId: 'turn-wrapup-0', id: 6, version: 1 }] },
+          { path: `${NOTES_API}/src/threads.ts`, added: 8, removed: 3, created: false, turns: 1, turnId: 'turn-wrapup-0', at: at(51), details: [{ turnId: 'turn-wrapup-0', id: 7, version: 1 }] },
+          { path: `${NOTES_API}/src/store.ts`, added: 5, removed: 2, created: false, turns: 1, turnId: 'turn-wrapup-0', at: at(51), details: [{ turnId: 'turn-wrapup-0', id: 8, version: 1 }] },
+          { path: `${NOTES_API}/README.md`, added: 3, removed: 1, created: false, turns: 1, turnId: 'turn-wrapup-0', at: at(51), details: [{ turnId: 'turn-wrapup-0', id: 9, version: 1 }] },
+          { path: `${NOTES_API}/package.json`, added: 2, removed: 2, created: false, turns: 1, turnId: 'turn-wrapup-0', at: at(51), details: [{ turnId: 'turn-wrapup-0', id: 10, version: 1 }] },
+          { path: `${NOTES_API}/test/outputs.test.ts`, added: 40, removed: 0, created: true, turns: 1, turnId: 'turn-wrapup-0', at: at(51), details: [{ turnId: 'turn-wrapup-0', id: 11, version: 1 }] },
+          { path: `${NOTES_API}/docs/old-plan.md`, added: 0, removed: 18, created: false, turns: 1, turnId: 'turn-wrapup-0', at: at(51), missing: true, details: [{ turnId: 'turn-wrapup-0', id: 12, version: 1 }] },
+          { path: `${NOTES_API}/docs/theme.md`, added: 9, removed: 2, created: false, turns: 1, turnId: 'turn-wrapup-0', at: at(51), details: [{ turnId: 'turn-wrapup-0', id: 13, version: 1 }] },
+        ],
+        added: 260,
+        removed: 47,
+        total: 13,
+      },
+      images: [
+        { path: `${NOTES_API}/docs/overview-wide.svg`, turnId: 'turn-wrapup-1', at: at(30) },
+        { path: `${NOTES_API}/docs/overview-390.svg`, turnId: 'turn-wrapup-1', at: at(30) },
+        { path: `${NOTES_API}/docs/diff-colors.svg`, turnId: 'turn-wrapup-1', at: at(30) },
+        { path: `${NOTES_API}/docs/stats-table.svg`, turnId: 'turn-wrapup-1', at: at(30) },
+        { path: `${NOTES_API}/docs/plan-board.svg`, turnId: 'turn-wrapup-1', at: at(30) },
+        { path: `${NOTES_API}/docs/trace.svg`, turnId: 'turn-wrapup-1', at: at(30) },
+        { path: `${NOTES_API}/docs/e2e-phone.svg`, turnId: 'turn-wrapup-1', at: at(30) },
+        // Present but unreadable: the square stays, grey, with the reason on it.
+        { path: `${NOTES_API}/shots/raw-scan.png`, turnId: 'turn-wrapup-1', at: at(30) },
+        // Gone from the disk: no square, one faint line under the grid.
+        { path: `${NOTES_API}/shots/deleted-390.png`, turnId: 'turn-wrapup-1', at: at(30), missing: true },
+      ],
+      files: [
+        { path: `${NOTES_API}/docs/release-notes.html`, turnId: 'turn-wrapup-0', at: at(51) },
+        { path: `${NOTES_API}/docs/theme.md`, turnId: 'turn-wrapup-0', at: at(51) },
+        { path: `${NOTES_API}/out/stats.md`, turnId: 'turn-wrapup-0', at: at(51) },
+        { path: `${NOTES_API}/data/notes.csv`, turnId: 'turn-wrapup-0', at: at(51) },
+        { path: `${NOTES_API}/docs/old-plan.md`, turnId: 'turn-wrapup-0', at: at(51), missing: true },
+      ],
+      seq: wrapup.events.length,
     },
   };
 
@@ -681,6 +818,18 @@ export function demoData(now = Date.now()): DemoData {
       timing: { source: 'hub', turns: 12, segments: 38, waitMs: 64_800, avgWaitMs: 1_800, genMs: 517_200, modelMs: 582_000, toolMs: 845_000 },
       tokens: { turnsWithout: 1, input: 51_362_118, cacheRead: 50_712_904, cacheWrite: 61_322, output: 191_864, reasoning: 40_112, total: 51_553_982 },
       tokPerSec: 74.2,
+      tokPerSecApprox: true,
+    },
+    // The lead's session: longer, mostly cache reads, so the panel's footer has a full line.
+    'demo-wrapup': {
+      threadId: 'demo-wrapup',
+      checkedAt: new Date(now).toISOString(),
+      running: true,
+      turns: 39,
+      steps: 210,
+      timing: { source: 'hub', turns: 39, segments: 96, waitMs: 171_600, avgWaitMs: 1_760, genMs: 1_404_000, modelMs: 1_575_600, toolMs: 2_730_000 },
+      tokens: { turnsWithout: 2, input: 40_020_000, cacheRead: 38_820_000, cacheWrite: 142_000, output: 180_000, reasoning: 31_200, total: 40_200_000 },
+      tokPerSec: 1740,
       tokPerSecApprox: true,
     },
   };
