@@ -203,7 +203,8 @@ function ThreadQuickSwitch({ threads, selectedId, agents, onSelect }: {
   const panel = useRef<HTMLDivElement>(null);
   const timer = useRef<number | null>(null);
   const lastY = useRef(0);
-  const tapOpenAtPointerDown = useRef(false);
+  const startX = useRef(0);
+  const startY = useRef(0);
   const [tapOpen, setTapOpen] = useState(false);
   const [press, setPress] = useState<{ pointerId: number; open: boolean; targetId: string } | null>(null);
   const agentById = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
@@ -260,18 +261,29 @@ function ThreadQuickSwitch({ threads, selectedId, agents, onSelect }: {
     };
   }, [tapOpen]);
   if (selectedIndex < 0 || items.length <= 1) return null;
+  /** A plain tap on the strip is not ours: hand the click to whatever interactive piece sits under it. */
+  const forwardTap = (x: number, y: number) => {
+    const strip = root.current;
+    if (!strip) return;
+    strip.style.visibility = 'hidden';
+    const hit = document.elementFromPoint(x, y);
+    strip.style.visibility = '';
+    hit?.closest('button, a, input, textarea, label, [role="option"], [role="menuitem"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+  };
   return (
-    <div className={`quick-switch${open ? ' open' : ''}`} ref={root}>
-      <button
-        type="button"
-        className="quick-switch-button"
-        aria-label={t('quickSwitch.handle')}
-        aria-expanded={open}
+    <div className="quick-switch" ref={root}>
+      {/* An invisible strip along the right edge, mirroring the left edge's list gesture: swipe it
+          left to summon the panel, hold to scrub through the sessions, and a plain tap falls
+          through to the interface underneath. */}
+      <div
+        className="quick-switch-edge"
+        aria-hidden="true"
         onPointerDown={(e) => {
           if (e.pointerType === 'mouse' && e.button !== 0) return;
           e.preventDefault();
           e.currentTarget.setPointerCapture(e.pointerId);
-          tapOpenAtPointerDown.current = tapOpen;
+          startX.current = e.clientX;
+          startY.current = e.clientY;
           lastY.current = e.clientY;
           setPress({ pointerId: e.pointerId, open: false, targetId: selectedId });
           clearTimer();
@@ -283,28 +295,32 @@ function ThreadQuickSwitch({ threads, selectedId, agents, onSelect }: {
         }}
         onPointerMove={(e) => {
           if (press?.pointerId !== e.pointerId) return;
-          e.preventDefault();
           lastY.current = e.clientY;
-          updateTarget(e.clientY);
+          // A pull past the threshold summons the panel for tapping; holding keeps its scrub.
+          if (!press.open && !tapOpen && startX.current - e.clientX > 24) {
+            clearTimer();
+            reset(e.currentTarget, e.pointerId);
+            setTapOpen(true);
+            return;
+          }
+          if (press.open) { e.preventDefault(); updateTarget(e.clientY); }
         }}
         onPointerUp={(e) => {
           if (press?.pointerId !== e.pointerId) return;
-          e.preventDefault();
           const targetId = press.open ? press.targetId : null;
+          const tap = Math.abs(e.clientX - startX.current) < 6 && Math.abs(e.clientY - startY.current) < 6;
           reset(e.currentTarget, e.pointerId);
           if (targetId) {
             setTapOpen(false);
             if (targetId !== selectedId) onSelect(targetId);
-          } else {
-            setTapOpen(!tapOpenAtPointerDown.current);
+            return;
           }
+          if (tap) forwardTap(e.clientX, e.clientY);
         }}
         onPointerCancel={(e) => {
           if (press?.pointerId === e.pointerId) reset(e.currentTarget, e.pointerId);
         }}
-      >
-        <IconList size={20} />
-      </button>
+      />
       {open && (
         <div className="quick-switch-panel" ref={panel} role="listbox" aria-label={t('quickSwitch.sessions')}>
           {items.map((thread) => {

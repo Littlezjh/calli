@@ -1611,7 +1611,6 @@ export const en: Messages = {
   'sidebar.me': 'Me: ',
   'sidebar.reply': 'Reply: ',
   'sidebar.settings': 'Settings',
-  'quickSwitch.handle': 'Quick switch sessions',
   'quickSwitch.sessions': 'Recent sessions',
 
   // Skills
