@@ -16,7 +16,7 @@ export const en: typeof zh = {
   again: 'Name again after the 3rd turn',
   againHint: 'Catches a conversation that drifted; titles you set are left alone',
   rules: 'Naming rules',
-  rulesHint: 'Sent as written. For example, add a line saying to start with a fitting emoji.',
+  rulesHint: 'Sent as written. The defaults already ask for a fitting emoji; change them as you like.',
   resetRules: 'Restore default rules',
   save: 'Save rules',
   saved: 'Saved',
