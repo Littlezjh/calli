@@ -43,7 +43,7 @@ export interface AutoTitlePass {
 }
 
 export const DEFAULT_RULES = [
-  '- 开头放一个贴切这件事本身的 emoji，只放一个，注意区分度；🤖 也可以，但只在真的关于 agent 时用',
+  '- 开头放一个贴切这件事本身的 emoji，只放一个，注意区分度',
   '- 8 到 20 个字，和对话用同一种语言',
   '- 说清楚要做的事，不要客套话',
   '- 不加标点和引号',
