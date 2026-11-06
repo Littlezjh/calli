@@ -1425,7 +1425,7 @@ function StepRow({ step: original, roots }: { step: Step; roots: string[] }) {
   const showInput = step.input !== undefined && step.diffs.length === 0 && JSON.stringify(step.input) !== '{}';
   // A command reads as the line that was typed, not as the JSON it was sent in.
   const command = stepCommand(step);
-  const result = step.status === 'completed' ? t('view.succeeded') : step.status === 'failed' ? t('team.failed') : null;
+  const result = step.status === 'completed' ? t('view.succeeded') : step.status === 'failed' ? t('team.failed') : step.status === 'unknown' ? t('view.resultUnknown') : null;
   const hasContent = showInput || step.diffs.length > 0 || Boolean(step.output);
   const hasDetail = Boolean(original.detail) || hasContent || result !== null;
   return (

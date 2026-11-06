@@ -48,6 +48,7 @@ async function main(): Promise<void> {
       traexCommand: config.traexCommand,
       codexCommand: config.codexCommand,
       dshCommand: config.dshCommand,
+      doubaoCommand: config.doubaoCommand,
     }),
   });
   const adapters = registry.adapters;

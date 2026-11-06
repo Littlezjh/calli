@@ -38,7 +38,7 @@ export class DemoApi extends Api {
     return (this.data ??= this.load());
   }
 
-  protected override async send<T>(method: string, url: string, body?: unknown): Promise<T> {
+  protected override async send<T>(method: string, url: string, body?: unknown, _opts: { keepalive?: boolean } = {}): Promise<T> {
     const extensions = this.extensionAnswer(method, url, body);
     if (extensions !== undefined) return structuredClone(extensions) as T;
     const data = await this.workspace();

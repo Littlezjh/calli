@@ -165,6 +165,33 @@ test('general settings default to a new thread and persist across clients and st
   assert.deepEqual(await (await api(path, { method: 'PUT', body: JSON.stringify({ startupPage: 'new-thread', autoArchiveDays: null }) })).json(), { startupPage: 'new-thread', autoArchiveDays: null });
 });
 
+test('draft model preferences are stored by the daemon and sanitized by agent capability', async () => {
+  const path = '/api/draft-model-preferences';
+  assert.equal((await api(path, {}, false)).status, 401);
+  assert.equal((await api(path, { method: 'PUT', body: JSON.stringify({ pi: { model: 'fake/think' } }) }, false)).status, 401);
+  assert.deepEqual(await (await api(path)).json(), {});
+  assert.equal((await api(path, { method: 'PUT', body: JSON.stringify(null) })).status, 400);
+
+  const saved = await api(path, { method: 'PUT', body: JSON.stringify({
+    pi: { model: 'fake/think', effort: 'high', speed: 'fast' },
+    ghost: { model: 'fake/think', effort: 'high', speed: 'fast' },
+    junk: 'not a preference',
+  }) });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(await saved.json(), { pi: { model: 'fake/think', effort: 'high', speed: null } });
+  assert.deepEqual(await (await api(path)).json(), { pi: { model: 'fake/think', effort: 'high', speed: null } });
+  const reopened = new Store(dataDir);
+  try { assert.deepEqual(reopened.hubSetting('draft.model.preferences', null), { pi: { model: 'fake/think', effort: 'high', speed: null } }); }
+  finally { reopened.close(); }
+
+  store.saveHubSetting('draft.model.preferences', {
+    pi: { model: 'fake/missing', effort: 'high', speed: 'fast' },
+    ghost: { model: 'fake/think', effort: 'high', speed: 'fast' },
+  });
+  assert.deepEqual(await (await api(path)).json(), { pi: { model: null, effort: 'high', speed: null } });
+  assert.deepEqual(store.hubSetting('draft.model.preferences', null), { pi: { model: null, effort: 'high', speed: null } });
+});
+
 test('project directory browsing is authenticated, read-only, and independent of file access', async () => {
   assert.equal((await api('/api/project-directories', {}, false)).status, 401);
   const before = await (await api('/api/config')).json();
@@ -1232,6 +1259,36 @@ test('fork at a turn: the copy ends where that turn ended, on the hub and on the
   assert.equal((await turnsOf(last.id)).length, 3);
 
   assert.equal((await forkAt(thread.id, 'no-such-turn')).status, 404);
+
+  // While a new turn is still running, a finished history boundary is safe to copy; the unfinished
+  // current turn is not.
+  const running = (await (await api(`/api/threads/${thread.id}/turns`, { method: 'POST', body: JSON.stringify({ text: 'slow while forking' }) })).json()) as { turnId: string };
+  await waitFor(async () => {
+    const t = (await (await api(`/api/threads/${thread.id}`)).json()) as { status: string };
+    return t.status === 'running' ? t : null;
+  });
+  const pi = (manager as unknown as { adapters: Map<string, AgentAdapter> }).adapters.get('pi')!;
+  const loadHistory = pi.loadHistory!;
+  let historyReads = 0;
+  pi.loadHistory = async (...args) => {
+    const history = await loadHistory.call(pi, ...args);
+    return ++historyReads === 1 ? [] : history.slice(0, 1);
+  };
+  try {
+    const historyFork = await forkAt(thread.id, first.turnId!);
+    assert.equal(historyFork.status, 201);
+    assert.equal(((await historyFork.json()) as Record<string, any>).agentSessionId, 'hist-forkat-fork-e2');
+    assert.equal(historyReads, 2, 'an active writer history snapshot that is one turn behind is retried');
+  } finally {
+    pi.loadHistory = loadHistory;
+  }
+  assert.equal((await api(`/api/threads/${thread.id}/fork`, { method: 'POST' })).status, 409);
+  assert.equal((await forkAt(thread.id, running.turnId)).status, 409);
+  await api(`/api/threads/${thread.id}/cancel`, { method: 'POST' });
+  await waitFor(async () => {
+    const t = (await (await api(`/api/threads/${thread.id}`)).json()) as { status: string };
+    return t.status === 'idle' ? t : null;
+  });
 
   // A turn the user stopped is no place to end a copy, wherever it stands.
   const stopping = await newThread({ agent: 'pi' });

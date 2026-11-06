@@ -26,10 +26,11 @@ daemon（Node.js，跑在远程主机上）
 | Claude Code | ACP，`@agentclientprotocol/claude-agent-acp@0.89.0`（stdio JSON-RPC） | 流式、审批、图片输入、`session/list`、`session/load`（回放历史）、`session/fork`、`session/delete`、`session/set_mode`、`session/set_config_option`（模型、强度）、斜杠命令 |
 | pi | `pi --mode rpc`（stdin/stdout JSON 行） | 流式、图片输入、`set_model`、`set_thinking_level`、`get_available_models`（含每个模型的强度映射和是否支持图片）、`get_commands`、`clone`、`fork`、`get_messages`；没有审批 |
 | Antigravity | `agy --input-format stream-json --output-format stream-json … -p=` | 流式、多轮（一个进程，每行输入一轮）、`--conversation` 恢复、`--model`、SIGINT 停止。输入是 `{"event":"user","message":{"content":…}}`，输出是 `init`、`step_update`、`result`。无界面模式不能询问权限，需要批准的操作会被拒绝；输入只有文字；流里没有思考过程和文件内容 |
-| Codex | `codex app-server`（自有 JSON-RPC v2 线程协议，stdio） | 流式、审批（`item/commandExecution/requestApproval`、`item/fileChange/requestApproval`，选项按 `availableDecisions` 生成）、`thread/resume`、`model/list`（含强度和图片输入）、`thread/turns/list`（回放历史）、`thread/fork`、`thread/delete`、`thread/compact/start`（`/compact`）；`turn/start` 携带模型/强度/沙箱覆盖，`thread/tokenUsage/updated` 映射上下文占用 |
-| TraeX | 执行与命令走 `traex app-server`，复用 Codex 线程协议；模型、历史、分叉仍走 ACP | 原生 `/goal`、多轮流式、审批、恢复、压缩、模型/强度/权限；额度保留 `traex models --json`。已有 ACP 会话通过同一原生会话 ID 恢复，入口命令配置无需迁移 |
+| Codex | `codex app-server`（自有 JSON-RPC v2 线程协议，stdio） | 流式、人工审批（`item/commandExecution/requestApproval`、`item/fileChange/requestApproval`，选项按 `availableDecisions` 生成）、原生自动审批（`approvalsReviewer: auto_review`）、`thread/resume`、`model/list`（含强度和图片输入）、`thread/turns/list`（回放历史）、`thread/fork`、`thread/delete`、`thread/compact/start`（`/compact`）；`turn/start` 携带模型/强度/权限覆盖，`thread/tokenUsage/updated` 映射上下文占用 |
+| TraeX | 执行、命令、历史与分叉走 `traex app-server`，复用 Codex 线程协议；模型元数据仍走 ACP | 原生 `/goal`、多轮流式、审批、恢复、压缩、模型/强度/权限；额度保留 `traex models --json`。已有 ACP 会话通过同一原生会话 ID 恢复，入口命令配置无需迁移 |
 | zcode | `zcode app-server`（无 jsonrpc 字段的 NDJSON） | 精简协议接入：关闭自动记忆、基础工具白名单、流式、审批回调、取消、恢复、模型/强度、图片输入（按原生模型能力）、`/compact`；无权限档位，扩展全局关闭需另配，见 `zcode-minimal-design.md` |
 | DeepSeek Harness | ACP，`dsh --profile acp`（stdio JSON-RPC） | 流式、逐次审批（allow-once/reject-once，审批卡回填工具信息）、`session/resume` 恢复（不回放）、协作、模型（分组、不透明路由 id）与 reasoning effort（按模型）、图片输入（按路由）；无 modes、fork、历史回放与会话删除，见 `dsh-acp-design.md` |
+| Doubao CLI | `doubao -p`，每轮一个原生进程，`--resume` 续接 | 默认最终文本，可选临时运行副本的实验 `stream-json` 桥（真实正文增量与工具快照，未知结果不补成功）；原生会话 ID 延迟保存、恢复、停止、两档权限、协作环境、终端登录；添加与实例设置页可按能力开关流式桥，保存到 Calli 的实例环境、下一轮生效；未找到原生 ACP 入口，无模型目录/人工审批/图片/历史分叉，见 `doubao-cli-design.md` |
 
 注意：`@zed-industries/claude-agent-acp` 已停更（0.23.1，模型列表过时），不要用回去。
 
@@ -70,15 +71,16 @@ Plan 交互参考了 [Cline 的 Plan / Act](https://docs.cline.bot/core-workflow
 - **页面自己发现断线和新版本。** 事件流 40 秒没有任何字节（daemon 每 15 秒发一次 ping）就当它死了重连，回到前台时静默超过 5 秒也立刻重连；线程列表流重连后重新拉一次列表。回到前台或重连时比对 `index.html` 里的入口脚本，不一样就提示"有新版本"。
 - **手机键盘。** 键盘不改变页面大小，只是盖住下半部分，浏览器再把剩下的可视区平移到输入框那里。所以 app 整个画在可视区所在的位置：高度取 `visualViewport.height`，位置取 `visualViewport.pageTop`；弹层都在 app 这个盒子里定位，跟着一起到可视区。只跟高度不跟位置，输入框会被顶到屏幕顶部、下面空一片。不要再加 `interactive-widget=resizes-content`。
 - **daemon 重启时收尾。** 启动时把还标着"运行中"的线程里没结束的那一轮记为 `turn.error`（`code: interrupted`）。
-- **同一个会话，两个入口。** 线程保存 agent 侧的会话 ID。网页和终端操作的是同一份会话；daemon 重启后用这个 ID 恢复。
+- **同一个会话，两个入口。** 线程保存 agent 侧的会话 ID。网页和终端操作的是同一份会话；daemon 重启后用这个 ID 恢复。只有实际发送后才创建原生会话的 CLI，通过 `StartOptions.onSessionId` 在收到原生标识时立即保存，不用假 ID 或额外提示词预建会话。
 - **不在 agent 那边留痕迹。** 探测模型和命令用临时进程（pi 加 `--no-session`；Claude 不发消息就不会落盘）。
 - **设置按线程保存：** 权限、模型、思考强度。运行中修改会直接作用到会话上，做不到时重启会话并恢复。
-  - 权限三档：请求批准 → `default`；帮我批准 → `auto`（没有就退到 `acceptEdits`）；完全访问 → `bypassPermissions`。pi 没有权限模式。
-  - 模型列表、支持的强度和图片能力从 agent 读取，不写死。Claude 读取并缓存 ACP 返回的目录，不逐个切换模型预检，避免列表加载触发真实 API 请求或因某个模型超时而失败；选中模型和应用会话设置时仍由原生 CLI 检查权限与参数。
+  - 权限三档按 agent 的原生语义映射：Codex / TraeX 的「帮我批准」使用 `workspace-write + on-request + approvalsReviewer: auto_review`，由原生审批 subagent 评估，切回请求批准或完全访问时恢复 `approvalsReviewer: user`；Claude 优先使用 `auto`（没有就退到 `acceptEdits`）；完全访问使用原生 bypass。pi 没有权限模式。
+  - 模型列表、支持的强度和图片能力从 agent 读取，不写死。原生接口不提供模型目录时声明 `capabilities.modelCatalog: false`，不显示模型/强度选择器，诊断区分「CLI 可启动」与模型读取失败；不发真实提示词探测，也不补造目录。Claude 原生目录沿用 ACP 缓存，不逐个切换模型预检；选中模型和应用会话设置时仍由原生 CLI 检查权限与参数。开启网关模型发现时，按实例环境和用户配置读取 Anthropic 兼容的 `/v1/models`，使用网关报告的强度和图片能力，菜单保留 GPT 5.5 及以上和 openrouter-4o 家族，后者置顶，不消耗推理额度。发现失败显式返回错误并允许重试，不缓存空目录或回退原生模型。打开模型弹层时刷新，地址、身份或默认模型变更也会使缓存失效。
+  - Ferry 模型状态：仅本机回环地址且标签来自 Ferry 的模型补充 `traex models --json` 上游负载与只读 `queue-seen.json` 观测，按模型配置匹配标准/Max/1M 档位，保留负载零值。独立的 `queuePosition`、`queueObservedAt` 表示最近请求的位置与时间，不冒充总排队数；30 分钟内显示「排 N」或明确的「未排队」及观测时间，过期显示已过期，缺失或无效缓存显示未知。没有 Ferry、缓存不可读、负载 CLI 失败均不影响选模，负载与队列读取互不依赖。列表、默认行与已选模型展示状态，打开弹层时刷新，弹层内仅本地更新时间，不增加推理探测、Codex 活跃请求或上游轮询；远程、非 Ferry 与旧目录保持原有行为。具体修改与验证见 [Ferry 模型状态代码修改方案](ferry-model-status.md)。
   - 速度同样按模型发现：`capabilities.speed` 表示适配器能设置速度，`ModelOption.speeds` 提供实际档位，适配器用 `isFast` 标记加速档，避免把经济或未知档位当作加速。Codex 读取 `model/list.serviceTiers`，旧协议的 `additionalSpeedTiers.fast` 映射为 `priority`；Claude 使用 ACP 返回的 `fast` 选项，不为读取目录逐个切换模型。TraeX 仅合并执行协议中匹配模型的速度能力。
   - 模型弹层左上角的闪电直接切换加速：开启为绿色实心，关闭为灰色轮廓；不再单独占一块速度选项。关闭显式恢复标准速度，模型不支持时隐藏；模型列表标注「可加速」。尚未选择时保留原生设置，按钮提示说明继承状态及加速可能增加用量。前端先于 Hub 更新、旧响应尚无 `isFast` 时，兼容已返回的快速档位 ID；明确的 `isFast: false` 优先，经济与未知档位不猜测为加速。
   - 线程 `speed` 未设置时不覆盖原生速度；选择后通过原生会话接口应用并保存。标准档为 `default`，切换到不支持原档位的模型也显式保存标准档，避免恢复时继承旧加速设置。Codex 通过 `thread/settings/update` 和 `turn/start.serviceTier` 应用，Claude 通过 `session/set_config_option` 应用并从 `config_option_update` 同步原生降速。切换速度不改变思考强度、权限、工作模式或会话。界面提示加速可能增加用量，不把固定价格或账户资格写死；参见 [官方 Speed 说明](https://learn.chatgpt.com/docs/agent-configuration/speed)。
-- **审批：** 只接受 agent 给出的选项 ID，其他一律拒绝。取消 turn 时，未决的审批自动按取消处理。
+- **审批：** Codex / TraeX 的自动审批由 app-server 原生处理，未被自动审批接管的请求仍进入统一人工审批；人工审批只接受 agent 给出的选项 ID，其他一律拒绝。取消 turn 时，未决的审批自动按取消处理。
 - **工作模式与权限分开。** `workMode: execute | plan` 按线程保存，前端只看 `capabilities.workModes`。运行中禁止切换，原生计划审批导致的模式变化由适配器回报；排队消息保留入队时的模式。进入计划不会改写用户的执行权限，回到执行继续使用原模型、强度、会话和权限。计划模式不能启动或恢复长期目标。
   - 输入框「＋」菜单合并附件与「计划模式」开关，开启时菜单打勾、底栏「＋」旁出现「计划」胶囊（列表图标 + 计划 + ×，点 × 退出），输入框提示先讨论方案，关闭即回到执行。手机模型仪表按钮及其容器保持固定正圆，停止和发送同时出现时也不压缩；手机上运行中的一轮遇到空输入框折叠为一行（＋、追加一条…、停止），点按输入行立即展开回两行。
   - Codex / TraeX 通过 `collaborationMode/list` 探测，再随 `turn/start` 传原生 `collaborationMode`；模型和强度取当前会话，不套用另一套默认值。旧版本不支持时明确报错。

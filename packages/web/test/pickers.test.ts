@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { agentGroups, effortsForModel, imagesBlocked, modelLoadLabel, modelLoadPercent, modelName, modelRows } from '../src/components/Pickers.js';
+import { agentGroups, effortsForModel, imagesBlocked, modelLoadLabel, modelLoadPercent, modelName, modelRows, modelQueueLabel, modelStatusLabel } from '../src/components/Pickers.js';
+import { setLocale } from '../src/i18n/index.js';
 import { isFastSpeed, type AgentInfo } from '../src/api.js';
 
 test('the new-thread picker omits hidden single instances and accounts before grouping', () => {
@@ -52,6 +53,93 @@ test('model load follows the selected model and the agent default alias', () => 
   assert.equal(modelLoadPercent(models, 'quiet'), undefined);
   assert.equal(modelLoadPercent(models, 'gone'), undefined);
   assert.equal(modelLoadLabel(100), '负载100%');
+});
+
+test('model status distinguishes unavailable queues from zero and follows the default model', () => {
+  // Ferry metadata is visible before selection; missing numbers must never be presented as zero.
+  const models = [
+    { id: 'main', label: 'Ferry Main', isDefault: true, loadPercent: 128, queueSize: null },
+    { id: 'zero', label: 'Ferry Zero', loadPercent: 0, queueSize: 0 },
+    { id: 'unknown', label: 'Ferry Unknown', queueSize: null },
+    { id: 'legacy', label: 'Legacy', loadPercent: 18 },
+  ];
+  assert.equal(modelStatusLabel(models[0]), '负载128% · 排队未提供');
+  assert.equal(modelStatusLabel(models[1]), '负载0% · 排队0');
+  assert.equal(modelStatusLabel(models[2]), '负载未提供 · 排队未提供');
+  assert.equal(modelStatusLabel(models[3]), '负载18%');
+  assert.equal(modelStatusLabel(undefined), '');
+  assert.equal(modelStatusLabel({ id: 'failed', label: 'Failed', queueSize: null, loadError: true }), '负载读取失败 · 排队未提供');
+  const rows = modelRows(models);
+  assert.equal(rows[0].label, '默认 · Ferry Main');
+  assert.equal(rows[0].hint, '负载128% · 排队未提供');
+  assert.equal(rows.find(row => row.value === 'zero')?.hint, '负载0% · 排队0');
+  assert.equal(rows.find(row => row.value === 'legacy')?.hint, undefined, 'older catalogs keep their hints unchanged');
+});
+
+test('queue positions include observation age without being presented as total queue sizes', () => {
+  // A valid observation overrides unavailable total size; the default and named rows share its status.
+  const now = 1_793_800_000_000;
+  const queued = { id: 'main', label: 'Ferry Main', isDefault: true, loadPercent: 128, queueSize: null, queuePosition: 550, queueObservedAt: now - 120_000 };
+  const nonqueued = { id: 'quiet', label: 'Ferry Quiet', loadPercent: 0, queuePosition: 0, queueObservedAt: now };
+  assert.equal(modelStatusLabel(queued, now), '负载128% · 排550（2 分钟前）');
+  assert.equal(modelStatusLabel(nonqueued, now), '负载0% · 未排队（刚刚）');
+  assert.equal(modelStatusLabel({ ...queued, loadPercent: undefined, loadError: true }, now), '负载读取失败 · 排550（2 分钟前）');
+  const rows = modelRows([queued, nonqueued], now);
+  assert.equal(rows[0].label, '默认 · Ferry Main');
+  assert.equal(rows[0].hint, rows[1].hint);
+  assert.equal(rows[1].hint, '负载128% · 排550（2 分钟前）');
+  assert.equal(rows[2].hint, '负载0% · 未排队（刚刚）');
+});
+
+test('queue observations expire even in cached catalogs, while missing and invalid data stay unknown', () => {
+  // Stale/missing observations are never rendered as an empty queue, including a previously nonqueued model.
+  const now = 1_793_800_000_000;
+  const option = { id: 'main', label: 'Main', queuePosition: 5, queueObservedAt: now - 30 * 60_000 };
+  assert.equal(modelQueueLabel(option, now), '排5（30 分钟前）');
+  assert.equal(modelQueueLabel(option, now + 1), '排队已过期');
+  assert.equal(modelQueueLabel({ ...option, queuePosition: 0 }, now + 1), '排队已过期');
+  assert.equal(modelQueueLabel({ ...option, queuePosition: null }, now + 1), '排队已过期');
+  for (const invalid of [
+    { ...option, queuePosition: null, queueObservedAt: now },
+    { ...option, queueObservedAt: undefined },
+    { ...option, queueObservedAt: now + 1 },
+    { ...option, queueObservedAt: NaN },
+    { ...option, queuePosition: -1, queueObservedAt: now },
+  ]) assert.equal(modelQueueLabel(invalid, now), '排队未知');
+  assert.equal(modelStatusLabel({ id: 'unknown', label: 'Unknown', queuePosition: null }, now), '负载未提供 · 排队未知');
+  assert.equal(modelQueueLabel({ id: 'legacy', label: 'Legacy' }, now), '');
+  assert.equal(modelQueueLabel(undefined, now), '');
+});
+
+test('queue positions and observation ages use localized wording and English minute plurals', () => {
+  // Position is not a request count; observation time uses the locale's relative-time grammar.
+  const now = 1_793_800_000_000;
+  const option = { id: 'a', label: 'A', queuePosition: 550, queueObservedAt: now - 60_000 };
+  try {
+    setLocale('en');
+    assert.equal(modelQueueLabel(option, now), 'Queue #550 (1 minute ago)');
+    assert.equal(modelQueueLabel(option, now + 60_000), 'Queue #550 (2 minutes ago)');
+    assert.equal(modelQueueLabel({ ...option, queuePosition: 0, queueObservedAt: now }, now), 'Not queued (Just now)');
+    assert.equal(modelQueueLabel({ ...option, queuePosition: null, queueObservedAt: undefined }, now), 'Queue unknown');
+    assert.equal(modelQueueLabel(option, now + 30 * 60_000), 'Queue outdated');
+    setLocale('ja');
+    assert.equal(modelQueueLabel(option, now), '待機550番（1 分前）');
+    assert.equal(modelQueueLabel({ ...option, queuePosition: 0, queueObservedAt: now }, now), '待機なし（たった今）');
+    assert.equal(modelQueueLabel({ ...option, queuePosition: null, queueObservedAt: undefined }, now), '待機状態不明');
+    assert.equal(modelQueueLabel(option, now + 30 * 60_000), '待機情報期限切れ');
+  } finally { setLocale('zh'); }
+});
+
+test('model status labels are localized and English queue counts use the right noun', () => {
+  // Status wording follows the same locale as the rest of the picker.
+  try {
+    setLocale('en');
+    assert.equal(modelStatusLabel({ id: 'a', label: 'A', loadPercent: 0, queueSize: 1 }), 'Load 0% · 1 queued request');
+    assert.equal(modelStatusLabel({ id: 'a', label: 'A', queueSize: 0 }), 'Load unavailable · 0 queued requests');
+    assert.equal(modelStatusLabel({ id: 'a', label: 'A', queueSize: null }), 'Load unavailable · Queue unavailable');
+    setLocale('ja');
+    assert.equal(modelStatusLabel({ id: 'a', label: 'A', loadPercent: 25, queueSize: null }), '負荷25% · 待機数未提供');
+  } finally { setLocale('zh'); }
 });
 
 test('the agent default is folded into one row, so there is no duplicate default', () => {
@@ -158,4 +246,13 @@ test('fast controls accept older Hub catalogs without treating economy or unknow
   }
   for (const id of ['default', 'flex', 'custom-tier']) assert.equal(isFastSpeed({ id, label: id }), false);
   assert.equal(isFastSpeed({ id: 'custom-tier', label: 'Custom', isFast: true }), true);
+});
+
+test('a CLI without a native catalog exposes no model or effort picker, including member controls', async () => {
+  const { createElement } = await import('react');
+  const { renderToStaticMarkup } = await import('react-dom/server');
+  const { ModelPicker } = await import('../src/components/Pickers.js');
+  const props = { catalog: false, models: [], model: null, efforts: [], effort: null, onModel: () => undefined, onEffort: () => undefined };
+  assert.equal(renderToStaticMarkup(createElement(ModelPicker, props)), '');
+  assert.equal(renderToStaticMarkup(createElement(ModelPicker, { ...props, quietFor: 'CLI instance' })), '');
 });

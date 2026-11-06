@@ -7,6 +7,14 @@ export interface GeneralSettings {
   /** Shared automatic archive window. Null means conversations stay in the sidebar. */
   autoArchiveDays: AutoArchiveDays;
 }
+export interface DraftModelPreference {
+  /** Null leaves the agent's own default model in charge. */
+  model: string | null;
+  /** Null leaves the agent's own/default thinking effort in charge. */
+  effort: string | null;
+  /** Null leaves the agent's own/default speed in charge. */
+  speed: string | null;
+}
 export interface UserQuestion { id: string; question: string; header?: string; options: Array<{ value: string; label: string; description?: string }>; multiple?: boolean; freeText?: boolean; required?: boolean }
 export type UserInputAnswer = { answers: Record<string, string[]> } | { cancelled: true };
 import type { UsageReport, AgentDiagnostic, CostReport, DailyUsage } from './observability';
@@ -658,6 +666,14 @@ export interface ModelOption {
   description?: string;
   /** How busy this model is right now; above 100 means overloaded. */
   loadPercent?: number;
+  /** Total queued requests. Null means unavailable, not zero; absent means no queue metadata. */
+  queueSize?: number | null;
+  /** Observed request position, not total queue size. Zero means observed nonqueued; null means unknown/stale. */
+  queuePosition?: number | null;
+  /** Queue observation time in epoch milliseconds; absent when no valid observation exists. */
+  queueObservedAt?: number;
+  /** True when reading the upstream load failed, rather than the upstream omitting it. */
+  loadError?: boolean;
   /** Effort levels this model accepts. Empty: none. Missing: use the agent-wide list. */
   efforts?: string[];
   speeds?: Array<{ id: string; label: string; description?: string; isFast?: boolean }>;
@@ -682,6 +698,13 @@ export interface AgentReferences {
   handoverOrders: number;
 }
 
+/** A version-limited opt-in bridge that changes only a private runtime copy. */
+export interface StreamBridgeCapability {
+  version: string;
+  platform: string;
+  temporaryMegabytes: number;
+}
+
 export interface AgentInfo {
   id: string;
   label: string;
@@ -695,6 +718,7 @@ export interface AgentInfo {
   available: boolean;
   /** How it can be signed in from the hub, when its adapter can start the CLI's login. */
   login?: 'terminal' | 'wizard';
+  streamBridgeEnabled?: boolean;
   capabilities: {
     workModes?: WorkMode[];
     speed?: boolean;
@@ -705,6 +729,9 @@ export interface AgentInfo {
     permissionModes: string[];
     /** The level a new thread starts at. Missing: `auto_edit`. */
     defaultPermissionMode?: string;
+    /** False when native model discovery is unavailable; no model picker is offered. */
+    modelCatalog?: boolean;
+    streamBridge?: StreamBridgeCapability;
     effortLevels: string[];
     images: boolean;
     deleteSession: boolean;
@@ -741,7 +768,7 @@ export interface SupportedAgent {
   label: string;
   icon?: string;
   installGuide?: string;
-  capabilities?: { createAccount: boolean };
+  capabilities?: { createAccount: boolean; streamBridge?: StreamBridgeCapability };
 }
 
 /** One window of a plan's usage, as the agent itself reports it. */
@@ -997,15 +1024,16 @@ export class Api {
     return this.base + (this.host ? hostPath(this.host, path) : path);
   }
 
-  private request<T>(method: string, path: string, body?: unknown): Promise<T> {
-    return this.send(method, this.url(path), body);
+  private request<T>(method: string, path: string, body?: unknown, opts: { keepalive?: boolean } = {}): Promise<T> {
+    return this.send(method, this.url(path), body, opts);
   }
 
-  protected async send<T>(method: string, url: string, body?: unknown): Promise<T> {
+  protected async send<T>(method: string, url: string, body?: unknown, opts: { keepalive?: boolean } = {}): Promise<T> {
     const res = await fetch(url, {
       method,
       headers: this.headers(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       body: body === undefined ? undefined : JSON.stringify(body),
+      keepalive: opts.keepalive,
     });
     if (res.status === 401) throw new AuthError('unauthorized');
     if (res.status === 204) return undefined as T;
@@ -1092,6 +1120,8 @@ export class Api {
   startExplore(sources: ExploreSourceId[]): Promise<{ id: string }> { return this.request('POST', '/api/personal/explore', { sources }); }
   exploreStatus(): Promise<ExploreStatus | null> { return this.request('GET', '/api/personal/explore'); }
   cancelExplore(): Promise<{ cancelled: boolean }> { return this.request('DELETE', '/api/personal/explore'); }
+  draftModelPreferences(): Promise<Record<string, DraftModelPreference>> { return this.request('GET', '/api/draft-model-preferences'); }
+  saveDraftModelPreferences(value: Record<string, DraftModelPreference>, opts: { keepalive?: boolean } = {}): Promise<Record<string, DraftModelPreference>> { return this.request('PUT', '/api/draft-model-preferences', value, opts); }
   personalSettings(): Promise<PersonalSettings> { return this.request('GET', '/api/personal/settings'); }
   savePersonalSettings(value: PersonalSettings): Promise<PersonalSettings> { return this.request('PUT', '/api/personal/settings', value); }
   personalBrief(kind: 'morning' | 'evening'): Promise<PersonalBrief | null> { return this.request('GET', `/api/personal/brief?kind=${kind}`); }
@@ -1596,12 +1626,12 @@ export class Api {
   }
 
   /** Adds an agent instance (another CLI, another account). */
-  addAgent(input: { id?: string; adapter: string; label?: string; command?: string[]; env?: Record<string, string>; account?: string }): Promise<{ id: string }> {
+  addAgent(input: { id?: string; adapter: string; label?: string; command?: string[]; env?: Record<string, string>; account?: string; streamBridge?: boolean }): Promise<{ id: string }> {
     return this.request('POST', '/api/agents', input);
   }
 
-  /** Updates an instance's presentation; its id, which threads store, does not change. */
-  updateAgent(id: string, patch: { label?: string; hidden?: boolean }): Promise<{ id: string; label?: string; hidden?: boolean }> {
+  /** Updates hub-owned settings; its id, which threads store, does not change. */
+  updateAgent(id: string, patch: { label?: string; hidden?: boolean; streamBridge?: boolean }): Promise<{ id: string; label?: string; hidden?: boolean }> {
     return this.request('PATCH', `/api/agents/${encodeURIComponent(id)}`, patch);
   }
 
@@ -1858,8 +1888,8 @@ export class Api {
     return this.request('DELETE', `/api/terminals/${id}`);
   }
 
-  models(agent: string): Promise<ModelOption[]> {
-    return this.request('GET', `/api/agents/${agent}/models`);
+  models(agent: string, refresh = false): Promise<ModelOption[]> {
+    return this.request('GET', `/api/agents/${encodeURIComponent(agent)}/models${refresh ? '?refresh=1' : ''}`);
   }
 
   listDirectory(path: string): Promise<DirectoryInfo> {

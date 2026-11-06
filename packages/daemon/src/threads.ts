@@ -73,6 +73,17 @@ export interface GeneralSettings {
   autoArchiveDays: AutoArchiveDays;
 }
 
+export interface DraftModelPreference {
+  /** Null means the agent should use its own default model. */
+  model: string | null;
+  /** Null means the agent should use its own/default thinking effort. */
+  effort: EffortLevel | null;
+  /** Null means the agent should use its own/default speed. */
+  speed: string | null;
+}
+
+export type DraftModelPreferences = Record<string, DraftModelPreference>;
+
 function storedAutoArchiveDays(value: unknown): AutoArchiveDays {
   return AUTO_ARCHIVE_DAY_OPTIONS.includes(value as never) ? value as AutoArchiveDays : null;
 }
@@ -81,6 +92,12 @@ function parseAutoArchiveDays(value: unknown): AutoArchiveDays {
   if (value === null) return null;
   if (AUTO_ARCHIVE_DAY_OPTIONS.includes(value as never)) return value as AutoArchiveDays;
   throw new HttpError(400, 'invalid auto archive period');
+}
+
+const DRAFT_MODEL_PREFERENCES_KEY = 'draft.model.preferences';
+
+function hasDraftModelPreference(value: DraftModelPreference): boolean {
+  return Boolean(value.model || value.effort || value.speed);
 }
 
 /** What forking a thread can offer besides a copy in the same directory. */
@@ -245,6 +262,7 @@ export interface AgentInfo {
   /** The account this instance runs as, when it is a linked second login (an email). */
   account?: string | null;
   available: boolean;
+  streamBridgeEnabled?: boolean;
   /** How it can be signed in from the hub, when its adapter can start the CLI's login. */
   login?: 'terminal' | 'wizard';
   capabilities: AgentAdapter['capabilities'];
@@ -415,9 +433,15 @@ export class ThreadManager {
         available: await a.available(),
         ...(a.startLogin ? { login: 'wizard' as const } : a.loginCommand ? { login: 'terminal' as const } : {}),
         capabilities: a.capabilities,
+        ...(a.capabilities.streamBridge ? { streamBridgeEnabled: a.streamBridgeEnabled ?? false } : {}),
       });
     }
     return out;
+  }
+
+  /** Invalidate only metadata; running turns keep their existing adapter until they finish. */
+  agentSettingsChanged(agent: string): void {
+    this.diagnosticCache.delete(agent);
   }
 
   /** Commands for an agent. `cwd` selects project-level commands and must be an allowed workdir. */
@@ -546,7 +570,8 @@ export class ThreadManager {
     const adapter = this.adapters.get(thread.agent);
     if (!adapter?.capabilities.fork || !adapter.forkSession) throw new HttpError(400, `${thread.agent} cannot fork a conversation`);
     if (!thread.agentSessionId) throw new HttpError(400, 'there is nothing to fork yet; send a message first');
-    if (this.running.has(id)) throw new HttpError(409, 'wait for the running turn to finish before forking');
+    const running = this.running.has(id);
+    if (running && !opts.turnId) throw new HttpError(409, 'wait for the running turn to finish before forking');
 
     // Where the hub's copy stops, and which of its turns that is. Null: the whole thread.
     let cut: { upToSeq: number; hubIndex: number; hubKeys: string[] } | null = null;
@@ -556,9 +581,12 @@ export class ThreadManager {
       if (hubIndex < 0) throw new HttpError(404, 'no such turn in this thread');
       // A turn the user stopped is not a place to go on from: the agent may not have kept it at all.
       const end = this.store.listEventsOfType(id, 'turn.done').find((ev) => ev.turnId === opts.turnId);
+      if (running && !end) throw new HttpError(409, 'wait for this turn to finish before forking from it');
       if (end?.data.stopReason === 'cancelled') throw new HttpError(409, 'this turn was stopped, so a copy cannot end there');
       if (hubIndex < starts.length - 1) {
-        cut = { upToSeq: starts[hubIndex + 1].seq - 1, hubIndex, hubKeys: starts.map((ev) => turnKey(String(ev.data.text ?? ''))) };
+        // Match only through the requested boundary. Later turns may be running or divergent, and
+        // they are not part of the copy being made.
+        cut = { upToSeq: starts[hubIndex + 1].seq - 1, hubIndex, hubKeys: starts.slice(0, hubIndex + 1).map((ev) => turnKey(String(ev.data.text ?? ''))) };
       }
     }
 
@@ -662,14 +690,27 @@ export class ThreadManager {
     if (!adapter.capabilities.forkAt || !adapter.loadHistory || !thread.agentSessionId) {
       throw new HttpError(400, `${thread.agent} can only fork a whole conversation`);
     }
-    const agentTurns = await adapter.loadHistory(thread.agentSessionId, thread.cwd);
-    const matched = matchTurns(agentTurns.map((t) => turnKey(t.text)), hubKeys, ThreadManager.SYNC_SKIP_TOLERANCE);
-    const agentIndex = matched?.hubToAgent[hubIndex] ?? -1;
-    if (agentIndex < 0) throw new HttpError(409, `this turn is not in ${thread.agent}'s own history, so a copy cannot stop there`);
-    if (agentIndex === agentTurns.length - 1) return undefined;
-    const ref = agentTurns[agentIndex].forkRef;
-    if (!ref) throw new HttpError(409, `${thread.agent} cannot stop a copy at this turn`);
-    return ref;
+    const active = this.running.has(thread.id);
+    const retryDelays = active ? [0, 50, 150] : [0];
+    for (const delayMs of retryDelays) {
+      // A second app-server can briefly see the active writer's history one turn behind. Only
+      // retry that prefix case; a real text disagreement still fails immediately.
+      if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
+      const agentTurns = await adapter.loadHistory(thread.agentSessionId, thread.cwd);
+      const matched = matchTurns(agentTurns.map((t) => turnKey(t.text)), hubKeys, ThreadManager.SYNC_SKIP_TOLERANCE);
+      const agentIndex = matched?.hubToAgent[hubIndex] ?? -1;
+      if (agentIndex < 0) {
+        if (matched && delayMs !== retryDelays.at(-1)) continue;
+        break;
+      }
+      // During a live turn the read snapshot may end at this older boundary even though the writer
+      // has already started another turn. Pass the explicit ref instead of cloning its moving tip.
+      if (!active && agentIndex === agentTurns.length - 1) return undefined;
+      const ref = agentTurns[agentIndex].forkRef;
+      if (!ref) throw new HttpError(409, `${thread.agent} cannot stop a copy at this turn`);
+      return ref;
+    }
+    throw new HttpError(409, `this turn is not in ${thread.agent}'s own history, so a copy cannot stop there`);
   }
 
   /** Where a stored image is on disk, for the HTTP layer to stream. */
@@ -865,6 +906,10 @@ export class ThreadManager {
       try {
         if (!await adapter.available()) return { ...base, checkedAt: new Date().toISOString(), state: 'missing', message: '没有找到 CLI，请检查该实例的命令和 PATH。', version: null, protocol: null, models: [] };
         const runtime = await adapter.diagnose?.().catch(() => null);
+        if (adapter.capabilities.modelCatalog === false) return {
+          ...base, ...runtime, checkedAt: new Date().toISOString(), state: 'cli_only', models: [],
+          message: 'CLI 可启动；原生接口不提供模型目录，沿用 CLI 默认设置。登录有效性以实际请求结果为准。',
+        };
         try {
           const models = await this.adapterModels(adapter, refresh);
           return { ...base, ...runtime, checkedAt: new Date().toISOString(), state: models.length ? 'ready' : 'empty',
@@ -888,10 +933,10 @@ export class ThreadManager {
     return adapter.models(refresh);
   }
 
-  async listModels(agent: string): Promise<ModelOption[]> {
+  async listModels(agent: string, refresh = false): Promise<ModelOption[]> {
     const adapter = this.adapters.get(agent);
     if (!adapter) throw new HttpError(404, `unknown agent: ${agent}`);
-    return this.adapterModels(adapter);
+    return this.adapterModels(adapter, refresh);
   }
 
   /** Turns of any thread, archived ones too, in which the words were said. */
@@ -1006,6 +1051,55 @@ export class ThreadManager {
     const value: GeneralSettings = { startupPage, autoArchiveDays };
     this.store.saveHubSetting('general.settings', value);
     return value;
+  }
+
+  async draftModelPreferences(): Promise<DraftModelPreferences> {
+    const stored = this.store.hubSetting<unknown>(DRAFT_MODEL_PREFERENCES_KEY, {});
+    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return {};
+    const out: DraftModelPreferences = {};
+    for (const [agent, value] of Object.entries(stored)) {
+      const preference = await this.sanitizeDraftModelPreference(agent, value);
+      if (preference) out[agent] = preference;
+    }
+    if (JSON.stringify(out) !== JSON.stringify(stored)) this.store.saveHubSetting(DRAFT_MODEL_PREFERENCES_KEY, out);
+    return out;
+  }
+
+  async saveDraftModelPreferences(input: unknown): Promise<DraftModelPreferences> {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new HttpError(400, 'invalid draft model preferences');
+    const out: DraftModelPreferences = {};
+    for (const [agent, value] of Object.entries(input)) {
+      const preference = await this.sanitizeDraftModelPreference(agent, value);
+      if (preference) out[agent] = preference;
+    }
+    this.store.saveHubSetting(DRAFT_MODEL_PREFERENCES_KEY, out);
+    return out;
+  }
+
+  private async sanitizeDraftModelPreference(agent: string, value: unknown): Promise<DraftModelPreference | null> {
+    if (!this.adapters.has(agent)) return null;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const source = value as { model?: unknown; effort?: unknown; speed?: unknown };
+    const model = typeof source.model === 'string' ? await this.validateModelOrNull(agent, source.model) : null;
+    const effort = typeof source.effort === 'string' ? await this.validateEffortOrNull(agent, model, source.effort) : null;
+    const speed = typeof source.speed === 'string' ? await this.validateSpeedOrNull(agent, model, source.speed) : null;
+    const preference = { model, effort, speed };
+    return hasDraftModelPreference(preference) ? preference : null;
+  }
+
+  private async validateModelOrNull(agent: string, model: string): Promise<string | null> {
+    try { return await this.validateModel(agent, model); }
+    catch { return null; }
+  }
+
+  private async validateEffortOrNull(agent: string, model: string | null, effort: string): Promise<EffortLevel | null> {
+    try { return await this.validateEffort(agent, model, effort); }
+    catch { return null; }
+  }
+
+  private async validateSpeedOrNull(agent: string, model: string | null, speed: string): Promise<string | null> {
+    try { return await this.validateSpeed(agent, model, speed); }
+    catch { return null; }
   }
 
   /** Periodic housekeeping only archives conversations that do not currently need attention. */
@@ -2930,19 +3024,24 @@ export class ThreadManager {
 
   private async createSession(thread: ThreadRecord): Promise<AgentSession> {
     const personalScope = Boolean(this.personal.environment(thread.id));
-    if (this.sessions.has(thread.id) && this.personalScopes.get(thread.id) !== personalScope) await this.dropSession(thread.id);
+    const adapter = this.adapters.get(thread.agent);
+    if (!adapter) throw new Error(`unknown agent: ${thread.agent}`);
+    if (this.sessions.has(thread.id) && (this.personalScopes.get(thread.id) !== personalScope || this.sessionAdapters.get(thread.id) !== adapter)) await this.dropSession(thread.id);
     const existing = this.sessions.get(thread.id);
     if (existing) {
       if (existing.setWorkMode) await existing.setWorkMode(thread.workMode ?? 'execute');
       return existing;
     }
-    const adapter = this.adapters.get(thread.agent);
-    if (!adapter) throw new Error(`unknown agent: ${thread.agent}`);
     const session = await adapter.start({
       borrowedTool: this.borrowing?.toolForThread(thread.id),
       coordinationEnv: this.backgroundThreads.has(thread.id) ? {} : { ...this.coordination?.environment(thread.id), ...this.borrowing?.environment(thread.id), ...this.personal.environment(thread.id) },
       cwd: thread.cwd,
       resumeId: thread.agentSessionId ?? undefined,
+      onSessionId: (id) => {
+        if (!id || !this.store.getThread(thread.id)) return;
+        this.store.updateThread(thread.id, { agentSessionId: id });
+        this.emitThreadEvent(thread.id, null, 'thread.updated', {});
+      },
       permissionMode: thread.permissionMode as PermissionMode,
       speed: thread.speed,
       workMode: thread.workMode ?? 'execute',
@@ -3007,7 +3106,7 @@ export class ThreadManager {
     this.personalScopes.set(thread.id, personalScope);
     this.sessions.set(thread.id, session);
     this.sessionAdapters.set(thread.id, adapter);
-    if (session.agentSessionId !== thread.agentSessionId) {
+    if (session.agentSessionId && session.agentSessionId !== thread.agentSessionId) {
       this.store.updateThread(thread.id, { agentSessionId: session.agentSessionId });
     }
     return session;

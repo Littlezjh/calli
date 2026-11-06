@@ -545,6 +545,8 @@ test('stepTitle puts a verb first and stepStatusLabel shows the state', () => {
   assert.equal(stepStatusLabel({ ...base, kind: 'execute', status: 'completed', startedAt: '2026-10-10T00:00:00.000Z', endedAt: '2026-10-10T00:00:00.900Z' }), '0.9 秒');
   assert.equal(stepStatusLabel({ ...base, kind: 'read', status: 'in_progress' }), '运行中');
   assert.equal(stepStatusLabel({ ...base, kind: 'other', status: 'failed' }), '已结束');
+  assert.equal(stepStatusLabel({ ...base, kind: 'other', status: 'unknown' }), '已结束');
+  assert.equal(stepStatusLabel({ ...base, kind: 'other', status: 'interrupted' }), '已结束');
   assert.equal(stepStatusLabel({ ...base, kind: 'execute', status: 'failed', startedAt: '2026-10-10T00:00:00.000Z', endedAt: '2026-10-10T00:00:00.900Z' }), '0.9 秒');
   assert.equal(stepTitle({ ...base, kind: 'other', status: 'completed' }), 'npm test');
   // A command is named by what it runs; the directory it steps into first says nothing in one line.
