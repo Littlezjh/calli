@@ -1,0 +1,72 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
+import { acpRateLimitQuota } from '../src/adapters/acp.js';
+import { ClaudeAcpAdapter } from '../src/adapters/claude.js';
+import { Store } from '../src/store.js';
+import { ThreadManager } from '../src/threads.js';
+import { AttachmentStore } from '../src/attachments.js';
+import { Workdirs } from '../src/workdirs.js';
+import type { PlanQuota } from '../src/adapters/types.js';
+
+const fixtures = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
+const fixture = (name: string) => [process.execPath, join(fixtures, `fake-${name}.mjs`)];
+const wait = async (check: () => any, timeout = 15000) => {
+  const end = Date.now() + timeout;
+  while (!check()) { if (Date.now() > end) throw new Error('timed out'); await new Promise(r => setTimeout(r, 10)); }
+};
+
+test('a rate_limit_event becomes quota windows, unknown kinds stay as they are', () => {
+  const now = Math.floor(Date.now() / 1000);
+  const quota = acpRateLimitQuota({
+    status: 'ok', rateLimitType: 'five_hour', utilization: 0.9, resetsAt: now + 3600,
+    unifiedWindows: {
+      five_hour: { utilization: 0.9, resetsAt: now + 3600 },
+      seven_day: { utilization: 0.42, resetsAt: now + 86400 },
+      seven_day_opus: { utilization: 0.71 },
+    },
+  })!;
+  assert.deepEqual(quota.windows.map(w => [w.label, w.scope, w.usedPercent]).sort((a, b) => a[2] - b[2]),
+    [['5H', undefined, 90], ['7D', '全部模型', 42], ['7D', 'Opus', 71]].sort((a, b) => a[2] - b[2]));
+  assert.ok(quota.windows[0].resetsAt && Date.parse(quota.windows[0].resetsAt) > Date.now());
+  // A rejection about a window it did not itemize counts as that window being full.
+  const rejected = acpRateLimitQuota({ status: 'rejected', rateLimitType: 'seven_day_sonnet', resetsAt: now + 7200 })!;
+  assert.equal(rejected.windows.find(w => w.scope === 'Sonnet')?.usedPercent, 100);
+  assert.equal(acpRateLimitQuota({}), null);
+  assert.equal(acpRateLimitQuota('junk'), null);
+  assert.equal(acpRateLimitQuota({ unifiedWindows: { five_hour: { utilization: 9 } } }), null, 'over-full utilization is not a share');
+});
+
+test('the adapter observes quota as the agent answers', async () => {
+  const adapter = new ClaudeAcpAdapter(fixture('acp'));
+  const seen: PlanQuota[] = [];
+  adapter.onQuotaObserved = q => seen.push(q);
+  const session = await adapter.start({ cwd: process.cwd() });
+  try {
+    const events: unknown[] = [];
+    await session.prompt({ text: 'rate-limit-tell', images: [] }, { emit: e => events.push(e), requestApproval: async () => ({ cancelled: true }) });
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].windows.find(w => w.label === '5H')?.usedPercent, 90);
+    assert.equal(seen[0].windows.find(w => w.scope === '全部模型')?.usedPercent, 42);
+  } finally { await session.close(); }
+});
+
+test('the hub reads plan usage the thread itself reported, with no probe', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'calli-quota-inband-'));
+  const store = new Store(dir);
+  const adapters = new Map([['cc', new ClaudeAcpAdapter(fixture('acp'))] as const]);
+  const manager = new ThreadManager(store, adapters as any, new Workdirs([dir], join(dir, 'dirs.json'), join(dir, 'scratch')), new AttachmentStore(dir), () => [{ id: 'cc', adapter: 'claude' }]);
+  try {
+    const thread = await manager.createThread({ agent: 'cc', cwd: dir });
+    await manager.startTurn(thread.id, { text: 'rate-limit-tell' });
+    await wait(() => manager.threadView(thread.id).status !== 'running');
+    // The in-band reading answers decisionQuota without spawning any usage probe.
+    const quota = await manager.decisionQuota('cc');
+    assert.equal(quota?.windows.find(w => w.label === '5H')?.usedPercent, 90);
+    // And it is what a plain cached read serves, the dashboard included.
+    assert.equal((await manager.agentQuota('cc')).windows.find(w => w.label === '5H')?.usedPercent, 90);
+  } finally { await manager.shutdown(); store.close(); rmSync(dir, { recursive: true, force: true }); }
+});

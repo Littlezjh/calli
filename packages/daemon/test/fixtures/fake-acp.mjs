@@ -354,6 +354,20 @@ rl.on('line', (line) => {
         if (process.env.FAKE_ACP_SPEED_REVOKED) { currentSpeed = 'off'; update({ sessionUpdate: 'config_option_update', configOptions: sessionInfo().configOptions }); }
         out({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } }); return;
       }
+      if (text === 'rate-limit-tell') {
+        // Claude Code's rate_limit_event as the ACP bridge forwards it: plan usage on a usage_update.
+        const now = Math.floor(Date.now() / 1000);
+        update({ sessionUpdate: 'usage_update', used: 1000, size: 200000, _meta: { '_claude/rateLimit': {
+          status: 'ok', rateLimitType: 'five_hour', utilization: 0.9, resetsAt: now + 3600,
+          unifiedWindows: {
+            five_hour: { utilization: 0.9, resetsAt: now + 3600 },
+            seven_day: { utilization: 0.42, resetsAt: now + 86400 },
+          },
+        } } });
+        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'told' } });
+        update({ sessionUpdate: 'usage_update', used: 1000, size: 200000, cost: { amount: 0.01, currency: 'USD' } });
+        out({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } }); return;
+      }
       if (text === 'plan-draft') { update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `mode:${currentMode};model:${currentModel};effort:${currentEffort}` } }); out({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } }); return; }
       const planCommand = text.split('\n')[0];
       if (planCommand === 'plan-question' || planCommand === 'plan-approval') {

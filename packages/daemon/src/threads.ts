@@ -3,6 +3,7 @@ import { changedFiles, mentionedFiles, checkMissingFiles, MAX_OUTPUT_ITEMS, type
 import { LarkChannel } from './channels/lark.js';
 import { PersonalService } from './personal.js';
 import { AutoHandover, type AutoHandoverView, type HandoverTarget, type SettledOutcome } from './auto-handover.js';
+import { AutoCompact } from './auto-compact.js';
 import { QuotaResume, type ResumeView } from './quota-resume.js';
 import type { VoiceTransport } from './voice-sessions.js';
 import { VoiceConversation } from './voice-conversation.js';
@@ -340,6 +341,9 @@ export class ThreadManager {
   private readonly diagnosticCache = new Map<string, { at: number; pending: boolean; value: Promise<unknown> }>();
   /** Plan-usage reads in flight or fresh, per agent: the probes spawn a CLI, so they are shared. */
   private readonly quotaCache = new Map<string, { at: number; value: Promise<PlanQuota> }>();
+  /** The last probe each agent answered, kept for between-turn decisions when a fresh one fails. */
+  private readonly lastGoodQuota = new Map<string, { at: number; quota: PlanQuota }>();
+  private quotaWatch?: NodeJS.Timeout;
   /** Threads whose session is being synced right now, for the same reason. */
   private readonly syncing = new Set<string>();
   /** Messages waiting for the running turn of their thread to finish. Kept in memory only. */
@@ -350,6 +354,7 @@ export class ThreadManager {
   /** Where threads may work; directories can be added from the page while the hub runs. */
   readonly dirs: Workdirs;
   readonly autoHandover: AutoHandover;
+  readonly autoCompact: AutoCompact;
   readonly personal: PersonalService;
   readonly lark: LarkChannel;
   readonly briefs: PersonalBriefSchedule;
@@ -369,6 +374,9 @@ export class ThreadManager {
     this.autoHandover = new AutoHandover(store, this);
     this.quotaResume = new QuotaResume(store, this, this.autoHandover);
     this.autoHandover.onSaved = settings => this.quotaResume.onSettings(settings.resume);
+    this.autoCompact = new AutoCompact(store, this);
+    for (const [id, adapter] of adapters) adapter.onQuotaObserved = quota => this.observeQuota(id, quota);
+    this.startQuotaWatch();
     this.quotaResume.start();
     this.personal = new PersonalService(store, this, adapters);
     this.lark = new LarkChannel(store, this.personal);
@@ -469,7 +477,54 @@ export class ThreadManager {
       throw err;
     });
     this.quotaCache.set(agent, { at: Date.now(), value });
+    void value.then(q => this.lastGoodQuota.set(agent, { at: Date.now(), quota: q })).catch(() => undefined);
     return value;
+  }
+
+  /** What the agent itself said while answering beats any probe: it feeds the same cache the
+   *  probes fill, so decisions and the dashboard read one truth. */
+  private observeQuota(agent: string, quota: PlanQuota): void {
+    this.lastGoodQuota.set(agent, { at: Date.now(), quota });
+    this.quotaCache.set(agent, { at: Date.now(), value: Promise.resolve(quota) });
+  }
+
+  /** The freshest reading a between-turn decision may trust: a recent one without a probe, a fresh
+   *  probe when the reading is old, and — when even the probe fails — a reading up to `graceMs`
+   *  old, for a near-limit check errs better on the side of acting than on waiting. */
+  async decisionQuota(agent: string, maxAgeMs = 5 * 60_000, graceMs = 15 * 60_000): Promise<PlanQuota | null> {
+    const last = this.lastGoodQuota.get(agent);
+    if (last && Date.now() - last.at <= maxAgeMs) return last.quota;
+    try {
+      return await this.agentQuota(agent, true);
+    } catch {
+      const older = this.lastGoodQuota.get(agent);
+      return older && Date.now() - older.at <= graceMs ? older.quota : null;
+    }
+  }
+
+  /** Agents worth watching: those of running threads and threads active in the last quarter hour. */
+  private quotaWatchAgents(): string[] {
+    const agents = new Set<string>();
+    for (const id of this.running.keys()) {
+      const thread = this.store.getThread(id);
+      if (thread) agents.add(thread.agent);
+    }
+    for (const row of this.store.activeThreadsSince(new Date(Date.now() - 15 * 60_000).toISOString())) {
+      const thread = this.store.getThread(row.threadId);
+      if (thread && !thread.archivedAt) agents.add(thread.agent);
+    }
+    return [...agents].filter(a => this.adapters.get(a)?.capabilities.quota).slice(0, 8);
+  }
+
+  /** Refreshes the watched agents' quota in the background, so between-turn decisions and the
+   *  dashboard see usage move without a probe after every turn. */
+  async refreshQuotas(): Promise<void> {
+    for (const agent of this.quotaWatchAgents()) await this.agentQuota(agent, true).catch(() => undefined);
+  }
+  private startQuotaWatch(): void {
+    const timer = setInterval(() => void this.refreshQuotas(), 3 * 60_000);
+    timer.unref?.();
+    this.quotaWatch = timer;
   }
 
   /**
@@ -2726,6 +2781,7 @@ export class ThreadManager {
     await this.personal.explore.dispose();
     await this.lark.dispose();
     this.autoHandover.close();
+    if (this.quotaWatch) clearInterval(this.quotaWatch);
     this.quotaResume.dispose();
     this.coordination?.suspendAll();
     // The file mirror must finish its queued writes before callers remove the data directory.
@@ -2821,6 +2877,9 @@ export class ThreadManager {
         const failed = this.store.listTurnEvents(thread.id, turnId).find(e => e.type === 'turn.error');
         if (failed?.data.code === 'plan_exhausted' && settled !== 'moved'
           && !this.running.has(thread.id) && !this.threadView(thread.id).waiting) this.quotaResume.parked(thread.id);
+        // Quota is closing in but the handover did not move the work: shrink the context while the
+        // account can still answer, so the rest of the window is not spent re-reading it.
+        if (settled !== 'moved') void this.autoCompact.settled(thread.id, turnId).catch(() => undefined);
         this.startNextQueued(thread.id);
       }
     }

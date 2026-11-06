@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { AgentInfo, Api, AutoHandoverView, HandoverSettings, HandoverTarget, ModelOption, Thread } from '../api';
+import type { AgentInfo, Api, AutoCompactSettings, AutoHandoverView, HandoverSettings, HandoverTarget, ModelOption, Thread } from '../api';
 import { t } from '../i18n';
 import { Dialog } from './Dialog';
 import { Popover } from './Popover';
@@ -72,12 +72,24 @@ function AddTarget({ api, agents, add }: { api: Api; agents: AgentInfo[]; add: (
 
 export function HandoverSettingsDialog({ api, agents, onClose }: { api: Api; agents: AgentInfo[]; onClose: () => void }) {
   const [value, setValue] = useState<HandoverSettings | null>(null);
+  const [compact, setCompact] = useState<AutoCompactSettings | null>(null);
+  const [compactModels, setCompactModels] = useState<ModelOption[] | null>(null);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [opened, setOpened] = useState('');
   const [dragged, setDragged] = useState<number | null>(null);
-  const load = () => { setError(''); void api.handoverSettings().then(setValue).catch(e => setError(String(e))); };
+  const load = () => {
+    setError('');
+    void api.handoverSettings().then(setValue).catch(e => setError(String(e)));
+    // Absent on older daemons: the section stays hidden, the rest of the dialog works as before.
+    void api.autoCompactSettings().then(s => setCompact(s.settings)).catch(() => setCompact(null));
+  };
   useEffect(load, [api]);
+  useEffect(() => {
+    let alive = true; setCompactModels(null);
+    if (compact?.agent) void api.models(compact.agent).then(m => { if (alive) setCompactModels(m); }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [api, compact?.agent]);
   const setOrder = (id: string, list: HandoverTarget[]) => setValue(v => v && ({ ...v, orders: { ...v.orders, [id]: list } }));
   const label = (target: HandoverTarget) => [agents.find(a => a.id === target.agent)?.label ?? target.agent, target.model].filter(Boolean).join(' · ');
   const move = (id: string, from: number, to: number) => {
@@ -85,8 +97,11 @@ export function HandoverSettingsDialog({ api, agents, onClose }: { api: Api; age
     if (to < 0 || to >= order.length) return;
     order.splice(to, 0, order.splice(from, 1)[0]); setOrder(id, order);
   };
-  return <Dialog title={t('auto.title')} confirmLabel={t('auto.save')} className="auto-settings" onCancel={() => { if (!saving) onClose(); }} confirmDisabled={!value || saving || value.threshold < 1 || value.threshold > 99} onConfirm={() => {
-    if (!value) return; setSaving(true); void api.saveHandoverSettings(value).then(onClose).catch(e => setError(String(e))).finally(() => setSaving(false));
+  return <Dialog title={t('auto.title')} confirmLabel={t('auto.save')} className="auto-settings" onCancel={() => { if (!saving) onClose(); }} confirmDisabled={!value || saving || value.threshold < 1 || value.threshold > 99 || !!compact && compact.enabled && (compact.threshold < 50 || compact.threshold > 98 || compact.threshold >= value.threshold)} onConfirm={() => {
+    if (!value) return; setSaving(true);
+    void (compact ? api.saveAutoCompactSettings(compact).catch(e => setError(String(e))) : Promise.resolve())
+      .then(() => api.saveHandoverSettings(value))
+      .then(onClose).catch(e => setError(String(e))).finally(() => setSaving(false));
   }}>
     {error && <p className="panel-error" role="alert">{error} {!value && <button onClick={load}>{t('common.retry')}</button>}</p>}
     {!value && !error && <p>{t('common.loading')}</p>}
@@ -97,6 +112,25 @@ export function HandoverSettingsDialog({ api, agents, onClose }: { api: Api; age
       </div></div>
       <p className="auto-setting-hint">{t('auto.methodHint')}</p>
       <label className="auto-setting-line">{t('auto.threshold')}<input inputMode="numeric" value={value.threshold} onChange={e => setValue({ ...value, threshold: Number(e.target.value) })} /></label>
+      {compact && <>
+        <div className="auto-setting-line"><span>{t('compact.enable')}</span><button aria-label={t('compact.enable')} className="auto-toggle" role="switch" aria-checked={compact.enabled} onClick={() => setCompact({ ...compact, enabled: !compact.enabled })}>{t(compact.enabled ? 'auto.on' : 'auto.off')}</button></div>
+        {compact.enabled && <>
+          <label className="auto-setting-line">{t('compact.threshold')}<input inputMode="numeric" value={compact.threshold} onChange={e => setCompact({ ...compact, threshold: Number(e.target.value) })} disabled={!value.enabled} /></label>
+          <div className="auto-setting-line"><span id="compact-agent">{t('compact.agent')}</span>
+            <div className="auto-add">
+              <button type="button" className={`chip${!compact.agent ? ' on' : ''}`} role="radio" aria-checked={!compact.agent} aria-labelledby="compact-agent" onClick={() => setCompact({ ...compact, agent: null, model: null })}>{t('compact.native')}</button>
+              <AgentPicker api={api} agents={agents.filter(a => !a.hidden)} value={compact.agent ?? agents.find(a => !a.hidden)?.id ?? ''} onChange={agent => setCompact({ ...compact, agent, model: null })} />
+              {compact.agent && <Popover triggerClassName="context-btn" label={t('auto.modelDefault')} trigger={compactModels?.find(m => m.id === compact.model)?.label ?? t('auto.modelDefault')}>
+                {close => <div role="menu">
+                  <button className="pop-item compact" role="menuitemradio" aria-checked={!compact.model} onClick={() => { setCompact({ ...compact, model: null }); close(); }}>{t('auto.modelDefault')}</button>
+                  {compactModels?.map(m => <button className="pop-item compact" role="menuitemradio" aria-checked={compact.model === m.id} key={m.id} onClick={() => { setCompact({ ...compact, model: m.id }); close(); }}>{m.label}</button>)}
+                </div>}
+              </Popover>}
+            </div>
+          </div>
+          <p className="auto-setting-hint">{t('compact.hint')}</p>
+        </>}
+      </>}
       <div className="auto-setting-line"><span>{t('auto.resume')}</span><button aria-label={t('auto.resume')} className="auto-toggle" role="switch" aria-checked={value.resume === true} onClick={() => setValue({ ...value, resume: value.resume !== true })}>{t(value.resume === true ? 'auto.on' : 'auto.off')}</button></div>
       <p className="auto-setting-hint">{t('auto.resumeHint')}</p>
       <div className="auto-orders">{agents.map(agent => {

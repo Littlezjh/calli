@@ -223,6 +223,11 @@ export interface HandoverTarget { agent: string; model?: string }
 /** How another account of the same agent takes over: a copy of the conversation, or a brief. Absent on older daemons. */
 export type HandoverMethod = 'resume' | 'summary';
 export interface HandoverSettings { enabled: boolean; threshold: number; orders: Record<string, HandoverTarget[]>; resume?: boolean; method?: HandoverMethod }
+/** Quota-aware context compression ahead of the handover: another agent (a third-party bridge,
+ *  say) reads the hub's transcript and writes the brief, so official-account quota buys no summarizing.
+ *  `agent: null` means a native /compact in place. Absent on older daemons. */
+export interface AutoCompactSettings { enabled: boolean; threshold: number; agent: string | null; model: string | null; minChars: number; chunkChars: number; maxChars: number }
+export interface AutoCompactStatus { last?: { threadId: string; successorId?: string; native: boolean; chars: number; chunks: number; at: string }; error?: { threadId: string; message: string; at: string }; skipped?: { threadId: string; reason: string; chars: number; at: string } }
 /** A watch waiting for the thread's agent quota to reset; the daemon then resends the failed turn. */
 export interface ResumeView { origin: 'user' | 'global'; resetsAt: string | null; nextCheckAt: string; lastError?: string }
 export interface AutoHandoverView {
@@ -1574,6 +1579,8 @@ export class Api {
   /** Creates an empty successor in the same directory and worktree, without starting an agent turn. */
   handoverSettings(): Promise<HandoverSettings> { return this.request('GET', '/api/handover-settings'); }
   saveHandoverSettings(value: HandoverSettings): Promise<HandoverSettings> { return this.request('PUT', '/api/handover-settings', value); }
+  autoCompactSettings(): Promise<{ settings: AutoCompactSettings; status: AutoCompactStatus }> { return this.request('GET', '/api/autocompact-settings'); }
+  saveAutoCompactSettings(value: AutoCompactSettings): Promise<AutoCompactSettings> { return this.request('PUT', '/api/autocompact-settings', value); }
   autoHandover(id: string): Promise<AutoHandoverView & { targets: HandoverTarget[] }> { return this.request('GET', `/api/threads/${id}/auto-handover`); }
   /** The thread's native goal, for the goal card above the input. */
   threadGoal(id: string): Promise<{ goal: GoalView | null }> { return this.request('GET', `/api/threads/${id}/goal`); }
