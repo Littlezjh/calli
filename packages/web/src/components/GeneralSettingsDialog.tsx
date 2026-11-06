@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import type { Api, GeneralSettings } from '../api';
 import { t } from '../i18n';
 import { Popover } from './Popover';
-import { IconCheck, IconChevron, IconClose, IconSettings } from './icons';
+import { IconCheck, IconChevron } from './icons';
+import { SettingsSection, usePageDraft } from './PageNavigation';
 
 export function GeneralSettingsDialog({ api, onSave, onClose }: {
   api: Api; onSave: (value: GeneralSettings) => void; onClose: () => void;
@@ -18,11 +19,7 @@ export function GeneralSettingsDialog({ api, onSave, onClose }: {
     return () => { live = false; };
   }, [api, retry]);
 
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  usePageDraft(false, saving);
 
   const save = (patch: Partial<GeneralSettings>) => {
     if (!value || saving) return;
@@ -37,13 +34,7 @@ export function GeneralSettingsDialog({ api, onSave, onClose }: {
   const archiveOptions: GeneralSettings['autoArchiveDays'][] = [null, 1, 3, 7, 15, 30];
   const archiveLabel = (days: GeneralSettings['autoArchiveDays']) => days === null ? t('general.autoArchiveNever') : t('general.autoArchiveDays', days);
 
-  return <div className="dialog-scrim" onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
-    <div className="panel general-settings" role="dialog" aria-modal="true" aria-labelledby="general-title" onClick={event => event.stopPropagation()}>
-      <header className="panel-head">
-        <h2 id="general-title" className="panel-title"><IconSettings size={20} />{t('general.title')}</h2>
-        <button className="icon-btn" aria-label={t('common.close')} onClick={onClose}><IconClose size={18} /></button>
-      </header>
-      <div className="general-body">
+  return <SettingsSection title={t('general.title')} className="general-settings">
         {!value && !error && <p role="status">{t('common.loading')}</p>}
         {value && <>
           <div className="personal-setting-line general-setting-line">
@@ -74,7 +65,5 @@ export function GeneralSettingsDialog({ api, onSave, onClose }: {
           {saving && <p className="sr-only" role="status">{t('general.saving')}</p>}
         </>}
         {error && <p className="panel-error" role="alert">{error} {!value && <button className="ghost" onClick={() => setRetry(n => n + 1)}>{t('common.retry')}</button>}</p>}
-      </div>
-    </div>
-  </div>;
+  </SettingsSection>;
 }

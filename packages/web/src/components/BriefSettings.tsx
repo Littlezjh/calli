@@ -5,19 +5,20 @@ import { t } from '../i18n';
 import { IconChevron } from './icons';
 import { Popover } from './Popover';
 
-/** The morning and evening brief in the private settings. Changes wait for the dialog's Save. */
-export function BriefSettings({ api, draft, onDraft }: { api: Api; draft: Settings | null; onDraft: (next: Settings) => void }) {
+/** The morning and evening brief in the private settings. Changes wait for the page's Save. */
+export function BriefSettings({ api, draft, onDraft, onLoaded }: { api: Api; draft: Settings | null; onDraft: (next: Settings) => void; onLoaded?: (value: Settings) => void }) {
   const [value, setValue] = useState<Settings | null>(draft);
+  useEffect(() => { if (draft) setValue(draft); }, [draft]);
   const [pushOn, setPushOn] = useState(true);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
   useEffect(() => {
     let live = true;
     setError('');
-    void api.briefSettings().then(next => { if (live) setValue(current => draft ?? current ?? next); }).catch(e => { if (live) setError(e instanceof Error ? e.message : String(e)); });
+    void api.briefSettings().then(next => { if (live) { setValue(current => draft ?? current ?? next); onLoaded?.(next); } }).catch(e => { if (live) setError(e instanceof Error ? e.message : String(e)); });
     void api.pushSettings().then(push => { if (live) setPushOn(push.enabled); }).catch(() => undefined);
     return () => { live = false; };
-  }, [api, retry]);
+  }, [api, retry, onLoaded]);
   const save = (next: Settings) => {
     setValue(next);
     onDraft(next);

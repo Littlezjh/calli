@@ -38,7 +38,7 @@ test('TRAE model load and weekly quota appear in existing controls in both theme
       await page.keyboard.press('Escape');
       if (phone) await page.locator('.menu-btn').click();
       await page.getByRole('button', { name: '配置', exact: true }).click();
-      await page.getByRole('menuitem', { name: '额度', exact: true }).click();
+      await page.locator('.settings-nav').getByRole('button', { name: '额度', exact: true }).click();
       const row = page.locator('.quota-board-row', { hasText: 'TRAE CLI' });
       await row.locator('.quota-cell:not(.quota-none)').waitFor();
       assert.match(await page.locator('.quota-board-row').first().innerText(), /TRAE CLI/);

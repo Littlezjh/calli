@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import { ApiError, type Api } from '../api';
 import { t } from '../i18n';
 import { DialogSurface } from './Dialog';
+import { SettingsSection, usePageDraft, usePageNavigation } from './PageNavigation';
 
 /** What the person cares about, written by hand: a sheet of paper, not a code editor. */
-export function ProfileDialog({ api, onClose, onSaved }: { api: Api; onClose: () => void; onSaved: (isTemplate: boolean) => void }) {
+export function ProfileDialog({ api, onClose, onSaved, inline = false }: { api: Api; onClose: () => void; onSaved: (isTemplate: boolean) => void; inline?: boolean }) {
   const [text, setText] = useState<string | null>(null);
   const [saved, setSaved] = useState('');
   const [rev, setRev] = useState<number | undefined>();
@@ -25,6 +26,8 @@ export function ProfileDialog({ api, onClose, onSaved }: { api: Api; onClose: ()
     }).catch(e => { if (live) setError(e instanceof Error ? e.message : String(e)); });
     return () => { live = false; };
   }, [api, retry]);
+  const release = usePageDraft(inline && text !== null && text !== saved, inline && busy);
+  const navigate = usePageNavigation();
   const loaded = text !== null;
   useEffect(() => { if (loaded) field.current?.focus(); }, [loaded]);
   const save = async (atRev = rev) => {
@@ -32,8 +35,8 @@ export function ProfileDialog({ api, onClose, onSaved }: { api: Api; onClose: ()
     setBusy(true); setError('');
     try {
       const profile = await api.savePersonalProfile(text, atRev);
-      onSaved(profile.isTemplate);
-      onClose();
+      setSaved(profile.text); release(); onSaved(profile.isTemplate);
+      if (!inline) onClose();
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
         // Someone else saved first. What is written here stays; the person decides which one wins.
@@ -43,9 +46,9 @@ export function ProfileDialog({ api, onClose, onSaved }: { api: Api; onClose: ()
       } else setError(e instanceof Error ? e.message : String(e));
     } finally { setBusy(false); }
   };
-  const close = () => { if (text !== null && text !== saved) setLeaving(true); else onClose(); };
-  return <DialogSurface className="profile-dialog" labelledBy="profile-title" busy={busy} onClose={close}>
-    <h2 id="profile-title">{t('profile.title')}</h2>
+  const close = () => { if (inline) { navigate(onClose); return; } if (text !== null && text !== saved) setLeaving(true); else onClose(); };
+  const content = <>
+    <h2 id="profile-title" className={inline ? 'sr-only' : undefined}>{t('profile.title')}</h2>
     {text === null ? (error
       ? <p className="profile-state" role="alert">{error} <button className="ghost" onClick={() => setRetry(n => n + 1)}>{t('common.retry')}</button></p>
       : <p className="profile-state" role="status">{t('common.loading')}</p>)
@@ -64,5 +67,8 @@ export function ProfileDialog({ api, onClose, onSaved }: { api: Api; onClose: ()
       <button className="ghost" disabled={busy} onClick={close}>{t('common.cancel')}</button>
       <button className="primary" disabled={busy || text === null || newer !== null} onClick={() => void save()}>{t('personal.save')}</button>
     </div>
-  </DialogSurface>;
+  </>;
+  return inline ? <SettingsSection title={t('profile.title')} className="profile-page">{content}</SettingsSection>
+    : <DialogSurface className="profile-dialog" labelledBy="profile-title" busy={busy} onClose={close}>{content}</DialogSurface>;
+
 }

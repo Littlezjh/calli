@@ -51,7 +51,7 @@ test('touching collaboration keeps the empty composer mounted when taps do not f
             mkdirSync(process.env.CALLI_E2E_SHOTS_DIR, { recursive: true });
             await page.screenshot({ path: join(process.env.CALLI_E2E_SHOTS_DIR, `collab-${mobile ? 'phone' : 'desktop'}-${colorScheme}-${running ? 'running' : 'idle'}.png`) });
           }
-          if (mobile) await page.locator('.pop-scrim').tap({ position: { x: 10, y: 10 } });
+          if (mobile) await page.locator('.topbar').tap({ position: { x: 150, y: 3 } });
           else await page.keyboard.press('Escape');
           await panel.waitFor({ state: 'detached' });
           // Ordinary focus leaving the composer still folds it; draft text still keeps it open.

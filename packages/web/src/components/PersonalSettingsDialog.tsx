@@ -1,20 +1,15 @@
-import { useEffect, useRef, useState } from 'react';
-import type { AgentInfo, Api, BriefSettings as BriefValue, LarkChannelSettings, ModelOption, PersonalSettings, ProactiveSettings as ProactiveValue } from '../api';
+import { useEffect, useState } from 'react';
+import type { AgentInfo, Api, ModelOption, PersonalSettings } from '../api';
 import { t } from '../i18n';
-import { Dialog } from './Dialog';
+import { SettingsSection, usePageDraft } from './PageNavigation';
 import { DirectoryPicker } from './DirectoryPicker';
 import { AgentPicker } from './Pickers';
-import { BriefSettings } from './BriefSettings';
-import { LarkSettings } from './LarkSettings';
 import { pickAgent, startsNewConversation } from '../personal-settings';
-import { addRepo, settingsPayload } from '../proactive';
-import { ProactiveSettings } from './ProactiveSettings';
 import { Popover } from './Popover';
-import { ProfileDialog } from './ProfileDialog';
 import { IconChevron, IconFolder, IconSearch } from './icons';
 
-export function PersonalSettingsDialog({ api, agents, initial, onSave, onClose }: {
-  api: Api; agents: AgentInfo[]; initial: PersonalSettings; onSave: (value: PersonalSettings) => void; onClose: () => void;
+export function PersonalSettingsDialog({ api, agents, initial, onSave, onClose, onNavigate }: {
+  api: Api; agents: AgentInfo[]; initial: PersonalSettings; onSave: (value: PersonalSettings) => void; onClose: () => void; onNavigate?: (path: string) => void;
 }) {
   const [value, setValue] = useState(initial);
   const [roots, setRoots] = useState<string[] | null>(null);
@@ -25,14 +20,9 @@ export function PersonalSettingsDialog({ api, agents, initial, onSave, onClose }
   const [saving, setSaving] = useState(false);
   const [retry, setRetry] = useState(0);
   const [query, setQuery] = useState('');
-  // What the Lark, brief and proactive sections would change; nothing leaves this dialog until Save.
-  const larkDraft = useRef<LarkChannelSettings | null>(null);
-  const [profileBlank, setProfileBlank] = useState<boolean | null>(null);
-  const [editingProfile, setEditingProfile] = useState(false);
-  useEffect(() => { let live = true; void api.personalProfile().then(profile => { if (live) setProfileBlank(profile.isTemplate); }).catch(() => undefined); return () => { live = false; }; }, [api]);
-  const briefDraft = useRef<BriefValue | null>(null);
-  const proactiveDraft = useRef<ProactiveValue | null>(null);
-  const [pickingRepo, setPickingRepo] = useState(false);
+  const [saved, setSaved] = useState(JSON.stringify(initial));
+  const [savedNotice, setSavedNotice] = useState(false);
+  usePageDraft(JSON.stringify(value) !== saved, saving);
   useEffect(() => { let live = true; void api.workdirs().then(v => { if (live) setRoots(v.workdirs); }).catch(e => { if (live) setError(String(e)); }); return () => { live = false; }; }, [api, initial.defaultDirectory, retry]);
   useEffect(() => {
     let live = true; setModels(null); setQuery(''); setModelError('');
@@ -41,19 +31,18 @@ export function PersonalSettingsDialog({ api, agents, initial, onSave, onClose }
   }, [api, value.agent, retry]);
   const isDefault = value.directory === initial.defaultDirectory || (value.directory === initial.directory && initial.directoryIsDefault);
   const directoryLabel = isDefault ? t('personal.defaultDirectory', initial.defaultDirectoryDisplay ?? initial.directoryDisplay ?? value.directory ?? '') : value.directory === initial.directory ? initial.directoryDisplay ?? value.directory : value.directory;
-  if (editingProfile) return <ProfileDialog api={api} onClose={() => setEditingProfile(false)} onSaved={setProfileBlank} />;
   if (picking && roots) return <DirectoryPicker api={api} allowedOnly defaultDirectory={initial.defaultDirectory} roots={roots} selected={value.directory ?? ''} machine="" onRootsChange={() => {}} onManageRoots={() => {}} onSelect={directory => setValue({ ...value, directory })} onClose={() => setPicking(false)} />;
-  if (pickingRepo && roots) return <DirectoryPicker api={api} allowedOnly roots={roots} selected="" machine="" onRootsChange={() => {}} onManageRoots={() => {}} onSelect={path => { if (proactiveDraft.current) proactiveDraft.current = addRepo(proactiveDraft.current, path); }} onClose={() => setPickingRepo(false)} />;
-  return <Dialog title={t('personal.settings')} className="personal-settings" confirmLabel={t('personal.save')} confirmDisabled={saving || !value.directory || !value.agent} onCancel={() => { if (!saving) onClose(); }} onConfirm={() => {
-    setSaving(true); setError('');
-    void (async () => {
-      const saved = await api.savePersonalSettings({ ...value, directory: isDefault ? null : value.directory });
-      if (larkDraft.current) await api.saveLarkChannel(larkDraft.current);
-      if (briefDraft.current) await api.saveBriefSettings(briefDraft.current);
-      if (proactiveDraft.current) await api.saveProactiveSettings(settingsPayload(proactiveDraft.current));
-      onSave(saved);
-    })().catch(e => setError(String(e))).finally(() => setSaving(false));
-  }}>
+  const save = async () => {
+    setSaving(true); setError(''); setSavedNotice(false);
+    try {
+      const next = await api.savePersonalSettings({ ...value, directory: isDefault ? null : value.directory });
+      setValue(next); setSaved(JSON.stringify(next)); setSavedNotice(true); onSave(next);
+    } catch (e) { setError(String(e)); } finally { setSaving(false); }
+  };
+  return <SettingsSection busy={saving} title={t('personal.settings')} className="personal-settings" actions={<>
+    <span role="status">{savedNotice && JSON.stringify(value) === saved ? t('settings.saved') : ''}</span>
+    <button className="primary" disabled={saving || !value.directory || !value.agent} onClick={() => void save()}>{t(saving ? 'general.saving' : 'personal.save')}</button>
+  </>}>
     <div className="personal-setting-line"><span>{t('personal.directory')}</span><button className="context-btn personal-directory" disabled={!roots} onClick={() => setPicking(true)}><IconFolder size={16} />{directoryLabel || t('personal.chooseDirectory')}</button></div>
     <div className="personal-setting-line"><span>{t('personal.agent')}</span><AgentPicker api={api} agents={agents} value={value.agent ?? ''} onChange={agent => setValue(pickAgent(value, agent))} /></div>
     <div className="personal-setting-line"><span>{t('personal.model')}</span><Popover label={t('personal.model')} placement="below" panelClassName="personal-models" triggerClassName="context-btn" disabled={!value.agent} trigger={<>{!models && !modelError ? t('common.loading') : modelError ? t('common.retry') : models?.find(m => m.id === value.model)?.label ?? value.model ?? t('auto.modelDefault')}<IconChevron size={12} open /></>}>
@@ -63,11 +52,10 @@ export function PersonalSettingsDialog({ api, agents, initial, onSave, onClose }
         {modelError && <p className="panel-error" role="alert">{modelError} <button className="ghost" onClick={() => setRetry(n => n + 1)}>{t('common.retry')}</button></p>}
       </>}
     </Popover></div>
-    <div className="personal-setting-line"><span>{t('profile.title')}<small>{t(profileBlank ? 'profile.blank' : 'profile.hint')}</small></span><button className="ghost profile-open" onClick={() => setEditingProfile(true)}>{t(profileBlank ? 'profile.write' : 'profile.edit')}</button></div>
-    <LarkSettings api={api} draft={larkDraft.current} onDraft={next => { larkDraft.current = next; }} />
-    <BriefSettings api={api} draft={briefDraft.current} onDraft={next => { briefDraft.current = next; }} />
-    <ProactiveSettings api={api} draft={proactiveDraft.current} canPick={Boolean(roots)} onDraft={next => { proactiveDraft.current = next; }} onPickRepo={current => { proactiveDraft.current = current; setPickingRepo(true); }} />
+    {onNavigate && <div className="settings-related">{([
+      ['profile', 'profile.title'], ['lark', 'lark.name'], ['brief', 'brief.name'], ['proactive', 'proactive.name'],
+    ] as const).map(([id, label]) => <button className="settings-link-row" key={id} onClick={() => onNavigate(`assistant/${id}`)}><span>{t(label)}</span><IconChevron size={15} /></button>)}</div>}
     {startsNewConversation(initial, value) && <p className="personal-warning personal-fork-hint" role="status">{t('personal.newConversation')}</p>}
     {error && <p className="panel-error" role="alert">{error} {!roots && <button className="ghost" onClick={() => { setError(''); setRetry(n => n + 1); }}>{t('common.retry')}</button>}</p>}
-  </Dialog>;
+  </SettingsSection>;
 }

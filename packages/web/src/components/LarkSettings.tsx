@@ -79,12 +79,13 @@ function RealtimeStatus({ status }: { status: LarkChannelStatus | null }) {
   </div>;
 }
 
-/** The Lark section of the private settings. Changes wait for the dialog's Save; only reading now happens at once. */
-export function LarkSettings({ api, draft, onDraft }: { api: Api; draft: LarkChannelSettings | null; onDraft: (next: LarkChannelSettings) => void }) {
+/** The Lark section of the private settings. Changes wait for the page's Save; only reading now happens at once. */
+export function LarkSettings({ api, draft, onDraft, onLoaded }: { api: Api; draft: LarkChannelSettings | null; onDraft: (next: LarkChannelSettings) => void; onLoaded?: (value: LarkChannelSettings) => void }) {
   const { channel: savedChannel, status, loadError, load, run, running, runError } = useLark(api);
-  // The parent stores drafts in a ref; subsequent edits must not be masked by its last render.
+  // Preserve local edits while the source status is refreshed.
   const [localDraft, setLocalDraft] = useState(draft);
   useEffect(() => { setLocalDraft(draft); }, [api, draft]);
+  useEffect(() => { if (savedChannel) onLoaded?.(savedChannel); }, [savedChannel, onLoaded]);
   const meetingHintId = useId();
   const channel = localDraft ?? savedChannel;
   if (loadError) return <div className="personal-setting-line"><span>{t('lark.name')}<small className="personal-warning" role="alert">{t('lark.loadFailed')}</small></span><button className="ghost" onClick={load}>{t('common.retry')}</button></div>;

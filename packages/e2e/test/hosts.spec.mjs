@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
+import { startDaemon, openUi, api, launchBrowser, closeSettings } from '../harness.mjs';
 
 const SOCKET_IN_HOME = '.local/state/calli/daemon.sock';
 
@@ -48,8 +48,10 @@ after(async () => {
 
 async function openMachines(p = page) {
   await p.getByRole('button', { name: '配置' }).click();
-  await p.getByRole('menuitem', { name: '机器' }).click();
-  return p.getByRole('dialog', { name: '机器' });
+  await p.locator('.settings-nav').getByRole('button', { name: '机器' }).click();
+  const region = p.getByRole('region', { name: '机器' });
+  if (await region.getByRole('button', { name: '添加机器', exact: true }).getAttribute('aria-expanded') === 'false') await region.getByRole('button', { name: '添加机器', exact: true }).click();
+  return region;
 }
 
 test('with no other machine, the list has no switcher', async () => {
@@ -75,12 +77,12 @@ test('a machine is added by its name in the ssh config; one ssh cannot get into 
   await row.getByText('在线').waitFor({ timeout: 15_000 });
   assert.equal(await failure.count(), 0, 'the earlier failure is cleared');
   assert.deepEqual(await panel.locator('.host-candidate .host-target').allInnerTexts(), ['buildbox'], 'no longer offered');
-  await panel.getByRole('button', { name: '关闭' }).click();
+  await closeSettings(page);
 
   // Now there is a choice to make, so the list says which machine it is of.
   const tabs = page.getByRole('tablist', { name: '机器' }).getByRole('tab');
-  assert.deepEqual(await tabs.allInnerTexts(), ['本机', 'devbox']);
-  assert.equal(await tabs.nth(0).getAttribute('aria-selected'), 'true');
+  assert.deepEqual(await tabs.allInnerTexts(), ['全部', '本机', 'devbox']);
+  assert.equal(await tabs.getByText('本机', { exact: true }).locator('..').getAttribute('aria-selected'), 'true');
 });
 
 test('switching shows that machine, and a thread started there runs there', async () => {
@@ -96,7 +98,9 @@ test('switching shows that machine, and a thread started there runs there', asyn
   await page.keyboard.type('hello from the hub');
   await page.keyboard.press('Enter');
   await page.getByText('hi there hello from the hub').waitFor({ timeout: 15_000 });
-  assert.match(await page.locator('.topbar-sub').innerText(), /· devbox$/);
+  await page.getByRole('button', { name: '线程所在位置', exact: true }).click();
+  await page.locator('.place-row', { hasText: 'devbox' }).waitFor();
+  await page.keyboard.press('Escape');
 
   const there = await (await api(node, '/api/threads')).json();
   assert.ok(there.some((t) => t.preview?.includes('hello from the hub') || t.title.includes('hello from the hub')), 'the thread is on the other machine');
@@ -232,8 +236,11 @@ test('removing the machine on screen goes back to the hub, and the switcher goes
   await panel.locator('.host-row', { hasText: 'devbox' }).getByRole('button', { name: '移除' }).click();
   const confirm = page.getByRole('dialog', { name: '移除 devbox？' });
   await confirm.getByRole('button', { name: '移除' }).click();
+  await page.waitForFunction(() => !document.querySelector('.host-switch'));
+  await page.getByRole('region', { name: '机器' }).waitFor();
+  if (await panel.getByRole('button', { name: '添加机器', exact: true }).getAttribute('aria-expanded') === 'false') await panel.getByRole('button', { name: '添加机器', exact: true }).click();
   await panel.getByRole('button', { name: '添加 devbox' }).waitFor({ timeout: 10_000 });
-  await panel.getByRole('button', { name: '关闭' }).click();
+  await closeSettings(page);
   await page.getByText('本机的线程').waitFor({ timeout: 10_000 });
   assert.equal(await page.locator('.host-switch').count(), 0);
   assert.deepEqual(await (await api(hub, '/api/hosts')).json(), []);

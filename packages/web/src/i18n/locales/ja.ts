@@ -1,6 +1,24 @@
 import type { Messages } from './zh';
 
 export const ja: Messages = {
+  "common.back": "戻る",
+  "settings.categories": "設定の分類",
+  "settings.preferences": "環境設定",
+  "settings.resources": "リソースと接続",
+  "settings.history": "履歴と使用量",
+  "settings.account": "接続とアカウント",
+  "settings.unsaved": "変更を保持しますか？",
+  "settings.unsavedHint": "未保存の変更があります。キャンセルで編集を続けるか、変更を破棄して移動します。",
+  "settings.discard": "変更を破棄",
+  "settings.saved": "保存済み",
+  "sched.pick": "タスクを選んで表示・編集",
+  "sched.noMatches": "このカテゴリにはタスクがありません",
+  "settings.language": "言語",
+  "settings.automatic": "変更は自動的に保存されます",
+  "settings.all": "すべて",
+  "settings.enabled": "有効",
+  "settings.paused": "一時停止",
+
   // Acting on her own.
   "proactive.mode.off": "オフ",
   "proactive.mode.observe": "観察",

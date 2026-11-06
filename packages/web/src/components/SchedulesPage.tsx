@@ -2,14 +2,17 @@ import { useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent,
 import type { AgentInfo, Api, Schedule, ScheduleRun, Thread } from '../api';
 import { PERMISSION_LABELS, PERMISSION_ORDER, startingPermission } from '../permissions';
 import { folderName } from '../paths';
-import { Dialog, DialogSurface } from './Dialog';
+import { Dialog } from './Dialog';
+import { SettingsSection, usePageDraft } from './PageNavigation';
 import { Menu, type MenuEntry } from './Menu';
 import { Popover } from './Popover';
-import { AgentMark, IconClock, IconClose, IconFolder, IconMore, IconPlay, IconPlus } from './icons';
+import { AgentMark, IconBack, IconChevron, IconClock, IconClose, IconFolder, IconMore, IconPlay, IconPlus } from './icons';
 import { formatDate, formatList, t } from '../i18n';
 
 interface Props {
   api: Api;
+  path: string;
+  onNavigate: (path: string) => void;
   /** The whole list, owned by App so it survives page switches. */
   schedules: Schedule[];
   agents: AgentInfo[];
@@ -131,8 +134,11 @@ function frequencyLabel(s: Schedule): string {
   return s.description || `cron: ${s.cron}`;
 }
 
-export function SchedulesPage({ api, schedules, agents, workdirs, refreshKey, onReload, onOpenThread, onError }: Props) {
-  const [editing, setEditing] = useState<Schedule | 'new' | null>(null);
+export function SchedulesPage({ api, path, onNavigate, schedules, agents, workdirs, refreshKey, onReload, onOpenThread, onError }: Props) {
+  const editing = path === 'new' ? 'new' : schedules.find(schedule => schedule.id === path) ?? null;
+  const setEditing = (schedule: Schedule | 'new' | null) => onNavigate(schedule === 'new' ? 'new' : schedule?.id ?? '');
+  const [filter, setFilter] = useState<'enabled' | 'paused' | 'all'>('enabled');
+  const visible = schedules.filter(schedule => filter === 'all' || schedule.enabled === (filter === 'enabled'));
   const [menu, setMenu] = useState<{ schedule: Schedule; x: number; y: number } | null>(null);
   const [deleting, setDeleting] = useState<Schedule | null>(null);
 
@@ -162,7 +168,8 @@ export function SchedulesPage({ api, schedules, agents, workdirs, refreshKey, on
   const empty = schedules.length === 0;
 
   return (
-    <div className="sched-page">
+    <div className={`sched-page sched-layout${editing ? ' has-detail' : ''}`}>
+      <div className="sched-index">
       <div className="sched-head">
         <div>
           <h2 className="sched-title">
@@ -175,19 +182,20 @@ export function SchedulesPage({ api, schedules, agents, workdirs, refreshKey, on
         </button>
       </div>
 
-      {empty && (
+      <div className="sched-filters" role="group" aria-label={t('sidebar.schedules')}>{(['enabled', 'paused', 'all'] as const).map(value => <button key={value} aria-pressed={filter === value} onClick={() => setFilter(value)}>{t(`settings.${value}`)}</button>)}</div>
+      {(empty || visible.length === 0) && (
         <div className="sched-empty">
           <IconClock size={28} />
-          <p>{t('sched.empty')}</p>
+          <p>{t(empty ? 'sched.empty' : 'sched.noMatches')}</p>
         </div>
       )}
 
       <ul className="sched-list">
-        {schedules.map((s) => {
+        {visible.map((s) => {
           const agent = agentOf(s.agent);
           const last = s.lastRun;
           return (
-            <li key={s.id} className={`sched-card${s.enabled ? '' : ' off'}`}>
+            <li key={s.id} className={`sched-card${s.enabled ? '' : ' off'}${path === s.id ? ' selected' : ''}`}>
               <div className="sched-main">
                 <button className="sched-open" onClick={() => setEditing(s)} title={t('sched.viewEdit')}>
                   <span className="sched-name">
@@ -237,6 +245,7 @@ export function SchedulesPage({ api, schedules, agents, workdirs, refreshKey, on
         })}
       </ul>
 
+      </div>
       {menu && (
         <Menu
           label={t('skills.actions', menu.schedule.name)}
@@ -269,6 +278,7 @@ export function SchedulesPage({ api, schedules, agents, workdirs, refreshKey, on
 
       {editing && (
         <ScheduleEditor
+          key={path}
           api={api}
           schedule={editing === 'new' ? null : editing}
           agents={agents}
@@ -282,6 +292,7 @@ export function SchedulesPage({ api, schedules, agents, workdirs, refreshKey, on
           onError={onError}
         />
       )}
+      {!editing && <div className="sched-placeholder"><IconClock size={28} /><p>{t('sched.pick')}</p></div>}
     </div>
   );
 }
@@ -327,6 +338,10 @@ function ScheduleEditor({ api, schedule, agents, workdirs, onCancel, onSaved, on
   const [permission, setPermission] = useState(schedule?.permissionMode ?? '');
   const [runs, setRuns] = useState<ScheduleRun[] | null>(null);
   const [threads, setThreads] = useState<Thread[] | null>(null);
+  const [showRuns, setShowRuns] = useState(false);
+  const [runsError, setRunsError] = useState('');
+  const [threadError, setThreadError] = useState('');
+  const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [preview, setPreview] = useState<{ cron: string; description: string; fires: string[] } | null>(null);
 
@@ -363,17 +378,16 @@ function ScheduleEditor({ api, schedule, agents, workdirs, onCancel, onSaved, on
     };
   }, [api, preset, cron, timezone]);
 
-  // Run history and the threads one can bind, fetched while the editor is open.
-  useEffect(() => {
+  const loadRuns = () => {
     if (!schedule) return;
-    api.scheduleRuns(schedule.id).then(setRuns).catch(() => setRuns([]));
-  }, [api, schedule]);
-  useEffect(() => {
-    api
-      .threads()
-      .then((t) => setThreads(t.filter((x) => !x.archivedAt)))
-      .catch(() => setThreads([]));
-  }, [api]);
+    setRunsError(''); setRuns(null);
+    void api.scheduleRuns(schedule.id).then(setRuns).catch(e => setRunsError(String(e)));
+  };
+  const loadThreads = () => {
+    setThreadError('');
+    void api.threads().then(value => setThreads(value.filter(thread => !thread.archivedAt))).catch(e => setThreadError(String(e)));
+  };
+  useEffect(() => { if (mode === 'same') loadThreads(); }, [api, mode]);
 
   // A bound thread carries its own agent and directory along.
   useEffect(() => {
@@ -392,8 +406,11 @@ function ScheduleEditor({ api, schedule, agents, workdirs, onCancel, onSaved, on
     return [...dirs].slice(0, 12);
   }, [workdirs, threads]);
 
+  const draft = JSON.stringify([name, agent, cwd, prompt, preset, time, weekday, day, interval, customCron, timezone, catchUp, mode, permission, boundThread?.id ?? schedule?.threadId ?? null]);
+  const [initialDraft] = useState(draft);
+  const release = usePageDraft(draft !== initialDraft, saving);
   const save = async () => {
-    setSaving(true);
+    setError(''); setSaving(true);
     try {
       const body: Record<string, unknown> = {
         name,
@@ -409,9 +426,9 @@ function ScheduleEditor({ api, schedule, agents, workdirs, onCancel, onSaved, on
       };
       if (schedule) await api.updateSchedule(schedule.id, body);
       else await api.createSchedule(body as Parameters<Api['createSchedule']>[0]);
-      onSaved();
+      release(); onSaved();
     } catch (e) {
-      onError(e);
+      setError(String(e));
     } finally {
       setSaving(false);
     }
@@ -420,40 +437,30 @@ function ScheduleEditor({ api, schedule, agents, workdirs, onCancel, onSaved, on
   const canSave = cron && prompt.trim() && (bound || (cwd.trim() && agent)) && !tzError && !saving;
 
   return (
-    <DialogSurface labelledBy="sched-editor-title" onClose={onCancel} busy={saving} className="sched-editor">
-      <div className="sched-dialog-head">
-        <h3 id="sched-editor-title" className="dialog-title">
-          {schedule ? t('sched.edit') : t('sched.new')}
-        </h3>
-        <button className="icon-btn" aria-label={t('common.cancel')} onClick={onCancel}>
-          <IconClose />
-        </button>
-      </div>
-
-      <div className="dialog-body sched-form">
+    <div className="sched-detail">
+      <header className="sched-detail-top"><button className="icon-btn glass-control" aria-label={t('common.back')} onClick={onCancel}><IconBack size={20} /></button><h2>{schedule?.name || t('sched.new')}</h2><span /></header>
+      <SettingsSection busy={saving} title={schedule?.name || t('sched.new')} className="sched-editor" actions={<>
+        <button type="button" className="ghost" disabled={saving} onClick={onCancel}>{t('common.cancel')}</button>
+        <button type="button" className="primary" disabled={!canSave} onClick={() => void save()}>{schedule ? t('sched.saveChanges') : t('sched.create')}</button>
+      </>}>
+      <div className="sched-form">
+        {error && <p className="panel-error" role="alert">{error}</p>}
         <label className="field">
           <span className="field-label">{t('mcp.name')}</span>
           <input value={name} placeholder={t('sched.namePlaceholder')} onChange={(e) => setName(e.target.value)} />
         </label>
 
-        <div className="field">
-          <span className="field-label">Agent</span>
-          <div className="chip-row" role="radiogroup" aria-label={t('sched.pickAgent')}>
-            {usable.map((a) => (
-              <button
-                key={a.id}
-                type="button"
-                className={`chip${agent === a.id ? ' on' : ''}`}
-                role="radio"
-                aria-checked={agent === a.id}
-                onClick={() => setAgent(a.id)}
-              >
-                {a.icon ? <AgentMark path={a.icon} size={14} /> : null}
-                {a.label}
-                {a.account ? <span className="chip-note">{a.account}</span> : null}
-              </button>
-            ))}
-          </div>
+        <label className="field">
+          <span className="field-label">{t('sched.prompt')}</span>
+          <textarea rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && isCommit(e) && e.preventDefault()} placeholder={t('sched.promptPlaceholder')} />
+        </label>
+
+        <div className="personal-setting-line"><span>{t('personal.agent')}</span>
+          <Popover label={t('sched.pickAgent')} placement="below" align="end" triggerClassName="context-btn" trigger={<>{usable.find(item => item.id === agent)?.label ?? agent}<IconChevron size={12} open /></>}>
+            {close => usable.map(item => <button key={item.id} className="pop-item compact" role="menuitemradio" aria-checked={agent === item.id} onClick={() => { setAgent(item.id); close(); }}>
+              {item.icon && <AgentMark path={item.icon} size={16} />}<span className="pop-item-label">{item.label}</span>{item.account && <span className="pop-item-hint">{item.account}</span>}
+            </button>)}
+          </Popover>
         </div>
 
         <div className="field">
@@ -490,16 +497,9 @@ function ScheduleEditor({ api, schedule, agents, workdirs, onCancel, onSaved, on
 
         <div className="field">
           <span className="field-label">{t('sched.frequency')}</span>
-          <div className="chip-row" role="radiogroup" aria-label={t('sched.frequency')}>
-            {(Object.keys(PRESET_LABELS) as Array<Exclude<Preset, 'custom'>>).map((p) => (
-              <button key={p} type="button" className={`chip${preset === p ? ' on' : ''}`} role="radio" aria-checked={preset === p} onClick={() => setPreset(p)}>
-                {PRESET_LABELS[p]}
-              </button>
-            ))}
-            <button type="button" className={`chip${preset === 'custom' ? ' on' : ''}`} role="radio" aria-checked={preset === 'custom'} onClick={() => setPreset('custom')}>
-              {t('sched.custom')}
-            </button>
-          </div>
+          <Popover label={t('sched.frequency')} placement="below" triggerClassName="context-btn" trigger={<>{preset === 'custom' ? t('sched.custom') : PRESET_LABELS[preset]}<IconChevron size={12} open /></>}>
+            {close => [...Object.keys(PRESET_LABELS), 'custom'].map(value => <button key={value} className="pop-item compact" role="menuitemradio" aria-checked={preset === value} onClick={() => { setPreset(value as Preset); close(); }}>{value === 'custom' ? t('sched.custom') : PRESET_LABELS[value as Exclude<Preset, 'custom'>]}</button>)}
+          </Popover>
           {preset === 'minutes' && (
             <div className="field-inline">
               <span>{t('sched.every')}</span>
@@ -622,6 +622,8 @@ function ScheduleEditor({ api, schedule, agents, workdirs, onCancel, onSaved, on
                   <Popover label={t('sched.pickSession')} triggerLabel={t('sched.pickExisting')} trigger={<IconPlus size={14} />} triggerClassName="btn-secondary" triggerTitle={t('sched.pickExistingHint')}>
                     {(close) => (
                       <ul className="pick-list">
+                        {threadError && <li role="alert">{threadError} <button onClick={loadThreads}>{t('common.retry')}</button></li>}
+                        {!threads && !threadError && <li role="status">{t('common.loading')}</li>}
                         {(threads ?? []).slice(0, 30).map((t) => (
                           <li key={t.id}>
                             <button
@@ -645,11 +647,6 @@ function ScheduleEditor({ api, schedule, agents, workdirs, onCancel, onSaved, on
           {mode === 'same' && <p className="field-hint">{t('sched.sameHint')}</p>}
         </div>
 
-        <label className="field">
-          <span className="field-label">{t('sched.prompt')}</span>
-          <textarea rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && isCommit(e) && e.preventDefault()} placeholder={t('sched.promptPlaceholder')} />
-        </label>
-
         {modes.length > 0 && (
           <div className="field">
             <span className="field-label">{t('statusPanel.permission')}</span>
@@ -670,8 +667,9 @@ function ScheduleEditor({ api, schedule, agents, workdirs, onCancel, onSaved, on
 
         {schedule && (
           <div className="field">
-            <span className="field-label">{t('sched.runs')}</span>
-            {runs === null || runs.length === 0 ? (
+            <button className="settings-link-row" aria-expanded={showRuns} onClick={() => { if (!showRuns) loadRuns(); setShowRuns(value => !value); }}><span>{t('sched.runs')}</span><IconChevron size={14} open={showRuns} /></button>
+            {showRuns && <>
+            {runsError ? <p className="panel-error" role="alert">{runsError} <button className="ghost" onClick={loadRuns}>{t('common.retry')}</button></p> : runs === null || runs.length === 0 ? (
               <p className="field-hint">{runs === null ? t('activity.reading') : t('sched.noRuns')}</p>
             ) : (
               <ul className="sched-runs">
@@ -690,18 +688,12 @@ function ScheduleEditor({ api, schedule, agents, workdirs, onCancel, onSaved, on
                 ))}
               </ul>
             )}
+            </>}
           </div>
         )}
       </div>
 
-      <div className="dialog-actions">
-        <button type="button" className="ghost" onClick={onCancel}>
-          {t('common.cancel')}
-        </button>
-        <button type="button" className="primary" disabled={!canSave} onClick={() => void save()}>
-          {schedule ? t('sched.saveChanges') : t('sched.create')}
-        </button>
-      </div>
-    </DialogSurface>
+      </SettingsSection>
+    </div>
   );
 }

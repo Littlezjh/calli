@@ -40,10 +40,10 @@ test('the settings menu opens the overview, a turn shows up the day it was asked
     // Not a row of the list: it lives in the settings menu, with the skills and MCP pages.
     assert.equal(await page.locator('.side-link', { hasText: '概览' }).count(), 0);
     await page.getByRole('button', { name: '配置', exact: true }).click();
-    await page.getByRole('menuitem', { name: '概览', exact: true }).click();
+    await page.locator('.settings-nav').getByRole('button', { name: '概览', exact: true }).click();
     await page.locator('.activity-page').waitFor({ timeout: 10_000 });
-    assert.match(await page.evaluate(() => window.location.hash), /#\/activity$/);
-    assert.equal((await page.locator('.topbar-title').innerText()).trim(), '概览', 'the top bar names the page, not 新线程');
+    assert.match(await page.evaluate(() => window.location.hash), /#\/settings\/activity$/);
+    assert.equal((await page.locator('.settings-topbar h1').innerText()).trim(), '配置', 'the top bar names the page, not 新线程');
 
     // Today's section: the ask, the conversation under its name, and the tools the fake pi called.
     const day = page.locator('.activity-day', { has: page.locator('.activity-day-head h2', { hasText: '今天' }) });
@@ -78,7 +78,7 @@ test('the settings menu opens the overview, a turn shows up the day it was asked
     await page.locator('.composer').waitFor({ timeout: 10_000 });
     assert.equal(await page.evaluate(() => window.location.hash), '');
     await page.getByRole('button', { name: '配置', exact: true }).click();
-    await page.getByRole('menuitem', { name: '概览', exact: true }).click();
+    await page.locator('.settings-nav').getByRole('button', { name: '概览', exact: true }).click();
     await page.locator('.activity-page').waitFor({ timeout: 10_000 });
   } finally { await page.close(); }
 });

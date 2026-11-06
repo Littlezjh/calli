@@ -89,7 +89,7 @@ test('signing out goes back to the demo without asking for a token', async () =>
   await page.getByRole('button', { name: '连接', exact: true }).click();
   await page.locator('.demo-bar').waitFor({ state: 'detached', timeout: 15_000 });
   await page.getByRole('button', { name: '配置' }).click();
-  await page.getByRole('menuitem', { name: '退出' }).click();
+  await page.locator('.settings-nav').getByRole('button', { name: '退出' }).click();
   await page.getByRole('dialog').getByRole('button', { name: '退出' }).click();
   await page.locator('.demo-bar').waitFor({ timeout: 5000 });
   assert.equal(await dialog().count(), 0);

@@ -44,9 +44,9 @@ async function openSkills(p, phone = false, shot) {
   if (phone) await p.locator('.menu-btn').click();
   assert.equal(await p.locator('.side-nav').getByRole('button', { name: '技能', exact: true }).count(), 0);
   await p.getByRole('button', { name: '配置', exact: true }).click();
-  await p.getByRole('menuitem', { name: '技能', exact: true }).waitFor();
+  await p.locator('.settings-nav').getByRole('button', { name: '技能', exact: true }).waitFor();
   if (shot) { await p.waitForTimeout(300); await p.screenshot({ path: shot }); }
-  await p.getByRole('menuitem', { name: '技能', exact: true }).click();
+  await p.locator('.settings-nav').getByRole('button', { name: '技能', exact: true }).click();
 }
 
 async function openSync(p = page) {

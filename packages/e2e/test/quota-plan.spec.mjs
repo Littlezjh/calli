@@ -31,7 +31,7 @@ test('the quota board shows each account plan beside its name', { timeout: 18000
         await openUi(page, daemon);
         if (phone) await page.locator('.menu-btn').click();
         await page.getByRole('button', { name: '配置', exact: true }).click();
-        await page.getByRole('menuitem', { name: '额度', exact: true }).click();
+        await page.locator('.settings-nav').getByRole('button', { name: '额度', exact: true }).click();
         const board = page.getByRole('dialog', { name: '额度看板', exact: true });
         const plan = (agent) => board.locator('.quota-board-row', { has: page.locator('.quota-board-name', { hasText: new RegExp(`^${agent}$`) }) }).locator(phone ? '.quota-plan.under' : '.quota-plan.beside');
         await plan('Claude Code').filter({ hasText: 'Max 20x' }).waitFor({ timeout: 30_000 });

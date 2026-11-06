@@ -32,7 +32,7 @@ test('hidden accounts disappear from quota and are not queried; restoring brings
           if (phone) await page.locator('.menu-btn').click();
           await page.getByRole('button', { name: '配置', exact: true }).click();
         };
-        const openBoard = async () => { await settings(); await page.getByRole('menuitem', { name: '额度', exact: true }).click(); };
+        const openBoard = async () => { await settings(); await page.locator('.settings-nav').getByRole('button', { name: '额度', exact: true }).click(); };
         const board = page.getByRole('dialog', { name: '额度看板', exact: true });
         await toggle('Primary', true);
         await openBoard();
@@ -57,7 +57,7 @@ test('hidden accounts disappear from quota and are not queried; restoring brings
         await toggle('Primary', true);
         await toggle('Backup', true);
         await settings();
-        assert.equal(await page.getByRole('menuitem', { name: '额度', exact: true }).count(), 0, 'the entry hides when every quota account is hidden');
+        assert.equal(await page.locator('.settings-nav').getByRole('button', { name: '额度', exact: true }).count(), 0, 'the entry hides when every quota account is hidden');
       } finally { await context.close(); }
     }
   } finally { await browser?.close(); await daemon.stop(); }

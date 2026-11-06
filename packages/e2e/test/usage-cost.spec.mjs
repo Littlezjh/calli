@@ -48,8 +48,8 @@ test('API estimates load pricing details on demand, explain aliases and retry on
       await openUi(page, daemon);
       if (mobile) await page.locator('.menu-btn').click();
       await page.getByRole('button', { name: '配置', exact: true }).click();
-      await page.getByRole('menuitem', { name: '用量与诊断' }).click();
-      const panel = page.getByRole('dialog', { name: '用量与诊断', exact: true });
+      await page.locator('.settings-nav').getByRole('button', { name: '用量与诊断' }).click();
+      const panel = page.locator('.obs-page');
       await panel.getByText('API 标价估算', { exact: true }).waitFor();
       await panel.getByText('1 条用量未计价', { exact: true }).waitFor();
       await panel.getByText('含 1 条家族价格估算', { exact: true }).waitFor();

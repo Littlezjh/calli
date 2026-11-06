@@ -2,7 +2,7 @@
 // The daemon has an isolated home and no usable Lark CLI; the empty list uses its actual route.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { startDaemon, launchBrowser, api, openUi } from '../harness.mjs';
+import { startDaemon, launchBrowser, api, openUi, closeSettings } from '../harness.mjs';
 
 const meetingEvents = ['vc.meeting.participant_meeting_ended_v1', 'vc.note.generated_v1', 'minutes.minute.generated_v1'];
 const lark = { enabled: true, people: [], chats: [], intervalMin: 30, events: ['im.message.receive_v1', ...meetingEvents] };
@@ -39,6 +39,7 @@ test('the Lark card says when events are stuck elsewhere, and folds what failed 
     const open = async () => {
       await page.evaluate(() => { location.hash = '#/todos'; });
       await page.locator('.personal-summary').click();
+      await page.getByRole('region', { name: '私人设置', exact: true }).getByRole('button', { name: '飞书', exact: true }).click();
       await page.locator('.lark-body').waitFor();
     };
     await open();
@@ -48,8 +49,7 @@ test('the Lark card says when events are stuck elsewhere, and folds what failed 
     await toggle.click();
     await page.locator('.lark-realtime li', { hasText: 'omt_1' }).getByText('lark_read_failed').waitFor();
     await page.locator('.lark-body .personal-talk-hint', { hasText: '多关注 XX 的消息' }).waitFor();
-    await page.getByRole('button', { name: '取消', exact: true }).click();
-    await page.locator('.personal-settings').waitFor({ state: 'detached' });
+    await closeSettings(page);
 
     realtime = 'live';
     await page.reload();
@@ -139,7 +139,8 @@ test('post-meeting settings edit only the draft, preserve unrelated events and k
     await page.locator('.desk-source-state.off').waitFor();
     const open = async () => {
       await page.locator('.desk-summary').getByRole('button', { name: '配置', exact: true }).click();
-      const dialog = page.getByRole('dialog', { name: '私人设置', exact: true });
+      await page.getByRole('region', { name: '私人设置', exact: true }).getByRole('button', { name: '飞书', exact: true }).click();
+      const dialog = page.getByRole('region', { name: '飞书', exact: true });
       await dialog.locator('.lark-meeting-events').waitFor();
       return dialog;
     };
@@ -151,16 +152,16 @@ test('post-meeting settings edit only the draft, preserve unrelated events and k
     await meeting().click();
     assert.equal(await meeting().getAttribute('aria-checked'), 'true');
     assert.equal(await global().getAttribute('aria-checked'), 'false');
-    // A parent rerender must not pin the Lark child to the first draft stored in its ref.
-    await dialog.getByRole('button', { name: '实例默认模型', exact: true }).click();
-    await page.getByRole('menuitemradio', { name: 'Fictional plain', exact: true }).click();
+    // The feature page rerenders on every draft update; later keyboard edits must still win.
     await meeting().focus();
     await page.keyboard.press('Space');
     assert.equal(await meeting().getAttribute('aria-checked'), 'false');
     assert.equal(await global().getAttribute('aria-checked'), 'false');
     assert.equal(writes.length, 0, 'toggling never writes immediately');
     assert.equal(personalWrites, 0);
-    await dialog.getByRole('button', { name: '取消', exact: true }).click();
+    await page.locator('.settings-topbar').getByRole('button', { name: '返回', exact: true }).click();
+    await page.getByRole('dialog', { name: '保留这次修改？', exact: true }).getByRole('button', { name: '放弃修改', exact: true }).click();
+    await closeSettings(page);
     await dialog.waitFor({ state: 'detached' });
     assert.deepEqual(channel, initial, 'Cancel leaves the saved list untouched');
 
@@ -168,8 +169,10 @@ test('post-meeting settings edit only the draft, preserve unrelated events and k
     assert.equal(await meeting().getAttribute('aria-checked'), 'mixed');
     await meeting().click();
     await dialog.getByRole('button', { name: '保存', exact: true }).click();
+    await dialog.getByRole('status').filter({ hasText: '已保存' }).waitFor();
+    await closeSettings(page);
     await dialog.waitFor({ state: 'detached' });
-    assert.equal(personalWrites, 1);
+    assert.equal(personalWrites, 0, 'saving a feature does not rewrite the assistant configuration');
     assert.deepEqual(writes, [{ ...initial, events: [...initial.events, meetingEvents[0], meetingEvents[2]] }]);
     assert.equal(channel.enabled, false, 'configuring meeting events never enables the source');
     await page.locator('.desk-source-state.off').waitFor();
@@ -178,6 +181,8 @@ test('post-meeting settings edit only the draft, preserve unrelated events and k
     assert.equal(await meeting().getAttribute('aria-checked'), 'true');
     await meeting().click();
     await dialog.getByRole('button', { name: '保存', exact: true }).click();
+    await dialog.getByRole('status').filter({ hasText: '已保存' }).waitFor();
+    await closeSettings(page);
     await dialog.waitFor({ state: 'detached' });
     assert.equal(writes.length, 2);
     assert.deepEqual(channel.events, unrelated, 'disabling removes only the three owned event keys');
@@ -191,9 +196,9 @@ test('post-meeting settings edit only the draft, preserve unrelated events and k
     assert.equal(await meeting().getAttribute('aria-checked'), 'mixed');
     assert.equal(await meeting().isDisabled(), true);
     await dialog.locator('.lark-meeting-events small', { hasText: '旧版 hub 未提供事件列表' }).waitFor();
-    await dialog.getByRole('button', { name: '保存', exact: true }).click();
-    await dialog.waitFor({ state: 'detached' });
-    assert.equal(writes.length, 2, 'saving other settings cannot replace an unknown list');
+    assert.equal(await dialog.getByRole('button', { name: '保存', exact: true }).isDisabled(), true);
+    await closeSettings(page);
+    assert.equal(writes.length, 2, 'an unknown event list cannot be overwritten');
     assert.equal(Object.hasOwn(channel, 'events'), false);
   } finally { await browser.close(); await daemon.stop(); }
 });
@@ -232,9 +237,9 @@ test('desk source states distinguish loading, disabled, unknown and failed reads
     await off.getByText('飞书未启用', { exact: true }).waitFor();
     assert.equal(await off.evaluate(element => element.classList.contains('problem')), false);
     await off.getByRole('button').click();
+    await page.getByRole('region', { name: '私人设置', exact: true }).getByRole('button', { name: '飞书', exact: true }).click();
     await page.locator('.lark-meeting-events').waitFor();
-    await page.getByRole('button', { name: '取消', exact: true }).click();
-    await page.locator('.personal-settings').waitFor({ state: 'detached' });
+    await closeSettings(page);
 
     channel = lark;
     await page.reload();
@@ -275,6 +280,7 @@ test('desk source states distinguish loading, disabled, unknown and failed reads
     const mobileOff = page.locator('.desk-meta-list .desk-source-state.off');
     await mobileOff.getByText('飞书未启用', { exact: true }).waitFor();
     await mobileOff.getByRole('button').click();
+    await page.getByRole('region', { name: '私人设置', exact: true }).getByRole('button', { name: '飞书', exact: true }).click();
     await page.locator('.lark-meeting-events').waitFor();
     assert.equal(writes, 0);
     assert.equal(runs, 0);

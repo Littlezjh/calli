@@ -1,6 +1,6 @@
 import { TodoDelegate, TodoThreadPicker, type DelegateRequest } from './TodoDelegate';
 import { useIsNarrow } from '../hooks';
-import { PersonalSettingsDialog } from './PersonalSettingsDialog';
+import { AssistantSettings } from './AssistantSettingsPage';
 import { TodoDetails, TodoMetadata, Wishes } from './PersonalTodo';
 import {
   useEffect,
@@ -545,6 +545,7 @@ export function TodosPage({ agents, personal, personalError, onPersonalChange, o
     );
   };
 
+  if (settingsOpen) return <AssistantSettings api={api} agents={agents} onClose={() => { setSettingsOpen(false); setPendingDelegate(null); setPendingSummary(false); }} onSave={value => { onPersonalChange(value); setSettingsOpen(false); if (pendingDelegate) void delegate(pendingDelegate, true); if (pendingSummary) void summarize(true); }} />;
   return (
     <div className={`todos-page${api.demo ? '' : ' personal-plan'}`} ref={pageRef}>
       <header className="todos-head">
@@ -605,7 +606,7 @@ export function TodosPage({ agents, personal, personalError, onPersonalChange, o
           await api.linkTodo(id, threadId); setLinkRequest(null); onReload();
         })().catch(onError).finally(() => setDelegating(false));
       }} />}
-      {settingsOpen && personal && <PersonalSettingsDialog api={api} agents={agents} initial={personal} onClose={() => { setSettingsOpen(false); setPendingDelegate(null); setPendingSummary(false); }} onSave={value => { onPersonalChange(value); setSettingsOpen(false); if (pendingDelegate) void delegate(pendingDelegate, true); if (pendingSummary) void summarize(true); }} />}
+
       {board.done.length > 0 && (
         <div className="todos-done-group">
           <button type="button" className="todos-done-head" aria-expanded={showDone} onClick={toggleDone}>

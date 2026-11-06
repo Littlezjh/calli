@@ -24,10 +24,10 @@ test('general startup preference is shared, respects recent activity and explici
       await page.locator('.topbar-title', { hasText: '新线程' }).waitFor();
       if (mobile) await page.getByRole('button', { name: '打开线程列表', exact: true }).click();
       await page.locator('.sidebar').getByRole('button', { name: '配置', exact: true }).click();
-      const menu = page.getByRole('menu', { name: '配置', exact: true });
-      assert.equal(await menu.getByRole('menuitem').first().innerText(), '常规');
-      await menu.getByRole('menuitem', { name: '常规', exact: true }).click();
-      const dialog = page.getByRole('dialog', { name: '常规', exact: true });
+      const menu = page.locator('.settings-nav');
+      assert.equal(await menu.getByRole('button').first().innerText(), '常规');
+      await menu.getByRole('button', { name: '常规', exact: true }).click();
+      const dialog = page.getByRole('region', { name: '常规', exact: true });
       const select = dialog.getByRole('button', { name: '默认打开页面', exact: true });
       await select.waitFor();
       assert.match(await select.innerText(), /新会话页面/);
@@ -53,7 +53,8 @@ test('general startup preference is shared, respects recent activity and explici
       await select.click();
       await page.screenshot({ path: join(shots, `general-menu-${mobile ? 'mobile' : 'desktop'}-${theme}.png`), fullPage: true, animations: 'disabled' });
       await page.keyboard.press('Escape');
-      await dialog.getByRole('button', { name: '关闭', exact: true }).click();
+      await page.locator('.settings-topbar').getByRole('button', { name: '返回', exact: true }).click();
+      if (await page.locator('.settings-page').count()) await page.locator('.settings-topbar').getByRole('button', { name: '返回', exact: true }).click();
       await dialog.waitFor({ state: 'detached' });
       assert.deepEqual(await (await api(daemon, '/api/general-settings')).json(), { startupPage: 'recent-thread', autoArchiveDays: 7 });
       await page.reload();
@@ -75,8 +76,8 @@ test('general startup preference is shared, respects recent activity and explici
     await page.locator('.topbar-title', { hasText: 'Latest conversation' }).waitFor();
     // A failed automatic save keeps the previous server value and lets the user retry.
     await page.locator('.sidebar').getByRole('button', { name: '配置', exact: true }).click();
-    await page.getByRole('menuitem', { name: '常规', exact: true }).click();
-    const dialog = page.getByRole('dialog', { name: '常规', exact: true });
+    await page.locator('.settings-nav').getByRole('button', { name: '常规', exact: true }).click();
+    const dialog = page.getByRole('region', { name: '常规', exact: true });
     await page.route('**/api/general-settings', route => route.request().method() === 'PUT'
       ? route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'Could not save settings' }) }) : route.continue());
     await dialog.getByRole('button', { name: '默认打开页面', exact: true }).click();
@@ -85,7 +86,8 @@ test('general startup preference is shared, respects recent activity and explici
     assert.match(await dialog.getByRole('button', { name: '默认打开页面', exact: true }).innerText(), /最近会话/);
     assert.deepEqual(await (await api(daemon, '/api/general-settings')).json(), { startupPage: 'recent-thread', autoArchiveDays: 7 });
     await page.unroute('**/api/general-settings');
-    await dialog.getByRole('button', { name: '关闭', exact: true }).click();
+    await page.locator('.settings-topbar').getByRole('button', { name: '返回', exact: true }).click();
+      if (await page.locator('.settings-page').count()) await page.locator('.settings-topbar').getByRole('button', { name: '返回', exact: true }).click();
     // A slow preference response must not replace a thread the user chose in the meantime.
     let release;
     const ready = new Promise(resolve => { release = resolve; });

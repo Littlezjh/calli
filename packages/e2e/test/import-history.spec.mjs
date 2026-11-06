@@ -45,7 +45,7 @@ for (const mobile of [false, true]) {
         await openUi(page, daemon);
         if (mobile) await page.locator('.menu-btn').click();
         await page.locator('.sidebar').getByRole('button', { name: '配置', exact: true }).click();
-        await page.getByRole('menuitem', { name: '导入历史', exact: true }).click();
+        await page.locator('.settings-nav').getByRole('button', { name: '导入历史', exact: true }).click();
         const panel = page.getByRole('dialog', { name: '导入历史' });
         await panel.getByText('历史会话 0', { exact: true }).waitFor();
         assert.equal(await panel.locator('.panel-row').count(), 100);

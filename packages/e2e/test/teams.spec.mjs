@@ -23,7 +23,7 @@ for (const phone of [false, true]) for (const theme of ['light', 'dark']) test(`
     await openUi(page, daemon);
     if (!phone) {
       await page.getByRole('button', { name: '配置', exact: true }).click();
-      await page.getByRole('menuitem', { name: '团队', exact: true }).click();
+      await page.locator('.settings-nav').getByRole('button', { name: '团队', exact: true }).click();
     } else await page.goto(`${daemon.base}/#/teams`);
     await page.locator('.teams-page').waitFor();
     await page.getByRole('button', { name: '从编码队模板创建', exact: true }).click();

@@ -3,6 +3,24 @@ import type { Messages } from './zh';
 const plural = (n: number, one: string, other: string) => `${n} ${n === 1 ? one : other}`;
 
 export const en: Messages = {
+  "common.back": "Back",
+  "settings.categories": "Settings categories",
+  "settings.preferences": "Preferences",
+  "settings.resources": "Resources and connections",
+  "settings.history": "History and usage",
+  "settings.account": "Connection and account",
+  "settings.unsaved": "Keep your changes?",
+  "settings.unsavedHint": "You have unsaved changes. Cancel to keep editing, or discard them to leave.",
+  "settings.discard": "Discard changes",
+  "settings.saved": "Saved",
+  "sched.pick": "Select a task to view or edit",
+  "sched.noMatches": "No tasks in this category",
+  "settings.language": "Language",
+  "settings.automatic": "Changes save automatically",
+  "settings.all": "All",
+  "settings.enabled": "Enabled",
+  "settings.paused": "Paused",
+
   // Acting on her own.
   "proactive.mode.off": "Off",
   "proactive.mode.observe": "Observe",

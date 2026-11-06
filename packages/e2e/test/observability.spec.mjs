@@ -28,8 +28,8 @@ test('usage, request details and actionable diagnostics on desktop/phone in ligh
       await openUi(page, daemon);
       if (mobile) await page.locator('.menu-btn').click();
       await page.getByRole('button', { name: '配置', exact: true }).click();
-      await page.getByRole('menuitem', { name: '用量与诊断' }).click();
-      const panel = page.getByRole('dialog', { name: '用量与诊断', exact: true });
+      await page.locator('.settings-nav').getByRole('button', { name: '用量与诊断' }).click();
+      const panel = page.locator('.obs-page');
       await panel.getByText('TPM · 最近 60 秒', { exact: true }).waitFor();
       assert.equal(await panel.locator('.obs-metric').nth(1).locator('strong').innerText(), '170');
       // The range menu must open fully inside the scrolling body, with styled rows.
@@ -67,7 +67,7 @@ test('usage, request details and actionable diagnostics on desktop/phone in ligh
       await empty.getByRole('button', { name: /复制 .* 诊断/ }).click();
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
       if (process.env.CALLI_E2E_SHOTS_DIR) await page.screenshot({ animations: 'disabled', path: join(process.env.CALLI_E2E_SHOTS_DIR, `diagnostics-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
-      await panel.getByRole('button', { name: '关闭', exact: true }).click();
+      await page.locator('.settings-topbar').getByRole('button', { name: '返回', exact: true }).click();
       await panel.waitFor({ state: 'hidden' });
     } finally { await context.close(); }
   }
@@ -92,8 +92,8 @@ test('multi-instance chart supports selection, output rates, touch, keys and nar
       await openUi(page, daemon);
       if (mobile) await page.locator('.menu-btn').click();
       await page.getByRole('button', { name: '配置', exact: true }).click();
-      await page.getByRole('menuitem', { name: '用量与诊断' }).click();
-      const panel = page.getByRole('dialog', { name: '用量与诊断', exact: true });
+      await page.locator('.settings-nav').getByRole('button', { name: '用量与诊断' }).click();
+      const panel = page.locator('.obs-page');
       const chart = panel.getByRole('region', { name: 'TPM 走势', exact: true });
       await chart.locator('svg').waitFor();
       assert.equal(await chart.locator('.obs-chart-line').count(), 3);

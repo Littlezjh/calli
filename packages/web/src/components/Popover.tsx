@@ -1,5 +1,5 @@
 import { createPortal } from 'react-dom';
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type CSSProperties } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type CSSProperties } from 'react';
 
 interface Props {
   /** Accessible name of the panel. */
@@ -21,7 +21,7 @@ interface Props {
 }
 
 /**
- * A button that opens a panel above or below it. On phones the panel becomes a bottom sheet.
+ * A button that opens one anchored surface above or below it on every screen size.
  * Used instead of native <select> so menus look and behave the same everywhere.
  */
 export function Popover({
@@ -39,6 +39,7 @@ export function Popover({
   children,
 }: Props) {
   const [open, setOpen] = useState(false);
+  const panelId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   const wasOpen = useRef(false);
 
@@ -46,20 +47,35 @@ export function Popover({
   const [position, setPosition] = useState<CSSProperties>({});
 
   useLayoutEffect(() => {
-    if (!open || placement !== 'below') return;
+    if (!open) return;
     const place = () => {
       if (!rootRef.current || !panelRef.current) return;
       const anchor = rootRef.current.getBoundingClientRect();
       const panel = panelRef.current.getBoundingClientRect();
-      const top = anchor.bottom + 8;
-      const left = Math.max(16, Math.min(align === 'end' ? anchor.right - panel.width : anchor.left, innerWidth - panel.width - 16));
-      setPosition({ '--pop-top': `${top}px`, '--pop-left': `${left}px`, '--pop-height': `${Math.max(80, innerHeight - top - 16)}px` } as CSSProperties);
+      const viewport = window.visualViewport;
+      const edge = 12;
+      const minY = (viewport?.offsetTop ?? 0) + edge;
+      const maxY = minY + (viewport?.height ?? innerHeight) - edge * 2;
+      const below = maxY - anchor.bottom - 8;
+      const above = anchor.top - minY - 8;
+      const belowFirst = placement === 'below';
+      const useBelow = belowFirst ? below >= Math.min(panel.height, 240) || below >= above : above < Math.min(panel.height, 240) && below > above;
+      const height = Math.max(0, Math.min(520, maxY - minY, Math.max(80, useBelow ? below : above)));
+      const top = Math.max(minY, Math.min(useBelow ? anchor.bottom + 8 : anchor.top - Math.min(panel.height, height) - 8, maxY - Math.min(panel.height, height)));
+      const left = Math.max(edge, Math.min(align === 'end' ? anchor.right - panel.width : anchor.left, innerWidth - panel.width - edge));
+      const next = { '--pop-top': `${top}px`, '--pop-left': `${left}px`, '--pop-height': `${height}px` } as CSSProperties;
+      setPosition(previous => JSON.stringify(previous) === JSON.stringify(next) ? previous : next);
     };
     place();
-    panelRef.current?.querySelector<HTMLElement>('[role^="menuitem"]')?.focus({ preventScroll: true });
+    const observer = new ResizeObserver(place);
+    if (panelRef.current) observer.observe(panelRef.current);
+    if (rootRef.current) observer.observe(rootRef.current);
     window.addEventListener('resize', place);
     window.addEventListener('scroll', place, true);
-    return () => { window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true); };
+    window.visualViewport?.addEventListener('resize', place);
+    const focusable = matchMedia('(hover: none)').matches ? '[role^="menuitem"]:not(:disabled), button:not(:disabled)' : 'input:not(:disabled), [role^="menuitem"]:not(:disabled), button:not(:disabled)';
+    panelRef.current?.querySelector<HTMLElement>(focusable)?.focus({ preventScroll: true });
+    return () => { observer.disconnect(); window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true); window.visualViewport?.removeEventListener('resize', place); };
   }, [open, placement, align]);
 
   useEffect(() => {
@@ -78,6 +94,10 @@ export function Popover({
       if (rootRef.current && !e.composedPath().includes(rootRef.current) && (!panelRef.current || !e.composedPath().includes(panelRef.current))) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
+      if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key) && e.target instanceof HTMLElement && !e.target.matches('input, textarea')) {
+        const rows = [...(panelRef.current?.querySelectorAll<HTMLElement>('[role^="menuitem"]:not(:disabled), button:not(:disabled)') ?? [])].filter(el => el.getClientRects().length > 0);
+        if (rows.length) { e.preventDefault(); const i = rows.indexOf(document.activeElement as HTMLElement); rows[e.key === 'Home' ? 0 : e.key === 'End' ? rows.length - 1 : (i + (e.key === 'ArrowDown' ? 1 : -1) + rows.length) % rows.length]?.focus(); }
+      }
       if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); setOpen(false); rootRef.current?.querySelector('button')?.focus(); }
     };
     document.addEventListener('mousedown', onDown);
@@ -92,8 +112,7 @@ export function Popover({
 
   const close = () => setOpen(false);
   const panel = <>
-    <div className="pop-scrim" onClick={close} aria-hidden="true" />
-    <div ref={panelRef} style={placement === 'below' ? position : undefined} className={`pop-panel align-${align} placement-${placement}${panelClassName ? ` ${panelClassName}` : ''}`} role="menu" aria-label={label}>
+    <div id={panelId} ref={panelRef} style={position} className={`pop-panel anchored-pop align-${align} placement-${placement}${panelClassName ? ` ${panelClassName}` : ''}`} role="menu" aria-label={label}>
       {open && children(close)}
     </div>
   </>;
@@ -107,12 +126,13 @@ export function Popover({
         aria-label={triggerLabel}
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-controls={open ? panelId : undefined}
         disabled={disabled}
         onClick={() => setOpen((v) => !v)}
       >
         {trigger}
       </button>
-      {open && (placement === 'below' ? createPortal(panel, document.body) : panel)}
+      {open && createPortal(panel, document.body)}
     </div>
   );
 }

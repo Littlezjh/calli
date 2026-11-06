@@ -28,7 +28,7 @@ test('Pi new-thread and personal model pickers work while MCP discovery is block
       await page.locator('.row.assistant').waitFor();
       await page.evaluate(() => { location.hash = '#/todos'; });
       await page.locator('.personal-summary').click();
-      const settings = page.getByRole('dialog', { name: '私人设置', exact: true });
+      const settings = page.getByRole('region', { name: '私人设置', exact: true });
       await settings.locator('.personal-setting-line').nth(2).getByRole('button').click();
       await page.getByLabel('筛选模型').fill('Model 40');
       await page.getByRole('menuitemradio', { name: 'Model 40', exact: true }).click();

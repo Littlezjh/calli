@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { api, startDaemon, openUi, launchBrowser, repoRoot } from '../harness.mjs';
+import { api, startDaemon, openUi, launchBrowser, repoRoot, closeSettings } from '../harness.mjs';
 const chainDialog = async page => {
   await page.getByLabel('这个线程的更多操作').click();
   await page.getByRole('menuitem', { name: '交接记录', exact: true }).click();
@@ -187,8 +187,8 @@ for (const mobile of [false, true]) for (const theme of ['light', 'dark']) {
       await openUi(page, daemon);
       if (mobile) await page.locator('.menu-btn').click();
       await page.locator('.sidebar').getByRole('button', { name: '配置', exact: true }).click();
-      await page.getByRole('menuitem', { name: '自动交接', exact: true }).click();
-      const dialog = page.getByRole('dialog', { name: '自动交接', exact: true });
+      await page.locator('.settings-nav').getByRole('button', { name: '自动交接', exact: true }).click();
+      const dialog = page.getByRole('region', { name: '自动交接', exact: true });
       await dialog.locator('.auto-order-head').filter({ hasText: 'Agent 1' }).click();
       await dialog.getByRole('button', { name: '添加接手目标' }).waitFor();
       if (mobile) {
@@ -206,10 +206,10 @@ for (const mobile of [false, true]) for (const theme of ['light', 'dark']) {
         await remove.waitFor({ state: 'detached' });
       }
       const box = await dialog.boundingBox(), viewport = page.viewportSize();
-      assert.ok(box.x >= 0 && box.y >= 0 && box.x + box.width <= viewport.width + 1 && box.y + box.height <= viewport.height + 1);
+      assert.ok(box.x >= 0 && box.y >= 0 && box.x + box.width <= viewport.width + 1 && (await dialog.locator('.settings-actions').boundingBox()).y < viewport.height);
       assert.ok(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth + 1));
       await page.screenshot({ path: join(shots, `settings-${mobile ? 'phone' : 'desktop'}-${theme}.png`) });
-      await dialog.getByRole('button', { name: '保存交接设置' }).click(); await dialog.waitFor({ state: 'detached' });
+      await dialog.getByRole('button', { name: '保存交接设置' }).click(); await dialog.getByRole('status').filter({ hasText: '已保存' }).waitFor(); await closeSettings(page);
       assert.equal((await request('/api/handover-settings')).orders.agy[0].model, 'claude-sonnet');
       await select(page, source.title, mobile);
       await page.getByLabel('这个线程的更多操作').click(); await page.getByRole('menuitem', { name: '交接', exact: true }).click();

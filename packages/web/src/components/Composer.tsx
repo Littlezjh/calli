@@ -674,6 +674,12 @@ export function Composer({
   // the button, and the menu it opened, away. The box stays whole until a tap lands outside it.
   // The press ends with the click, or shortly after the finger lifts.
   const boxRef = useRef<HTMLDivElement>(null);
+  // A portaled picker still belongs to its trigger, including during touch focus changes.
+  const ownsTarget = (target: EventTarget | null) => {
+    if (target instanceof Node && boxRef.current?.contains(target)) return true;
+    const panel = target instanceof Element ? target.closest('.pop-panel[id]') : null;
+    return Boolean(panel && [...(boxRef.current?.querySelectorAll('[aria-controls]') ?? [])].some(button => button.getAttribute('aria-controls') === panel.id));
+  };
   const boxPress = useRef<number | null>(null);
   const endBoxPress = () => {
     if (boxPress.current === null) return;
@@ -684,9 +690,9 @@ export function Composer({
     const down = (e: PointerEvent) => {
       pressing.current = true;
       // With the focus left on the page (see above) there is no blur to fold on; a tap elsewhere is.
-      if (e.target instanceof Node && !boxRef.current?.contains(e.target)) {
+      if (e.target instanceof Node && !ownsTarget(e.target)) {
         endBoxPress();
-        if (!boxRef.current?.contains(document.activeElement)) leave();
+        if (!ownsTarget(document.activeElement)) leave();
       }
     };
     const up = () => {
@@ -982,7 +988,7 @@ export function Composer({
           onBlur={(e) => {
             // A tap on a button in the box moves the focus to it; the box stays whole so the
             // change of shape cannot pull the button out from under the finger.
-            if (!e.currentTarget.contains(e.relatedTarget) && boxPress.current === null) leave();
+            if (!ownsTarget(e.relatedTarget) && boxPress.current === null) leave();
           }}
           onDragOver={(e) => {
             if (!hasFiles(e)) return;

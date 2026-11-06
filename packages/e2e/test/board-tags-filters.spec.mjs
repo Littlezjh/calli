@@ -50,14 +50,11 @@ for (const phone of [false, true]) for (const colorScheme of ['light', 'dark']) 
         if (!phone) {
           const trigger = await filters.getByRole('button', { name: new RegExp(`^${name}`) }).boundingBox();
           assert.ok(rect.y >= trigger.y + trigger.height, 'opens below the trigger');
-        } else {
-          assert.ok(Math.abs(rect.y + rect.height - page.viewportSize().height) <= 1, 'bottom sheet');
-          assert.ok(await menu.evaluate(el => parseFloat(getComputedStyle(el).paddingBottom)) >= 48);
         }
         return menu;
       };
       const dismiss = async () => {
-        if (phone) await page.locator('.pop-scrim').click({ position: { x: 12, y: 10 } });
+        if (phone) await page.locator('.topbar').click({ position: { x: 150, y: 3 } });
         else await page.keyboard.press('Escape');
         await page.getByRole('menu').waitFor({ state: 'hidden' });
       };

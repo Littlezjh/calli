@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { AgentInfo, Api, AutoHandoverView, HandoverSettings, HandoverTarget, ModelOption, Thread } from '../api';
 import { t } from '../i18n';
-import { Dialog } from './Dialog';
+import { SettingsSection, usePageDraft } from './PageNavigation';
 import { Popover } from './Popover';
 import { AgentPicker } from './Pickers';
 import { AgentMark, IconChevron, IconFork, IconGrip, IconMore } from './icons';
@@ -75,8 +75,11 @@ export function HandoverSettingsDialog({ api, agents, onClose }: { api: Api; age
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [opened, setOpened] = useState('');
+  const [saved, setSaved] = useState('');
+  const [savedNotice, setSavedNotice] = useState(false);
+  usePageDraft(value !== null && JSON.stringify(value) !== saved, saving);
   const [dragged, setDragged] = useState<number | null>(null);
-  const load = () => { setError(''); void api.handoverSettings().then(setValue).catch(e => setError(String(e))); };
+  const load = () => { setError(''); void api.handoverSettings().then(next => { setValue(next); setSaved(JSON.stringify(next)); }).catch(e => setError(String(e))); };
   useEffect(load, [api]);
   const setOrder = (id: string, list: HandoverTarget[]) => setValue(v => v && ({ ...v, orders: { ...v.orders, [id]: list } }));
   const label = (target: HandoverTarget) => [agents.find(a => a.id === target.agent)?.label ?? target.agent, target.model].filter(Boolean).join(' · ');
@@ -85,9 +88,16 @@ export function HandoverSettingsDialog({ api, agents, onClose }: { api: Api; age
     if (to < 0 || to >= order.length) return;
     order.splice(to, 0, order.splice(from, 1)[0]); setOrder(id, order);
   };
-  return <Dialog title={t('auto.title')} confirmLabel={t('auto.save')} className="auto-settings" onCancel={() => { if (!saving) onClose(); }} confirmDisabled={!value || saving || value.threshold < 1 || value.threshold > 99} onConfirm={() => {
-    if (!value) return; setSaving(true); void api.saveHandoverSettings(value).then(onClose).catch(e => setError(String(e))).finally(() => setSaving(false));
-  }}>
+  const save = async () => {
+    if (!value || saving) return;
+    setSaving(true); setError(''); setSavedNotice(false);
+    try { const next = await api.saveHandoverSettings(value); setValue(next); setSaved(JSON.stringify(next)); setSavedNotice(true); }
+    catch (e) { setError(String(e)); } finally { setSaving(false); }
+  };
+  return <SettingsSection busy={saving} title={t('auto.title')} className="auto-settings" actions={<>
+    <span role="status">{savedNotice && value && JSON.stringify(value) === saved ? t('settings.saved') : ''}</span>
+    <button className="primary" disabled={!value || saving || !Number.isFinite(value.threshold) || value.threshold < 1 || value.threshold > 99} onClick={() => void save()}>{t(saving ? 'general.saving' : 'auto.save')}</button>
+  </>}>
     {error && <p className="panel-error" role="alert">{error} {!value && <button onClick={load}>{t('common.retry')}</button>}</p>}
     {!value && !error && <p>{t('common.loading')}</p>}
     {value && <>
@@ -124,5 +134,5 @@ export function HandoverSettingsDialog({ api, agents, onClose }: { api: Api; age
         </section>;
       })}</div>
     </>}
-  </Dialog>;
+  </SettingsSection>;
 }

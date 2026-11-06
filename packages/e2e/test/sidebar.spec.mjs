@@ -103,27 +103,26 @@ test('the settings button holds what is not an everyday thing, and signing out a
   const gear = list.getByRole('button', { name: '配置', exact: true });
   await gear.click();
   for (const name of ['外观', '已归档', '导入历史', '退出']) {
-    await page.getByRole('menuitem', { name, exact: true }).waitFor({ timeout: 5_000 });
+    await page.locator('.settings-nav').getByRole('button', { name, exact: true }).waitFor({ timeout: 5_000 });
   }
-  // The button is at the bottom of the screen, so the menu grows upwards from it and stays whole.
-  const menu = await page.getByRole('menu', { name: '配置' }).boundingBox();
-  const button = await gear.boundingBox();
-  assert.ok(menu.y + menu.height <= button.y + 1, `the menu sits above its button (${menu.y + menu.height} vs ${button.y})`);
-  assert.ok(menu.y >= 0 && menu.x >= 0);
+  assert.equal(await page.locator('.settings-page').count(), 1, 'settings occupies the main page');
+  assert.equal(await page.getByRole('dialog').count(), 0);
 
-  await page.getByRole('menuitem', { name: '退出', exact: true }).click();
+  await page.locator('.settings-nav').getByRole('button', { name: '退出', exact: true }).click();
   await page.getByText('退出登录？').waitFor({ timeout: 5_000 });
   await page.getByRole('button', { name: '取消' }).click();
   await page.getByText('退出登录？').waitFor({ state: 'detached', timeout: 5_000 });
-  assert.equal(await list.locator('.brand').isVisible(), true, 'still signed in');
+  assert.equal(await list.isVisible(), false, 'settings keeps the conversation sidebar out of view');
+  await page.locator('.settings-topbar').getByRole('button', { name: '返回', exact: true }).click();
+  assert.equal(await list.locator('.brand').isVisible(), true, 'return restores the signed-in workspace');
 });
 
 test('an open thread names its agent and directory in the top bar, not on the composer', async () => {
   await page.locator('.sidebar .thread-title', { hasText: 'hello' }).click();
   await page.getByText('hi there hello').waitFor({ timeout: 15_000 });
-  const sub = page.locator('.topbar-sub');
-  assert.equal(await sub.isVisible(), true);
-  assert.match(await sub.innerText(), /^pi · /);
+  await page.getByRole('button', { name: '线程所在位置', exact: true }).click();
+  assert.match(await page.locator('.place-panel').innerText(), /pi/);
+  await page.keyboard.press('Escape');
   assert.equal(await page.locator('.composer-context').count(), 0, 'the strip is only for choosing, before the thread exists');
 
   await page.locator('.sidebar').getByRole('button', { name: '新线程', exact: true }).click();

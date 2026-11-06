@@ -3,6 +3,24 @@
  * a key added here has to be added to them too. Messages with values are functions.
  */
 export const zh = {
+  "common.back": "返回",
+  "settings.categories": "配置分类",
+  "settings.preferences": "偏好",
+  "settings.resources": "资源与连接",
+  "settings.history": "记录与用量",
+  "settings.account": "连接与账号",
+  "settings.unsaved": "保留这次修改？",
+  "settings.unsavedHint": "还有未保存的修改。取消返回继续编辑，或放弃修改后离开。",
+  "settings.discard": "放弃修改",
+  "settings.saved": "已保存",
+  "sched.pick": "选择一个任务，查看或修改配置",
+  "sched.noMatches": "这个分类下没有任务",
+  "settings.language": "语言",
+  "settings.automatic": "更改后自动保存",
+  "settings.all": "全部",
+  "settings.enabled": "已开启",
+  "settings.paused": "已暂停",
+
   // Acting on her own.
   "proactive.mode.off": "关",
   "proactive.mode.observe": "观察",

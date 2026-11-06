@@ -5,7 +5,7 @@ import { buildDesk, byPeriod, dueLabel, LANES, needsPerson, NEXT_STEP, noteSecti
 import { formatDate, formatDateTime, t } from '../i18n';
 import { DialogSurface } from './Dialog';
 import { IconAgents, IconPin, IconSparkle, IconExternal, IconCheck, IconChevron, IconClose, IconFile, IconSideChat } from './icons';
-import { PersonalSettingsDialog } from './PersonalSettingsDialog';
+import { AssistantSettings } from './AssistantSettingsPage';
 import { Popover } from './Popover';
 import { TodoDelegate, TodoThreadPicker, type DelegateRequest } from './TodoDelegate';
 import { DeskMeta } from './DeskMeta';
@@ -122,6 +122,7 @@ export function DeskPage(props: Props) {
   const laterPiles = matrix ? desk.quadrants.later : desk.lanes.later;
   const stack = (list: Pile[]) => <StackButton id="later" count={list.length} label={t('desk.laterCount', list.length)} onOpen={source => show('later', source)}><strong>{t('desk.laterCount', list.length)}</strong><span className="desk-stack-preview">{list.map(pile => pile.todo.text).join(' · ')}</span></StackButton>;
   const title = open?.id === 'inbox' ? t('desk.inbox') : open?.id === 'later' ? t('desk.later') : selected?.todo.text ?? '';
+  if (settingsOpen) return <AssistantSettings api={api} agents={agents} onClose={() => { setSettingsOpen(false); setPendingDelegate(null); }} onSave={value => { onPersonalChange(value); setSettingsOpen(false); setSettingsSaved(n => n + 1); if (pendingDelegate) void delegate(pendingDelegate, true); }} />;
   return <div className="desk-page">
     <header className="desk-header">
       <div><h1>{formatDate(now, { month: 'long', day: 'numeric', weekday: 'long' })}</h1>
@@ -177,12 +178,6 @@ export function DeskPage(props: Props) {
         : selected ? <MatterCards api={api} pile={selected} busy={busy} proactive={proactive} onChange={(todo, done) => void act(() => api.updateTodo(todo.id, { done }))} onUnsubscribe={(todo, { kind, ref }) => void act(() => api.updateTodo(todo.id, { unsubscribe: [{ kind, ref }] }))} onResolve={resolve} onOpenThread={onOpenThread} /> : <p className="desk-empty">{t('desk.solved')}</p>}
     </Spread>}
     {linkRequest && createPortal(<TodoThreadPicker todos={todos} threads={threads} todoId={linkRequest.id} busy={busy} onClose={() => setLinkRequest(null)} onPick={threadId => void act(async () => { await api.linkTodo(linkRequest.id!, threadId); setLinkRequest(null); })} />, document.body)}
-    {settingsOpen && !personal && createPortal(<DialogSurface labelledBy="desk-setup-title" onClose={() => setSettingsOpen(false)}>
-      <h2 id="desk-setup-title">{t('personal.settings')}</h2>
-      {personalError ? <p role="alert">{personalError}<button className="ghost" onClick={onPersonalRetry}>{t('common.retry')}</button></p> : <p role="status">{t('common.loading')}</p>}
-      <button className="ghost" onClick={() => setSettingsOpen(false)}>{t('common.close')}</button>
-    </DialogSurface>, document.body)}
-    {settingsOpen && personal && createPortal(<PersonalSettingsDialog api={api} agents={agents} initial={personal} onClose={() => { setSettingsOpen(false); setPendingDelegate(null); }} onSave={value => { onPersonalChange(value); setSettingsOpen(false); setSettingsSaved(n => n + 1); if (pendingDelegate) void delegate(pendingDelegate, true); }} />, document.body)}
     {!api.demo && <Pet api={api} greeting={loading || error ? null : { you: desk.quadrants.now.length, first: desk.first[0]?.todo.text ?? null }} spreadOpen={Boolean(open)} todos={todos.filter(todo => !todo.done)} onOpenTodo={showTodo} onOpenThread={onOpenThread} onStatusChange={onPetStatusChange} onConfigure={() => { setSettingsOpen(true); if (!personal) onPersonalRetry(); }} />}
   </div>;
 }

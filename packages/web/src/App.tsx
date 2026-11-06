@@ -1,3 +1,6 @@
+import { SettingsPage, type SettingsGroup } from './components/SettingsPage';
+import { AssistantSettingsPage, assistantTitle } from './components/AssistantSettingsPage';
+import { PageNavigation, SettingsSection, usePageNavigation } from './components/PageNavigation';
 import { PushSettingsDialog } from './components/PushSettingsDialog';
 import { GeneralSettingsDialog } from './components/GeneralSettingsDialog';
 import { AutoHandoverNotice, HandoverSettingsDialog } from './components/AutoHandover';
@@ -5,7 +8,7 @@ import { useWorkSources, WorkSummary } from './extensions/work';
 import { HostIcon } from './extensions/ui';
 import { historyPage, mergeHistory, watchHistory } from './history';
 import type { WorkMode, WritingStage } from './api';
-import { forkBlocked, useThreadActions } from './components/ThreadActions';import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { forkBlocked, useThreadActions } from './components/ThreadActions';import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import type { Theme } from './appearance';
 import {
   Api,
@@ -144,12 +147,14 @@ const ACTIVITY_HASH = '#/activity';
 const OBSERVABILITY_HASH = '#/observability';
 const EXTENSIONS_HASH = '#/extensions';
 /** The hub's own pages. Any other `#/…` may be an extension's view; see extensions/routes.ts. */
-const CORE_ROUTES = [AGENTS_HASH, TEAMS_HASH, TODOS_HASH, DESK_HASH, SKILLS_HASH, MCP_HASH, SCHEDULES_HASH, ACTIVITY_HASH, OBSERVABILITY_HASH, EXTENSIONS_HASH];
+const CORE_ROUTES = ['#/settings', AGENTS_HASH, TEAMS_HASH, TODOS_HASH, DESK_HASH, SKILLS_HASH, MCP_HASH, SCHEDULES_HASH, ACTIVITY_HASH, OBSERVABILITY_HASH, EXTENSIONS_HASH];
 
-type MainView = 'agents' | 'teams' | 'thread' | 'todos' | 'desk' | 'schedules' | 'activity' | 'observability' | 'skills' | 'mcp' | 'extensions' | 'ext';
+type MainView = 'settings' | 'agents' | 'teams' | 'thread' | 'todos' | 'desk' | 'schedules' | 'activity' | 'observability' | 'skills' | 'mcp' | 'extensions' | 'ext';
 
 /** The page an address opens; null for none (a thread). Skills and MCP are the hub's own machinery, which the demo has none of. */
 function viewForHash(hash: string, connected: boolean): MainView | null {
+  if (hash.startsWith('#/schedules/')) return 'schedules';
+  if (hash === '#/settings' || hash.startsWith('#/settings/')) return 'settings';
   if (hash.startsWith('#/thread/')) return null;
   switch (hash) {
     case DESK_HASH:
@@ -405,7 +410,10 @@ interface AppProps {
 /** What is open when the app starts over on another machine: the phone's thread list, the machines panel, or a thread of that machine. */
 export type AppStart = 'list' | 'machines' | { thread: string };
 
-export function App({ token, onToken, connect, hostId = null, onHost, start, showcase }: AppProps) {
+export function App(props: AppProps) { return <PageNavigation><Hub {...props} /></PageNavigation>; }
+
+function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }: AppProps) {
+  const navigate = usePageNavigation();
   // Asking for the token, and why: what was being done, or why the old one stopped working.
   const [connectAsk, setConnectAsk] = useState<{ reason?: string } | null>(connect ?? null);
   // Looking at another machine, every call is answered by its daemon, through the hub.
@@ -417,11 +425,10 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const api = useMemo<Api>(() => showcase?.api ?? (token ? new Api(token, '', hostId) : new DemoApi()), [token, hostId, hostUp, showcase?.api]);
   const demo = api.demo;
-  const [hostsOpen, setHostsOpen] = useState(start === 'machines');
   // A machine that was removed (here or on another device) has nothing to show: back to the hub's own.
   useEffect(() => {
-    if (hostId && hostsLoaded && !host) onHost?.(null, hostsOpen ? 'machines' : undefined);
-  }, [hostId, hostsLoaded, host, onHost, hostsOpen]);
+    if (hostId && hostsLoaded && !host) onHost?.(null, window.location.hash.startsWith('#/settings/machines') ? 'machines' : undefined);
+  }, [hostId, hostsLoaded, host, onHost]);
 
   const [teamDefinitions, setTeamDefinitions] = useState<TeamSummary[]>([]);
   const reloadTeams = useCallback(() => { if (!api.demo) void api.teams().then(setTeamDefinitions).catch(() => setTeamDefinitions([])); }, [api]);
@@ -469,7 +476,10 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   /** What the main area shows: a thread (or the blank one a new thread starts from), one of the hub's pages, or an extension's view. */
   // Those pages have addresses of their own, so a reload or a bookmark lands back on them.
   const [threadLink, setThreadLink] = useState(() => window.location.hash.startsWith('#/thread/') ? window.location.hash : null);
-  const [view, setView] = useState<MainView>(() => viewForHash(window.location.hash, Boolean(token)) ?? 'thread');
+  const [schedulePath, setSchedulePath] = useState(() => window.location.hash.startsWith('#/schedules/') ? window.location.hash.slice('#/schedules/'.length) : '');
+  const [settingsPath, setSettingsPath] = useState(() => start === 'machines' ? 'machines' : window.location.hash.replace(/^#\/settings\/?/, ''));
+  const settingsOrigin = useRef<{ view: MainView; thread: string | null; hash: string; scroll: number; pinned: boolean } | null>(null);
+  const [view, setView] = useState<MainView>(() => start === 'machines' ? 'settings' : viewForHash(window.location.hash, Boolean(token)) ?? 'thread');
   /** The address of the extension view asked for. Which view that is waits for the list of extensions. */
   const [extTarget, setExtTarget] = useState<string | null>(() => (viewForHash(window.location.hash, Boolean(token)) === 'ext' ? window.location.hash : null));
   /** The extension catalog and what is installed on the machine on screen; null until read. */
@@ -556,7 +566,6 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   /** Bumped by daemon broadcasts, so the open plan page reloads. */
   const [personal, setPersonal] = useState<PersonalSettings | null>(null);
   const [personalError, setPersonalError] = useState('');
-  const [pushSettingsOpen, setPushSettingsOpen] = useState(false);
   const reloadPersonal = useCallback(() => {
     if (api.demo) return; setPersonalError('');
     void api.personalSettings().then(setPersonal).catch(e => setPersonalError(String(e)));
@@ -568,7 +577,6 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   // Explicit navigation wins even when the startup preference or thread list arrives late.
   const startupPending = useRef(!demo && !showcase && start === undefined && !window.location.hash);
   const [startupSettings, setStartupSettings] = useState<GeneralSettings | null>(null);
-  const [generalSettingsOpen, setGeneralSettingsOpen] = useState(false);
   const [selectedId, setSelectedIdState] = useState<string | null>(typeof start === 'object' ? start.thread : showcase?.initialThreadId ?? null);
   const setSelectedId = useCallback((id: string | null) => {
     startupPending.current = false;
@@ -710,7 +718,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     const onKey = (e: KeyboardEvent) => {
       if (e.code === 'KeyS' && e.shiftKey && (e.metaKey || e.ctrlKey) && !e.altKey) {
         e.preventDefault();
-        toggleSidebar();
+        if (!document.querySelector('.settings-page')) toggleSidebar();
       }
     };
     window.addEventListener('keydown', onKey);
@@ -719,10 +727,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const listOpen = drawer && compact;
   useListSwipe(compact, listOpen, setDrawer);
   const [confirmSignOut, setConfirmSignOut] = useState(false);
-  /** Where the settings menu opened from, while it is open. */
-  const [settingsAt, setSettingsAt] = useState<{ x: number; y: number } | null>(null);
   const [appearance, setAppearance, theme] = useAppearance(showcase ? 'calli.showcase.appearance' : undefined, showcase ? { mode: showcase.theme, palette: 'paper' } : undefined);
-  const [appearanceOpen, setAppearanceOpen] = useState(false);
   // An error belongs to the thread (or new-thread page) it happened in, so other threads stay clean.
   // The closure keeps the thread that was open when the failing request started.
   const [errorState, setErrorState] = useState<{ text: string; thread: string | null } | null>(null);
@@ -753,7 +758,6 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const [terminalTarget, setTerminalTarget] = useState<string | null>(null);
   /** The agent whose plan usage the quota panel shows. */
   /** The quota dashboard, over every agent that can report usage. */
-  const [handoverSettingsOpen, setHandoverSettingsOpen] = useState(false);
   const [quotaOpen, setQuotaOpen] = useState(false);
   const [observabilityTab, setObservabilityTab] = useState<'usage' | 'diagnostics'>('usage');
   const [observabilityFocus, setObservabilityFocus] = useState<string | undefined>(undefined);
@@ -854,6 +858,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     return () => { cancelled = true; };
   }, [api, selectedId, threads]);
   useEffect(() => { setAgentsOpen(false); setDraftCollaboration(false); setCollaborationDirectories([]); }, [selectedId, hostId]);
+  const onSettings = view === 'settings';
   const onDesk = view === 'desk' && !selectedId;
   const onTodos = view === 'todos' && !selectedId;
   const onSchedules = view === 'schedules' && !selectedId;
@@ -869,7 +874,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const extOpen = onExt && extensions && extTarget ? resolveExtensionRoute(extTarget, extensions) : null;
   const extName = extOpen ? extensions?.find((e) => e.manifest.id === extOpen.extensionId)?.manifest.name[locale()] ?? extOpen.extensionId : '';
   /** The name of the page the main area shows instead of a thread, for the top bar; null on a thread. */
-  const viewTitle = onDesk ? t('desk.title') : onObservability ? t('obs.title') : onAgents ? t('agents.title') : onTeams ? t('teams.title') : onTodos
+  const viewTitle = onSettings ? t('sidebar.settings') : onDesk ? t('desk.title') : onObservability ? t('obs.title') : onAgents ? t('agents.title') : onTeams ? t('teams.title') : onTodos
     ? t('todos.title')
     : onSchedules
       ? t('sidebar.schedules')
@@ -932,11 +937,11 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const extWant = onExt ? (extOpen ? extensionHash(extOpen) : extTarget ?? '') : '';
   useEffect(() => {
     if (threadLink) return;
-    const want = onDesk ? DESK_HASH : onObservability ? OBSERVABILITY_HASH : onAgents ? AGENTS_HASH : onTeams ? TEAMS_HASH : onTodos ? TODOS_HASH : onSchedules ? SCHEDULES_HASH : onActivity ? ACTIVITY_HASH : onSkills ? SKILLS_HASH : onMcp ? MCP_HASH : onExtensions ? EXTENSIONS_HASH : extWant;
+    const want = onSettings ? `#/settings${settingsPath ? `/${settingsPath}` : ''}` : onDesk ? DESK_HASH : onObservability ? OBSERVABILITY_HASH : onAgents ? AGENTS_HASH : onTeams ? TEAMS_HASH : onTodos ? TODOS_HASH : onSchedules ? `${SCHEDULES_HASH}${schedulePath ? `/${schedulePath}` : ''}` : onActivity ? ACTIVITY_HASH : onSkills ? SKILLS_HASH : onMcp ? MCP_HASH : onExtensions ? EXTENSIONS_HASH : extWant;
     if (window.location.hash !== want) {
       window.history.replaceState(window.history.state, '', want || window.location.pathname + window.location.search);
     }
-  }, [onDesk, onObservability, onAgents, onTeams, onTodos, onActivity, onSkills, onSchedules, onMcp, onExtensions, extWant, threadLink]);
+  }, [schedulePath, onSettings, settingsPath, onDesk, onObservability, onAgents, onTeams, onTodos, onActivity, onSkills, onSchedules, onMcp, onExtensions, extWant, threadLink]);
 
   // Whether the directory a new thread would start in is a git repository. Asked once per directory picked.
   useEffect(() => {
@@ -959,22 +964,30 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   // An address typed or followed while the page is open. Signing in or out changes what may be
   // opened, so the listener is renewed with the token.
   useEffect(() => {
-    const onHash = () => {
-      startupPending.current = false;
+    const onHash = (event: HashChangeEvent) => {
       const hash = window.location.hash;
-      if (hash.startsWith('#/thread/')) { setThreadLink(hash); return; }
-      setThreadLink(null);
-      const next = viewForHash(hash, Boolean(token));
-      if (!next) return;
-      // An address no enabled extension claims is let through too: it lands on the thread view.
-      setSelectedId(null);
-      setView(next);
-      if (next === 'ext') setExtTarget(hash);
-      setDrawer(false);
+      const apply = () => {
+        startupPending.current = false;
+        window.history.replaceState(window.history.state, '', hash || window.location.pathname + window.location.search);
+        if (hash.startsWith('#/thread/')) { setThreadLink(hash); return; }
+        setThreadLink(null);
+        const next = viewForHash(hash, Boolean(token));
+        if (!next) {
+          const origin = settingsOrigin.current;
+          setView(origin?.view ?? 'thread'); setSelectedId(origin?.thread ?? null); return;
+        }
+        if (next !== 'settings') setSelectedId(null);
+        setView(next);
+        if (next === 'schedules') setSchedulePath(hash.startsWith('#/schedules/') ? hash.slice('#/schedules/'.length) : '');
+        if (next === 'settings') setSettingsPath(hash.replace(/^#\/settings\/?/, ''));
+        if (next === 'ext') setExtTarget(hash);
+        setDrawer(false);
+      };
+      if (!navigate(apply)) window.history.replaceState(window.history.state, '', event.oldURL);
     };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
-  }, [token]);
+  }, [token, navigate]);
 
   // Both spellings of the thread's directory; kept stable so the thread view is not re-rendered for nothing.
   const threadRoots = useMemo(() => (selected ? [selected.cwd, selected.cwdReal] : []), [selected?.cwd, selected?.cwdReal]);
@@ -1316,6 +1329,18 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     }
   };
 
+  // Settings keep the active conversation in memory; coming back restores its reading position.
+  useLayoutEffect(() => {
+    if (onSettings) return;
+    const origin = settingsOrigin.current;
+    settingsOrigin.current = null;
+    const el = scrollerRef.current;
+    if (!origin || origin.thread !== selectedId || !el) return;
+    stickToBottom.current = origin.pinned;
+    el.scrollTop = origin.pinned ? el.scrollHeight : origin.scroll;
+    setAtBottom(isNearBottom(el));
+  }, [onSettings, selectedId]);
+
   // Keep the view pinned to the bottom while the user has not scrolled up.
   useEffect(() => {
     const el = scrollerRef.current;
@@ -1338,7 +1363,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     ro.observe(content);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [selectedId, mergedHandover]);
+  }, [selectedId, mergedHandover, onSettings]);
 
   // A phone keyboard does not resize the page: it covers the bottom of it, and the browser pans
   // what is left (the visual viewport) over the page to keep the focused field in sight. So the
@@ -1802,11 +1827,24 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     api.decide(approvalId, body).catch(handleError);
   };
 
-  const pick = (id: string) => {
-    setSingleSegmentId(null);
-    setSelectedId(id);
-    setDrawer(false);
+  const pick = (id: string) => navigate(() => {
+    setSingleSegmentId(null); setView('thread'); setSelectedId(id); setDrawer(false);
+  });
+
+  const openSettings = (path = '') => {
+    if (onSettings && settingsPath === path) return;
+    navigate(() => {
+      if (!onSettings) settingsOrigin.current = { view, thread: selectedId, hash: window.location.hash, scroll: scrollerRef.current?.scrollTop ?? 0, pinned: stickToBottom.current };
+      setThreadLink(null); setView('settings'); setSettingsPath(path); setDrawer(false);
+      const hash = `#/settings${path ? `/${path}` : ''}`;
+      if (window.location.hash !== hash) window.history.pushState(window.history.state, '', hash);
+    });
   };
+  const closeSettings = () => navigate(() => {
+    const origin = settingsOrigin.current;
+    setSettingsPath(''); setView(origin?.view ?? 'thread'); setSelectedId(origin?.thread ?? null); setThreadLink(null);
+    window.history.pushState(window.history.state, '', origin?.hash || window.location.pathname + window.location.search);
+  });
 
   // Marked from an extension view: the stream brings the change back to the list.
   const setThreadDone = async (id: string, done: boolean) => {
@@ -1821,34 +1859,37 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   // The plan page takes the place of a thread, so no thread is open while it is.
   // `finds` lays the new finds out on arrival, for a matter her conversation asked the person to confirm.
   const [deskFinds, setDeskFinds] = useState(false);
-  const openDesk = (finds = false) => {
+  const openDesk = (finds = false) => navigate(() => {
     setSelectedId(null); setView('desk'); setDrawer(false); setDeskFinds(finds);
-  };
-  const openTodos = () => {
+  });
+  const openTodos = () => navigate(() => {
     setSelectedId(null);
     setView('todos');
     setDrawer(false);
-  };
-  const openSchedules = () => {
+  });
+  const openSchedules = (path = '') => navigate(() => {
+    setSchedulePath(path);
+    const hash = `#/schedules${path ? `/${path}` : ''}`;
+    if (window.location.hash !== hash) window.history.pushState(window.history.state, '', hash);
     setSelectedId(null);
     setView('schedules');
     setDrawer(false);
-  };
+  });
 
-  const openActivity = () => {
+  const openActivity = () => navigate(() => {
     setSelectedId(null);
     setView('activity');
     setDrawer(false);
-  };
+  });
 
-  const openObservability = (tab: 'usage' | 'diagnostics', focusAgent?: string) => {
+  const openObservability = (tab: 'usage' | 'diagnostics', focusAgent?: string) => navigate(() => {
     setSelectedId(null);
     setObservabilityTab(tab);
     setObservabilityFocus(focusAgent);
     setObservabilityKey((n) => n + 1);
     setView('observability');
     setDrawer(false);
-  };
+  });
 
   const reloadAgents = async () => {
     if (!api) return;
@@ -1857,7 +1898,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     setDraftAgent((prev) => (list.some((a) => a.id === prev && !a.hidden) ? prev : list.find((a) => a.available && !a.hidden)?.id ?? ''));
   };
 
-  const openAgents = () => { setSelectedId(null); setView('agents'); setDrawer(false); void reloadAgents().catch(handleError); };
+  const openAgents = () => { openSettings('agents'); void reloadAgents().catch(handleError); };
 
   const openTerminal = () => { setTerminalTarget(null); setTermOpen(true); };
 
@@ -1869,33 +1910,21 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     setToast({ message: t('agents.loginStarted') });
   };
 
-  const openTeams = () => { setSelectedId(null); setView('teams'); setDrawer(false); reloadTeams(); };
+  const openTeams = () => { openSettings('teams'); reloadTeams(); };
 
-  const openSkills = () => {
-    setSelectedId(null);
-    setView('skills');
-    setDrawer(false);
-  };
+  const openSkills = () => openSettings('skills');
 
-  const openMcp = () => {
-    setSelectedId(null);
-    setView('mcp');
-    setDrawer(false);
-  };
+  const openMcp = () => openSettings('mcp');
 
-  const openExtensions = () => {
-    setSelectedId(null);
-    setView('extensions');
-    setDrawer(false);
-  };
+  const openExtensions = () => openSettings('extensions');
 
   /** Opens an extension's view by its address, the way the sidebar entry and a bookmark do. */
-  const openExtensionView = (hash: string) => {
+  const openExtensionView = (hash: string) => navigate(() => {
     setSelectedId(null);
     setExtTarget(hash);
     setView('ext');
     setDrawer(false);
-  };
+  });
   // Views enabled extensions pin, after the hub's own entries.
   const extensionNav: ExtensionNavEntry[] = enabledViews(extensions ?? [])
     .filter((v) => v.view.sidebar?.pinned)
@@ -1907,7 +1936,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       onOpen: () => openExtensionView(extensionHash(v)),
     }));
 
-  const newThread = (opts: { cwd?: string; sectionId?: string | null; scratch?: boolean } = {}) => {
+  const newThread = (opts: { cwd?: string; sectionId?: string | null; scratch?: boolean } = {}) => navigate(() => {
     if (showcase) { showcase.onInstall(); return; }
     setSelectedId(null);
     setView('thread');
@@ -1918,7 +1947,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     }
     if (opts.scratch) setDraftScratch(true);
     setDraftSectionId(opts.sectionId ?? null);
-  };
+  });
 
   // A turn a search found: its thread is opened and the conversation is brought to that turn. An
   // archived thread comes back out of the archive, as it does when opened from anywhere else.
@@ -2152,7 +2181,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     if (id === 'model') return setModelSignal((n) => n + 1);
     if (id === 'permission') return setPermissionSignal((n) => n + 1);
     if (id === 'import') return setImportOpen(true);
-    if (id === 'appearance') return setAppearanceOpen(true);
+    if (id === 'appearance') return openSettings('appearance');
     if (selected && (id === 'rename' || id === 'pin' || id === 'fork' || id === 'archive')) threadActions.run(id, selected);
   };
 
@@ -2188,7 +2217,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         hosts={hosts}
         current={hostId}
         onPick={(id) => { if (id !== hostId) onHost(id); }}
-        onManage={() => setHostsOpen(true)}
+        onManage={() => openSettings('machines')}
       />}
       {offer && !draftScratch && !draftTeam && <WorkspacePicker branch={offer.branch} changes={offer.changes} worktree={draftWorktree} onChange={setDraftWorktree} />}
       {draftSectionId && sections.some((s) => s.id === draftSectionId) && (
@@ -2377,6 +2406,43 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     </>
   );
 
+  const settingsGroups: SettingsGroup[] = [
+    { label: t('settings.preferences'), entries: [
+      ...(!demo ? [{ id: 'general', label: t('general.title'), icon: IconSettings, render: () => <GeneralSettingsDialog api={api} onSave={setStartupSettings} onClose={closeSettings} /> }] : []),
+      { id: 'appearance', label: t('appearance.title'), icon: IconPalette, render: () => <AppearancePanel appearance={appearance} theme={theme} onChange={setAppearance} onClose={closeSettings} /> },
+      { id: 'language', label: t('locale.menu'), icon: IconLanguage, render: () => <SettingsSection title={t('locale.menu')} hint={t('settings.automatic')}><div className="settings-options">
+        {[{ id: 'system' as const, name: t('locale.system') }, ...LOCALES].map(l => <button key={l.id} className="settings-link-row" role="radio" aria-checked={localeChoice() === l.id} onClick={() => navigate(() => chooseLocale(l.id))}><span>{l.name}</span>{localeChoice() === l.id && <IconCheck size={16} />}</button>)}
+      </div></SettingsSection> },
+      ...(!demo ? [
+        { id: 'push', label: t('push.title'), icon: IconBell, render: () => <PushSettingsDialog api={api} onClose={closeSettings} /> },
+        { id: 'assistant', label: t('personal.settings'), icon: IconSparkle, render: () => <AssistantSettingsPage api={api} agents={agents} path={settingsPath || 'assistant'} onNavigate={openSettings} onSave={setPersonal} /> },
+        { id: 'handover', label: t('auto.title'), icon: IconAgents, render: () => <HandoverSettingsDialog api={api} agents={agents} onClose={closeSettings} /> },
+      ] : []),
+    ] },
+    { label: t('settings.resources'), entries: [
+      ...(!demo ? [
+        { id: 'agents', label: t('agents.title'), icon: IconAgents, render: () => <AgentsPage api={api} agents={agents} onAdd={() => { setOnboardStep('results'); setOnboardOpen(true); }} onReload={reloadAgents} onLogin={openAgentLogin} /> },
+        { id: 'teams', label: t('teams.title'), icon: IconAgents, render: () => <TeamsPage api={api} agents={agents} onReload={reloadTeams} /> },
+        { id: 'machines', label: t('hosts.machines'), icon: IconServer, render: () => <HostsPanel api={api} hosts={hosts} onChanged={reloadHosts} onClose={closeSettings} onError={handleError} /> },
+        { id: 'skills', label: t('composerMenu.skills'), icon: IconSparkle, render: () => <SkillsPage api={api} token={token} hostId={hostId} hosts={hosts} agents={agents} onError={handleError} /> },
+        { id: 'mcp', label: 'MCP', icon: IconGlobe, render: () => <McpPage api={api} token={token} hostId={hostId} hosts={hosts} agents={agents} onError={handleError} /> },
+      ] : []),
+      { id: 'extensions', label: t('extensions.title'), icon: IconPuzzle, render: () => <ExtensionsPage api={api} demo={demo} extensions={extensions} threads={threads} onReload={() => void reloadExtensions()} onChange={changeExtension} onOpenView={openExtensionView} onError={handleError} /> },
+    ] },
+    { label: t('settings.history'), entries: [
+      { id: 'archive', label: t('archive.title'), icon: IconArchive, onOpen: () => setArchiveOpen(true) },
+      ...(importAgents.length ? [{ id: 'import', label: t('import.title'), icon: IconImport, onOpen: () => setImportOpen(true) }] : []),
+      ...(agents.some(a => !a.hidden && a.capabilities.quota) ? [{ id: 'quota', label: t('app.quota'), icon: IconGauge, onOpen: () => setQuotaOpen(true) }] : []),
+      { id: 'activity', label: t('activity.title'), icon: IconActivity, render: () => <ActivityPage api={api} agents={agents} onOpenThread={pick} onError={handleError} /> },
+      ...(!demo ? [{ id: 'observability', label: t('obs.title'), icon: IconGauge, render: () => <ObservabilityPage api={api} agents={agents} initial="usage" /> }] : []),
+      ...enabledViews(extensions ?? []).filter(v => v.view.sidebar?.pinned === false).map(v => ({ id: `ext:${v.extensionId}/${v.view.id}`, label: v.view.title[locale()], icon: (props: { size?: number }) => <HostIcon name={v.view.icon} {...props} />, onOpen: () => openExtensionView(extensionHash(v)) })),
+    ] },
+    { label: t('settings.account'), entries: [demo
+      ? { id: 'connect', label: t('connect.connectHub'), icon: IconSignIn, onOpen: () => navigate(askToConnect) }
+      : { id: 'sign-out', label: t('app.signOut'), icon: IconSignOut, onOpen: () => setConfirmSignOut(true) }],
+    },
+  ];
+
   return (
     <div
       className={`app${listOpen ? ' drawer-open' : ''}${sidebarHidden && !compact ? ' sidebar-hidden' : ''}${sidebarDrag ? ' sidebar-resizing' : ''}`}
@@ -2444,13 +2510,13 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           compact={compact}
           onSearch={api ? (q) => api.search(q) : undefined}
           onOpenHit={(hit) => void openHit(hit)}
-          onOpenSettings={(x, y) => setSettingsAt({ x, y })}
+          onOpenSettings={() => showcase ? showcase.onInstall() : openSettings()}
           hosts={hosts}
           hostId={hostId}
-          onHost={onHost && ((id) => {
+          onHost={onHost && ((id) => navigate(() => {
             setAllHosts(false);
             if (id !== hostId) onHost(id, 'list');
-          })}
+          }))}
           hostDown={Boolean(host) && !hostUp}
           loading={!threadsKnown}
           merged={merging ? [
@@ -2501,7 +2567,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         {compact && selected && !listOpen && !onPage && hostUp && (
           <ThreadQuickSwitch threads={topLevelThreads} selectedId={selected.id} agents={agents} onSelect={pick} />
         )}
-        <header className="topbar">
+        {!onSettings && <header className="topbar">
           {/* In a member's thread the way back is to the thread that sent it, not to the list. */}
           {compact && atMember ? (
             <button className="icon-btn menu-btn" aria-label={t('app.backToLead')} onClick={() => pick(selected!.coordination!.rootId)}>
@@ -2593,7 +2659,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
               </button>
             </div>
           )}
-        </header>
+        </header>}
 
         {demo && (showcase ? showcase.notice(selectedId, extWant) : <DemoBar compact={compact} onConnect={askToConnect} />)}
 
@@ -2606,7 +2672,10 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           </div>
         )}
 
-        {host && !hostUp ? (
+        {onSettings ? (
+          <SettingsPage groups={settingsGroups} path={settingsPath} onNavigate={openSettings} onClose={closeSettings}
+            detailTitle={settingsPath.startsWith('assistant') ? assistantTitle(settingsPath) : undefined} />
+        ) : host && !hostUp ? (
           // The machine's threads are over there; until it is back there is only this to say.
           <div key="host-down" className="scroller">
             <HostDown host={host} onRetry={() => api.reconnectHost(host.id).catch(() => undefined).then(reloadHosts)} />
@@ -2669,8 +2738,10 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           </div>
         ) : onSchedules ? (
           // The same: a document-style page with a scroller of its own.
-          <div key="schedules" className="scroller">
+          <div key="schedules" className="scroller schedules-scroller">
             <SchedulesPage
+              path={schedulePath}
+              onNavigate={openSchedules}
               api={api}
               schedules={schedules}
               agents={agents}
@@ -2998,9 +3069,6 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           onClose={() => setStatusOpen(false)}
         />
       )}
-      {pushSettingsOpen && <PushSettingsDialog api={api} onClose={() => setPushSettingsOpen(false)} />}
-      {generalSettingsOpen && <GeneralSettingsDialog api={api} onSave={setStartupSettings} onClose={() => setGeneralSettingsOpen(false)} />}
-      {handoverSettingsOpen && api && <HandoverSettingsDialog api={api} agents={agents} onClose={() => setHandoverSettingsOpen(false)} />}
       {quotaOpen && api && <QuotaBoard api={api} agents={agents} current={onPage ? undefined : activeAgent} onClose={() => setQuotaOpen(false)} onError={handleError} />}
       {onboardOpen && (
         <OnboardingDialog
@@ -3053,135 +3121,6 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
             performSend(p.text, p.images, false, p.mentions, p.videos).then(p.resolve, p.reject);
           }}
         />
-      )}
-      {settingsAt && (
-        <Menu
-          label={t('sidebar.settings')}
-          x={settingsAt.x}
-          y={settingsAt.y}
-          corner="bottom-right"
-          onClose={() => setSettingsAt(null)}
-          items={showcase ? [{ id: 'install', label: t('app.install'), icon: IconSignIn, onSelect: () => { setDrawer(false); showcase.onInstall(); } }] : [
-            ...(!api.demo ? [{ id: 'general', label: t('general.title'), icon: IconSettings, onSelect: () => { setGeneralSettingsOpen(true); setDrawer(false); } }] : []),
-            // The demo's way in. The look works as it is; the hub's own machinery is left out.
-            ...(demo
-              ? [
-                  {
-                    id: 'connect',
-                    label: t('connect.connectHub'),
-                    icon: IconSignIn,
-                    onSelect: () => {
-                      setDrawer(false);
-                      askToConnect();
-                    },
-                  },
-                  'separator' as const,
-                ]
-              : []),
-            ...(!api.demo ? [{ id: 'push', label: t('push.title'), icon: IconBell, onSelect: () => { setPushSettingsOpen(true); setDrawer(false); } }, { id: 'auto-handover', label: t('auto.title'), icon: IconAgents, onSelect: () => { setHandoverSettingsOpen(true); setDrawer(false); } }] : []),
-            {
-              id: 'appearance',
-              label: t('appearance.title'),
-              icon: IconPalette,
-              onSelect: () => {
-                setAppearanceOpen(true);
-                setDrawer(false);
-              },
-            },
-            {
-              id: 'language',
-              label: t('locale.menu'),
-              icon: IconLanguage,
-              // Each language is named in itself, so it can be found from any of the others.
-              submenu: [
-                { id: 'locale:system', label: t('locale.system'), checked: localeChoice() === 'system', onSelect: () => chooseLocale('system') },
-                'separator' as const,
-                ...LOCALES.map((l) => ({ id: `locale:${l.id}`, label: l.name, checked: localeChoice() === l.id, onSelect: () => chooseLocale(l.id) })),
-              ],
-            },
-            {
-              id: 'archive',
-              label: t('archive.title'),
-              icon: IconArchive,
-              onSelect: () => {
-                setArchiveOpen(true);
-                setDrawer(false);
-              },
-            },
-            ...(agents.some((a) => !a.hidden && a.capabilities.quota)
-              ? [
-                  {
-                    id: 'quota',
-                    label: t('app.quota'),
-                    icon: IconGauge,
-                    onSelect: () => {
-                      setQuotaOpen(true);
-                      setDrawer(false);
-                    },
-                  },
-                ]
-              : []),
-            ...(!demo
-              ? [
-                  {
-                    id: 'agents',
-                    label: t('agents.title'),
-                    icon: IconAgents,
-                    onSelect: () => {
-                      openAgents();
-                      setDrawer(false);
-                    },
-                  },
-                ]
-              : []),
-            // The overview reads only this hub's own log, so the demo has one to show too.
-            { id: 'activity', label: t('activity.title'), icon: IconActivity, onSelect: openActivity },
-            ...enabledViews(extensions ?? []).filter(v => v.view.sidebar?.pinned === false).map(v => ({
-              id: `ext:${v.extensionId}/${v.view.id}`,
-              label: v.view.title[locale()],
-              icon: (props: { size?: number }) => <HostIcon name={v.view.icon} {...props} />,
-              onSelect: () => openExtensionView(extensionHash(v)),
-            })),
-            // The demo can try them too: what it installs lasts as long as the page.
-            { id: 'extensions', label: t('extensions.title'), icon: IconPuzzle, onSelect: openExtensions },
-            ...(demo
-              ? []
-              : [
-                  { id: 'observability', label: t('obs.title'), icon: IconGauge, onSelect: () => openObservability('usage') },
-                  { id: 'teams', label: t('teams.title'), icon: IconAgents, onSelect: openTeams },
-                  { id: 'skills', label: t('composerMenu.skills'), icon: IconSparkle, onSelect: openSkills },
-                  { id: 'mcp', label: 'MCP', icon: IconGlobe, onSelect: openMcp },
-                  {
-                    id: 'hosts',
-                    label: t('hosts.machines'),
-                    icon: IconServer,
-                    onSelect: () => {
-                      setHostsOpen(true);
-                      setDrawer(false);
-                    },
-                  },
-                ]),
-            ...(importAgents.length
-              ? [
-                  {
-                    id: 'import',
-                    label: t('import.title'),
-                    icon: IconImport,
-                    onSelect: () => {
-                      setImportOpen(true);
-                      setDrawer(false);
-                    },
-                  },
-                ]
-              : []),
-            // Signing out costs the saved token, so it asks first.
-            ...(demo ? [] : ['separator' as const, { id: 'sign-out', label: t('app.signOut'), icon: IconSignOut, danger: true, onSelect: () => setConfirmSignOut(true) }]),
-          ]}
-        />
-      )}
-      {hostsOpen && <HostsPanel api={api} hosts={hosts} onChanged={reloadHosts} onClose={() => setHostsOpen(false)} onError={handleError} />}
-      {appearanceOpen && (
-        <AppearancePanel appearance={appearance} theme={theme} onChange={setAppearance} onClose={() => setAppearanceOpen(false)} />
       )}
       {connectAsk && !showcase && <ConnectDialog reason={connectAsk.reason} onCancel={() => setConnectAsk(null)} onConnected={(t) => onToken(t)} />}
       {confirmSignOut && (

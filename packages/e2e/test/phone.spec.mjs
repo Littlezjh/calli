@@ -85,13 +85,16 @@ test('the list has its pages as rows, and search behind a button', async () => {
   assert.equal(await list.getByRole('button', { name: '已归档', exact: true }).count(), 0);
   await list.getByRole('button', { name: '配置', exact: true }).tap();
   for (const name of ['已归档', '导入历史', '退出']) {
-    await page.getByRole('menuitem', { name, exact: true }).waitFor({ timeout: 5_000 });
+    await page.locator('.settings-nav').getByRole('button', { name, exact: true }).waitFor({ timeout: 5_000 });
   }
   // Signing out costs the saved token, so it asks first; backing out leaves everything as it was.
-  await page.getByRole('menuitem', { name: '退出', exact: true }).tap();
+  await page.locator('.settings-nav').getByRole('button', { name: '退出', exact: true }).tap();
   await page.getByText('退出登录？').waitFor({ timeout: 5_000 });
   await page.getByRole('button', { name: '取消' }).tap();
   await page.getByText('退出登录？').waitFor({ state: 'detached', timeout: 5_000 });
+  await page.locator('.settings-topbar').getByRole('button', { name: '返回', exact: true }).tap();
+  await page.locator('.menu-btn').tap();
+  await settle();
   assert.equal(await listOpen(), true);
   assert.equal(await list.locator('.thread-row .row-more').first().isVisible(), false, 'rows carry no button on a touch screen');
 
@@ -120,7 +123,9 @@ test('a tap on a row opens the thread; the top bar says which agent and director
   await settle();
   assert.equal(await listOpen(), false);
   assert.match(await page.locator('.topbar-title').innerText(), /first thread/);
-  assert.match(await page.locator('.topbar-sub').innerText(), /^pi · /);
+  await page.getByRole('button', { name: 'first thread', exact: true }).click();
+  assert.match(await page.locator('.place-panel').innerText(), /pi/);
+  await page.keyboard.press('Escape');
   // So the composer does not say it again.
   assert.equal(await page.locator('.composer-context').count(), 0);
   // Under the answer: copy, fork, and when the turn ended.

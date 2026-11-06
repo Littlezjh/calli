@@ -117,6 +117,6 @@ test('the location picker offers machine management even before a remote is adde
     const menu = await machines(page);
     assert.equal(await menu.getByRole('menuitemradio').count(), 1);
     await menu.getByRole('menuitem', { name: '管理机器…' }).click();
-    await page.getByRole('dialog', { name: '机器', exact: true }).waitFor();
+    await page.getByRole('region', { name: '机器', exact: true }).waitFor();
   } finally { await context.close(); }
 });

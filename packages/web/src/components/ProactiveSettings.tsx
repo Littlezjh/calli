@@ -6,18 +6,19 @@ import { IconClose, IconPlus } from './icons';
 
 const MODES = ['off', 'observe', 'auto'] as const;
 
-/** Whether she may act on her own, in the private settings. Off shows one line; observing and acting show the repositories too. Changes wait for the dialog's Save. */
-export function ProactiveSettings({ api, draft, canPick, onDraft, onPickRepo }: { api: Api; draft: Settings | null; canPick: boolean; onDraft: (next: Settings) => void; onPickRepo: (current: Settings) => void }) {
+/** Whether she may act on her own, in the private settings. Off shows one line; observing and acting show the repositories too. Changes wait for the page's Save. */
+export function ProactiveSettings({ api, draft, canPick, onDraft, onPickRepo, onLoaded }: { api: Api; draft: Settings | null; canPick: boolean; onDraft: (next: Settings) => void; onLoaded?: (value: Settings) => void; onPickRepo: (current: Settings) => void }) {
   const [value, setValue] = useState<Settings | null>(draft);
+  useEffect(() => { if (draft) setValue(draft); }, [draft]);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
   useEffect(() => {
     if (draft) return;
     let live = true;
     setError('');
-    void api.proactiveSettings().then(next => { if (live) setValue(current => current ?? next.settings); }).catch(e => { if (live) setError(e instanceof Error ? e.message : String(e)); });
+    void api.proactiveSettings().then(next => { if (live) { setValue(current => current ?? next.settings); onLoaded?.(next.settings); } }).catch(e => { if (live) setError(e instanceof Error ? e.message : String(e)); });
     return () => { live = false; };
-  }, [api, retry]);
+  }, [api, retry, onLoaded]);
   const save = (next: Settings) => {
     setValue(next);
     onDraft(next);

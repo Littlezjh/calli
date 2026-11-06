@@ -239,3 +239,11 @@ export function api(daemon, path, init = {}) {
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${daemon.token}`, ...(init.headers ?? {}) },
   });
 }
+
+/** Leave a settings detail and its phone index through the same Back control as the product. */
+export async function closeSettings(page) {
+  for (let i = 0; i < 4 && await page.locator('.settings-page').count(); i++) {
+    await page.locator('.settings-topbar').getByRole('button', { name: '返回', exact: true }).click();
+  }
+  await page.locator('.settings-page').waitFor({ state: 'detached' });
+}

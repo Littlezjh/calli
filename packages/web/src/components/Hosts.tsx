@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { ApiError, AuthError, type Api, type HostFailure, type HostInfo } from '../api';
 import { hostProblem, hostStatus } from '../hosts';
 import { Dialog } from './Dialog';
+import { SettingsSection, usePageDraft } from './PageNavigation';
 import { IconCheck, IconChevron, IconClose, IconComputer, IconGlobe, IconPlus, IconServer, IconSettings } from './icons';
 import { Popover } from './Popover';
 import { t } from '../i18n';
@@ -135,7 +136,9 @@ interface PanelProps {
  * signs in, finds the Calli running there, and keeps a connection to it.
  */
 export function HostsPanel({ api, hosts, onChanged, onClose, onError }: PanelProps) {
-  const [candidates, setCandidates] = useState<string[]>([]);
+  const [candidates, setCandidates] = useState<string[] | null>(null);
+  const [candidatesError, setCandidatesError] = useState('');
+  const [showAdd, setShowAdd] = useState(false);
   const [target, setTarget] = useState('');
   /** The ssh name being signed in to, while that takes its seconds. */
   const [adding, setAdding] = useState<string | null>(null);
@@ -143,24 +146,14 @@ export function HostsPanel({ api, hosts, onChanged, onClose, onError }: PanelPro
   const [busy, setBusy] = useState<string | null>(null);
   const [removing, setRemoving] = useState<HostInfo | null>(null);
 
-  const loadCandidates = () =>
-    api
-      .hostCandidates()
-      .then(setCandidates)
-      .catch(() => undefined);
+  const loadCandidates = async () => {
+    setCandidatesError('');
+    try { setCandidates(await api.hostCandidates()); }
+    catch (e) { setCandidatesError(String(e)); }
+  };
 
-  useEffect(() => {
-    void loadCandidates();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !removing) onClose();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose, removing]);
+  useEffect(() => { if (showAdd) void loadCandidates(); }, [showAdd]);
+  usePageDraft(Boolean(target.trim()), adding !== null || busy !== null);
 
   const add = async (name: string) => {
     const wanted = name.trim();
@@ -207,18 +200,7 @@ export function HostsPanel({ api, hosts, onChanged, onClose, onError }: PanelPro
 
   return (
     <>
-    <div className="dialog-scrim" onClick={onClose}>
-      <div className="panel" role="dialog" aria-modal="true" aria-labelledby="hosts-title" onClick={(e) => e.stopPropagation()}>
-        <header className="panel-head">
-          <h2 id="hosts-title" className="panel-title">
-            <IconServer size={20} /> {t('hosts.machines')}
-          </h2>
-          <button className="icon-btn" aria-label={t('common.close')} onClick={onClose}>
-            <IconClose size={18} />
-          </button>
-        </header>
-        <p className="panel-hint">{t('hosts.hint')}</p>
-
+    <SettingsSection title={t('hosts.machines')} hint={t('hosts.hint')} className="hosts-settings">
         <div className="panel-list">
           {hosts.map((h) => (
             <div key={h.id} className="panel-row single host-row">
@@ -249,7 +231,8 @@ export function HostsPanel({ api, hosts, onChanged, onClose, onError }: PanelPro
             </div>
           ))}
 
-          <div className="group-label host-add-label">{t('hosts.add')}</div>
+          <button className="settings-add-row" aria-expanded={showAdd} onClick={() => setShowAdd(value => !value)}><IconPlus size={17} />{t('hosts.add')}</button>
+          {showAdd && <>
           <form
             className="host-add"
             onSubmit={(e) => {
@@ -281,8 +264,9 @@ export function HostsPanel({ api, hosts, onChanged, onClose, onError }: PanelPro
             </p>
           )}
 
-          {candidates.length > 0 && <p className="host-candidates-hint">{t('hosts.candidates')}</p>}
-          {candidates.length > 0 && (
+          {candidatesError ? <p className="panel-error" role="alert">{candidatesError} <button className="ghost" onClick={() => void loadCandidates()}>{t('common.retry')}</button></p> : candidates === null && <p role="status">{t('common.loading')}</p>}
+          {candidates && candidates.length > 0 && <p className="host-candidates-hint">{t('hosts.candidates')}</p>}
+          {candidates && candidates.length > 0 && (
             <div className="host-candidates">
               {candidates.map((alias) => (
                 <button key={alias} type="button" className="host-candidate" aria-label={t('hosts.addAlias', alias)} disabled={adding !== null} onClick={() => void add(alias)}>
@@ -294,9 +278,9 @@ export function HostsPanel({ api, hosts, onChanged, onClose, onError }: PanelPro
             </div>
           )}
           <p className="host-foot">{t('hosts.foot')}</p>
+          </>}
         </div>
-      </div>
-    </div>
+    </SettingsSection>
     {removing && (
       <Dialog
         title={t('hosts.removeTitle', removing.label)}

@@ -18,7 +18,7 @@ test('zcode quota appears in the shared board on desktop and phone, light and da
         await openUi(page, daemon);
         if (mobile) await page.locator('.menu-btn').click();
         await page.getByRole('button', { name: '配置', exact: true }).click();
-        await page.getByRole('menuitem', { name: '额度', exact: true }).click();
+        await page.locator('.settings-nav').getByRole('button', { name: '额度', exact: true }).click();
         const row = page.locator('.quota-board-row').filter({ has: page.locator('.quota-board-name', { hasText: /zcode/i }) });
         // 98% of the week used: 2% left, in red; the 5-hour window is fine.
         await row.getByText('2%', { exact: true }).waitFor();
@@ -52,7 +52,7 @@ test('quota reopens immediately, survives page reload and retains the last readi
           const settings = page.getByRole('button', { name: '配置', exact: true });
           if (mobile) await page.locator('.menu-btn').click();
           await settings.click();
-          await page.getByRole('menuitem', { name: '额度', exact: true }).click();
+          await page.locator('.settings-nav').getByRole('button', { name: '额度', exact: true }).click();
         };
         const panel = page.getByRole('dialog', { name: '额度看板', exact: true });
         const row = panel.locator('.quota-board-row');
