@@ -70,7 +70,11 @@ import { McpPage } from './components/McpPage';
 import { TeamsPage } from './components/TeamsPage';
 import { teamRecipient } from './teams';
 import type { PetStatus, TeamSummary } from './api';
-import { PetBustImage, PetPortrait, usePetBust } from './components/Pet';
+import { ExploreDialog } from './components/ExploreDialog';
+import { needsExplore, exploreSummary } from './personal-explore';
+import { Pet, PetBustImage, PetPortrait, usePetBust } from './components/Pet';
+import { PersonalSettingsDialog } from './components/PersonalSettingsDialog';
+import { buildDesk } from './desk';
 import { SkillsPage } from './components/SkillsPage';
 import { SchedulesPage } from './components/SchedulesPage';
 import { DeskPage } from './components/DeskPage';
@@ -1877,6 +1881,33 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const openDesk = (finds = false) => {
     setSelectedId(null); setView('desk'); setDrawer(false); setDeskFinds(finds);
   };
+  // She now sits over every page; the desk still feeds her what to say and what to step back from.
+  const petGreeting = useMemo(() => {
+    if (!onDesk || todosLoading || todosError) return null;
+    const desk = buildDesk(todos, new Date());
+    return { you: desk.quadrants.now.length, first: desk.first[0]?.todo.text ?? null };
+  }, [onDesk, todos, todosLoading, todosError]);
+  const [deskSpread, setDeskSpread] = useState(false);
+  // A matter her reply named: the desk opens that pile, wherever the person is when they tap it.
+  const [revealTodo, setRevealTodo] = useState<string | null>(null);
+  const openTodoFromPet = (id: string) => {
+    if (!onDesk) openDesk(false);
+    setRevealTodo(id);
+  };
+  const [petSettingsOpen, setPetSettingsOpen] = useState(false);
+  const [exploreOpen, setExploreOpen] = useState(false);
+  const [setupNeeded, setSetupNeeded] = useState<boolean | null>(null);
+  const [setupNotice, setSetupNotice] = useState<{ text: string; at: number } | null>(null);
+  useEffect(() => {
+    let live = true;
+    setSetupNeeded(needsExplore(personal, null, null));
+    if (api.demo || !personal?.agent) return;
+    void Promise.all([api.personalProfile(), api.larkChannel()]).then(([profile, lark]) => {
+      if (live) setSetupNeeded(needsExplore(personal, profile.isTemplate, lark));
+    }).catch(() => undefined);
+    return () => { live = false; };
+  }, [api, personal]);
+  const openExplore = useCallback(() => { setPetSettingsOpen(false); setExploreOpen(true); }, []);
   const openTodos = () => {
     setSelectedId(null);
     setView('todos');
@@ -2787,11 +2818,11 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           </div>
         ) : onDesk ? (
           <div key="desk" className="scroller">
-            <DeskPage api={api} todos={todos} loading={todosLoading} error={todosError} threads={threads} agents={agents}
+            <DeskPage key={setupNotice?.at} setupNeeded={setupNeeded} onExplore={openExplore} api={api} todos={todos} loading={todosLoading} error={todosError} threads={threads} agents={agents}
               personal={personal} personalError={personalError} refreshKey={todosKey} onReload={reloadTodos}
-              onPetStatusChange={setPetStatus}
               onPersonalChange={setPersonal} onPersonalRetry={reloadPersonal} onOpenThread={pick} onOpenPlans={openTodos}
-              openFinds={deskFinds} onFindsOpened={() => setDeskFinds(false)} />
+              openFinds={deskFinds} onFindsOpened={() => setDeskFinds(false)}
+              onSpreadChange={setDeskSpread} revealTodoId={revealTodo} onRevealTodo={() => setRevealTodo(null)} />
           </div>
         ) : onTodos ? (
           // A scroller of its own: the thread's one pins itself to the bottom, a document starts at the top.
@@ -3098,6 +3129,36 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         />
       )}
       {pushSettingsOpen && <PushSettingsDialog api={api} onClose={() => setPushSettingsOpen(false)} />}
+      {exploreOpen && <ExploreDialog api={api} onClose={() => setExploreOpen(false)} onApplied={(draft, saved) => {
+        setPersonal(saved.personal); setSetupNeeded(false); setExploreOpen(false);
+        setSetupNotice({ text: exploreSummary(draft), at: Date.now() });
+      }} />}
+      {petSettingsOpen && personal && (
+        <PersonalSettingsDialog
+          api={api}
+          agents={agents}
+          initial={personal}
+          setupNeeded={setupNeeded} onExplore={openExplore}
+          onSave={value => { setPersonal(value); setPetSettingsOpen(false); }}
+          onClose={() => setPetSettingsOpen(false)}
+        />
+      )}
+      {api && (
+        <Pet
+          api={api}
+          greeting={petGreeting}
+          setupNeeded={setupNeeded} onExplore={openExplore} setupNotice={setupNotice}
+          spreadOpen={deskSpread}
+          desk={onDesk}
+          place={!onPage ? 'thread' : 'corner'}
+          threads={threads}
+          onOpenThread={pick}
+          onStatusChange={setPetStatus}
+          onConfigure={() => setPetSettingsOpen(true)}
+          todos={todos.filter(todo => !todo.done)}
+          onOpenTodo={openTodoFromPet}
+        />
+      )}
       {generalSettingsOpen && <GeneralSettingsDialog api={api} onSave={setStartupSettings} onClose={() => setGeneralSettingsOpen(false)} />}
       {handoverSettingsOpen && api && <HandoverSettingsDialog api={api} agents={agents} onClose={() => setHandoverSettingsOpen(false)} />}
       {quotaOpen && api && <QuotaBoard api={api} agents={agents} current={onPage ? undefined : activeAgent} onClose={() => setQuotaOpen(false)} onError={handleError} />}

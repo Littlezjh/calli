@@ -267,6 +267,20 @@ rl.on('line', (line) => {
         return;
       }
       const personal = personalFixture(cmd.message);
+      if (personal === '__hold__') {
+        // A fixture answer that never settles: only a cancellation can end this turn.
+        reply({ disposition: 'started' });
+        out({ type: 'agent_start' });
+        running = true;
+        return;
+      }
+      if (personal === '__explore_error__') {
+        reply({ disposition: 'started' });
+        out({ type: 'agent_start' });
+        out({ type: 'message_end', message: { role: 'assistant', stopReason: 'error', errorMessage: 'explore provider unavailable' } });
+        out({ type: 'agent_settled', aborted: false });
+        return;
+      }
       if (personal !== null) {
         reply({ disposition: 'started' });
         out({ type: 'agent_start' });

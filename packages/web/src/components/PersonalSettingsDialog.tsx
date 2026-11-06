@@ -11,9 +11,12 @@ import { addRepo, settingsPayload } from '../proactive';
 import { ProactiveSettings } from './ProactiveSettings';
 import { Popover } from './Popover';
 import { ProfileDialog } from './ProfileDialog';
+import { readPetPresence, savePetPresence } from './Pet';
+import type { PetPresence } from '../pet';
 import { IconChevron, IconFolder, IconSearch } from './icons';
 
-export function PersonalSettingsDialog({ api, agents, initial, onSave, onClose }: {
+export function PersonalSettingsDialog({ api, agents, initial, onSave, onClose, setupNeeded, onExplore }: {
+  setupNeeded?: boolean | null; onExplore?: () => void;
   api: Api; agents: AgentInfo[]; initial: PersonalSettings; onSave: (value: PersonalSettings) => void; onClose: () => void;
 }) {
   const [value, setValue] = useState(initial);
@@ -25,6 +28,8 @@ export function PersonalSettingsDialog({ api, agents, initial, onSave, onClose }
   const [saving, setSaving] = useState(false);
   const [retry, setRetry] = useState(0);
   const [query, setQuery] = useState('');
+  // Her presence on this device: chosen here, taking effect at once like the appearance settings.
+  const [petPresence, setPetPresence] = useState<PetPresence>(readPetPresence);
   // What the Lark, brief and proactive sections would change; nothing leaves this dialog until Save.
   const larkDraft = useRef<LarkChannelSettings | null>(null);
   const [profileBlank, setProfileBlank] = useState<boolean | null>(null);
@@ -54,6 +59,7 @@ export function PersonalSettingsDialog({ api, agents, initial, onSave, onClose }
       onSave(saved);
     })().catch(e => setError(String(e))).finally(() => setSaving(false));
   }}>
+    {onExplore && <div className="personal-setting-line"><span>{t(setupNeeded ? 'explore.entryHint' : 'explore.again')}</span><button type="button" className={setupNeeded ? 'primary' : 'ghost'} onClick={onExplore}>{t(setupNeeded ? 'explore.entry' : 'explore.again')}</button></div>}
     <div className="personal-setting-line"><span>{t('personal.directory')}</span><button className="context-btn personal-directory" disabled={!roots} onClick={() => setPicking(true)}><IconFolder size={16} />{directoryLabel || t('personal.chooseDirectory')}</button></div>
     <div className="personal-setting-line"><span>{t('personal.agent')}</span><AgentPicker api={api} agents={agents} value={value.agent ?? ''} onChange={agent => setValue(pickAgent(value, agent))} /></div>
     <div className="personal-setting-line"><span>{t('personal.model')}</span><Popover label={t('personal.model')} placement="below" panelClassName="personal-models" triggerClassName="context-btn" disabled={!value.agent} trigger={<>{!models && !modelError ? t('common.loading') : modelError ? t('common.retry') : models?.find(m => m.id === value.model)?.label ?? value.model ?? t('auto.modelDefault')}<IconChevron size={12} open /></>}>
@@ -63,6 +69,13 @@ export function PersonalSettingsDialog({ api, agents, initial, onSave, onClose }
         {modelError && <p className="panel-error" role="alert">{modelError} <button className="ghost" onClick={() => setRetry(n => n + 1)}>{t('common.retry')}</button></p>}
       </>}
     </Popover></div>
+    <div className="personal-setting-line"><span>{t('pet.presenceLabel')}<small>{t('pet.presenceHint')}</small></span>
+      <div className="desk-segment" role="group" aria-label={t('pet.presenceLabel')}>
+        {(['always', 'event', 'off'] as const).map(mode => (
+          <button key={mode} type="button" aria-pressed={petPresence === mode}
+            onClick={() => { setPetPresence(mode); savePetPresence(mode); }}>{t(mode === 'always' ? 'pet.presence.always' : mode === 'event' ? 'pet.presence.event' : 'pet.presence.off')}</button>
+        ))}
+      </div></div>
     <div className="personal-setting-line"><span>{t('profile.title')}<small>{t(profileBlank ? 'profile.blank' : 'profile.hint')}</small></span><button className="ghost profile-open" onClick={() => setEditingProfile(true)}>{t(profileBlank ? 'profile.write' : 'profile.edit')}</button></div>
     <LarkSettings api={api} draft={larkDraft.current} onDraft={next => { larkDraft.current = next; }} />
     <BriefSettings api={api} draft={briefDraft.current} onDraft={next => { briefDraft.current = next; }} />

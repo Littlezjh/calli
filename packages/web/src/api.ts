@@ -426,6 +426,42 @@ export interface Section {
 }
 
 /** One entry on the plan page. `parentId` is a top-level todo or null: one level of nesting. */
+export interface ExploreRecommendation {
+  agent: { agent: string; model: string | null; options: Array<{ agent: string; model: string | null; label: string; why: string; recommended?: boolean }> };
+  profile: { draft: string; why: string; replace: boolean };
+  people: Array<{ id: string; name: string; role: 'boss' | 'pm' | 'other'; selected: boolean; why: string; evidence: string[] }>;
+  chats: Array<{ id: string; name: string; selected: boolean; why: string; evidence: string[] }>;
+  meetings: { on: boolean; why: string; examples: string[] };
+  intervalMin: { value: 15 | 30 | 60 | 120; why: string };
+  brief: { enabled: boolean; morning: string; evening: string; why: string };
+  push: { enabled: boolean; available: boolean; why: string };
+  proactive: { mode: 'off' | 'observe' | 'auto'; why: string };
+}
+
+export interface ExploreStep {
+  source: string;
+  state: 'pending' | 'running' | 'done' | 'skipped' | 'failed';
+  /** One human conclusion, shown as-is by the interface. */
+  line?: string;
+  /** How much this source read, shown as-is by the interface. */
+  read?: string;
+  reason?: string;
+}
+
+export interface ExploreStatus {
+  id: string;
+  state: 'collecting' | 'judging' | 'ready' | 'failed' | 'cancelled';
+  steps: ExploreStep[];
+  recommendation?: ExploreRecommendation;
+  model?: 'ok' | 'fallback';
+  error?: string;
+  startedAt: string;
+  finishedAt?: string;
+}
+
+export type ExploreSourceId = 'lark-profile' | 'lark-chats' | 'lark-messages' | 'lark-calendar' | 'calli-threads';
+export interface ExploreSource { id: ExploreSourceId; available: boolean; reason?: string }
+
 export interface PersonalSettings { routerThreadId?: string | null; directoryIsDefault?: boolean; defaultDirectory?: string; defaultDirectoryDisplay?: string; directoryDisplay?: string | null; directory: string | null; agent: string | null; model: string | null }
 export interface PersonalBrief { title: string; lines: string[]; text: string }
 export interface LastPersonalBrief { text: string; sentAt: string }
@@ -1052,6 +1088,10 @@ export class Api {
 
   generalSettings(): Promise<GeneralSettings> { return this.request('GET', '/api/general-settings'); }
   saveGeneralSettings(value: GeneralSettings): Promise<GeneralSettings> { return this.request('PUT', '/api/general-settings', value); }
+  exploreSources(): Promise<ExploreSource[]> { return this.request('GET', '/api/personal/explore/sources'); }
+  startExplore(sources: ExploreSourceId[]): Promise<{ id: string }> { return this.request('POST', '/api/personal/explore', { sources }); }
+  exploreStatus(): Promise<ExploreStatus | null> { return this.request('GET', '/api/personal/explore'); }
+  cancelExplore(): Promise<{ cancelled: boolean }> { return this.request('DELETE', '/api/personal/explore'); }
   personalSettings(): Promise<PersonalSettings> { return this.request('GET', '/api/personal/settings'); }
   savePersonalSettings(value: PersonalSettings): Promise<PersonalSettings> { return this.request('PUT', '/api/personal/settings', value); }
   personalBrief(kind: 'morning' | 'evening'): Promise<PersonalBrief | null> { return this.request('GET', `/api/personal/brief?kind=${kind}`); }
