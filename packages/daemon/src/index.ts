@@ -146,7 +146,7 @@ async function main(): Promise<void> {
   });
   preview.listen(previewPort, config.host, () => console.log(`previews on http://${config.host}:${previewPort}`));
   // The same API on a socket only this user can open: how a hub on another machine reaches this one.
-  const local = config.socket ? createHttpServer({ manager, push, registry, terminals, desktop, scheduler, extensions, voice, trusted: true, token: config.token, webDir: null, version: VERSION }) : null;
+  const local = config.socket ? createHttpServer({ manager, push, registry, terminals, desktop, scheduler, extensions, voice, autotitle, trusted: true, token: config.token, webDir: null, version: VERSION }) : null;
   let ownsSocket = false;
   if (local && config.socket) {
     listenPrivate(local, config.socket)
