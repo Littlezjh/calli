@@ -1,7 +1,8 @@
 // Run npm run build from the repository root before capturing screenshots.
-// Captures the session-statistics readings and the in-thread trace with its timeline:
-// desktop (1440) and phone (390), light and dark, against a real daemon driven by the fake pi
-// agent, plus the demo workspace for the hub-estimated (≈) wording.
+// Captures the session readings where they live now — the overview panel's footer, a faint line
+// under the thread's groups — and the in-thread trace they open, on desktop (1440) and phone (390),
+// light and dark, against a real daemon driven by the fake pi agent. The demo workspace shows the
+// hub-estimated (≈) wording in the same footer.
 // Run: node session-stats-shots.mjs (writes PNGs into shots/session-stats/)
 import { mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -30,23 +31,25 @@ async function makeTurns(page) {
   await page.waitForTimeout(3_600);
 }
 
-// The top-bar trace button opens the side panel; a click that lands mid-render is repeated.
+/** Opens the overview from the top bar and waits for its footer readings to arrive. */
+async function openOverview(page) {
+  await page.locator('.topbar-overview').click();
+  await page.locator('.overview-panel').waitFor();
+  await page.waitForFunction(() => document.querySelector('.overview-readings')?.textContent?.trim(), null, { timeout: 10_000 });
+  await page.waitForTimeout(300);
+}
+
+/** From the panel footer into the thread's trace; a click that lands mid-render is repeated. */
 async function openTrace(page) {
   for (let i = 0; i < 3; i++) {
-    await page.locator('.topbar-trace').click();
+    await page.locator('.overview-trace').click();
     try {
       await page.locator('.trace-side .ov').waitFor({ timeout: 5_000 });
       // Let the panel's slide-in and the first paint settle, so hovers land on steady bars.
       await page.waitForTimeout(700);
       return;
     } catch {
-      if (await page.locator('.trace-side').count()) {
-        try {
-          await page.locator('.trace-side .ov').waitFor({ timeout: 8_000 });
-          await page.waitForTimeout(700);
-          return;
-        } catch { /* no trace yet: click again */ }
-      }
+      if (!(await page.locator('.overview-panel').count())) await openOverview(page);
     }
   }
   throw new Error('the trace panel did not open');
@@ -55,34 +58,20 @@ async function openTrace(page) {
 const daemon = await startDaemon({ FAKE_TELEMETRY: '1', FAKE_PI_TWO_REQUESTS: '1' });
 const browser = await launchBrowser();
 try {
-  // ---------- Desktop: readings in the top bar, the trace beside the conversation ----------
+  // ---------- Desktop: readings in the overview footer, the trace beside the conversation ----------
   {
     const page = await (await browser.newContext({ viewport: { width: 1440, height: 900 } })).newPage();
     await openUi(page, daemon);
     await makeTurns(page);
-    await page.waitForTimeout(400);
     await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'light'));
-    await page.waitForTimeout(300);
-    await shot(page, 'desktop-topbar-light', { clip: { x: 640, y: 0, width: 800, height: 260 } });
+    await openOverview(page);
+    const clip = await panelClip(page, 1440, 900);
+    await shot(page, 'desktop-footer-light', { clip });
 
-    // The session reading opens its detail; the token one shows the cache lines.
-    await page.locator('[data-testid="session-stats"] .stat').first().click();
-    await page.locator('.pop-rows').waitFor({ timeout: 5_000 });
-    await page.waitForTimeout(250);
-    await shot(page, 'desktop-stats-popover-light');
-    await page.keyboard.press('Escape');
-    await page.locator('.pop-panel').waitFor({ state: 'detached', timeout: 5_000 });
-    await page.locator('[data-testid="session-stats"] .stat').nth(1).click();
-    await page.locator('.pop-rows').waitFor({ timeout: 5_000 });
-    await page.waitForTimeout(250);
-    await shot(page, 'desktop-token-popover-light');
-    await page.keyboard.press('Escape');
-
-    // The trace beside the conversation: the timeline pinned, the steps under it.
+    // The footer's trace opens the timeline pinned over the steps.
     await openTrace(page);
     await shot(page, 'desktop-trace-light');
     // Hovering a bar says when it began and how it split; clicking selects and opens its step.
-    // The last segment sits at the end of the turn, clear of the tools it answers.
     await page.locator('.trace-side .ov-bar.ov-seg').last().hover();
     await page.locator('.ov-tip').waitFor({ timeout: 5_000 });
     await page.waitForTimeout(200);
@@ -90,47 +79,31 @@ try {
     await page.locator('.trace-side .ov-bar.ov-seg').last().click();
     await page.waitForTimeout(700);
     await shot(page, 'desktop-trace-selected-light');
-    for (const theme of ['dark']) {
-      await page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), theme);
-      await page.waitForTimeout(300);
-      await shot(page, `desktop-trace-${theme}`);
-      await page.locator('.ov-tip').waitFor({ state: 'detached', timeout: 5_000 }).catch(() => undefined);
-      await page.locator('.trace-side .ov-bar.tool').last().hover();
-      await page.locator('.ov-tip').waitFor({ timeout: 5_000 });
-    await page.waitForTimeout(200);
-      await shot(page, `desktop-trace-hover-${theme}`);
-    }
-    await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'light'));
-    // With the panel open the bar runs out of room and the readings step aside, as they should;
-    // close it before the dark top-bar and popover shots.
+    await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
+    await page.waitForTimeout(300);
+    await shot(page, 'desktop-trace-dark');
     await page.locator('.trace-side .icon-btn[aria-label="关闭"]').click();
     await page.locator('.trace-side').waitFor({ state: 'detached', timeout: 5_000 });
-    await page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), 'dark');
-    await page.waitForTimeout(300);
-    await page.keyboard.press('Escape');
-    await shot(page, 'desktop-topbar-dark', { clip: { x: 640, y: 0, width: 800, height: 260 } });
-    await page.locator('[data-testid="session-stats"] .stat').first().click();
-    await page.locator('.pop-rows').waitFor({ timeout: 5_000 });
-    await page.waitForTimeout(250);
-    await shot(page, 'desktop-stats-popover-dark');
+    await openOverview(page);
+    await shot(page, 'desktop-footer-dark', { clip });
     await page.close();
   }
 
-  // ---------- Phone: no readings in the bar; they lead the full-screen trace page ----------
+  // ---------- Phone: the footer leads into the full-screen trace, whose readings still open ----------
   {
     const page = await (await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })).newPage();
     await openUi(page, daemon);
     await makeTurns(page);
-    await page.waitForTimeout(400);
     for (const theme of ['light', 'dark']) {
       await page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), theme);
       await page.waitForTimeout(300);
-      await shot(page, `phone-topbar-${theme}`, { clip: { x: 0, y: 0, width: 390, height: 200 } });
+      await openOverview(page);
+      await shot(page, `phone-sheet-${theme}`);
       await openTrace(page);
       await shot(page, `phone-trace-${theme}`);
       await page.locator('.trace-side.phone .stats-top .stat').first().click();
       await page.locator('.pop-rows').waitFor({ timeout: 5_000 });
-    await page.waitForTimeout(250);
+      await page.waitForTimeout(250);
       await shot(page, `phone-stats-sheet-${theme}`);
       await page.keyboard.press('Escape');
       await page.waitForTimeout(200);
@@ -145,17 +118,10 @@ try {
   {
     const page = await (await browser.newContext({ viewport: { width: 1440, height: 900 } })).newPage();
     await page.goto(daemon.base + '/');
-    await page.locator('.demo-bar, .sidebar-inner').first().waitFor({ timeout: 15_000 });
-    // Pick the example thread; its readings come from the demo data.
-    await page.locator('.sidebar .thread-item, .sidebar [class*="thread"]').filter({ hasText: '修复商品列表' }).first().click();
-    await page.locator('[data-testid="session-stats"]').waitFor({ timeout: 10_000 });
+    await page.locator('.thread-row', { hasText: '修复商品列表' }).click();
     await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'light'));
-    await page.waitForTimeout(300);
-    await shot(page, 'demo-topbar-light', { clip: { x: 640, y: 0, width: 800, height: 260 } });
-    await page.locator('[data-testid="session-stats"] .stat').first().click();
-    await page.locator('.pop-rows').waitFor({ timeout: 5_000 });
-    await page.waitForTimeout(250);
-    await shot(page, 'demo-stats-popover-light');
+    await openOverview(page);
+    await shot(page, 'demo-footer-light', { clip: await panelClip(page, 1440, 900) });
     await openTrace(page);
     await shot(page, 'demo-trace-light');
     await page.close();
@@ -165,3 +131,11 @@ try {
   await daemon?.stop();
 }
 console.log('shots written to', outDir);
+
+/** The panel plus a little air, kept inside the window so the clip is always valid. */
+async function panelClip(page, width, height) {
+  const panel = await page.locator('.overview-panel').boundingBox();
+  const x = Math.max(0, panel.x - 8);
+  const y = Math.max(0, panel.y - 8);
+  return { x, y, width: Math.min(panel.width + 16, width - x), height: Math.min(panel.height + 16, height - y) };
+}

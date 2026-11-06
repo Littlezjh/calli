@@ -14,7 +14,7 @@ export const zh = {
   again: '第 3 轮结束后再取一次',
   againHint: '对话跑题时修正；你改过的标题不会动',
   rules: '命名规则',
-  rulesHint: '原样写进请求里。比如加一行「开头放一个贴切的 emoji」。',
+  rulesHint: '原样写进请求里，默认已带 emoji 规则，可以按自己的喜好改。',
   resetRules: '恢复默认规则',
   save: '保存规则',
   saved: '已保存',

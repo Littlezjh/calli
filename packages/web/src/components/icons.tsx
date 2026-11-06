@@ -241,6 +241,20 @@ export const IconExternal = (p: { size?: number }) => (
     <path d="M14 5h5v5M19 5l-7 7M17 14v5H5V7h5" />
   </Svg>
 );
+/** The thread at a glance: what is in it, as a short list. */
+export const IconOverview = (p: { size?: number }) => (
+  <Svg {...p}>
+    <circle cx="6" cy="7" r="2" />
+    <circle cx="6" cy="17" r="2" />
+    <path d="M11 7h9M11 17h9" />
+  </Svg>
+);
+/** Open a page or drawing in the preview, apart from the row that opens the file itself. */
+export const IconPreview = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M14 4h6v6M20 4l-8 8M18 14v5H5V6h5" />
+  </Svg>
+);
 export const IconGauge = (p: { size?: number }) => (
   <Svg {...p}>
     <path d="M4 14a8 8 0 1 1 16 0M12 14l4-4" />

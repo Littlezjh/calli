@@ -28,6 +28,7 @@ import {
 import type { HubAction } from './commands';
 import { buildProjectOptions } from './projects';
 import { useAppearance, useInTitlebar, useIsCompact, useListSwipe, useStoredFlag } from './hooks';
+import { mergeAgentChoice, parseAgentChoices, type AgentChoices } from './agent-choice';
 import { useHosts } from './hosts';
 import type { PreparedImage } from './images';
 import { restoreVideos, type PreparedVideo } from './videos';
@@ -59,10 +60,11 @@ import { ObservabilityPage } from './components/ObservabilityPage';
 import { QuotaBoard } from './components/QuotaBoard';
 import { SelectionMenu } from './components/SelectionMenu';
 import { AgentPanel } from './components/AgentPanel';
-import { ThreadOverview } from './components/ThreadOverview';
+import { memberProgress, ThreadOverview } from './components/ThreadOverview';
+import { ChangeDiffDialog } from './components/ChangeDiffDialog';
 import { AgentsPage } from './components/AgentsPage';
-import type { AgentMention, Coordination, MemberDefault, SearchHit, ThreadOutputs } from './api';
-import { Popover as CoordinationPopover } from './components/Popover';
+import type { AgentMention, ChangedFile, Coordination, MemberDefault, SearchHit } from './api';
+import { Popover } from './components/Popover';
 import { SideChat } from './components/SideChat';
 import { McpPage } from './components/McpPage';
 import { TeamsPage } from './components/TeamsPage';
@@ -103,7 +105,7 @@ import { NoteMarks, type NoteMark } from './components/NoteMarks';
 import { Toast, type ToastState } from './components/Toast';
 import { ConnectDialog, DemoBar } from './components/ConnectDialog';
 import { DemoApi, DemoError } from './demo/DemoApi';
-import { IconCheck, IconBell, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconSettings, IconMore, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconTrace, IconLanguage, IconWaveform } from './components/icons';
+import { IconCheck, IconBell, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconSettings, IconMore, IconOverview, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconLanguage, IconWaveform } from './components/icons';
 import { StatReadings } from './components/SessionStats';
 import { ThreadTracePanel } from './components/TracePanel';
 import { chooseLocale, locale, LOCALES, localeChoice, t } from './i18n';
@@ -188,6 +190,14 @@ const SIDEBAR_KEYBOARD_STEP = 16;
 
 /** What members of each instance start with, remembered on this device for the next team. */
 const MEMBER_DEFAULTS_KEY = 'calli.coord.defaults';
+/** The model, effort and speed last chosen per instance: its next new thread starts there. */
+const AGENT_CHOICE_KEY = 'calli.agent.choice';
+const readAgentChoices = (): AgentChoices => parseAgentChoices(localStorage.getItem(AGENT_CHOICE_KEY));
+const rememberAgentChoice = (agent: string, choice: Partial<Record<'model' | 'effort' | 'speed', string | null>>) => {
+  try {
+    localStorage.setItem(AGENT_CHOICE_KEY, JSON.stringify(mergeAgentChoice(readAgentChoices(), agent, choice)));
+  } catch { /* a full or blocked store just stops remembering */ }
+};
 
 /** A plan the user chose to leave be, by thread: the proposal's key, so a reload does not ask again. */
 const PLAN_SKIP_KEY = 'calli:plan-skipped';
@@ -208,7 +218,8 @@ function ThreadQuickSwitch({ threads, selectedId, agents, onSelect }: {
   const panel = useRef<HTMLDivElement>(null);
   const timer = useRef<number | null>(null);
   const lastY = useRef(0);
-  const tapOpenAtPointerDown = useRef(false);
+  const startX = useRef(0);
+  const startY = useRef(0);
   const [tapOpen, setTapOpen] = useState(false);
   const [press, setPress] = useState<{ pointerId: number; open: boolean; targetId: string } | null>(null);
   const agentById = useMemo(() => new Map(agents.map((agent) => [agent.id, agent])), [agents]);
@@ -265,18 +276,29 @@ function ThreadQuickSwitch({ threads, selectedId, agents, onSelect }: {
     };
   }, [tapOpen]);
   if (selectedIndex < 0 || items.length <= 1) return null;
+  /** A plain tap on the strip is not ours: hand the click to whatever interactive piece sits under it. */
+  const forwardTap = (x: number, y: number) => {
+    const strip = root.current;
+    if (!strip) return;
+    strip.style.visibility = 'hidden';
+    const hit = document.elementFromPoint(x, y);
+    strip.style.visibility = '';
+    hit?.closest('button, a, input, textarea, label, [role="option"], [role="menuitem"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+  };
   return (
-    <div className={`quick-switch${open ? ' open' : ''}`} ref={root}>
-      <button
-        type="button"
-        className="quick-switch-button"
-        aria-label={t('quickSwitch.handle')}
-        aria-expanded={open}
+    <div className="quick-switch" ref={root}>
+      {/* An invisible strip along the right edge, mirroring the left edge's list gesture: swipe it
+          left to summon the panel, hold to scrub through the sessions, and a plain tap falls
+          through to the interface underneath. */}
+      <div
+        className="quick-switch-edge"
+        aria-hidden="true"
         onPointerDown={(e) => {
           if (e.pointerType === 'mouse' && e.button !== 0) return;
           e.preventDefault();
           e.currentTarget.setPointerCapture(e.pointerId);
-          tapOpenAtPointerDown.current = tapOpen;
+          startX.current = e.clientX;
+          startY.current = e.clientY;
           lastY.current = e.clientY;
           setPress({ pointerId: e.pointerId, open: false, targetId: selectedId });
           clearTimer();
@@ -288,28 +310,40 @@ function ThreadQuickSwitch({ threads, selectedId, agents, onSelect }: {
         }}
         onPointerMove={(e) => {
           if (press?.pointerId !== e.pointerId) return;
-          e.preventDefault();
           lastY.current = e.clientY;
-          updateTarget(e.clientY);
+          const dx = startX.current - e.clientX;
+          const dy = Math.abs(e.clientY - startY.current);
+          // A vertical drag is a scroll, not a summon: give up before the hold timer fires.
+          if (!press.open && !tapOpen && dy > 10 && dx <= 24) {
+            clearTimer();
+            reset(e.currentTarget, e.pointerId);
+            return;
+          }
+          // A pull past the threshold summons the panel for tapping; holding keeps its scrub.
+          if (!press.open && !tapOpen && dx > 24 && dx > dy) {
+            clearTimer();
+            reset(e.currentTarget, e.pointerId);
+            setTapOpen(true);
+            return;
+          }
+          if (press.open) { e.preventDefault(); updateTarget(e.clientY); }
         }}
         onPointerUp={(e) => {
           if (press?.pointerId !== e.pointerId) return;
-          e.preventDefault();
           const targetId = press.open ? press.targetId : null;
+          const tap = Math.abs(e.clientX - startX.current) < 6 && Math.abs(e.clientY - startY.current) < 6;
           reset(e.currentTarget, e.pointerId);
           if (targetId) {
             setTapOpen(false);
             if (targetId !== selectedId) onSelect(targetId);
-          } else {
-            setTapOpen(!tapOpenAtPointerDown.current);
+            return;
           }
+          if (tap) forwardTap(e.clientX, e.clientY);
         }}
         onPointerCancel={(e) => {
           if (press?.pointerId === e.pointerId) reset(e.currentTarget, e.pointerId);
         }}
-      >
-        <IconList size={20} />
-      </button>
+      />
       {open && (
         <div className="quick-switch-panel" ref={panel} role="listbox" aria-label={t('quickSwitch.sessions')}>
           {items.map((thread) => {
@@ -1048,16 +1082,11 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   // Arming or cancelling a "wait for the quota and continue" watch on that same turn.
   const [resumeBusy, setResumeBusy] = useState(false);
   const scrollerRef = useRef<HTMLDivElement>(null);
-  // Whether the margin beside the conversation is wide enough to hold the team's card.
   const mainRef = useRef<HTMLElement>(null);
-  const [roomy, setRoomy] = useState(false);
   useEffect(() => {
     const el = mainRef.current;
     if (!el) return;
     const read = () => {
-      const column = parseFloat(getComputedStyle(el).getPropertyValue('--content-w')) || 780;
-      // The overview card (248px) with its offset from the edge and a gap to the conversation.
-      setRoomy((el.clientWidth - column) / 2 >= 288);
       // What the column's lean toward the middle of the screen is worked out from (see styles.css).
       // clientWidth includes the padding the lean adds, so the two do not chase each other.
       el.style.setProperty('--main-w', `${el.clientWidth}px`);
@@ -1678,6 +1707,9 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
       void refreshThreads();
     },
     onOpenTerminal: () => (demo ? askToConnect() : openTerminal()),
+    // The bar hands its trace mark to the menu on a wide screen; a phone reaches it from the
+    // overview panel's foot.
+    onOpenTrace: compact ? undefined : () => { setAgentsOpen(false); setFiles(null); setTraceOpen(true); },
     onError: handleError,
     toast: setToast,
     // The handover chain record lives in the thread menu, not as chrome above the conversation.
@@ -2063,9 +2095,32 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   };
 
   const permission = selected ? selected.permissionMode : draftPermission;
+  // A remembered model can be gone from the instance's list (an update, a removed plan): fall
+  // back to its default rather than offering a model that cannot be started.
+  const draftModels = modelsByAgent[draftAgent];
+  useEffect(() => {
+    if (draftModels?.length && draftModel && !draftModels.some((m) => m.id === draftModel)) setDraftModel(null);
+  }, [draftModels, draftModel]);
   const model = selected ? selected.model : draftModel;
   const effort = selected ? selected.effort : draftEffort;
   const speed = selected ? selected.speed ?? null : draftSpeed;
+
+  // A new thread starts where the last one of that instance was left: the remembered model,
+  // effort and speed. Applied once on mount; pickAgent does the same for every switch.
+  useEffect(() => {
+    const remembered = readAgentChoices()[draftAgent];
+    if (remembered) {
+      if (remembered.model) setDraftModel(remembered.model);
+      if (remembered.effort) setDraftEffort(remembered.effort);
+      if (remembered.speed) setDraftSpeed(remembered.speed);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // The choice made in the draft is remembered while it is the draft being composed.
+  useEffect(() => {
+    if (!selected && draftAgent) rememberAgentChoice(draftAgent, { model: draftModel, effort: draftEffort, speed: draftSpeed });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftModel, draftEffort, draftSpeed, draftAgent, selected?.id]);
 
   const updateSelected = (patch: { speed?: string | null; permissionMode?: string; model?: string | null; effort?: string | null }) => {
     if (!selected) return;
@@ -2075,7 +2130,12 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
     setThreads((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
     api
       .updateThread(id, patch)
-      .then((updated) => setThreads((prev) => prev.map((t) => (t.id === updated.id ? updated : t))))
+      .then((updated) => {
+        setThreads((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+        if (patch.model !== undefined || patch.effort !== undefined || patch.speed !== undefined) {
+          rememberAgentChoice(updated.agent, { model: updated.model, effort: updated.effort, speed: updated.speed });
+        }
+      })
       .catch((e) => {
         setThreads((prev) => prev.map((t) => (t.id === id ? { ...t, ...before } : t)));
         handleError(e);
@@ -2085,9 +2145,10 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const pickAgent = (id: string) => {
     setDraftAgent(id);
     setDraftWorkMode('execute');
-    setDraftSpeed(null);
-    setDraftModel(null);
-    setDraftEffort(null);
+    const remembered = readAgentChoices()[id] ?? {};
+    setDraftSpeed(remembered.speed ?? null);
+    setDraftModel(remembered.model ?? null);
+    setDraftEffort(remembered.effort ?? null);
     // Each agent starts at its own level: one that cannot ask starts where it can work.
     const caps = capsOf(id);
     if (caps) setDraftPermission(startingPermission(caps));
@@ -2275,7 +2336,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           ] : [];
   const collaborationIcon = (m: AgentMention) => [...agents, ...remoteAgents].find((a) => a.id === (m.kind === 'agent' ? m.id : coordination?.members.find((v) => v.id === m.id)?.thread?.agent))?.icon;
 
-  const collaborationControl = (select: (mention: AgentMention) => void, chosen: AgentMention[]) => (!draftTeam && !selected?.coordination?.team && (activeCaps?.coordination || selected?.coordination) && <CoordinationPopover label={t('app.collab')} panelClassName="coord-picker-panel" triggerClassName={`tool-btn coord-tool${selected?.coordination || draftCollaboration ? ' on' : ''}`} triggerLabel={t('app.collab')} triggerTitle={selected?.coordination || draftCollaboration ? t('app.collabOn') : t('app.collab')} trigger={<><IconAgents size={16} /><span>{t('app.collab')}</span></>}>
+  const collaborationControl = (select: (mention: AgentMention) => void, chosen: AgentMention[]) => (!draftTeam && !selected?.coordination?.team && (activeCaps?.coordination || selected?.coordination) && <Popover label={t('app.collab')} panelClassName="coord-picker-panel" triggerClassName={`tool-btn coord-tool${selected?.coordination || draftCollaboration ? ' on' : ''}`} triggerLabel={t('app.collab')} triggerTitle={selected?.coordination || draftCollaboration ? t('app.collabOn') : t('app.collab')} trigger={<><IconAgents size={16} /><span>{t('app.collab')}</span></>}>
       {close => <CollaborationMenu options={collaborationOptions} selected={chosen} icon={collaborationIcon}
         onSelect={mention => { close(); select(mention); }}
         unavailable={selected?.coordination && !leading ? t('app.collabBack') : t('app.collabNone')}
@@ -2304,7 +2365,7 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
         </>}
         {selected?.coordination && <button className="pop-item compact" onClick={() => { setAgentsOpen(true); setFiles(null); close(); }}>{t('team.view')}</button>}
       </div>} />}
-    </CoordinationPopover>);
+    </Popover>);
 
   const left = (<>
     <PermissionPicker
@@ -2344,35 +2405,29 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
   const takeoverLabel = takeoverChoice ? [agents.find(a => a.id === takeoverChoice.agent)?.label ?? takeoverChoice.agent, takeoverChoice.model].filter(Boolean).join(' · ') : undefined;
 
   const teamWaiting = Boolean(coordination?.members.some((m) => m.thread?.waiting));
-  const teamRunning = coordination?.members.filter((m) => m.thread?.status === 'running').length ?? 0;
   const teamShown = Boolean(selected?.coordination && (selected.coordination.rootId !== selected.id || selected.coordination.children > 0) && !onPage && hostUp);
-  // The overview in the margin a wide screen leaves beside the conversation: the team, the plan and
-  // what the thread produced. Read only while it can be seen; the daemon keeps it until the log grows.
-  const marginFree = Boolean(selected && roomy && !agentsOpen && !files && !onPage && hostUp);
-  const teamInMargin = marginFree && teamShown && Boolean(coordination) && coordination!.rootId === selected!.id;
-  const [outputs, setOutputs] = useState<{ threadId: string; data: ThreadOutputs | null; failed: boolean } | null>(null);
-  const [outputsTry, setOutputsTry] = useState(0);
-  useEffect(() => {
-    if (!marginFree || !api || !selected) return;
-    const id = selected.id;
-    const timer = setTimeout(() => {
-      api.outputs(id)
-        .then(data => setOutputs({ threadId: id, data, failed: false }))
-        // A daemon from before the endpoint has no overview to read: that is empty, not a failure.
-        .catch((e: unknown) => setOutputs(prev => ({ threadId: id, data: prev?.threadId === id ? prev.data : null, failed: !(e instanceof ApiError && e.status === 404) })));
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [marginFree, api, selected?.id, selected?.updatedAt, outputsTry]);
-  const shownOutputs = outputs?.threadId === selected?.id ? outputs : null;
-  const outputsAny = Boolean(shownOutputs?.data && (shownOutputs.data.changes.total || shownOutputs.data.images.length || shownOutputs.data.files.length));
-  const planInMargin = marginFree && Boolean(topPlan);
-  const overviewShown = marginFree && (teamInMargin || planInMargin || outputsAny || Boolean(shownOutputs?.failed));
+  // The overview is a panel from one top-bar button now; the button carries only what asks for the
+  // person. The team it opens is the lead's own (a member's thread has none to show).
+  const overviewTeam = teamShown && coordination?.rootId === selected?.id ? coordination : null;
+  const teamNeeds = overviewTeam?.members.filter((member) => memberProgress(member) === 'need').length ?? 0;
+  // The conversation's turns, for naming the section each change belongs to in the diff dialog.
+  const turnOrder = useMemo(() => {
+    const seen = new Set<string>();
+    const order: string[] = [];
+    for (const item of timeline.items) {
+      if (!item.turnId || seen.has(item.turnId)) continue;
+      seen.add(item.turnId);
+      order.push(item.turnId);
+    }
+    return order;
+  }, [timeline.items]);
+  // One file's whole change history, opened from the changes group; read only while it is open.
+  const [diffFile, setDiffFile] = useState<{ threadId: string; file: ChangedFile } | null>(null);
   // A member's own thread: it was sent from the lead's, which is where its way back goes.
   const atMember = Boolean(teamShown && selected!.coordination!.rootId !== selected!.id);
   // Where the thread runs, beside its title; a page or a team task names itself instead.
   const placeShown = Boolean(selected && !viewTitle && !(host && !hostUp) && !selected.coordination?.team && !atMember);
   const leadTitle = atMember ? threads.find((v) => v.id === selected!.coordination!.rootId)?.title ?? '' : '';
-  const teamNote = teamWaiting ? t('app.teamWaiting') : teamRunning ? t('team.running', teamRunning) : selected?.coordination?.paused ? t('team.paused') : '';
 
   // Older daemons advertise /compact before they expose the dedicated capability.
   const canCompact = activeCaps?.compact ?? (commandsByKey[commandsKey] ?? []).some((command) => command.name === 'compact' && command.kind !== 'skill');
@@ -2573,28 +2628,35 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           </div>
           {selected && (
             <div className="topbar-actions">
-              {/* The team, as one more icon: how many with a badge, orange when one of them needs you. */}
-              {teamShown && !atMember && !(overviewShown && teamInMargin) && (
-                <button className={`icon-btn topbar-agents${teamWaiting ? ' attention' : ''}${agentsOpen ? ' on' : ''}`} aria-label={t('team.view')} aria-pressed={agentsOpen} title={teamNote || t('sidebar.agents', selected.coordination!.children)} onClick={() => { setAgentsStart(null); setAgentsOpen((v) => !v); setFiles(null); }}>
-                  <IconAgents />
-                  <span className="topbar-badge">{selected.coordination!.children}</span>
-                </button>
+              {/* The thread at a glance: one panel for the team, the plan, the changes, the pictures
+                  and the files. The badge is only ever what needs the person. */}
+              {api && hostUp && (
+                <Popover
+                  label={t('overview.label')}
+                  triggerClassName={`icon-btn topbar-overview${teamNeeds ? ' attention' : ''}`}
+                  triggerLabel={t('overview.label')}
+                  triggerTitle={teamNeeds ? t('overview.needsYou', teamNeeds) : t('overview.label')}
+                  align="end"
+                  placement="below"
+                  panelClassName="overview-panel"
+                  trigger={<><IconOverview />{teamNeeds > 0 && <span className="topbar-badge">{teamNeeds}</span>}</>}
+                >
+                  {(close) => <ThreadOverview
+                    api={api} threadId={selected.id} updatedAt={selected.updatedAt} active={selected.status === 'running'}
+                    team={overviewTeam} agents={agents} plan={topPlan} roots={threadRoots} turnOrder={turnOrder}
+                    loadFile={loadFile}
+                    onOpenMember={(member) => { setAgentsStart(member ?? null); setAgentsOpen(true); setFiles(null); }}
+                    onOpenDiff={(file) => setDiffFile({ threadId: selected.id, file })}
+                    onOpenFile={async (path) => { if (/\.html?$/i.test(path)) setPreview({ threadId: selected.id, path }); else await openFileLink(path); }}
+                    onPreview={(path) => setPreview({ threadId: selected.id, path })}
+                    onOpenTrace={() => { setAgentsOpen(false); setFiles(null); setTraceOpen(true); }}
+                    onClose={close}
+                  />}
+                </Popover>
               )}
-              {teamShown && !atMember && teamNote && !compact && !(overviewShown && teamInMargin) && (
-                <span className={`topbar-team-note${teamWaiting ? ' attention' : ''}`}>{teamNote}</span>
-              )}
-              {topPlan && !onPage && !(overviewShown && planInMargin) && <PlanButton item={topPlan} />}
-              {/* The session's numbers, quiet pills beside the trace button; a phone reads them in the trace page. */}
-              {!compact && <StatReadings api={api} threadId={selected.id} active={selected.status === 'running'} onOpenTrace={() => { setAgentsOpen(false); setFiles(null); setTraceOpen(true); }} />}
-              <button
-                className={`icon-btn topbar-trace${traceOpen ? ' on' : ''}`}
-                aria-label={t('trace.openTrace')}
-                aria-pressed={traceOpen}
-                title={t('trace.openTrace')}
-                onClick={() => { setAgentsOpen(false); setFiles(null); setTraceOpen((v) => !v); }}
-              >
-                <IconTrace />
-              </button>
+              {/* A phone keeps its plan button: it has no margin card, and the lead's list of what
+                  leaves the bar was the desktop's. The overview has the plan too, one tap away. */}
+              {compact && topPlan && !onPage && <PlanButton item={topPlan} />}
               <button
                 className={`icon-btn topbar-files${files ? ' on' : ''}`}
                 aria-label={t('files.files')}
@@ -2604,14 +2666,11 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
               >
                 <IconFiles />
               </button>
-              {!compact && (
-                <button className="icon-btn topbar-term" aria-label={t('actions.terminal')} title={t('term.title')} onClick={() => (demo ? askToConnect() : openTerminal())}>
-                  <IconTerminal />
+              {compact && (
+                <button className="icon-btn topbar-new" aria-label={t('sidebar.newThread')} onClick={() => newThread()}>
+                  <IconEdit />
                 </button>
               )}
-              <button className="icon-btn topbar-new" aria-label={t('sidebar.newThread')} onClick={() => newThread()}>
-                <IconEdit />
-              </button>
               <button
                 className="icon-btn topbar-more"
                 aria-label={t('app.threadMore')}
@@ -2844,20 +2903,6 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
             </button>
           )}
         </div>
-
-        {/* Where there is room to spare, the team, the plan and what the thread produced sit in one
-            card in the margin; otherwise the team and the plan are marks in the top bar. */}
-        {overviewShown && (
-          <ThreadOverview
-            team={teamInMargin ? coordination : null} agents={agents} plan={planInMargin ? topPlan : null}
-            outputs={shownOutputs?.data ?? null} failed={Boolean(shownOutputs?.failed)} roots={threadRoots}
-            onOpenMember={(member) => { setAgentsStart(member ?? null); setAgentsOpen(true); setFiles(null); }}
-            onRetry={() => setOutputsTry(n => n + 1)}
-            onJumpTurn={(turnId) => setJump({ threadId: selected!.id, turnId })}
-            onOpenFile={async (path) => { if (/\.html?$/i.test(path)) setPreview({ threadId: selected!.id, path }); else await openFileLink(path); }}
-            loadFile={loadFile}
-          />
-        )}
 
         {!onPage && !(host && !hostUp) && (
         <div className={`composer-slot${voice.state.active || voice.state.error ? ' voice-mode' : ''}`}>
@@ -3274,6 +3319,16 @@ export function App({ token, onToken, connect, hostId = null, onHost, start, sho
           onClose={() => setSideAsk(null)}
           onError={handleError}
           onThreadCreated={(t) => setThreads((prev) => [t, ...prev.filter((x) => x.id !== t.id)])}
+        />
+      )}
+      {api && diffFile && diffFile.threadId === selected?.id && (
+        <ChangeDiffDialog
+          api={api}
+          threadId={diffFile.threadId}
+          file={diffFile.file}
+          turnOrder={turnOrder}
+          onClose={() => setDiffFile(null)}
+          onJumpTurn={(turnId) => { setDiffFile(null); setJump({ threadId: diffFile.threadId, turnId }); }}
         />
       )}
       {threadActions.layer}

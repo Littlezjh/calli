@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { referencedFile, referencesFile } from '../src/artifacts.js';
 
@@ -29,6 +29,18 @@ test('mentions do not grant path prefixes, web URLs, relative paths or double-de
     '[file](file://remote/tmp/report/chart.png)',
     '[file](/tmp/report/%2563hart.png)',
   ]) assert.equal(referencesFile(text, '/tmp/report/chart.png'), false, text);
+});
+
+test('home-relative references grant only the exact named file', () => {
+  const path = join(homedir(), 'out/chart.png');
+  for (const text of ['~/out/chart.png', '`~/out/chart.png`', '[chart](~/out/chart.png)', '[chart](%7E/out/chart.png#L1)']) {
+    assert.equal(referencesFile(text, path), true, text);
+    assert.equal(referencesFile(text, join(homedir(), 'out/other.png')), false);
+  }
+  assert.equal(referencesFile('`~/out/my report.md`', join(homedir(), 'out/my report.md')), true);
+  for (const text of ['~/out/chart.png.bak', '~/out/', '~', 'file://~/out/chart.png', 'https://example.com/~/out/chart.png']) {
+    assert.equal(referencesFile(text, path), false, text);
+  }
 });
 
 test('a named file resolves anywhere, but links beneath a temp folder are refused', () => {

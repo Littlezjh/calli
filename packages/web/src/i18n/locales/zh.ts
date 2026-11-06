@@ -1701,7 +1701,6 @@ export const zh = {
   'sidebar.me': '我：',
   'sidebar.reply': '回复：',
   'sidebar.settings': '配置',
-  'quickSwitch.handle': '快速切换会话',
   'quickSwitch.sessions': '最近会话',
 
   // Skills
@@ -2364,6 +2363,7 @@ export const zh = {
   'writing.saveFailed': (message: string) => `没保存上：${message}`,
   'extensions.cannotEnable': '缺少必要依赖，暂时无法启用',
   'overview.label': '概况',
+  'overview.agents': '子智能体',
   'overview.plan': '计划',
   'overview.changes': '变更',
   'overview.images': '图片',
@@ -2377,6 +2377,21 @@ export const zh = {
   'overview.failed': '概况没有读到',
   'overview.toTurn': (path: string, turns: number) => `${path}\n${turns > 1 ? `${turns} 轮改过，` : ''}点开跳到最后改它的那一轮`,
   'overview.openPanel': '打开智能体面板',
+  'overview.failedCount': (n: number) => `${n} 失败`,
+  'overview.showMore': (n: number) => `再显示 ${n} 个`,
+  'overview.missing': '已删除',
+  'overview.missingImages': (n: number) => `另有 ${n} 张已不在磁盘上`,
+  'overview.preview': '预览',
+  'overview.trace': '轨迹',
+  'overview.tokens': (value: string) => `${value} tok`,
+  'overview.cache': (value: string) => `缓存 ${value}`,
+  'overview.diffTurns': (n: number) => `共 ${n} 轮`,
+  'overview.diffTurn': (n: number) => `第 ${n} 轮`,
+  'overview.diffPart': (n: number) => `第 ${n} 次修改`,
+  'overview.diffLast': '跳到最后一轮',
+  'overview.diffFailed': '这一轮的 diff 没有读到',
+  'overview.diffEmpty': '这一轮没有留下 diff',
+  'overview.diffWindow': (shown: number, older: number) => `显示最近 ${shown} 次修改，另有 ${older} 次更早的未显示`,
 };
 
 export type Messages = typeof zh;

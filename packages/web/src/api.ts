@@ -342,9 +342,32 @@ export interface Schedule {
 
 /** A request the daemon refused. `details` is whatever it sent besides the message, for errors the page handles itself. */
 /** A file the thread's agents changed, summed over every turn that touched it. */
-export interface ChangedFile { path: string; added: number; removed: number; created: boolean; turns: number; turnId: string; at: string }
+export interface ChangedFile {
+  path: string;
+  added: number;
+  removed: number;
+  created: boolean;
+  turns: number;
+  turnId: string;
+  at: string;
+  /**
+   * The diff references that touched it, in the order the log reported them, for the dialog to read
+   * on demand. The daemon always sends it; a change it could not reference is an empty list.
+   */
+  details: Array<{ turnId: string; id: number; version: number }>;
+  /** How many references there are, when `details` holds only the newest 20. */
+  detailsTotal?: number;
+  /** The last disk check found no ordinary file at this path. */
+  missing?: true;
+}
 /** A picture or file an answer named, or the thread created; the last turn that did. */
-export interface OutputFile { path: string; turnId: string; at: string }
+export interface OutputFile {
+  path: string;
+  turnId: string;
+  at: string;
+  /** The last disk check found no ordinary file at this path. */
+  missing?: true;
+}
 export interface ThreadOutputs {
   changes: { files: ChangedFile[]; added: number; removed: number; total: number };
   images: OutputFile[];
