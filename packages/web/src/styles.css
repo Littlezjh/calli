@@ -2049,17 +2049,21 @@ html.list-open body {
   overflow-wrap: anywhere;
 }
 
-/* A plan that ran out is a quiet card: neutral surface, one red line saying where it hurts, the
- * agent's raw words shrunk to a second line, and every way on is a text link. */
-.exhausted-card {
-  padding: 12px 14px;
-  border-left: 3px solid var(--danger);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
+/* A plan that ran out is a system line, like the fork mark: a quiet word centered between
+ * hairlines, no box. The agent's raw words shrink to one faint line under it, and every way on
+ * is a text link. */
+.exhausted-note { display: flex; flex-direction: column; align-items: center; margin: 6px 0; }
+.exhausted-line {
+  display: flex; align-items: center; gap: 14px; align-self: stretch;
+  color: var(--danger); font-size: 13.5px; font-weight: 550;
 }
-.exhausted-title { font-size: 14px; font-weight: 650; }
-.exhausted-detail { margin-top: 3px; color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
-.exhausted-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 14px; margin-top: 11px; white-space: normal; }
+.exhausted-line::before,
+.exhausted-line::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+.exhausted-sub {
+  max-width: 100%; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--faint); font-size: 12px;
+}
+.exhausted-actions { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; white-space: normal; }
 .exhausted-actions > button { min-height: 30px; padding: 0; border: 0; background: none; font: inherit; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; }
 .exhausted-hand { color: var(--accent); font-weight: 600; }
 .exhausted-hand:hover:not(:disabled) { text-decoration: underline; text-underline-offset: 3px; }

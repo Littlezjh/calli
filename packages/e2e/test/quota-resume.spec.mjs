@@ -56,7 +56,7 @@ test('the exhausted turn offers waiting beside takeover; arming shows the reset 
   const page = await context.newPage();
   try {
     await openUi(page, daemon); await select(page, source.title);
-    const card = page.locator('.exhausted-card');
+    const card = page.locator('.exhausted-note');
     await card.getByRole('button', { name: '交给 Agent 2 接手', exact: true }).waitFor();
     const link = card.getByRole('button', { name: '等额度恢复后自动继续', exact: true });
     await link.waitFor();
@@ -84,7 +84,7 @@ test('the global switch arms parked threads; once the quota is back the daemon c
   const page = await phone.newPage();
   try {
     await openUi(page, daemon); await select(page, source.title, true);
-    const card = page.locator('.exhausted-card');
+    const card = page.locator('.exhausted-note');
     await card.getByText(/额度恢复后自动继续/).waitFor();
     await card.scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(shots, 'armed-phone-dark.png'), animations: 'disabled' });

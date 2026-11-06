@@ -95,9 +95,9 @@ test('a turn stopped by a plan that ran out offers another account of the same t
       await openUi(page, hub);
       if (phone) await page.getByRole('button', { name: '打开线程列表', exact: true }).click();
       await page.locator('.thread-item').filter({ hasText: '额度用完的任务' }).first().click();
-      const go = page.locator('.exhausted-card .exhausted-hand');
+      const go = page.locator('.exhausted-note .exhausted-hand');
       await go.waitFor();
-      assert.match(await page.locator('.exhausted-card').innerText(), /额度用完了/);
+      assert.match(await page.locator('.exhausted-note').innerText(), /额度用完了/);
       assert.match(await go.innerText(), /交给 .+ 接手/);
       await page.waitForTimeout(400);
       await page.screenshot({ path: `/tmp/calli-handover-shots/${phone ? 'phone' : 'desktop'}-${theme}-exhausted.png` });

@@ -374,14 +374,14 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
             </div>
           );
         case 'error': {
-          // A plan that ran out reads as a quiet card: the conclusion leads, the agent's raw words
-          // shrink to a second line, and every way on is a text link, not a filled button.
+          // A plan that ran out is a system line, like the fork mark: centered between hairlines,
+          // no box. The conclusion leads, the agent's raw words shrink to one faint line, and every
+          // way on is a text link.
           if (item.planExhausted) return (
-            <div key={item.key} className="row">
-              <div className="exhausted-card" role="alert">
-                <div className="exhausted-title">{t('timeline.error.planExhaustedTitle')}</div>
-                {item.detail && <div className="exhausted-detail">{item.detail}</div>}
-                {item === items[items.length - 1] && (takeover || resume) && <div className="exhausted-actions">
+            <div key={item.key} className="row exhausted-note" role="alert">
+              <div className="exhausted-line">{t('timeline.error.planExhaustedTitle')}</div>
+              {item.detail && <div className="exhausted-sub" title={item.detail}>{item.detail}</div>}
+              {item === items[items.length - 1] && (takeover || resume) && <div className="exhausted-actions">
                   {takeover?.go && takeover.label && <button className="exhausted-hand" onClick={takeover.go} disabled={takeover.busy}>
                     {takeover.busy ? t('view.handingOver') : t('view.handTo', takeover.label)}
                     <IconArrowRight size={14} />
@@ -394,7 +394,6 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
                   </>}
                   {resume?.error && <small className="exhausted-error">{resume.error}</small>}
                 </div>}
-              </div>
             </div>
           );
           return (
