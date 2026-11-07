@@ -22,6 +22,11 @@ test('hidden accounts disappear from quota and are not queried; restoring brings
         page.on('request', request => { if (/\/api\/agents\/[^/]+\/quota/.test(request.url())) requests.push(new URL(request.url()).pathname); });
         await openUi(page, daemon);
         const toggle = async (name, hidden) => {
+          // Back from settings lands on the list they were opened from; a back swipe puts it away.
+          if (phone && await page.locator('.drawer-open').count()) {
+            await page.goBack();
+            await page.waitForFunction(() => !document.querySelector('.drawer-open'));
+          }
           await page.evaluate(() => { location.hash = '#/agents'; });
           const row = page.locator('.agents-row').filter({ has: page.getByText(name, { exact: true }) });
           await row.getByRole('button', { name: '操作', exact: true }).click();
@@ -29,7 +34,8 @@ test('hidden accounts disappear from quota and are not queried; restoring brings
           await row.locator('.agents-hidden').waitFor({ state: hidden ? 'visible' : 'detached' });
         };
         const settings = async () => {
-          if (phone) await page.locator('.menu-btn').click();
+          // Closing settings opened from the list leaves the list open.
+          if (phone && !await page.locator('.drawer-open').count()) await page.locator('.menu-btn').click();
           await page.getByRole('button', { name: '配置', exact: true }).click();
         };
         const openBoard = async () => { await settings(); await page.locator('.settings-nav').getByRole('button', { name: '额度', exact: true }).click(); };

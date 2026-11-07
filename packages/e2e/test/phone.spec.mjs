@@ -92,8 +92,8 @@ test('the list has its pages as rows, and search behind a button', async () => {
   await page.getByText('退出登录？').waitFor({ timeout: 5_000 });
   await page.getByRole('button', { name: '取消' }).tap();
   await page.getByText('退出登录？').waitFor({ state: 'detached', timeout: 5_000 });
+  // Settings were opened from the list, so going back lands on the list again.
   await page.locator('.settings-topbar').getByRole('button', { name: '返回', exact: true }).tap();
-  await page.locator('.menu-btn').tap();
   await settle();
   assert.equal(await listOpen(), true);
   assert.equal(await list.locator('.thread-row .row-more').first().isVisible(), false, 'rows carry no button on a touch screen');

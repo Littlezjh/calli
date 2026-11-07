@@ -27,7 +27,8 @@ const send = (id, text, queue = false) => request(`/api/threads/${id}/turns`, 'P
 // This spec exercises the summary path; the copy-the-conversation path has its own tests.
 const configure = (targets, enabled = true) => request('/api/handover-settings', 'PUT', { enabled, threshold: 90, orders: { agy: targets }, method: 'summary' });
 const select = async (page, title, mobile = false) => {
-  if (mobile) await page.locator('.menu-btn').click();
+  // Closing settings opened from the list leaves the list open.
+  if (mobile && !await page.locator('.drawer-open').count()) await page.locator('.menu-btn').click();
   await page.locator('.sidebar .thread-item').filter({ has: page.locator('.thread-title', { hasText: new RegExp(`^${title}$`) }) }).click();
   if (mobile) await page.waitForFunction(() => getComputedStyle(document.querySelector('.sidebar')).visibility === 'hidden' && Math.abs(document.querySelector('.main').getBoundingClientRect().x) < 1, null, { timeout: 5000 });
 };

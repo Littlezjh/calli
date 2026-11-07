@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type TouchEvent } from 'react';
 import { APPEARANCE_KEY, parseAppearance, resolveTheme, type Appearance, type Theme } from './appearance';
+import { noteEdgeSwipe } from './appHistory';
 
 function useMediaQuery(query: string): boolean {
   const [matches, setMatches] = useState(() => typeof window !== 'undefined' && window.matchMedia(query).matches);
@@ -67,6 +68,8 @@ export function useListSwipe(enabled: boolean, open: boolean, setOpen: (open: bo
       if (Math.abs(t.clientY - start.y) > SWIPE_DRIFT_PX) start = null;
       else if (open ? dx < -SWIPE_PX : dx > SWIPE_PX) {
         start = null;
+        // On iOS the same finger also is the history's back; that must not move the list twice.
+        noteEdgeSwipe();
         setOpen(!open);
       }
     };

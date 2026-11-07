@@ -30,6 +30,7 @@ import {
 } from './api';
 import type { HubAction } from './commands';
 import { buildProjectOptions } from './projects';
+import { isBounce, useAppHistory } from './appHistory';
 import { useAppearance, useInTitlebar, useIsCompact, useListSwipe, useMinWidth, useStoredFlag } from './hooks';
 import { mergeAgentChoice, parseAgentChoices, type AgentChoices } from './agent-choice';
 import { useHosts } from './hosts';
@@ -560,7 +561,13 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const [threadLink, setThreadLink] = useState(() => window.location.hash.startsWith('#/thread/') ? window.location.hash : null);
   const [schedulePath, setSchedulePath] = useState(() => window.location.hash.startsWith('#/schedules/') ? window.location.hash.slice('#/schedules/'.length) : '');
   const [settingsPath, setSettingsPath] = useState(() => start === 'machines' ? 'machines' : window.location.hash.replace(/^#\/settings\/?/, ''));
-  const settingsOrigin = useRef<{ view: MainView; thread: string | null; hash: string; scroll: number; pinned: boolean; entry: string } | null>(null);
+  // `list`: the phone's thread list was open, so closing settings goes back to it.
+  const settingsOrigin = useRef<{ view: MainView; thread: string | null; hash: string; scroll: number; pinned: boolean; entry: string; list: boolean } | null>(null);
+  // The hub's "back" (what the top-left button does), run when a back swipe reaches the history
+  // floor, and the address the app entry goes back to afterwards. See appHistory.ts.
+  const appBack = useRef<() => boolean>(() => false);
+  const appHref = useRef(window.location.pathname + window.location.search + window.location.hash);
+  useAppHistory(appBack, appHref);
   const [view, setView] = useState<MainView>(() => start === 'machines' ? 'settings' : viewForHash(window.location.hash, Boolean(token)) ?? 'thread');
   /** The address of the extension view asked for. Which view that is waits for the list of extensions. */
   const [extTarget, setExtTarget] = useState<string | null>(() => (viewForHash(window.location.hash, Boolean(token)) === 'ext' ? window.location.hash : null));
@@ -1132,6 +1139,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     if (window.location.hash !== want) {
       window.history.replaceState(window.history.state, '', want || window.location.pathname + window.location.search);
     }
+    appHref.current = window.location.pathname + window.location.search + window.location.hash;
   }, [schedulePath, onSettings, settingsPath, onDesk, onObservability, onAgents, onTeams, onTodos, onActivity, onSkills, onSchedules, onMcp, onExtensions, extWant, threadLink]);
 
   // Whether the directory a new thread would start in is a git repository. Asked once per directory picked.
@@ -1156,6 +1164,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   // opened, so the listener is renewed with the token.
   useEffect(() => {
     const onHash = (event: HashChangeEvent) => {
+      // A landing on the history floor is the back gesture, not an address followed (appHistory.ts).
+      if (isBounce()) return;
       const hash = window.location.hash;
       const apply = () => {
         startupPending.current = false;
@@ -1164,8 +1174,14 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         setThreadLink(null);
         const next = viewForHash(hash, Boolean(token));
         if (!next) {
+          // Back to a plain thread address. The settings origin may already have restored the
+          // view while a close was still landing (the origin is consumed on first render away
+          // from settings), so keep whatever is already a thread view and only replace a page.
           const origin = settingsOrigin.current;
-          setView(origin?.view ?? 'thread'); setSelectedId(origin?.thread ?? null); return;
+          setView(v => v === 'thread' ? v : origin?.view ?? 'thread');
+          if (origin?.thread) setSelectedId(origin.thread);
+          setDrawer(false);
+          return;
         }
         if (next !== 'settings') setSelectedId(null);
         setView(next);
@@ -2058,17 +2074,34 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const openSettings = (path = '') => {
     if (onSettings && settingsPath === path) return;
     navigate(() => {
-      if (!onSettings) settingsOrigin.current = { view, thread: selectedId, hash: window.location.hash, scroll: scrollerRef.current?.scrollTop ?? 0, pinned: stickToBottom.current, entry: path };
+      if (!onSettings) {
+        settingsOrigin.current = { view, thread: selectedId, hash: window.location.hash, scroll: scrollerRef.current?.scrollTop ?? 0, pinned: stickToBottom.current, entry: path, list: listOpen };
+      }
       setThreadLink(null); setView('settings'); setSettingsPath(path); setDrawer(false);
-      const hash = `#/settings${path ? `/${path}` : ''}`;
-      if (window.location.hash !== hash) window.history.pushState(window.history.state, '', hash);
     });
   };
+  // The address follows the page (see the address effect); no history entry is pushed for a
+  // level, so closing has nothing to walk back down.
   const closeSettings = () => navigate(() => {
     const origin = settingsOrigin.current;
     setSettingsPath(''); setView(origin?.view ?? 'thread'); setSelectedId(origin?.thread ?? null); setThreadLink(null);
-    window.history.pushState(window.history.state, '', origin?.hash || window.location.pathname + window.location.search);
+    setDrawer(Boolean(origin?.list));
   });
+
+  // The hub's "back", for a back swipe or the browser's back button (see appHistory.ts): the same
+  // steps as the top-left button, one at a time. Nothing left to undo hands the swipe to the browser.
+  appBack.current = () => {
+    if (listOpen) { setDrawer(false); return true; }
+    if (onSettings) {
+      if (settingsPath.includes('/')) openSettings(settingsPath.slice(0, settingsPath.lastIndexOf('/')));
+      else if (settingsPath && !(settingsOrigin.current?.entry === 'quota' && settingsPath === 'quota')) openSettings('');
+      else closeSettings();
+      return true;
+    }
+    if (onSchedules && schedulePath) { openSchedules(''); return true; }
+    if (compact) { setDrawer(true); return true; }
+    return false;
+  };
 
   // Marked from an extension view: the stream brings the change back to the list.
   const setThreadDone = async (id: string, done: boolean) => {
@@ -2119,8 +2152,6 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   });
   const openSchedules = (path = '') => navigate(() => {
     setSchedulePath(path);
-    const hash = `#/schedules${path ? `/${path}` : ''}`;
-    if (window.location.hash !== hash) window.history.pushState(window.history.state, '', hash);
     setSelectedId(null);
     setView('schedules');
     setDrawer(false);
