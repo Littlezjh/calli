@@ -23,6 +23,7 @@ import type { DetailRef } from './timeline';
 import type { HistoryPage, HistoryDetail, HistoryWork } from './history';
 import { cachedQuota, clearQuotaCache, rememberQuota } from './quota-cache';
 import { clearThreadCache } from './thread-cache';
+import { clearHostCache } from './host-cache';
 import { localeTag, t } from './i18n';
 import { isSupportedVideo } from './videos';
 
@@ -950,7 +951,7 @@ export function loadToken(): string {
 }
 
 export function saveToken(token: string): void {
-  if (!token || token !== loadToken()) { clearQuotaCache(); clearThreadCache(); }
+  if (!token || token !== loadToken()) { clearQuotaCache(); clearThreadCache(); clearHostCache(); }
   try {
     if (token) localStorage.setItem(TOKEN_KEY, token);
     else localStorage.removeItem(TOKEN_KEY);

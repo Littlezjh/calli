@@ -56,6 +56,13 @@ export type PetGreeting = { you: number; first: string | null } | null;
 
 /** The size of every frame in the artwork. */
 export const PET_FRAME = { width: 412, height: 344 };
+
+/** Her small portrait, cut from the first idle frame: a picture the size of where it is shown. */
+export interface PetBust { src: string; aspect: number }
+
+/** The height the cut portrait keeps: enough for every place it is shown, small enough to keep on the device. */
+export const PET_BUST_HEIGHT = 160;
+
 /** Frames kept decoded: the one on screen and those just ahead, about half a megabyte each. */
 export const PET_RING_SIZE = 8;
 export const PET_WEBP_QUALITY = 0.9;

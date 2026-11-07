@@ -95,6 +95,7 @@ import { ExtensionView } from './extensions/ExtensionView';
 import { threadSummaries } from './extensions/project';
 import { createThreadFeed } from './extensions/thread-feed';
 import { cachedAgentMarks, cachedThreads, rememberAgentMarks, rememberThreads } from './thread-cache';
+import { cachedAgents, cachedDraft, cachedModels, cachedPet, rememberAgents, rememberDraft, rememberModels, rememberPetBust, rememberPetStatus } from './host-cache';
 import { clampSidebarWidth, defaultSidebarWidth, projectDir, savedSidebarWidth, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, type HostSource } from './sidebar';
 import { enabledViews, extensionHash, looksLikeExtensionRoute, resolveExtensionRoute } from './extensions/routes';
 import { AgentPicker, type DiscoveredAccount, type DiscoveredAgent, effortsForModel, imagesBlocked, imagesNote, modelName, speedsForModel, ModelPicker, PermissionPicker, UsageMeter, WorkspacePicker } from './components/Pickers';
@@ -505,12 +506,16 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     if (hostId && hostsLoaded && !host) onHost?.(null, window.location.hash.startsWith('#/settings/machines') ? 'machines' : undefined);
   }, [hostId, hostsLoaded, host, onHost]);
 
+  // What this device last read from a machine stands in until the machine answers, so nothing jumps
+  // when the app starts over on it. Demo and showcase lists are not the hub's and are not kept.
+  const keepThreads = Boolean(token) && !showcase;
+
   const [teamDefinitions, setTeamDefinitions] = useState<TeamSummary[]>([]);
   const reloadTeams = useCallback(() => { if (!api.demo) void api.teams().then(setTeamDefinitions).catch(() => setTeamDefinitions([])); }, [api]);
   useEffect(reloadTeams, [reloadTeams]);
   const [draftTeam, setDraftTeam] = useState<string | null>(null);
   useEffect(() => setDraftTeam(null), [api]);
-  const [agents, setAgents] = useState<AgentInfo[]>([]);
+  const [agents, setAgents] = useState<AgentInfo[]>(() => (keepThreads ? cachedAgents(hostId) ?? [] : []));
   /** Whether this machine's agents have been read: until then the sidebar marks rows from what this device last saw. */
   const [agentsKnown, setAgentsKnown] = useState(false);
   /** CLIs on PATH that look like extra agents, offered in the picker. */
@@ -521,8 +526,9 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   // Each project root and whether it was added from the page; and whether threads can be in no project.
   const [roots, setRoots] = useState<Array<{ path: string; removable: boolean }>>([]);
   const [scratchAvailable, setScratchAvailable] = useState(false);
-  // A new thread in no project: the hub gives it a scratch folder.
-  const [draftScratch, setDraftScratch] = useState(false);
+  // A new thread in no project: the hub gives it a scratch folder. What this machine was last left
+  // in opens there again, rather than snapping to its first choice.
+  const [draftScratch, setDraftScratch] = useState(() => keepThreads && cachedDraft(hostId)?.scratch === true);
   const [projectDialog, setProjectDialog] = useState<'new' | 'roots' | null>(null);
   const applyWorkdirs = useCallback((c: WorkdirsConfig) => {
     setWorkdirs(c.workdirs);
@@ -530,8 +536,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     setScratchAvailable(c.scratch === true);
   }, []);
   // The list last read from this machine stands in until the live one arrives: switching machines
-  // must not flash an empty sidebar. Demo and showcase lists are not the hub's and are not kept.
-  const keepThreads = Boolean(token) && !showcase;
+  // must not flash an empty sidebar.
   const [threads, setThreads] = useState<Thread[]>(() => (keepThreads ? cachedThreads(hostId)?.threads ?? [] : []));
   /** Whether there is any list to show yet, cached or live: until then an empty one means "not read", not "none". */
   const [threadsKnown, setThreadsKnown] = useState(() => !keepThreads || cachedThreads(hostId) !== null);
@@ -539,8 +544,10 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const [todos, setTodos] = useState<Todo[]>([]);
   const [todosLoading, setTodosLoading] = useState(true);
   const [todosError, setTodosError] = useState('');
-  const [petStatus, setPetStatus] = useState<PetStatus | null>(null);
-  const petBust = usePetBust(api, petStatus);
+  // Her shape as this device last saw her, so she is on the first frame rather than popping in.
+  const [keptPet] = useState(() => (keepThreads ? cachedPet(hostId) : null));
+  const [petStatus, setPetStatus] = useState<PetStatus | null>(() => keptPet ? { installing: false, error: null, ...keptPet.status } : null);
+  const petBust = usePetBust(api, petStatus, keptPet?.bust ? { url: api.petFrame(keptPet.status.id, 'idle', 0), bust: keptPet.bust } : null);
   useEffect(() => {
     if (api.demo) return; let live = true;
     // An older hub has no pets endpoint: the sidebar keeps its plain icon.
@@ -679,8 +686,11 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const [historyRevision, setHistoryRevision] = useState(0);
   /** Bumped when an edit replaced the conversation, so the page is read again from its start. */
   const [historyEpoch, setHistoryEpoch] = useState(0);
-  const [draftAgent, setDraftAgent] = useState('');
-  const [draftCwd, setDraftCwd] = useState('');
+  // A new thread opens where this machine's last one was left: the choice this device kept stands
+  // until the machine's own answer says otherwise.
+  const keptDraft = keepThreads ? cachedDraft(hostId) : null;
+  const [draftAgent, setDraftAgent] = useState(() => keptDraft?.agent ?? '');
+  const [draftCwd, setDraftCwd] = useState(() => keptDraft?.cwd ?? '');
   // A new thread may start in a git worktree of its directory; offered only when the directory is in a repository.
   const [draftWorktree, setDraftWorktree] = useState(false);
   const [worktreeOffer, setWorktreeOffer] = useState<{ cwd: string; branch: string | null; changes: number } | null>(null);
@@ -697,7 +707,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const draftModelPreferences = useRef<Record<string, DraftModelPreference>>({});
   const draftPreferencesApi = useRef<Api | null>(api);
   const draftPreferenceSave = useRef<{ api: Api | null; pending: Record<string, DraftModelPreference> | null; running: boolean }>({ api, pending: null, running: false });
-  const [modelsByAgent, setModelsByAgent] = useState<Record<string, ModelOption[]>>({});
+  const [modelsByAgent, setModelsByAgent] = useState<Record<string, ModelOption[]>>(() => (keepThreads ? cachedModels(hostId) ?? {} : {}));
   const modelVersions = useRef<Record<string, number>>({});
   const [commandsByKey, setCommandsByKey] = useState<Record<string, SlashCommand[]>>({});
   const [drawer, setDrawer] = useState(start === 'list');
@@ -1350,9 +1360,13 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         applyWorkdirs(c);
         setSections(s);
         setSchedules(sc);
+        // What was kept only stands while the machine still offers it; a gone scratch folder or
+        // instance falls back rather than keeping a choice that cannot start.
+        if (draftScratch && c.scratch !== true) setDraftScratch(false);
         setDraftCwd((cur) => cur || c.workdirs[0] || '');
         const first = a.find((x) => x.available && !x.hidden);
-        selectDraftAgent(first?.id ?? '', a, false);
+        const kept = draftAgent && a.some((x) => x.id === draftAgent && !x.hidden) ? draftAgent : first?.id ?? '';
+        selectDraftAgent(kept, a, false);
         if (!demo) {
           const dismissed = localStorage.getItem('calli_onboard_dismissed') === '1';
           const needsOnboard = a.length === 0 || a.filter((x) => x.available).length === 0;
@@ -1380,6 +1394,17 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     // handleError only touches state setters, so it is stable enough to leave out.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api]);
+
+  // What a machine said is what its next cold start opens with. Written as it changes, not per
+  // event: unchanged answers must not touch storage.
+  useEffect(() => { if (keepThreads && agentsKnown) rememberAgents(hostId, agents); }, [keepThreads, agentsKnown, hostId, agents]);
+  useEffect(() => { if (keepThreads) rememberModels(hostId, modelsByAgent); }, [keepThreads, hostId, modelsByAgent]);
+  useEffect(() => { if (keepThreads && petStatus) rememberPetStatus(hostId, petStatus); }, [keepThreads, hostId, petStatus]);
+  useEffect(() => { if (keepThreads && petBust && petStatus?.installed) rememberPetBust(hostId, petBust); }, [keepThreads, hostId, petBust, petStatus]);
+  useEffect(() => {
+    if (!keepThreads || selected || !draftAgent) return;
+    rememberDraft(hostId, { agent: draftAgent, cwd: draftScratch ? '' : draftCwd, scratch: draftScratch && scratchAvailable });
+  }, [keepThreads, hostId, selected, draftAgent, draftCwd, draftScratch, scratchAvailable]);
 
   // Thread-list changes, pushed by the daemon. Refresh is debounced.
   useEffect(() => {

@@ -7,8 +7,8 @@ import { ProfileDialog } from './ProfileDialog';
 import { t } from '../i18n';
 import {
   applyPetStarter, clearPetHaze, nextPetFrame, petBustBox, parsePetPending, petCacheKey, petCacheName, petClampPosition, petDay, petErrorDetail, petGreetingLine, petLicenseUrl, petNotableThreads, petReplyParts, petRing, petStarters, petThreadState, readPetRouter, yawnDelay,
-  PET_BUBBLE_FADE_MS, PET_BUBBLE_GONE_MS, PET_CACHE_PREFIX, PET_FRAME, PET_GIVE_UP_MS, PET_RING_SIZE, PET_WEBP_QUALITY, PET_LATE_MS, PET_LOST_POLLS,
-  type PetClip, type PetGreeting, type PetPending, type PetPresence, type PetThreadState,
+  PET_BUBBLE_FADE_MS, PET_BUBBLE_GONE_MS, PET_BUST_HEIGHT, PET_CACHE_PREFIX, PET_FRAME, PET_GIVE_UP_MS, PET_RING_SIZE, PET_WEBP_QUALITY, PET_LATE_MS, PET_LOST_POLLS,
+  type PetBust, type PetClip, type PetGreeting, type PetPending, type PetPresence, type PetThreadState,
 } from '../pet';
 
 const GREETED_KEY = 'calli.pet.greeted';
@@ -270,7 +270,7 @@ function useReducedMotion(): boolean {
 }
 
 /** Her head and upper body from the first idle frame, cut to her outline. */
-export interface PetBust { src: string; aspect: number }
+export type { PetBust } from '../pet';
 
 const busts = new Map<string, Promise<PetBust | null>>();
 
@@ -289,17 +289,20 @@ async function cutBust(url: string): Promise<PetBust | null> {
   clearPetHaze(pixels.data);
   const box = petBustBox(pixels.data, canvas.width, canvas.height);
   if (!box) return null;
+  // Cut at the size it is kept at, so what the device remembers is no larger than what it shows.
+  const scale = Math.min(1, PET_BUST_HEIGHT / box.height);
   const cut = document.createElement('canvas');
-  cut.width = box.width;
-  cut.height = box.height;
-  cut.getContext('2d')?.putImageData(pixels, -box.x, -box.y);
+  cut.width = Math.max(1, Math.round(box.width * scale));
+  cut.height = Math.max(1, Math.round(box.height * scale));
+  cut.getContext('2d')?.drawImage(canvas, box.x, box.y, box.width, box.height, 0, 0, cut.width, cut.height);
   return { src: cut.toDataURL('image/png'), aspect: box.width / box.height };
 }
 
 /** Her small portrait for the sidebar and the title, once per page; null until it is cut, or if she is not installed. */
-export function usePetBust(api: Api, status: PetStatus | null): PetBust | null {
+export function usePetBust(api: Api, status: PetStatus | null, kept?: { url: string; bust: PetBust } | null): PetBust | null {
   const url = status?.installed ? api.petFrame(status.id, 'idle', 0) : null;
-  const [bust, setBust] = useState<PetBust | null>(null);
+  // What this device kept stands in for the first frame, when it is this portrait it was cut from.
+  const [bust, setBust] = useState<PetBust | null>(() => (kept && kept.url === url ? kept.bust : null));
   useEffect(() => {
     if (!url) { setBust(null); return; }
     let live = true;
