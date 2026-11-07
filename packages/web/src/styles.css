@@ -13274,9 +13274,9 @@ body:has(.settings-page, .action-sheet) .pet { display: none; }
   margin-top: calc(-1 * var(--chat-top-overlap, 0px));
   margin-bottom: calc(-1 * var(--chat-bottom-overlap, 0px));
   padding-top: calc(var(--chat-top-overlap, 0px) + 14px);
-  padding-bottom: calc(var(--chat-bottom-overlap, 0px) + 28px);
+  padding-bottom: calc(var(--chat-bottom-overlap, 0px) + var(--composer-clear));
   scroll-padding-top: calc(var(--chat-top-overlap, 0px) + 14px);
-  scroll-padding-bottom: calc(var(--chat-bottom-overlap, 0px) + 28px);
+  scroll-padding-bottom: calc(var(--chat-bottom-overlap, 0px) + var(--composer-clear));
 }
 .main:has(> .composer-slot) > .topbar { position: relative; z-index: 4; }
 .main:has(> .composer-slot) > .topbar::before,
@@ -13298,14 +13298,20 @@ body:has(.settings-page, .action-sheet) .pet { display: none; }
     color-mix(in srgb, var(--bg) calc(var(--glass-fade) * 0.3), transparent) calc(env(safe-area-inset-top) + 66px), transparent calc(env(safe-area-inset-top) + 76px));
 }
 /* The same wash under the composer; the box paints above it. */
-/* Under the composer: a tinted band that fades upward and blurs what scrolls beneath, so the box has an edge
-   of its own. The slot's other children are lifted above it so they stay sharp. */
-.composer-slot > :not(.action-sheet) { position: relative; }
+/* Under the composer, two bands. The tint is as tall as the gap kept below the last line, so at rest
+   it falls on empty space and the newest output stays sharp; the blur is only a short fade at the
+   box's top edge, for what scrolls behind it. The slot's other children are lifted above both. */
+.main:has(> .composer-slot) { --composer-clear: 48px; }
+.composer-slot > :not(.action-sheet) { position: relative; z-index: 1; }
+.composer-slot::before, .composer-slot::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; pointer-events: none; }
 .composer-slot::before {
-  content: ''; position: absolute; inset: -150px 0 0; pointer-events: none;
-  background: linear-gradient(to top, rgba(0, 0, 0, var(--glass-scrim)) 0, rgba(0, 0, 0, calc(var(--glass-scrim) * 0.75)) 35%, rgba(0, 0, 0, calc(var(--glass-scrim) * 0.3)) 70%, transparent 100%);
+  top: -16px;
   -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
-  -webkit-mask-image: linear-gradient(to top, #000 0, #000 40%, transparent 100%); mask-image: linear-gradient(to top, #000 0, #000 40%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to top, #000 calc(100% - 16px), transparent); mask-image: linear-gradient(to top, #000 calc(100% - 16px), transparent);
+}
+.composer-slot::after {
+  top: calc(-1 * var(--composer-clear));
+  background: linear-gradient(to top, rgba(0, 0, 0, var(--glass-scrim)) 0, rgba(0, 0, 0, calc(var(--glass-scrim) * 0.6)) calc(100% - var(--composer-clear)), transparent 100%);
 }
 .in-titlebar .main > .topbar::before, .in-titlebar .main > .topbar::after { display: none; }
 
@@ -13345,13 +13351,13 @@ body:has(.settings-page, .action-sheet) .pet { display: none; }
   .glass-control, .topbar .menu-btn, .topbar-actions, .composer-box, .menu-panel, .pop-panel.anchored-pop, .selection-menu, .settings-actions, .round-btn, .jump-btn, .pet-summon, .command-menu, .coord-mention-menu, .action-sheet-card { background: var(--surface); }
   .main:has(> .composer-slot) > .topbar::before { display: none; }
   .main:has(> .composer-slot) > .topbar::after { background: var(--bg); }
-  .composer-slot::before { display: none; }
+  .composer-slot::before, .composer-slot::after { display: none; }
 }
 @media (prefers-reduced-transparency: reduce) {
   .glass-control, .topbar .menu-btn, .topbar-actions, .composer-box, .menu-panel, .pop-panel.anchored-pop, .selection-menu, .settings-actions, .round-btn, .jump-btn, .pet-summon, .command-menu, .coord-mention-menu, .action-sheet-card { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; }
   .main:has(> .composer-slot) > .topbar::before { display: none; }
   .main:has(> .composer-slot) > .topbar::after { background: var(--bg); -webkit-backdrop-filter: none; backdrop-filter: none; }
-  .composer-slot::before { display: none; }
+  .composer-slot::before, .composer-slot::after { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .menu-panel, .pop-panel.anchored-pop { animation: none; }

@@ -32,7 +32,9 @@ test('glass chrome has scrolling content behind it without hiding either end of 
       await page.waitForFunction(() => Number.parseFloat(document.querySelector('.main').style.getPropertyValue('--chat-bottom-overlap')) > 0);
       const measure = () => page.evaluate(() => {
         const rect = selector => { const r = document.querySelector(selector).getBoundingClientRect(); return { top: r.top, bottom: r.bottom, height: r.height }; };
-        return { scroller: rect('.main > .scroller'), top: rect('.topbar'), input: rect('.composer-box'), thread: rect('.thread') };
+        const slot = document.querySelector('.composer-slot');
+        const blur = slot.getBoundingClientRect().top + Number.parseFloat(getComputedStyle(slot, '::before').top);
+        return { scroller: rect('.main > .scroller'), top: rect('.topbar'), input: rect('.composer-box'), thread: rect('.thread'), blur };
       });
       let bounds = await measure();
       assert.ok(bounds.scroller.top <= bounds.top.top + 1, 'content scrolls behind the top controls');
@@ -43,6 +45,7 @@ test('glass chrome has scrolling content behind it without hiding either end of 
       await scroller.evaluate(el => { el.scrollTop = el.scrollHeight; });
       bounds = await measure();
       assert.ok(bounds.thread.bottom <= bounds.input.top - 10, 'the last message remains above the input');
+      assert.ok(bounds.thread.bottom <= bounds.blur, 'at rest the newest output stays clear of the blur under the composer');
       await page.locator('.composer textarea').fill('多行输入\n检查输入框增高\n仍保留最后一条消息\n以及底部操作');
       await page.waitForTimeout(100);
       await scroller.evaluate(el => { el.scrollTop = el.scrollHeight; });
