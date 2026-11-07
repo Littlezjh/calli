@@ -22,6 +22,8 @@
   --glass-fade-blur: 8px;
   /* Under the composer: a darker, blurred band so the box stands out from the text behind it. */
   --glass-scrim: 0.07;
+  /* On a wide screen the composer's own soft shadow does the same job, following its round corners. */
+  --glass-halo: 0 10px 40px rgba(31, 30, 28, 0.11), 0 2px 8px rgba(31, 30, 28, 0.05);
   --z-desk-spread: 44;
   --z-pet: 46;
   --z-desk-menu: 72;
@@ -172,6 +174,7 @@
     --glass-rim: inset 0 0 0 1px rgba(255, 255, 255, 0.066), inset 0 1px 1px rgba(255, 255, 255, 0.12);
     --glass-lift: 0 2px 10px rgba(0, 0, 0, 0.2);
     --glass-scrim: 0.28;
+    --glass-halo: 0 10px 40px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
     color-scheme: dark;
   }
 }
@@ -232,6 +235,7 @@
   --glass-rim: inset 0 0 0 1px rgba(255, 255, 255, 0.066), inset 0 1px 1px rgba(255, 255, 255, 0.12);
   --glass-lift: 0 2px 10px rgba(0, 0, 0, 0.2);
   --glass-scrim: 0.28;
+  --glass-halo: 0 10px 40px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
   color-scheme: dark;
 }
 
@@ -13304,26 +13308,26 @@ body:has(.settings-page, .action-sheet) .pet { display: none; }
     color-mix(in srgb, var(--bg) calc(var(--glass-fade) * 0.7), transparent) calc(env(safe-area-inset-top) + 52px),
     color-mix(in srgb, var(--bg) calc(var(--glass-fade) * 0.3), transparent) calc(env(safe-area-inset-top) + 66px), transparent calc(env(safe-area-inset-top) + 76px));
 }
-/* Under the composer, two bands. The tint is as tall as the gap kept below the last line, so at rest
-   it falls on empty space and the newest output stays sharp; the blur is only a short fade at the
-   box's top edge, for what scrolls behind it. Both hug the box: as wide as the column, fading out
-   at the sides, so a wide window gets no grey bar across it. The slot's other children sit above. */
+/* Under the composer on a phone, two bands. The tint is as tall as the gap kept below the last line,
+   so at rest it falls on empty space and the newest output stays sharp; the blur is only a short fade
+   at the box's top edge, for what scrolls behind it. The slot's other children sit above both.
+   A wide screen draws neither: a band there reads as a grey bar with square corners around a round
+   box, so the box gets a soft shadow of its own instead. */
 .main:has(> .composer-slot) { --composer-clear: 48px; }
 .composer-slot > :not(.action-sheet) { position: relative; z-index: 1; }
-.composer-slot::before, .composer-slot::after {
-  --hug: linear-gradient(to right, transparent, #000 48px, #000 calc(100% - 48px), transparent);
-  content: ''; position: absolute; left: 50%; bottom: 0; width: calc(min(100%, var(--content-w) + 32px) + 96px); translate: -50% 0; pointer-events: none;
-}
+.composer-slot::before, .composer-slot::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; pointer-events: none; }
 .composer-slot::before {
   top: -16px;
   -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
-  -webkit-mask-image: linear-gradient(to top, #000 calc(100% - 16px), transparent), var(--hug); -webkit-mask-composite: source-in;
-  mask-image: linear-gradient(to top, #000 calc(100% - 16px), transparent), var(--hug); mask-composite: intersect;
+  -webkit-mask-image: linear-gradient(to top, #000 calc(100% - 16px), transparent); mask-image: linear-gradient(to top, #000 calc(100% - 16px), transparent);
 }
 .composer-slot::after {
   top: calc(-1 * var(--composer-clear));
   background: linear-gradient(to top, rgba(0, 0, 0, var(--glass-scrim)) 0, rgba(0, 0, 0, calc(var(--glass-scrim) * 0.6)) calc(100% - var(--composer-clear)), transparent 100%);
-  -webkit-mask-image: var(--hug); mask-image: var(--hug);
+}
+@media (min-width: 900px) {
+  .composer-slot::before, .composer-slot::after { display: none; }
+  .composer-box { box-shadow: var(--glass-rim), var(--glass-halo); }
 }
 .in-titlebar .main > .topbar::before, .in-titlebar .main > .topbar::after { display: none; }
 
