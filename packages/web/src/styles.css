@@ -13310,7 +13310,8 @@ body:has(.settings-page, .action-sheet) .pet { display: none; }
    box's top edge, for what scrolls behind it. The slot's other children are lifted above both. */
 .main:has(> .composer-slot) { --composer-clear: 48px; }
 .composer-slot > :not(.action-sheet) { position: relative; z-index: 1; }
-.composer-slot::before, .composer-slot::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; pointer-events: none; }
+/* Both reach the window's right edge across the room a leaning column leaves on a wide screen. */
+.composer-slot::before, .composer-slot::after { content: ''; position: absolute; left: 0; right: calc(-2 * var(--column-shift, 0px)); bottom: 0; pointer-events: none; }
 .composer-slot::before {
   top: -16px;
   -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
