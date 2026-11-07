@@ -13304,22 +13304,26 @@ body:has(.settings-page, .action-sheet) .pet { display: none; }
     color-mix(in srgb, var(--bg) calc(var(--glass-fade) * 0.7), transparent) calc(env(safe-area-inset-top) + 52px),
     color-mix(in srgb, var(--bg) calc(var(--glass-fade) * 0.3), transparent) calc(env(safe-area-inset-top) + 66px), transparent calc(env(safe-area-inset-top) + 76px));
 }
-/* The same wash under the composer; the box paints above it. */
 /* Under the composer, two bands. The tint is as tall as the gap kept below the last line, so at rest
    it falls on empty space and the newest output stays sharp; the blur is only a short fade at the
-   box's top edge, for what scrolls behind it. The slot's other children are lifted above both. */
+   box's top edge, for what scrolls behind it. Both hug the box: as wide as the column, fading out
+   at the sides, so a wide window gets no grey bar across it. The slot's other children sit above. */
 .main:has(> .composer-slot) { --composer-clear: 48px; }
 .composer-slot > :not(.action-sheet) { position: relative; z-index: 1; }
-/* Both reach the window's right edge across the room a leaning column leaves on a wide screen. */
-.composer-slot::before, .composer-slot::after { content: ''; position: absolute; left: 0; right: calc(-2 * var(--column-shift, 0px)); bottom: 0; pointer-events: none; }
+.composer-slot::before, .composer-slot::after {
+  --hug: linear-gradient(to right, transparent, #000 48px, #000 calc(100% - 48px), transparent);
+  content: ''; position: absolute; left: 50%; bottom: 0; width: calc(min(100%, var(--content-w) + 32px) + 96px); translate: -50% 0; pointer-events: none;
+}
 .composer-slot::before {
   top: -16px;
   -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
-  -webkit-mask-image: linear-gradient(to top, #000 calc(100% - 16px), transparent); mask-image: linear-gradient(to top, #000 calc(100% - 16px), transparent);
+  -webkit-mask-image: linear-gradient(to top, #000 calc(100% - 16px), transparent), var(--hug); -webkit-mask-composite: source-in;
+  mask-image: linear-gradient(to top, #000 calc(100% - 16px), transparent), var(--hug); mask-composite: intersect;
 }
 .composer-slot::after {
   top: calc(-1 * var(--composer-clear));
   background: linear-gradient(to top, rgba(0, 0, 0, var(--glass-scrim)) 0, rgba(0, 0, 0, calc(var(--glass-scrim) * 0.6)) calc(100% - var(--composer-clear)), transparent 100%);
+  -webkit-mask-image: var(--hug); mask-image: var(--hug);
 }
 .in-titlebar .main > .topbar::before, .in-titlebar .main > .topbar::after { display: none; }
 
