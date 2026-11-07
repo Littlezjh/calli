@@ -20,6 +20,8 @@
      them, and how far that is blurred. Low on purpose, so edges stay readable. */
   --glass-fade: 32%;
   --glass-fade-blur: 8px;
+  /* Under the composer: a darker, blurred band so the box stands out from the text behind it. */
+  --glass-scrim: 0.07;
   --z-desk-spread: 44;
   --z-pet: 46;
   --z-desk-menu: 72;
@@ -169,6 +171,7 @@
     --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.25);
     --glass-rim: inset 0 0 0 1px rgba(255, 255, 255, 0.066), inset 0 1px 1px rgba(255, 255, 255, 0.12);
     --glass-lift: 0 2px 10px rgba(0, 0, 0, 0.2);
+    --glass-scrim: 0.28;
     color-scheme: dark;
   }
 }
@@ -228,6 +231,7 @@
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.25);
   --glass-rim: inset 0 0 0 1px rgba(255, 255, 255, 0.066), inset 0 1px 1px rgba(255, 255, 255, 0.12);
   --glass-lift: 0 2px 10px rgba(0, 0, 0, 0.2);
+  --glass-scrim: 0.28;
   color-scheme: dark;
 }
 
@@ -13294,7 +13298,15 @@ body:has(.settings-page, .action-sheet) .pet { display: none; }
     color-mix(in srgb, var(--bg) calc(var(--glass-fade) * 0.3), transparent) calc(env(safe-area-inset-top) + 66px), transparent calc(env(safe-area-inset-top) + 76px));
 }
 /* The same wash under the composer; the box paints above it. */
-.composer-slot::before { content: ''; position: absolute; inset: -34px 0 0; pointer-events: none; background: linear-gradient(to top, color-mix(in srgb, var(--bg) var(--glass-fade), transparent) 55%, transparent); }
+/* Under the composer: a tinted band that fades upward and blurs what scrolls beneath, so the box has an edge
+   of its own. The slot's other children are lifted above it so they stay sharp. */
+.composer-slot > :not(.action-sheet) { position: relative; }
+.composer-slot::before {
+  content: ''; position: absolute; inset: -150px 0 0; pointer-events: none;
+  background: linear-gradient(to top, rgba(0, 0, 0, var(--glass-scrim)) 0, rgba(0, 0, 0, calc(var(--glass-scrim) * 0.75)) 35%, rgba(0, 0, 0, calc(var(--glass-scrim) * 0.3)) 70%, transparent 100%);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  -webkit-mask-image: linear-gradient(to top, #000 0, #000 40%, transparent 100%); mask-image: linear-gradient(to top, #000 0, #000 40%, transparent 100%);
+}
 .in-titlebar .main > .topbar::before, .in-titlebar .main > .topbar::after { display: none; }
 
 @media (max-width: 899px) {
