@@ -71,6 +71,34 @@ test('a selection in the answer becomes a quote in the composer and in the sent 
   );
 });
 
+test('a note number stays out of the glass bars the conversation scrolls under', async () => {
+  await openUi(page, daemon);
+  await page.getByText('hi there quoteselect').first().waitFor({ timeout: 15_000 });
+  await selectStartOfAnswer(7);
+  await page.locator('.selection-menu button', { hasText: '注释' }).click();
+  await page.locator('.selection-add').click();
+  await page.locator('.note-mark').waitFor({ timeout: 5_000 });
+
+  // Give the thread room to scroll, then slide the passage up under the top bar.
+  await page.evaluate(() => {
+    const scroller = document.querySelector('.main > .scroller');
+    const spacer = document.createElement('div');
+    spacer.style.height = '3000px';
+    scroller.appendChild(spacer);
+  });
+  const topbar = await page.locator('.main > .topbar').boundingBox();
+  await page.evaluate((barBottom) => {
+    const scroller = document.querySelector('.main > .scroller');
+    const mark = document.querySelector('.note-mark').getBoundingClientRect();
+    scroller.scrollTop += mark.top + mark.height / 2 - (barBottom - 10);
+  }, topbar.y + topbar.height);
+  await page.waitForFunction(() => !document.querySelector('.note-mark'), null, { timeout: 5_000 });
+
+  // And back in the readable area it returns.
+  await page.evaluate(() => { document.querySelector('.main > .scroller').scrollTop = 0; });
+  await page.locator('.note-mark').waitFor({ timeout: 5_000 });
+});
+
 test('asking in the side chat opens a thread of its own', async () => {
   const originalAnswer = await page.locator('.main .thread .markdown').first().innerText();
   await selectStartOfAnswer(7);
