@@ -1239,17 +1239,27 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const [resumeBusy, setResumeBusy] = useState(false);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLElement>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = mainRef.current;
     if (!el) return;
+    const topbar = el.querySelector<HTMLElement>(':scope > .topbar');
+    const composer = el.querySelector<HTMLElement>(':scope > .composer-slot');
     const read = () => {
       // What the column's lean toward the middle of the screen is worked out from (see styles.css).
       // clientWidth includes the padding the lean adds, so the two do not chase each other.
       el.style.setProperty('--main-w', `${el.clientWidth}px`);
+      // Let the conversation pass behind glass controls. Padding keeps both ends readable;
+      // measure the slot because queues, attachments and the phone keyboard change its height.
+      // Notices keep their place in the flow, and an installed window keeps its native title band.
+      const top = composer && topbar?.nextElementSibling?.classList.contains('scroller') && !el.closest('.in-titlebar') ? topbar.offsetHeight : 0;
+      el.style.setProperty('--chat-top-overlap', `${top}px`);
+      el.style.setProperty('--chat-bottom-overlap', `${composer?.offsetHeight ?? 0}px`);
     };
     read();
     const watch = new ResizeObserver(read);
     watch.observe(el);
+    if (topbar) watch.observe(topbar);
+    if (composer) watch.observe(composer);
     return () => watch.disconnect();
   });
   const [agentsStart, setAgentsStart] = useState<string | null>(null);

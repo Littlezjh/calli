@@ -78,6 +78,7 @@ test('effort slider, model subview, reset and compression work in both themes an
         assert.equal(patches, 0, 'dragging only previews the selection');
         await page.mouse.up();
         await waitFor(async () => (await read(thread)).effort === 'max');
+        await waitFor(async () => patches === 1);
         assert.equal(patches, 1, 'releasing writes once');
       }
       await waitFor(async () => (await read(thread)).effort === 'max');
@@ -89,6 +90,7 @@ test('effort slider, model subview, reset and compression work in both themes an
       await slider.press('End');
       await waitFor(async () => (await read(thread)).effort === 'max');
       // The button shows the level as a dial; its name says it in words. A phone shows the dial alone.
+      await waitFor(async () => (await page.locator('.model-control-trigger').getAttribute('aria-label')) === '模型与思考强度：GPT Big · 最大');
       assert.equal(await page.locator('.model-control-trigger').getAttribute('aria-label'), '模型与思考强度：GPT Big · 最大');
       assert.equal(await page.locator('.model-control-trigger .model-trigger-name').count(), mobile ? 0 : 1);
       if (mobile) {

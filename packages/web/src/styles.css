@@ -8,13 +8,16 @@
 :root,
 [data-palette='paper'] {
   /* One translucent material for navigation and transient controls. Content keeps an opaque surface. */
-  --glass-bg: color-mix(in srgb, var(--surface) 84%, transparent);
-  --glass-edge: color-mix(in srgb, var(--surface) 58%, var(--border));
-  --glass-highlight: color-mix(in srgb, var(--surface) 76%, transparent);
-  --glass-shadow: inset 0 1px 0 var(--glass-highlight), var(--shadow-card);
-  --glass-pop-shadow: inset 0 1px 0 var(--glass-highlight), var(--shadow-pop);
-  --glass-filter: blur(22px) saturate(135%);
-  --navigation-fade: linear-gradient(var(--bg) 72%, transparent);
+  --glass-bg: color-mix(in srgb, var(--surface) 52%, transparent);
+  --glass-lighting: linear-gradient(145deg, color-mix(in srgb, var(--surface) 48%, transparent), transparent 45%, color-mix(in srgb, var(--surface) 14%, transparent));
+  --glass-edge: color-mix(in srgb, var(--text) 10%, transparent);
+  --glass-highlight: color-mix(in srgb, var(--surface) 88%, var(--text));
+  --glass-shadow: inset 0 1px 0 var(--glass-highlight), inset 0 -1px 0 var(--glass-edge), var(--shadow-card);
+  --glass-pop-shadow: inset 0 1px 0 var(--glass-highlight), inset 0 -1px 0 var(--glass-edge), var(--shadow-pop);
+  --glass-filter: blur(16px) saturate(155%);
+  --navigation-fade: linear-gradient(color-mix(in srgb, var(--bg) 70%, transparent), color-mix(in srgb, var(--bg) 24%, transparent) 70%, transparent);
+  --navigation-mask: linear-gradient(var(--on-color) 70%, transparent);
+  --navigation-filter: blur(12px);
   --z-desk-spread: 44;
   --z-pet: 46;
   --z-desk-menu: 72;
@@ -13219,7 +13222,7 @@ button.pet-summon:hover { background: var(--surface-2); color: var(--text); }
 /* Shared navigation pages: a persistent list on desktop, one page at a time on phones. */
 .app:has(.settings-page) .shell > :is(.sidebar, .sidebar-resize-handle) { display: none; }
 .app:has(.settings-page) .shell > .main { transform: none; visibility: visible; }
-body:has(.settings-page) .pet { display: none; }
+body:has(.settings-page, .action-sheet) .pet { display: none; }
 .settings-page { display: flex; flex: 1; flex-direction: column; min-height: 0; height: 100%; overflow: hidden; background: var(--bg); }
 .settings-topbar { display: flex; align-items: center; gap: 16px; flex: none; min-height: 72px; padding: 12px 28px; }
 .settings-topbar h1 { margin: 0; font-size: 20px; font-weight: 600; outline: none; }
@@ -13268,7 +13271,7 @@ body:has(.settings-page) .pet { display: none; }
 .main:has(.settings-standalone) > .scroller { padding: 0; overflow: hidden; }
 
 /* One material and row rhythm across contextual menus and value pickers. */
-.menu-panel, .pop-panel.anchored-pop, .selection-menu { border: 1px solid var(--glass-edge); border-radius: var(--radius-lg); background: var(--glass-bg); box-shadow: var(--glass-pop-shadow); -webkit-backdrop-filter: var(--glass-filter); backdrop-filter: var(--glass-filter); padding: 8px; }
+.menu-panel, .pop-panel.anchored-pop, .selection-menu { border: 1px solid var(--glass-edge); border-radius: var(--radius-lg); background: var(--glass-lighting), var(--glass-bg); box-shadow: var(--glass-pop-shadow); -webkit-backdrop-filter: var(--glass-filter); backdrop-filter: var(--glass-filter); padding: 8px; }
 .menu-float { max-height: calc(var(--vvh, 100dvh) - 24px); min-width: 240px; max-width: min(340px, calc(100vw - 24px)); }
 .menu-touch { overflow-y: auto; overscroll-behavior: contain; -webkit-touch-callout: none; user-select: none; }
 .sheet-unarmed .menu-touch { pointer-events: none; }
@@ -13278,11 +13281,30 @@ body:has(.settings-page) .pet { display: none; }
 .pop-panel.anchored-pop { position: fixed; top: var(--pop-top); left: var(--pop-left); right: auto; bottom: auto; width: max-content; min-width: min(260px, calc(100vw - 24px)); max-width: min(380px, calc(100vw - 24px)); max-height: var(--pop-height, 520px); overflow-y: auto; overscroll-behavior: contain; z-index: 80; animation: pop-in .14s ease-out; }
 .pop-panel.anchored-pop .pop-scroll { max-height: min(340px, calc(var(--pop-height, 520px) - 96px)); }
 .pop-panel.anchored-pop .pop-search { position: sticky; top: -8px; z-index: 1; background: var(--surface); }
-.glass-control, .topbar .menu-btn, .topbar-actions, .composer-box { border: 1px solid var(--glass-edge); background: var(--glass-bg); box-shadow: var(--glass-shadow); -webkit-backdrop-filter: var(--glass-filter); backdrop-filter: var(--glass-filter); }
+.glass-control, .topbar .menu-btn, .topbar-actions, .composer-box { border: 1px solid var(--glass-edge); background: var(--glass-lighting), var(--glass-bg); box-shadow: var(--glass-shadow); -webkit-backdrop-filter: var(--glass-filter); backdrop-filter: var(--glass-filter); }
 .glass-control { border-radius: var(--radius-pill); }
 .topbar-actions { border-radius: var(--radius-pill); padding: 2px 4px; }
 .topbar-actions .icon-btn { background: transparent; border: 0; box-shadow: none; }
 .composer-box:focus-within { box-shadow: var(--glass-shadow); border-color: var(--border-strong); }
+
+/* Glass needs a backdrop: the scroller spans the chrome, while its padding keeps the first
+   and last lines clear at rest. No extra rounded container is drawn around the top bar. */
+.main:has(> .composer-slot) > .scroller {
+  margin-top: calc(-1 * var(--chat-top-overlap, 0px));
+  margin-bottom: calc(-1 * var(--chat-bottom-overlap, 0px));
+  padding-top: calc(var(--chat-top-overlap, 0px) + 14px);
+  padding-bottom: calc(var(--chat-bottom-overlap, 0px) + 28px);
+  scroll-padding-top: calc(var(--chat-top-overlap, 0px) + 14px);
+  scroll-padding-bottom: calc(var(--chat-bottom-overlap, 0px) + 28px);
+}
+.main:has(> .composer-slot) > .topbar { position: relative; z-index: 4; }
+.main:has(> .composer-slot) > .topbar::after {
+  content: ''; position: absolute; inset: 0 0 -16px; height: auto; z-index: -1;
+  background: var(--navigation-fade); pointer-events: none;
+  -webkit-backdrop-filter: var(--navigation-filter); backdrop-filter: var(--navigation-filter);
+  -webkit-mask-image: var(--navigation-mask); mask-image: var(--navigation-mask);
+}
+.in-titlebar .main > .topbar::after { display: none; }
 
 @media (max-width: 899px) {
   .settings-topbar { padding: calc(10px + env(safe-area-inset-top)) 18px 14px; gap: 12px; min-height: 76px; background: var(--bg); }
@@ -13319,9 +13341,11 @@ body:has(.settings-page) .pet { display: none; }
 }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .glass-control, .topbar .menu-btn, .topbar-actions, .composer-box, .menu-panel, .pop-panel.anchored-pop, .selection-menu, .settings-actions { background: var(--surface); }
+  .main:has(> .composer-slot) > .topbar::after { background: var(--bg); }
 }
 @media (prefers-reduced-transparency: reduce) {
   .glass-control, .topbar .menu-btn, .topbar-actions, .composer-box, .menu-panel, .pop-panel.anchored-pop, .selection-menu, .settings-actions { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .main:has(> .composer-slot) > .topbar::after { background: var(--bg); -webkit-backdrop-filter: none; backdrop-filter: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .menu-panel, .pop-panel.anchored-pop { animation: none; }
