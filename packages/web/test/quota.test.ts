@@ -5,6 +5,16 @@ import { formatReset, periodName, quotaColumns, quotaGroups, quotaLeft, quotaLev
 
 const win = (over: Partial<QuotaWindow> = {}): QuotaWindow => ({ label: '5H', usedPercent: 0, ...over });
 
+test('legacy account-wide weekly readings pair with short readings without merging model-specific pools', () => {
+  const short = win(), week = win({ label: '7D', scope: '全部模型', usedPercent: 95 });
+  const opus = win({ label: '7D', scope: 'Opus', usedPercent: 71 });
+  const groups = quotaGroups([week, opus, short]);
+  assert.deepEqual(groups, [{ scope: undefined, windows: [week, short] }, { scope: 'Opus', windows: [opus] }]);
+  assert.deepEqual(quotaSlots(groups[0].windows), [{ label: '5H', window: short }, { label: '7D', window: week }],
+    'both original readings are visible without a false missing period');
+  assert.deepEqual([quotaLeft(short), quotaLeft(week), quotaLeft(opus)], [100, 5, 29]);
+});
+
 test('quota previews retain both periods and distinguish missing windows from zero remaining', () => {
   const short = win({ usedPercent: 100 }), week = win({ label: '7D', usedPercent: 0 });
   assert.deepEqual(quotaSlots([week, short]), [{ label: '5H', window: short }, { label: '7D', window: week }]);

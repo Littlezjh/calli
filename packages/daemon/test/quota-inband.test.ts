@@ -30,11 +30,13 @@ test('a rate_limit_event becomes quota windows, unknown kinds stay as they are',
     },
   })!;
   assert.deepEqual(quota.windows.map(w => [w.label, w.scope, w.usedPercent]).sort((a, b) => a[2] - b[2]),
-    [['5H', undefined, 90], ['7D', '全部模型', 42], ['7D', 'Opus', 71]].sort((a, b) => a[2] - b[2]));
+    [['5H', undefined, 90], ['7D', undefined, 42], ['7D', 'Opus', 71]].sort((a, b) => a[2] - b[2]));
   assert.ok(quota.windows[0].resetsAt && Date.parse(quota.windows[0].resetsAt) > Date.now());
   // A rejection about a window it did not itemize counts as that window being full.
   const rejected = acpRateLimitQuota({ status: 'rejected', rateLimitType: 'seven_day_sonnet', resetsAt: now + 7200 })!;
   assert.equal(rejected.windows.find(w => w.scope === 'Sonnet')?.usedPercent, 100);
+  assert.deepEqual(acpRateLimitQuota({ rateLimitType: 'seven_day', utilization: 0.95 })?.windows,
+    [{ label: '7D', usedPercent: 95 }], 'single-window updates also use the account-wide pool');
   assert.equal(acpRateLimitQuota({}), null);
   assert.equal(acpRateLimitQuota('junk'), null);
   assert.equal(acpRateLimitQuota({ unifiedWindows: { five_hour: { utilization: 9 } } }), null, 'over-full utilization is not a share');
@@ -50,7 +52,7 @@ test('the adapter observes quota as the agent answers', async () => {
     await session.prompt({ text: 'rate-limit-tell', images: [] }, { emit: e => events.push(e), requestApproval: async () => ({ cancelled: true }) });
     assert.equal(seen.length, 1);
     assert.equal(seen[0].windows.find(w => w.label === '5H')?.usedPercent, 90);
-    assert.equal(seen[0].windows.find(w => w.scope === '全部模型')?.usedPercent, 42);
+    assert.equal(seen[0].windows.find(w => w.label === '7D' && w.scope === undefined)?.usedPercent, 42);
   } finally { await session.close(); }
 });
 
@@ -65,8 +67,9 @@ test('the hub reads plan usage the thread itself reported, with no probe', async
     await wait(() => manager.threadView(thread.id).status !== 'running');
     // The in-band reading answers decisionQuota without spawning any usage probe.
     const quota = await manager.decisionQuota('cc');
-    assert.equal(quota?.windows.find(w => w.label === '5H')?.usedPercent, 90);
+    assert.deepEqual(quota?.windows.map(w => [w.label, w.scope, w.usedPercent]),
+      [['5H', undefined, 90], ['7D', undefined, 42]], 'both account-wide periods reach quota decisions together');
     // And it is what a plain cached read serves, the dashboard included.
-    assert.equal((await manager.agentQuota('cc')).windows.find(w => w.label === '5H')?.usedPercent, 90);
+    assert.deepEqual((await manager.agentQuota('cc')).windows, quota?.windows, 'the dashboard serves the same paired in-band reading');
   } finally { await manager.shutdown(); store.close(); rmSync(dir, { recursive: true, force: true }); }
 });

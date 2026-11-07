@@ -12,7 +12,7 @@ test('chat quota and account pages share refreshes and preserve the conversation
     { id: 'hidden', adapter: 'codex', label: 'Hidden', hidden: true, command },
   ] }) });
   const browser = await launchBrowser();
-  const shots = '/tmp/calli-quota-navigation'; mkdirSync(shots, { recursive: true });
+  const shots = process.env.CALLI_E2E_SHOTS_DIR || '/tmp/calli-quota-navigation'; mkdirSync(shots, { recursive: true });
   try {
     const thread = await (await api(daemon, '/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'codex', cwd: daemon.workdir, title: 'Quota navigation return' }) })).json();
     await api(daemon, `/api/threads/${thread.id}/turns`, { method: 'POST', body: JSON.stringify({ text: Array.from({ length: 60 }, (_, index) => `Review paragraph ${index + 1}`).join('\n\n') }) });
@@ -28,7 +28,8 @@ test('chat quota and account pages share refreshes and preserve the conversation
         if (url.searchParams.has('refresh') && agent === 'codex') used += 1;
         return route.fulfill({ json: { plan: { id: 'test-plan', label: 'Test plan' }, checkedAt: new Date().toISOString(), windows: agent === 'backup' || empty ? [] : [
           ...(!missingShort ? [{ label: '5H', usedPercent: 25, resetsAt: new Date(Date.now() + 2 * 3600000).toISOString() }] : []),
-          { label: '7D', usedPercent: used, resetsAt: new Date(Date.now() + 3 * 86400000).toISOString() },
+          // An older server or cached reading still names the global weekly scope this way.
+          { label: '7D', scope: '全部模型', usedPercent: used, resetsAt: new Date(Date.now() + 3 * 86400000).toISOString() },
           { label: '7D', scope: 'Review', usedPercent: 10 },
         ] } });
       });
@@ -52,6 +53,7 @@ test('chat quota and account pages share refreshes and preserve the conversation
       await quick.getByRole('meter').filter({ hasText: '18%' }).waitFor();
       assert.deepEqual([...new Set(requests)], ['codex'], 'opening the menu reads only the current account');
       assert.equal(await quick.getByRole('meter').count(), 2, 'both main periods are visible immediately');
+      assert.equal(await quick.locator(':scope > .quota-preview > .quota-pair .quota-missing').count(), 0, 'legacy account-wide periods are not split into false missing pairs');
       await quick.locator('summary').click();
       assert.equal(await quick.getByRole('meter').count(), 3, 'other model pools remain inspectable');
       await quick.locator('summary').click();
@@ -111,7 +113,7 @@ test('chat quota and account pages share refreshes and preserve the conversation
         fail = false; used = 99;
         await quick.getByRole('menuitem', { name: '刷新 Primary 的额度', exact: true }).click();
         await quick.getByRole('meter').filter({ hasText: /^每周0%/ }).waitFor();
-        assert.equal(await quick.getByRole('meter', { name: '每周', exact: true }).getAttribute('aria-valuenow'), '0');
+        assert.equal(await quick.getByRole('meter', { name: '全部模型 · 每周', exact: true }).getAttribute('aria-valuenow'), '0');
         missingShort = true;
         await quick.getByRole('menuitem', { name: '刷新 Primary 的额度', exact: true }).click();
         await quick.locator(':scope > .quota-preview > .quota-pair').getByText('未提供', { exact: true }).waitFor();

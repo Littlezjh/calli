@@ -6,7 +6,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
+import { startDaemon, openUi, api, launchBrowser, repoRoot } from '../harness.mjs';
 
 test('the quota board shows each account plan beside its name', { timeout: 180000 }, async () => {
   const home = mkdtempSync(join(tmpdir(), 'calli-quota-plan-'));
@@ -69,4 +69,39 @@ test('the quota board shows each account plan beside its name', { timeout: 18000
     await daemon?.stop();
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+test('live Claude rate limits keep both account-wide periods in the menu and overview', { timeout: 90000 }, async () => {
+  const daemon = await startDaemon({ CALLI_AGENTS_JSON: JSON.stringify({ agents: [
+    { id: 'claude', adapter: 'claude', command: [process.execPath, join(repoRoot, 'daemon/test/fixtures/fake-acp.mjs')] },
+  ] }) });
+  const browser = await launchBrowser();
+  try {
+    const thread = await (await api(daemon, '/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'claude', cwd: daemon.workdir, title: 'Live quota periods' }) })).json();
+    await api(daemon, `/api/threads/${thread.id}/turns`, { method: 'POST', body: JSON.stringify({ text: 'rate-limit-tell' }) });
+    for (const phone of [false, true]) for (const theme of ['light', 'dark']) {
+      const context = await browser.newContext({ viewport: phone ? { width: 390, height: 844 } : { width: 1440, height: 960 }, isMobile: phone, hasTouch: phone, colorScheme: theme });
+      try {
+        const page = await context.newPage();
+        await openUi(page, daemon);
+        if (phone) await page.locator('.menu-btn').click();
+        await page.locator('.sidebar .thread-item', { hasText: thread.title }).click();
+        await page.getByText('told', { exact: true }).waitFor();
+        assert.equal(await page.locator('.topbar [role=meter], .chat-quota-preview').count(), 0);
+        await page.locator('.topbar-more').click();
+        const quick = page.locator('.quota-menu-preview');
+        await quick.getByRole('meter', { name: '每周', exact: true }).waitFor();
+        assert.deepEqual(await quick.getByRole('meter').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-valuenow'))), ['10', '58']);
+        assert.equal(await quick.locator('.quota-pools, .quota-missing').count(), 0, 'live reports produce one complete pair without a usage probe');
+        const shots = process.env.CALLI_E2E_SHOTS_DIR;
+        if (shots) await page.screenshot({ path: join(shots, `live-menu-${phone ? 'phone' : 'desktop'}-${theme}.png`), animations: 'disabled' });
+        await quick.getByRole('menuitem', { name: '查看全部额度', exact: true }).click();
+        const board = page.getByRole('region', { name: '额度', exact: true });
+        await board.getByRole('meter', { name: '每周', exact: true }).waitFor();
+        assert.deepEqual(await board.getByRole('meter').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-valuenow'))), ['10', '58']);
+        assert.equal(await board.locator('.quota-pools, .quota-missing').count(), 0);
+        if (shots) await page.screenshot({ path: join(shots, `live-board-${phone ? 'phone' : 'desktop'}-${theme}.png`), animations: 'disabled' });
+      } finally { await context.close(); }
+    }
+  } finally { await browser.close(); await daemon.stop(); }
 });

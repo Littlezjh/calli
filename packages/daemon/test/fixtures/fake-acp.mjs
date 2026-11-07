@@ -354,7 +354,7 @@ rl.on('line', (line) => {
         if (process.env.FAKE_ACP_SPEED_REVOKED) { currentSpeed = 'off'; update({ sessionUpdate: 'config_option_update', configOptions: sessionInfo().configOptions }); }
         out({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } }); return;
       }
-      if (text === 'rate-limit-tell') {
+      if (text.split('\n')[0] === 'rate-limit-tell') {
         // Claude Code's rate_limit_event as the ACP bridge forwards it: plan usage on a usage_update.
         const now = Math.floor(Date.now() / 1000);
         update({ sessionUpdate: 'usage_update', used: 1000, size: 200000, _meta: { '_claude/rateLimit': {

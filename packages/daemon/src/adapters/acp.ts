@@ -52,7 +52,7 @@ interface ConfigOption {
  *  prints (5H/7D); the scoped weekly pools keep their scope so model decisions can use them. */
 const RATE_LIMIT_KINDS: Record<string, { label: string; scope?: string; modelIds?: string[] }> = {
   five_hour: { label: '5H' },
-  seven_day: { label: '7D', scope: '全部模型' },
+  seven_day: { label: '7D' },
   seven_day_opus: { label: '7D', scope: 'Opus', modelIds: ['opus'] },
   seven_day_sonnet: { label: '7D', scope: 'Sonnet', modelIds: ['sonnet'] },
 };
