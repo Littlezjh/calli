@@ -3,6 +3,12 @@ import type { Messages } from './zh';
 const plural = (n: number, one: string, other: string) => `${n} ${n === 1 ? one : other}`;
 
 export const en: Messages = {
+  'quota.percent': (percent: number) => `${percent}%`,
+  'quota.notReported': 'Not reported',
+  'quota.notRead': 'Quota not read yet',
+  'quota.unknown': '—',
+  'quota.morePools': (count: number) => `${count} more model ${count === 1 ? 'pool' : 'pools'}`,
+  'quota.preview': (reading: string) => `Quota: ${reading}. Open quota preview`,
   'quota.query': 'Check quota',
   'pickers.permissionIs': (mode: string) => `Permissions: ${mode}`,
   "quota.resetUnknown": "Reset time unknown",
@@ -13,7 +19,7 @@ export const en: Messages = {
   "quota.filter": "Filter accounts",
   "quota.attention": "Needs attention",
   "quota.noMatches": "No matching accounts",
-  "quota.overviewHint": "Each account shows its most constrained window. Select it to view all limits.",
+  "quota.overviewHint": "Each period shows remaining quota. Missing periods are not treated as 0%.",
   "quota.quickTitle": "Quota overview",
   "quota.all": "View all quotas",
   "quota.refresh": "Refresh quota",

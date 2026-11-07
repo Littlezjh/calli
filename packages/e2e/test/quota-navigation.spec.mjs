@@ -16,17 +16,18 @@ test('chat quota and account pages share refreshes and preserve the conversation
   try {
     const thread = await (await api(daemon, '/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'codex', cwd: daemon.workdir, title: 'Quota navigation return' }) })).json();
     await api(daemon, `/api/threads/${thread.id}/turns`, { method: 'POST', body: JSON.stringify({ text: Array.from({ length: 60 }, (_, index) => `Review paragraph ${index + 1}`).join('\n\n') }) });
-    for (const mobile of [false, true]) for (const theme of ['light', 'dark']) {
-      const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 1000 }, isMobile: mobile, hasTouch: mobile, colorScheme: theme });
+    for (const width of [320, 390, 1440]) for (const theme of ['light', 'dark']) {
+      const mobile = width < 700;
+      const context = await browser.newContext({ viewport: { width, height: mobile ? 844 : 1000 }, isMobile: mobile, hasTouch: mobile, colorScheme: theme });
       const page = await context.newPage(); page.setDefaultTimeout(15000);
-      const errors = [], requests = []; let used = 82, fail = false, backupFailed = true;
+      const errors = [], requests = []; let used = 82, fail = false, backupFailed = true, missingShort = false, empty = false;
       page.on('pageerror', error => errors.push(error.message));
       await page.route('**/api/agents/*/quota*', async route => {
         const url = new URL(route.request().url()); const agent = url.pathname.split('/')[3]; requests.push(agent);
         if (agent === 'codex' && fail || agent === 'backup' && backupFailed) return route.fulfill({ status: 503, json: { error: 'Offline for test' } });
         if (url.searchParams.has('refresh') && agent === 'codex') used += 1;
-        return route.fulfill({ json: { plan: { id: 'test-plan', label: 'Test plan' }, checkedAt: new Date().toISOString(), windows: agent === 'backup' ? [] : [
-          { label: '5H', usedPercent: 25, resetsAt: new Date(Date.now() + 2 * 3600000).toISOString() },
+        return route.fulfill({ json: { plan: { id: 'test-plan', label: 'Test plan' }, checkedAt: new Date().toISOString(), windows: agent === 'backup' || empty ? [] : [
+          ...(!missingShort ? [{ label: '5H', usedPercent: 25, resetsAt: new Date(Date.now() + 2 * 3600000).toISOString() }] : []),
           { label: '7D', usedPercent: used, resetsAt: new Date(Date.now() + 3 * 86400000).toISOString() },
           { label: '7D', scope: 'Review', usedPercent: 10 },
         ] } });
@@ -35,7 +36,12 @@ test('chat quota and account pages share refreshes and preserve the conversation
       if (mobile) await page.getByRole('button', { name: '打开线程列表', exact: true }).click();
       await page.locator('.sidebar .thread-item', { hasText: 'Quota navigation return' }).click();
       await page.locator('.composer textarea').fill('Draft survives quota');
-      assert.equal(requests.length, 0, 'chat does not query quotas before the quick view opens');
+      await page.locator('.chat-quota-preview').getByRole('meter').first().waitFor();
+      assert.deepEqual([...new Set(requests)], ['codex'], 'the visible preview reads only the current account');
+      assert.equal(await page.locator('.chat-quota-preview').getByRole('meter').count(), 2);
+      assert.equal(await page.locator('.chat-quota-preview').evaluate(el => el.scrollWidth > el.clientWidth + 1), false, 'both title bars fit');
+      assert.equal(await page.locator('.chat-quota-number > span:last-child').evaluateAll(els => els.some(el => el.scrollWidth > el.clientWidth)), false, 'percentages remain readable at narrow widths');
+      await page.screenshot({ path: `${shots}/header-${width}-${theme}.png` });
       assert.equal(await page.locator('.composer .chat-quota-trigger').count(), 0);
       assert.equal(requests.includes('backup'), false, 'chat does not load other account quotas');
       assert.equal(requests.includes('hidden'), false);
@@ -44,18 +50,22 @@ test('chat quota and account pages share refreshes and preserve the conversation
       await page.waitForTimeout(150); const scroll = await page.locator('.scroller').evaluate(el => el.scrollTop);
       const openQuick = async () => {
         await page.getByRole('button', { name: '这个线程的更多操作', exact: true }).click();
-        await page.getByRole('menuitem', { name: '额度查询', exact: true }).click();
       };
-      await openQuick(); const quick = page.getByRole('menu', { name: '额度快览', exact: true });
+      await openQuick(); const quick = page.locator('.quota-menu-preview');
       await quick.getByRole('meter').filter({ hasText: '18%' }).waitFor();
-      assert.equal(await quick.getByRole('meter').count(), 3);
+      assert.equal(await quick.getByRole('meter').count(), 2, 'both main periods are visible immediately');
+      await quick.locator('summary').click();
+      assert.equal(await quick.getByRole('meter').count(), 3, 'other model pools remain inspectable');
+      await quick.locator('summary').click();
       assert.equal(await page.getByRole('dialog').count(), 0);
-      const bounds = await quick.boundingBox(); assert.ok(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= page.viewportSize().width + 1);
-      await page.screenshot({ path: `${shots}/quick-${mobile ? 'phone' : 'desktop'}-${theme}.png` });
-      await quick.getByRole('button', { name: '刷新 codex 的额度', exact: true }).click();
+      const bounds = await page.locator('.menu-float').boundingBox(); assert.ok(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= page.viewportSize().width + 1);
+      await page.screenshot({ path: `${shots}/quick-${width}-${theme}.png` });
+      await quick.getByRole('menuitem', { name: '刷新 Primary 的额度', exact: true }).click();
       await quick.getByRole('meter').filter({ hasText: '17%' }).waitFor();
-      await quick.getByRole('button', { name: '查看全部额度', exact: true }).click();
+      await quick.getByRole('menuitem', { name: '查看全部额度', exact: true }).click();
       const list = page.getByRole('region', { name: '额度', exact: true }); await list.waitFor();
+      assert.equal(await page.locator('.jump-btn').count(), 0, 'chat controls stay out of the settings page');
+      assert.equal(await list.locator('.quota-page-filters').evaluate(el => el.scrollWidth > el.clientWidth + 1), false, 'search and filters stay inside the phone page');
       assert.equal(await page.locator('.sidebar').isVisible(), false);
       await list.locator('.quota-account-row', { hasText: 'Primary' }).getByRole('meter').filter({ hasText: '17%' }).waitFor();
       assert.equal(await list.locator('.quota-account-row', { hasText: 'Hidden' }).count(), 0);
@@ -63,8 +73,13 @@ test('chat quota and account pages share refreshes and preserve the conversation
       await list.getByRole('searchbox', { name: '搜索账号', exact: true }).fill('not-an-account');
       await list.getByText('没有匹配的账号', { exact: true }).waitFor();
       await list.getByRole('searchbox', { name: '搜索账号', exact: true }).fill('');
-      await page.screenshot({ path: `${shots}/list-${mobile ? 'phone' : 'desktop'}-${theme}.png` });
-      await list.getByRole('button', { name: '查看 Primary 的额度详情', exact: true }).click();
+      await page.screenshot({ path: `${shots}/list-${width}-${theme}.png` });
+      const primary = list.locator('.quota-account-row', { hasText: 'Primary' });
+      assert.equal(await primary.getByRole('meter').count(), 2);
+      assert.equal(await primary.evaluate(el => el.scrollWidth > el.clientWidth + 1), false, 'the account row fits without clipping either period');
+      await primary.locator('summary').click();
+      assert.equal(await primary.getByRole('meter').count(), 3);
+      await primary.getByRole('button', { name: '查看 Primary 的额度详情', exact: true }).click();
       const detail = page.getByRole('region', { name: 'Primary', exact: true }); await detail.waitFor();
       assert.equal(await detail.getByRole('meter').count(), 3);
       fail = true; await detail.getByRole('button', { name: '刷新 Primary 的额度', exact: true }).click();
@@ -72,7 +87,7 @@ test('chat quota and account pages share refreshes and preserve the conversation
       assert.ok((await detail.innerText()).includes('17%'));
       fail = false; await detail.getByRole('button', { name: '重试', exact: true }).click();
       await detail.getByRole('meter').filter({ hasText: '16%' }).waitFor();
-      await page.screenshot({ path: `${shots}/detail-${mobile ? 'phone' : 'desktop'}-${theme}.png` });
+      await page.screenshot({ path: `${shots}/detail-${width}-${theme}.png` });
       await page.goBack(); await list.waitFor();
       await list.getByRole('button', { name: '查看 Backup 的额度详情', exact: true }).click();
       const backup = page.getByRole('region', { name: 'Backup', exact: true });
@@ -85,9 +100,32 @@ test('chat quota and account pages share refreshes and preserve the conversation
       assert.equal(await page.locator('.composer textarea').inputValue(), 'Draft survives quota');
       await openQuick();
       await quick.getByRole('meter').filter({ hasText: '16%' }).waitFor();
-      await quick.getByRole('button', { name: '关闭', exact: true }).click();
+      await page.keyboard.press('Escape');
+      await page.locator('.chat-quota-preview').getByRole('meter').filter({ hasText: '16%' }).waitFor();
       assert.ok(Math.abs(await page.locator('.scroller').evaluate(el => el.scrollTop) - scroll) < 2, 'reading position is restored');
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+      if (width === 320 && theme === 'dark') {
+        await openQuick();
+        fail = true;
+        await quick.getByRole('menuitem', { name: '刷新 Primary 的额度', exact: true }).click();
+        await quick.getByText('刷新失败，显示上次结果', { exact: true }).waitFor();
+        await page.locator('.chat-quota-preview.stale').waitFor();
+        assert.equal(await quick.getByRole('meter').count(), 2, 'failed reads retain both cached periods');
+        fail = false; used = 99;
+        await quick.getByRole('menuitem', { name: '刷新 Primary 的额度', exact: true }).click();
+        await quick.getByRole('meter').filter({ hasText: /^每周0%/ }).waitFor();
+        assert.equal(await page.locator('.chat-quota-preview').getByRole('meter', { name: '每周', exact: true }).getAttribute('aria-valuenow'), '0');
+        missingShort = true;
+        await quick.getByRole('menuitem', { name: '刷新 Primary 的额度', exact: true }).click();
+        await quick.locator(':scope > .quota-preview > .quota-pair').getByText('未提供', { exact: true }).waitFor();
+        assert.equal(await quick.getByRole('meter').count(), 1, 'a missing short period has no invented zero meter');
+        assert.equal(await page.locator('.chat-quota-preview').getByRole('meter').count(), 1);
+        empty = true;
+        await quick.getByRole('menuitem', { name: '刷新 Primary 的额度', exact: true }).click();
+        await quick.getByText('服务未提供额度信息', { exact: true }).waitFor();
+        assert.equal(await quick.getByRole('meter').count(), 0);
+        await page.keyboard.press('Escape');
+      }
       assert.deepEqual(errors, []); await context.close();
     }
   } finally { await browser.close(); await daemon.stop(); }

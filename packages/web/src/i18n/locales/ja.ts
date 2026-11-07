@@ -1,6 +1,12 @@
 import type { Messages } from './zh';
 
 export const ja: Messages = {
+  'quota.percent': (percent: number) => `${percent}%`,
+  'quota.notReported': '未提供',
+  'quota.notRead': '利用枠は未取得です',
+  'quota.unknown': '—',
+  'quota.morePools': (count: number) => `ほか ${count} 個のモデルプール`,
+  'quota.preview': (reading: string) => `利用枠：${reading}。概要を開く`,
   'quota.query': '利用枠を確認',
   'pickers.permissionIs': (mode: string) => `権限：${mode}`,
   "quota.resetUnknown": "リセット時刻は不明",
@@ -11,7 +17,7 @@ export const ja: Messages = {
   "quota.filter": "アカウントを絞り込む",
   "quota.attention": "要確認",
   "quota.noMatches": "一致するアカウントがありません",
-  "quota.overviewHint": "各アカウントで最も残りが少ない枠を表示します。選択するとすべて確認できます。",
+  "quota.overviewHint": "各期間の残りを表示します。未提供の期間を 0% として扱いません。",
   "quota.quickTitle": "利用枠の概要",
   "quota.all": "すべての利用枠を見る",
   "quota.refresh": "利用枠を更新",

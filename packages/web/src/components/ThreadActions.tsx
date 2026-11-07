@@ -6,7 +6,8 @@ import { ChoiceDialog, Dialog } from './Dialog';
 import { HandoverChainDialog } from './HandoverTrail';
 import { HandoverDialog } from './HandoverDialog';
 import { Menu, type MenuEntry } from './Menu';
-import { IconArchive, IconCheck, IconCopy, IconDot, IconEdit, IconFork, IconGauge, IconHand, IconHandover, IconList, IconPin, IconPlus, IconSparkle, IconTerminal, IconTrace, IconTrash, IconWorktree } from './icons';
+import { ChatQuotaMenu } from './ChatQuotaPreview';
+import { IconArchive, IconCheck, IconCopy, IconDot, IconEdit, IconFork, IconHand, IconHandover, IconList, IconPin, IconPlus, IconSparkle, IconTerminal, IconTrace, IconTrash, IconWorktree } from './icons';
 import { formatList, t } from '../i18n';
 
 interface Deps {
@@ -31,7 +32,6 @@ interface Deps {
   /** Opens the thread's trace, where the top bar no longer keeps a button of its own (a phone
    *  reaches it from the overview instead). */
   onOpenTrace?: () => void;
-  onOpenQuota?: (thread: Thread) => void;
   onError: (e: unknown) => void;
   /** Says what the thread is busy with, as a line by its title until it is done; null clears it. */
   onBusy: (busy: { threadId: string; message: string } | null) => void;
@@ -83,7 +83,7 @@ export function forkBlocked(thread: Thread, turnId?: string): string | null {
  * the archive and the slash menu, so an action behaves the same wherever it is started.
  */
 export function useThreadActions(deps: Deps) {
-  const { api, agents, sections, todos, chain, onTodosChange, onThreadChange, onThreadRemove, onThreadOpen, onMarkedUnread, onSectionsChange, onOpenTerminal, onOpenTrace, onOpenQuota, onError, onBusy, onArchived, markdownOf, autotitle } = deps;
+  const { api, agents, sections, todos, chain, onTodosChange, onThreadChange, onThreadRemove, onThreadOpen, onMarkedUnread, onSectionsChange, onOpenTerminal, onOpenTrace, onError, onBusy, onArchived, markdownOf, autotitle } = deps;
   /** The chain record when this thread belongs to any handover chain, automatic or manual. */
   const chainOf = (thread: Thread) => chain && (thread.handover
     || chain.threads.some(x => x.handover?.sourceId === thread.id)) ? chain : undefined;
@@ -181,7 +181,6 @@ export function useThreadActions(deps: Deps) {
     const linkedTodoIds = new Set(todos.filter((todo) => todo.threads.some((it) => it.id === thread.id)).map((todo) => todo.id));
     const planChoices = todos.filter((todo) => !todo.parentId).slice(0, 30);
     return [
-      ...(onOpenQuota && agents.find(a => a.id === thread.agent)?.capabilities.quota ? [{ id: 'quota', label: t('quota.query'), icon: IconGauge, onSelect: () => onOpenQuota(thread) }] : []),
       { id: 'terminal', label: t('actions.terminal'), icon: IconTerminal, onSelect: onOpenTerminal },
       ...(onOpenTrace ? [{ id: 'trace', label: t('trace.openTrace'), icon: IconTrace, onSelect: onOpenTrace }] : []),
       { id: 'rename', label: t('actions.rename'), icon: IconEdit, onSelect: () => run('rename', thread) },
@@ -457,6 +456,8 @@ export function useThreadActions(deps: Deps) {
           x={menu.x}
           y={menu.y}
           items={'thread' in menu ? threadItems(menu.thread) : sectionItems(menu.section)}
+          header={api && 'thread' in menu && agents.some(agent => agent.id === menu.thread.agent && !agent.hidden && agent.capabilities.quota)
+            ? <ChatQuotaMenu api={api} agent={menu.thread.agent} label={agents.find(agent => agent.id === menu.thread.agent)!.label} close={() => setMenu(null)} /> : undefined}
           onClose={() => setMenu(null)}
         />
       )}

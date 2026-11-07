@@ -20,9 +20,9 @@ test('zcode quota appears in the shared board on desktop and phone, light and da
         await page.getByRole('button', { name: '配置', exact: true }).click();
         await page.locator('.settings-nav').getByRole('button', { name: '额度', exact: true }).click();
         const row = page.locator('.quota-board-row').filter({ has: page.locator('.quota-board-name', { hasText: /zcode/i }) });
-        await row.getByRole('meter').filter({ hasText: '剩余 2%' }).waitFor();
-        assert.equal(await row.getByRole('meter').count(), 1, 'the list shows the most constrained period');
-        await row.click();
+        await row.getByRole('meter').filter({ hasText: '2%' }).waitFor();
+        assert.equal(await row.getByRole('meter').count(), 2, 'the list shows short and weekly quota together');
+        await row.getByRole('button').click();
         const detail = page.locator('.quota-account-detail');
         await detail.getByRole('meter').first().waitFor();
         assert.deepEqual(await detail.getByRole('meter').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-valuenow'))), ['88', '2']);

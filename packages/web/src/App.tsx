@@ -62,7 +62,7 @@ import { AddAgentDialog } from './components/AddAgentDialog';
 import { OnboardingDialog } from './components/OnboardingDialog';
 import { ObservabilityPage } from './components/ObservabilityPage';
 import { QuotaBoard } from './components/QuotaBoard';
-import { ChatQuota } from './components/AgentQuota';
+import { ChatQuotaPreview } from './components/ChatQuotaPreview';
 import { QuotaNavigation } from './quota-reading';
 import { SelectionMenu } from './components/SelectionMenu';
 import { AgentPanel } from './components/AgentPanel';
@@ -1266,8 +1266,6 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const scrollerRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLElement>(null);
   const threadMoreRef = useRef<HTMLButtonElement>(null);
-  const [quotaRequest, setQuotaRequest] = useState<{ threadId: string; signal: number } | null>(null);
-  useEffect(() => setQuotaRequest(null), [selectedId, onPage]);
   useLayoutEffect(() => {
     const el = mainRef.current;
     if (!el) return;
@@ -1934,10 +1932,6 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     // The bar hands its trace mark to the menu on a wide screen; a phone reaches it from the
     // overview panel's foot.
     onOpenTrace: compact ? undefined : () => { setAgentsOpen(false); setFiles(null); setTraceOpen(true); },
-    onOpenQuota: thread => {
-      if (thread.id === selectedId) setQuotaRequest(value => ({ threadId: thread.id, signal: (value?.signal ?? 0) + 1 }));
-      else openSettings(`quota/${encodeURIComponent(thread.agent)}`);
-    },
     onError: handleError,
     onBusy: setBusyLine,
     onArchived: (thread) => setArchivedUndo({ thread, nonce: Date.now() }),
@@ -2927,6 +2921,10 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
                 {agentLabel(selected!.agent)} · {t('app.leadThread', leadTitle)}
               </button>
             )}
+            {selected && !onPage && hostUp && agents.some(agent => agent.id === activeAgent && !agent.hidden && agent.capabilities.quota) && <ChatQuotaPreview key={activeAgent} api={api} agent={activeAgent} onOpen={() => {
+              const rect = threadMoreRef.current?.getBoundingClientRect();
+              if (rect) threadActions.openThreadMenu(selected, rect.right - 320, rect.bottom + 6);
+            }} />}
           </div>
           {selected && (
             <div className="topbar-actions">
@@ -3232,7 +3230,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         )}
 
         <div className="jump-anchor">
-          {selected && !atBottom && (
+          {selected && !onPage && !atBottom && (
             <button className="jump-btn" aria-label={t('app.toBottom')} onClick={jumpToBottom}>
               <IconArrowDown size={17} />
             </button>
@@ -3507,7 +3505,6 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           onJumpTurn={(turnId) => { setDiffFile(null); setJump({ threadId: diffFile.threadId, turnId }); }}
         />
       )}
-      {selected && quotaRequest?.threadId === selected.id && !onPage && activeCaps?.quota && <ChatQuota key={selected.id} api={api} agent={activeAgent} anchorRef={threadMoreRef} openSignal={quotaRequest.signal} />}
       {threadActions.layer}
       <NoteMarks marks={noteMarks} scrollerRef={scrollerRef} />
       <SelectionMenu

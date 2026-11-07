@@ -62,6 +62,16 @@ export function quotaGroups(windows: QuotaWindow[]): Array<{ scope?: string; win
   return groups.sort((a, b) => Number(a.scope !== undefined) - Number(b.scope !== undefined));
 }
 
+/** Keep short and weekly readings side by side, without inventing a value for a missing window. */
+export function quotaSlots(windows: QuotaWindow[]): Array<{ label: string; window?: QuotaWindow }> {
+  const labels = [...new Set(windows.map(window => window.label))].sort((a, b) => periodLength(a) - periodLength(b));
+  const periods = labels.includes('5H') || labels.includes('7D') ? ['5H', '7D', ...labels.filter(label => label !== '5H' && label !== '7D')] : labels;
+  return periods.flatMap(label => {
+    const matches = windows.filter(window => window.label === label);
+    return matches.length ? matches.map(window => ({ label, window })) : [{ label }];
+  });
+}
+
 /** When a window resets, as short as a table cell allows: "14:40" today, "10/12" later. */
 export function shortReset(window: QuotaWindow, now = new Date()): string {
   if (!window.resetsAt) return '';

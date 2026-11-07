@@ -40,7 +40,8 @@ test('the simplified composer fits narrow screens and keeps permission, collabor
         assert.equal(await permission.innerText(), '', 'permissions use the existing icon without the wide text');
         assert.equal(await permission.locator('svg').count(), 1);
         assert.equal(await page.locator('.composer .usage, .composer .chat-quota-trigger, .composer .coord-tool').count(), 0);
-        assert.equal(quotaReads, 0, 'normal chat and its add menu do not subscribe to quota');
+        await page.locator('.chat-quota-preview').getByRole('meter').waitFor();
+        assert.equal(quotaReads, 1, 'only the title preview reads the current account');
         const fits = async () => {
           const overflow = await page.locator('.composer-bar').evaluate(bar => {
             const box = bar.getBoundingClientRect();
@@ -62,7 +63,7 @@ test('the simplified composer fits narrow screens and keeps permission, collabor
         assert.equal(await permissions.getByText('额度查询', { exact: true }).count(), 0);
         await page.keyboard.press('Escape');
         await openCollaboration(page);
-        assert.equal(quotaReads, 0);
+        assert.equal(quotaReads, 1);
         await page.keyboard.press('Escape');
         const model = page.locator('.model-control-trigger'); await model.click();
         await page.locator('.model-context').waitFor();
@@ -82,12 +83,11 @@ test('the simplified composer fits narrow screens and keeps permission, collabor
           await page.screenshot({ path: join(shots, `composer-${width}-${colorScheme}.png`), animations: 'disabled' });
         }
         await page.locator('.topbar-more').click();
-        assert.equal(quotaReads, 0, 'opening the thread menu still does not query quota');
-        await page.getByRole('menuitem', { name: '额度查询', exact: true }).click();
-        const quick = page.getByRole('menu', { name: '额度快览', exact: true });
+        const quick = page.locator('.quota-menu-preview');
         await quick.getByRole('meter').filter({ hasText: '41%' }).waitFor();
         assert.equal(quotaReads, 1);
-        await quick.getByRole('button', { name: '关闭', exact: true }).click();
+        assert.equal(await quick.getByText('未提供', { exact: true }).count(), 1);
+        await page.keyboard.press('Escape');
         assert.equal(await input.inputValue(), '这段草稿需要保留');
         await fits();
         // Sending during work queues the draft, then stopping restores an editable composer.

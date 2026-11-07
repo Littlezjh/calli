@@ -1,9 +1,22 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { PlanQuota, QuotaWindow } from '../src/api.js';
-import { formatReset, periodName, quotaColumns, quotaGroups, quotaLeft, quotaLevel, quotaRows, shortReset } from '../src/quota.js';
+import { formatReset, periodName, quotaColumns, quotaGroups, quotaLeft, quotaLevel, quotaRows, quotaSlots, shortReset } from '../src/quota.js';
 
 const win = (over: Partial<QuotaWindow> = {}): QuotaWindow => ({ label: '5H', usedPercent: 0, ...over });
+
+test('quota previews retain both periods and distinguish missing windows from zero remaining', () => {
+  const short = win({ usedPercent: 100 }), week = win({ label: '7D', usedPercent: 0 });
+  assert.deepEqual(quotaSlots([week, short]), [{ label: '5H', window: short }, { label: '7D', window: week }]);
+  assert.deepEqual(quotaSlots([week]), [{ label: '5H' }, { label: '7D', window: week }]);
+  assert.equal(quotaLeft(quotaSlots([short])[0].window!), 0);
+  assert.deepEqual(quotaSlots([]), []);
+  const other = win({ label: '1H' });
+  assert.deepEqual(quotaSlots([other]), [{ label: '1H', window: other }], 'unrelated periods retain their actual duration');
+  assert.deepEqual(quotaSlots([other, week, short]).map(slot => slot.label), ['5H', '7D', '1H'], 'additional periods never displace the short and weekly pair');
+  const pools = quotaGroups([week, { ...week, scope: 'Review', usedPercent: 100 }]);
+  assert.deepEqual(pools.map(pool => quotaSlots(pool.windows)[1].window?.usedPercent), [0, 100], 'model pools are never averaged or substituted');
+});
 
 test('quotaLevel splits at half and at nearly full', () => {
   assert.deepEqual([0, 49, 50, 79, 80, 100].map(quotaLevel), ['ok', 'ok', 'warn', 'warn', 'danger', 'danger']);

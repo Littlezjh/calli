@@ -4,7 +4,7 @@ import { t } from '../i18n';
 import { quotaRows } from '../quota';
 import { refreshQuota, useAgentQuota } from '../quota-reading';
 import { SettingsSection } from './PageNavigation';
-import { QuotaMeter, QuotaReadingStatus, QuotaWindows, quotaStale } from './QuotaReadout';
+import { QuotaPreview, QuotaWindows, quotaStale } from './QuotaReadout';
 import { AgentMark, IconChevron, IconRefresh, IconSearch } from './icons';
 
 interface Props { api: Api; agents: AgentInfo[]; current?: string; account?: string; onAccount: (id: string) => void }
@@ -14,21 +14,18 @@ function AccountRow({ api, agent, current, onOpen, attentionOnly, search }: {
 }) {
   const reading = useAgentQuota(api, agent.id);
   const windows = reading.quota?.windows ?? [];
-  const limiting = windows.reduce<(typeof windows)[number] | undefined>((prev, window) => !prev || window.usedPercent > prev.usedPercent ? window : prev, undefined);
-  const needsAttention = Boolean(reading.error || windows.some(window => window.usedPercent >= 80 || (window.loadPercent ?? 0) >= 100));
+  const needsAttention = Boolean(reading.error || quotaStale(reading) || windows.some(window => window.usedPercent >= 80 || (window.loadPercent ?? 0) >= 100));
   if (attentionOnly && !needsAttention || search && !`${agent.label} ${reading.quota?.plan?.label ?? ''}`.toLocaleLowerCase().includes(search)) return null;
-  return <button type="button" className="quota-account-row quota-board-row" onClick={onOpen} aria-label={t('quota.accountDetails', agent.label)}>
+  return <div className="quota-account-row quota-board-row">
+    <button type="button" className="quota-account-open" onClick={onOpen} aria-label={t('quota.accountDetails', agent.label)}>
     {agent.icon && <span className="agent-mark"><AgentMark path={agent.icon} size={20} /></span>}
     <span className="quota-account-name"><span className="quota-board-name">{agent.label}</span>{current && <small className="quota-current">{t('quota.current')}</small>}
       {reading.quota?.plan && <span className="quota-account-plan quota-plan" title={reading.quota.plan.id}>{reading.quota.plan.label}</span>}
     </span>
-    <span className="quota-account-summary">
-      {limiting && <QuotaMeter window={limiting} stale={quotaStale(reading)} />}
-      <QuotaReadingStatus reading={reading} />
-      {windows.some(window => (window.loadPercent ?? 0) >= 100 && window !== limiting) && <span className="quota-busy-note">{t('quota.board.busy')}</span>}
-    </span>
     <IconChevron size={15} />
-  </button>;
+    </button>
+    <div className="quota-account-summary"><QuotaPreview reading={reading} /></div>
+  </div>;
 }
 
 function AccountDetail({ api, agent, current }: { api: Api; agent: AgentInfo; current: boolean }) {

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useIsNarrow } from '../hooks';
 import { IconCheck, IconChevron } from './icons';
@@ -27,6 +27,8 @@ interface Props {
   /** Which corner of the panel sits at that point. A menu opened from the bottom of the screen grows upwards. */
   corner?: 'top-left' | 'bottom-right';
   items: MenuEntry[];
+  /** Optional account summary, mounted only while the root menu is visible. */
+  header?: ReactNode;
   onClose: () => void;
 }
 
@@ -47,7 +49,7 @@ if (typeof document !== 'undefined') {
  * Wide screens: a floating panel at the pointer, with submenus opening beside their row.
  * Phones: the same anchored surface, with a submenu replacing its parent list.
  */
-export function Menu({ label, x, y, corner = 'top-left', items, onClose }: Props) {
+export function Menu({ label, x, y, corner = 'top-left', items, header, onClose }: Props) {
   const narrow = useIsNarrow();
   const rootRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -210,7 +212,7 @@ export function Menu({ label, x, y, corner = 'top-left', items, onClose }: Props
     <div ref={rootRef} className={armed ? undefined : 'sheet-unarmed'}>
       <div ref={panelRef} className={`menu-panel menu-float${narrow ? ' menu-touch' : ''}`} role="menu" aria-label={narrow && sub ? sub.label : label}
         style={{ left: pos.left, top: pos.top, visibility: pos.ready ? 'visible' : 'hidden' }}>
-        {narrow && sub ? <><button className="menu-back" onClick={() => setOpenSub(null)}><span className="menu-back-icon"><IconChevron size={14} /></span>{sub.label}</button>{list(sub.submenu ?? [], true)}</> : list(items, false)}
+        {narrow && sub ? <><button className="menu-back" onClick={() => setOpenSub(null)}><span className="menu-back-icon"><IconChevron size={14} /></span>{sub.label}</button>{list(sub.submenu ?? [], true)}</> : <>{header}{list(items, false)}</>}
       </div>
     </div>, document.body,
   );

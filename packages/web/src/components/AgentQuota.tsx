@@ -3,10 +3,9 @@ import type { Api, PlanQuota, QuotaWindow } from '../api';
 import { formatDateTime, t } from '../i18n';
 import { formatReset, quotaLeft, quotaLevel } from '../quota';
 import { useAgentQuota, useQuotaNavigation } from '../quota-reading';
-import { QuotaWindows, quotaStale } from './QuotaReadout';
-import { Popover } from './Popover';
+import { quotaStale } from './QuotaReadout';
 import { createPortal } from 'react-dom';
-import { IconClock, IconClose, QuotaRing } from './icons';
+import { IconClock, QuotaRing } from './icons';
 
 
 /** Space between chips and before the "+N" chip, in px. Matches the gap in styles.css. */
@@ -235,22 +234,10 @@ function QuotaPreview({ id, anchor, children, onEnter, onLeave }: { id: string; 
   return createPortal(<div className="agent-quota-preview" id={id} role="tooltip" ref={cardRef} style={style} onPointerEnter={onEnter} onPointerLeave={onLeave}>{children}</div>, document.body);
 }
 
-function QuotaActions({ reading, agent, onOpen }: { reading: ReturnType<typeof useAgentQuota>; agent: string; onOpen?: () => void }) {
+function QuotaActions({ reading, agent }: { reading: ReturnType<typeof useAgentQuota>; agent: string }) {
   const open = useQuotaNavigation();
   return <div className="quota-quick-actions">
-    {open && <button type="button" className="text-btn" onClick={() => { onOpen?.(); open(); }}>{t('quota.all')}</button>}
+    {open && <button type="button" className="text-btn" onClick={open}>{t('quota.all')}</button>}
     <button type="button" className="text-btn" aria-disabled={reading.loading} aria-label={t('quota.refreshAgent', agent)} onClick={() => { if (!reading.loading) void reading.refresh(); }}>{t(reading.error ? 'common.retry' : 'quota.refresh')}</button>
   </div>;
-}
-
-/** Quota is read only while the conversation menu's quick view is open. */
-export function ChatQuota({ api, agent, anchorRef, openSignal }: { api: Api; agent: string; anchorRef: RefObject<HTMLElement>; openSignal: number }) {
-  return <Popover label={t('quota.quickTitle')} anchorRef={anchorRef} openSignal={openSignal} align="end" placement="below" panelClassName="quota-quick-panel">
-    {close => <ChatQuotaDetails api={api} agent={agent} close={close} />}
-  </Popover>;
-}
-
-function ChatQuotaDetails({ api, agent, close }: { api: Api; agent: string; close: () => void }) {
-  const reading = useAgentQuota(api, agent);
-  return <><div className="quota-quick-head"><span>{t('quota.quickTitle')}</span><button type="button" className="icon-btn" aria-label={t('common.close')} onClick={close}><IconClose size={17} /></button></div><QuotaWindows reading={reading} /><QuotaActions reading={reading} agent={agent} onOpen={close} /></>;
 }

@@ -3,6 +3,12 @@
  * a key added here has to be added to them too. Messages with values are functions.
  */
 export const zh = {
+  'quota.percent': (percent: number) => `${percent}%`,
+  'quota.notReported': '未提供',
+  'quota.notRead': '尚未读取额度',
+  'quota.unknown': '—',
+  'quota.morePools': (count: number) => `另 ${count} 个模型池`,
+  'quota.preview': (reading: string) => `额度：${reading}，打开额度预览`,
   'quota.query': '额度查询',
   'pickers.permissionIs': (mode: string) => `权限：${mode}`,
   "quota.resetUnknown": "重置时间未知",
@@ -13,7 +19,7 @@ export const zh = {
   "quota.filter": "筛选账号",
   "quota.attention": "需留意",
   "quota.noMatches": "没有匹配的账号",
-  "quota.overviewHint": "先显示每个账号最紧的周期，点击查看全部额度。",
+  "quota.overviewHint": "各周期均显示剩余额度；未提供的周期不会当作 0%。",
   "quota.quickTitle": "额度快览",
   "quota.all": "查看全部额度",
   "quota.refresh": "刷新额度",
