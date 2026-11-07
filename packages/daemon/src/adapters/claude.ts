@@ -185,7 +185,7 @@ export function parseClaudeUsage(text: string, now = new Date()): QuotaWindow[] 
     if (!m) continue;
     out.push({
       label: m[1] === 'session' ? '5H' : '7D',
-      ...(m[1] !== 'session' ? { scope: '全部模型' } : {}),
+      // Both windows cover the account; "all models" is not a separate model pool.
       usedPercent: Number(m[2]),
       ...(m[3] ? { resetsAt: claudeResetAt(m[3], now) } : {}),
     });

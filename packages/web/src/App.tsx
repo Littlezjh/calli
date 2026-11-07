@@ -62,7 +62,6 @@ import { AddAgentDialog } from './components/AddAgentDialog';
 import { OnboardingDialog } from './components/OnboardingDialog';
 import { ObservabilityPage } from './components/ObservabilityPage';
 import { QuotaBoard } from './components/QuotaBoard';
-import { ChatQuotaPreview } from './components/ChatQuotaPreview';
 import { QuotaNavigation } from './quota-reading';
 import { SelectionMenu } from './components/SelectionMenu';
 import { AgentPanel } from './components/AgentPanel';
@@ -1265,7 +1264,6 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const [resumeBusy, setResumeBusy] = useState(false);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLElement>(null);
-  const threadMoreRef = useRef<HTMLButtonElement>(null);
   useLayoutEffect(() => {
     const el = mainRef.current;
     if (!el) return;
@@ -2921,10 +2919,6 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
                 {agentLabel(selected!.agent)} · {t('app.leadThread', leadTitle)}
               </button>
             )}
-            {selected && !onPage && hostUp && agents.some(agent => agent.id === activeAgent && !agent.hidden && agent.capabilities.quota) && <ChatQuotaPreview key={activeAgent} api={api} agent={activeAgent} onOpen={() => {
-              const rect = threadMoreRef.current?.getBoundingClientRect();
-              if (rect) threadActions.openThreadMenu(selected, rect.right - 320, rect.bottom + 6);
-            }} />}
           </div>
           {selected && (
             <div className="topbar-actions">
@@ -2974,7 +2968,6 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
                 </button>
               )}
               <button
-                ref={threadMoreRef}
                 className="icon-btn topbar-more"
                 aria-label={t('app.threadMore')}
                 onClick={(e) => {

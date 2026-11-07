@@ -40,8 +40,8 @@ test('the simplified composer fits narrow screens and keeps permission, collabor
         assert.equal(await permission.innerText(), '', 'permissions use the existing icon without the wide text');
         assert.equal(await permission.locator('svg').count(), 1);
         assert.equal(await page.locator('.composer .usage, .composer .chat-quota-trigger, .composer .coord-tool').count(), 0);
-        await page.locator('.chat-quota-preview').getByRole('meter').waitFor();
-        assert.equal(quotaReads, 1, 'only the title preview reads the current account');
+        assert.equal(await page.locator('.topbar [role=meter], .chat-quota-preview').count(), 0);
+        assert.equal(quotaReads, 0, 'chat does not read quotas until the menu opens');
         const fits = async () => {
           const overflow = await page.locator('.composer-bar').evaluate(bar => {
             const box = bar.getBoundingClientRect();
@@ -63,7 +63,7 @@ test('the simplified composer fits narrow screens and keeps permission, collabor
         assert.equal(await permissions.getByText('额度查询', { exact: true }).count(), 0);
         await page.keyboard.press('Escape');
         await openCollaboration(page);
-        assert.equal(quotaReads, 1);
+        assert.equal(quotaReads, 0);
         await page.keyboard.press('Escape');
         const model = page.locator('.model-control-trigger'); await model.click();
         await page.locator('.model-context').waitFor();

@@ -6,7 +6,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startDaemon, openUi, launchBrowser } from '../harness.mjs';
+import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
 
 test('the quota board shows each account plan beside its name', { timeout: 180000 }, async () => {
   const home = mkdtempSync(join(tmpdir(), 'calli-quota-plan-'));
@@ -20,6 +20,7 @@ test('the quota board shows each account plan beside its name', { timeout: 18000
     writeFileSync(join(home, '.claude', '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'sk-secret-access', subscriptionType: 'max', rateLimitTier: 'default_claude_max_20x' } }));
     daemon = await startDaemon({ CALLI_CODEX_BIN: fakeCodex, CALLI_CLAUDE_QUOTA_BIN: join(fixtures, 'fake-claude-usage.sh'), HOME: home, CLAUDE_CONFIG_DIR: join(home, '.claude'), CODEX_HOME: join(home, '.codex') });
     browser = await launchBrowser();
+    const thread = await (await api(daemon, '/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'claude', cwd: daemon.workdir, title: 'Claude quota periods' }) })).json();
     const shots = process.env.CALLI_E2E_SHOTS_DIR;
     if (shots) mkdirSync(shots, { recursive: true });
     for (const phone of [false, true]) for (const theme of ['light', 'dark']) {
@@ -30,12 +31,23 @@ test('the quota board shows each account plan beside its name', { timeout: 18000
         page.on('pageerror', (error) => errors.push(String(error)));
         await openUi(page, daemon);
         if (phone) await page.locator('.menu-btn').click();
-        await page.getByRole('button', { name: '配置', exact: true }).click();
-        await page.locator('.settings-nav').getByRole('button', { name: '额度', exact: true }).click();
+        await page.locator('.sidebar .thread-item', { hasText: thread.title }).click();
+        assert.equal(await page.locator('.topbar [role=meter], .chat-quota-preview').count(), 0, 'quotas do not occupy the chat header');
+        await page.locator('.topbar-more').click();
+        const quick = page.locator('.quota-menu-preview');
+        await quick.getByRole('meter', { name: '每周', exact: true }).waitFor();
+        assert.deepEqual(await quick.getByRole('meter').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-valuenow'))), ['5', '60']);
+        assert.equal(await quick.locator('.quota-pools').count(), 0, 'Claude session and all-model week share one visible pair');
+        assert.equal(await quick.locator('.quota-missing').count(), 0, 'neither returned period is called missing');
+        if (shots) await page.screenshot({ path: join(shots, `claude-menu-${phone ? 'phone' : 'desktop'}-${theme}.png`), animations: 'disabled' });
+        await quick.getByRole('menuitem', { name: '查看全部额度', exact: true }).click();
         const board = page.getByRole('region', { name: '额度', exact: true });
         const plan = (agent) => board.locator('.quota-board-row', { has: page.locator('.quota-board-name', { hasText: new RegExp(`^${agent}$`) }) }).locator('.quota-account-plan');
         await plan('Claude Code').filter({ hasText: 'Max 20x' }).waitFor({ timeout: 30_000 });
         assert.equal(await plan('Claude Code').count(), 1, 'the plan is shown once');
+        const claude = board.locator('.quota-board-row', { has: page.locator('.quota-board-name', { hasText: /^Claude Code$/ }) });
+        assert.deepEqual(await claude.getByRole('meter').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-valuenow'))), ['5', '60']);
+        assert.equal(await claude.locator('.quota-pools, .quota-missing').count(), 0, 'the full overview keeps the same account-wide pair');
         await plan('Codex').filter({ hasText: 'Pro 5x' }).waitFor({ timeout: 30_000 });
         assert.equal(await plan('Codex').getAttribute('title'), 'prolite', "the agent's own word for it, on hover");
         assert.equal(await plan('pi').count(), 0, 'an agent without a plan shows none');

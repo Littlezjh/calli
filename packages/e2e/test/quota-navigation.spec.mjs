@@ -36,11 +36,8 @@ test('chat quota and account pages share refreshes and preserve the conversation
       if (mobile) await page.getByRole('button', { name: '打开线程列表', exact: true }).click();
       await page.locator('.sidebar .thread-item', { hasText: 'Quota navigation return' }).click();
       await page.locator('.composer textarea').fill('Draft survives quota');
-      await page.locator('.chat-quota-preview').getByRole('meter').first().waitFor();
-      assert.deepEqual([...new Set(requests)], ['codex'], 'the visible preview reads only the current account');
-      assert.equal(await page.locator('.chat-quota-preview').getByRole('meter').count(), 2);
-      assert.equal(await page.locator('.chat-quota-preview').evaluate(el => el.scrollWidth > el.clientWidth + 1), false, 'both title bars fit');
-      assert.equal(await page.locator('.chat-quota-number > span:last-child').evaluateAll(els => els.some(el => el.scrollWidth > el.clientWidth)), false, 'percentages remain readable at narrow widths');
+      assert.equal(requests.length, 0, 'chat does not subscribe to quotas before opening the menu');
+      assert.equal(await page.locator('.topbar [role=meter], .chat-quota-preview').count(), 0);
       await page.screenshot({ path: `${shots}/header-${width}-${theme}.png` });
       assert.equal(await page.locator('.composer .chat-quota-trigger').count(), 0);
       assert.equal(requests.includes('backup'), false, 'chat does not load other account quotas');
@@ -53,6 +50,7 @@ test('chat quota and account pages share refreshes and preserve the conversation
       };
       await openQuick(); const quick = page.locator('.quota-menu-preview');
       await quick.getByRole('meter').filter({ hasText: '18%' }).waitFor();
+      assert.deepEqual([...new Set(requests)], ['codex'], 'opening the menu reads only the current account');
       assert.equal(await quick.getByRole('meter').count(), 2, 'both main periods are visible immediately');
       await quick.locator('summary').click();
       assert.equal(await quick.getByRole('meter').count(), 3, 'other model pools remain inspectable');
@@ -101,7 +99,7 @@ test('chat quota and account pages share refreshes and preserve the conversation
       await openQuick();
       await quick.getByRole('meter').filter({ hasText: '16%' }).waitFor();
       await page.keyboard.press('Escape');
-      await page.locator('.chat-quota-preview').getByRole('meter').filter({ hasText: '16%' }).waitFor();
+      assert.equal(await page.locator('.topbar [role=meter], .chat-quota-preview').count(), 0);
       assert.ok(Math.abs(await page.locator('.scroller').evaluate(el => el.scrollTop) - scroll) < 2, 'reading position is restored');
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
       if (width === 320 && theme === 'dark') {
@@ -109,17 +107,15 @@ test('chat quota and account pages share refreshes and preserve the conversation
         fail = true;
         await quick.getByRole('menuitem', { name: '刷新 Primary 的额度', exact: true }).click();
         await quick.getByText('刷新失败，显示上次结果', { exact: true }).waitFor();
-        await page.locator('.chat-quota-preview.stale').waitFor();
         assert.equal(await quick.getByRole('meter').count(), 2, 'failed reads retain both cached periods');
         fail = false; used = 99;
         await quick.getByRole('menuitem', { name: '刷新 Primary 的额度', exact: true }).click();
         await quick.getByRole('meter').filter({ hasText: /^每周0%/ }).waitFor();
-        assert.equal(await page.locator('.chat-quota-preview').getByRole('meter', { name: '每周', exact: true }).getAttribute('aria-valuenow'), '0');
+        assert.equal(await quick.getByRole('meter', { name: '每周', exact: true }).getAttribute('aria-valuenow'), '0');
         missingShort = true;
         await quick.getByRole('menuitem', { name: '刷新 Primary 的额度', exact: true }).click();
         await quick.locator(':scope > .quota-preview > .quota-pair').getByText('未提供', { exact: true }).waitFor();
         assert.equal(await quick.getByRole('meter').count(), 1, 'a missing short period has no invented zero meter');
-        assert.equal(await page.locator('.chat-quota-preview').getByRole('meter').count(), 1);
         empty = true;
         await quick.getByRole('menuitem', { name: '刷新 Primary 的额度', exact: true }).click();
         await quick.getByText('服务未提供额度信息', { exact: true }).waitFor();

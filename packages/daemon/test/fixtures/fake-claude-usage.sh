@@ -2,6 +2,7 @@
 # Stands in for `claude -p "/usage"` in tests. Counts runs when FAKE_CLAUDE_USAGE_LOG is set,
 # so a test can tell cached answers from fresh probes. FAKE_CLAUDE_SESSION_USED sets the session share.
 # `claude auth status` answers as the real one does, with the plan it reports.
+# Session and "all models" weekly limits refer to the same account-wide pool.
 if [ "$1" = "auth" ]; then
   printf '{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"%s"}\n' "${FAKE_CLAUDE_PLAN:-max}"
   exit 0

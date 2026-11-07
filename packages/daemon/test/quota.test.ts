@@ -22,7 +22,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const TOKEN = 'test-token-0123456789';
 const auth = { Authorization: `Bearer ${TOKEN}` };
 
-test('parseClaudeUsage reads the two windows, with resets crossing the year', () => {
+test('parseClaudeUsage keeps session and all-model weekly limits in one account pool, with resets crossing the year', () => {
   const now = new Date('2026-12-28T10:00:00Z');
   const windows = parseClaudeUsage(
     ['Intro line', 'Current session: 95% used · resets Dec 29, 1:30am (UTC)', '', 'Current week (all models): 40% used · resets Jan 2, 7am (UTC)', 'Advice that must be ignored'].join('\n'),
@@ -30,7 +30,7 @@ test('parseClaudeUsage reads the two windows, with resets crossing the year', ()
   );
   assert.deepEqual(windows, [
     { label: '5H', usedPercent: 95, resetsAt: '2026-12-29T01:30:00.000Z' },
-    { label: '7D', scope: '全部模型', usedPercent: 40, resetsAt: '2027-01-02T07:00:00.000Z' },
+    { label: '7D', usedPercent: 40, resetsAt: '2027-01-02T07:00:00.000Z' },
   ]);
 });
 

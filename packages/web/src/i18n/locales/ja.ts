@@ -3,10 +3,7 @@ import type { Messages } from './zh';
 export const ja: Messages = {
   'quota.percent': (percent: number) => `${percent}%`,
   'quota.notReported': '未提供',
-  'quota.notRead': '利用枠は未取得です',
-  'quota.unknown': '—',
   'quota.morePools': (count: number) => `ほか ${count} 個のモデルプール`,
-  'quota.preview': (reading: string) => `利用枠：${reading}。概要を開く`,
   'quota.query': '利用枠を確認',
   'pickers.permissionIs': (mode: string) => `権限：${mode}`,
   "quota.resetUnknown": "リセット時刻は不明",

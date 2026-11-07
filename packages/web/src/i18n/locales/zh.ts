@@ -5,10 +5,7 @@
 export const zh = {
   'quota.percent': (percent: number) => `${percent}%`,
   'quota.notReported': '未提供',
-  'quota.notRead': '尚未读取额度',
-  'quota.unknown': '—',
   'quota.morePools': (count: number) => `另 ${count} 个模型池`,
-  'quota.preview': (reading: string) => `额度：${reading}，打开额度预览`,
   'quota.query': '额度查询',
   'pickers.permissionIs': (mode: string) => `权限：${mode}`,
   "quota.resetUnknown": "重置时间未知",

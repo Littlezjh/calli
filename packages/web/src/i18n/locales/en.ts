@@ -5,10 +5,7 @@ const plural = (n: number, one: string, other: string) => `${n} ${n === 1 ? one 
 export const en: Messages = {
   'quota.percent': (percent: number) => `${percent}%`,
   'quota.notReported': 'Not reported',
-  'quota.notRead': 'Quota not read yet',
-  'quota.unknown': '—',
   'quota.morePools': (count: number) => `${count} more model ${count === 1 ? 'pool' : 'pools'}`,
-  'quota.preview': (reading: string) => `Quota: ${reading}. Open quota preview`,
   'quota.query': 'Check quota',
   'pickers.permissionIs': (mode: string) => `Permissions: ${mode}`,
   "quota.resetUnknown": "Reset time unknown",

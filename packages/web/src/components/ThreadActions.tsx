@@ -6,7 +6,7 @@ import { ChoiceDialog, Dialog } from './Dialog';
 import { HandoverChainDialog } from './HandoverTrail';
 import { HandoverDialog } from './HandoverDialog';
 import { Menu, type MenuEntry } from './Menu';
-import { ChatQuotaMenu } from './ChatQuotaPreview';
+import { ChatQuotaMenu } from './ChatQuotaMenu';
 import { IconArchive, IconCheck, IconCopy, IconDot, IconEdit, IconFork, IconHand, IconHandover, IconList, IconPin, IconPlus, IconSparkle, IconTerminal, IconTrace, IconTrash, IconWorktree } from './icons';
 import { formatList, t } from '../i18n';
 
