@@ -1825,11 +1825,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
 
   // The thread on screen is being read. With the page in the background, nothing is.
   const viewingId = pageHidden ? null : selectedId;
-  // Threads away from this one that want a look: counted in the tab title, dotted on the list button.
-  const attention = attentionCount(threads, viewingId);
-
-  // Keep a count of threads that want attention in the tab title; the sidebar rows and the dot on
-  // the list button carry it inside the app. What happens off-screen is not announced over the page.
+  // Keep a count of threads that want attention in the tab title; the sidebar rows carry it inside
+  // the app. What happens off-screen is not announced over the page.
   useEffect(() => {
     document.title = pageTitle(baseTitle.current, attentionCount(threads, viewingId));
   }, [threads, viewingId]);
@@ -2844,7 +2841,6 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           ) : (
             <button className="icon-btn menu-btn" aria-label={t('app.openList')} aria-expanded={listOpen} onClick={() => setDrawer((v) => !v)}>
               {compact ? <IconBack size={22} /> : <IconMenu />}
-              {attention > 0 && <span className="menu-dot" aria-hidden="true" />}
             </button>
           )}
           {/* With the list put away, the way back and a new thread move up here. */}

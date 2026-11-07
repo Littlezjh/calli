@@ -50,7 +50,6 @@ try {
   await narrow.locator('.menu-btn').click();
   await open(narrow, '正在干的活');
   await narrow.waitForFunction(() => getComputedStyle(document.querySelector('.sidebar')).visibility === 'hidden');
-  await narrow.locator('.menu-dot').waitFor({ timeout: 10000 });
   await theme(narrow, 'light');
   await shoot(narrow, '.topbar', 'dot-desktop-light');
   await theme(narrow, 'dark');
@@ -86,7 +85,6 @@ try {
   await phone.locator('.menu-btn').click();
   await open(phone, '正在干的活');
   await phone.waitForFunction(() => getComputedStyle(document.querySelector('.sidebar')).visibility === 'hidden');
-  await phone.locator('.menu-dot').waitFor({ timeout: 10000 });
   await theme(phone, 'light');
   await shoot(phone, '.topbar', 'dot-phone-light');
   await phone.locator('.topbar-more').click();

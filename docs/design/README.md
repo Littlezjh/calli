@@ -9,6 +9,7 @@
 | `mobile.jpg` | 手机三屏：线程列表、对话与审批卡片、导入历史 |
 | `voice-mode.jpg`、`voice-mode-dark.jpg` | `voice-mode.html` 的亮色、深色截图，打不开 HTML 时看这两张 |
 | `agent-direct-message.html` | 智能体面板里直接给成员发消息：空闲、运行中排队、「让主智能体调整」带草稿回主线程，桌面与手机、亮暗 |
+| `glass-playground.html` | 玻璃控件（顶栏按钮、标题后的渐隐、输入框）的材质调参：当前与调整后对比，亮暗，滑条调填充、模糊、亮边、阴影、背景带。已采用的参数在 `styles.css` 顶部 `--glass-*` |
 | `voice-mode.html` | 实时语音：球、控制行、边聊边做、结束后的折叠与文字结果（说明见 `../voice-ui-design.md`） |
 
 ## 和实现不一样的地方

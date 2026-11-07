@@ -585,7 +585,6 @@ export function Sidebar({
                 onClick={() => setByActivity(!byActivity)}
               >
                 <IconBell size={compact ? 20 : 16} />
-                {wanted > 0 && <span className="activity-badge" aria-hidden="true" />}
               </button>
               <button className="round-btn" aria-label={t('sidebar.search')} title={t('sidebar.search')} onClick={() => setSearching(true)}>
                 <IconSearch size={compact ? 20 : 16} />

@@ -88,3 +88,29 @@ test('glass chrome has scrolling content behind it without hiding either end of 
     }
   } finally { await browser.close(); await daemon.stop(); }
 });
+
+test('focusing the composer keeps its glass edge, and floating buttons share the material', { timeout: 60000 }, async () => {
+  const daemon = await startDaemon();
+  const browser = await launchBrowser();
+  try {
+    const thread = await (await api(daemon, '/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: daemon.workdir, title: '输入框边缘' }) })).json();
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    const page = await context.newPage(); page.setDefaultTimeout(10000);
+    await openUi(page, daemon);
+    await page.addStyleTag({ content: '*,*::before,*::after{transition:none!important;animation:none!important}' });
+    const edge = () => page.locator('.composer-box').evaluate(el => { const s = getComputedStyle(el); return { shadow: s.boxShadow, border: s.borderTopColor }; });
+    const sidebar = await page.locator('.round-btn').first().evaluate(el => getComputedStyle(el).backdropFilter);
+    assert.notEqual(sidebar, 'none', 'the sidebar round buttons are glass');
+    await page.getByRole('button', { name: '打开线程列表', exact: true }).click();
+    await page.locator('.sidebar .thread-item', { hasText: thread.title }).click();
+    await page.locator('.composer-box').waitFor();
+    const resting = await edge();
+    await page.locator('.composer textarea').click();
+    assert.deepEqual(await edge(), resting, 'focus adds no darker ring around the composer');
+    assert.equal(await page.locator('.menu-dot').count(), 0, 'the list button carries no dot');
+    await context.close();
+  } finally {
+    await browser.close();
+    await daemon.stop();
+  }
+});

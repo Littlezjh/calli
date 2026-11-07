@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="zh" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>玻璃控件 · Playground</title>
+<style>
+/* Colours copied from packages/web/src/styles.css (paper palette). What this page varies is the glass material:
+   the top bar buttons, the title fade and the composer. "当前" reproduces what the app does today. */
+:root {
+  --bg: #f8f6f1; --surface: #ffffff; --text: #1f1e1c; --muted: #827f77; --faint: #a9a69e;
+  --border: #e5e2da; --border-strong: #d6d2c8; --hover: rgba(31, 30, 28, 0.045);
+  --accent: #1f1e1c; --accent-fg: #fff; --user-bg: #eceae4; --code-bg: #efede7; --warn: #c2410c;
+  --shadow-card: 0 1px 2px rgba(31, 30, 28, 0.04), 0 6px 20px rgba(31, 30, 28, 0.05);
+  --glass-tint: 255, 255, 255;
+  --ink: 31, 30, 28;
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Noto Sans CJK SC', sans-serif;
+  --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+  /* Knobs for the "新" material, set by the sliders. */
+  --fill: 72%; --blur: 24px; --sat: 180%; --rim: 0.55; --lift: 0.08; --fade: 0.92; --fade-blur: 10px;
+}
+[data-theme='dark'] {
+  --bg: #1b1a18; --surface: #252422; --text: #ecebe7; --muted: #9a978f; --faint: #6f6c65;
+  --border: #32302c; --border-strong: #423f3a; --hover: rgba(236, 235, 231, 0.06);
+  --accent: #ecebe7; --accent-fg: #1b1a18; --user-bg: #2c2b28; --code-bg: #262522; --warn: #f0935a;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 20px rgba(0, 0, 0, 0.25);
+  --glass-tint: 255, 255, 255;
+  --ink: 0, 0, 0;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font); -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; }
+.ic { width: 20px; height: 20px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---------- Controls ---------- */
+.panel { max-width: 980px; margin: 0 auto; padding: 14px 16px 6px; display: grid; gap: 12px; }
+.panel h1 { margin: 0; font-size: 16px; }
+.panel p { margin: 0; font-size: 12.5px; color: var(--muted); line-height: 1.55; }
+.row { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+.seg { display: inline-flex; padding: 2px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); }
+.seg button { border: 0; background: none; padding: 6px 13px; border-radius: 999px; font-size: 13px; color: var(--muted); cursor: pointer; white-space: nowrap; }
+.seg button[aria-pressed='true'] { background: var(--accent); color: var(--accent-fg); }
+.sliders { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px 22px; }
+.sliders label { display: grid; grid-template-columns: 76px 1fr 52px; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); }
+.sliders output { text-align: right; font-family: var(--mono); font-size: 11.5px; color: var(--text); }
+.sliders input { width: 100%; accent-color: var(--accent); }
+details summary { cursor: pointer; font-size: 12.5px; color: var(--muted); }
+pre { margin: 8px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--code-bg); font: 11.5px/1.55 var(--mono); overflow-x: auto; user-select: all; }
+.off .sliders { opacity: .4; pointer-events: none; }
+
+/* ---------- The phone ---------- */
+.stage { display: flex; justify-content: center; padding: 10px 0 40px; }
+.phone { position: relative; width: 390px; height: min(844px, 82dvh); border: 1px solid var(--border-strong); border-radius: 44px; overflow: hidden; background: var(--bg); isolation: isolate; }
+@media (max-width: 520px) { .phone { width: calc(100% - 20px); border-radius: 34px; } }
+.scroll { position: absolute; inset: 0; overflow-y: auto; overscroll-behavior: contain; padding: 120px 18px 150px; -webkit-overflow-scrolling: touch; }
+.status { position: absolute; z-index: 9; top: 14px; left: 0; right: 0; display: flex; justify-content: space-between; padding: 0 34px; font-size: 15px; font-weight: 600; pointer-events: none; }
+
+/* Content: enough contrast and edges behind the glass to judge it by. */
+.user { margin: 8px 0 14px auto; width: fit-content; max-width: 82%; padding: 11px 16px; border-radius: 22px; background: var(--user-bg); font-size: 15px; line-height: 1.5; }
+.msg { font-size: 15px; line-height: 1.65; margin: 0 0 12px; }
+.msg b { font-weight: 650; }
+.msg code { padding: 1px 6px; border-radius: 6px; background: var(--code-bg); font: 13px var(--mono); }
+.meta { display: flex; gap: 18px; margin: 0 0 22px; color: var(--faint); font-size: 12.5px; }
+.code { margin: 0 0 14px; padding: 12px 14px; border-radius: 14px; background: #1f1e1c; color: #e8e6df; font: 12.5px/1.6 var(--mono); }
+.code i { color: #e3c178; font-style: normal; } .code u { color: #86aaf5; text-decoration: none; }
+.diff { display: flex; gap: 10px; align-items: center; margin: 0 0 14px; padding: 13px 14px; border-radius: 14px; background: var(--user-bg); font-size: 14px; }
+.diff em { font-style: normal; color: #2f7d5b; } .diff s { text-decoration: none; color: #b42318; }
+.swatch { height: 96px; margin: 0 0 14px; border-radius: 16px; background: linear-gradient(120deg, #3b5bdb, #9c36b5 55%, #f76707); }
+.work { color: var(--muted); font-size: 14px; margin: 0 0 12px; }
+
+/* ---------- Top: the fade behind the controls, then the controls ---------- */
+.top { position: absolute; z-index: 5; top: 0; left: 0; right: 0; height: 120px; pointer-events: none; }
+.fade { position: absolute; inset: 0; }
+.fade i { position: absolute; inset: 0; display: block; }
+.bar { position: absolute; left: 12px; right: 12px; top: 52px; height: 44px; display: flex; align-items: center; gap: 10px; pointer-events: auto; }
+.title { flex: 1; min-width: 0; padding: 0 2px; font-size: 16px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.round { position: relative; width: 42px; height: 42px; flex: none; display: grid; place-items: center; border-radius: 999px; cursor: pointer; }
+.round::after { content: ''; position: absolute; top: 5px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }
+.pill { display: flex; align-items: center; height: 42px; padding: 0 2px; border-radius: 999px; flex: none; }
+.pill span { width: 40px; height: 40px; display: grid; place-items: center; color: var(--muted); }
+
+/* ---------- Bottom: the composer ---------- */
+.bottom { position: absolute; z-index: 5; left: 0; right: 0; bottom: 0; padding: 0 12px 26px; pointer-events: none; }
+.bottom .base { position: absolute; inset: -34px 0 0; }
+.box { position: relative; display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 6px 7px 6px 16px; border-radius: 28px; pointer-events: auto; }
+.box .hint { flex: 1; color: var(--faint); font-size: 16px; }
+.box .mic { color: var(--faint); }
+.send { width: 42px; height: 42px; border-radius: 50%; background: var(--accent); color: var(--accent-fg); display: grid; place-items: center; }
+.send .ic { width: 16px; height: 16px; fill: currentColor; stroke: none; }
+
+/* ===== 当前: what styles.css does today ===== */
+[data-variant='now'] .glass {
+  border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--surface) 48%, transparent), transparent 45%, color-mix(in srgb, var(--surface) 14%, transparent)), color-mix(in srgb, var(--surface) 52%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--surface) 88%, var(--text)), inset 0 -1px 0 color-mix(in srgb, var(--text) 10%, transparent), var(--shadow-card);
+  -webkit-backdrop-filter: blur(16px) saturate(155%); backdrop-filter: blur(16px) saturate(155%);
+}
+[data-variant='now'] .fade i { background: linear-gradient(var(--bg), var(--bg) 60px, color-mix(in srgb, var(--bg) 24%, transparent) 107px, transparent); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); }
+[data-variant='now'] .fade i:not(:first-child), [data-variant='now'] .bottom .base { display: none; }
+
+/* ===== 新: lighter, no dark edge, no cast shadow; the rim is light, the blur is stronger ===== */
+[data-variant='new'] .glass {
+  border: 0;
+  background:
+    linear-gradient(160deg, rgba(var(--glass-tint), calc(var(--rim) * .35)), rgba(var(--glass-tint), 0) 55%),
+    color-mix(in srgb, var(--surface) var(--fill), transparent);
+  box-shadow:
+    inset 0 0 0 1px rgba(var(--glass-tint), calc(var(--rim) * .5)),
+    inset 0 1px 1px rgba(var(--glass-tint), var(--rim)),
+    0 2px 10px rgba(var(--ink), var(--lift));
+  -webkit-backdrop-filter: blur(var(--blur)) saturate(var(--sat)); backdrop-filter: blur(var(--blur)) saturate(var(--sat));
+}
+[data-theme='dark'] [data-variant='new'] .glass { box-shadow: inset 0 0 0 1px rgba(var(--glass-tint), calc(var(--rim) * .12)), inset 0 1px 1px rgba(var(--glass-tint), calc(var(--rim) * .22)), 0 2px 10px rgba(var(--ink), calc(var(--lift) * 2.5)); }
+/* Progressive blur: each layer blurs more and is revealed only toward the top; the colour fade sits on top of them. */
+[data-variant='new'] .fade i:nth-child(1) { -webkit-backdrop-filter: blur(calc(var(--fade-blur) * .1)); backdrop-filter: blur(calc(var(--fade-blur) * .1)); -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 55%, transparent 100%); mask-image: linear-gradient(to bottom, #000 0, #000 55%, transparent 100%); }
+[data-variant='new'] .fade i:nth-child(2) { -webkit-backdrop-filter: blur(calc(var(--fade-blur) * .3)); backdrop-filter: blur(calc(var(--fade-blur) * .3)); -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 48%, transparent 90%); mask-image: linear-gradient(to bottom, #000 0, #000 48%, transparent 90%); }
+[data-variant='new'] .fade i:nth-child(3) { -webkit-backdrop-filter: blur(calc(var(--fade-blur) * .65)); backdrop-filter: blur(calc(var(--fade-blur) * .65)); -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 42%, transparent 78%); mask-image: linear-gradient(to bottom, #000 0, #000 42%, transparent 78%); }
+[data-variant='new'] .fade i:nth-child(4) { -webkit-backdrop-filter: blur(var(--fade-blur)); backdrop-filter: blur(var(--fade-blur)); -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 36%, transparent 66%); mask-image: linear-gradient(to bottom, #000 0, #000 36%, transparent 66%); }
+[data-variant='new'] .fade i:nth-child(5) { background: linear-gradient(to bottom, color-mix(in srgb, var(--bg) calc(var(--fade) * 100%), transparent) 0, color-mix(in srgb, var(--bg) calc(var(--fade) * 100%), transparent) 76%, color-mix(in srgb, var(--bg) calc(var(--fade) * 40%), transparent) 94%, transparent); }
+[data-variant='new'] .bottom .base { background: linear-gradient(to top, color-mix(in srgb, var(--bg) calc(var(--fade) * 100%), transparent) 0, color-mix(in srgb, var(--bg) calc(var(--fade) * 100%), transparent) 55%, transparent); }
+
+/* 无背景带: glass controls alone, content shows through to the edge. */
+[data-fade='off'] .fade, [data-fade='off'] .bottom .base { display: none; }
+
+@media (prefers-reduced-transparency: reduce) { .glass { background: var(--surface) !important; -webkit-backdrop-filter: none !important; backdrop-filter: none !important; } }
+</style>
+</head>
+<body>
+
+<section class="panel" id="panel">
+  <h1>玻璃控件 · Playground</h1>
+  <p>往下滑手机里的内容，看按钮和输入框下面的东西怎么透出来。<b>当前</b>是应用现在的样子，<b>新</b>是调整后的：更亮的填充、更强的模糊、亮边代替深色描边和大阴影、标题后面用渐进模糊。</p>
+  <div class="row">
+    <span class="seg" id="variant"><button data-v="now" aria-pressed="false">当前</button><button data-v="new" aria-pressed="true">新</button></span>
+    <span class="seg" id="theme"><button data-v="light" aria-pressed="true">亮色</button><button data-v="dark" aria-pressed="false">深色</button></span>
+    <span class="seg" id="fadeMode"><button data-v="on" aria-pressed="true">有背景带</button><button data-v="off" aria-pressed="false">无背景带</button></span>
+  </div>
+  <div class="sliders" id="sliders"></div>
+  <details><summary>当前参数（调好后发给我，或直接复制）</summary><pre id="out"></pre></details>
+</section>
+
+<section class="stage" id="stage">
+  <div class="phone" id="phone" data-variant="new" data-fade="on">
+    <div class="status"><span>08:55</span><span>5G ▮</span></div>
+
+    <div class="scroll">
+      <div class="msg"><b>建议</b>（等你拍板，我不动）</div>
+      <div class="msg">1. <b>日常任务用较轻的模型</b>，只在难任务上临时切换到更强的。<br>2. <b>摘要、起标题这类小任务</b>交给最轻的模型。<br>3. 长任务开始前先确认额度。</div>
+      <div class="swatch"></div>
+      <div class="msg">切法：会话内用 <code>/model</code>；全局改配置里的 <code>"model"</code> 字段。</div>
+      <div class="meta"><span>复制</span><span>分支</span><span>08:48</span></div>
+      <div class="user">同一个会话切换模型，需要重新写缓存吗？</div>
+      <div class="work">工作中 · 14 秒</div>
+      <div class="code"><u>const</u> glass = {<br>&nbsp;&nbsp;blur: <i>'24px'</i>,<br>&nbsp;&nbsp;fill: <i>'72%'</i>,<br>&nbsp;&nbsp;shadow: <i>'none'</i><br>};</div>
+      <div class="diff"><span>已更改 23 个文件</span><em>+238</em><s>−54</s></div>
+      <div class="msg">之前做了，但底色太实、后面又没有滚动内容，确实看不出玻璃感，这部分没做到位。现在已修正并合入 master。</div>
+      <div class="user">液态玻璃效果，之前说要做，做了吗？怎么看不到？</div>
+      <div class="swatch" style="background: linear-gradient(200deg, #0b7285, #2b8a3e 60%, #fcc419)"></div>
+      <div class="msg">刷新页面，在长聊天里上下滚，按钮和输入框后面的内容会被模糊透出来。<b>标题、按钮和输入框</b>都用同一套材质。</div>
+      <div class="code"><u>npm</u> run typecheck &amp;&amp; <u>npm</u> test<br><i>ok</i> 148 passed</div>
+      <div class="msg">还有一点：深色下底色更暗，亮边要收一些，否则会发白发灰。</div>
+      <div class="user">好，那就按这个来</div>
+      <div class="msg">收到。下面是更多内容，用来滚到输入框后面。</div>
+      <div class="swatch" style="background: linear-gradient(60deg, #c2255c, #5f3dc4)"></div>
+      <div class="msg">长一点的段落：玻璃的关键是它后面有东西。滚动时，文字和色块从按钮下面经过，边缘被模糊拉开，但仍能看出轮廓，这就是层次感。</div>
+    </div>
+
+    <div class="top">
+      <div class="fade"><i></i><i></i><i></i><i></i><i></i></div>
+      <div class="bar">
+        <span class="round glass"><svg class="ic" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></span>
+        <span class="title">用量与成本</span>
+        <span class="pill glass">
+          <span><svg class="ic" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></svg></span>
+          <span><svg class="ic" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2.5"/><path d="M16 8V6.5A2.5 2.5 0 0013.5 4h-7A2.5 2.5 0 004 6.5v7A2.5 2.5 0 006.5 16H8"/></svg></span>
+          <span><svg class="ic" viewBox="0 0 24 24"><path d="M4 20l4-1 11-11a2 2 0 00-3-3L5 16z"/></svg></span>
+          <span><svg class="ic" viewBox="0 0 24 24"><path d="M6 12h.01M12 12h.01M18 12h.01"/></svg></span>
+        </span>
+      </div>
+    </div>
+
+    <div class="bottom">
+      <div class="base"></div>
+      <div class="box glass">
+        <svg class="ic" viewBox="0 0 24 24" style="color: var(--muted)"><path d="M12 5v14M5 12h14"/></svg>
+        <span class="hint">追加一条…</span>
+        <svg class="ic mic" viewBox="0 0 24 24"><path d="M4 11v2M8 8v8M12 5v14M16 8v8M20 11v2"/></svg>
+        <span class="send"><svg class="ic" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/></svg></span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+const root = document.documentElement, phone = document.getElementById('phone');
+const KNOBS = [
+  ['fill', '填充不透明', 30, 95, 1, '%', 72],
+  ['blur', '模糊', 4, 48, 1, 'px', 24],
+  ['sat', '饱和度', 100, 240, 5, '%', 180],
+  ['rim', '亮边', 0, 1, 0.05, '', 0.55],
+  ['lift', '阴影', 0, 0.3, 0.01, '', 0.08],
+  ['fade', '背景带浓度', 0, 1, 0.02, '', 0.92],
+  ['fade-blur', '背景带模糊', 0, 24, 1, 'px', 10],
+];
+const state = Object.fromEntries(KNOBS.map(k => [k[0], k[6]]));
+const wrap = document.getElementById('sliders');
+for (const [name, label, min, max, step, unit] of KNOBS) {
+  const l = document.createElement('label');
+  l.innerHTML = `<span>${label}</span><input type="range" min="${min}" max="${max}" step="${step}" data-k="${name}"><output></output>`;
+  wrap.append(l);
+}
+function render() {
+  for (const [name, , , , , unit] of KNOBS) {
+    root.style.setProperty('--' + name, state[name] + unit);
+    const input = wrap.querySelector(`[data-k="${name}"]`);
+    input.value = state[name]; input.nextElementSibling.textContent = state[name] + unit;
+  }
+  document.getElementById('out').textContent = KNOBS.map(k => `--${k[0]}: ${state[k[0]]}${k[5]};`).join('\n');
+}
+wrap.addEventListener('input', e => { state[e.target.dataset.k] = Number(e.target.value); render(); });
+function seg(id, apply) {
+  const el = document.getElementById(id);
+  el.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    el.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+    apply(b.dataset.v);
+  });
+}
+seg('variant', v => { phone.dataset.variant = v; document.getElementById('panel').classList.toggle('off', v === 'now'); });
+seg('theme', v => { root.dataset.theme = v; });
+seg('fadeMode', v => { phone.dataset.fade = v; });
+render();
+</script>
+</body>
+</html>
