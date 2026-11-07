@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
-import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
+import { openCollaboration, startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
 
 test('queued collaboration restores text and target tasks separately in all viewports', async () => {
   const daemon = await startDaemon();
@@ -17,9 +17,10 @@ test('queued collaboration restores text and target tasks separately in all view
         await openUi(page, daemon);
         if (phone) await page.locator('.menu-btn').click();
         await page.locator('.thread-row', { hasText: title }).click();
-        await page.getByRole('button', { name: '协作', exact: true }).click();
+        await openCollaboration(page);
+        await page.getByRole('button', { name: '协作设置', exact: true }).click();
         await page.getByRole('button', { name: '启用协作', exact: true }).click();
-        await page.locator('.coord-tool.on').waitFor();
+        await page.locator('.composer-add.on').waitFor();
         await post(`/api/threads/${thread.id}/turns`, { text: 'slow' });
         const mentions = [{ id: 'claude', label: 'Claude Code', kind: 'agent', cwd: daemon.workdir, task: '总结经验，先不要自己做' }];
         await post(`/api/threads/${thread.id}/turns`, { text: '让 Claude 参与分析', mentions, queue: true });

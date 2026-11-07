@@ -1,5 +1,5 @@
 import { createPortal } from 'react-dom';
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type CSSProperties } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type CSSProperties, type RefObject } from 'react';
 
 interface Props {
   /** Accessible name of the panel. */
@@ -8,7 +8,10 @@ interface Props {
   triggerTitle?: string;
   triggerLabel?: string;
   panelClassName?: string;
-  trigger: ReactNode;
+  trigger?: ReactNode;
+  triggerRef?: RefObject<HTMLButtonElement>;
+  /** A menu action can open another panel at the same button without adding a second trigger. */
+  anchorRef?: RefObject<HTMLElement>;
   /** Which edge of the trigger the panel lines up with on wide screens. */
   align?: 'start' | 'end';
   placement?: 'above' | 'below';
@@ -31,6 +34,8 @@ export function Popover({
   triggerLabel,
   panelClassName,
   trigger,
+  triggerRef,
+  anchorRef,
   align = 'start',
   placement = 'above',
   disabled,
@@ -47,10 +52,24 @@ export function Popover({
   const [position, setPosition] = useState<CSSProperties>({});
 
   useLayoutEffect(() => {
+    const anchor = anchorRef?.current;
+    if (!open || !anchor) return;
+    const controls = anchor.getAttribute('aria-controls');
+    const expanded = anchor.getAttribute('aria-expanded');
+    anchor.setAttribute('aria-controls', panelId);
+    anchor.setAttribute('aria-expanded', 'true');
+    return () => {
+      if (controls === null) anchor.removeAttribute('aria-controls'); else anchor.setAttribute('aria-controls', controls);
+      if (expanded === null) anchor.removeAttribute('aria-expanded'); else anchor.setAttribute('aria-expanded', expanded);
+    };
+  }, [open, anchorRef, panelId]);
+
+  useLayoutEffect(() => {
     if (!open) return;
     const place = () => {
-      if (!rootRef.current || !panelRef.current) return;
-      const anchor = rootRef.current.getBoundingClientRect();
+      const at = anchorRef?.current ?? rootRef.current;
+      if (!at || !panelRef.current) return;
+      const anchor = at.getBoundingClientRect();
       const panel = panelRef.current.getBoundingClientRect();
       const viewport = window.visualViewport;
       const edge = 12;
@@ -69,17 +88,18 @@ export function Popover({
     place();
     const observer = new ResizeObserver(place);
     if (panelRef.current) observer.observe(panelRef.current);
-    if (rootRef.current) observer.observe(rootRef.current);
+    const at = anchorRef?.current ?? rootRef.current;
+    if (at) observer.observe(at);
     window.addEventListener('resize', place);
     window.addEventListener('scroll', place, true);
     window.visualViewport?.addEventListener('resize', place);
     const focusable = matchMedia('(hover: none)').matches ? '[role^="menuitem"]:not(:disabled), button:not(:disabled)' : 'input:not(:disabled), [role^="menuitem"]:not(:disabled), button:not(:disabled)';
     panelRef.current?.querySelector<HTMLElement>(focusable)?.focus({ preventScroll: true });
     return () => { observer.disconnect(); window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true); window.visualViewport?.removeEventListener('resize', place); };
-  }, [open, placement, align]);
+  }, [open, placement, align, anchorRef]);
 
   useEffect(() => {
-    if (openSignal) setOpen(true);
+    if (openSignal !== undefined) setOpen(openSignal > 0);
   }, [openSignal]);
 
   useEffect(() => {
@@ -91,7 +111,9 @@ export function Popover({
     if (!open) return;
     // composedPath is captured at dispatch, so it still works if the clicked node is removed by the handler.
     const onDown = (e: MouseEvent | TouchEvent) => {
-      if (rootRef.current && !e.composedPath().includes(rootRef.current) && (!panelRef.current || !e.composedPath().includes(panelRef.current))) setOpen(false);
+      const at = anchorRef?.current ?? rootRef.current;
+      if (anchorRef && at && e.composedPath().includes(at)) { setOpen(false); return; }
+      if (at && !e.composedPath().includes(at) && (!panelRef.current || !e.composedPath().includes(panelRef.current))) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       // An open inline disclosure consumes Escape before its containing menu.
@@ -100,7 +122,7 @@ export function Popover({
         const rows = [...(panelRef.current?.querySelectorAll<HTMLElement>('[role^="menuitem"]:not(:disabled), button:not(:disabled)') ?? [])].filter(el => el.getClientRects().length > 0);
         if (rows.length) { e.preventDefault(); const i = rows.indexOf(document.activeElement as HTMLElement); rows[e.key === 'Home' ? 0 : e.key === 'End' ? rows.length - 1 : (i + (e.key === 'ArrowDown' ? 1 : -1) + rows.length) % rows.length]?.focus(); }
       }
-      if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); setOpen(false); rootRef.current?.querySelector('button')?.focus(); }
+      if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); setOpen(false); (anchorRef?.current ?? rootRef.current?.querySelector('button'))?.focus({ preventScroll: true }); }
     };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('touchstart', onDown);
@@ -110,7 +132,7 @@ export function Popover({
       document.removeEventListener('touchstart', onDown);
       document.removeEventListener('keydown', onKey, true);
     };
-  }, [open]);
+  }, [open, anchorRef]);
 
   const close = () => setOpen(false);
   const panel = <>
@@ -119,9 +141,11 @@ export function Popover({
     </div>
   </>;
 
+  if (anchorRef) return open ? createPortal(panel, document.body) : null;
   return (
     <div className="pop" ref={rootRef}>
       <button
+        ref={triggerRef}
         type="button"
         className={triggerClassName}
         title={triggerTitle}

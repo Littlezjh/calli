@@ -270,8 +270,8 @@ test('add menu keeps Plan and attachments accessible and the crowded mobile mode
       await page.getByRole('button', { name: '停止', exact: true }).waitFor();
       await input.fill('继续检查布局，保持模型按钮为圆形。');
       await page.getByRole('button', { name: '排队发送', exact: true }).waitFor();
-      await page.getByRole('button', { name: '协作', exact: true }).waitFor();
-      await page.locator('.composer-bar .usage').waitFor();
+      assert.equal(await page.locator('.composer-bar .coord-tool').count(), 0, 'collaboration lives in the add menu');
+      await page.locator('.composer-bar .model-control-trigger').waitFor();
       // A shorter viewport exercises the available space above an on-screen keyboard.
       if (mobile) await page.setViewportSize({ width, height: 450 });
       await input.focus();
@@ -291,9 +291,12 @@ test('add menu keeps Plan and attachments accessible and the crowded mobile mode
       await add.click();
       assert.equal(await plan.isDisabled(), true);
       assert.equal(await attachChoice(page).isEnabled(), true);
-      const menu = await (mobile ? page.getByRole('menu', { name: '添加与模式', exact: true }) : page.locator('.command-menu')).boundingBox();
-      const trigger = await add.boundingBox();
-      assert.ok(menu.y >= 0 && menu.y + menu.height <= trigger.y, 'add menu stays above the composer');
+      await page.waitForFunction(mobile => {
+        const menu = document.querySelector(mobile ? '.composer-add-menu' : '.command-menu')?.getBoundingClientRect();
+        const add = document.querySelector('.composer-add')?.getBoundingClientRect();
+        return menu && add && menu.y >= 0 && menu.bottom <= add.y;
+      }, mobile);
+      // The placement check above reads menu and trigger in the same browser frame.
       if (shots) await page.screenshot({ path: join(shots, `add-running-${width}-${colorScheme}.png`), animations: 'disabled' });
       await page.keyboard.press('Escape');
       await page.getByRole('button', { name: '停止', exact: true }).click();
@@ -323,7 +326,7 @@ test('a phone folds the empty composer to one line while a turn runs, and opens 
       await page.locator('.composer-box.collapsed textarea').tap();
       await page.locator('.composer-box.collapsed').waitFor({ state: 'detached' });
       await page.locator('.composer textarea[placeholder="追加一条，这一轮结束后发送"]').waitFor();
-      await page.getByRole('button', { name: '协作', exact: true }).waitFor();
+      assert.equal(await page.locator('.composer-bar .coord-tool').count(), 0, 'collaboration lives in the add menu');
       await page.getByRole('button', { name: '停止', exact: true }).click();
       await page.getByRole('button', { name: '停止', exact: true }).waitFor({ state: 'hidden' });
       // Idle, it folds the same way: nothing being written is one line.
@@ -333,7 +336,7 @@ test('a phone folds the empty composer to one line while a turn runs, and opens 
       assert.equal(await page.getByRole('button', { name: '协作', exact: true }).count(), 0);
       if (shots) await page.screenshot({ path: join(shots, `composer-collapsed-idle-phone-${colorScheme}.png`), animations: 'disabled' });
       await page.locator('.composer-box.collapsed textarea').tap();
-      await page.getByRole('button', { name: '协作', exact: true }).waitFor();
+      assert.equal(await page.locator('.composer-bar .coord-tool').count(), 0, 'collaboration lives in the add menu');
       // A new thread keeps its strip of agent and directory in view: that is the choice being made.
       await openUi(page, daemon);
       await page.locator('.composer .composer-context').waitFor();

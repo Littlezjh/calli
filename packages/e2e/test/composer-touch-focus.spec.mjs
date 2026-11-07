@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
+import { openCollaboration, startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
 
 test('touching collaboration keeps the empty composer mounted when taps do not focus buttons', async () => {
   const daemon = await startDaemon();
@@ -34,13 +34,12 @@ test('touching collaboration keeps the empty composer mounted when taps do not f
           }, true);
         });
         const input = page.locator('.composer textarea');
-        const trigger = page.locator('.composer .coord-tool');
         const panel = page.getByRole('menu', { name: '协作', exact: true });
         const tap = async locator => mobile ? locator.tap() : locator.click();
         for (const running of [false, true]) {
           if (running) await post(`/api/threads/${thread.id}/turns`, { text: 'slow' });
           await input.focus();
-          await tap(trigger);
+          await openCollaboration(page);
           await page.waitForTimeout(300);
           assert.ok(await panel.isVisible(), 'the menu survives blur and pointer release');
           assert.equal(await page.locator('.composer-box.collapsed').count(), 0);

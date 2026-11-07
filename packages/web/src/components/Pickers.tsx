@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { isFastSpeed, type AgentInfo, type Api, type ModelOption } from '../api';
 import { usageSummary, type Usage } from '../timeline';
 import { EFFORT_LABELS, PERMISSION_LABELS, PERMISSION_ORDER, permissionHint } from '../permissions';
@@ -37,13 +37,13 @@ export function PermissionPicker({ modes, value, onChange, canAsk, openSignal, q
       label={t('statusPanel.permission')}
       openSignal={openSignal}
       align={quietFor === undefined ? undefined : 'end'}
-      triggerClassName={quietFor === undefined ? `tool-btn keep${value === 'full_access' ? ' warn' : ''}` : 'member-model set'}
-      triggerLabel={quietFor === undefined ? undefined : t('pickers.permissionFor', quietFor)}
+      triggerClassName={quietFor === undefined ? `tool-btn icon-only composer-permission${value === 'full_access' ? ' warn' : ''}` : 'member-model set'}
+      triggerLabel={quietFor === undefined ? t('pickers.permissionIs', PERMISSION_LABELS[value]?.label ?? value) : t('pickers.permissionFor', quietFor)}
       triggerTitle={permissionHint(value, canAsk)}
       trigger={
         <>
           <Icon size={16} />
-          <span>{PERMISSION_LABELS[value]?.short ?? value}</span>
+          {quietFor !== undefined && <span>{PERMISSION_LABELS[value]?.short ?? value}</span>}
         </>
       }
     >
@@ -86,6 +86,9 @@ export function PermissionPicker({ modes, value, onChange, canAsk, openSignal, q
 }
 
 interface ModelProps {
+  /** Context details share the model panel instead of adding a second toolbar dial. */
+  context?: ReactNode;
+  contextHigh?: boolean;
   onDiagnose?: () => void;
   /** False when the CLI does not expose a model catalog at all, rather than one that failed to load. */
   catalog?: boolean;
@@ -220,12 +223,12 @@ export function ModelPicker(props: ModelProps) {
         openSignal={openSignal}
         onOpen={props.onOpen}
         align="end"
-        triggerClassName="tool-btn model-control-trigger"
+        triggerClassName={`tool-btn model-control-trigger${props.contextHigh ? ' high' : ''}`}
         triggerLabel={t('pickers.modelNoneLabel')}
         triggerTitle={t('pickers.noModels')}
         trigger={<><span className="model-trigger-name">{t('statusPanel.model')}</span><IconChevron size={13} open /></>}
       >
-        {close => <><div className="pop-title">{t('pickers.noModels')}</div><p className="member-model-empty">{t('pickers.noModelsHint')}</p>{props.onDiagnose && <button type="button" role="menuitem" className="pop-item compact" onClick={() => { close(); props.onDiagnose?.(); }}><span className="pop-item-label">{t('pickers.diagnose')}</span></button>}</>}
+        {close => <><div className="pop-title">{t('pickers.noModels')}</div><p className="member-model-empty">{t('pickers.noModelsHint')}</p>{props.onDiagnose && <button type="button" role="menuitem" className="pop-item compact" onClick={() => { close(); props.onDiagnose?.(); }}><span className="pop-item-label">{t('pickers.diagnose')}</span></button>}{props.context}</>}
       </Popover>
     );
   }
@@ -259,9 +262,9 @@ export function ModelPicker(props: ModelProps) {
       onOpen={props.onOpen}
       align="end"
       panelClassName="model-control-panel"
-      triggerClassName={`tool-btn model-control-trigger${narrow && levels.length > 0 ? ' dial-only' : ''}`}
-      triggerTitle={summary}
-      triggerLabel={t('pickers.modelAndEffortIs', summary)}
+      triggerClassName={`tool-btn model-control-trigger${narrow && levels.length > 0 ? ' dial-only' : ''}${props.contextHigh ? ' high' : ''}`}
+      triggerTitle={summary + (props.contextHigh ? t('pickers.contextHigh') : '')}
+      triggerLabel={t('pickers.modelAndEffortIs', summary) + (props.contextHigh ? t('pickers.contextHigh') : '')}
       trigger={<>
         {/* A phone has room for the dial alone; the card it opens names the model. */}
         {!(narrow && levels.length > 0) && <span className="model-trigger-name">{modelName(models, model)}</span>}
@@ -269,7 +272,7 @@ export function ModelPicker(props: ModelProps) {
         {!narrow && <IconChevron size={13} open />}
       </>}
     >
-      {() => <ModelControl {...props} />}
+      {() => <><ModelControl {...props} />{props.context}</>}
     </Popover>
   );
 }
@@ -546,18 +549,35 @@ export function AgentPicker({ api, agents, value, onChange, accounts = [], onAdd
 }
 
 /** How full the agent's context window is: a small ring that opens to the numbers. */
-export function UsageMeter({ usage, onCompact, running, compactDisabled, compactQueued }: {
+export function UsageMeter({ usage, onCompact, running, compactDisabled, compactQueued, inline = false }: {
   usage: Usage | null;
   onCompact?: () => Promise<void>;
   running?: boolean;
   compactDisabled?: boolean;
   compactQueued?: boolean;
+  inline?: boolean;
 }) {
   const [compacting, setCompacting] = useState(false);
   const { percent, high, detail } = usage ? usageSummary(usage)
     : { percent: 0, high: false, detail: t('pickers.contextUnknown') };
   // A ring of radius 6 has a circumference of about 37.7; the dash shows the used share of it.
   const circumference = 2 * Math.PI * 6;
+  const details = (close: () => void) => <>
+    <div className="pop-title">{t('statusPanel.context')}{usage && <span className="context-percent">{percent}%</span>}</div>
+    <div className="pop-note">{detail}{high && t('pickers.contextHigh')}</div>
+    {onCompact && <button type="button" className="pop-item compact context-compact" disabled={compacting || compactDisabled || compactQueued}
+      onClick={async () => {
+        setCompacting(true);
+        try { await onCompact(); close(); } catch { /* The caller displays the error. */ }
+        finally { setCompacting(false); }
+      }}>
+      <span className="pop-item-icon"><IconCompress size={17} /></span>
+      <span className="pop-item-text"><span className="pop-item-label">{compacting ? t('pickers.submitting') : compactQueued ? t('pickers.compactQueued') : t('pickers.compact')}</span>
+        <span className="pop-item-hint">{compactDisabled ? t('pickers.queueFull') : running ? t('pickers.compactAfter') : t('pickers.compactHint')}</span>
+      </span>
+    </button>}
+  </>;
+  if (inline) return <section className={`model-context${high ? ' high' : ''}`} aria-label={t('pickers.contextUsage')}>{details(() => {})}</section>;
   return (
     <Popover
       label={t('pickers.contextUsage')}
@@ -583,26 +603,7 @@ export function UsageMeter({ usage, onCompact, running, compactDisabled, compact
         </>
       }
     >
-      {(close) => (
-        <>
-          <div className="pop-title">{t('statusPanel.context')}</div>
-          <div className="pop-note">
-            {detail}
-            {high && t('pickers.contextHigh')}
-          </div>
-          {onCompact && <button type="button" className="pop-item compact context-compact" disabled={compacting || compactDisabled || compactQueued}
-            onClick={async () => {
-              setCompacting(true);
-              try { await onCompact(); close(); } catch { /* The caller displays the error. */ }
-              finally { setCompacting(false); }
-            }}>
-            <span className="pop-item-icon"><IconCompress size={17} /></span>
-            <span className="pop-item-text"><span className="pop-item-label">{compacting ? t('pickers.submitting') : compactQueued ? t('pickers.compactQueued') : t('pickers.compact')}</span>
-              <span className="pop-item-hint">{compactDisabled ? t('pickers.queueFull') : running ? t('pickers.compactAfter') : t('pickers.compactHint')}</span>
-            </span>
-          </button>}
-        </>
-      )}
+      {details}
     </Popover>
   );
 }

@@ -28,9 +28,16 @@ const openGoal = async page => {
   await add(page).click();
   if (!mobileMenu(page)) await page.getByRole('textbox', { name: '搜索操作与技能' }).fill('目标');
 };
+const activate = async (page, target) => {
+  if (!mobileMenu(page)) return target.click();
+  await target.scrollIntoViewIfNeeded();
+  const bounds = await target.boundingBox();
+  // The phone's quick-switch pad forwards actual taps to controls beneath it.
+  await page.touchscreen.tap(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+};
 const goalAction = async (page, name) => {
   if (name === '设置目标') { await openGoal(page); await item(page, name).click(); }
-  else await page.locator('.goal-card').getByRole('button', { name, exact: true }).click();
+  else await activate(page, page.locator('.goal-card').getByRole('button', { name, exact: true }));
 };
 const startGoal = async (page, objective) => {
   await goalAction(page, '设置目标');
@@ -42,6 +49,7 @@ const create = async (page, agent, title, mobile) => {
   assert.equal(res.status, 201);
   const thread = await res.json();
   await openUi(page, daemon);
+  await page.addStyleTag({ content: '*,*::before,*::after{transition:none!important;animation:none!important}' });
   if (mobile) await page.locator('.menu-btn').click();
   await page.locator('.thread-title', { hasText: title }).first().click();
   return thread;
@@ -167,6 +175,7 @@ test('desktop plus and slash share a full-width catalog with search, keyboard se
       await query.waitFor();
       assert.deepEqual(await page.getByRole('option').allTextContents(), slashEntries);
       assert.equal(await query.evaluate(el => el === document.activeElement), true);
+      await waitForPaletteWidth(page);
       const bounds = await page.locator('.command-menu').boundingBox();
       const composer = await page.locator('.composer-box').boundingBox();
       assert.equal(Math.round(bounds.width), Math.round(composer.width));
@@ -287,7 +296,7 @@ test('add menu offers searchable actions and skills and controls goals without l
       await screenshot(page, `goal-running-${key}`);
       assert.equal(await item(page, '查看目标').count(), 0);
       await page.keyboard.press('Escape');
-      await page.locator('.goal-card').getByRole('button', { name: '目标详情', exact: true }).click();
+      await activate(page, page.locator('.goal-card').getByRole('button', { name: '目标详情', exact: true }));
       await page.locator('.goal-full', { hasText: 'slow' }).waitFor();
       assert.equal(await input(page).inputValue(), '保留我的草稿');
       assert.equal(await page.locator('.attachment img').count(), 1);

@@ -8,7 +8,7 @@ import { useWorkSources, WorkSummary } from './extensions/work';
 import { HostIcon } from './extensions/ui';
 import { historyPage, mergeHistory, watchHistory } from './history';
 import type { WorkMode, WritingStage } from './api';
-import { forkBlocked, useThreadActions } from './components/ThreadActions';import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { forkBlocked, useThreadActions } from './components/ThreadActions';import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ComponentProps, type ReactNode } from 'react';
 import type { Theme } from './appearance';
 import {
   Api,
@@ -39,7 +39,7 @@ import { attentionCount, pageTitle } from './notices';
 import { folderName } from './paths';
 import { ThreadPlace } from './components/ThreadPlace';
 import { PERMISSION_LABELS, PERMISSION_ORDER, permissionHint, startingPermission } from './permissions';
-import { buildTimeline, toMarkdown, turnPreviews, type StoredEvent, type Timeline } from './timeline';
+import { buildTimeline, toMarkdown, turnPreviews, usageSummary, type StoredEvent, type Timeline } from './timeline';
 import { newerBuildAvailable } from './version';
 import { AppearancePanel } from './components/AppearancePanel';
 import { ActionSheet, type SheetTarget } from './components/ActionSheet';
@@ -1239,6 +1239,9 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const [resumeBusy, setResumeBusy] = useState(false);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLElement>(null);
+  const threadMoreRef = useRef<HTMLButtonElement>(null);
+  const [quotaRequest, setQuotaRequest] = useState<{ threadId: string; signal: number } | null>(null);
+  useEffect(() => setQuotaRequest(null), [selectedId, onPage]);
   useLayoutEffect(() => {
     const el = mainRef.current;
     if (!el) return;
@@ -1893,6 +1896,10 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     // The bar hands its trace mark to the menu on a wide screen; a phone reaches it from the
     // overview panel's foot.
     onOpenTrace: compact ? undefined : () => { setAgentsOpen(false); setFiles(null); setTraceOpen(true); },
+    onOpenQuota: thread => {
+      if (thread.id === selectedId) setQuotaRequest(value => ({ threadId: thread.id, signal: (value?.signal ?? 0) + 1 }));
+      else openSettings(`quota/${encodeURIComponent(thread.agent)}`);
+    },
     onError: handleError,
     onBusy: setBusyLine,
     onArchived: (thread) => setArchivedUndo({ thread, nonce: Date.now() }),
@@ -2512,7 +2519,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           ] : [];
   const collaborationIcon = (m: AgentMention) => [...agents, ...remoteAgents].find((a) => a.id === (m.kind === 'agent' ? m.id : coordination?.members.find((v) => v.id === m.id)?.thread?.agent))?.icon;
 
-  const collaborationControl = (select: (mention: AgentMention) => void, chosen: AgentMention[]) => (!draftTeam && !selected?.coordination?.team && (activeCaps?.coordination || selected?.coordination) && <Popover label={t('app.collab')} panelClassName="coord-picker-panel" triggerClassName={`tool-btn coord-tool${selected?.coordination || draftCollaboration ? ' on' : ''}`} triggerLabel={t('app.collab')} triggerTitle={selected?.coordination || draftCollaboration ? t('app.collabOn') : t('app.collab')} trigger={<><IconAgents size={16} /><span>{t('app.collab')}</span></>}>
+  const collaborationControl: NonNullable<ComponentProps<typeof Composer>['collaboration']> = (select, chosen, anchorRef, openSignal) => (<Popover label={t('app.collab')} panelClassName="coord-picker-panel" anchorRef={anchorRef} openSignal={openSignal}>
       {close => <CollaborationMenu options={collaborationOptions} selected={chosen} icon={collaborationIcon}
         onSelect={mention => { close(); select(mention); }}
         unavailable={selected?.coordination && !leading ? t('app.collabBack') : t('app.collabNone')}
@@ -2544,7 +2551,6 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     </Popover>);
 
   const left = (<>
-    {activeCaps?.quota && <ChatQuota api={api} agent={activeAgent} />}
     <PermissionPicker
       modes={permissionModes}
       value={permission}
@@ -2609,16 +2615,20 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   // Older daemons advertise /compact before they expose the dedicated capability.
   const canCompact = activeCaps?.compact ?? (commandsByKey[commandsKey] ?? []).some((command) => command.name === 'compact' && command.kind !== 'skill');
 
-  const right = (
-    <>
-      {selected && (timeline.usage || canCompact) && <UsageMeter
+  const contextDetails = selected && (timeline.usage || canCompact) ? <UsageMeter
+        inline={activeCaps?.modelCatalog !== false}
         usage={timeline.usage}
         onCompact={canCompact ? () => send('/compact', []) : undefined}
         running={running}
         compactQueued={selected.queued?.some((message) => message.text.trim() === '/compact')}
         compactDisabled={(selected.queued?.length ?? 0) >= MAX_QUEUED}
-      />}
+      /> : undefined;
+  const right = (
+    <>
+      {activeCaps?.modelCatalog === false && contextDetails}
       <ModelPicker
+        context={contextDetails}
+        contextHigh={timeline.usage ? usageSummary(timeline.usage).high : false}
         catalog={activeCaps?.modelCatalog}
         models={models}
         model={model}
@@ -2914,6 +2924,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
                 </button>
               )}
               <button
+                ref={threadMoreRef}
                 className="icon-btn topbar-more"
                 aria-label={t('app.threadMore')}
                 onClick={(e) => {
@@ -3207,7 +3218,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           } : send}
           mentionOptions={collaborationOptions}
           mentionIcon={collaborationIcon}
-          collaboration={collaborationControl}
+          collaboration={!draftTeam && !selected?.coordination?.team && (activeCaps?.coordination || selected?.coordination) ? collaborationControl : undefined}
+          collaborationActive={Boolean(selected?.coordination || draftCollaboration)}
           mentionExtra={(m) => { const a = agents.find((v) => v.id === m.id); return a ? memberModel(a) : null; }}
           onBrowseMentionDir={(m, choose) => {
             const a = remoteAgents.find((v) => v.id === m.id);
@@ -3443,6 +3455,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           onJumpTurn={(turnId) => { setDiffFile(null); setJump({ threadId: diffFile.threadId, turnId }); }}
         />
       )}
+      {selected && quotaRequest?.threadId === selected.id && !onPage && activeCaps?.quota && <ChatQuota key={selected.id} api={api} agent={activeAgent} anchorRef={threadMoreRef} openSignal={quotaRequest.signal} />}
       {threadActions.layer}
       <NoteMarks marks={noteMarks} scrollerRef={scrollerRef} />
       <SelectionMenu

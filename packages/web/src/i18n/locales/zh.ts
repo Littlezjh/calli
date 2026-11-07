@@ -3,6 +3,8 @@
  * a key added here has to be added to them too. Messages with values are functions.
  */
 export const zh = {
+  'quota.query': '额度查询',
+  'pickers.permissionIs': (mode: string) => `权限：${mode}`,
   "quota.resetUnknown": "重置时间未知",
   "quota.empty": "服务未提供额度信息",
   "quota.exhausted": "额度已耗尽",

@@ -62,16 +62,16 @@ test('Codex shows current context on desktop and phone in both themes, including
         const page = await context.newPage();
         await openUi(page, daemon);
         await selectThread(page, thread, mobile);
-        const meter = page.locator('.usage:visible').first();
+        await page.locator('.model-control-trigger').click();
+        const meter = page.locator('.model-context .context-percent');
         await meter.waitFor();
         assert.equal(await meter.innerText(), '71%');
-        assert.equal(await meter.evaluate((el) => el.classList.contains('high')), false);
-        await meter.click();
+        assert.equal(await page.locator('.model-context.high').count(), 0);
         await page.locator('.pop-note', { hasText: '上下文已用' }).waitFor();
         assert.equal(await page.locator('.pop-note', { hasText: '上下文已用' }).innerText(), '上下文已用 184k / 258k');
         // Let the phone drawer and bottom sheet finish moving before inspecting their bounds.
         await page.waitForTimeout(450);
-        const bounds = await page.locator('.pop-panel').boundingBox();
+        const bounds = await page.locator('.model-control-panel').boundingBox();
         assert.ok(bounds && bounds.y >= 0 && bounds.y + bounds.height <= page.viewportSize().height + 1);
         if (process.env.CALLI_E2E_SHOTS_DIR) {
           mkdirSync(process.env.CALLI_E2E_SHOTS_DIR, { recursive: true });
@@ -79,6 +79,7 @@ test('Codex shows current context on desktop and phone in both themes, including
         }
         await openUi(page, daemon);
         await selectThread(page, thread, mobile);
+        await page.locator('.model-control-trigger').click();
         await meter.waitFor();
         assert.equal(await meter.innerText(), '71%');
       } finally {
@@ -92,7 +93,8 @@ test('Codex shows current context on desktop and phone in both themes, including
     const page = await context.newPage();
     await openUi(page, daemon);
     await selectThread(page, thread, false);
-    const meter = page.locator('.usage:visible').first();
+    await page.locator('.model-control-trigger').click();
+    const meter = page.locator('.model-context .context-percent');
     await meter.waitFor();
     assert.equal(await meter.innerText(), '5%');
   } finally {
@@ -108,7 +110,8 @@ test('Pi clears its previous context after compaction and measures it again afte
     const page = await context.newPage();
     await openUi(page, daemon);
     await selectThread(page, thread, false);
-    const meter = page.locator('.usage:visible').first();
+    await page.locator('.model-control-trigger').click();
+    const meter = page.locator('.model-context .context-percent');
     await meter.waitFor();
     assert.equal(await meter.innerText(), '1%');
     await send(thread, '/compact');
@@ -116,7 +119,9 @@ test('Pi clears its previous context after compaction and measures it again afte
     await openUi(page, daemon);
     await selectThread(page, thread, false);
     await page.getByText('已压缩上下文：150.0k → 约 32.0k tokens。', { exact: true }).waitFor();
-    assert.equal(await page.locator('.usage:visible').count(), 0);
+    await page.locator('.model-control-trigger').click();
+    assert.equal(await meter.count(), 0);
+    await page.getByText('暂未获取上下文用量，下一次响应后更新。', { exact: true }).waitFor();
     await send(thread, 'hello again');
     await meter.waitFor();
     assert.equal(await meter.innerText(), '1%');

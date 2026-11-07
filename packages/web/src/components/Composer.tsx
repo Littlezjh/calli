@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from 'react';
 import { flushSync } from 'react-dom';
 import { ApiError, MAX_QUEUED, type AgentMention, type ModelQueue, type OutgoingImage, type QueuedMessage, type SlashCommand } from '../api';
 import { commandDraft, searchCommands, slashQuery, type HubAction, type MenuRow } from '../commands';
@@ -17,6 +17,7 @@ import { VideoPreview } from './VideoPreview';
 import { isPlayable, isSupportedVideo, MAX_UPLOADS, MAX_VIDEOS, prepareFile, prepareVideo, type PreparedVideo } from '../videos';
 import {
   IconArchive,
+  IconAgents,
   AgentMark,
   IconClose,
   IconCheck,
@@ -129,7 +130,8 @@ interface Props {
   disabled?: boolean;
   placeholder: string;
   mentionOptions?: AgentMention[];
-  collaboration?: (select: (mention: AgentMention) => void, selected: AgentMention[]) => ReactNode;
+  collaboration?: (select: (mention: AgentMention) => void, selected: AgentMention[], anchorRef: RefObject<HTMLButtonElement>, openSignal: number) => ReactNode;
+  collaborationActive?: boolean;
   mentionDirectories?: string[];
   /** Browse another machine's folders for an instance there; `choose` sets that one's folder. */
   onBrowseMentionDir?: (mention: AgentMention, choose: (cwd: string) => void) => void;
@@ -254,6 +256,7 @@ export function Composer({
   lastSent = null,
   mentionOptions = [],
   collaboration,
+  collaborationActive,
   mentionDirectories = [],
   onBrowseMentionDir,
   mentionIcon,
@@ -284,6 +287,7 @@ export function Composer({
   const [active, setActive] = useState(0);
   const [dismissed, setDismissed] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [collaborationSignal, setCollaborationSignal] = useState(0);
   const [addQuery, setAddQuery] = useState('');
   const [catalog, setCatalog] = useState<'all' | 'actions' | 'skills'>('all');
   /** A picture being looked at full size before it goes out. */
@@ -298,6 +302,7 @@ export function Composer({
   const isTouch = useIsTouch();
 
   useEffect(() => { setAddOpen(false); }, [draftKey, narrow]);
+  useEffect(() => { setCollaborationSignal(0); }, [draftKey]);
   useEffect(() => {
     if (!addOpen) return;
     const outside = (event: PointerEvent) => {
@@ -354,6 +359,7 @@ export function Composer({
       return searchCommands(query, catalog === 'actions' ? actions.filter(a => !['help', 'skills'].includes(a.id)) : [], entries, [...hiddenCommands, ...(goal ? ['goal'] : [])]);
     }
     const additions: HubAction[] = [{ id: 'composer:attach', label: t('composerMenu.attach'), hint: '', keywords: ['attach', 'image', 'video', 'file', '附件', '文件'] }];
+    if (collaboration) additions.push({ id: 'composer:collaboration', label: t('app.collab'), hint: '', keywords: ['collaboration', 'agents', '协作'] });
     if (planMode) additions.push({ id: 'composer:plan', label: t('composerMenu.planMode'), hint: planMode.disabled ? t('composer.planAfterTurn') : planMode.active ? t('composer.planActive') : t('composerMenu.planOn'), keywords: ['plan', '计划'], disabled: planMode.disabled });
     if (writingMode) additions.push({ id: 'composer:writing', label: t('writing.mode'), hint: writingMode.active ? t('writing.off') : t('writing.modeHint'), keywords: ['writing', 'write', '写作', '文章'], disabled: writingMode.disabled });
     if (goal) {
@@ -367,7 +373,7 @@ export function Composer({
       ...(!narrow ? group(t('composer.add'), additions) : []),
       ...searchCommands(query, actions, commands, hiddenCommands),
     ];
-  }, [addOpen, addQuery, catalog, text, narrow, actions, commands, hiddenCommands, planMode, writingMode, goal, running]);
+  }, [addOpen, addQuery, catalog, text, narrow, actions, commands, hiddenCommands, planMode, writingMode, goal, running, collaboration]);
   const selectable = useMemo(() => rows.filter((r): r is Selectable => r.type !== 'heading' && !(r.type === 'action' && r.action.disabled)), [rows]);
   const menuOpen = addOpen || (rows.length > 0 && !dismissed);
 
@@ -627,6 +633,7 @@ export function Composer({
       if (!addOpen) setText('');
       const id = row.action.id;
       if (id === 'composer:attach') fileRef.current?.click();
+      else if (id === 'composer:collaboration') setCollaborationSignal(value => value + 1);
       else if (id === 'composer:plan') planMode?.onChange(!planMode.active);
       else if (id === 'composer:writing') writingMode?.onChange(!writingMode.active);
       else if (id.startsWith('composer:goal:')) chooseGoal(id.slice('composer:goal:'.length) as GoalAction);
@@ -936,7 +943,7 @@ export function Composer({
               const plan = isAction && row.action.id === 'composer:plan';
               const writing = isAction && row.action.id === 'composer:writing';
               const checked = plan ? planMode?.active : writing ? writingMode?.active : undefined;
-              const Icon = isAction ? row.action.id === 'composer:attach' ? IconPaperclip : plan ? IconList : writing ? IconPen : row.action.id.startsWith('composer:goal:') ? IconTarget : (ACTION_ICONS[row.action.id] ?? IconSlash) : row.command.kind === 'skill' ? IconSparkle : IconSlash;
+              const Icon = isAction ? row.action.id === 'composer:attach' ? IconPaperclip : row.action.id === 'composer:collaboration' ? IconAgents : plan ? IconList : writing ? IconPen : row.action.id.startsWith('composer:goal:') ? IconTarget : (ACTION_ICONS[row.action.id] ?? IconSlash) : row.command.kind === 'skill' ? IconSparkle : IconSlash;
               return (
                 <button
                   key={isAction ? `a-${row.action.id}` : `c-${row.command.name}`}
@@ -1195,8 +1202,9 @@ export function Composer({
               }}
             />
             {narrow ? <Popover
+              triggerRef={addRef}
               label={t('composer.addAndMode')}
-              triggerClassName="tool-btn icon-only composer-add"
+              triggerClassName={`tool-btn icon-only composer-add${collaborationActive ? ' on' : ''}`}
               triggerLabel={t('composer.addAndMode')}
               triggerTitle={t('composer.addAndModeHint')}
               panelClassName="composer-add-menu"
@@ -1204,13 +1212,15 @@ export function Composer({
               disabled={disabled || menuBusy || busy}
             >
               {close => <ComposerMenu close={close} commands={commands} planMode={planMode} writingMode={writingMode} goal={goal} running={running}
+                collaboration={collaboration ? { active: !!collaborationActive, open: () => setCollaborationSignal(value => value + 1) } : undefined}
                 attachDisabled={Boolean(attachmentsBlocked)}
                 attachTitle={attachBlocked ? t('composer.attachBlocked', attachBlocked) : attachNote ?? t('composer.attachHint')}
                 onAttach={() => fileRef.current?.click()} onGoal={chooseGoal} onBrowse={browse} />}
-            </Popover> : <button ref={addRef} type="button" className="tool-btn icon-only composer-add"
+            </Popover> : <button ref={addRef} type="button" className={`tool-btn icon-only composer-add${collaborationActive ? ' on' : ''}`}
               aria-label={t('composer.addAndMode')} aria-haspopup="listbox" aria-expanded={addOpen} title={t('composer.addActionsSkills')} disabled={disabled || menuBusy || busy}
               onClick={() => { setCatalog('all'); setAddQuery(''); setAddOpen(!addOpen); setDismissed(true); }}><IconPlus size={20} /></button>}
-            {/* Plan mode is a pill of its own: what is on shows, and × takes it off. */}
+            {!collapsed && left}
+            {/* Only active modes take space; their compact marks can turn them off. */}
             {planMode?.active && (
               <button
                 type="button"
@@ -1224,10 +1234,6 @@ export function Composer({
                 <IconClose size={13} />
               </button>
             )}
-            {!collapsed && <>
-              {collaboration?.(mention => chooseMention(mention, false), mentions)}
-              {left}
-            </>}
             <div className="spacer" />
             {!collapsed && right}
             {composerActions}
@@ -1263,6 +1269,7 @@ export function Composer({
         </div>
       </div>
       {voiceControls}
+      {collaboration?.(mention => chooseMention(mention, false), mentions, addRef, collaborationSignal)}
       {videoPreview && <VideoPreview url={videoPreview.previewUrl} name={videoPreview.name} onClose={() => setVideoPreview(null)} />}
       {preview && <Lightbox url={preview.previewUrl} name={preview.name} onClose={() => setPreview(null)} />}
     </div>

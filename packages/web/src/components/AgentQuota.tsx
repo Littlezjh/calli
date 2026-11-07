@@ -3,10 +3,10 @@ import type { Api, PlanQuota, QuotaWindow } from '../api';
 import { formatDateTime, t } from '../i18n';
 import { formatReset, quotaLeft, quotaLevel } from '../quota';
 import { useAgentQuota, useQuotaNavigation } from '../quota-reading';
-import { QuotaWindows, quotaStale, quotaWindowName } from './QuotaReadout';
+import { QuotaWindows, quotaStale } from './QuotaReadout';
 import { Popover } from './Popover';
 import { createPortal } from 'react-dom';
-import { IconClock, IconGauge, QuotaRing } from './icons';
+import { IconClock, IconClose, QuotaRing } from './icons';
 
 
 /** Space between chips and before the "+N" chip, in px. Matches the gap in styles.css. */
@@ -243,19 +243,14 @@ function QuotaActions({ reading, agent, onOpen }: { reading: ReturnType<typeof u
   </div>;
 }
 
-/** A current account can be inspected without opening the account picker or leaving the chat. */
-export function ChatQuota({ api, agent }: { api: Api; agent: string }) {
-  const reading = useAgentQuota(api, agent);
-  const windows = reading.quota?.windows ?? [];
-  const limiting = windows.reduce<(typeof windows)[number] | undefined>((prev, window) => !prev || window.usedPercent > prev.usedPercent ? window : prev, undefined);
-  const stale = quotaStale(reading);
-  const label = limiting ? `${quotaWindowName(limiting)} · ${t('quota.remaining', quotaLeft(limiting))}`
-    : t(reading.loading ? 'quota.loading' : reading.error ? 'quota.unavailable' : 'quota.empty');
-  return <Popover label={t('quota.quickTitle')} triggerLabel={`${t('quota.quickTitle')}：${label}`} triggerTitle={label} placement="above"
-    triggerClassName={`context-btn chat-quota-trigger${limiting && limiting.usedPercent >= 80 || reading.error ? ' attention' : ''}`}
-    panelClassName="quota-quick-panel" trigger={<>{limiting ? <QuotaRing remaining={quotaLeft(limiting)} size={14} /> : <IconGauge size={14} />}
-      {limiting && <span className="chat-quota-period">{quotaWindowName(limiting)}</span>}
-      <span className="chat-quota-value">{limiting ? `${quotaLeft(limiting)}%` : '—'}</span>{stale && <IconClock size={11} />}</>}>
-    {close => <><QuotaWindows reading={reading} /><QuotaActions reading={reading} agent={agent} onOpen={close} /></>}
+/** Quota is read only while the conversation menu's quick view is open. */
+export function ChatQuota({ api, agent, anchorRef, openSignal }: { api: Api; agent: string; anchorRef: RefObject<HTMLElement>; openSignal: number }) {
+  return <Popover label={t('quota.quickTitle')} anchorRef={anchorRef} openSignal={openSignal} align="end" placement="below" panelClassName="quota-quick-panel">
+    {close => <ChatQuotaDetails api={api} agent={agent} close={close} />}
   </Popover>;
+}
+
+function ChatQuotaDetails({ api, agent, close }: { api: Api; agent: string; close: () => void }) {
+  const reading = useAgentQuota(api, agent);
+  return <><div className="quota-quick-head"><span>{t('quota.quickTitle')}</span><button type="button" className="icon-btn" aria-label={t('common.close')} onClick={close}><IconClose size={17} /></button></div><QuotaWindows reading={reading} /><QuotaActions reading={reading} agent={agent} onOpen={close} /></>;
 }

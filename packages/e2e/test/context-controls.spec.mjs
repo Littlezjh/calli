@@ -39,7 +39,7 @@ async function select(page, thread, mobile = false) {
   await page.locator('.thread-title', { hasText: thread.title }).first().click();
   // On a phone an empty box is one line until it is touched; the controls are on its second.
   if (mobile) await page.locator('.composer textarea').tap();
-  await page.locator('.usage:visible').waitFor();
+  await page.locator('.model-control-trigger:visible').waitFor();
 }
 async function shot(page, name) {
   await page.waitForTimeout(350);
@@ -117,9 +117,9 @@ test('effort slider, model subview, reset and compression work in both themes an
       await page.keyboard.press('Escape');
       const input = page.locator('.composer textarea');
       await input.fill('这段草稿需要保留');
-      await page.locator('.usage:visible').click();
+      await page.locator('.model-control-trigger:visible').click();
       await shot(page, `compact-${tag}`);
-      await fits(page, page.getByRole('menu', { name: '上下文用量' }));
+      await fits(page, page.getByRole('menu', { name: '模型与思考强度' }));
       await page.getByRole('button', { name: '压缩 精简较早的对话，释放上下文' }).click();
       await page.getByText('上下文压缩完成。', { exact: true }).waitFor();
       assert.equal(await input.inputValue(), '这段草稿需要保留');
@@ -203,17 +203,16 @@ test('compression queues once during a turn and preserves a draft; pi uses its o
     await select(page, thread);
     await page.locator('.composer textarea').fill('下一轮草稿');
     await page.getByRole('button', { name: '停止', exact: true }).waitFor();
-    await page.locator('.usage:visible').click();
+    await page.locator('.model-control-trigger:visible').click();
     await page.getByRole('button', { name: /压缩 本轮结束后/ }).click();
     await waitFor(async () => (await read(thread)).queued.length === 1);
-    await page.locator('.usage:visible').click();
     assert.ok(await page.getByRole('button', { name: /已排队压缩/ }).isDisabled());
     await page.keyboard.press('Escape');
     await page.getByText('上下文压缩完成。', { exact: true }).waitFor();
     assert.equal(await page.locator('.composer textarea').inputValue(), '下一轮草稿');
     const pi = await makeThread('pi 压缩操作', 'pi');
     await select(page, pi);
-    await page.locator('.usage:visible').click();
+    await page.locator('.model-control-trigger:visible').click();
     await page.getByRole('button', { name: '压缩 精简较早的对话，释放上下文' }).click();
     await page.getByText('已压缩上下文：150.0k → 约 32.0k tokens。', { exact: true }).waitFor();
   } finally { await context.close(); }

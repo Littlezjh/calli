@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
+import { openCollaboration, startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
 
 const shots = process.env.CALLI_E2E_SHOTS_DIR ?? '/tmp/calli-board-collaboration-shots';
 test('running unconfigured collaboration queues and restores target tasks in all layouts', { timeout: 90000 }, async () => {
@@ -29,7 +29,7 @@ test('running unconfigured collaboration queues and restores target tasks in all
         await page.locator('.thread-row', { hasText: title }).click();
         const box = page.getByRole('textbox', { name: '消息', exact: true });
         await box.fill('请一起分析');
-        await page.getByRole('button', { name: '协作', exact: true }).click();
+        await openCollaboration(page);
         await page.getByRole('menuitem', { name: '给 Claude Code 分配任务', exact: true }).click();
         const task = page.getByRole('textbox', { name: '给 Claude Code 的任务', exact: true });
         await task.fill('先总结经验，只给建议');
@@ -51,7 +51,7 @@ test('running unconfigured collaboration queues and restores target tasks in all
         await page.locator('.queue-targets').waitFor();
         state = await (await api(daemon, `/api/threads/${thread.id}`)).json();
         await post(`/api/threads/${thread.id}/queue/${state.queued[0].id}/now`, {});
-        await page.locator('.coord-tool.on').waitFor();
+        await page.locator('.composer-add.on').waitFor();
         await page.getByRole('button', { name: '排队发送', exact: true }).waitFor({ state: 'hidden' });
         const events = await (await api(daemon, `/api/threads/${thread.id}/events`)).json();
         const rows = Array.isArray(events) ? events : events.events;

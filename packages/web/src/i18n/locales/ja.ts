@@ -1,6 +1,8 @@
 import type { Messages } from './zh';
 
 export const ja: Messages = {
+  'quota.query': '利用枠を確認',
+  'pickers.permissionIs': (mode: string) => `権限：${mode}`,
   "quota.resetUnknown": "リセット時刻は不明",
   "quota.empty": "サービスから利用枠の情報が提供されていません",
   "quota.exhausted": "利用枠を使い切りました",

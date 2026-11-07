@@ -3,6 +3,8 @@ import type { Messages } from './zh';
 const plural = (n: number, one: string, other: string) => `${n} ${n === 1 ? one : other}`;
 
 export const en: Messages = {
+  'quota.query': 'Check quota',
+  'pickers.permissionIs': (mode: string) => `Permissions: ${mode}`,
   "quota.resetUnknown": "Reset time unknown",
   "quota.empty": "The provider did not report quota information",
   "quota.exhausted": "Quota exhausted",

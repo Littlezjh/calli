@@ -2410,6 +2410,15 @@ html.list-open body {
   padding: 6px 8px 8px;
 }
 
+.composer-bar > .pop:has(> .model-control-trigger) { min-width: 0; }
+.composer-bar .composer-permission { width: 40px; height: 40px; flex: none; }
+.composer-voice { flex: none; }
+.model-control-trigger.high, .model-control-trigger.high .model-trigger-name, .model-context.high .context-percent { color: var(--warn); }
+.model-control-trigger.high .gauge-fill { stroke: var(--warn); }
+.model-context { border-top: 1px solid var(--border); margin-top: 8px; padding: 8px 0; }
+.context-percent { float: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+.quota-quick-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; font-size: 14px; font-weight: 560; }
+
 /* On a phone, a running turn with an empty box leaves one line: add, write, stop. Touching the
    line is focus, and focus brings the whole box back before the keyboard can cover anything. */
 .composer-box.collapsed {
@@ -2482,10 +2491,7 @@ html.list-open body {
   flex-shrink: 0;
 }
 
-/* The permission label is short and matters; when space is tight the model name gives way instead. */
-.pop:has(> .tool-btn.keep) {
-  flex-shrink: 0;
-}
+.pop:has(> .composer-permission) { flex: none; }
 
 .tool-btn:hover:not(:disabled),
 .tool-btn[aria-expanded='true'] {
@@ -9492,11 +9498,10 @@ div.file-card:hover { background: var(--surface); }
 @media (max-width: 640px) {
   .composer-bar { gap: 2px; }
   .composer-bar .send-btn { margin-left: 0; }
-  .composer-bar .tool-btn.keep { padding-inline: 6px; }
-  .composer-bar .coord-tool { justify-content: center; width: 32px; padding: 0; }
-  .composer-bar > .pop:has(> .coord-tool),
   .composer-bar > .pop:has(> .usage) { flex: none; }
   .composer-bar .usage { padding-inline: 4px; }
+  .composer-bar .plan-pill { justify-content: center; width: 32px; padding: 0; }
+  .composer-bar .plan-pill > span, .composer-bar .plan-pill > svg:last-child { display: none; }
   .model-control-trigger { gap: 4px; padding-inline: 6px; }
   .model-control-panel { width: auto; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
   .effort-card { padding: 10px 12px 12px; }
@@ -9635,8 +9640,7 @@ div.file-card:hover { background: var(--surface); }
 @media (max-width: 640px) {
   /* The mark says which agent; its name is in the menu it opens. */
   .agent-btn.has-mark > span { display: none; }
-  /* The bar is short of room: these two keep their icons and say the rest when opened. */
-  .composer-bar .coord-tool > span,
+  /* Agents without a model picker keep a compact context fallback. */
   .composer-bar .usage > span { display: none; }
 }
 .machine-trigger { max-width: 100%; }
@@ -9651,8 +9655,8 @@ div.file-card:hover { background: var(--surface); }
 .project-machine.remote > svg { color: var(--positive); }
 
 /* Collaboration: one list and a readable transcript alongside the main conversation. */
-/* Off, it is one more quiet tool; on, it only darkens. */
-.coord-tool.on { color: var(--text); }
+/* The add menu keeps the active collaboration state visible without another toolbar button. */
+.composer-add.on { color: var(--text); }
 /* Once on: one small line above the composer says how many agents there are and opens them. */
 /* The team in the top bar: one more icon, with how many as a badge; orange when one needs you. */
 .topbar-agents { position: relative; }
@@ -13437,12 +13441,6 @@ body:has(.settings-page, .action-sheet) .pet { display: none; }
 .quota-account-detail .quota-meter-label { font-size: 14px; }
 .quota-account-detail .quota-percent { font-size: 17px; }
 .quota-detail-refresh { margin: 16px 0 0; }
-.chat-quota-trigger { display: inline-flex; align-items: center; gap: 6px; max-width: 220px; color: var(--muted); }
-.chat-quota-trigger > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
-.chat-quota-trigger > svg { flex: none; }
-.chat-quota-trigger > .chat-quota-value { flex: none; overflow: visible; font-variant-numeric: tabular-nums; }
-.composer-bar > .pop:has(> .chat-quota-trigger) { flex: none; }
-.chat-quota-trigger.attention { color: var(--warn); }
 .quota-quick-panel { width: min(360px, calc(100vw - 24px)); padding: 16px; }
 .quota-quick-panel > .quota-reading-status { padding-bottom: 12px; }
 .quota-quick-panel > .quota-meter { padding: 14px 0; border-top: 1px solid var(--border); }
@@ -13468,9 +13466,6 @@ body:has(.settings-page, .action-sheet) .pet { display: none; }
   .quota-reading-status { font-size: 11px; }
   .quota-page-toolbar { gap: 10px; }
   .quota-page-toolbar .text-btn { font-size: 12px; white-space: nowrap; }
-  .chat-quota-trigger { max-width: 150px; }
-  .chat-quota-trigger > span { font-size: 11px; }
-  .chat-quota-trigger > .chat-quota-period { display: none; }
 }
 /* One-shot setup: the approved inline checklist, with detail loaded only when requested. */
 .explore-dialog { width: min(560px, calc(100vw - 32px)); max-height: min(860px, calc(100dvh - 48px)); display: flex; flex-direction: column; padding: 0; overflow: hidden; }

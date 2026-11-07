@@ -1,7 +1,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
-import { startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
+import { openCollaboration, startDaemon, openUi, api, launchBrowser } from '../harness.mjs';
 
 let daemon, browser;
 before(async () => { daemon = await startDaemon(); browser = await launchBrowser(); });
@@ -33,11 +33,11 @@ for (const phone of [false, true]) for (const colorScheme of ['light', 'dark']) 
       await page.locator('.thread-row', { hasText: title }).click();
       // On the desktop collaboration is switched on first; on the phone the @ alone starts it.
       if (!phone) {
-        await page.getByRole('button', { name: '协作', exact: true }).click();
+        await openCollaboration(page);
         await page.locator('.coord-picker-head button').click();
         await page.getByRole('button', { name: '启用协作', exact: true }).click();
         // Nobody is in the team yet: the button says it is on, and no line is added above the box.
-        await page.locator('.coord-tool.on').waitFor();
+        await page.locator('.composer-add.on').waitFor();
         assert.equal(await page.locator('.coord-bar').count(), 0);
       }
       const box = page.getByRole('textbox', { name: '消息', exact: true });
@@ -80,7 +80,7 @@ for (const phone of [false, true]) for (const colorScheme of ['light', 'dark']) 
       await task.fill('只看异常处理');
       // The model its member starts with is a quiet mark at the end of the line, worded once chosen.
       const quiet = row.getByRole('button', { name: /的模型与思考强度$/ });
-      assert.equal((await quiet.innerText()).trim(), '');
+      assert.equal(await quiet.getAttribute('aria-haspopup'), 'menu');
       await quiet.click();
       const control = page.locator('.model-control-panel');
       const toModels = control.getByRole('button', { name: /切换模型/ });
@@ -109,7 +109,7 @@ for (const phone of [false, true]) for (const colorScheme of ['light', 'dark']) 
       assert.equal(mention.task, '只看异常处理');
       await waitIdle(root.id);
       await page.waitForFunction(() => document.querySelector('.composer textarea')?.value === '');
-      await page.locator('.coord-tool.on').waitFor();
+      await page.locator('.composer-add.on').waitFor();
       await page.locator('.coord-row').waitFor({ state: 'detached' });
       await page.locator('.row.user .bubble', { hasText: '只看异常处理' }).waitFor();
 
@@ -117,6 +117,8 @@ for (const phone of [false, true]) for (const colorScheme of ['light', 'dark']) 
       const directive = Buffer.from(JSON.stringify({ args: ['spawn', '--agent', 'claude', '--name', '文档审查', '--message-file', '-', '--request-id', 'review'], text: '检查接口与异常处理 CALLI_REPORT' })).toString('base64');
       await post(`/api/threads/${root.id}/turns`, { text: `CALLI_COMMAND:${directive}` });
       await box.fill('保留这段主线程草稿');
+      await openCollaboration(page);
+      await page.getByRole('button', { name: '协作设置', exact: true }).click();
       await page.getByRole('button', { name: '查看智能体', exact: true }).click();
       const panel = page.getByRole('region', { name: '智能体面板' });
       const card = panel.locator('.agent-member', { hasText: '文档审查' });
@@ -161,7 +163,7 @@ for (const phone of [false, true]) for (const colorScheme of ['light', 'dark']) 
       await own.waitFor();
       // Opened from the top of the panel, the member's own setting is all on screen.
       await own.click();
-      const ownPanel = panel.locator('.agent-panel-head .pop-panel');
+      const ownPanel = page.getByRole('menu', { name: '模型与思考强度', exact: true });
       await ownPanel.waitFor();
       await page.waitForTimeout(250);
       const shown = await ownPanel.boundingBox();
@@ -211,6 +213,8 @@ for (const phone of [false, true]) for (const colorScheme of ['light', 'dark']) 
       await page.screenshot({ path: `${shots}/${phone ? 'phone' : 'desktop'}-${colorScheme}-result-open.png` });
       const after = await (await api(daemon, `/api/threads/${child}/events`)).json();
       assert.equal(after.filter(e => e.type === 'turn.started').length, before.filter(e => e.type === 'turn.started').length, 'viewing output does not start work');
+      await openCollaboration(page);
+      await page.getByRole('button', { name: '协作设置', exact: true }).click();
       await page.getByRole('button', { name: '查看智能体', exact: true }).click();
       await card.click();
       if (phone) {
@@ -226,6 +230,8 @@ for (const phone of [false, true]) for (const colorScheme of ['light', 'dark']) 
       // Written to directly: the member answers in its own thread, and the lead is not woken.
       const leadTurns = async () => (await (await api(daemon, `/api/threads/${root.id}/events`)).json()).filter(e => e.type === 'turn.started').length;
       const leadBefore = await leadTurns();
+      await openCollaboration(page);
+      await page.getByRole('button', { name: '协作设置', exact: true }).click();
       await page.getByRole('button', { name: '查看智能体', exact: true }).click();
       await card.click();
       const direct = panel.getByRole('textbox', { name: '消息', exact: true });
@@ -263,6 +269,8 @@ for (const phone of [false, true]) for (const colorScheme of ['light', 'dark']) 
       for (let n = 0; n < 50 && await box.inputValue() !== carried; n++) await page.waitForTimeout(50);
       assert.equal(await box.inputValue(), carried);
       await page.screenshot({ path: `${shots}/${phone ? 'phone' : 'desktop'}-${colorScheme}-via-lead.png` });
+      await openCollaboration(page);
+      await page.getByRole('button', { name: '协作设置', exact: true }).click();
       await page.getByRole('button', { name: '查看智能体', exact: true }).click();
       await card.click();
       assert.equal(await direct.inputValue(), '');

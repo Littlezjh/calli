@@ -263,3 +263,10 @@ export async function closeSettings(page) {
   }
   await page.locator('.settings-page').waitFor({ state: 'detached' });
 }
+
+/** Collaboration is a secondary action in the composer's add menu on every screen. */
+export async function openCollaboration(page) {
+  await page.getByRole('button', { name: '添加与模式', exact: true }).click();
+  await page.getByRole('menuitem', { name: '协作', exact: true }).or(page.getByRole('option', { name: '协作', exact: true })).click();
+  await page.getByRole('menu', { name: '协作', exact: true }).waitFor();
+}

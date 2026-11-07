@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { api, startDaemon, openUi, launchBrowser, repoRoot, closeSettings } from '../harness.mjs';
+import { openCollaboration, api, startDaemon, openUi, launchBrowser, repoRoot, closeSettings } from '../harness.mjs';
 const chainDialog = async page => {
   await page.getByLabel('这个线程的更多操作').click();
   await page.getByRole('menuitem', { name: '交接记录', exact: true }).click();
@@ -268,7 +268,7 @@ test('collaboration default and overrides; lead CLI sends to the replacement mem
     await notification.getByRole('button').click();
     await notification.locator('.delivered-body').waitFor();
     await page.screenshot({ path: join(shots, 'lead-notification-desktop-dark.png'), animations: 'disabled' });
-    await page.locator('.coord-tool').click();
+    await openCollaboration(page);
     await page.getByRole('button', { name: '协作设置', exact: true }).click();
     await page.getByRole('button', { name: '查看智能体', exact: true }).click();
     const panel = page.getByRole('region', { name: '智能体面板' });

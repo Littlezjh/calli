@@ -41,10 +41,10 @@ test('zcode context and compression work with measured or unknown usage on deskt
       // On a phone an empty box is one line until it is touched; the context ring is on its second.
       if (mobile) await page.locator('.composer textarea').tap();
       // On phones the visible trigger is the ring; its text is intentionally hidden.
-      await page.locator('.usage:visible').getByText(measured ? '38%' : '上下文', { exact: true }).waitFor({ state: 'attached' });
+      await page.locator('.model-control-trigger').waitFor();
       const input = page.locator('.composer textarea');
       await input.fill('压缩后保留这段草稿');
-      await page.locator('.usage:visible').click();
+      await page.locator('.model-control-trigger').click();
       await page.getByText(measured ? '上下文已用 48k / 128k' : '暂未获取上下文用量，下一次响应后更新。', { exact: true }).waitFor();
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
       if (process.env.CALLI_E2E_SHOTS_DIR) {
@@ -55,7 +55,8 @@ test('zcode context and compression work with measured or unknown usage on deskt
       await page.getByRole('button', { name: '压缩 精简较早的对话，释放上下文', exact: true }).click();
       await page.getByText('已压缩', { exact: true }).waitFor();
       await waitIdle(thread.id);
-      await page.locator('.usage:visible').getByText(measured ? '6%' : '上下文', { exact: true }).waitFor({ state: 'attached' });
+      if (measured) await page.locator('.model-context .context-percent').getByText('6%', { exact: true }).waitFor();
+      else await page.getByText('暂未获取上下文用量，下一次响应后更新。', { exact: true }).waitFor();
       assert.equal(await input.inputValue(), '压缩后保留这段草稿');
     } finally { await context.close(); }
   }
