@@ -94,7 +94,9 @@ test('the overview panel reads the thread from one top-bar button, and a change 
     // The more menu keeps the terminal and the trace beside the thread.
     await page.locator('.topbar-more').click();
     await page.getByRole('menuitem', { name: '打开终端', exact: true }).waitFor();
+    await page.getByRole('menuitem', { name: '整理线程', exact: true }).click();
     await page.getByRole('menuitem', { name: '轨迹', exact: true }).waitFor();
+    await page.keyboard.press('Escape');
     await page.keyboard.press('Escape');
 
     // The standing panel stays through the conversation, the input and Escape; only its own

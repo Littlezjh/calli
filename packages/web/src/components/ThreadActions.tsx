@@ -185,66 +185,69 @@ export function useThreadActions(deps: Deps) {
     return [
       { id: 'files', label: t('files.files'), icon: IconFiles, onSelect: () => onOpenFiles(thread) },
       { id: 'terminal', label: t('actions.terminal'), icon: IconTerminal, onSelect: onOpenTerminal },
-      ...(onOpenTrace ? [{ id: 'trace', label: t('trace.openTrace'), icon: IconTrace, onSelect: onOpenTrace }] : []),
-      { id: 'rename', label: t('actions.rename'), icon: IconEdit, onSelect: () => run('rename', thread) },
-      ...(autotitle ? [{ id: 'autotitle', label: t('actions.autotitle'), icon: IconSparkle, onSelect: () => void autoName(thread) }] : []),
-      { id: 'pin', label: thread.pinned ? t('actions.unpin') : t('actions.pin'), icon: IconPin, onSelect: () => run('pin', thread) },
-      {
-        id: 'unread',
-        label: thread.unread ? t('actions.markRead') : t('actions.markUnread'),
-        icon: IconDot,
-        onSelect: () => void patch(thread, { unread: !thread.unread }, thread.unread ? undefined : () => onMarkedUnread(thread)),
-      },
       'separator',
-      {
-        id: 'section',
-        label: t('actions.moveToSection'),
-        icon: IconList,
-        submenu: [
-          ...sections.map((s) => ({
-            id: `section-${s.id}`,
-            label: s.name,
-            checked: s.id === thread.sectionId,
-            onSelect: () => void patch(thread, { sectionId: s.id === thread.sectionId ? null : s.id }),
-          })),
-          ...(filed ? [{ id: 'unfile', label: t('actions.unfile'), onSelect: () => void patch(thread, { sectionId: null }) }] : []),
-          ...(sections.length ? (['separator'] as MenuEntry[]) : []),
-          { id: 'new-section', label: t('actions.newSection'), icon: IconPlus, onSelect: () => setDialog({ kind: 'new-section', thread }) },
-        ],
-      },
-      {
-        id: 'todo',
-        label: t('actions.linkPlan'),
-        icon: IconCheck,
-        disabled: planChoices.length === 0,
-        submenu: [
-          ...planChoices.map((todo) => ({
-            id: `todo-${todo.id}`,
-            label: todo.text,
-            checked: linkedTodoIds.has(todo.id),
-            onSelect: () =>
-              void guard(async () => {
-                if (!api) return;
-                if (linkedTodoIds.has(todo.id)) await api.unlinkTodo(todo.id, thread.id);
-                else await api.linkTodo(todo.id, thread.id);
-                onTodosChange();
-              }),
-          })),
-          ...(planChoices.length ? (['separator'] as MenuEntry[]) : []),
-          {
-            id: 'new-todo',
-            label: t('actions.newPlan'),
-            icon: IconPlus,
-            onSelect: () =>
-              void guard(async () => {
-                if (!api) return;
-                const todo = await api.createTodo(thread.title || folderName(thread.cwd));
-                await api.linkTodo(todo.id, thread.id);
-                onTodosChange();
-              }),
-          },
-        ],
-      },
+      { id: 'organize', label: t('actions.organizeThread'), icon: IconList, submenu: [
+        { id: 'rename', label: t('actions.rename'), icon: IconEdit, onSelect: () => run('rename', thread) },
+        ...(autotitle ? [{ id: 'autotitle', label: t('actions.autotitle'), icon: IconSparkle, onSelect: () => void autoName(thread) }] : []),
+        { id: 'pin', label: thread.pinned ? t('actions.unpin') : t('actions.pin'), icon: IconPin, onSelect: () => run('pin', thread) },
+        {
+          id: 'unread',
+          label: thread.unread ? t('actions.markRead') : t('actions.markUnread'),
+          icon: IconDot,
+          onSelect: () => void patch(thread, { unread: !thread.unread }, thread.unread ? undefined : () => onMarkedUnread(thread)),
+        },
+        'separator',
+        {
+          id: 'section',
+          label: t('actions.moveToSection'),
+          icon: IconList,
+          submenu: [
+            ...sections.map((s) => ({
+              id: `section-${s.id}`,
+              label: s.name,
+              checked: s.id === thread.sectionId,
+              onSelect: () => void patch(thread, { sectionId: s.id === thread.sectionId ? null : s.id }),
+            })),
+            ...(filed ? [{ id: 'unfile', label: t('actions.unfile'), onSelect: () => void patch(thread, { sectionId: null }) }] : []),
+            ...(sections.length ? (['separator'] as MenuEntry[]) : []),
+            { id: 'new-section', label: t('actions.newSection'), icon: IconPlus, onSelect: () => setDialog({ kind: 'new-section', thread }) },
+          ],
+        },
+        {
+          id: 'todo',
+          label: t('actions.linkPlan'),
+          icon: IconCheck,
+          disabled: planChoices.length === 0,
+          submenu: [
+            ...planChoices.map((todo) => ({
+              id: `todo-${todo.id}`,
+              label: todo.text,
+              checked: linkedTodoIds.has(todo.id),
+              onSelect: () =>
+                void guard(async () => {
+                  if (!api) return;
+                  if (linkedTodoIds.has(todo.id)) await api.unlinkTodo(todo.id, thread.id);
+                  else await api.linkTodo(todo.id, thread.id);
+                  onTodosChange();
+                }),
+            })),
+            ...(planChoices.length ? (['separator'] as MenuEntry[]) : []),
+            {
+              id: 'new-todo',
+              label: t('actions.newPlan'),
+              icon: IconPlus,
+              onSelect: () =>
+                void guard(async () => {
+                  if (!api) return;
+                  const todo = await api.createTodo(thread.title || folderName(thread.cwd));
+                  await api.linkTodo(todo.id, thread.id);
+                  onTodosChange();
+                }),
+            },
+          ],
+        },
+        ...(onOpenTrace ? [{ id: 'trace', label: t('trace.openTrace'), icon: IconTrace, onSelect: onOpenTrace }] : []),
+      ] },
       {
         id: 'copy',
         label: t('common.copy'),
@@ -266,11 +269,13 @@ export function useThreadActions(deps: Deps) {
           { id: 'copy-cwd', label: t('actions.cwd'), onSelect: () => void copy(thread.cwd) },
         ],
       },
-      ...(agents.find((a) => a.id === thread.agent)?.capabilities.fork
-        ? [{ id: 'fork', label: t('sidebar.fork'), icon: IconFork, disabled: forkBlocked(thread) !== null, onSelect: () => run('fork', thread) }]
-        : []),
-      { id: 'handover', label: t('handover.title'), icon: IconHand, onSelect: () => setDialog({ kind: 'handover', thread }) },
-      ...(chainOf(thread) ? [{ id: 'chain', label: t('handover.trail.title'), icon: IconHandover, onSelect: () => setDialog({ kind: 'chain', thread }) }] : []),
+      { id: 'continuation', label: t('actions.forkAndHandover'), icon: IconHand, submenu: [
+        ...(agents.find((a) => a.id === thread.agent)?.capabilities.fork
+          ? [{ id: 'fork', label: t('sidebar.fork'), icon: IconFork, disabled: forkBlocked(thread) !== null, onSelect: () => run('fork', thread) }]
+          : []),
+        { id: 'handover', label: t('handover.title'), icon: IconHand, onSelect: () => setDialog({ kind: 'handover', thread }) },
+        ...(chainOf(thread) ? [{ id: 'chain', label: t('handover.trail.title'), icon: IconHandover, onSelect: () => setDialog({ kind: 'chain', thread }) }] : []),
+      ] },
       'separator',
       thread.archivedAt
         ? { id: 'restore', label: t('archive.restore'), icon: IconArchive, onSelect: () => run('restore', thread) }

@@ -54,9 +54,7 @@ test('chat quota and account pages share refreshes and preserve the conversation
       assert.deepEqual([...new Set(requests)], ['codex'], 'opening the menu reads only the current account');
       assert.equal(await quick.getByRole('meter').count(), 2, 'both main periods are visible immediately');
       assert.equal(await quick.locator(':scope > .quota-preview > .quota-pair .quota-missing').count(), 0, 'legacy account-wide periods are not split into false missing pairs');
-      await quick.locator('summary').click();
-      assert.equal(await quick.getByRole('meter').count(), 3, 'other model pools remain inspectable');
-      await quick.locator('summary').click();
+      assert.equal(await quick.locator('summary, .quota-meter-reset').count(), 0, 'reset details and other pools are reached through the full page');
       assert.equal(await page.getByRole('dialog').count(), 0);
       const bounds = await page.locator('.menu-float').boundingBox(); assert.ok(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= page.viewportSize().width + 1);
       await page.screenshot({ path: `${shots}/quick-${width}-${theme}.png` });
@@ -108,7 +106,7 @@ test('chat quota and account pages share refreshes and preserve the conversation
         await openQuick();
         fail = true;
         await quick.getByRole('menuitem', { name: '刷新 Primary 的额度', exact: true }).click();
-        await quick.getByText('刷新失败，显示上次结果', { exact: true }).waitFor();
+        await quick.getByText('刷新失败 · 旧值', { exact: true }).waitFor();
         assert.equal(await quick.getByRole('meter').count(), 2, 'failed reads retain both cached periods');
         fail = false; used = 99;
         await quick.getByRole('menuitem', { name: '刷新 Primary 的额度', exact: true }).click();

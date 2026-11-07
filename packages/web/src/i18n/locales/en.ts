@@ -3,6 +3,10 @@ import type { Messages } from './zh';
 const plural = (n: number, one: string, other: string) => `${n} ${n === 1 ? one : other}`;
 
 export const en: Messages = {
+  'actions.organizeThread': 'Organize thread',
+  'actions.forkAndHandover': 'Fork and hand over',
+  'quota.menuLowCount': (count: number) => `${count} ${count === 1 ? 'limit low' : 'limits low'}`,
+  'quota.menuCached': 'Failed · Cached',
   'quota.percent': (percent: number) => `${percent}%`,
   'quota.notReported': 'Not reported',
   'quota.morePools': (count: number) => `${count} more model ${count === 1 ? 'pool' : 'pools'}`,

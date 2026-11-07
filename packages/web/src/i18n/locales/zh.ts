@@ -3,6 +3,10 @@
  * a key added here has to be added to them too. Messages with values are functions.
  */
 export const zh = {
+  'actions.organizeThread': '整理线程',
+  'actions.forkAndHandover': '分叉与交接',
+  'quota.menuLowCount': (count: number) => `${count} 项偏低`,
+  'quota.menuCached': '刷新失败 · 旧值',
   'quota.percent': (percent: number) => `${percent}%`,
   'quota.notReported': '未提供',
   'quota.morePools': (count: number) => `另 ${count} 个模型池`,

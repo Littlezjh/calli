@@ -7,39 +7,45 @@ import { IconChevron } from './icons';
 export const quotaWindowName = (window: QuotaWindow) => [window.scope, periodName(window.label)].filter(Boolean).join(' · ');
 export const quotaStale = (reading: QuotaReading) => Boolean(reading.failedAt || reading.quota && Date.now() - Date.parse(reading.quota.checkedAt) > 60_000);
 
-export function QuotaMeter({ window, stale = false, detail = false, compact = false }: { window: QuotaWindow; stale?: boolean; detail?: boolean; compact?: boolean }) {
+export function QuotaMeter({ window, stale = false, detail = false, compact = false, summary = false }: { window: QuotaWindow; stale?: boolean; detail?: boolean; compact?: boolean; summary?: boolean }) {
   const remaining = quotaLeft(window);
   return <div className={`quota-meter${stale ? ' stale' : remaining === 0 ? ' exhausted' : remaining <= 20 ? ' low' : ''}`}
     role="meter" aria-label={quotaWindowName(window)} aria-valuemin={0} aria-valuemax={100} aria-valuenow={remaining}
     aria-valuetext={`${stale ? `${t('quota.cachedReading')} · ` : ''}${t('quota.remaining', remaining)}`}>
     <div className="quota-meter-label"><span>{compact ? periodName(window.label) : quotaWindowName(window)}</span><strong className="quota-percent">{stale && !compact && <small>{t('quota.cachedReading')} · </small>}{compact ? t('quota.percent', remaining) : t('quota.remaining', remaining)}</strong></div>
     <div className="quota-meter-track" aria-hidden="true"><div style={{ width: `${remaining}%` }} /></div>
-    <span className="quota-meter-reset">{formatReset(window) || t('quota.resetUnknown')}</span>
+    {!summary && <span className="quota-meter-reset">{formatReset(window) || t('quota.resetUnknown')}</span>}
     {detail && <span className="quota-meter-used">{t('quota.board.used', window.usedPercent)}</span>}
-    {window.loadPercent !== undefined && (detail || window.loadPercent >= 100) && <span className={`quota-load${window.loadPercent >= 100 ? ' high' : ''}`}>{t('quota.load', window.loadPercent)}</span>}
+    {!summary && window.loadPercent !== undefined && (detail || window.loadPercent >= 100) && <span className={`quota-load${window.loadPercent >= 100 ? ' high' : ''}`}>{t('quota.load', window.loadPercent)}</span>}
   </div>;
 }
 
-export function QuotaPair({ windows, stale = false }: { windows: QuotaWindow[]; stale?: boolean }) {
-  return <div className="quota-pair">{quotaSlots(windows).map(({ label, window }, index) => window
-    ? <QuotaMeter key={`${label}:${index}`} window={window} stale={stale} compact />
+export function QuotaPair({ windows, stale = false, summary = false }: { windows: QuotaWindow[]; stale?: boolean; summary?: boolean }) {
+  const slots = quotaSlots(windows);
+  return <div className="quota-pair">{(summary ? slots.slice(0, 2) : slots).map(({ label, window }, index) => window
+    ? <QuotaMeter key={`${label}:${index}`} window={window} stale={stale} compact summary={summary} />
     : <div key={label} className="quota-missing"><div className="quota-meter-label"><span>{periodName(label)}</span><span>{t('quota.notReported')}</span></div><div className="quota-missing-track" /></div>)}</div>;
 }
 
 /** Match a reading's footprint without presenting invented values or periods. */
-function QuotaPlaceholder({ detail = false }: { detail?: boolean }) {
+function QuotaPlaceholder({ detail = false, summary = false }: { detail?: boolean; summary?: boolean }) {
   return <div className="quota-meter quota-placeholder" aria-hidden="true">
     <div className="quota-meter-label"><span>{'\u00a0'}</span><strong className="quota-percent">{'\u00a0'}</strong></div>
     <div className="quota-meter-track" />
-    <span className="quota-meter-reset">{'\u00a0'}</span>
+    {!summary && <span className="quota-meter-reset">{'\u00a0'}</span>}
     {detail && <span className="quota-meter-used">{'\u00a0'}</span>}
   </div>;
 }
 
 /** One model pool is visible immediately; other pools retain their own periods and values. */
-export function QuotaPreview({ reading }: { reading: QuotaReading }) {
+export function QuotaPreview({ reading, summary = false }: { reading: QuotaReading; summary?: boolean }) {
   const groups = quotaGroups(reading.quota?.windows ?? []);
   const stale = quotaStale(reading);
+  if (summary) return <div className="quota-preview compact" aria-busy={reading.loading}>
+    {groups[0] ? <QuotaPair windows={groups[0].windows} stale={stale} summary />
+      : !reading.quota && !reading.error ? <div className="quota-pair"><QuotaPlaceholder summary /><QuotaPlaceholder summary /></div>
+        : <p className="quota-preview-empty">{t(reading.error ? 'quota.unavailable' : 'quota.empty')}</p>}
+  </div>;
   return <div className="quota-preview" aria-busy={reading.loading}>
     {!reading.quota && !reading.error && <div className="quota-pair"><QuotaPlaceholder /><QuotaPlaceholder /></div>}
     {groups[0]?.scope && <div className="quota-pool-name">{groups[0].scope}</div>}

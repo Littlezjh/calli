@@ -51,6 +51,7 @@ test('handover groups and bidirectional navigation on desktop and phone in both 
       await page.screenshot({ path: `/tmp/calli-handover-shots/${phone ? 'phone' : 'desktop'}-${theme}-sidebar.png` });
       await page.locator('.handover-group > .thread-row .thread-item').click();
       await page.getByLabel('这个线程的更多操作').click();
+      await page.getByRole('menuitem', { name: '分叉与交接', exact: true }).click();
       await page.getByRole('menuitem', { name: '交接记录', exact: true }).click();
       await page.getByRole('dialog', { name: '交接记录', exact: true }).waitFor();
       await page.waitForTimeout(250);
@@ -58,6 +59,7 @@ test('handover groups and bidirectional navigation on desktop and phone in both 
       await page.locator('.handover-entry').filter({ hasText: '原始会话' }).click();
       await page.locator('.topbar-title').filter({ hasText: original.title }).waitFor();
       await page.getByLabel('这个线程的更多操作').click();
+      await page.getByRole('menuitem', { name: '分叉与交接', exact: true }).click();
       await page.getByRole('menuitem', { name: '交接记录', exact: true }).click();
       await page.locator('.handover-entry').filter({ hasText: '接手会话' }).first().click();
       await page.locator('.topbar-title').filter({ hasText: next.title }).waitFor();

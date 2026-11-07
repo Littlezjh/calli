@@ -1,6 +1,10 @@
 import type { Messages } from './zh';
 
 export const ja: Messages = {
+  'actions.organizeThread': 'スレッドを整理',
+  'actions.forkAndHandover': '分岐と引き継ぎ',
+  'quota.menuLowCount': (count: number) => `${count} 件の残り僅か`,
+  'quota.menuCached': '更新失敗 · 前回の値',
   'quota.percent': (percent: number) => `${percent}%`,
   'quota.notReported': '未提供',
   'quota.morePools': (count: number) => `ほか ${count} 個のモデルプール`,

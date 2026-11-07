@@ -45,16 +45,17 @@ if (typeof document !== 'undefined') {
 }
 
 /**
- * A menu with icons, separators and one level of submenus.
- * Wide screens: a floating panel at the pointer, with submenus opening beside their row.
+ * A menu with icons, separators and nested groups.
+ * Wide screens keep the root beside one branch; deeper groups replace the branch's contents.
  * Phones: the same anchored surface, with a submenu replacing its parent list.
  */
 export function Menu({ label, x, y, corner = 'top-left', items, header, onClose }: Props) {
   const narrow = useIsNarrow();
   const rootRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const [openSub, setOpenSub] = useState<string | null>(null);
-  const [pos, setPos] = useState({ left: x, top: y, flip: false, ready: false });
+  const branchRef = useRef<HTMLDivElement>(null);
+  const [openPath, setOpenPath] = useState<string[]>([]);
+  const [pos, setPos] = useState({ left: x, top: y, subLeft: x, subTop: y, ready: false });
   // A menu opened under a finger (a long press) ignores that finger: lifting it must not pick
   // the row that slid in beneath it, nor close the menu. Safari sends the lifted finger's mouse
   // press and click a moment later, wherever it now is, so those are swallowed too, and the menu
@@ -84,7 +85,23 @@ export function Menu({ label, x, y, corner = 'top-left', items, header, onClose 
     };
   }, [armed]);
 
-  // The portal uses viewport coordinates, including the part left above a phone keyboard.
+  const branches: MenuItem[] = [];
+  let entries = items;
+  for (const id of openPath) {
+    const entry = entries.find((entry): entry is MenuItem => entry !== 'separator' && entry.id === id && Boolean(entry.submenu));
+    if (!entry) break;
+    branches.push(entry);
+    entries = entry.submenu!;
+  }
+  const branch = branches.at(-1);
+  const focusBranch = () => requestAnimationFrame(() => (narrow ? panelRef : branchRef).current?.querySelector<HTMLElement>('button:not(:disabled)')?.focus({ preventScroll: true }));
+  const back = () => {
+    const id = branches.at(-1)?.id;
+    setOpenPath(path => path.slice(0, -1));
+    requestAnimationFrame(() => [...(rootRef.current?.querySelectorAll<HTMLButtonElement>('button[data-menu-id]') ?? [])].find(button => button.dataset.menuId === id)?.focus({ preventScroll: true }));
+  };
+
+  // Both surfaces stay inside the visible viewport, including above a phone keyboard.
   useLayoutEffect(() => {
     const place = () => {
       const el = panelRef.current;
@@ -96,26 +113,30 @@ export function Menu({ label, x, y, corner = 'top-left', items, header, onClose 
       const [wantLeft, wantTop] = corner === 'bottom-right' ? [x - rect.width, y - rect.height] : [x, y];
       const left = Math.max(EDGE, Math.min(wantLeft, innerWidth - rect.width - EDGE));
       const top = Math.max(minY, Math.min(wantTop, bottom - rect.height - EDGE));
-      const flip = left + rect.width + 240 > innerWidth;
-      setPos(previous => previous.left === left && previous.top === top && previous.flip === flip && previous.ready ? previous : { left, top, flip, ready: true });
+      const child = branchRef.current?.getBoundingClientRect();
+      const childLeft = child && left + rect.width + child.width + EDGE * 2 <= innerWidth ? left + rect.width + EDGE : left - (child?.width ?? 0) - EDGE;
+      const subLeft = Math.max(EDGE, Math.min(childLeft, innerWidth - (child?.width ?? 0) - EDGE));
+      const subTop = Math.max(minY, Math.min(top, bottom - (child?.height ?? 0) - EDGE));
+      const next = { left, top, subLeft, subTop, ready: true };
+      setPos(previous => previous.left === left && previous.top === top && previous.subLeft === subLeft && previous.subTop === subTop && previous.ready ? previous : next);
     };
     place();
     const observer = new ResizeObserver(place);
     if (panelRef.current) observer.observe(panelRef.current);
+    if (branchRef.current) observer.observe(branchRef.current);
     window.addEventListener('resize', place);
     window.visualViewport?.addEventListener('resize', place);
     return () => { observer.disconnect(); window.removeEventListener('resize', place); window.visualViewport?.removeEventListener('resize', place); };
-  }, [x, y, corner, narrow, items, openSub]);
+  }, [x, y, corner, narrow, items, openPath]);
 
   useEffect(() => {
-    // composedPath is captured at dispatch, so it still works if the clicked row is removed by its handler.
-    const onDown = (e: MouseEvent | TouchEvent) => {
-      if (rootRef.current && !e.composedPath().includes(rootRef.current)) onClose();
+    const onDown = (event: MouseEvent | TouchEvent) => {
+      if (rootRef.current && !event.composedPath().includes(rootRef.current)) onClose();
     };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      if (openSub) setOpenSub(null);
-      else onClose();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault(); event.stopImmediatePropagation();
+      if (openPath.length) back(); else onClose();
     };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('touchstart', onDown);
@@ -125,95 +146,79 @@ export function Menu({ label, x, y, corner = 'top-left', items, header, onClose 
       document.removeEventListener('touchstart', onDown);
       document.removeEventListener('keydown', onKey);
     };
-  }, [onClose, openSub]);
+  }, [onClose, openPath]);
 
   useEffect(() => {
     if (!armed) return;
     const previous = document.activeElement as HTMLElement | null;
     panelRef.current?.querySelector<HTMLElement>('button:not(:disabled)')?.focus({ preventScroll: true });
+    return () => { if (previous?.isConnected) previous.focus({ preventScroll: true }); };
+  }, [armed]);
+
+  useEffect(() => {
+    if (!armed) return;
     const onKey = (event: KeyboardEvent) => {
       if (!['ArrowDown', 'ArrowUp', 'Home', 'End', 'ArrowRight', 'ArrowLeft'].includes(event.key)) return;
       const current = document.activeElement as HTMLElement;
       const menu = current?.closest('[role="menu"]');
       if (!menu || !rootRef.current?.contains(menu)) return;
-      const rows = [...menu.querySelectorAll<HTMLElement>('button:not(:disabled)')].filter(row => row.closest('[role="menu"]') === menu);
+      const rows = [...menu.querySelectorAll<HTMLElement>('button:not(:disabled)')];
       if (!rows.length) return;
       event.preventDefault(); event.stopPropagation();
-      if (event.key === 'ArrowRight') { if (current.getAttribute('aria-haspopup') === 'menu') { current.click(); requestAnimationFrame(() => rootRef.current?.querySelector<HTMLElement>('.menu-sub button, .menu-back')?.focus()); } return; }
-      if (event.key === 'ArrowLeft') { setOpenSub(null); return; }
+      if (event.key === 'ArrowRight') { if (current.getAttribute('aria-haspopup') === 'menu') current.click(); return; }
+      if (event.key === 'ArrowLeft') { if (openPath.length) back(); return; }
       const index = rows.indexOf(current);
       const next = event.key === 'Home' ? 0 : event.key === 'End' ? rows.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + rows.length) % rows.length;
       rows[next]?.focus();
     };
     document.addEventListener('keydown', onKey);
-    return () => { document.removeEventListener('keydown', onKey); if (previous?.isConnected) previous.focus({ preventScroll: true }); };
-  }, [armed]);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [armed, openPath]);
 
-  const pick = (item: MenuItem) => {
+  const pick = (item: MenuItem, inBranch: boolean) => {
     if (item.disabled) return;
     if (item.submenu) {
-      // Hovering has usually opened it already; a click on top of that means "this one", not "close it".
-      setOpenSub(item.id);
+      setOpenPath(inBranch ? [...branches.map(entry => entry.id), item.id] : [item.id]);
+      focusBranch();
       return;
     }
     onClose();
     item.onSelect?.();
   };
 
-  const row = (item: MenuItem, inSubmenu: boolean) => {
+  const list = (rows: MenuEntry[], inBranch: boolean) => rows.map((item, index) => {
+    if (item === 'separator') return <div key={`sep-${index}`} className="menu-sep" role="separator" />;
     const Icon = item.icon;
-    return (
-      <button
-        type="button"
-        role={item.checked !== undefined ? 'menuitemradio' : 'menuitem'}
-        aria-checked={item.checked}
-        aria-haspopup={item.submenu ? 'menu' : undefined}
-        aria-expanded={item.submenu ? openSub === item.id : undefined}
-        className={`menu-row${item.danger ? ' danger' : ''}${openSub === item.id ? ' open' : ''}`}
-        disabled={item.disabled}
-        onClick={() => pick(item)}
-        // Hover opens a submenu on wide screens, and moving to a plain row closes any open one.
-        onMouseEnter={() => !narrow && !inSubmenu && setOpenSub(item.submenu && !item.disabled ? item.id : null)}
-      >
-        <span className="menu-icon">{Icon ? <Icon size={17} /> : null}</span>
-        <span className="menu-label">{item.label}</span>
-        {item.checked && (
-          <span className="menu-trail">
-            <IconCheck size={15} />
-          </span>
-        )}
-        {item.submenu && (
-          <span className="menu-trail">
-            <IconChevron size={14} />
-          </span>
-        )}
-      </button>
-    );
-  };
-
-  const list = (entries: MenuEntry[], inSubmenu: boolean) =>
-    entries.map((entry, i) =>
-      entry === 'separator' ? (
-        <div key={`sep-${i}`} className="menu-sep" role="separator" />
-      ) : (
-        <div key={entry.id} className="menu-cell">
-          {row(entry, inSubmenu)}
-          {!narrow && !inSubmenu && entry.submenu && openSub === entry.id && (
-            <div className={`menu-panel menu-sub${pos.flip ? ' flip' : ''}`} role="menu" aria-label={entry.label}>
-              {list(entry.submenu, true)}
-            </div>
-          )}
-        </div>
-      ),
-    );
-
-  const sub = items.find((e): e is MenuItem => e !== 'separator' && e.id === openSub && Boolean(e.submenu));
+    const expanded = branches.some(entry => entry.id === item.id);
+    return <div key={item.id} className="menu-cell"><button
+      type="button"
+      role={item.checked !== undefined ? 'menuitemradio' : 'menuitem'}
+      aria-checked={item.checked}
+      aria-haspopup={item.submenu ? 'menu' : undefined}
+      aria-expanded={item.submenu ? expanded : undefined}
+      data-menu-id={item.id}
+      className={`menu-row${item.danger ? ' danger' : ''}${expanded ? ' open' : ''}`}
+      disabled={item.disabled}
+      onClick={() => pick(item, inBranch)}
+      onMouseEnter={() => {
+        if (narrow || inBranch) return;
+        setOpenPath(path => item.submenu && !item.disabled ? path[0] === item.id ? path : [item.id] : path.length ? [] : path);
+      }}
+    >
+      <span className="menu-icon">{Icon ? <Icon size={17} /> : null}</span>
+      <span className="menu-label">{item.label}</span>
+      {item.checked && <span className="menu-trail"><IconCheck size={15} /></span>}
+      {item.submenu && <span className="menu-trail"><IconChevron size={14} /></span>}
+    </button></div>;
+  });
+  const branchContent = branch && <><button type="button" role="menuitem" className="menu-back" onClick={back}><span className="menu-back-icon"><IconChevron size={14} /></span>{branch.label}</button>{list(entries, true)}</>;
   return createPortal(
     <div ref={rootRef} className={armed ? undefined : 'sheet-unarmed'}>
-      <div ref={panelRef} className={`menu-panel menu-float${narrow ? ' menu-touch' : ''}`} role="menu" aria-label={narrow && sub ? sub.label : label}
+      <div ref={panelRef} className={`menu-panel menu-float${narrow ? ' menu-touch' : ''}${header ? ' menu-with-header' : ''}`} role="menu" aria-label={narrow && branch ? branch.label : label}
         style={{ left: pos.left, top: pos.top, visibility: pos.ready ? 'visible' : 'hidden' }}>
-        {narrow && sub ? <><button className="menu-back" onClick={() => setOpenSub(null)}><span className="menu-back-icon"><IconChevron size={14} /></span>{sub.label}</button>{list(sub.submenu ?? [], true)}</> : <>{header}{list(items, false)}</>}
+        {narrow && branch ? branchContent : <>{header}{list(items, false)}</>}
       </div>
+      {!narrow && branch && <div ref={branchRef} className="menu-panel menu-sub menu-branch" role="menu" aria-label={branch.label} style={{ left: pos.subLeft, top: pos.subTop }}>{branchContent}</div>}
     </div>, document.body,
   );
 }

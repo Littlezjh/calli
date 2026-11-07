@@ -79,7 +79,7 @@ test('glass chrome has scrolling content behind it without hiding either end of 
       }
       await page.screenshot({ path: `${shots}/chat-${mobile ? 'phone' : 'desktop'}-${theme}.png` });
       await page.locator('.topbar-more').click();
-      await page.getByRole('menuitem', { name: '重命名', exact: true }).waitFor();
+      await page.getByRole('menuitem', { name: '整理线程', exact: true }).waitFor();
       await page.screenshot({ path: `${shots}/menu-${mobile ? 'phone' : 'desktop'}-${theme}.png` });
       await page.keyboard.press('Escape');
       await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-transparency', value: 'reduce' }] });
