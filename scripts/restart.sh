@@ -6,6 +6,9 @@
 #   scripts/restart.sh --force     build and restart now; running turns end with an error
 #   scripts/restart.sh --no-build  skip `npm run build`
 #
+# A hub that fails to answer counts as busy, never as idle, and idleness is confirmed by two
+# consecutive empty polls; a hub with nothing listening at all is restarted right away.
+#
 # Run from inside the hub (by an agent in one of its threads), it cannot wait in the foreground:
 # its own turn would never finish. It schedules the restart in the background instead, for when
 # every turn, including the caller's, has ended. Log: $XDG_STATE_HOME/calli/restart.log
@@ -19,7 +22,10 @@ fi
 REPO="$(cd "$(dirname "$0")/.." && pwd -P)"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/$NAME"
 LOG="$STATE_DIR/restart.log"
-POLL=5
+POLL="${CALLI_RESTART_POLL:-5}" # seconds between checks; mainly a knob for tests
+# Consecutive empty polls that confirm idleness before restarting. A single clean poll after a
+# missed answer once restarted the hub under four running turns; two make that impossible.
+CLEAN_POLLS="${CALLI_RESTART_CLEAN_POLLS:-2}"
 
 FORCE=0 BUILD=1 BACKGROUND=0
 for arg in "$@"; do
@@ -53,12 +59,22 @@ TOKEN="$(env_get TOKEN)"
 case "$HOST" in 0.0.0.0 | ::) HOST=127.0.0.1 ;; esac
 BASE="http://$HOST:$PORT"
 
-# Prints "<title> (<agent>)" for each running thread, archived ones included. Fails if the hub
-# does not answer, which callers treat as "nothing to wait for".
+# Fetches a thread list. Status 0: answered, body on stdout. Status 1: no answer (busy or
+# broken; callers must keep waiting, not restart). Status 2: nothing is listening at $BASE at
+# all, so no turn can be running and restarting is safe.
+fetch_threads() {
+  local body rc=0
+  body="$(curl -sf -m 5 -H "Authorization: Bearer $TOKEN" "$BASE/api/threads$1")" || rc=$?
+  [ "$rc" -ne 7 ] || return 2 # curl 7: connection refused
+  [ "$rc" -eq 0 ] || return 1
+  printf '%s' "$body"
+}
+
+# Prints "<title> (<agent>)" for each running thread, archived ones included.
 running_threads() {
   local active archived
-  active="$(curl -sf -m 5 -H "Authorization: Bearer $TOKEN" "$BASE/api/threads")" || return 1
-  archived="$(curl -sf -m 5 -H "Authorization: Bearer $TOKEN" "$BASE/api/threads?archived=1")" || return 1
+  active="$(fetch_threads "")" || return
+  archived="$(fetch_threads "?archived=1")" || return
   # The thread list outgrew the kernel's per-argument limit (~128K), which used to fail exec
   # ("Argument list too long") and read as "no threads running", restarting under active turns.
   # So the lists reach node through stdin, NUL-separated, never through argv.
@@ -76,12 +92,33 @@ running_threads() {
 }
 
 wait_until_idle() {
-  local list last=""
-  while list="$(running_threads)" && [ -n "$list" ]; do
-    if [ "$list" != "$last" ]; then
-      say "Waiting for $(echo "$list" | wc -l) running thread(s):"
-      echo "$list" | sed 's/^/  - /'
-      last="$list"
+  local list rc last="" clean=0
+  while :; do
+    rc=0
+    list="$(running_threads)" || rc=$?
+    if [ "$rc" -eq 2 ]; then
+      say "Nothing answers at $BASE; restarting brings the hub back."
+      return 0
+    fi
+    if [ "$rc" -ne 0 ]; then
+      # A busy hub can miss the timeout; that is "unknown", never "idle".
+      if [ "$last" != "?no-answer" ]; then
+        say "Hub did not answer; retrying."
+        last="?no-answer"
+      fi
+      clean=0
+    elif [ -n "$list" ]; then
+      clean=0
+      if [ "$list" != "$last" ]; then
+        say "Waiting for $(echo "$list" | wc -l) running thread(s):"
+        echo "$list" | sed 's/^/  - /'
+        last="$list"
+      fi
+    else
+      clean=$((clean + 1))
+      if [ "$clean" -ge "$CLEAN_POLLS" ]; then
+        return 0
+      fi
     fi
     sleep "$POLL"
   done
