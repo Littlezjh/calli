@@ -33,7 +33,7 @@ function AccountDetail({ api, agent, current }: { api: Api; agent: AgentInfo; cu
   return <SettingsSection title={agent.label} className="quota-page quota-account-detail">
     <div className="quota-account-meta">{reading.quota?.plan && <span title={reading.quota.plan.id}>{reading.quota.plan.label}</span>}{current && <span>{t('quota.current')}</span>}</div>
     <QuotaWindows reading={reading} detail />
-    <button type="button" className="text-btn quota-detail-refresh" disabled={reading.loading} onClick={() => void reading.refresh()}><IconRefresh size={14} />{reading.error ? t('common.retry') : t('quota.refreshAgent', agent.label)}</button>
+    <button type="button" className="text-btn quota-detail-refresh" aria-busy={reading.loading} disabled={reading.loading} onClick={() => void reading.refresh()}><IconRefresh size={14} />{reading.error ? t('common.retry') : t('quota.refreshAgent', agent.label)}</button>
   </SettingsSection>;
 }
 
@@ -50,7 +50,7 @@ export function QuotaBoard({ api, agents, current, account, onAccount }: Props) 
   };
   if (account) return agent ? <AccountDetail key={agent.id} api={api} agent={agent} current={current === agent.id} /> : <SettingsSection title={t('app.quota')}><p role="status">{t('quota.noAgents')}</p></SettingsSection>;
   return <SettingsSection title={t('app.quota')} className="quota-page">
-    <div className="quota-page-toolbar"><p className="settings-hint">{t('quota.accounts', rows.length)}</p><button type="button" className="text-btn strong" disabled={refreshing} onClick={() => void refreshAll()}><IconRefresh size={14} />{t('quota.refreshAll')}</button></div>
+    <div className="quota-page-toolbar"><p className="settings-hint">{t('quota.accounts', rows.length)}</p><button type="button" className="text-btn strong" aria-busy={refreshing} disabled={refreshing} onClick={() => void refreshAll()}><IconRefresh size={14} />{t('quota.refreshAll')}</button></div>
     {rows.length > 0 && <>
       <div className="quota-page-filters"><div className="quota-page-tabs" role="group" aria-label={t('quota.filter')}>
         <button type="button" aria-pressed={!attentionOnly} onClick={() => setAttentionOnly(false)}>{t('settings.all')}</button>

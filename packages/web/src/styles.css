@@ -903,19 +903,19 @@ button:disabled {
   }
 
   .topbar .menu-btn {
-    width: 42px;
-    height: 42px;
+    width: 44px;
+    height: 44px;
   }
 
   .topbar-actions {
-    height: 42px;
+    height: 44px;
     padding: 0 2px;
     border-radius: 999px;
   }
 
   .topbar-actions .icon-btn {
-    width: 40px;
-    height: 40px;
+    width: 42px;
+    height: 42px;
   }
 
   .topbar-heading {
@@ -925,7 +925,7 @@ button:disabled {
 
   .topbar-title {
     font-size: 16px;
-    font-weight: 650;
+    font-weight: 600;
   }
 
   .scroller {
@@ -8507,10 +8507,6 @@ div.file-card:hover { background: var(--surface); }
   font-weight: 600;
 }
 
-.topbar-files.on {
-  background: var(--active);
-}
-
 /* On a phone: a page of its own over everything, the tree one step back from the file. */
 .files-panel.phone {
   position: fixed;
@@ -13264,6 +13260,7 @@ body:has(.settings-page, .action-sheet) .pet { display: none; }
 .glass-control, .topbar .menu-btn, .topbar-actions, .composer-box { border: 1px solid transparent; background: var(--glass-lighting), var(--glass-bg); box-shadow: var(--glass-shadow); -webkit-backdrop-filter: var(--glass-filter); backdrop-filter: var(--glass-filter); }
 .glass-control { border-radius: var(--radius-pill); }
 .topbar-actions { border-radius: var(--radius-pill); padding: 2px 4px; }
+@media (max-width: 899.98px) { .topbar-actions { padding: 0 2px; } }
 .topbar-actions .icon-btn { background: transparent; border: 0; box-shadow: none; }
 .composer-box { position: relative; }
 
@@ -13442,6 +13439,11 @@ body:has(.settings-page, .action-sheet) .pet { display: none; }
 .quota-meter.exhausted .quota-percent { color: var(--danger); }
 .quota-meter.stale .quota-meter-track > div { background: var(--muted); opacity: .6; }
 .quota-meter-reset, .quota-meter-used { display: block; margin-top: 6px; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.quota-placeholder { pointer-events: none; }
+.quota-placeholder .quota-meter-label > span, .quota-placeholder .quota-percent, .quota-placeholder .quota-meter-reset, .quota-placeholder .quota-meter-used { border-radius: var(--radius-xs); background: var(--border); }
+.quota-placeholder .quota-meter-label > span { width: 3em; }
+.quota-placeholder .quota-percent { width: 2em; }
+.quota-placeholder .quota-meter-reset, .quota-placeholder .quota-meter-used { width: 8em; }
 .quota-meter .quota-load { display: block; margin-top: 6px; color: var(--muted); font-size: 11px; }
 .quota-meter .quota-load.high, .quota-busy-note { color: var(--warn); }
 .quota-reading-status { display: flex; flex-direction: column; gap: 5px; color: var(--muted); font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
@@ -13453,7 +13455,7 @@ body:has(.settings-page, .action-sheet) .pet { display: none; }
 .quota-no-matches { display: none; padding: 36px 0; text-align: center; color: var(--muted); font-size: 13px; }
 .quota-account-list:not(:has(.quota-account-row)) > .quota-no-matches { display: block; }
 .quota-page-note { margin: 24px 0 0; color: var(--muted); font-size: 12px; line-height: 1.8; }
-.quota-account-meta { display: flex; gap: 16px; margin: -10px 0 24px; color: var(--muted); font-size: 13px; }
+.quota-account-meta { display: flex; gap: 16px; min-height: 1lh; margin: -10px 0 24px; color: var(--muted); font-size: 13px; }
 .quota-account-detail .quota-reading-status { margin-bottom: 18px; }
 .quota-account-detail .quota-meter { padding: 24px 0; border-top: 1px solid var(--border); }
 .quota-account-detail .quota-meter-label { font-size: 14px; }
@@ -13471,6 +13473,8 @@ body:has(.settings-page, .action-sheet) .pet { display: none; }
 .quota-menu-head > span { margin-left: auto; min-width: 0; color: var(--muted); font-size: 10px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .quota-menu-head > button { flex: none; width: 28px; height: 28px; }
 .quota-menu-head > button[aria-disabled='true'] { opacity: .5; }
+.quota-menu-head > button[aria-busy='true'] > svg, .quota-page-toolbar button[aria-busy='true'] > svg, .quota-detail-refresh[aria-busy='true'] > svg { animation: spin 0.8s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .quota-menu-head > button[aria-busy='true'] > svg, .quota-page-toolbar button[aria-busy='true'] > svg, .quota-detail-refresh[aria-busy='true'] > svg { animation: none; } }
 .quota-menu-preview .quota-pair { gap: 16px; }
 .quota-menu-preview .quota-meter-label { font-size: 11px; gap: 6px; }
 .quota-menu-preview .quota-meter .quota-percent { font-size: 13px; }

@@ -26,11 +26,22 @@ export function QuotaPair({ windows, stale = false }: { windows: QuotaWindow[]; 
     : <div key={label} className="quota-missing"><div className="quota-meter-label"><span>{periodName(label)}</span><span>{t('quota.notReported')}</span></div><div className="quota-missing-track" /></div>)}</div>;
 }
 
+/** Match a reading's footprint without presenting invented values or periods. */
+function QuotaPlaceholder({ detail = false }: { detail?: boolean }) {
+  return <div className="quota-meter quota-placeholder" aria-hidden="true">
+    <div className="quota-meter-label"><span>{'\u00a0'}</span><strong className="quota-percent">{'\u00a0'}</strong></div>
+    <div className="quota-meter-track" />
+    <span className="quota-meter-reset">{'\u00a0'}</span>
+    {detail && <span className="quota-meter-used">{'\u00a0'}</span>}
+  </div>;
+}
+
 /** One model pool is visible immediately; other pools retain their own periods and values. */
 export function QuotaPreview({ reading }: { reading: QuotaReading }) {
   const groups = quotaGroups(reading.quota?.windows ?? []);
   const stale = quotaStale(reading);
-  return <div className="quota-preview">
+  return <div className="quota-preview" aria-busy={reading.loading}>
+    {!reading.quota && !reading.error && <div className="quota-pair"><QuotaPlaceholder /><QuotaPlaceholder /></div>}
     {groups[0]?.scope && <div className="quota-pool-name">{groups[0].scope}</div>}
     {groups[0] && <QuotaPair windows={groups[0].windows} stale={stale} />}
     <QuotaReadingStatus reading={reading} />
@@ -41,13 +52,13 @@ export function QuotaPreview({ reading }: { reading: QuotaReading }) {
 }
 
 export function QuotaReadingStatus({ reading, detail = false }: { reading: QuotaReading; detail?: boolean }) {
-  const { quota, loading, error } = reading;
+  const { quota, error } = reading;
   const stale = quotaStale(reading);
   const constrained = quota?.windows.filter(window => window.usedPercent >= 80).length ?? 0;
   const exhausted = quota?.windows.some(window => window.usedPercent >= 100);
-  const status = loading ? t('quota.updating') : error ? quota?.windows.length ? t('quota.cached') : t('quota.unavailable')
+  const status = error ? quota?.windows.length ? t('quota.cached') : t('quota.unavailable')
     : !quota ? t('quota.loading') : !quota.windows.length ? t('quota.empty') : stale ? t('quota.cachedReading') : '';
-  return <div className={`quota-reading-status${error || constrained ? ' attention' : ''}`} role="status">
+  return <div className={`quota-reading-status${error || constrained ? ' attention' : ''}${!quota && !error && !detail ? ' sr-only' : ''}`} role="status">
     {status && <span>{status}</span>}
     {!stale && exhausted ? <span>{t('quota.exhausted')}</span> : !stale && constrained > 0 ? <span>{t('quota.lowCount', constrained)}</span> : null}
     {quota?.windows.some(window => (window.loadPercent ?? 0) >= 100) && <span>{t('quota.board.busy')}</span>}
@@ -58,9 +69,10 @@ export function QuotaReadingStatus({ reading, detail = false }: { reading: Quota
 
 /** The same per-window detail is used in a chat quick look and the account page. */
 export function QuotaWindows({ reading, detail = false }: { reading: QuotaReading; detail?: boolean }) {
-  return <>
+  return <div className="quota-windows" aria-busy={reading.loading}>
     <QuotaReadingStatus reading={reading} detail />
+    {!reading.quota && !reading.error && <><QuotaPlaceholder detail={detail} /><QuotaPlaceholder detail={detail} /></>}
     {reading.quota?.windows.map((window, index) => <QuotaMeter key={`${window.label}:${window.scope ?? ''}:${index}`} window={window} stale={quotaStale(reading)} detail={detail} />)}
     {reading.quota?.note && <p className="quota-note">{reading.quota.note}</p>}
-  </>;
+  </div>;
 }

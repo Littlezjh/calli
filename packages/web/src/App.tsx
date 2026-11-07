@@ -111,7 +111,7 @@ import { NoteMarks, type NoteMark } from './components/NoteMarks';
 import { ConnectDialog, DemoBar } from './components/ConnectDialog';
 import { DemoApi, DemoError } from './demo/DemoApi';
 import { type DraftModelPreference, switchDraftModelPreference } from './draft-preferences';
-import { IconCheck, IconBell, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFiles, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconSettings, IconMore, IconOverview, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconTrace, IconLanguage, IconWaveform } from './components/icons';
+import { IconCheck, IconBell, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowDown, IconBack, IconClose, IconEdit, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconSettings, IconMore, IconOverview, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconTrace, IconLanguage, IconWaveform } from './components/icons';
 import { StatReadings } from './components/SessionStats';
 import { ThreadTracePanel } from './components/TracePanel';
 import { chooseLocale, locale, LOCALES, localeChoice, t } from './i18n';
@@ -1816,9 +1816,10 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     [api, selectedId],
   );
 
-  // The file panel: what it shows, for the thread on screen. Switching threads closes it.
+  // The file panel may browse any thread; switching the conversation closes it.
   const [filesThreadId, setFilesThreadId] = useState<string | null>(null);
   const [files, setFiles] = useState<FilesTarget | null>(null);
+  const filesThread = threads.find(thread => thread.id === filesThreadId) ?? selected;
   /** The thread's trace, beside the conversation on a desktop, a page of its own on a phone. */
   const [traceOpen, setTraceOpen] = useState(false);
   const filesSeq = useRef(0);
@@ -1927,6 +1928,12 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       void refreshThreads();
     },
     onOpenTerminal: () => (demo ? askToConnect() : openTerminal()),
+    onOpenFiles: (thread) => {
+      setAgentsOpen(false);
+      setTraceOpen(false);
+      setFilesThreadId(thread.id);
+      setFiles({ path: null, seq: ++filesSeq.current });
+    },
     // The bar hands its trace mark to the menu on a wide screen; a phone reaches it from the
     // overview panel's foot.
     onOpenTrace: compact ? undefined : () => { setAgentsOpen(false); setFiles(null); setTraceOpen(true); },
@@ -2953,15 +2960,6 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
               {/* A phone keeps its plan button: it has no margin card, and the lead's list of what
                   leaves the bar was the desktop's. The overview has the plan too, one tap away. */}
               {compact && topPlan && !onPage && <PlanButton item={topPlan} />}
-              <button
-                className={`icon-btn topbar-files${files ? ' on' : ''}`}
-                aria-label={t('files.files')}
-                aria-pressed={Boolean(files)}
-                title={t('files.files')}
-                onClick={() => { setAgentsOpen(false); setFilesThreadId(selected?.id ?? null); setFiles(files ? null : { path: null, seq: ++filesSeq.current }); }}
-              >
-                <IconFiles />
-              </button>
               {compact && (
                 <button className="icon-btn topbar-new" aria-label={t('sidebar.newThread')} onClick={() => newThread()}>
                   <IconEdit />
@@ -3357,7 +3355,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         return a ? <MemberModel agent={a} models={modelsByAgent[a.id] ?? []} value={{ model: thread.model ?? null, effort: thread.effort ?? null }} onNeed={needModels} onChange={({ model, effort }) => { void api.updateThread(thread.id, { model, effort }).then(() => refreshThreads()).catch(handleError); }}
           permission={a.capabilities.permissionModes.length ? thread.permissionMode : undefined} onPermission={(permissionMode) => { void api.updateThread(thread.id, { permissionMode }).then(() => refreshThreads()).catch(handleError); }} /> : null;
       }} leadAgent={threads.find((t) => t.id === coordination.rootId)?.agent} phone={compact} onClose={() => setAgentsOpen(false)} onOpen={thread => { openThread(thread); setAgentsOpen(false); }} onAdjust={(name, draft) => { setAgentsOpen(false); setSelectedId(coordination.rootId); setRestore({ text: t('app.adjustTask', name) + draft, nonce: Date.now() }); }} onRefresh={() => { void refreshThreads(); }} onError={handleError} />}
-      {files && selected && api && <FilesPanel api={api} threadId={filesThreadId ?? selected.id} target={files} phone={compact} revision={threads.find(t => t.id === (filesThreadId ?? selected.id))?.updatedAt} writingStage={selected.writing?.stage ?? null} writingHabits={selected.writing?.habits ?? null} noted={{ count: noteCount, nonce: filesNotePulse }} onClose={() => setFiles(null)} />}
+      {files && filesThread && api && <FilesPanel api={api} threadId={filesThread.id} target={files} phone={compact} revision={filesThread.updatedAt} writingStage={filesThread.writing?.stage ?? null} writingHabits={filesThread.writing?.habits ?? null} noted={{ count: noteCount, nonce: filesNotePulse }} onClose={() => setFiles(null)} />}
       {traceOpen && selected && (
         <ThreadTracePanel
           api={api}

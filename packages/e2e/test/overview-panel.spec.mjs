@@ -41,9 +41,9 @@ test('the overview panel reads the thread from one top-bar button, and a change 
     await openUi(page, daemon);
     await page.locator('.thread-row', { hasText: '概况面板' }).click();
 
-    // The lean bar: the overview, the files and the one more menu — nothing else.
+    // Files live in the more menu; only the overview and more stay in the desktop bar.
     await page.locator('.topbar-overview').waitFor();
-    assert.equal(await page.locator('.topbar-actions button.icon-btn').count(), 3, 'three top-bar buttons');
+    assert.equal(await page.locator('.topbar-actions button.icon-btn').count(), 2, 'two top-bar buttons');
     assert.equal(await page.locator('.topbar-agents, .topbar-plan, .topbar-trace').count(), 0, 'no old buttons came back');
 
     // The panel: open by default, standing beside the conversation, plan, changes, images and
@@ -109,7 +109,8 @@ test('the overview panel reads the thread from one top-bar button, and a change 
 
     // A side panel takes the same edge: the overview steps aside while it is open, but the
     // person's switch is untouched — it comes back when the side panel closes.
-    await page.locator('.topbar-files').click();
+    await page.locator('.topbar-more').click();
+    await page.getByRole('menuitem', { name: '文件', exact: true }).click();
     await page.locator('.files-panel').waitFor();
     await panel.waitFor({ state: 'detached' });
     assert.notEqual(await page.evaluate(() => localStorage.getItem('calli.overview.open')), '0', 'a side panel does not record the panel as closed');
@@ -199,7 +200,7 @@ test('below the dock width the overview is the old popover, and a phone tap outs
     await panel.waitFor({ state: 'detached' });
     await wide.close();
 
-    // A phone keeps the bottom sheet; a tap outside it puts it away.
+    // A phone's anchored popover also closes on an outside tap.
     const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
     const small = await phone.newPage();
     await small.goto(`${daemon.base}/`);
@@ -209,7 +210,7 @@ test('below the dock width the overview is the old popover, and a phone tap outs
     assert.equal(await small.locator('.overview-panel').count(), 0, 'the phone starts collapsed');
     await small.locator('.topbar-overview').click();
     await small.locator('.overview-panel').waitFor();
-    await small.locator('.pop-scrim').click({ position: { x: 20, y: 20 } });
+    await small.touchscreen.tap(2, 100);
     await small.locator('.overview-panel').waitFor({ state: 'detached' });
     await phone.close();
   } finally {
