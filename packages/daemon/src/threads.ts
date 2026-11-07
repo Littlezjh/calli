@@ -2061,11 +2061,18 @@ export class ThreadManager {
     // Whoever takes over from here, the work leaves this thread; stop waiting for its quota.
     this.quotaResume.drop(threadId);
     const selected = mode ?? 'branch';
+    // A relay between accounts of the same agent keeps the thread's model and effort: without this
+    // the successor falls back to the target account's default (opus, say) and the swap quietly
+    // multiplies the burn and the cache rewrite. Across agent kinds the names mean different
+    // things, so the target keeps its own default.
+    const kind = (id: string) => this.adapters.get(id)?.id;
+    const sameKind = kind(agent) !== undefined && kind(agent) === kind(source.agent);
     const successor = await this.createThread({
       agent,
       cwd: source.cwd,
       title: `${source.title}（接手）`,
-      model,
+      model: model ?? (sameKind ? source.model ?? undefined : undefined),
+      effort: sameKind ? source.effort ?? undefined : undefined,
       sectionId: source.sectionId,
     }, source.worktree, { sourceId: source.id, title: source.title, agent: source.agent, mode: selected,
       sourceSeq: this.store.history.latest(source.id) });

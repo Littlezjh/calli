@@ -321,3 +321,31 @@ test('manual handovers always branch without stopping work, automatic handovers 
     await manager.shutdown(); await new Promise<void>(r => server.close(() => r())); store.close(); rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('a relay between accounts of the same agent keeps model and effort; across agent kinds it does not', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'calli-handover-model-'));
+  const cwd = join(root, 'project'); mkdirSync(cwd);
+  const one = join(root, 'one'), two = join(root, 'two');
+  const fakeAgy = join(dirname(fixture), 'fake-agy.mjs');
+  const registry = new AgentRegistry([
+    { id: 'claude-1', adapter: 'claude', label: 'Claude Code', command: [process.execPath, fixture], env: { CLAUDE_CONFIG_DIR: one, FAKE_SESSION_ROOT: one } },
+    { id: 'claude-2', adapter: 'claude', label: 'Claude Code', command: [process.execPath, fixture], env: { CLAUDE_CONFIG_DIR: two, FAKE_SESSION_ROOT: two } },
+    { id: 'agy-x', adapter: 'agy', label: 'Antigravity', command: [process.execPath, fakeAgy], env: {} },
+  ], null);
+  const store = new Store(join(root, 'data'));
+  const manager = new ThreadManager(store, registry.adapters, new Workdirs([cwd], null), new AttachmentStore(join(root, 'data')));
+  try {
+    const source = await manager.createThread({ agent: 'claude-1', cwd, model: 'big', effort: 'high' });
+    // Same agent, another account: the relay keeps what the thread was running.
+    const relay = await manager.createHandoverThread(source.id, 'claude-2');
+    assert.equal(relay.model, 'big');
+    assert.equal(relay.effort, 'high');
+    // A different agent kind has its own model names; it keeps its own default.
+    const across = await manager.createHandoverThread(source.id, 'agy-x');
+    assert.equal(across.model, null);
+    assert.equal(across.effort, null);
+    // An explicit choice still wins over the inheritance.
+    const pinned = await manager.createHandoverThread(source.id, 'claude-2', 'small');
+    assert.equal(pinned.model, 'small');
+  } finally { await manager.shutdown(); store.close(); rmSync(root, { recursive: true, force: true }); }
+});
