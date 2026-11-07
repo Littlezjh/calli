@@ -1359,6 +1359,7 @@ export const en: Messages = {
   'files.copyPath': 'Copy path',
   'files.download': 'Download file',
   'files.downloading': 'Preparing…',
+  'files.downloadStarted': (size: string) => `Handed to the system to save (${size}); a large file takes a while`,
   'files.downloadFailed': 'Download failed, try again',
   'files.more': 'More file actions',
   'files.files': 'Files',

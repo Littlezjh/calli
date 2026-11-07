@@ -1359,6 +1359,7 @@ export const zh = {
   'files.copyPath': '复制路径',
   'files.download': '下载文件',
   'files.downloading': '准备下载…',
+  'files.downloadStarted': (size: string) => `已交给系统下载（${size}），大文件需要一会儿`,
   'files.downloadFailed': '下载失败，再试一次',
   'files.more': '文件的更多操作',
   'files.files': '文件',

@@ -873,10 +873,30 @@ function EntryRow({ entry, depth, open, current, onClick }: { entry: FolderEntry
   );
 }
 
-/** Saves one of the thread's files: a signed link is minted, then the browser saves what it names. */
+/**
+ * Saves one of the thread's files: a signed link is minted, then the browser saves what it names.
+ * In the phone menu the link is minted as the menu opens and the item is a real link: a click that
+ * waits for the network before saving loses its standing as a tap, and an installed iPhone app
+ * then drops the download without a word.
+ */
 function DownloadButton({ api, threadId, path, label, icon, menu }: { api: Api; threadId: string; path: string; label: string; icon?: boolean; menu?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [ready, setReady] = useState<{ url: string; name: string; size: number } | null>(null);
+  const [started, setStarted] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    if (!menu) return;
+    let live = true;
+    setReady(null);
+    setStarted(false);
+    setFailed(false);
+    api.downloadLink(threadId, path, true).then(
+      (link) => live && setReady({ url: link.url, name: link.name, size: link.size }),
+      () => live && setFailed(true),
+    );
+    return () => { live = false; };
+  }, [api, threadId, path, menu, attempt]);
   const start = async () => {
     setBusy(true);
     setFailed(false);
@@ -896,8 +916,22 @@ function DownloadButton({ api, threadId, path, label, icon, menu }: { api: Api; 
         <IconDownload size={16} />
       </button>
     );
+  if (menu && ready)
+    return (
+      <a className="pop-item" role="menuitem" href={ready.url} download={ready.name} onClick={() => setStarted(true)}>
+        <IconDownload size={15} />
+        <span>{started ? t('files.downloadStarted', sizeLabel(ready.size)) : label}</span>
+      </a>
+    );
+  if (menu)
+    return (
+      <button type="button" className="pop-item" role="menuitem" aria-disabled={!failed} onClick={() => failed && setAttempt((n) => n + 1)}>
+        <IconDownload size={15} />
+        <span>{failed ? title : t('files.downloading')}</span>
+      </button>
+    );
   return (
-    <button type="button" className={menu ? 'pop-item' : 'btn-secondary files-download'} role={menu ? 'menuitem' : undefined} disabled={busy} onClick={() => void start()}>
+    <button type="button" className="btn-secondary files-download" disabled={busy} onClick={() => void start()}>
       <IconDownload size={15} />
       <span>{busy ? t('files.downloading') : title}</span>
     </button>

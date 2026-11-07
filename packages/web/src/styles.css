@@ -2729,6 +2729,11 @@ html.list-open body {
   background: var(--hover);
 }
 
+a.pop-item {
+  color: inherit;
+  text-decoration: none;
+}
+
 .pop-item.compact {
   padding: 7px 10px;
 }

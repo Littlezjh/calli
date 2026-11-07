@@ -1357,6 +1357,7 @@ export const ja: Messages = {
   'files.copyPath': 'パスをコピー',
   'files.download': 'ファイルをダウンロード',
   'files.downloading': '準備中…',
+  'files.downloadStarted': (size: string) => `ダウンロードを開始しました（${size}）。大きなファイルは時間がかかります`,
   'files.downloadFailed': 'ダウンロードできませんでした。もう一度お試しください',
   'files.more': 'ファイルのその他の操作',
   'files.files': 'ファイル',
