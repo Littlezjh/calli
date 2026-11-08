@@ -65,7 +65,8 @@ import { QuotaBoard } from './components/QuotaBoard';
 import { QuotaNavigation } from './quota-reading';
 import { SelectionMenu } from './components/SelectionMenu';
 import { AgentPanel } from './components/AgentPanel';
-import { memberProgress, ThreadOverview } from './components/ThreadOverview';
+import { memberProgress, ThreadOverview, type OverviewSection } from './components/ThreadOverview';
+import { prepareOverview } from './overview-reading';
 import { ChangeDiffDialog } from './components/ChangeDiffDialog';
 import { AgentsPage } from './components/AgentsPage';
 import type { AgentMention, ChangedFile, Coordination, MemberDefault, SearchHit } from './api';
@@ -1829,10 +1830,20 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   // conversation on a wide one. Its switch is remembered here, and starts open.
   const overviewDock = useMinWidth(OVERVIEW_DOCK_MIN_WIDTH) && !onPage;
   const [overviewOpen, setOverviewOpen] = useStoredFlag(OVERVIEW_OPEN_KEY, true);
+  const [overviewDetail, setOverviewDetail] = useState<{ api: Api; threadId: string; section: OverviewSection; returnToPreview: boolean } | null>(null);
+  const [overviewSignal, setOverviewSignal] = useState(0);
+  const [overviewLoading, setOverviewLoading] = useState(false);
+  const activeOverviewDetail = overviewDetail?.api === api && overviewDetail?.threadId === selectedId && !onPage ? overviewDetail : null;
+  useLayoutEffect(() => { setOverviewDetail(null); setOverviewSignal(0); }, [api, selectedId, onPage]);
+  const closeOverviewDetail = () => {
+    setOverviewDetail(null);
+    if (overviewDock && !activeOverviewDetail?.returnToPreview) setOverviewOpen(false);
+    else if (!overviewDock && activeOverviewDetail?.returnToPreview) setOverviewSignal(signal => signal + 1);
+  };
   /** A side panel takes the same edge as the overview, so the panel steps aside while one is open —
    *  but the person's own switch is left alone: it comes back when the side panel closes. */
   const sideOpen = Boolean(agentsOpen && coordination) || Boolean(files) || traceOpen;
-  const overviewShown = overviewDock && overviewOpen && !sideOpen && Boolean(selected) && hostUp;
+  const overviewShown = overviewDock && overviewOpen && !sideOpen && !activeOverviewDetail && Boolean(selected) && hostUp;
   /** Only the person turns the standing panel off; the switch above remembers it. */
   const closeOverview = useCallback(() => { if (overviewDock) setOverviewOpen(false); }, [overviewDock, setOverviewOpen]);
   // A page the agent wrote, rendered in a sandboxed iframe.
@@ -2744,10 +2755,12 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   ];
   // The same body in both shapes: the standing panel beside the conversation, and the popover a
   // narrow window still gets. Only the standing one keeps itself open behind its own rows.
-  const overviewBody = (close: () => void, persistent: boolean) => selected && api && (
-    <ThreadOverview
+  const overviewBody = (close: () => void, persistent: boolean, detail?: OverviewSection) => selected && api && (
+    <ThreadOverview key={`${hostId ?? ''}:${selected.id}:${detail ?? 'preview'}`}
+      detail={detail} onLoadingChange={setOverviewLoading}
+      onViewAll={(section, returnToPreview = true) => setOverviewDetail({ api, threadId: selected.id, section, returnToPreview })}
       api={api} threadId={selected.id} updatedAt={selected.updatedAt} active={selected.status === 'running'}
-      team={overviewTeam} agents={agents} plan={topPlan} roots={threadRoots} turnOrder={turnOrder}
+      team={overviewTeam} agents={agents} plan={topPlan} roots={threadRoots}
       loadFile={loadFile} persistent={persistent}
       onOpenMember={(member) => { setAgentsStart(member ?? null); setAgentsOpen(true); setFiles(null); }}
       onOpenDiff={(file) => setDiffFile({ threadId: selected.id, file })}
@@ -2883,7 +2896,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
 
       {/* A conversation under way leans toward the middle of the screen, as in Codex; a new
           thread, and the pages, stay centred where they are. */}
-      <main className={`main${selected && !onPage && hostUp && !compact ? ' lean' : ''}${overviewShown ? ' overview-room' : ''}`} ref={mainRef}>
+      <main className={`main${selected && !onPage && hostUp && !compact ? ' lean' : ''}${overviewShown || (activeOverviewDetail && overviewDock && overviewOpen) ? ' overview-room' : ''}`} ref={mainRef}>
         {compact && selected && !listOpen && !onPage && hostUp && (
           <ThreadQuickSwitch threads={topLevelThreads} selectedId={selected.id} agents={agents} onSelect={pick} />
         )}
@@ -2937,6 +2950,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
                   className={`icon-btn topbar-overview${overviewOpen ? ' on' : ''}${teamNeeds ? ' attention' : ''}`}
                   aria-label={t('overview.label')}
                   aria-pressed={overviewOpen}
+                  aria-busy={overviewLoading}
                   title={teamNeeds ? t('overview.needsYou', teamNeeds) : t('overview.label')}
                   onClick={() => setOverviewOpen(!overviewOpen)}
                 >
@@ -2945,7 +2959,11 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
                 </button>
               ) : (
                 <Popover
+                  key={`${hostId ?? ''}:${selected.id}`}
                   label={t('overview.label')}
+                  prepare={() => prepareOverview(api, selected.id, selected.updatedAt)}
+                  openSignal={overviewSignal}
+                  triggerBusy={overviewLoading}
                   triggerClassName={`icon-btn topbar-overview${teamNeeds ? ' attention' : ''}`}
                   triggerLabel={t('overview.label')}
                   triggerTitle={teamNeeds ? t('overview.needsYou', teamNeeds) : t('overview.label')}
@@ -3340,6 +3358,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         )}
         </div>
         )}
+        {activeOverviewDetail && overviewBody(closeOverviewDetail, true, activeOverviewDetail.section)}
       </main>
 
       {/* The overview standing beside the conversation: a layer of its own, put away only by the

@@ -7,6 +7,7 @@ interface Props {
   triggerClassName?: string;
   triggerTitle?: string;
   triggerLabel?: string;
+  triggerBusy?: boolean;
   panelClassName?: string;
   trigger?: ReactNode;
   triggerRef?: RefObject<HTMLButtonElement>;
@@ -20,6 +21,8 @@ interface Props {
   openSignal?: number;
   /** Called once when the panel opens, whether by click or by an open signal. */
   onOpen?: () => void;
+  /** Read a cold panel before showing it; progress stays in the existing trigger. */
+  prepare?: () => Promise<void>;
   children: (close: () => void) => ReactNode;
 }
 
@@ -32,6 +35,7 @@ export function Popover({
   triggerClassName,
   triggerTitle,
   triggerLabel,
+  triggerBusy,
   panelClassName,
   trigger,
   triggerRef,
@@ -41,9 +45,23 @@ export function Popover({
   disabled,
   openSignal,
   onOpen,
+  prepare,
   children,
 }: Props) {
   const [open, setOpen] = useState(false);
+  const [preparing, setPreparing] = useState(false);
+  const request = useRef(0);
+  const close = () => { request.current++; setPreparing(false); setOpen(false); };
+  const show = () => {
+    if (!prepare) { setOpen(true); return; }
+    const ticket = ++request.current;
+    setPreparing(true);
+    void prepare().then(() => {
+      if (request.current !== ticket) return;
+      setPreparing(false); setOpen(true);
+    }, () => { if (request.current === ticket) setPreparing(false); });
+  };
+  useEffect(() => () => { request.current++; }, []);
   const panelId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   const wasOpen = useRef(false);
@@ -70,7 +88,7 @@ export function Popover({
       const at = anchorRef?.current ?? rootRef.current;
       if (!at || !panelRef.current) return;
       const anchor = at.getBoundingClientRect();
-      const panel = panelRef.current.getBoundingClientRect();
+      const panel = { width: panelRef.current.offsetWidth, height: panelRef.current.offsetHeight };
       const viewport = window.visualViewport;
       const edge = 12;
       const minY = (viewport?.offsetTop ?? 0) + edge;
@@ -108,12 +126,12 @@ export function Popover({
   }, [open, onOpen]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open && !preparing) return;
     // composedPath is captured at dispatch, so it still works if the clicked node is removed by the handler.
     const onDown = (e: MouseEvent | TouchEvent) => {
       const at = anchorRef?.current ?? rootRef.current;
-      if (anchorRef && at && e.composedPath().includes(at)) { setOpen(false); return; }
-      if (at && !e.composedPath().includes(at) && (!panelRef.current || !e.composedPath().includes(panelRef.current))) setOpen(false);
+      if (anchorRef && at && e.composedPath().includes(at)) { close(); return; }
+      if (at && !e.composedPath().includes(at) && (!panelRef.current || !e.composedPath().includes(panelRef.current))) close();
     };
     const onKey = (e: KeyboardEvent) => {
       // An open inline disclosure consumes Escape before its containing menu.
@@ -122,7 +140,7 @@ export function Popover({
         const rows = [...(panelRef.current?.querySelectorAll<HTMLElement>('[role^="menuitem"]:not(:disabled), button:not(:disabled)') ?? [])].filter(el => el.getClientRects().length > 0);
         if (rows.length) { e.preventDefault(); const i = rows.indexOf(document.activeElement as HTMLElement); rows[e.key === 'Home' ? 0 : e.key === 'End' ? rows.length - 1 : (i + (e.key === 'ArrowDown' ? 1 : -1) + rows.length) % rows.length]?.focus(); }
       }
-      if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); setOpen(false); (anchorRef?.current ?? rootRef.current?.querySelector('button'))?.focus({ preventScroll: true }); }
+      if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); close(); (anchorRef?.current ?? rootRef.current?.querySelector('button'))?.focus({ preventScroll: true }); }
     };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('touchstart', onDown);
@@ -132,9 +150,7 @@ export function Popover({
       document.removeEventListener('touchstart', onDown);
       document.removeEventListener('keydown', onKey, true);
     };
-  }, [open, anchorRef]);
-
-  const close = () => setOpen(false);
+  }, [open, preparing, anchorRef]);
   const panel = <>
     <div id={panelId} ref={panelRef} style={position} className={`pop-panel anchored-pop align-${align} placement-${placement}${panelClassName ? ` ${panelClassName}` : ''}`} role="menu" aria-label={label}>
       {open && children(close)}
@@ -152,9 +168,10 @@ export function Popover({
         aria-label={triggerLabel}
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-busy={preparing || triggerBusy || undefined}
         aria-controls={open ? panelId : undefined}
         disabled={disabled}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => open || preparing ? close() : show()}
       >
         {trigger}
       </button>

@@ -9648,18 +9648,14 @@ div.file-card:hover { background: var(--surface); }
 @media (hover: hover) { .topbar-lead-link:hover { color: var(--text); } }
 /* The thread at a glance: one top-bar button opens a narrow panel with the team, the plan, what
    changed, the pictures and the files. Every row is one line, a long group shows its first few and
-   keeps the rest behind one more line. The panel folds its last groups, rather than growing a
-   scrollbar, to the room a phone or a desktop actually leaves under the top bar. */
+   keeps the full list on a separate page. The panel reduces previews from three to one when
+   necessary, without shrinking row heights or growing a scrollbar. */
 .topbar-overview { position: relative; }
 /* Standing open: the same pressed ground as the files and team buttons in this bar. */
 .topbar-overview.on { background: var(--active); }
 .topbar-overview.attention .topbar-badge { background: var(--warn); color: var(--on-color); }
-/* The panel lines up 12px from the window's right edge, under the top bar; a phone gets the usual
-   bottom sheet from the shared Popover rules. It is 340 wide rather than the mock's 300 because the
-   foot has to hold four readings and the trace link on one line: Japanese writes the cache share as
-   "キャッシュ 97%", which needs the extra 40px (Chinese and English would fit at 300). */
+/* The dock sits below the top bar; narrow windows use the shared anchored popover. */
 @media (min-width: 641px) {
-  .pop-panel.overview-panel { left: auto; right: 12px; width: 340px; min-width: 340px; max-height: min(70vh, var(--pop-height)); padding: 5px 5px 7px; }
   /* The standing shape of the same panel: fixed under the top bar, not anchored to its button, and
      without the popover's scrim — clicks elsewhere, scrolling and Escape leave it alone. The
      top-bar button above it is its only switch. The 8px band and the paper's 12px margin put its
@@ -9670,8 +9666,6 @@ div.file-card:hover { background: var(--surface); }
     right: 20px;
     bottom: auto;
     left: auto;
-    max-height: min(70vh, calc(100vh - var(--titlebar-row, calc(52px + env(safe-area-inset-top))) - 32px));
-    overflow-y: auto;
   }
 }
 
@@ -9679,7 +9673,6 @@ div.file-card:hover { background: var(--surface); }
   /* The paper starts at the window's top edge here, so the panel hangs 8px higher. */
   .pop-panel.overview-dock {
     top: calc(var(--titlebar-row, 40px) + 6px);
-    max-height: min(70vh, calc(100vh - var(--titlebar-row, 40px) - 24px));
   }
 }
 /* The overview is the quietest card on the page: barely a shade over the paper, a hairline, and
@@ -9770,21 +9763,8 @@ div.file-card:hover { background: var(--surface); }
 .overview-plan .plan-entry .plan-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .overview-plan .plan-entry.completed { color: var(--faint); }
 .overview-plan .plan-entry.active { color: var(--text); font-weight: 600; }
-/* Square thumbnails, four across; the file itself is read only while the group is open. A photo
-   fills the square; a drawing sits whole on the picture background, with room around it. */
-.overview-pictures { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; padding: 0 7px 4px; }
-.overview-picture { aspect-ratio: 1; display: flex; align-items: center; justify-content: center; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--faint); overflow: hidden; cursor: pointer; }
-.overview-picture img { width: 100%; height: 100%; object-fit: cover; }
-.overview-picture.vector { padding: 3px; background: var(--picture-bg); }
-.overview-picture.vector img { object-fit: contain; }
-.overview-picture:disabled { cursor: default; }
-.overview-picture.failed { background: var(--surface-2); }
 /* A picture that left the disk keeps one faint line instead of a square that cannot be read. */
 .overview-missing-line { padding: 1px 7px 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 11.5px; }
-/* The one line that says the overview could not be read, kept apart from an honestly empty card. */
-.overview-failed { display: flex; align-items: center; gap: 6px; padding: 6px 7px; color: var(--muted); font-size: 12.5px; }
-.overview-failed .text-btn { min-height: 0; padding: 0 2px; font-size: 12.5px; color: var(--muted); text-decoration: underline; text-underline-offset: 3px; }
-.overview-failed .text-btn:hover { background: none; color: var(--text); }
 /* The readings and the way to the trace share one faint line at the bottom. Readings that have
    not been measured leave the line to the trace alone. The separator belongs to a line that has
    groups above it; readings on their own are the panel's only line, with normal padding. */
@@ -13599,3 +13579,62 @@ body:has(.settings-page, .action-sheet) .pet { display: none; }
   .explore-search input, .explore-draft { font-size: 16px; }
   .explore-control { max-width: 60%; }
 }
+
+/* Overview A: natural height, fewer real rows when space runs out. Never scroll the preview. */
+.pop-panel.overview-panel {
+  width: 340px;
+  min-width: 0;
+  max-width: calc(100vw - 24px);
+  max-height: none;
+  overflow: visible;
+  padding: 5px 5px 7px;
+  animation: overview-appear 0.12s ease;
+}
+@keyframes overview-appear { from { opacity: 0; } to { opacity: 1; } }
+.overview-panel:has(.thread-overview[data-ready='false']) { visibility: hidden; }
+.topbar-overview[aria-busy='true'] > svg, .overview-refresh[aria-busy='true'] > svg { animation: spin 1s linear infinite; }
+.overview-content { flex: 1; min-height: 0; }
+.overview-group { flex: none; }
+.overview-attention { color: var(--warn); }
+.overview-slot-empty { height: 30px; padding: 0 7px; line-height: 30px; font-size: 12px; color: var(--faint); }
+.overview-more { display: inline-flex; align-items: center; gap: 4px; }
+.overview-picture-row { height: 30px; }
+.overview-picture-mini { flex: none; display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; overflow: hidden; border-radius: var(--radius-sm); background: var(--surface-2); color: var(--faint); }
+.overview-picture-mini img { width: 100%; height: 100%; object-fit: cover; }
+.overview-picture-row.vector img { object-fit: contain; }
+.overview-panel .overview-plan .plan-entry { height: 30px; }
+.overview-foot { flex: none; height: 46px; box-sizing: border-box; margin-top: 3px; padding: 4px 7px 0; border-top: 1px solid var(--border); }
+.overview-readings { display: flex; flex-direction: column; line-height: 15px; }
+.overview-readings > span { height: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.overview-status.failed { color: var(--warn); }
+.overview-refresh { flex: none; width: 30px; height: 30px; color: var(--muted); }
+/* A full list is a page in the main column; the conversation stays mounted underneath it. */
+.overview-details-page { position: absolute; inset: 0; z-index: 35; display: flex; flex-direction: column; background: var(--bg); }
+.overview-details-head { flex: none; display: flex; align-items: center; gap: 14px; min-height: 58px; padding: env(safe-area-inset-top) 24px 0; }
+.overview-details-head h1 { margin: 0; font-size: 20px; font-weight: 600; outline: none; }
+.overview-details-head .icon-btn { flex: none; }
+.overview-details-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 12px max(24px, calc((100% - 900px) / 2)) 32px; }
+.overview-details-search { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--faint); }
+.overview-details-search input { flex: 1; min-width: 0; padding: 0; border: 0; outline: none; color: var(--text); background: none; font: inherit; font-size: 14px; }
+.overview-details-search:focus-within { border-color: var(--muted); }
+.overview-details-toolbar .overview-foot { margin-top: 8px; border: 0; padding: 0; }
+.overview-detail-group { padding: 12px 0; }
+.overview-detail-group + .overview-detail-group { border-top: 1px solid var(--border); }
+.overview-detail-group h2 { display: flex; align-items: baseline; gap: 12px; margin: 0 0 8px; padding: 0 7px; font-size: 14px; font-weight: 600; }
+.overview-detail-group h2 > span { display: inline-flex; align-items: baseline; gap: 5px; color: var(--faint); font-size: 12px; font-weight: 400; }
+.overview-details-page .overview-row, .overview-details-page .overview-member, .overview-details-page .plan-entry { min-height: 44px; }
+@media (max-width: 640px) {
+  .pop-panel.overview-panel { width: min(380px, calc(100vw - 24px)); }
+  .overview-slot-empty { height: 36px; line-height: 36px; }
+  .overview-picture-row, .overview-panel .overview-plan .plan-entry { height: 36px; }
+  .overview-more { min-height: 32px; }
+  .overview-toggle { min-height: 32px; }
+  .overview-foot { height: 50px; }
+  .overview-refresh { width: 36px; height: 36px; }
+  .overview-details-head { min-height: 60px; padding-left: 12px; padding-right: 16px; }
+  .overview-details-scroll { padding: 12px 16px calc(24px + env(safe-area-inset-bottom)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pop-panel.overview-panel, .topbar-overview[aria-busy='true'] > svg, .overview-refresh[aria-busy='true'] > svg { animation: none; }
+}
+.overview-panel .overview-empty { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

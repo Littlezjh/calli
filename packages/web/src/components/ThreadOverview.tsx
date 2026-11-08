@@ -1,13 +1,14 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { ApiError, type AgentInfo, type Api, type ChangedFile, type Coordination, type OutputFile, type ThreadOutputs } from '../api';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { type AgentInfo, type Api, type ChangedFile, type Coordination, type OutputFile, type ThreadStats } from '../api';
 import { deliveredPreview, progressState } from '../timeline';
 import { relativePath } from '../paths';
 import { t } from '../i18n';
 import { memberStatus } from './AgentPanel';
 import { PlanList, PlanRing, planProgress, type PlanItem } from './PlanPanel';
 import { Lightbox } from './Lightbox';
-import { compactTokens, speedLabel, useThreadStats } from './SessionStats';
-import { AgentMark, IconAgents, IconChevron, IconChevronRight, IconEdit, IconFile, IconImage, IconPreview } from './icons';
+import { compactTokens, speedLabel } from './SessionStats';
+import { useOverviewReading } from '../overview-reading';
+import { AgentMark, IconAgents, IconBack, IconChevron, IconChevronRight, IconEdit, IconFile, IconImage, IconPreview, IconRefresh, IconSearch } from './icons';
 
 /** The parts of the overview, in the order they are shown. */
 export type Section = 'agents' | 'plan' | 'changes' | 'images' | 'files';
@@ -15,9 +16,6 @@ export type Section = 'agents' | 'plan' | 'changes' | 'images' | 'files';
 /** Which sections the user folded (true) or unfolded (false) by hand, kept on this device. */
 export type Choices = Partial<Record<Section, boolean>>;
 
-/** Rows a list shows first, and pictures, before "show more". */
-export const ROWS = 3;
-export const PICTURES = 4;
 /** The fold choices a device remembers: today's map, and the plain list older pages wrote. */
 export function choicesFrom(raw: string | null): Choices {
   try {
@@ -30,29 +28,6 @@ export function choicesFrom(raw: string | null): Choices {
     }
   } catch { /* a page that cannot read it starts with everything open */ }
   return {};
-}
-
-/** One group as the height budget sees it: the lines it takes open, and whether folding may never touch it. */
-export interface FoldLine { id: Section; openLines: number; keep?: boolean }
-
-/**
- * The groups that stay open in the room the panel has, folding from the last group up. What the user
- * folded or unfolded by hand is left alone, and so is a group whose "show more" they pressed; the
- * agents are never folded by the budget, because what needs the person is the point of the panel.
- */
-export function autoFold(groups: FoldLine[], budget: number, choices: Choices = {}, expanded: ReadonlySet<Section> = new Set()): Record<Section, boolean> {
-  const open = {} as Record<Section, boolean>;
-  let total = 0;
-  for (const group of groups) {
-    open[group.id] = choices[group.id] !== true;
-    total += open[group.id] ? group.openLines : 1;
-  }
-  for (const group of [...groups].reverse()) {
-    if (total <= budget || group.keep || !open[group.id] || choices[group.id] !== undefined || expanded.has(group.id)) continue;
-    total -= group.openLines - 1;
-    open[group.id] = false;
-  }
-  return open;
 }
 
 /**
@@ -77,52 +52,20 @@ export function sortMembers(members: Coordination['members']): Coordination['mem
   return members.map((m, i) => ({ m, i })).sort((a, b) => memberRank(a.m) - memberRank(b.m) || a.i - b.i).map(({ m }) => m);
 }
 
-/** The members worth showing first: what needs the user, what failed, what is running. When none
- *  of those, the first three of the sorted list; the rest wait behind "show more". */
-export const attentionMembers = (members: Coordination['members']) =>
-  members.filter((m) => { const p = memberProgress(m); return p === 'need' || p === 'failed' || m.thread?.status === 'running'; });
-export const initialMemberRows = (members: Coordination['members']): number => {
-  const attention = attentionMembers(members).length;
-  return attention || Math.min(ROWS, members.length);
-};
-
-/** Missing pictures are not drawn; the grid says beside itself how many there are. */
-export const shownImages = (images: OutputFile[]) => images.filter((image) => !image.missing);
+/** Missing pictures remain identifiable without trying to fetch them. */
 export const missingImages = (images: OutputFile[]) => images.filter((image) => image.missing);
 
 /** A page or a drawing can be shown in the preview, as long as it is still on disk. */
 export const previewable = (file: { path: string; missing?: true }): boolean => !file.missing && /\.(html?|svg)$/i.test(file.path);
 
-/** What a thread with nothing to report answers: a daemon that cannot list outputs is read the same
- *  way, so the panel says the thread is empty rather than waiting forever. */
-const EMPTY_OUTPUTS: ThreadOutputs = {
-  changes: { files: [], added: 0, removed: 0, total: 0 },
-  images: [],
-  files: [],
-  seq: 0,
-};
-
 const baseName = (path: string) => path.replace(/\/+$/, '').split('/').pop() || path;
 const dirName = (path: string) => { const at = path.lastIndexOf('/'); return at > 0 ? path.slice(0, at) : ''; };
 
-/** How many 30px lines the list under a title takes: the rows, and "show more" when some are left. */
-const listLines = (shown: number, total: number) => 1 + shown + (shown < total ? 1 : 0);
-/** A grid row is about two lines tall at this width. */
-const pictureLines = (shown: number, total: number) => 1 + Math.ceil(shown / 4) * 2 + (shown < total ? 1 : 0);
-
-/**
- * Everything about a thread at a glance, above the conversation in a panel from the top bar: the
- * team, the plan, what changed, the pictures and the files. The outputs and the readings are read
- * only while the panel is open. Each group folds; long ones show their first few. When the panel is
- * taller than the room it has, groups give way from the bottom — the agents never do.
- *
- * A persistent panel is the one standing beside the conversation: its own rows open other panels
- * without putting it away, and only its button or its close mark does. The popover version still
- * closes behind every row it sends the person to.
- */
-export function ThreadOverview({ api, threadId, updatedAt, active, team, agents, plan, roots, turnOrder, loadFile, onOpenMember, onOpenDiff, onOpenFile, onPreview, onOpenTrace, onClose, persistent = false }: {
+type PreviewLimit = 0 | 1 | 3;
+export type OverviewSection = Section | 'all';
+type OverviewProps = {
   api: Api; threadId: string; updatedAt: string; active: boolean;
-  team: Coordination | null; agents: AgentInfo[]; plan: PlanItem | null; roots: string[]; turnOrder: string[];
+  team: Coordination | null; agents: AgentInfo[]; plan: PlanItem | null; roots: string[];
   loadFile: (path: string) => Promise<Blob>;
   onOpenMember: (memberId?: string) => void;
   onOpenDiff: (file: ChangedFile) => void;
@@ -130,162 +73,146 @@ export function ThreadOverview({ api, threadId, updatedAt, active, team, agents,
   onPreview: (path: string) => void;
   onOpenTrace: () => void;
   onClose: () => void;
-  /** Standing beside the conversation rather than opening over it: rows do not put it away. */
+  onViewAll: (section: OverviewSection, returnToPreview?: boolean) => void;
+  onLoadingChange?: (loading: boolean) => void;
   persistent?: boolean;
-}) {
-  const [outputs, setOutputs] = useState<ThreadOutputs | null>(null);
-  const [failed, setFailed] = useState(false);
-  const [attempt, setAttempt] = useState(0);
-  const [choices, setChoices] = useState<Choices>(() => choicesFrom(typeof localStorage === 'undefined' ? null : localStorage.getItem('calli.overview.folded')));
-  const [expanded, setExpanded] = useState<Set<Section>>(new Set());
-  const [viewport, setViewport] = useState(() => ({ w: window.innerWidth, h: window.innerHeight }));
+  detail?: OverviewSection;
+};
+type Layout = { height: number; sections: Section[]; counts: Partial<Record<Section, number>> };
 
-  // A standing panel outlives the thread it describes: the last thread's outputs must not stand in
-  // for the new thread's while that one is being read.
-  useEffect(() => {
-    setOutputs(null);
-    setFailed(false);
-  }, [threadId]);
-
-  useEffect(() => {
-    let live = true;
-    const timer = setTimeout(() => {
-      api.outputs(threadId).then(
-        (value) => { if (live) { setOutputs(value); setFailed(false); } },
-        // A daemon from before the endpoint has no overview to read: that is empty, not a failure.
-        (error: unknown) => {
-          if (!live) return;
-          if (error instanceof ApiError && error.status === 404) setOutputs(EMPTY_OUTPUTS);
-          else setFailed(true);
-        },
-      );
-    }, 400);
-    return () => { live = false; clearTimeout(timer); };
-  }, [api, threadId, updatedAt, attempt]);
-
-  useEffect(() => {
-    const onResize = () => setViewport({ w: window.innerWidth, h: window.innerHeight });
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
-
-  const stats = useThreadStats(api, threadId, active);
+/** Preview counts are chosen once per opening; refreshes keep the same slots and footer. */
+export function ThreadOverview(props: OverviewProps) {
+  const { api, threadId, updatedAt, active, team, agents, plan, roots, loadFile, onOpenMember, onOpenDiff, onOpenFile, onPreview, onOpenTrace, onClose, onViewAll, onLoadingChange, persistent = false, detail } = props;
+  const reading = useOverviewReading(api, threadId, updatedAt, active);
+  const { outputs, stats, loading, failed } = reading;
+  const ready = Boolean(outputs || failed);
+  const root = useRef<HTMLDivElement>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const [choices, setChoices] = useState<Choices>(() => choicesFrom(localStorage.getItem('calli.overview.folded')));
+  const [limit, setLimit] = useState<PreviewLimit>(3);
+  const [layout, setLayout] = useState<Layout | null>(null);
+  const [search, setSearch] = useState('');
   const rel = (path: string) => relativePath(path, roots);
-
-  const members = useMemo(() => (team ? sortMembers(team.members) : []), [team]);
-  const needs = members.filter((m) => memberProgress(m) === 'need').length;
-  const failedMembers = members.filter((m) => memberProgress(m) === 'failed').length;
-  const running = members.filter((m) => m.thread?.status === 'running').length;
-  const memberFirst = initialMemberRows(members);
-  const changes = outputs?.changes;
-  const pictures = outputs ? shownImages(outputs.images) : [];
+  const members = useMemo(() => team ? sortMembers(team.members) : [], [team]);
+  const needs = members.filter(member => memberProgress(member) === 'need').length;
+  const failures = members.filter(member => memberProgress(member) === 'failed').length;
+  const running = members.filter(member => member.thread?.status === 'running').length;
+  const attention = [needs ? t('overview.needsYou', needs) : '', failures ? t('overview.failedCount', failures) : ''].filter(Boolean).join(' · ');
+  const pictures = outputs?.images ?? [];
   const gonePictures = outputs ? missingImages(outputs.images) : [];
-  const progress = plan ? planProgress(plan) : null;
+  const changes = outputs?.changes;
   const files = outputs?.files ?? [];
-
-  const first = (section: Section, total: number): number => {
-    if (section === 'agents') return Math.min(memberFirst, total);
-    if (section === 'images') return Math.min(PICTURES, total);
-    return Math.min(ROWS, total);
+  const progress = plan ? planProgress(plan) : null;
+  const counts: Record<Section, number> = { agents: members.length, plan: plan?.entries.length ?? 0, changes: changes?.files.length ?? 0, images: pictures.length, files: files.length };
+  const available = (Object.keys(counts) as Section[]).filter(id => counts[id] > 0);
+  const sections = detail ? detail === 'all' ? available : [detail] : layout?.sections ?? available;
+  const slots = (id: Section) => detail ? counts[id] : Math.min(limit, layout?.counts[id] ?? counts[id]);
+  const action = (run: () => void) => () => { if (!persistent && !detail) onClose(); run(); };
+  const viewAll = (id: OverviewSection) => action(() => onViewAll(id));
+  const toggle = (id: Section) => {
+    setChoices(previous => { const next = { ...previous, [id]: !previous[id] }; rememberChoices(next); return next; });
+    setLayout(null);
   };
-  const more = (section: Section, total: number) => total > first(section, total) && (
-    <button type="button" className="overview-more" onClick={() => showMore(section)}>
-      {expanded.has(section) ? t('overview.showLess') : t('overview.showMore', total - first(section, total))}
-    </button>
-  );
-  const showMore = (section: Section) => {
-    const collapsing = expanded.has(section);
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (!next.delete(section)) next.add(section);
-      return next;
-    });
-    // The person asked for these rows: the height budget must not fold them away again. Folded
-    // back by hand, the section is an explicit one-line title, the budget leaves it alone too.
-    setChoices((prev) => { const next = { ...prev, [section]: collapsing }; rememberChoices(next); return next; });
-  };
-  const shownCount = (section: Section, total: number) => (expanded.has(section) ? total : first(section, total));
+  const matches = (value: string) => value.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase());
+  const take = <T,>(id: Section, rows: T[]) => detail ? rows : rows.slice(0, slots(id));
+  const pad = (id: Section, shown: number) => !detail && Array.from({ length: Math.max(0, slots(id) - shown) }, (_, index) => (
+    <div key={`empty-${index}`} className="overview-slot-empty" aria-hidden={shown > 0 || index > 0 ? true : undefined}>{!shown && !index ? t('overview.sectionEmpty') : '\u00a0'}</div>
+  ));
+  useEffect(() => { onLoadingChange?.(loading && !outputs); return () => onLoadingChange?.(false); }, [loading, outputs, onLoadingChange]);
 
-  // How many 30px lines the panel can take before it scrolls; the footer and padding are kept out.
-  const room = viewport.w <= 640 ? viewport.h * 0.78 : Math.min(viewport.h * 0.7, viewport.h - 60 - 24);
-  const budget = Math.max(4, Math.floor((room - 12 - 32) / 30));
-  const lines: FoldLine[] = [];
-  if (team && members.length) lines.push({ id: 'agents', openLines: listLines(shownCount('agents', members.length), members.length), keep: true });
-  if (plan && progress) lines.push({ id: 'plan', openLines: 1 + plan.entries.length });
-  if (changes && changes.total > 0) lines.push({ id: 'changes', openLines: listLines(shownCount('changes', changes.files.length), changes.files.length) });
-  if (pictures.length) lines.push({ id: 'images', openLines: pictureLines(shownCount('images', pictures.length), pictures.length) });
-  if (files.length) lines.push({ id: 'files', openLines: listLines(shownCount('files', files.length), files.length) });
-  const open = autoFold(lines, budget, choices, expanded);
+  // The page covers the main column without unmounting its conversation or composer.
+  useLayoutEffect(() => {
+    if (!detail || !root.current) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const siblings = [...(root.current.parentElement?.children ?? [])].filter((el): el is HTMLElement => el instanceof HTMLElement && el !== root.current);
+    const inert = siblings.map(el => el.inert);
+    siblings.forEach(el => { el.inert = true; });
+    heading.current?.focus({ preventScroll: true });
+    return () => { siblings.forEach((el, index) => { el.inert = inert[index]; }); if (previous?.isConnected) previous.focus({ preventScroll: true }); };
+  }, [detail]);
 
-  const toggle = (section: Section) => setChoices((prev) => {
-    const next = { ...prev, [section]: open[section] };
-    rememberChoices(next);
-    return next;
+  useLayoutEffect(() => {
+    if (detail || !ready || layout || !root.current) return;
+    const el = root.current;
+    const panel = el.closest<HTMLElement>('.overview-panel');
+    if (!panel) return;
+    const viewport = window.visualViewport;
+    const bottom = (viewport?.offsetTop ?? 0) + (viewport?.height ?? innerHeight);
+    const trigger = document.querySelector('.topbar-overview');
+    const top = panel.classList.contains('anchored-pop') && trigger ? trigger.getBoundingClientRect().bottom + 8 : panel.getBoundingClientRect().top;
+    const hard = Math.max(0, bottom - top - 12);
+    const composer = document.querySelector('.composer-slot, .composer');
+    const preferred = composer ? composer.getBoundingClientRect().top - top - 12 : hard;
+    const budget = Math.min(hard, Math.max(preferred, Math.min(360, hard)));
+    const height = el.offsetHeight;
+    if (height + 18 > budget && limit > 0) { setLimit(limit === 3 ? 1 : 0); return; }
+    if (height + 18 > hard && limit === 0) { action(() => onViewAll('all', false))(); return; }
+    setLayout({ height, sections: available, counts });
+  });
+  useEffect(() => {
+    if (detail) return;
+    const reset = () => { setLimit(3); setLayout(null); };
+    window.addEventListener('resize', reset);
+    window.visualViewport?.addEventListener('resize', reset);
+    return () => { window.removeEventListener('resize', reset); window.visualViewport?.removeEventListener('resize', reset); };
+  }, [detail]);
+
+  const content = sections.map(id => {
+    let rows: ReactNode;
+    let matched = 0;
+    let summary: ReactNode = String(counts[id]);
+    if (id === 'agents') {
+      const selected = take(id, detail ? members.filter(member => matches(`${member.name} ${member.latest?.text ?? ''} ${member.latest?.result ?? ''}`)) : members);
+      matched = selected.length;
+      summary = attention ? <span className="overview-attention">{attention}</span> : team?.paused ? t('team.paused') : running ? t('team.running', running) : t('team.count', members.length);
+      rows = <>{selected.map(member => <MemberRow key={member.id} member={member} agents={agents} onOpen={action(() => onOpenMember(member.id))} />)}{pad(id, selected.length)}</>;
+    } else if (id === 'plan') {
+      const entries = plan?.entries ?? [];
+      const current = entries.findIndex(entry => entry.status === 'in_progress');
+      const selected = detail ? entries.filter(entry => matches(entry.content)) : entries.slice(current >= slots(id) ? current : 0, (current >= slots(id) ? current : 0) + slots(id));
+      matched = selected.length;
+      summary = progress ? `${progress.completed}/${progress.total}` : '0';
+      rows = <>{plan && <div className="overview-plan"><PlanList item={{ ...plan, entries: selected }} /></div>}{pad(id, selected.length)}</>;
+    } else if (id === 'changes') {
+      const selected = take(id, detail ? (changes?.files ?? []).filter(file => matches(rel(file.path))) : changes?.files ?? []);
+      matched = selected.length;
+      summary = changes ? <><span>{changes.total}</span><span className="overview-dot" aria-hidden="true">·</span><Nums added={changes.added} removed={changes.removed} /></> : '0';
+      rows = <>{selected.map(file => <FileLine key={file.path} path={rel(file.path)} full={file.path} missing={file.missing} tag={file.created && !file.missing ? t('overview.created') : undefined}
+        trailing={<Nums added={file.added} removed={file.removed} />} onOpen={action(() => onOpenDiff(file))} preview={previewable(file) ? action(() => onPreview(file.path)) : undefined} />)}{pad(id, selected.length)}</>;
+    } else if (id === 'images') {
+      const selected = take(id, detail ? pictures.filter(file => matches(rel(file.path))) : pictures);
+      matched = selected.length;
+      summary = gonePictures.length ? t('overview.missingImages', gonePictures.length) : String(pictures.length);
+      rows = <>{selected.map(file => file.missing ? <FileLine key={file.path} path={rel(file.path)} full={file.path} missing locked onOpen={() => {}} /> : <Picture key={file.path} path={file.path} name={rel(file.path)} load={loadFile} enabled={Boolean(detail || layout)} />)}{pad(id, selected.length)}</>;
+    } else {
+      const selected = take(id, detail ? files.filter(file => matches(rel(file.path))) : files);
+      matched = selected.length;
+      rows = <>{selected.map(file => <FileLine key={file.path} path={rel(file.path)} full={file.path} missing={file.missing} locked={file.missing} onOpen={action(() => { void onOpenFile(file.path); })}
+        preview={previewable(file) ? action(() => onPreview(file.path)) : undefined} />)}{pad(id, selected.length)}</>;
+    }
+    const icons = { agents: <IconAgents size={14} />, plan: <PlanRing done={progress?.total ? progress.completed / progress.total : 0} size={14} />, changes: <IconEdit size={14} />, images: <IconImage size={14} />, files: <IconFile size={14} /> };
+    if (detail) return <section key={id} className="overview-detail-group"><h2>{t(`overview.${id}`)}<span>{summary}</span></h2>{rows}{matched === 0 && <p className="overview-empty">{t(search.trim() ? 'common.noMatch' : 'overview.sectionEmpty')}</p>}</section>;
+    return <Group key={id} id={id} open={limit > 0 && !choices[id]} onToggle={limit === 0 ? section => viewAll(section)() : toggle} icon={icons[id]} label={t(`overview.${id}`)} summary={summary}>
+      {rows}<button type="button" className="overview-more" onClick={viewAll(id)}>{t('overview.viewAll')}<IconChevronRight size={12} /></button>
+    </Group>;
   });
 
-  const footer = readings(stats);
-  const openAndClose = (run: () => void) => persistent ? run : () => { onClose(); run(); };
-
-  // Before the first answer, and when the answer is nothing, the panel says which of the two it is
-  // in one faint line instead of looking like a card that failed to draw.
-  const hasGroups = lines.length > 0;
-  const loading = outputs === null && !failed;
-  const empty = !loading && !failed && !hasGroups && !footer;
-  const placeholder = loading && !hasGroups && !footer ? t('overview.loading') : empty ? t('overview.empty') : null;
-
-  return <div className="thread-overview">
-    {team && members.length > 0 && <Group id="agents" open={open.agents} onToggle={toggle} icon={<IconAgents size={14} />} label={t('overview.agents')}
-      summary={team.paused ? t('team.paused') : needs ? <span className="overview-attention">{t('overview.needsYou', needs)}</span>
-        : failedMembers ? <span className="overview-danger">{t('overview.failedCount', failedMembers)}</span>
-        : running ? t('team.running', running) : t('team.count', members.length)}>
-      {members.slice(0, shownCount('agents', members.length)).map((m) => <MemberRow key={m.id} member={m} agents={agents} onOpen={openAndClose(() => onOpenMember(m.id))} />)}
-      {more('agents', members.length)}
-    </Group>}
-
-    {plan && progress && <Group id="plan" open={open.plan} onToggle={toggle} icon={<PlanRing done={progress.total ? progress.completed / progress.total : 0} size={14} />} label={t('overview.plan')}
-      summary={`${progress.completed}/${progress.total}`}>
-      <div className="overview-plan"><PlanList item={plan} /></div>
-    </Group>}
-
-    {changes && changes.total > 0 && <Group id="changes" open={open.changes} onToggle={toggle} icon={<IconEdit size={14} />} label={t('overview.changes')}
-      summary={<><span>{changes.total}</span><span className="overview-dot" aria-hidden="true">·</span><Nums added={changes.added} removed={changes.removed} /></>}>
-      {changes.files.slice(0, shownCount('changes', changes.files.length)).map((file) => (
-        <FileLine key={file.path} path={rel(file.path)} full={file.path} missing={file.missing} tag={file.created && !file.missing ? t('overview.created') : undefined}
-          trailing={<Nums added={file.added} removed={file.removed} />} onOpen={openAndClose(() => onOpenDiff(file))}
-          preview={previewable(file) ? openAndClose(() => onPreview(file.path)) : undefined} />
-      ))}
-      {more('changes', changes.files.length)}
-    </Group>}
-
-    {pictures.length > 0 && <Group id="images" open={open.images} onToggle={toggle} icon={<IconImage size={14} />} label={t('overview.images')}
-      summary={String(pictures.length)}>
-      <div className="overview-pictures">
-        {pictures.slice(0, shownCount('images', pictures.length)).map((image) => <Picture key={image.path} path={image.path} name={rel(image.path)} load={loadFile} />)}
-      </div>
-      {more('images', pictures.length)}
-      {gonePictures.length > 0 && <div className="overview-missing-line" title={gonePictures.map((image) => rel(image.path)).join('\n')}>{t('overview.missingImages', gonePictures.length)}</div>}
-    </Group>}
-
-    {files.length > 0 && <Group id="files" open={open.files} onToggle={toggle} icon={<IconFile size={14} />} label={t('overview.files')}
-      summary={String(files.length)}>
-      {files.slice(0, shownCount('files', files.length)).map((file) => (
-        <FileLine key={file.path} path={rel(file.path)} full={file.path} missing={file.missing} locked={file.missing} onOpen={openAndClose(() => { void onOpenFile(file.path); })}
-          preview={previewable(file) ? openAndClose(() => onPreview(file.path)) : undefined} />
-      ))}
-      {more('files', files.length)}
-    </Group>}
-
-    {failed && <div className="overview-failed" role="status"><span>{t('overview.failed')}</span><button type="button" className="text-btn" onClick={() => setAttempt((n) => n + 1)}>{t('common.retry')}</button></div>}
-
-    {placeholder && <div className="overview-empty" role="status">{placeholder}</div>}
-
-    {!placeholder && <div className="overview-foot">
-      <span className="overview-readings">{footer}</span>
-      <button type="button" className="overview-trace" onClick={openAndClose(onOpenTrace)}>
-        {t('overview.trace')}
-        <IconChevronRight size={12} />
-      </button>
-    </div>}
+  const newSections = available.some(id => layout && !layout.sections.includes(id));
+  const status = failed && outputs ? t('overview.cachedFailed') : loading && outputs ? t('overview.refreshing') : !sections.includes('agents') && attention ? attention : newSections && sections.length > 0 ? t('overview.newContent') : '';
+  const footer = <div className="overview-foot">
+    <div className="overview-readings"><span>{readings(stats)}</span><span className={`overview-status${failed || (!sections.includes('agents') && attention) ? ' failed' : ''}`} role="status">{status}</span></div>
+    <button type="button" className="icon-btn overview-refresh" aria-label={t(failed ? 'common.retry' : 'overview.refresh')} aria-busy={loading} aria-disabled={loading} onClick={() => { if (!loading) { if (!outputs) { setLimit(3); setLayout(null); } void reading.refresh(); } }}><IconRefresh size={14} /></button>
+    <button type="button" className="overview-trace" onClick={detail ? onOpenTrace : viewAll('all')}>{t(detail ? 'overview.trace' : 'overview.viewAll')}<IconChevronRight size={12} /></button>
+  </div>;
+  if (detail) return <div ref={root} className="overview-details-page" role="region" aria-label={t(detail === 'all' ? 'overview.label' : `overview.${detail}`)}
+    onKeyDown={event => { if (event.key === 'Escape' && !(event.target instanceof Element && event.target.closest('[role="dialog"]'))) { event.stopPropagation(); onClose(); } }}>
+    <header className="overview-details-head"><button className="icon-btn glass-control" aria-label={t('common.back')} onClick={onClose}><IconBack size={21} /></button><h1 ref={heading} tabIndex={-1}>{t(detail === 'all' ? 'overview.label' : `overview.${detail}`)}</h1></header>
+    <div className="overview-details-scroll"><div className="overview-details-toolbar"><label className="overview-details-search"><IconSearch size={16} /><input value={search} aria-label={t('overview.search')} placeholder={t('overview.search')} onChange={event => setSearch(event.target.value)} /></label>{footer}</div>
+      {!outputs && <p className="overview-empty" role={failed ? 'alert' : 'status'}>{t(failed ? 'overview.failed' : 'common.loading')}</p>}{content}{!available.length && outputs && !failed && <p className="overview-empty">{t('overview.empty')}</p>}
+    </div>
+  </div>;
+  return <div ref={root} className="thread-overview" data-ready={ready && Boolean(layout)} data-limit={limit} aria-busy={loading} style={{ height: layout?.height }}>
+    <div className="overview-content">{content}{failed && !outputs && <p className="overview-empty" role="status">{t('overview.failed')}</p>}{!sections.length && ready && !failed && <p className="overview-empty">{t(available.length ? 'overview.newContent' : 'overview.empty')}</p>}</div>{footer}
   </div>;
 }
 
@@ -296,7 +223,7 @@ function rememberChoices(choices: Choices) {
 /** The readings line, in the order a session is read: turns, speed, tokens, cache. Nothing is
  *  drawn before it has been measured, and a zero is left out so the line never reads as a fact
  *  that has not happened yet. */
-function readings(stats: ReturnType<typeof useThreadStats>): string {
+function readings(stats: ThreadStats | null): string {
   if (!stats) return '';
   const parts: string[] = [];
   if (stats.turns > 0) parts.push(t('stats.turnsShort', stats.turns));
@@ -397,11 +324,12 @@ function PathName({ path }: { path: string }) {
 
 /** A thumbnail, fetched while it is on screen; the full picture opens over everything. A file that
  *  exists but cannot be read keeps its square, grey, with the reason on hover. */
-function Picture({ path, name, load }: { path: string; name: string; load: (path: string) => Promise<Blob> }) {
+function Picture({ path, name, load, enabled = true }: { path: string; name: string; load: (path: string) => Promise<Blob>; enabled?: boolean }) {
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [large, setLarge] = useState(false);
   useEffect(() => {
+    if (!enabled) return;
     let live = true;
     let made: string | null = null;
     load(path).then(
@@ -409,13 +337,13 @@ function Picture({ path, name, load }: { path: string; name: string; load: (path
       (reason: unknown) => { if (live) setError(reason instanceof Error && reason.message ? reason.message : t('view.noPreview')); },
     );
     return () => { live = false; if (made) URL.revokeObjectURL(made); };
-  }, [path, load]);
+  }, [path, load, enabled]);
   // A drawing has no background of its own and would be cropped by the square cell; it sits whole
   // on the picture background instead, with room around it.
   const vector = /\.svgz?$/i.test(path);
   return <>
-    <button type="button" className={`overview-picture${vector ? ' vector' : ''}${error ? ' failed' : ''}`} title={error ? `${name}\n${error}` : name} disabled={!url} onClick={() => setLarge(true)}>
-      {url ? <img src={url} alt={name} /> : <IconImage size={15} />}
+    <button type="button" className={`overview-row overview-picture-row${vector ? ' vector' : ''}${error ? ' failed' : ''}`} title={error ? `${name}\n${error}` : name} disabled={!url} onClick={() => setLarge(true)}>
+      <span className="overview-picture-mini">{url ? <img src={url} alt="" /> : <IconImage size={15} />}</span><PathName path={name} />{error && <span className="overview-gone">{t('view.noPreview')}</span>}
     </button>
     {large && url && <Lightbox url={url} name={name} onClose={() => setLarge(false)} />}
   </>;

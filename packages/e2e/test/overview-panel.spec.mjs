@@ -64,7 +64,7 @@ test('the overview panel reads the thread from one top-bar button, and a change 
     const groups = await panel.locator('.overview-toggle strong').allTextContents();
     assert.deepEqual(groups.slice(0, 4), ['计划', '变更', '图片', '文件']);
     assert.equal(await panel.locator('.overview-plan .plan-entry').count(), 3);
-    assert.ok(await panel.locator('.overview-picture img').count() > 0, 'the chart shows a thumbnail');
+    assert.ok(await panel.locator('.overview-picture-row img').count() > 0, 'the chart shows a thumbnail');
 
     // A change row opens every turn's diff for that file, read from history/detail.
     await panel.locator('.overview-row', { hasText: 'app.ts' }).click();
@@ -163,15 +163,16 @@ test('a full team and thirteen changes fold into the room the panel has, with no
     await panel.locator('.overview-member', { hasText: '深色核对' }).waitFor();
     // The badge counts only what asks for the person.
     assert.equal((await page.locator('.topbar-overview .topbar-badge').innerText()).trim(), '1');
-    // Four members show their attention rows first; the rest wait behind one more line.
-    assert.ok(await panel.locator('.overview-member').count() >= 3);
+    // A tall overview keeps one real member, with needs and failures visible in its summary.
+    assert.equal(await panel.locator('.overview-member').count(), 1);
     await panel.locator('.overview-more').first().waitFor();
-    // The last groups folded rather than the panel growing a scrollbar.
+    // Preview counts shrink rather than the panel growing a scrollbar.
     const fit = await panel.evaluate((el) => ({ scroll: el.scrollHeight, client: el.clientHeight, bottom: el.getBoundingClientRect().bottom }));
     assert.ok(fit.scroll <= fit.client + 1, `panel scrolls: ${fit.scroll} > ${fit.client}`);
     assert.ok(fit.bottom <= 900, `panel runs past the window: ${fit.bottom}`);
-    // The groups that folded say so by not showing their rows; the agents never fold.
-    assert.ok(await panel.locator('.overview-group.open .overview-member').count() >= 3, 'the agents stay open');
+    // All groups keep a real preview and an explicit full-list entry.
+    assert.equal(await panel.locator('.overview-group.open .overview-member').count(), 1, 'the first member stays visible');
+    assert.match(await panel.locator('.overview-summary').first().innerText(), /需要你.*失败/, 'other important states stay visible in the group summary');
     await context.close();
   } finally {
     await browser.close();

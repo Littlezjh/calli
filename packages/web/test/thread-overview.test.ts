@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  autoFold, choicesFrom, initialMemberRows, memberProgress, missingImages, previewable, ROWS,
-  shownImages, sortMembers, type FoldLine,
+  choicesFrom, memberProgress, missingImages, previewable,
+  sortMembers,
 } from '../src/components/ThreadOverview.js';
 import type { Coordination, OutputFile, Thread } from '../src/api.js';
 
@@ -48,46 +48,6 @@ test('members line up by who needs the user first, keeping their order within a 
   assert.deepEqual(sortMembers([member('gone', null), need]).map((m) => m.name), ['need', 'gone']);
 });
 
-test('the first rows are the members worth seeing: need, failed, running; otherwise the first three', () => {
-  const need = member('need', { status: 'idle' }, 'returned', '[进度] 需要你：看这里');
-  const failed = member('failed', { status: 'idle' }, 'failed');
-  const running = member('running', { status: 'running' });
-  const review = member('review', { status: 'idle' }, 'returned', '[进度] 待验收');
-  const idle = member('idle', { status: 'idle' }, 'returned', '好了。');
-  // The attention rows are shown before anything else, and the rest wait behind "show more".
-  assert.equal(initialMemberRows([review, idle, need, failed, running]), 3);
-  // Nothing asks for the user: three rows, or everything when there is less.
-  assert.equal(initialMemberRows([review, idle, review]), ROWS);
-  assert.equal(initialMemberRows([review, idle]), 2);
-  assert.equal(initialMemberRows([]), 0);
-  // A member already reporting progress is not an attention row; a running thread is.
-  assert.equal(initialMemberRows([member('p', { status: 'idle' }, 'returned', '[进度] 进行中'), running]), 1);
-});
-
-test('the height budget folds from the last group up, leaving the agents and the user’s choices alone', () => {
-  const groups: FoldLine[] = [
-    { id: 'agents', openLines: 4, keep: true },
-    { id: 'plan', openLines: 4 },
-    { id: 'changes', openLines: 8 },
-    { id: 'images', openLines: 4 },
-    { id: 'files', openLines: 3 },
-  ];
-  // Room for everything: nothing folds.
-  assert.deepEqual(autoFold(groups, 30), { agents: true, plan: true, changes: true, images: true, files: true });
-  // Too tall: files go first, then images, then changes, until the lines fit.
-  assert.deepEqual(autoFold(groups, 12), { agents: true, plan: true, changes: false, images: false, files: false });
-  // A group the user unfolded by hand is never folded by the budget; the next one up gives way.
-  assert.deepEqual(autoFold(groups, 12, { changes: false }), { agents: true, plan: false, changes: true, images: false, files: false });
-  // A group the user folded stays folded, and counts as its one title line.
-  assert.deepEqual(autoFold(groups, 30, { plan: true }), { agents: true, plan: false, changes: true, images: true, files: true });
-  // The agents are never folded by the budget, however little room is left.
-  assert.deepEqual(autoFold(groups, 1), { agents: true, plan: false, changes: false, images: false, files: false });
-  // "Show more" in a section pins it open too.
-  assert.deepEqual(autoFold(groups, 12, {}, new Set(['changes'])), { agents: true, plan: false, changes: true, images: false, files: false });
-  // A folded group already saves its lines whatever the budget is.
-  assert.deepEqual(autoFold([{ id: 'agents', openLines: 2, keep: true }, { id: 'files', openLines: 2 }], 3, { files: true }), { agents: true, files: false });
-});
-
 test('the fold choices a device remembers come back as a map; an older page’s list still counts as folded', () => {
   assert.deepEqual(choicesFrom('["images","files"]'), { images: true, files: true });
   assert.deepEqual(choicesFrom('{"plan":false,"changes":true}'), { plan: false, changes: true });
@@ -100,7 +60,6 @@ test('the fold choices a device remembers come back as a map; an older page’s 
 
 test('missing pictures leave the grid, and a page or a drawing still on disk can be previewed', () => {
   const images = [file('shots/a.png'), file('shots/b.svg', true), file('shots/c.jpg')];
-  assert.deepEqual(shownImages(images).map((image) => image.path), ['shots/a.png', 'shots/c.jpg']);
   assert.deepEqual(missingImages(images).map((image) => image.path), ['shots/b.svg']);
   assert.equal(previewable(file('docs/page.html')), true);
   assert.equal(previewable(file('docs/page.htm')), true);

@@ -48,11 +48,18 @@ test('the newest plan lives in the overview panel, opens to the whole list, and 
         await openOverview(page);
         const panel = page.locator('.overview-panel');
         await panel.waitFor();
-        const plan = panel.locator('.overview-plan');
+        // A dock already open before the plan arrived keeps its frame. Its fixed footer
+        // exposes new sections without inserting a group midway through the person's reading.
+        await panel.locator('.overview-foot .overview-trace').click();
+        const details = page.locator('.overview-details-page');
+        await details.waitFor();
+        const plan = details.locator('.overview-plan');
         await plan.waitFor();
         assert.equal(await plan.locator('.plan-entry').count(), 5);
         assert.equal(await plan.locator('.plan-entry.active').count(), 1);
         assert.match(await plan.locator('.plan-entry.active').innerText(), /Pull every root request/);
+        await details.locator('.overview-details-head button').click();
+        await panel.waitFor();
         if (shots) await page.screenshot({ path: join(shots, `plan-line-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
 
         // Stopped: nothing is in progress any more.
