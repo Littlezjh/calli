@@ -272,9 +272,10 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
         case 'user': {
           if (item.handoverCollapsed) return null;
           // Nobody wrote this turn: the agent picked up work on its own, e.g. a finished background task.
+          // A hairline across the thread with the word in the middle, like the fork mark but quiet.
           if (item.background) return (
-            <div key={item.key} className="row turn-note" data-turn={item.turnId}>
-              <span className="work-toggle"><span className="work-label">{t('view.backgroundTurn')}</span></span>
+            <div key={item.key} className="row turn-note" data-turn={item.turnId} role="separator" aria-label={t('view.backgroundTurn')}>
+              <span className="turn-note-label">{t('view.backgroundTurn')}</span>
             </div>
           );
           // Nobody said this either: a channel handed over what it read. A quiet line, not a bubble.
