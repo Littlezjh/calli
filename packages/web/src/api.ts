@@ -238,6 +238,16 @@ export interface AutoHandoverView {
   /** Present when this thread waits for its quota to come back; absent on older daemons. */
   resume?: ResumeView | null;
 }
+/** The facts behind a thread that wants the person (`GET /api/threads/:id/brief`); sentences are the client's to write. */
+export interface ThreadBrief {
+  /** The thread's `updatedAt` when this was read. */
+  updatedAt: string;
+  kind: 'approval' | 'failure' | 'result' | null;
+  approval?: { action: 'run' | 'edit' | 'delete' | 'other'; command: string | null; paths: string[]; moreFiles: number; title: string | null; pending: number };
+  failure?: { code: string | null; edits: number; files: number; repeats: number; resume: boolean };
+  result?: { first: string | null; edits: number; files: number };
+}
+
 export interface Thread {
   autoHandover?: AutoHandoverView;
   /** `doing`, on a member: its latest task while it works, the opening of its answer once it has returned. */
@@ -291,6 +301,8 @@ export interface Thread {
   modelQueue?: ModelQueue | null;
   /** When the running turn started. Missing from older daemons, null while nothing runs. */
   runningSince?: string | null;
+  /** Why the thread stopped, while its status is `error`. Missing from older daemons. */
+  failure?: { code: string | null; message: string; at: string } | null;
   /** Shell command that continues this conversation in a terminal. Null before the first message. */
   resumeCommand: string | null;
   /** `cwd` with symlinks resolved, which is how agents report file paths. */
@@ -1497,6 +1509,16 @@ export class Api {
     if (res.status === 401) throw new AuthError('unauthorized');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.blob();
+  }
+
+  /** What a thread that wants the person comes down to, read from its log without a model. */
+  threadBrief(threadId: string): Promise<ThreadBrief> {
+    return this.request('GET', `/api/threads/${threadId}/brief`);
+  }
+
+  /** Sends the ask the thread stopped on again: the person's "continue" on a thread whose last turn failed. */
+  retryThread(threadId: string): Promise<Thread> {
+    return this.request('POST', `/api/threads/${threadId}/retry`);
   }
 
   /** Stops the running turn. Messages that were waiting are not sent; their text comes back. */

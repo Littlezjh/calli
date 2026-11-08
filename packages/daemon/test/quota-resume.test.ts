@@ -217,3 +217,34 @@ test('a future reset time defers the first probe', async () => {
     assert.equal(h.manager.quotaResume.view(h.thread.id)?.nextCheckAt, view.nextCheckAt); // untouched
   } finally { await h.close(); }
 });
+
+test('a stopped thread says why, and 「接着做」 sends the failed ask again', async () => {
+  const h = await setup({ exhaustOnce: true });
+  try {
+    // Nothing has failed yet: there is no failure to show and nothing to retry.
+    await h.manager.startTurn(h.thread.id, { text: 'hello' });
+    await h.idle();
+    assert.equal(h.manager.threadView(h.thread.id).failure, null);
+    assert.equal((await h.api(`/api/threads/${h.thread.id}/retry`, 'POST')).status, 409);
+
+    await h.exhaust();
+    const stopped = await (await h.api(`/api/threads/${h.thread.id}`)).json() as { status: string; failure: { code: string | null; message: string; at: string } | null };
+    assert.equal(stopped.status, 'error');
+    assert.equal(stopped.failure?.code, 'plan_exhausted');
+    assert.match(stopped.failure?.message ?? '', /quota/);
+    assert.ok(Date.parse(stopped.failure!.at) > 0);
+    await h.arm(h.thread.id);
+
+    const res = await h.api(`/api/threads/${h.thread.id}/retry`, 'POST');
+    assert.equal(res.status, 200);
+    // The watch is moot once the person has asked again.
+    assert.equal(h.manager.quotaResume.view(h.thread.id), null);
+    await h.idle();
+    const view = h.manager.threadView(h.thread.id);
+    assert.equal(view.status, 'idle');
+    assert.equal(view.failure, null);
+    const last = h.store.listTurns(h.thread.id).at(-1)!.turnId;
+    const started = h.store.listTurnEvents(h.thread.id, last).find(e => e.type === 'turn.started');
+    assert.equal(started?.data.text, 'quota-exhausted');
+  } finally { await h.close(); }
+});

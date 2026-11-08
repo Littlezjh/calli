@@ -1193,6 +1193,11 @@ export function createHttpServer(deps: HttpDeps): Server {
         if (!autotitle) throw new HttpError(501, '此 daemon 没有自动取名扩展');
         return sendJson(res, 200, await autotitle.name(threadId, { apply: true }));
       }
+      // GET /api/threads/:id/brief: the facts behind a thread that wants the person (what waits for approval,
+      // whether a failed turn changed files, how a finished one ended), for the companion to word.
+      if (method === 'GET' && sub === 'brief') return sendJson(res, 200, manager.threadBrief(threadId));
+      // POST /api/threads/:id/retry: send the failed ask again, the person's 「接着做」.
+      if (method === 'POST' && sub === 'retry') return sendJson(res, 200, await manager.retryFailedTurn(threadId));
       if (method === 'POST' && sub === 'takeover') {
         const body = await readJson(req);
         return sendJson(res, 201, await manager.takeOver(threadId, body.agent, body.model, body.note));

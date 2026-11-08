@@ -993,6 +993,12 @@ html.list-open body {
   background: var(--hover);
 }
 
+/* The round buttons hug their focus ring instead of wearing it a gap outside, where it reads as
+   a stray box around the control (menus already focus the same way). */
+.icon-btn:focus-visible {
+  outline-offset: -2px;
+}
+
 .primary,
 .ghost,
 .dialog-actions button.danger,
@@ -1655,6 +1661,33 @@ html.list-open body {
   font-family: var(--mono);
   font-size: 12.5px;
   font-weight: 400;
+}
+
+/* A turn nobody wrote: the agent continued on its own, e.g. a finished background task woke it.
+   The fork mark's quiet cousin — the same line across the thread with the word in the middle, but
+   neutral, for a thing the system did rather than the person. */
+.turn-note {
+  flex-direction: row;
+  align-items: center;
+  gap: 14px;
+  margin: 2px 0;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.turn-note::before,
+.turn-note::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.turn-note-label {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  white-space: nowrap;
 }
 
 .older-messages {
@@ -7124,6 +7157,16 @@ div.file-card:hover { background: var(--surface); }
   white-space: nowrap;
 }
 
+/* The file could not be read — gone, or never a picture after all. Its name is the record that it
+ * was there, the words that named it having given way to it in the text. No button beside it, so
+ * the caption may not lean on the picture's width: it sizes itself and wraps. */
+.file-image.missing figcaption {
+  color: var(--faint);
+  contain: none;
+  white-space: normal;
+  overflow: visible;
+}
+
 .markdown img {
   max-width: 100%;
   border-radius: var(--radius-sm);
@@ -12579,7 +12622,7 @@ body:has(.app.drawer-open) .pet { visibility: hidden; }
   animation: pet-pop 0.18s cubic-bezier(0.2, 0.8, 0.2, 1);
   transition: opacity 0.6s;
 }
-.pet-bub::after {
+.pet-bub::after, .pet-matter::after {
   content: '';
   position: absolute;
   right: 22px;
@@ -12591,8 +12634,8 @@ body:has(.app.drawer-open) .pet { visibility: hidden; }
   border-bottom: 1px solid var(--border);
   transform: rotate(45deg);
 }
-.pet[data-side='left'] .pet-bub::after { right: auto; left: 22px; }
-.pet[data-vert='top'] .pet-bub::after { bottom: auto; top: -5px; transform: rotate(225deg); }
+.pet[data-side='left'] :is(.pet-bub, .pet-matter)::after { right: auto; left: 22px; }
+.pet[data-vert='top'] :is(.pet-bub, .pet-matter)::after { bottom: auto; top: -5px; transform: rotate(225deg); }
 .pet-bub p { margin: 0; }
 .pet-bub[data-fading='true'] { opacity: 0.35; }
 .pet-bub[data-more='true'] { cursor: pointer; }
@@ -12670,6 +12713,7 @@ body:has(.app.drawer-open) .pet { visibility: hidden; }
 .pet-dot[data-s='running'] { background: var(--muted); animation: pet-pulse 1.2s infinite; }
 .pet-dot[data-s='waiting'], .pet-dot[data-s='failed'] { background: var(--warn); }
 .pet-dot[data-s='review'] { background: var(--positive); }
+.pet-dot[data-s='parked'], .pet-dot[data-s='stale'] { background: var(--faint); }
 .pet-bar-chip {
   flex: none;
   height: 22px;
@@ -12701,6 +12745,91 @@ body:has(.app.drawer-open) .pet { visibility: hidden; }
 }
 .pet-bar-icon:hover { background: var(--hover); color: var(--text); }
 .pet-bar-icon b { position: absolute; right: 4px; top: 3px; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
+/* The one matter she brings up, over her head: what, why, and the step she suggests. The rest wait behind "+N". */
+.pet-matter {
+  position: relative;
+  width: min(290px, calc(100vw - 32px));
+  padding: 10px 12px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: left;
+  box-sizing: border-box;
+  animation: pet-pop 0.18s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.pet-matter-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.pet-matter-title {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.pet-matter-title:hover { text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px; }
+.pet-more {
+  flex: none;
+  padding: 0 7px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--hover);
+  color: var(--muted);
+  font: inherit;
+  font-size: 11.5px;
+  line-height: 20px;
+  cursor: pointer;
+}
+.pet-more:hover { color: var(--text); background: var(--active); }
+.pet-matter-why { margin: 3px 0 0; color: var(--muted); overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+/* Room for the specific sentence while it is on its way, so a longer one arriving does not push the buttons. */
+.pet-matter-why[data-brief] { min-height: 2lh; }
+.pet-matter-code { padding: 0.1em 0.35em; border-radius: 5px; background: var(--code-bg); color: var(--text); font-family: var(--mono); font-size: 0.9em; }
+/* The time sits by the title and gives way last: the title is what is cut short. */
+.pet-matter-ago { flex: none; color: var(--faint); font-size: 11.5px; white-space: nowrap; }
+.pet-matter-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 9px; }
+.pet-matter-aside {
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.pet-matter-aside:hover { color: var(--text); }
+
+/* Her suggestion: a quiet button, not a black slab; the colour stays with the dot. */
+.pet-step {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 550;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.pet-step:hover { background: var(--hover); border-color: var(--border-strong); }
+.pet-step:disabled { color: var(--muted); cursor: default; }
+.pet-step .spinner { width: 11px; height: 11px; border-width: 1.5px; }
 
 /* Panels above her: the thread tray and a thread's full line. */
 .pet-panel {
@@ -12715,8 +12844,12 @@ body:has(.app.drawer-open) .pet { visibility: hidden; }
   animation: pet-pop 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .pet-panel-head { display: flex; align-items: center; gap: 6px; min-height: 20px; margin-bottom: 2px; color: var(--muted); font-size: 12px; }
-.pet-panel-head button { margin-left: auto; padding: 2px; display: inline-flex; border: 0; background: none; color: var(--faint); cursor: pointer; }
-.pet-panel-head button:hover { color: var(--text); }
+.pet-head-close { margin-left: auto; padding: 2px; display: inline-flex; border: 0; background: none; color: var(--faint); cursor: pointer; }
+.pet-head-close:hover { color: var(--text); }
+.pet-head-act { margin-left: auto; padding: 1px 6px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--text); font: inherit; font-size: 12px; font-weight: 550; cursor: pointer; }
+.pet-head-act:hover { background: var(--hover); }
+.pet-head-act:disabled { color: var(--faint); cursor: default; }
+.pet-head-act + .pet-head-close { margin-left: 2px; }
 .pet-panel p { margin: 0; }
 .pet-panel-title { font-weight: 550; overflow-wrap: anywhere; }
 .pet-panel-note { margin-top: 2px; color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
@@ -12724,24 +12857,46 @@ body:has(.app.drawer-open) .pet { visibility: hidden; }
 .pet-panel-empty { color: var(--faint); font-size: 12.5px; }
 .pet-panel .pet-credit { margin: 10px 0 0; }
 .pet-tray { max-height: 44dvh; overflow-y: auto; }
-.pet-tray-item {
+.pet-tray-item { display: flex; align-items: center; gap: 6px; border-radius: var(--radius-sm); }
+.pet-tray-item:hover { background: var(--hover); }
+.pet-tray-open {
+  flex: 1;
+  min-width: 0;
   display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
+  align-items: flex-start;
+  gap: 9px;
   padding: 7px 6px;
   border: 0;
   border-radius: var(--radius-sm);
   background: none;
+  color: var(--text);
   text-align: left;
   font: inherit;
-  font-size: 13px;
   cursor: pointer;
 }
-.pet-tray-item:hover { background: var(--hover); }
-.pet-tray-item > span:nth-child(2) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pet-tray-item small { color: var(--muted); font-size: 12px; }
-.pet-tray-item small.warn { color: var(--warn); }
+.pet-tray-open .pet-dot { margin-top: 6px; }
+.pet-tray-text { display: flex; flex-direction: column; min-width: 0; }
+.pet-tray-title, .pet-tray-why { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pet-tray-title { font-size: 13px; line-height: 1.4; }
+.pet-tray-why { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.pet-tray-item .pet-step { margin-right: 4px; }
+.pet-tray-earlier .pet-tray-title { color: var(--muted); }
+.pet-tray-fold, .pet-tray-clear {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.pet-tray-fold:hover, .pet-tray-clear:hover { background: var(--hover); color: var(--text); }
+.pet-tray-clear { margin: 2px 0 0; }
 
 /* Saying something to her: one thin line. */
 .pet-qc-col { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
@@ -12866,7 +13021,7 @@ button.pet-summon:hover { background: var(--surface-2); color: var(--text); }
 
 @media (prefers-reduced-motion: reduce) {
   .pet, .pet-body canvas { transition: none; }
-  .pet-bub, .pet-bar, .pet-panel, .pet-qc, .pet-avatar { animation: none; }
+  .pet-bub, .pet-matter, .pet-bar, .pet-panel, .pet-qc, .pet-avatar { animation: none; }
   .pet-dot[data-s='running'] { animation: none; }
 }
 
@@ -13425,6 +13580,26 @@ body:has(.settings-page, .action-sheet) .pet { display: none; }
   .main:has(> .composer-slot) > .topbar::before { display: none; }
   .main:has(> .composer-slot) > .topbar::after { background: var(--bg); -webkit-backdrop-filter: none; backdrop-filter: none; }
   .composer-slot::before, .composer-slot::after { display: none; }
+}
+/* A wide screen draws the chrome solid, as Codex does: the top bar is one band of the list's
+   colour with a hairline under it, and the composer is an opaque card with its soft halo. The
+   conversation ends at both edges instead of sliding under translucent controls, where a
+   70%-surface wash reads as smudged text, and the top bar's buttons float plainly, with no
+   capsule around them. Phones keep the glass: there the bands answer the system status area. */
+@media (min-width: 900px) {
+  .main:has(> .composer-slot) > .scroller {
+    margin-top: 0;
+    margin-bottom: 0;
+    padding-top: 14px;
+    padding-bottom: var(--composer-clear);
+    scroll-padding-top: 14px;
+    scroll-padding-bottom: var(--composer-clear);
+  }
+  .main:has(> .composer-slot) > .topbar { background: var(--sidebar); border-bottom: 1px solid var(--border); }
+  .main:has(> .composer-slot) > .topbar::before,
+  .main:has(> .composer-slot) > .topbar::after { display: none; }
+  .topbar-actions { padding: 0; background: none; border-color: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .composer-box { background: var(--surface); border-color: var(--border); box-shadow: var(--glass-halo); -webkit-backdrop-filter: none; backdrop-filter: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .menu-panel, .pop-panel.anchored-pop { animation: none; }
