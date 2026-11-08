@@ -373,7 +373,10 @@ export class AcpSession implements AgentSession {
       const preferred = this.permissionMode === 'ask' ? ['exit-plan-default'] : this.permissionMode === 'full_access' ? ['exit-plan-bypass'] : ['exit-plan-auto', 'exit-plan-accept-edits'];
       const option = preferred.map(id => params.options?.find((o: any) => o.optionId === id)).find(Boolean);
       if (option) {
-        const answer = await hooks.requestInput({ id: params.toolCall.toolCallId, title: '计划已准备好', kind: 'plan', plan, questions: [{ id: 'approval', question: '是否按此计划开始执行？', options: [{ value: option.optionId, label: '开始执行' }] }] });
+        // Full access stands by its word on the plan gate too: the plan is recorded and carried
+        // out without waiting for a person. Every lesser level still reads it before deciding.
+        const auto = this.permissionMode === 'full_access' ? { answers: { approval: [option.optionId] } } : undefined;
+        const answer = await hooks.requestInput({ id: params.toolCall.toolCallId, title: '计划已准备好', kind: 'plan', plan, ...(auto ? { auto } : {}), questions: [{ id: 'approval', question: '是否按此计划开始执行？', options: [{ value: option.optionId, label: '开始执行' }] }] });
         return 'answers' in answer ? { outcome: { outcome: 'selected', optionId: answer.answers.approval[0] } } : { outcome: { outcome: 'cancelled' } };
       }
     }

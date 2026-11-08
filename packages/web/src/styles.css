@@ -10197,75 +10197,96 @@ button.coord-row-name { cursor: pointer; }
 .obs-chart-table th, .obs-chart-table td { padding: 8px; text-align: right; border-bottom: 1px solid var(--border); font-weight: normal; }
 .obs-chart-table th:first-child { text-align: left; }
 
-/* ---------- Plan card, plan reader, and the bottom sheet ---------- */
+/* ---------- Plan document and the bottom sheet ---------- */
 
-/* A plan in the thread: a small card with the opening of the plan, fading out where it is cut. */
+/* A plan in the thread is a document, not a card: it flows on the page beside a rule that softens
+   in over its first stretch and dissolves with the text where the plan is cut. */
 .proposal {
+  position: relative;
   width: 100%;
   min-width: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  box-shadow: var(--shadow-card);
+  padding-left: 18px;
+}
+
+.proposal::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 3px;
+  bottom: 0;
+  width: 2px;
+  border-radius: 2px;
+  background: linear-gradient(to bottom, transparent, var(--border-strong) 22px, var(--border-strong) calc(100% - 60px), transparent);
 }
 
 .proposal-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
-  padding: 8px 8px 0 16px;
+  padding-right: 4px;
+  margin-bottom: 5px;
 }
 
-.proposal-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--muted);
-  font-size: 13px;
+.proposal-label {
+  color: var(--faint);
+  font-size: 11.5px;
   font-weight: 600;
+  letter-spacing: 3px;
 }
 
 .proposal-tools {
   display: inline-flex;
+  margin-left: auto;
   flex: none;
 }
 
 .proposal-tools .icon-btn {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   color: var(--muted);
 }
 
-.proposal-body {
-  display: block;
-  width: 100%;
-  padding: 2px 16px 12px;
-  border: 0;
-  background: transparent;
-  text-align: left;
-  font: inherit;
-  cursor: pointer;
-}
-
 .proposal-scroll {
-  max-height: 260px;
-  overflow-y: auto;
-  scrollbar-width: none;
+  max-height: 228px;
+  overflow: hidden;
 }
 
-.proposal-scroll::-webkit-scrollbar {
-  display: none;
-}
-
-/* Only where the plan is cut off does it fade, over its last stretch; one still being written is
-   pinned to its newest lines and fades at the top instead. */
+/* Only where the plan is cut off does it fade — the text itself (a mask, not an overlay), so the
+   cut lands on whatever is behind it with no band at the seam; one still being written is pinned
+   to its newest lines and fades at the top instead. */
 .proposal.overflow .proposal-scroll {
   mask-image: linear-gradient(#000 calc(100% - 64px), transparent 100%);
 }
 
 .proposal.streaming.overflow .proposal-scroll {
   mask-image: linear-gradient(transparent 0, #000 64px);
+}
+
+/* Opened to the whole of it, in place: nothing is cut any more. */
+.proposal.full .proposal-scroll {
+  max-height: none;
+  mask-image: none;
+}
+
+/* The way into the rest of the plan, right at its cut. */
+.proposal-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 0;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.proposal-more:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.proposal-more svg {
+  color: var(--faint);
 }
 
 /* What an answered question or approval left behind: one quiet line, there but not in the way. */
@@ -10291,87 +10312,11 @@ button.coord-row-name { cursor: pointer; }
   overflow-wrap: anywhere;
 }
 
-/* A plan at full size: a panel over a scrim on a desktop, its own screen on a phone. */
-.plan-reader {
-  position: fixed;
-  inset: 0;
-  z-index: 90;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: var(--scrim);
-  animation: fade-in 0.14s ease-out;
-}
-
-/* As tall as the plan makes it, never taller than most of the screen: a short plan must not sit
-   in a panel of empty page. */
-.plan-reader-panel {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  width: min(860px, 92vw);
-  max-height: 86vh;
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  box-shadow: var(--shadow-pop);
-}
-
-.plan-reader-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex: none;
-  padding: 8px 10px 8px 8px;
-}
-
-.plan-reader-actions {
-  display: inline-flex;
-}
-
-.plan-reader-scroll {
-  flex: 1;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-
-.plan-reader-content {
-  max-width: var(--content-w);
-  margin: 0 auto;
-  padding: 4px 36px 56px;
-}
-
 @media (max-width: 640px) {
-  .plan-reader {
-    padding: 0;
-    background: var(--bg);
-  }
-
-  .plan-reader-panel {
-    width: 100%;
-    height: 100%;
-    max-height: none;
-    border-radius: 0;
-    background: var(--bg);
-    box-shadow: none;
-  }
-
-  /* Clear of the status bar, and roomy round buttons at the right, the way Codex has them. */
-  .plan-reader-top {
-    padding: calc(8px + env(safe-area-inset-top)) 14px 8px 8px;
-  }
-
-  .plan-reader .icon-btn {
-    width: 44px;
-    height: 44px;
-  }
-
-  .plan-reader-content {
-    padding: 0 20px calc(32px + var(--safe-bottom));
-  }
-
+  /* Deeper than on a desktop: narrow columns wrap the same plan into more lines, and the opening
+     must still show a whole legible stretch before the fade. */
   .proposal-scroll {
-    max-height: 220px;
+    max-height: 264px;
   }
 }
 

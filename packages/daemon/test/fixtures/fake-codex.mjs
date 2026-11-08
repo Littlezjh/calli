@@ -52,7 +52,7 @@ let currentWorkMode = 'default';
 const awaitingInput = new Map();
 const planResult = (turnId) => {
   notify('item/plan/delta', { turnId, itemId: 'proposal', delta: '## 实施计划\n\n正在整理…' });
-  notify('item/completed', { turnId, item: { type: 'plan', id: 'proposal', text: '## 实施计划\n\n1. 阅读现有实现\n2. 完成改动并验证\n\n保留当前会话和权限设置。' } });
+  notify('item/completed', { turnId, item: { type: 'plan', id: 'proposal', text: '## 实施计划\n\n1. 阅读现有实现，列出所有调用点\n2. 完成改动并验证\n3. 跑一遍接口测试，记录结果\n4. 补齐两处文案的中英文\n5. 更新 README 的说明段落\n6. 回归一遍登录与支付两条主链路\n7. 清理迁移期间留下的临时开关\n8. 把已知限制写进迁移说明的末尾\n9. 检查一遍日志里的新告警\n10. 交给下一个人验收\n\n保留当前会话和权限设置。' } });
 };
 let currentModel = 'gpt-big';
 let currentEffort = 'high';

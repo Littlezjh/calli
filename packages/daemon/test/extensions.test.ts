@@ -231,6 +231,9 @@ test('subscribers get whitelisted summaries: no text, tool calls, answers, previ
     h.emit('t1', 'turn-1', 'approval.resolved', { approvalId: 'a1', decision: { optionId: 'allow' } });
     h.emit('t1', 'turn-1', 'input.request', { inputId: 'i1', kind: 'plan', questions: [{ id: 'q', question: SECRET, options: [{ label: SECRET, value: SECRET }] }] });
     h.emit('t1', 'turn-1', 'input.resolved', { inputId: 'i1', answer: { answers: { q: [SECRET] } } });
+    // A request that arrives already answered (full access approves a plan itself) raises no
+    // attention: nothing is being asked, so the hooks below stay as they are.
+    h.emit('t1', 'turn-1', 'input.request', { inputId: 'i2', kind: 'plan', auto: { answers: { approval: ['exit-plan-bypass'] } }, questions: [{ id: 'approval', question: SECRET, options: [{ label: SECRET, value: SECRET }] }] });
     h.emit('t1', 'turn-1', 'message.delta', { text: SECRET });
     h.emit('t1', 'turn-1', 'tool.start', { id: 'tool', title: SECRET, rawInput: SECRET });
     h.emit('t1', 'turn-1', 'turn.done', { stopReason: 'end_turn' });

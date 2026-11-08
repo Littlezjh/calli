@@ -789,6 +789,7 @@ export const ja: Messages = {
   'step.running': '実行中',
   'step.ended': '終了',
   'step.done': '完了',
+  'step.exitedPlanMode': '計画モードを終了しました',
   'compaction.in_progress': 'コンテキストを圧縮中…',
   'compaction.completed': 'コンテキストを圧縮しました',
   'compaction.automatic': 'コンテキストを自動で圧縮しました',
@@ -1026,11 +1027,11 @@ export const ja: Messages = {
   'sideChat.placeholder': '何か質問する…',
   'composer.noThread': '開いているスレッドがありません',
 
-  // Plan card, plan reader, and the bottom sheet that asks for decisions
+  // Plan document and the bottom sheet that asks for decisions
   'plan.cardTitle': '計画',
   'plan.cardStreaming': '計画をまとめています',
-  'plan.openFull': '計画の全文を表示',
-  'plan.readerTitle': '計画を表示',
+  'plan.showAll': '計画の全文を表示',
+  'plan.collapse': '折りたたむ',
   'plan.download': '計画をダウンロード',
   'plan.copy': '計画をコピー',
   'plan.copyDone': 'コピーしました',
@@ -1069,6 +1070,7 @@ export const ja: Messages = {
   'trace.ended': (asked: string) => `質問は終了しました · ${asked}`,
   'trace.planSkipped': '計画をスキップしました',
   'trace.planConfirmed': '計画を確定しました',
+  'trace.planAuto': '自動的に実行しました · 完全アクセス',
   'trace.planReturned': (said: string) => `差し戻しました：${said}`,
   'trace.allowed': (title: string) => `許可しました · ${title}`,
   'trace.rejected': (title: string) => `拒否しました · ${title}`,
