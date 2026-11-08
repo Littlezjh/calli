@@ -7151,6 +7151,16 @@ div.file-card:hover { background: var(--surface); }
   white-space: nowrap;
 }
 
+/* The file could not be read — gone, or never a picture after all. Its name is the record that it
+ * was there, the words that named it having given way to it in the text. No button beside it, so
+ * the caption may not lean on the picture's width: it sizes itself and wraps. */
+.file-image.missing figcaption {
+  color: var(--faint);
+  contain: none;
+  white-space: normal;
+  overflow: visible;
+}
+
 .markdown img {
   max-width: 100%;
   border-radius: var(--radius-sm);

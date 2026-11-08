@@ -1032,9 +1032,11 @@ const DeliveredNote = memo(function DeliveredNote({ turnId, note, text, memberTh
   );
 });
 
-/** An image file the answer points at. Shown only if the daemon confirms it is one; otherwise nothing. */
+/** An image file the answer points at. Shown only if the daemon confirms it is one; the name
+ * stays behind as the record of it when it cannot be read, the words that named it being gone. */
 function FileImage({ path, roots, load, onOpen }: { path: string; roots: string[]; load: (path: string) => Promise<Blob>; onOpen: (url: string, name?: string) => void }) {
   const [url, setUrl] = useState<string | null>(null);
+  const [gone, setGone] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -1046,14 +1048,23 @@ function FileImage({ path, roots, load, onOpen }: { path: string; roots: string[
         made = address;
         setUrl(made);
       })
-      .catch(() => undefined); // not an image, not in this thread's directory, or gone
+      .catch(() => {
+        if (alive) setGone(true); // not an image, not in this thread's directory, or gone
+      });
     return () => {
       alive = false;
       if (made) URL.revokeObjectURL(made);
     };
   }, [path, load]);
 
-  if (!url) return null;
+  if (!url) {
+    if (!gone) return null;
+    return (
+      <figure className="file-image missing">
+        <figcaption title={path}>{relativePath(path, roots)} · {t('view.imageFailed')}</figcaption>
+      </figure>
+    );
+  }
   return (
     <figure className="file-image">
       <button type="button" onClick={() => onOpen(url, path)} aria-label={t('view.enlargePath', path)}>
