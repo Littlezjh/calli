@@ -41,24 +41,28 @@ function splitAddress(value: string): [string, string] {
  * punctuation renders as a bold link plus plain text.
  */
 export function trimAutolinkJunk() {
-  return (tree: Root) => {
-    walk(tree);
+  return (tree: Root, file: { toString(): string }) => {
+    walk(tree, String(file));
   };
 }
 
-function walk(node: Content | Root) {
+function walk(node: Content | Root, source: string) {
   const children = 'children' in node ? (node.children as Content[]) : undefined;
   if (!children) return;
   const next: Content[] = [];
   for (let i = 0; i < children.length; i++) {
     const child = children[i];
-    walk(child);
+    walk(child, source);
     if (child.type === 'link' && child.children.length === 1) {
       const text = asText(child.children[0]);
-      if (text) {
+      const start = child.position?.start.offset;
+      const end = child.position?.end.offset;
+      // Only bare GFM URLs may have swallowed prose; explicit links have their own boundaries.
+      const raw = start !== undefined && end !== undefined ? source.slice(start, end) : '';
+      if (text && /^(?:https?:\/\/|www\.)/i.test(raw) && raw === text.value) {
         const [kept, junk] = splitAddress(text.value);
         if (kept !== text.value) {
-          child.url = kept;
+          child.url = /^www\./i.test(kept) ? `http://${kept}` : kept;
           text.value = kept;
           // `**address**（…）` lost its closing markers to the autolink: pair them up again
           // as real emphasis instead of leaving literal `**` in the text.
