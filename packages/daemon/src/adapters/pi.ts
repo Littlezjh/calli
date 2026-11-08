@@ -4,7 +4,7 @@ import { isCompaction, trackCompaction } from './compaction.js';
 import { PlanReply } from './plan-reply.js';
 import { sessionEnvironment } from './types.js';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -318,6 +318,36 @@ const PI_VISION_MCP_SERVER = 'zai-mcp-server';
 // what the UI shows when a model sees pictures through the server, so it names the general tool.
 export const PI_MCP_VISION_TOOL = 'analyze_image';
 
+/** A per-launch marker also identifies MCP servers that detach or outlive Pi on Linux. */
+async function stopPiProcess(child: import('node:child_process').ChildProcess, owner: string): Promise<void> {
+  if (!child.pid) return;
+  const pid = child.pid;
+  const signal = (name: NodeJS.Signals) => {
+    if (process.platform === 'linux') {
+      for (const entry of readdirSync('/proc')) {
+        if (!/^\d+$/.test(entry)) continue;
+        try {
+          const env = readFileSync('/proc/' + entry + '/environ', 'utf8');
+          if (env.split('\0').includes('CALLI_PI_PROCESS_OWNER=' + owner)) process.kill(Number(entry), name);
+        } catch (error) {
+          // Other users' processes and processes which exited during the scan are expected.
+          if (!['ENOENT', 'ESRCH', 'EACCES', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
+        }
+      }
+      return;
+    }
+    if (process.platform === 'win32') {
+      if (child.exitCode === null && child.signalCode === null) child.kill(name);
+      return;
+    }
+    try { process.kill(-pid, name); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
+  };
+  signal('SIGTERM');
+  await new Promise(resolve => setTimeout(resolve, 250));
+  signal('SIGKILL');
+}
+
 /**
  * Runs `pi mcp list --json` and returns every tool of every connected server, qualified as the
  * model sees them: `mcp__<server>__<tool>`. A server that never finishes the MCP handshake makes
@@ -325,20 +355,21 @@ export const PI_MCP_VISION_TOOL = 'analyze_image';
  * means no MCP vision, never a broken hub.
  */
 function mcpToolNames(command: string[], env: Record<string, string>): Promise<string[]> {
+  const owner = randomUUID();
   const child = spawn(command[0], [...command.slice(1), 'mcp', 'list', '--json'], {
     cwd: process.cwd(),
     stdio: ['ignore', 'pipe', 'ignore'],
-    env: { ...process.env, ...env },
+    detached: process.platform !== 'win32',
+    env: { ...process.env, ...env, CALLI_PI_PROCESS_OWNER: owner },
   });
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     let out = '';
     let settled = false;
     const done = (names: string[]) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      child.kill();
-      resolve(names);
+      void stopPiProcess(child, owner).then(() => resolve(names), reject);
     };
     const timer = setTimeout(() => done([]), MCP_LIST_TIMEOUT_MS);
     child.stdout.setEncoding('utf8');
@@ -374,12 +405,14 @@ class PiSession implements AgentSession {
   private turn: { resolve(r: TurnResult): void; error?: string; plan?: PlanReply; submitted?: boolean } | null = null;
   private buffer = '';
   private exited = false;
+  private closing: Promise<void> | null = null;
   private compactionSequence = 0;
   private activeCompaction: string | null = null;
 
   constructor(
     private readonly child: ChildProcessWithoutNullStreams,
     private readonly label: string,
+    private readonly owner: string,
   ) {
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => this.onData(chunk));
@@ -399,12 +432,14 @@ class PiSession implements AgentSession {
     env: Record<string, string> = {},
   ): PiSession {
     const [bin, ...base] = command;
+    const owner = randomUUID();
     const child = spawn(bin, [...base, '--mode', 'rpc', ...extraArgs], {
       cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, ...env },
+      detached: process.platform !== 'win32',
+      env: { ...process.env, ...env, CALLI_PI_PROCESS_OWNER: owner },
     });
-    return new PiSession(child, label);
+    return new PiSession(child, label, owner);
   }
 
   /** A session for a thread. pi saves it, so it can be resumed later and from the terminal. */
@@ -565,6 +600,7 @@ class PiSession implements AgentSession {
 
   private onExit(code: number | null, signal: string | null | NodeJS.Signals): void {
     this.exited = true;
+    void this.close().catch(error => console.error('[pi] process cleanup failed:', error));
     const err = new Error(`${this.label} exited (code=${code}, signal=${signal})`);
     for (const [, p] of this.pending) p.reject(err);
     this.pending.clear();
@@ -687,9 +723,11 @@ class PiSession implements AgentSession {
   }
 
   async close(): Promise<void> {
-    if (this.exited) return;
-    this.child.stdin.end();
-    this.child.kill();
+    if (!this.closing) {
+      this.child.stdin.end();
+      this.closing = stopPiProcess(this.child, this.owner);
+    }
+    await this.closing;
   }
 }
 
