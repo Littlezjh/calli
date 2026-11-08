@@ -581,7 +581,11 @@ rl.on('line', (line) => {
           method: 'session/request_permission',
           params: {
             sessionId,
-            toolCall: dsh ? { toolCallId: 't1' } : { toolCallId: 't2', title: 'Edit file', kind: 'edit' },
+            toolCall: dsh ? { toolCallId: 't1' }
+              // "approve install": a shell command; "approve lockfile": an edit that names its file.
+              : text.includes('approve install') ? { toolCallId: 't2', title: 'npm install lodash', kind: 'execute', rawInput: { command: 'npm install lodash\n--save' } }
+              : text.includes('approve lockfile') ? { toolCallId: 't2', title: 'Edit package-lock.json', kind: 'edit', rawInput: { file_path: `${process.cwd()}/package-lock.json` } }
+              : { toolCallId: 't2', title: 'Edit file', kind: 'edit' },
             options: dsh
               ? [
                   { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
@@ -593,6 +597,10 @@ rl.on('line', (line) => {
                 ],
           },
         });
+      }
+      // A provider error that is not about quota; its request number differs on every attempt.
+      if (text.includes('flaky')) {
+        return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: `Internal error: upstream connection reset (request ${Math.floor(Math.random() * 90000) + 10000})` } });
       }
       // FAKE_ACP_PLAN_LEFT stands for another account whose plan still has room.
       if (text.includes('out of plan') && !process.env.FAKE_ACP_PLAN_LEFT) {

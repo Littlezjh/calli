@@ -1614,6 +1614,68 @@ export class Store {
     for (const row of rows) yield toEvent(row as unknown as EventRow);
   }
 
+  /**
+   * How the thread's latest turn failed, when it did: the newest lifecycle event, read through the
+   * lifecycle index so a thread list can afford it. Null when the latest turn did not fail.
+   */
+  lastTurnFailure(threadId: string): { turnId: string; at: string; code: string | null; message: string } | null {
+    const row = this.db
+      .prepare("SELECT turn_id, ts, type, data FROM events WHERE thread_id = ? AND type IN ('turn.started', 'turn.done', 'turn.error') ORDER BY seq DESC LIMIT 1")
+      .get(threadId) as { turn_id: string | null; ts: string; type: string; data: string } | undefined;
+    if (!row || row.type !== 'turn.error' || !row.turn_id) return null;
+    let data: { code?: unknown; message?: unknown } = {};
+    try { data = JSON.parse(row.data) as typeof data; } catch { /* a malformed payload still failed */ }
+    return { turnId: row.turn_id, at: row.ts, code: typeof data.code === 'string' ? data.code : null, message: typeof data.message === 'string' ? data.message : '' };
+  }
+
+  /** The newest turn starts, ends and failures, newest first: enough to read how the last few turns went. */
+  recentLifecycle(threadId: string, limit: number): Array<{ turnId: string; seq: number; type: 'turn.started' | 'turn.done' | 'turn.error'; ts: string; data: Record<string, unknown> }> {
+    const rows = this.db
+      .prepare("SELECT turn_id, seq, ts, type, data FROM events WHERE thread_id = ? AND type IN ('turn.started', 'turn.done', 'turn.error') ORDER BY seq DESC LIMIT ?")
+      .all(threadId, limit) as Array<{ turn_id: string | null; seq: number; ts: string; type: 'turn.started' | 'turn.done' | 'turn.error'; data: string }>;
+    return rows.filter(row => row.turn_id).map(row => {
+      let data: Record<string, unknown> = {};
+      try { data = JSON.parse(row.data) as Record<string, unknown>; } catch { /* a malformed payload still ended the turn */ }
+      return { turnId: row.turn_id!, seq: row.seq, type: row.type, ts: row.ts, data };
+    });
+  }
+
+  /**
+   * One turn's tool calls as logged, minus their output, which can be large and says nothing of what a
+   * call touched. `fromSeq` is where the turn began: events are indexed by position, not by turn.
+   */
+  turnToolEvents(threadId: string, turnId: string, fromSeq: number): StoredEvent[] {
+    const rows = this.db
+      .prepare("SELECT thread_id, turn_id, seq, type, ts, json_remove(data, '$.output') AS data FROM events WHERE thread_id = ? AND seq >= ? AND turn_id = ? AND type IN ('tool.start', 'tool.update', 'tool.end') ORDER BY seq")
+      .all(threadId, fromSeq, turnId) as unknown as EventRow[];
+    return rows.map(toEvent);
+  }
+
+  /** What the agent said last in a turn that began at `fromSeq`: the text after its final tool call, cut at `limit` characters. */
+  finalAnswer(threadId: string, turnId: string, fromSeq: number, limit = 2000): string {
+    const after = (this.db
+      .prepare("SELECT MAX(seq) AS seq FROM events WHERE thread_id = ? AND seq >= ? AND turn_id = ? AND type IN ('tool.start', 'tool.update', 'tool.end')")
+      .get(threadId, fromSeq, turnId) as { seq: number | null }).seq ?? fromSeq;
+    const rows = this.db
+      .prepare("SELECT type, data FROM events WHERE thread_id = ? AND seq > ? AND turn_id = ? AND type IN ('message.delta', 'message.replace') ORDER BY seq")
+      .iterate(threadId, after, turnId) as Iterable<{ type: string; data: string }>;
+    let text = '';
+    for (const row of rows) {
+      const data = JSON.parse(row.data) as Record<string, unknown>;
+      text = row.type === 'message.replace' ? replaceMessageTail(text, data) : text + (typeof data.text === 'string' ? data.text : '');
+      if (text.length >= limit) break;
+    }
+    return text.slice(0, limit);
+  }
+
+  /** The newest approval the agent asked for at or after `fromSeq`, or null when it has not. */
+  latestApprovalRequest(threadId: string, fromSeq: number): StoredEvent | null {
+    const row = this.db
+      .prepare("SELECT * FROM events WHERE thread_id = ? AND seq >= ? AND type = 'approval.request' ORDER BY seq DESC LIMIT 1")
+      .get(threadId, fromSeq) as unknown as EventRow | undefined;
+    return row ? toEvent(row) : null;
+  }
+
   /** A thread's turns, oldest first, by where each began in the log. */
   listTurns(threadId: string): Array<{ turnId: string; ts: string; seq: number }> {
     const rows = this.db

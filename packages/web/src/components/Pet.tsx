@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { ApiError, type Api, type PetStatus, type Thread } from '../api';
-import { IconArrowUp, IconClose, IconList, IconEdit } from './icons';
+import { ApiError, type Api, type PetStatus, type Thread, type ThreadBrief } from '../api';
+import { IconArrowUp, IconChevron, IconClose, IconList, IconEdit } from './icons';
+import { timeAgo } from '../sessions';
 import { useIsNarrow, useIsTouch } from '../hooks';
 import { ProfileDialog } from './ProfileDialog';
 import { t } from '../i18n';
 import {
-  applyPetStarter, clearPetHaze, nextPetFrame, petBustBox, parsePetPending, petCacheKey, petCacheName, petClampPosition, petDay, petErrorDetail, petGreetingLine, petLicenseUrl, petNotableThreads, petReplyParts, petRing, petStarters, petThreadState, readPetRouter, yawnDelay,
+  applyPetStarter, clearPetHaze, nextPetFrame, petBustBox, parsePetPending, petCacheKey, petCacheName, petClampPosition, petDay, petErrorDetail, petGreetingLine, petLicenseUrl, petAdvice, petBriefAdvice, petBriefWanted, petNeedsPerson, petReplyParts, petSpeaksOf, petRing, petStarters, petThreadState, petTriage, readPetRouter, yawnDelay,
   PET_BUBBLE_FADE_MS, PET_BUBBLE_GONE_MS, PET_BUST_HEIGHT, PET_CACHE_PREFIX, PET_FRAME, PET_GIVE_UP_MS, PET_RING_SIZE, PET_WEBP_QUALITY, PET_LATE_MS, PET_LOST_POLLS,
-  type PetBust, type PetClip, type PetGreeting, type PetPending, type PetPresence, type PetThreadState,
+  type PetAdvice, type PetBust, type PetClip, type PetGreeting, type PetPending, type PetPresence,
 } from '../pet';
 
 const GREETED_KEY = 'calli.pet.greeted';
@@ -16,6 +17,12 @@ const PENDING_KEY = 'calli.pet.pending';
 const DRAFT_KEY = 'calli.pet.draft';
 const POS_KEY = 'calli.pet.pos';
 const PRESENCE_KEY = 'calli.pet.presence';
+/** Threads the person set aside, each with the `updatedAt` it had then: anything new brings it back. */
+const DISMISSED_KEY = 'calli.pet.dismissed';
+/** Briefs kept in memory: the few matters she has brought up lately. */
+const BRIEF_CACHE = 24;
+/** Set-aside marks kept at most; the oldest go first. */
+const DISMISSED_MAX = 300;
 const PRESENCE_EVENT = 'calli:pet-presence';
 const GREETING_DELAY_MS = 900;
 const INSTALL_POLL_MS = 2_000;
@@ -449,8 +456,22 @@ function PetDetail({ text }: { text?: string | null }) {
   );
 }
 
-function threadStateLabel(state: PetThreadState): string {
-  return t(state === 'waiting' ? 'pet.state.waiting' : state === 'review' ? 'pet.state.review' : state === 'failed' ? 'pet.state.failed' : 'pet.state.running');
+/** A matter as she last said it: anything new on the thread makes it news again. */
+function matterKey(thread: Thread): string {
+  return `${thread.id}:${thread.updatedAt}`;
+}
+
+function readDismissed(): Record<string, string> {
+  try {
+    const value = JSON.parse(readStored(DISMISSED_KEY) ?? '{}') as unknown;
+    return value && typeof value === 'object' && !Array.isArray(value) ? Object.fromEntries(Object.entries(value).filter(([, at]) => typeof at === 'string')) as Record<string, string> : {};
+  } catch { return {}; }
+}
+
+/** Why a thread is there, and when it stopped if it did: one quiet line under its title. */
+function adviceLine(advice: PetAdvice): string {
+  const ago = advice.since ? timeAgo(advice.since, Date.now()) : '';
+  return ago ? `${advice.why} · ${ago}` : advice.why;
 }
 
 /** The companion and the way to talk to the Router, on every page. Nothing here until she has been asked for. */
@@ -641,7 +662,8 @@ function PetCompanion({ api, status, greeting, spreadOpen, desk, place, threads,
   const [expanded, setExpanded] = useState(false);
   const [fading, setFading] = useState(false);
   const [compose, setCompose] = useState(false);
-  const [panel, setPanel] = useState<null | 'tray' | 'detail'>(null);
+  const [panel, setPanel] = useState<null | 'tray'>(null);
+  const [showEarlier, setShowEarlier] = useState(false);
   const [revealed, setRevealed] = useState(false);
   const [tucked, setTucked] = useState(presence === 'event');
 
@@ -671,11 +693,59 @@ function PetCompanion({ api, status, greeting, spreadOpen, desk, place, threads,
   const sayRef = useRef(say);
   sayRef.current = say;
 
-  // ——— The status bar under her ———
-  const notable = useMemo(() => petNotableThreads(threads), [threads]);
-  const top = notable[0] ?? null;
+  // ——— What she brings up: one matter at a time, over her head ———
+  const [dismissed, setDismissed] = useState(readDismissed);
+  const { active: notable, earlier } = useMemo(() => petTriage(threads, Date.now(), dismissed), [threads, dismissed]);
+  const matters = useMemo(() => notable.filter(thread => petSpeaksOf(petThreadState(thread))), [notable]);
+  // The one the person picked from the rest, while it is still there; otherwise the most pressing.
+  const [focusId, setFocusId] = useState<string | null>(null);
+  const top = (focusId && [...notable, ...earlier].find(thread => thread.id === focusId)) || matters[0] || null;
   const topState = top ? petThreadState(top) : null;
-  const attn = notable.some(thread => { const state = petThreadState(thread); return state === 'waiting' || state === 'failed'; });
+  // What she has already said and the person waved off: she brings it up again only when something changes.
+  const [quiet, setQuiet] = useState<ReadonlySet<string>>(new Set());
+  const fresh = matters.some(thread => !quiet.has(matterKey(thread)));
+  const attn = notable.some(thread => petNeedsPerson(petThreadState(thread)));
+  const retryable = notable.filter(thread => petAdvice(thread).step === 'retry');
+  const hush = useCallback(() => {
+    setQuiet(new Set(matters.map(matterKey)));
+    setFocusId(null);
+  }, [matters]);
+  // Her own words and the person's typing come first; a spread pile has the floor.
+  const matterShown = !!top && (focusId === top.id || fresh) && !busy && !compose && !say && !spreadOpen;
+  const matterRef = useRef(matterShown);
+  matterRef.current = matterShown;
+
+  // What the daemon found in the matter's log, asked for only while she is bringing that matter up and
+  // kept per version of the thread. null: asked and unavailable, so the plain line stands.
+  const [briefs, setBriefs] = useState<Readonly<Record<string, ThreadBrief | null>>>({});
+  const briefKey = top ? `${matterKey(top)}:${petThreadState(top)}` : null;
+  const briefWanted = !!top && petBriefWanted(top);
+  useEffect(() => {
+    if (!top || !briefKey || !briefWanted || !matterShown || briefKey in briefs) return;
+    let live = true;
+    const store = (brief: ThreadBrief | null) => {
+      if (live) setBriefs(current => Object.fromEntries([...Object.entries(current), [briefKey, brief]].slice(-BRIEF_CACHE)));
+    };
+    api.threadBrief(top.id).then(store, () => store(null));
+    return () => { live = false; };
+    // `briefs` is read only to skip what is kept; the key says which version of which thread it is.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [briefKey, briefWanted, matterShown, api]);
+  const topBrief = briefKey ? briefs[briefKey] : undefined;
+  const topAdvice = top ? petBriefAdvice(top, topBrief) : null;
+  // While the brief is on its way the line keeps room for a second row; once it is here, or known not to come, the line is as tall as its words.
+  const briefPending = briefWanted && topBrief === undefined;
+
+  // Set aside until something new happens on it: the mark is the thread's `updatedAt` at the time.
+  const setAside = useCallback((items: readonly Thread[]) => {
+    setDismissed((current) => {
+      const next = { ...current };
+      for (const thread of items) { delete next[thread.id]; next[thread.id] = thread.updatedAt; }
+      const kept = Object.fromEntries(Object.entries(next).slice(-DISMISSED_MAX));
+      writeStored(DISMISSED_KEY, JSON.stringify(kept));
+      return kept;
+    });
+  }, []);
 
   const revealTimer = useRef(0);
   const fadeTimer = useRef(0);
@@ -785,14 +855,25 @@ function PetCompanion({ api, status, greeting, spreadOpen, desk, place, threads,
     if (say) setTucked(false);
   }, [say]);
 
+  // Something new to bring up: she comes out and looks up, once per change, not on every poll.
+  const heard = useRef<ReadonlySet<string> | null>(null);
+  useEffect(() => {
+    const keys = new Set(matters.map(matterKey));
+    const before = heard.current;
+    heard.current = keys;
+    if (![...keys].some(key => !before?.has(key) && !quiet.has(key))) return;
+    setTucked(false);
+    if (before && !busyRef.current && visible) playerRef.current?.play('poke', false);
+  }, [matters, quiet, visible]);
+
   // In "when needed" presence she goes back to the dot once nothing is left to show, about ten seconds after the last of it.
   useEffect(() => {
     if (presence !== 'event') { setTucked(false); return; }
     window.clearTimeout(tuckTimer.current);
-    if (tucked || busy || say || compose || panel) return;
+    if (tucked || busy || say || compose || panel || matterShown) return;
     tuckTimer.current = window.setTimeout(() => setTucked(true), TUCK_AFTER_SPEAK_MS);
     return () => window.clearTimeout(tuckTimer.current);
-  }, [presence, tucked, busy, say, compose, panel]);
+  }, [presence, tucked, busy, say, compose, panel, matterShown]);
 
   // Wait for the Router's answer. The page being away pauses this; coming back reads at once.
   useEffect(() => {
@@ -895,28 +976,30 @@ function PetCompanion({ api, status, greeting, spreadOpen, desk, place, threads,
       if (rootRef.current?.contains(e.target as Node)) return;
       if (touch) conceal();
       if (panel) setPanel(null);
+      else if (matterRef.current) hush();
       if (compose && !draft.trim()) setCompose(false);
     };
     document.addEventListener('pointerdown', onDown);
     return () => document.removeEventListener('pointerdown', onDown);
-  }, [touch, conceal, panel, compose, draft]);
+  }, [touch, conceal, panel, compose, draft, hush]);
 
   // Captured, because a spread pile below her also listens for Esc, and she answers first. A modal
   // above her or an open menu has the keyboard, and the same goes for a composing input method.
   useEffect(() => {
-    if (!compose && !panel) return;
+    if (!compose && !panel && !matterShown) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.isComposing || e.keyCode === 229) return;
       if (document.querySelector('.pop-panel') || petCoveredByModal(rootRef.current)) return;
       e.preventDefault();
       e.stopPropagation();
       if (panel) { setPanel(null); return; }
+      if (!compose) { hush(); return; }
       setCompose(false);
       bodyRef.current?.focus({ preventScroll: true });
     };
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
-  }, [compose, panel]);
+  }, [compose, panel, matterShown, hush]);
 
   // ——— Dragging her ———
   const onBodyPointerDown = (e: ReactPointerEvent) => {
@@ -959,6 +1042,8 @@ function PetCompanion({ api, status, greeting, spreadOpen, desk, place, threads,
   const petClick = () => {
     if (compose) { setCompose(false); return; }
     if (!busy) playerRef.current?.play('poke', false);
+    // What she waved off comes back first: tapping her is asking what is up.
+    if (top && !matterShown && !say && petSpeaksOf(topState!)) { setQuiet(new Set()); setFocusId(top.id); return; }
     // A phone has no hover: the first tap shows what a pointer would have, the next one talks to her.
     if (touch && !revealed) { reveal(REVEAL_TAP_MS); return; }
     if (say?.kind === 'error' && !expanded) { setExpanded(true); return; }
@@ -974,7 +1059,13 @@ function PetCompanion({ api, status, greeting, spreadOpen, desk, place, threads,
   const openThread = (id: string) => {
     setSay(null);
     setPanel(null);
+    setFocusId(null);
     onOpenThread(id);
+  };
+  const pick = (id: string) => {
+    setPanel(null);
+    setQuiet(new Set());
+    setFocusId(id);
   };
 
   const starters = petStarters();
@@ -983,53 +1074,114 @@ function PetCompanion({ api, status, greeting, spreadOpen, desk, place, threads,
     fieldRef.current?.focus();
   };
 
+  // ——— Moving a thread on ———
+  const [stepping, setStepping] = useState<ReadonlySet<string>>(new Set());
+  const retry = async (thread: Thread): Promise<boolean> => {
+    setStepping(current => new Set(current).add(thread.id));
+    try {
+      await api.retryThread(thread.id);
+      return true;
+    } catch (e) {
+      setSay({ kind: 'error', text: t('pet.retryFailed', thread.title), detail: petErrorDetail(e), threadId: thread.id, retry: () => void takeStep(thread, petAdvice(thread)) });
+      return false;
+    } finally {
+      setStepping(current => { const next = new Set(current); next.delete(thread.id); return next; });
+    }
+  };
+  const takeStep = async (thread: Thread, advice: PetAdvice) => {
+    if (advice.step !== 'retry') { openThread(thread.id); return; }
+    if (!await retry(thread)) return;
+    setSay({ kind: 'notice', text: t('pet.retried', thread.title) });
+    if (!busy) playerRef.current?.play('success', false);
+  };
+  // One after another, so a burst of stops after a quota reset does not start every agent at once.
+  const continueAll = async () => {
+    let moved = 0;
+    for (const thread of retryable) if (await retry(thread)) moved += 1;
+    if (moved) {
+      setSay((current) => current?.kind === 'error' ? current : { kind: 'notice', text: t('pet.retriedMany', moved) });
+      if (!busy) playerRef.current?.play('success', false);
+    }
+  };
+
+  const stepButton = (thread: Thread, advice: PetAdvice) => {
+    if (!advice.step) return null;
+    const working = stepping.has(thread.id);
+    return (
+      <button type="button" className="pet-step" disabled={working} aria-busy={working || undefined} onClick={() => void takeStep(thread, advice)}>
+        {working ? <span className="spinner" aria-hidden="true" /> : null}
+        <span>{advice.label}</span>
+      </button>
+    );
+  };
+
+  const trayButton = (
+    <button type="button" className="pet-bar-icon pet-tray-button" aria-label={t('pet.threads')} title={t('pet.threads')} aria-expanded={panel === 'tray'} onClick={() => setPanel(panel === 'tray' ? null : 'tray')}>
+      <IconList size={14} />
+      {attn && <b aria-hidden="true" />}
+    </button>
+  );
+
+  const trayRow = (thread: Thread) => {
+    const state = petThreadState(thread);
+    const advice = petAdvice(thread);
+    return (
+      <div key={thread.id} className="pet-tray-item" data-s={state}>
+        <button type="button" className="pet-tray-open" onClick={() => (matterShown ? pick(thread.id) : openThread(thread.id))}>
+          <span className="pet-dot" data-s={state} />
+          <span className="pet-tray-text">
+            <span className="pet-tray-title">{thread.title}</span>
+            {advice.why && <span className="pet-tray-why">{adviceLine(advice)}</span>}
+          </span>
+        </button>
+        {advice.step === 'retry' && stepButton(thread, advice)}
+      </div>
+    );
+  };
+
   // "Off" leaves the desk to her: nowhere else does she show.
   if (presence === 'off' && !desk) return null;
 
   // A pile spread out has the floor: what she volunteers waits, what the person asked for stays.
   const bubble = compose || panel || (spreadOpen && say?.kind === 'greeting') ? null : say;
+  const others = matterShown && top ? notable.filter(thread => thread !== top) : notable;
+  // The old stops fold away in the list, so they count only when nothing newer is there.
+  const moreCount = others.length || earlier.length;
   const bubbleMore = bubble ? Array.from(bubble.text).length > 30 : false;
   const bubbleText = bubble && !expanded && bubbleMore ? Array.from(bubble.text).slice(0, 26).join('') + '…' : bubble?.text ?? '';
 
   // On the body, because a spread pile is too, and she has to stay above it and within reach.
   return createPortal(
     <div ref={rootRef} className={`pet pet-live${spreadOpen ? ' pet-back' : ''}`}
-      data-reveal={revealed || undefined} data-tucked={tucked || undefined} data-attn={attn || undefined} data-badge={attn || undefined}>
+      data-reveal={revealed || undefined} data-tucked={tucked || undefined} data-attn={(attn && !(matterShown && !panel)) || undefined} data-badge={attn || undefined}>
       <div className="pet-above">
         {panel === 'tray' && (
           <div className="pet-panel" role="dialog" aria-label={t('pet.threads')}>
             <div className="pet-panel-head">
-              <span>{t('pet.threads')}</span>
-              <button type="button" aria-label={t('pet.dismiss')} title={t('pet.dismiss')} onClick={() => setPanel(null)}><IconClose size={12} /></button>
+              <span>{matterShown ? t('pet.others') : t('pet.threads')}</span>
+              {retryable.length > 1 && (
+                <button type="button" className="pet-head-act" disabled={stepping.size > 0} onClick={() => void continueAll()}>{t('pet.continueAll', retryable.length)}</button>
+              )}
+              <button type="button" className="pet-head-close" aria-label={t('pet.dismiss')} title={t('pet.dismiss')} onClick={() => setPanel(null)}><IconClose size={12} /></button>
             </div>
-            {notable.length ? (
-              <div className="pet-tray">
-                {notable.map(thread => {
-                  const state = petThreadState(thread);
-                  return (
-                    <button key={thread.id} type="button" className="pet-tray-item" onClick={() => openThread(thread.id)}>
-                      <span className="pet-dot" data-s={state} />
-                      <span>{thread.title}</span>
-                      <small className={state === 'waiting' || state === 'failed' ? 'warn' : undefined}>{threadStateLabel(state)}</small>
-                    </button>
-                  );
-                })}
-              </div>
-            ) : <p className="pet-panel-empty">{t('pet.trayEmpty')}</p>}
+            {others.length ? (
+              <div className="pet-tray">{others.map(thread => trayRow(thread))}</div>
+            ) : !earlier.length && <p className="pet-panel-empty">{t('pet.trayEmpty')}</p>}
+            {earlier.length > 0 && (
+              <>
+                <button type="button" className="pet-tray-fold" aria-expanded={showEarlier} onClick={() => setShowEarlier(was => !was)}>
+                  <IconChevron size={12} open={showEarlier} />
+                  <span>{t('pet.earlier', earlier.length)}</span>
+                </button>
+                {showEarlier && (
+                  <div className="pet-tray pet-tray-earlier">
+                    {earlier.map(thread => trayRow(thread))}
+                    <button type="button" className="pet-tray-clear" onClick={() => { setAside(earlier); setShowEarlier(false); }}>{t('pet.clearEarlier')}</button>
+                  </div>
+                )}
+              </>
+            )}
             <a className="pet-credit" href={petLicenseUrl(status.commit)} target="_blank" rel="noreferrer">{t('pet.credit')}</a>
-          </div>
-        )}
-        {panel === 'detail' && top && topState && (
-          <div className="pet-panel" role="dialog" aria-label={threadStateLabel(topState)}>
-            <div className="pet-panel-head">
-              <span>{threadStateLabel(topState)}</span>
-              <button type="button" aria-label={t('pet.dismiss')} title={t('pet.dismiss')} onClick={() => setPanel(null)}><IconClose size={12} /></button>
-            </div>
-            <p className="pet-panel-title">{top.title}</p>
-            {top.preview && <p className="pet-panel-note">{top.preview}</p>}
-            <div className="pet-panel-acts">
-              <button type="button" className="pet-bar-chip" onClick={() => openThread(top.id)}>{t('pet.goSee')}</button>
-            </div>
           </div>
         )}
         {bubble && (
@@ -1064,6 +1216,30 @@ function PetCompanion({ api, status, greeting, spreadOpen, desk, place, threads,
             {bubble.kind === 'error' && (
               <button type="button" className="pet-bub-close" aria-label={t('pet.dismiss')} title={t('pet.dismiss')} onClick={() => setSay(null)}><IconClose size={11} /></button>
             )}
+          </div>
+        )}
+        {matterShown && top && topState && topAdvice && !panel && (
+          <div className="pet-matter" role="status" data-s={topState}>
+            <div className="pet-matter-head">
+              <span className="pet-dot" data-s={topState} />
+              <button type="button" className="pet-matter-title" onClick={() => openThread(top.id)}>{top.title}</button>
+              {topAdvice.since && <time className="pet-matter-ago" dateTime={topAdvice.since}>{timeAgo(topAdvice.since, Date.now())}</time>}
+              {moreCount > 0 && (
+                <button type="button" className="pet-more" aria-label={t('pet.othersCount', moreCount)} title={t('pet.othersCount', moreCount)} aria-expanded={false} onClick={() => setPanel('tray')}>
+                  +{moreCount}
+                </button>
+              )}
+            </div>
+            {topAdvice.why && (
+              <p className="pet-matter-why" data-brief={briefPending || undefined} title={topAdvice.code ? `${topAdvice.why} ${topAdvice.code}` : topAdvice.why}>
+                {topAdvice.why}{topAdvice.code && <> <code className="pet-matter-code">{topAdvice.code}</code></>}
+              </p>
+            )}
+            <div className="pet-matter-acts">
+              {stepButton(top, topAdvice)}
+              {topAdvice.step !== 'open' && <button type="button" className="pet-step" onClick={() => openThread(top.id)}>{t('pet.openShort')}</button>}
+              <button type="button" className="pet-matter-aside" onClick={() => { setAside([top]); setFocusId(null); }}>{t('pet.setAside')}</button>
+            </div>
           </div>
         )}
       </div>
@@ -1114,20 +1290,10 @@ function PetCompanion({ api, status, greeting, spreadOpen, desk, place, threads,
                 </button>
                 {late && pending && <button type="button" className="pet-bar-chip" onClick={() => openThread(pending.threadId)}>{t('pet.openShort')}</button>}
               </>
-            ) : top && topState ? (
-              <>
-                <button type="button" className="pet-bar-status" onClick={() => setPanel(panel === 'detail' ? null : 'detail')}>
-                  <span className="pet-dot" data-s={topState} />
-                  <span>{top.title} · {threadStateLabel(topState)}</span>
-                </button>
-                <button type="button" className="pet-bar-chip" onClick={() => openThread(top.id)}>{t('pet.goSee')}</button>
-              </>
-            ) : null}
-            <button type="button" className="pet-bar-icon" aria-label={t('pet.write')} title={t('pet.write')} onClick={openCompose}><IconEdit size={14} /></button>
-            <button type="button" className="pet-bar-icon" aria-label={t('pet.threads')} title={t('pet.threads')} onClick={() => setPanel(panel === 'tray' ? null : 'tray')}>
-              <IconList size={14} />
-              {attn && <b aria-hidden="true" />}
-            </button>
+            ) : <>
+              <button type="button" className="pet-bar-icon" aria-label={t('pet.write')} title={t('pet.write')} onClick={openCompose}><IconEdit size={14} /></button>
+              {!matterShown && trayButton}
+            </>}
           </div>
         )}
       </div>
