@@ -19,8 +19,8 @@ test('renaming preserves caret, selection and focus through streamed task update
       if (mobile) await page.locator('.menu-btn').click();
       await page.locator('.thread-title', { hasText: title }).first().click();
       const openRename = async () => {
+        // Renaming sits in the open thread's own "…", beside its list tools.
         await page.getByLabel('这个线程的更多操作').click();
-        await page.getByRole('menuitem', { name: '整理线程', exact: true }).click();
         await page.getByRole('menuitem', { name: '重命名', exact: true }).click();
       };
       await openRename();

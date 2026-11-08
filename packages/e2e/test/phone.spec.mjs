@@ -110,11 +110,11 @@ test('a long press on a row opens its menu, and is not a tap', async () => {
   const row = page.locator('.sidebar .thread-row', { hasText: 'first thread' });
   const box = await row.boundingBox();
   await touch({ x: box.x + 60, y: box.y + box.height / 2 }, null, 700);
-  await page.getByRole('menuitem', { name: '整理线程' }).waitFor({ timeout: 5_000 });
+  await page.getByRole('menuitem', { name: '置顶' }).waitFor({ timeout: 5_000 });
   assert.equal(await listOpen(), true, 'the list is still open: the press did not open the thread');
   assert.equal((await page.locator('.topbar-title').textContent()).trim(), '新线程');
   await page.keyboard.press('Escape');
-  await page.getByRole('menuitem', { name: '整理线程' }).waitFor({ state: 'detached', timeout: 5_000 });
+  await page.getByRole('menuitem', { name: '置顶' }).waitFor({ state: 'detached', timeout: 5_000 });
 });
 
 test('a tap on a row opens the thread; the top bar says which agent and directory', async () => {

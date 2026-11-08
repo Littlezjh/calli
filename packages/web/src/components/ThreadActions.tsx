@@ -29,7 +29,7 @@ interface Deps {
   onSectionsChange: () => void;
   /** Opens the web terminal, from a menu item tied to the thread's directory. */
   onOpenTerminal: () => void;
-  /** Opens the files belonging to the menu's thread, even when another thread is selected. */
+  /** Opens the open thread's files, from its own page menu. */
   onOpenFiles: (thread: Thread) => void;
   /** Opens the thread's trace, where the top bar no longer keeps a button of its own (a phone
    *  reaches it from the overview instead). */
@@ -53,7 +53,7 @@ interface Deps {
   };
 }
 
-type MenuState = { x: number; y: number } & ({ thread: Thread } | { section: Section });
+type MenuState = { x: number; y: number; where: 'list' | 'page' } & ({ thread: Thread } | { section: Section });
 
 type DialogState =
   | { kind: 'rename'; thread: Thread }
@@ -80,9 +80,11 @@ export function forkBlocked(thread: Thread, turnId?: string): string | null {
 }
 
 /**
- * Everything that can be done to a thread or a section from a menu: the menu itself, the dialogs
- * it leads to, and the requests behind them. One instance serves the sidebar, the thread header,
- * the archive and the slash menu, so an action behaves the same wherever it is started.
+ * Everything that can be done to a thread or a section from a menu: the menus themselves, the
+ * dialogs they lead to, and the requests behind them. One instance serves the sidebar, the thread
+ * header, the archive and the slash menu, so an action behaves the same wherever it is started.
+ * The two menus hold different work: the list's rows manage how a thread sits in the list, the
+ * open thread's own menu serves the conversation being read.
  */
 export function useThreadActions(deps: Deps) {
   const { api, agents, sections, todos, chain, onTodosChange, onThreadChange, onThreadRemove, onThreadOpen, onMarkedUnread, onSectionsChange, onOpenTerminal, onOpenFiles, onOpenTrace, onError, onBusy, onArchived, markdownOf, autotitle } = deps;
@@ -178,104 +180,64 @@ export function useThreadActions(deps: Deps) {
     }
   };
 
-  const threadItems = (thread: Thread): MenuEntry[] => {
+  /** What a row's menu offers: how the thread sits in the list. As in ChatGPT and the Claude app,
+   *  a row menu holds only row management, never the conversation's own tools. */
+  const listItems = (thread: Thread): MenuEntry[] => {
     const filed = sections.some((s) => s.id === thread.sectionId);
     const linkedTodoIds = new Set(todos.filter((todo) => todo.threads.some((it) => it.id === thread.id)).map((todo) => todo.id));
     const planChoices = todos.filter((todo) => !todo.parentId).slice(0, 30);
     return [
-      { id: 'files', label: t('files.files'), icon: IconFiles, onSelect: () => onOpenFiles(thread) },
-      { id: 'terminal', label: t('actions.terminal'), icon: IconTerminal, onSelect: onOpenTerminal },
-      'separator',
-      { id: 'organize', label: t('actions.organizeThread'), icon: IconList, submenu: [
-        { id: 'rename', label: t('actions.rename'), icon: IconEdit, onSelect: () => run('rename', thread) },
-        ...(autotitle ? [{ id: 'autotitle', label: t('actions.autotitle'), icon: IconSparkle, onSelect: () => void autoName(thread) }] : []),
-        { id: 'pin', label: thread.pinned ? t('actions.unpin') : t('actions.pin'), icon: IconPin, onSelect: () => run('pin', thread) },
-        {
-          id: 'unread',
-          label: thread.unread ? t('actions.markRead') : t('actions.markUnread'),
-          icon: IconDot,
-          onSelect: () => void patch(thread, { unread: !thread.unread }, thread.unread ? undefined : () => onMarkedUnread(thread)),
-        },
-        'separator',
-        {
-          id: 'section',
-          label: t('actions.moveToSection'),
-          icon: IconList,
-          submenu: [
-            ...sections.map((s) => ({
-              id: `section-${s.id}`,
-              label: s.name,
-              checked: s.id === thread.sectionId,
-              onSelect: () => void patch(thread, { sectionId: s.id === thread.sectionId ? null : s.id }),
-            })),
-            ...(filed ? [{ id: 'unfile', label: t('actions.unfile'), onSelect: () => void patch(thread, { sectionId: null }) }] : []),
-            ...(sections.length ? (['separator'] as MenuEntry[]) : []),
-            { id: 'new-section', label: t('actions.newSection'), icon: IconPlus, onSelect: () => setDialog({ kind: 'new-section', thread }) },
-          ],
-        },
-        {
-          id: 'todo',
-          label: t('actions.linkPlan'),
-          icon: IconCheck,
-          disabled: planChoices.length === 0,
-          submenu: [
-            ...planChoices.map((todo) => ({
-              id: `todo-${todo.id}`,
-              label: todo.text,
-              checked: linkedTodoIds.has(todo.id),
-              onSelect: () =>
-                void guard(async () => {
-                  if (!api) return;
-                  if (linkedTodoIds.has(todo.id)) await api.unlinkTodo(todo.id, thread.id);
-                  else await api.linkTodo(todo.id, thread.id);
-                  onTodosChange();
-                }),
-            })),
-            ...(planChoices.length ? (['separator'] as MenuEntry[]) : []),
-            {
-              id: 'new-todo',
-              label: t('actions.newPlan'),
-              icon: IconPlus,
-              onSelect: () =>
-                void guard(async () => {
-                  if (!api) return;
-                  const todo = await api.createTodo(thread.title || folderName(thread.cwd));
-                  await api.linkTodo(todo.id, thread.id);
-                  onTodosChange();
-                }),
-            },
-          ],
-        },
-        ...(onOpenTrace ? [{ id: 'trace', label: t('trace.openTrace'), icon: IconTrace, onSelect: onOpenTrace }] : []),
-      ] },
+      { id: 'pin', label: thread.pinned ? t('actions.unpin') : t('actions.pin'), icon: IconPin, onSelect: () => run('pin', thread) },
+      ...(autotitle ? [{ id: 'autotitle', label: t('actions.autotitle'), icon: IconSparkle, onSelect: () => void autoName(thread) }] : []),
       {
-        id: 'copy',
-        label: t('common.copy'),
-        icon: IconCopy,
+        id: 'section',
+        label: t('actions.moveToSection'),
+        icon: IconList,
         submenu: [
-          { id: 'copy-md', label: t('actions.copyMarkdown'), onSelect: () => void copy(markdownOf(thread)) },
-          {
-            id: 'copy-resume',
-            label: t('actions.resumeCommand'),
-            disabled: !thread.resumeCommand,
-            onSelect: () => void copy(thread.resumeCommand),
-          },
-          {
-            id: 'copy-id',
-            label: t('statusPanel.sessionId'),
-            disabled: !thread.agentSessionId,
-            onSelect: () => void copy(thread.agentSessionId),
-          },
-          { id: 'copy-cwd', label: t('actions.cwd'), onSelect: () => void copy(thread.cwd) },
+          ...sections.map((s) => ({
+            id: `section-${s.id}`,
+            label: s.name,
+            checked: s.id === thread.sectionId,
+            onSelect: () => void patch(thread, { sectionId: s.id === thread.sectionId ? null : s.id }),
+          })),
+          ...(filed ? [{ id: 'unfile', label: t('actions.unfile'), onSelect: () => void patch(thread, { sectionId: null }) }] : []),
+          ...(sections.length ? (['separator'] as MenuEntry[]) : []),
+          { id: 'new-section', label: t('actions.newSection'), icon: IconPlus, onSelect: () => setDialog({ kind: 'new-section', thread }) },
         ],
       },
-      { id: 'continuation', label: t('actions.forkAndHandover'), icon: IconHand, submenu: [
-        ...(agents.find((a) => a.id === thread.agent)?.capabilities.fork
-          ? [{ id: 'fork', label: t('sidebar.fork'), icon: IconFork, disabled: forkBlocked(thread) !== null, onSelect: () => run('fork', thread) }]
-          : []),
-        { id: 'handover', label: t('handover.title'), icon: IconHand, onSelect: () => setDialog({ kind: 'handover', thread }) },
-        ...(chainOf(thread) ? [{ id: 'chain', label: t('handover.trail.title'), icon: IconHandover, onSelect: () => setDialog({ kind: 'chain', thread }) }] : []),
-      ] },
+      {
+        id: 'todo',
+        label: t('actions.linkPlan'),
+        icon: IconCheck,
+        disabled: planChoices.length === 0,
+        submenu: [
+          ...planChoices.map((todo) => ({
+            id: `todo-${todo.id}`,
+            label: todo.text,
+            checked: linkedTodoIds.has(todo.id),
+            onSelect: () =>
+              void guard(async () => {
+                if (!api) return;
+                if (linkedTodoIds.has(todo.id)) await api.unlinkTodo(todo.id, thread.id);
+                else await api.linkTodo(todo.id, thread.id);
+                onTodosChange();
+              }),
+          })),
+          ...(planChoices.length ? (['separator'] as MenuEntry[]) : []),
+          {
+            id: 'new-todo',
+            label: t('actions.newPlan'),
+            icon: IconPlus,
+            onSelect: () =>
+              void guard(async () => {
+                if (!api) return;
+                const todo = await api.createTodo(thread.title || folderName(thread.cwd));
+                await api.linkTodo(todo.id, thread.id);
+                onTodosChange();
+              }),
+          },
+        ],
+      },
       'separator',
       thread.archivedAt
         ? { id: 'restore', label: t('archive.restore'), icon: IconArchive, onSelect: () => run('restore', thread) }
@@ -283,6 +245,54 @@ export function useThreadActions(deps: Deps) {
       { id: 'delete', label: t('archive.delete'), icon: IconTrash, danger: true, onSelect: () => run('delete', thread) },
     ];
   };
+
+  /** What the open thread's "…" offers: the conversation being read, plus the things worth doing
+   *  to the thread itself while reading it, kept at the first level rather than behind a submenu. */
+  const pageItems = (thread: Thread): MenuEntry[] => [
+    { id: 'files', label: t('files.files'), icon: IconFiles, onSelect: () => onOpenFiles(thread) },
+    { id: 'terminal', label: t('actions.terminal'), icon: IconTerminal, onSelect: onOpenTerminal },
+    'separator',
+    { id: 'pin', label: thread.pinned ? t('actions.unpin') : t('actions.pin'), icon: IconPin, onSelect: () => run('pin', thread) },
+    {
+      id: 'unread',
+      label: thread.unread ? t('actions.markRead') : t('actions.markUnread'),
+      icon: IconDot,
+      onSelect: () => void patch(thread, { unread: !thread.unread }, thread.unread ? undefined : () => onMarkedUnread(thread)),
+    },
+    { id: 'rename', label: t('actions.rename'), icon: IconEdit, onSelect: () => run('rename', thread) },
+    ...(autotitle ? [{ id: 'autotitle', label: t('actions.autotitle'), icon: IconSparkle, onSelect: () => void autoName(thread) }] : []),
+    'separator',
+    {
+      id: 'copy',
+      label: t('common.copy'),
+      icon: IconCopy,
+      submenu: [
+        { id: 'copy-md', label: t('actions.copyMarkdown'), onSelect: () => void copy(markdownOf(thread)) },
+        {
+          id: 'copy-resume',
+          label: t('actions.resumeCommand'),
+          disabled: !thread.resumeCommand,
+          onSelect: () => void copy(thread.resumeCommand),
+        },
+        {
+          id: 'copy-id',
+          label: t('statusPanel.sessionId'),
+          disabled: !thread.agentSessionId,
+          onSelect: () => void copy(thread.agentSessionId),
+        },
+        { id: 'copy-cwd', label: t('actions.cwd'), onSelect: () => void copy(thread.cwd) },
+      ],
+    },
+    { id: 'continuation', label: t('actions.forkAndHandover'), icon: IconHand, submenu: [
+      ...(agents.find((a) => a.id === thread.agent)?.capabilities.fork
+        ? [{ id: 'fork', label: t('sidebar.fork'), icon: IconFork, disabled: forkBlocked(thread) !== null, onSelect: () => run('fork', thread) }]
+        : []),
+      { id: 'handover', label: t('handover.title'), icon: IconHand, onSelect: () => setDialog({ kind: 'handover', thread }) },
+      ...(chainOf(thread) ? [{ id: 'chain', label: t('handover.trail.title'), icon: IconHandover, onSelect: () => setDialog({ kind: 'chain', thread }) }] : []),
+    ] },
+    // A phone reaches the trace from the overview instead, so the bar keeps no button of its own.
+    ...(onOpenTrace ? [{ id: 'trace', label: t('trace.openTrace'), icon: IconTrace, onSelect: onOpenTrace }] : []),
+  ];
 
   const sectionItems = (section: Section): MenuEntry[] => [
     { id: 'rename', label: t('actions.renameSection'), icon: IconEdit, onSelect: () => setDialog({ kind: 'rename-section', section }) },
@@ -463,8 +473,9 @@ export function useThreadActions(deps: Deps) {
           label={'thread' in menu ? menu.thread.title : menu.section.name}
           x={menu.x}
           y={menu.y}
-          items={'thread' in menu ? threadItems(menu.thread) : sectionItems(menu.section)}
-          header={api && 'thread' in menu && agents.some(agent => agent.id === menu.thread.agent && !agent.hidden && agent.capabilities.quota)
+          items={'thread' in menu ? (menu.where === 'list' ? listItems(menu.thread) : pageItems(menu.thread)) : sectionItems(menu.section)}
+          // The quota belongs to the conversation being read, not to a row in the list.
+          header={api && menu.where === 'page' && 'thread' in menu && agents.some(agent => agent.id === menu.thread.agent && !agent.hidden && agent.capabilities.quota)
             ? <ChatQuotaMenu api={api} agent={menu.thread.agent} label={agents.find(agent => agent.id === menu.thread.agent)!.label} close={() => setMenu(null)} /> : undefined}
           onClose={() => setMenu(null)}
         />
@@ -474,8 +485,10 @@ export function useThreadActions(deps: Deps) {
   );
 
   return {
-    openThreadMenu: (thread: Thread, x: number, y: number) => setMenu({ thread, x, y }),
-    openSectionMenu: (section: Section, x: number, y: number) => setMenu({ section, x, y }),
+    openThreadMenu: (thread: Thread, x: number, y: number) => setMenu({ thread, x, y, where: 'list' }),
+    /** Opens the open thread's own "…": the conversation's tools, without the list's management. */
+    openPageMenu: (thread: Thread, x: number, y: number) => setMenu({ thread, x, y, where: 'page' }),
+    openSectionMenu: (section: Section, x: number, y: number) => setMenu({ section, x, y, where: 'list' }),
     copyConversation: (thread: Thread) => void copy(markdownOf(thread)),
     newSection: () => setDialog({ kind: 'new-section', thread: null }),
     /** Opens the handover, to pick who takes over or copy what it says. */

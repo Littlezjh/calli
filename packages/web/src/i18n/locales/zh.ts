@@ -3,7 +3,6 @@
  * a key added here has to be added to them too. Messages with values are functions.
  */
 export const zh = {
-  'actions.organizeThread': '整理线程',
   'actions.forkAndHandover': '分叉与交接',
   'quota.menuLowCount': (count: number) => `${count} 项偏低`,
   'quota.menuCached': '刷新失败 · 旧值',
@@ -1898,12 +1897,12 @@ export const zh = {
   'actions.copyFailed': '复制失败，请手动选中文字复制',
   'actions.terminal': '打开终端',
   'actions.rename': '重命名',
+  'actions.markRead': '标记为已读',
+  'actions.markUnread': '标记为未读',
   'actions.autotitle': '重新取名',
   'actions.autotitling': '正在取名…',
   'actions.unpin': '取消置顶',
   'actions.pin': '置顶',
-  'actions.markRead': '标记为已读',
-  'actions.markUnread': '标记为未读',
   'actions.moveToSection': '移到分区',
   'actions.unfile': '移出分区',
   'actions.newSection': '新建分区…',
