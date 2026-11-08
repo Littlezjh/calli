@@ -1018,6 +1018,12 @@ export const ja: Messages = {
   'sheet.plan.rejectHint': '修正点を伝えて差し戻す',
   'sheet.approval.aria': '権限の承認',
   'sheet.approval.label': '承認が必要です',
+  'sheet.approval.commandTitle': 'コマンドの実行',
+  'sheet.approval.defaultTitle': 'この操作を承認しますか？',
+  'sheet.approval.commandDetail': '操作内容の全文',
+  'sheet.approval.submitting': '送信中',
+  'sheet.approval.timeout': '送信がタイムアウトしました。接続を確認して再試行してください。',
+  'sheet.approval.syncError': '判断は送信されましたが、状態を同期できませんでした。再試行して結果を確認してください。',
   'sheet.approval.viewChanges': '変更を見る',
   'sheet.approval.reject': '拒否',
   // The daemon words "always allow" scopes with this prefix, which the row need not repeat.

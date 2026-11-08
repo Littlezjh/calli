@@ -273,6 +273,7 @@ export { HttpError };
 
 interface PendingApproval {
   threadId: string;
+  turnId: string;
   /** The option ids the agent offered. Anything else is refused instead of being passed on. */
   optionIds: string[];
   resolve(decision: ApprovalDecision): void;
@@ -334,6 +335,8 @@ export class ThreadManager {
   /** Whether an enabled extension holds `progress.report`. Wired by the daemon's entry point. */
   progressWanted: () => boolean = () => false;
   private readonly approvals = new Map<string, PendingApproval>();
+  /** Approval hooks are retired before terminal events or cancellation can reenter listeners. */
+  private readonly approvalTurns = new Map<string, string>();
   private readonly listeners = new Set<Listener>();
   /** Agent sessions being imported right now, so the same one is not imported twice in parallel. */
   private readonly importing = new Set<string>();
@@ -2760,9 +2763,7 @@ export class ThreadManager {
     const run = this.running.get(threadId);
     if (run) run.cancelRequested = true;
     this.inputs.cancel(threadId, undefined, true);
-    for (const [approvalId, p] of this.approvals) {
-      if (p.threadId === threadId) this.resolveApproval(approvalId, { cancelled: true });
-    }
+    this.cancelApprovals(threadId);
     const session = this.sessions.get(threadId);
     if (session) await session.cancel();
   }
@@ -2781,6 +2782,17 @@ export class ThreadManager {
     this.approvals.delete(approvalId);
     p.resolve(decision);
     return true;
+  }
+
+  private cancelApprovals(threadId: string, turnId?: string): void {
+    for (const [id, thread] of this.approvalTurns) {
+      if (thread === threadId && (turnId === undefined || id === turnId)) this.approvalTurns.delete(id);
+    }
+    for (const [id, approval] of this.approvals) {
+      if (approval.threadId === threadId && (turnId === undefined || approval.turnId === turnId)) {
+        this.resolveApproval(id, { cancelled: true });
+      }
+    }
   }
 
   /** Closes live agent processes. Threads and events stay in the store. */
@@ -2846,6 +2858,7 @@ export class ThreadManager {
       this.emitThreadEvent(thread.id, turnId, 'turn.error', { message, ...(exhausted ? { code: 'plan_exhausted' } : {}) });
       await this.dropSession(thread.id);
     } finally {
+      this.cancelApprovals(thread.id, turnId);
       this.quietTurns.delete(turnId);
       this.reportTurns.delete(turnId);
       if (!this.nativeTurns.get(thread.id)?.size) this.inputs.cancel(thread.id, undefined, true);
@@ -3153,13 +3166,13 @@ export class ThreadManager {
           for (const resolve of waiters ?? []) resolve();
         }
         if (!this.store.getThread(thread.id)) return;
+        this.cancelApprovals(thread.id, turnId);
         this.emitThreadEvent(thread.id, turnId, result.stopReason === 'error' ? 'turn.error' : 'turn.done',
           result.stopReason === 'error' ? { message: result.error ?? 'agent error' } : { stopReason: result.stopReason });
         if (this.running.get(thread.id)?.turnId === turnId) {
           this.running.delete(thread.id);
           this.clearModelQueue(thread.id, turnId);
           this.inputs.cancel(thread.id, undefined, true);
-          for (const [id, approval] of this.approvals) if (approval.threadId === thread.id) this.resolveApproval(id, { cancelled: true });
           this.store.updateThread(thread.id, { status: result.stopReason === 'error' ? 'error' : 'idle', ...(result.stopReason !== 'cancelled' && (result.stopReason === 'error' || !this.quietTurns.has(turnId)) ? { unread: true } : {}) }, { touch: true });
           this.quietTurns.delete(turnId);
           this.emitThreadEvent(thread.id, null, 'thread.updated', {});
@@ -3272,6 +3285,7 @@ export class ThreadManager {
   }
 
   private hooksFor(threadId: string, turnId: string): TurnHooks {
+    this.approvalTurns.set(turnId, threadId);
     const started = performance.now();
     let previousPhase = started;
     return {
@@ -3295,21 +3309,25 @@ export class ThreadManager {
         ? Promise.resolve({ cancelled: true }) : this.inputs.request(threadId, turnId, req),
       cancelInput: id => this.inputs.cancel(threadId, id, true),
       requestApproval: (req: ApprovalRequest) => {
+        const run = this.running.get(threadId);
+        const native = [...(this.nativeTurns.get(threadId)?.values() ?? [])].includes(turnId);
+        if (this.approvalTurns.get(turnId) !== threadId || run?.cancelRequested || (run?.turnId !== turnId && !native)) return Promise.resolve({ cancelled: true });
         const approvalId = randomUUID();
-        this.emitThreadEvent(threadId, turnId, 'approval.request', {
-          approvalId,
-          title: req.title,
-          options: req.options,
-          toolCall: req.toolCall,
-        });
         return new Promise<ApprovalDecision>((resolve) => {
           this.approvals.set(approvalId, {
             threadId,
+            turnId,
             optionIds: req.options.map((o) => o.optionId),
             resolve: (decision) => {
               this.emitThreadEvent(threadId, turnId, 'approval.resolved', { approvalId, decision });
               resolve(decision);
             },
+          });
+          this.emitThreadEvent(threadId, turnId, 'approval.request', {
+            approvalId,
+            title: req.title,
+            options: req.options,
+            toolCall: req.toolCall,
           });
         });
       },
@@ -3317,6 +3335,7 @@ export class ThreadManager {
   }
 
   private emitThreadEvent(threadId: string, turnId: string | null, type: EventType, data: Record<string, unknown>): void {
+    if (turnId && (type === 'turn.done' || type === 'turn.error')) this.approvalTurns.delete(turnId);
     if (type === 'turn.done' && turnId && this.quietTurns.has(turnId) && data.stopReason !== 'cancelled') data = { ...data, quiet: true };
     if (type === 'turn.started') {
       if (!data.control) this.injections.started(threadId, String(data.text ?? ''));

@@ -139,9 +139,23 @@ const sessionInfo = () => ({
           ]),
   ],
 });
-const awaitingPermission = new Map(); // request id -> prompt id
+const awaitingPermission = new Map(); // request id -> { promptId, scenario?, ended? }
 
 const update = (u) => out({ jsonrpc: '2.0', method: 'session/update', params: { sessionId, update: u } });
+
+// Lifecycle probes keep the permission unanswered while the prompt stops or the process exits.
+const lifecyclePermission = (promptId, scenario) => {
+  const id = nextAgentRequestId++;
+  awaitingPermission.set(id, { promptId, scenario, ended: scenario !== 'after-cancel' });
+  out({
+    jsonrpc: '2.0', id, method: 'session/request_permission',
+    params: {
+      sessionId,
+      toolCall: { toolCallId: `lifecycle-${scenario}`, title: 'Run lifecycle probe', kind: 'execute', rawInput: { command: 'APPROVAL_LIFECYCLE_SECRET' } },
+      options: [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }, { optionId: 'reject', name: 'Reject', kind: 'reject_once' }],
+    },
+  });
+};
 
 rl.on('line', (line) => {
   const msg = JSON.parse(line);
@@ -160,13 +174,23 @@ rl.on('line', (line) => {
       out({ jsonrpc: '2.0', id: input.prompt, result: { stopReason: 'end_turn' } });
       pendingPrompt = null; return;
     }
-    const promptId = awaitingPermission.get(msg.id);
-    if (promptId === undefined) return;
+    const permission = awaitingPermission.get(msg.id);
+    if (permission === undefined) return;
     awaitingPermission.delete(msg.id);
     const outcome = msg.result?.outcome;
+    if (permission.scenario) {
+      // Record the native reply without sending updates that would start background work.
+      if (process.env.FAKE_ACP_PERMISSION_LOG) appendFileSync(process.env.FAKE_ACP_PERMISSION_LOG, JSON.stringify({ scenario: permission.scenario, outcome }) + '\n');
+      if (!permission.ended) {
+        update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `permission:${outcome?.outcome}` } });
+        out({ jsonrpc: '2.0', id: permission.promptId, result: { stopReason: 'cancelled' } });
+        pendingPrompt = null;
+      }
+      return;
+    }
     const text = outcome?.outcome === 'selected' ? `approved:${outcome.optionId}` : 'denied';
     update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });
-    out({ jsonrpc: '2.0', id: promptId, result: { stopReason: 'end_turn' } });
+    out({ jsonrpc: '2.0', id: permission.promptId, result: { stopReason: 'end_turn' } });
     pendingPrompt = null;
     return;
   }
@@ -301,6 +325,11 @@ rl.on('line', (line) => {
     case 'session/cancel':
       // Interrupting work the agent started itself: it stops without a final cost report.
       clearTimeout(backgroundWork);
+      if (pendingPrompt?.permissionOnCancel) {
+        pendingPrompt.permissionOnCancel = false;
+        lifecyclePermission(pendingPrompt.id, 'after-cancel');
+        return;
+      }
       if (pendingPrompt) {
         out({ jsonrpc: '2.0', id: pendingPrompt.id, result: { stopReason: 'cancelled' } });
         pendingPrompt = null;
@@ -318,6 +347,23 @@ rl.on('line', (line) => {
       recordSession(dsh ? 'dsh' : traex ? 'traex' : 'claude', msg.params.sessionId);
       const blocks = msg.params.prompt;
       const text = blocks.filter((p) => p.type === 'text').map((p) => p.text).join('');
+      const lifecycle = text.match(/approval lifecycle (after-cancel|error|end|exit)/)?.[1];
+      if (lifecycle) {
+        if (lifecycle === 'after-cancel') {
+          pendingPrompt = { id: msg.id, permissionOnCancel: true };
+          update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'waiting-for-cancel' } });
+          return;
+        }
+        // Deliver the request before its terminal reply, without relying on sleeps.
+        lifecyclePermission(msg.id, lifecycle);
+        if (lifecycle === 'exit') {
+          process.stdout.write('', () => process.exit(9));
+          return;
+        }
+        return out(lifecycle === 'error'
+          ? { jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: 'fixture prompt failed with pending permission' } }
+          : { jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });
+      }
       // A naming request from 自动取名: a title wrapped the way real agents sometimes answer, with an
       // emoji only when the rules ask for one. `slow name` keeps it waiting until cancelled;
       // `later name` answers after a moment, so a test can act while the naming agent thinks.
@@ -514,7 +560,7 @@ rl.on('line', (line) => {
       }
       if (text.includes('approve') && (dsh || (currentMode !== 'bypassPermissions' && currentMode !== 'bypass_permissions'))) {
         const reqId = nextAgentRequestId++;
-        awaitingPermission.set(reqId, msg.id);
+        awaitingPermission.set(reqId, { promptId: msg.id });
         pendingPrompt = { id: msg.id };
         // dsh offers one-shot choices and its toolCall names only the call id: the approval card
         // then has to borrow what the tool's own update showed.

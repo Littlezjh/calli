@@ -365,7 +365,9 @@ const runTurn = (text, turnId, done) => {
   }
   if ((text.includes('approve') || text.includes('deny')) && currentApproval !== 'never') {
     const id = 'exec-2';
-    const command = 'rm -rf /tmp/one/build';
+    const command = text.includes('long-approve')
+      ? `python3 - <<'PY'\n${Array.from({ length: 60 }, (_, i) => `print("permission detail ${i + 1}")`).join('\n')}\nPY\n# command end`
+      : 'rm -rf /tmp/one/build';
     notify('item/started', { turnId, item: { type: 'commandExecution', id, command, cwd: '/tmp/one', status: 'inProgress' } });
     const requestId = nextServerRequestId++;
     const available = text.includes('deny')

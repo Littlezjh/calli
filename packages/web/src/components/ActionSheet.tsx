@@ -1,8 +1,9 @@
-import { useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { t } from '../i18n';
 import type { UserInputAnswer, UserQuestion } from '../api';
 import { shortenPaths } from '../paths';
 import type { Item } from '../timeline';
+import { approvalContent } from '../approval';
 import { DiffView, optionLabel, Stats } from './ThreadView';
 import { IconArrowLeft, IconArrowUp, IconCheck, IconChevron, IconEdit } from './icons';
 
@@ -21,7 +22,7 @@ interface Props {
   /** Every spelling of the thread's directory, so paths can be shown relative to it. */
   roots: string[];
   onAnswer: (id: string, answer: UserInputAnswer) => Promise<void> | void;
-  onDecide: (approvalId: string, optionId: string | null) => void;
+  onDecide: (approvalId: string, optionId: string | null) => Promise<void> | void;
   /** Goes ahead with the plan: sends the go-ahead message, in execute mode. Missing while a turn runs. */
   onExecutePlan?: () => Promise<void> | void;
   /** Sends the plan back with what must change, putting the thread in plan mode again. */
@@ -371,60 +372,84 @@ function HubPlanSheet({ onExecutePlan, onRejectPlan, onSkipPlan }: Pick<Props, '
 /** A command or file change the agent wants to run past the user first. */
 function ApprovalSheet({ item, roots, onDecide }: { item: Extract<Item, { kind: 'approval' }>; roots: string[]; onDecide: Props['onDecide'] }) {
   const [showDiff, setShowDiff] = useState(false);
-  const reject = item.options.find((o) => o.kind.startsWith('reject'));
-  let primaryUsed = false;
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const submitting = useRef(false);
+  const reject = item.options.find((o) => o.kind === 'reject_once') ?? item.options.find((o) => o.kind.startsWith('reject'));
+  const primary = item.options.find((o) => o.kind === 'allow_once');
+  const content = approvalContent(item.title, item.command, t('sheet.approval.commandTitle'), t('sheet.approval.defaultTitle'));
+  const submit = async (optionId: string | null) => {
+    if (submitting.current) return;
+    submitting.current = true;
+    setBusy(true);
+    setError('');
+    try {
+      await onDecide(item.approvalId, optionId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      submitting.current = false;
+      setBusy(false);
+    }
+  };
   return (
-    <Sheet ariaLabel={t('sheet.approval.aria')} label={t('sheet.approval.label')} title={shortenPaths(item.title, roots)}>
-      {item.command && <pre className="sheet-command">{item.command}</pre>}
-      {item.diffs.length > 0 && (
-        <div className="sheet-files">
-          {item.diffs.map((diff) => (
-            <div key={diff.path} className="sheet-file" title={diff.path}>
-              <span className="sheet-file-path">{shortenPaths(diff.path, roots)}</span>
-              <Stats added={diff.added} removed={diff.removed} />
-            </div>
-          ))}
-          <button type="button" className="sheet-diff-toggle" aria-expanded={showDiff} onClick={() => setShowDiff((v) => !v)}>
-            {t('sheet.approval.viewChanges')}
-            <IconChevron size={13} open={showDiff} />
-          </button>
-          {showDiff && (
-            <div className="sheet-diff">
-              <DiffView diffs={item.diffs} />
+    <div className="approval-sheet">
+      <Sheet ariaLabel={t('sheet.approval.aria')} label={t('sheet.approval.label')} title={shortenPaths(content.title, roots)}>
+        <div className="sheet-approval-body">
+          {content.detail !== null && (
+            <pre className="sheet-command" tabIndex={0} aria-label={t('sheet.approval.commandDetail')}>{content.detail}</pre>
+          )}
+          {item.diffs.length > 0 && (
+            <div className="sheet-files">
+              {item.diffs.map((diff) => (
+                <div key={diff.path} className="sheet-file" title={diff.path}>
+                  <span className="sheet-file-path">{shortenPaths(diff.path, roots)}</span>
+                  <Stats added={diff.added} removed={diff.removed} />
+                </div>
+              ))}
+              <button type="button" className="sheet-diff-toggle" aria-expanded={showDiff} onClick={() => setShowDiff((v) => !v)}>
+                {t('sheet.approval.viewChanges')}
+                <IconChevron size={13} open={showDiff} />
+              </button>
+              {showDiff && (
+                <div className="sheet-diff">
+                  <DiffView diffs={item.diffs} />
+                </div>
+              )}
             </div>
           )}
+          <div className="sheet-options">
+            {item.options.filter((o) => o !== primary && o !== reject).map((o) => (
+              <OptionRow
+                key={o.optionId}
+                name={optionLabel(o)}
+                // The agent's own wording carries the scope of persistent permission.
+                description={o.kind === 'allow_always' && o.name.startsWith(t('sheet.approval.allowPrefix'))
+                  ? o.name.slice(t('sheet.approval.allowPrefix').length)
+                  : o.kind === 'allow_always' ? o.name : undefined}
+                disabled={busy}
+                onClick={() => void submit(o.optionId)}
+              />
+            ))}
+          </div>
         </div>
-      )}
-      <div className="sheet-options">
-        {item.options.map((o) => {
-          const primary = o.kind === 'allow_once' && !primaryUsed;
-          if (primary) primaryUsed = true;
-          return (
-            <OptionRow
-              key={o.optionId}
-              name={optionLabel(o)}
-              // "Always allow" means a different thing each time (this file, this command): the
-              // option's own wording says which, without repeating what the row is called.
-              description={o.kind === 'allow_always' && o.name.startsWith(t('sheet.approval.allowPrefix'))
-                ? o.name.slice(t('sheet.approval.allowPrefix').length)
-                : o.kind === 'allow_always' ? o.name : undefined}
-              emphasised={primary}
-              onClick={() => onDecide(item.approvalId, o.optionId)}
-            />
-          );
-        })}
-      </div>
-      <div className="sheet-bottom">
-        <span className="sheet-note" />
-        <button
-          type="button"
-          className="ghost sheet-skip"
-          onClick={() => onDecide(item.approvalId, reject ? reject.optionId : null)}
-        >
-          {t('sheet.approval.reject')}
-        </button>
-      </div>
-    </Sheet>
+        <div className="sheet-approval-footer" aria-busy={busy}>
+          <div className="sheet-approval-actions">
+            <span className="sheet-approval-status" role="status">
+              {busy && <><span className="spinner" aria-hidden="true" />{t('sheet.approval.submitting')}</>}
+            </span>
+            <button type="button" className="ghost" disabled={busy} onClick={() => void submit(reject?.optionId ?? null)}>
+              {reject ? optionLabel(reject) : t('sheet.approval.reject')}
+            </button>
+            {primary && (
+              <button type="button" className="primary" disabled={busy} onClick={() => void submit(primary.optionId)}>
+                {optionLabel(primary)}
+              </button>
+            )}
+          </div>
+          {error && <SheetError error={error} />}
+        </div>
+      </Sheet>
+    </div>
   );
 }
 

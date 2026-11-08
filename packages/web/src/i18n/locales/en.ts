@@ -1020,6 +1020,12 @@ export const en: Messages = {
   'sheet.plan.rejectHint': 'Reject and say what to change',
   'sheet.approval.aria': 'Permission approval',
   'sheet.approval.label': 'Needs your approval',
+  'sheet.approval.commandTitle': 'Run command',
+  'sheet.approval.defaultTitle': 'Approve this operation?',
+  'sheet.approval.commandDetail': 'Full operation details',
+  'sheet.approval.submitting': 'Sending',
+  'sheet.approval.timeout': 'The request timed out. Check your connection and try again.',
+  'sheet.approval.syncError': 'Your decision was sent, but the status could not sync. Retry to check the result.',
   'sheet.approval.viewChanges': 'View changes',
   'sheet.approval.reject': 'Reject',
   // The daemon words "always allow" scopes with this prefix, which the row need not repeat.

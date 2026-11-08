@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../../daemon/src/store';
 import { buildTimeline, hydrateHistoryFiles, liveWorkFromEvents, type Item, type StoredEvent } from '../src/timeline';
-import { historyPage, hydrateWork, mergeHistory, watchHistory, type HistoryPage } from '../src/history';
+import { historyPage, hydrateWork, mergeHistory, mergeHistoryPage, refreshHistoryPage, watchHistory, type HistoryPage } from '../src/history';
 import type { EventType } from '../../daemon/src/events';
 import type { Api } from '../src/api';
 
@@ -107,6 +107,41 @@ test('reconnect replaces existing turns without deleting earlier pages or a newe
   const events = [event(1,'old'), event(4,'a'), event(8,'new')];
   const reset = { ...event(7,''), type: 'history.reset', data: { turns: ['a'], events: [event(2,'a'),event(7,'a')] } };
   assert.deepEqual(mergeHistory(events,[reset]).map(e => e.seq), [1,2,7,8]);
+});
+
+test('decision recovery replaces stale approval state without dropping older pages or newer events', () => {
+  const event = (seq: number, turnId: string, type: string, data: Record<string, unknown>): StoredEvent => ({ threadId: 'th', seq, turnId, type, data, ts: '' });
+  const request = event(4, 'active', 'approval.request', { approvalId: 'approval-1', title: 'Run', options: [], toolCall: { rawInput: { command: 'long command' } } });
+  const previous = [event(1, 'old', 'turn.started', { text: 'old' }), request, event(9, 'new', 'turn.started', { text: 'newer live turn' })];
+  const page = { events: [event(3, 'active', 'turn.started', { text: 'current' }), { ...request, data: { ...request.data, toolCall: undefined } },
+    event(7, 'active', 'approval.resolved', { approvalId: 'approval-1', decision: { cancelled: true } })], snapshotSeq: 8, nextCursor: 3, hasOlder: true };
+  const merged = mergeHistoryPage(previous, page);
+  assert.deepEqual(merged.map(event => event.seq), [1, 3, 4, 7, 9]);
+  const approval = buildTimeline(merged).items.find(item => item.kind === 'approval');
+  assert.ok(approval?.kind === 'approval');
+  assert.deepEqual(approval.decision, { cancelled: true });
+  assert.equal(approval.command, null, 'obsolete command payload is not retained');
+});
+
+test('decision recovery bypasses cached pages and refreshes the compact page cache', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout'] });
+  let calls = 0;
+  let signal: AbortSignal | undefined;
+  const api = {
+    demo: false,
+    historyPage: async (_id: string, _before?: number, _after?: number, chain?: boolean, requestSignal?: AbortSignal): Promise<HistoryPage> => {
+      assert.equal(chain, true);
+      signal = requestSignal;
+      return { events: [pageEvent('th', ++calls)], snapshotSeq: calls, nextCursor: null, hasOlder: false };
+    },
+  } as unknown as Api;
+  await historyPage(api, 'th', undefined, undefined, true);
+  const fresh = await refreshHistoryPage(api, 'th', true);
+  assert.equal(fresh.snapshotSeq, 2);
+  context.mock.timers.tick(20_000);
+  assert.equal(signal?.aborted, false, 'the completed refresh clears its timer');
+  assert.equal((await historyPage(api, 'th', undefined, undefined, true)).snapshotSeq, 2);
+  assert.equal(calls, 2);
 });
 
 test('reset keeps already received work visible while lazy details reload', async () => {

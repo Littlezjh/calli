@@ -10582,9 +10582,77 @@ button.coord-row-name { cursor: pointer; }
   overflow-wrap: anywhere;
 }
 
-/* The command an approval is about, or the files it would change. */
+/* The decision stays reachable; only the operation and secondary options scroll. */
+.approval-sheet .action-sheet-card {
+  display: flex;
+  flex-direction: column;
+  max-height: min(560px, calc(var(--vvh, 100dvh) - 96px - var(--safe-bottom)));
+  border-radius: var(--radius-lg);
+}
+
+.approval-sheet .sheet-head,
+.approval-sheet .sheet-title,
+.sheet-approval-footer {
+  flex: none;
+}
+
+.sheet-approval-body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.sheet-approval-footer {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.sheet-approval-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.sheet-approval-actions > button {
+  flex: none;
+  min-height: 40px;
+}
+
+.sheet-approval-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.sheet-approval-status .spinner {
+  width: 12px;
+  height: 12px;
+  border-width: 1.5px;
+}
+
+.sheet-approval-footer .sheet-error {
+  max-height: 4.5em;
+  overflow-y: auto;
+}
+
+@media (max-width: 640px) {
+  .approval-sheet .action-sheet-card {
+    padding: 14px 16px;
+  }
+
+  .sheet-approval-status {
+    font-size: 11px;
+  }
+}
+
+/* Full executable text is decision-critical: readable, never elided, keyboard-scrollable. */
 .sheet-command {
-  max-height: 7.5em;
+  max-height: min(180px, calc(var(--vvh, 100dvh) * 0.28));
   margin: 8px 0 0;
   padding: 9px 12px;
   border-radius: var(--radius-sm);
@@ -10595,6 +10663,7 @@ button.coord-row-name { cursor: pointer; }
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .sheet-files {

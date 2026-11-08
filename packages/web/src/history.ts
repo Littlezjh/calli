@@ -149,6 +149,30 @@ export async function historyPage(api: Api, id: string, before?: number, after?:
   return page;
 }
 
+/** A decision response may arrive without its SSE event. Read a fresh, bounded summary, not raw history. */
+export async function refreshHistoryPage(api: Api, id: string, chain = false): Promise<HistoryPage> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const page = await api.historyPage(id, undefined, undefined, chain, controller.signal);
+    forgetThreadPages(api, id);
+    rememberPage(api, id, page, undefined, undefined, chain);
+    return page;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Refresh only the summary's covered turns; preserve older pages and events newer than the read. */
+export function mergeHistoryPage(previous: StoredEvent[], page: HistoryPage): StoredEvent[] {
+  const threadId = page.events[0]?.threadId;
+  if (!threadId) return previous;
+  return mergeHistory(previous, [{
+    threadId, turnId: null, type: 'history.reset', ts: '', seq: page.snapshotSeq,
+    data: { turns: [...new Set(page.events.map(event => event.turnId).filter(Boolean))], events: page.events },
+  }]);
+}
+
 /** All conversation surfaces share snapshot/stream ordering and batched delivery. */
 export async function watchHistory(api: Api, id: string, signal: AbortSignal, callbacks: {
   page: (page: HistoryPage) => void;

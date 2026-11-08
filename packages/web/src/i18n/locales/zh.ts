@@ -1020,6 +1020,12 @@ export const zh = {
   'sheet.plan.rejectHint': '拒绝并说明修改要求',
   'sheet.approval.aria': '权限审批',
   'sheet.approval.label': '需要你的批准',
+  'sheet.approval.commandTitle': '运行命令',
+  'sheet.approval.defaultTitle': '批准此操作？',
+  'sheet.approval.commandDetail': '完整操作内容',
+  'sheet.approval.submitting': '提交中',
+  'sheet.approval.timeout': '提交超时，请检查连接后重试。',
+  'sheet.approval.syncError': '决定已提交，但状态同步失败；请重试以核对结果。',
   'sheet.approval.viewChanges': '查看改动',
   'sheet.approval.reject': '拒绝',
   // The daemon words "always allow" scopes with this prefix, which the row need not repeat.

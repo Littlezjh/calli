@@ -6,7 +6,7 @@ import { GeneralSettingsDialog } from './components/GeneralSettingsDialog';
 import { AutoHandoverNotice, HandoverSettingsDialog } from './components/AutoHandover';
 import { useWorkSources, WorkSummary } from './extensions/work';
 import { HostIcon } from './extensions/ui';
-import { historyPage, mergeHistory, watchHistory } from './history';
+import { historyPage, mergeHistory, mergeHistoryPage, refreshHistoryPage, watchHistory } from './history';
 import type { WorkMode, WritingStage } from './api';
 import { forkBlocked, useThreadActions } from './components/ThreadActions';import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ComponentProps, type ReactNode } from 'react';
 import type { Theme } from './appearance';
@@ -1293,6 +1293,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   // The thread on screen, for answers that arrive after the user has moved on.
   const shownThread = useRef<string | null>(null);
   shownThread.current = selectedId;
+  const shownApi = useRef(api);
+  shownApi.current = api;
   // Whether the user has a hand on the scroller, and when they last did.
   const gesture = useRef({ held: false, at: 0 });
 
@@ -2072,9 +2074,30 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     if (selectedId) api.sendQueuedNow(selectedId, queuedId).then(refreshThreads).catch(handleError);
   };
 
-  const decide = (approvalId: string, optionId: string | null) => {
+  const decide = async (approvalId: string, optionId: string | null) => {
+    const id = selectedId;
     const body = optionId === null ? { cancel: true as const } : { optionId };
-    api.decide(approvalId, body).catch(handleError);
+    const reconcile = async () => {
+      if (!id || api.demo) return false;
+      const page = await refreshHistoryPage(api, id, mergedHandover);
+      if (shownThread.current === id && shownApi.current === api) {
+        setEvents(previous => shownThread.current === id && shownApi.current === api ? mergeHistoryPage(previous, page) : previous);
+        setHistoryRevision(revision => Math.max(revision, page.snapshotSeq));
+      }
+      return page.events.some(ev => ev.type === 'approval.resolved' && ev.data.approvalId === approvalId);
+    };
+    try {
+      await api.decide(approvalId, body);
+    } catch (e) {
+      // A timeout or another tab's decision is ambiguous: trust the server's summary, not a guess.
+      if (!(e instanceof DemoError || e instanceof AuthError || e instanceof ApiError && e.details.code === 'host_offline')) {
+        if (await reconcile().catch(() => false)) return;
+      }
+      // Keep ordinary submission errors beside the decision, not in a second global banner.
+      if (e instanceof DemoError || e instanceof AuthError || e instanceof ApiError && e.details.code === 'host_offline') handleError(e);
+      throw e;
+    }
+    if (!api.demo && !await reconcile().catch(() => false)) throw new Error(t('sheet.approval.syncError'));
   };
 
   const pick = (id: string) => navigate(() => {

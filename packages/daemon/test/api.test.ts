@@ -53,6 +53,7 @@ before(async () => {
   dataDir = mkdtempSync(join(tmpdir(), 'calli-test-data-'));
   // The fake ACP agent appends the ids it is asked to delete to this file.
   process.env.FAKE_ACP_DELETE_LOG = join(dataDir, 'acp-deleted.log');
+  process.env.FAKE_ACP_PERMISSION_LOG = join(dataDir, 'acp-permissions.jsonl');
   // Sessions the fake agents claim to have already. Tests fill these in; they start out empty.
   process.env.FAKE_ACP_SESSIONS_FILE = join(dataDir, 'acp-sessions.json');
   process.env.PI_CODING_AGENT_DIR = join(dataDir, 'pi-agent');
@@ -1670,6 +1671,51 @@ test('waiting: a thread says when its agent is waiting for approval, in the list
   assert.equal(after.waiting, false);
   assert.equal(after.waitingReason, null);
 });
+
+const permissionOutcomes = () => {
+  const file = process.env.FAKE_ACP_PERMISSION_LOG!;
+  return existsSync(file) ? readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line) as { scenario: string; outcome: { outcome: string } }) : [];
+};
+
+test('approval lifecycle: a permission arriving after cancel cannot reopen a stopped turn', { timeout: 5000 }, async () => {
+  const thread = await newThread({ agent: 'claude', permissionMode: 'ask' });
+  await post(`/api/threads/${thread.id}/turns`, { text: 'approval lifecycle after-cancel' });
+  await waitFor(async () => (await events(thread.id)).find(e => e.type === 'message.delta' && e.data.text === 'waiting-for-cancel'));
+  assert.equal((await post(`/api/threads/${thread.id}/cancel`)).status, 200);
+  const view = await untilIdle(thread.id);
+  assert.deepEqual([view.status, view.waiting, view.waitingReason], ['idle', false, null]);
+  const list = await events(thread.id);
+  assert.equal(list.filter(e => e.type === 'approval.request').length, 0);
+  assert.ok(list.some(e => e.type === 'turn.done' && e.data.stopReason === 'cancelled'));
+  const outcome = await waitFor(async () => permissionOutcomes().find(p => p.scenario === 'after-cancel'));
+  assert.equal(outcome.outcome.outcome, 'cancelled', 'the adapter answers the late native permission, letting cancellation finish');
+});
+
+for (const scenario of ['error', 'end', 'exit'] as const) {
+  test(`approval lifecycle: ${scenario} clears pending decisions and rejects obsolete approval ids`, { timeout: 5000 }, async () => {
+    const thread = await newThread({ agent: 'claude', permissionMode: 'ask' });
+    await post(`/api/threads/${thread.id}/turns`, { text: `approval lifecycle ${scenario}` });
+    const view = await untilIdle(thread.id);
+    assert.deepEqual([view.status, view.waiting, view.waitingReason], [scenario === 'end' ? 'idle' : 'error', false, null]);
+    const list = await events(thread.id);
+    const request = list.find(e => e.type === 'approval.request')!;
+    assert.ok(request, 'the permission is received before the turn ends');
+    const resolved = list.filter(e => e.type === 'approval.resolved' && e.data.approvalId === request.data.approvalId);
+    assert.equal(resolved.length, 1);
+    assert.deepEqual(resolved[0].data.decision, { cancelled: true });
+    assert.equal((await post(`/api/approvals/${request.data.approvalId}`, { optionId: 'allow' })).status, 404);
+    assert.equal((await post(`/api/approvals/${request.data.approvalId}`, { cancel: true })).status, 404);
+    const threads = (await (await api('/api/threads')).json()) as View[];
+    assert.deepEqual([threads.find(t => t.id === thread.id)?.waiting, threads.find(t => t.id === thread.id)?.waitingReason], [false, null]);
+    const history = await (await api(`/api/threads/${thread.id}/history`)).text();
+    assert.ok(history.includes(request.data.approvalId), 'the resolved decision remains in the conversation');
+    assert.equal(history.includes('APPROVAL_LIFECYCLE_SECRET'), false, 'obsolete decision payloads are no longer loaded into history');
+    if (scenario !== 'exit') {
+      const outcome = await waitFor(async () => permissionOutcomes().find(p => p.scenario === scenario));
+      assert.equal(outcome.outcome.outcome, 'cancelled', 'cleanup sends the native cancellation answer');
+    }
+  });
+}
 
 test('the thread-list stream reports approvals, so a waiting thread shows up without polling', async () => {
   const thread = await newThread({ agent: 'claude', permissionMode: 'ask' });

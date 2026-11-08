@@ -1030,16 +1030,17 @@ export class Api {
     return this.base + (this.host ? hostPath(this.host, path) : path);
   }
 
-  private request<T>(method: string, path: string, body?: unknown, opts: { keepalive?: boolean } = {}): Promise<T> {
+  private request<T>(method: string, path: string, body?: unknown, opts: { keepalive?: boolean; signal?: AbortSignal } = {}): Promise<T> {
     return this.send(method, this.url(path), body, opts);
   }
 
-  protected async send<T>(method: string, url: string, body?: unknown, opts: { keepalive?: boolean } = {}): Promise<T> {
+  protected async send<T>(method: string, url: string, body?: unknown, opts: { keepalive?: boolean; signal?: AbortSignal } = {}): Promise<T> {
     const res = await fetch(url, {
       method,
       headers: this.headers(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       body: body === undefined ? undefined : JSON.stringify(body),
       keepalive: opts.keepalive,
+      signal: opts.signal,
     });
     if (res.status === 401) throw new AuthError('unauthorized');
     if (res.status === 204) return undefined as T;
@@ -1252,12 +1253,12 @@ export class Api {
     return this.request('GET', `/api/threads/${id}/events?after=${after}`);
   }
 
-  historyPage(id: string, before?: number, after?: number, chain = false): Promise<HistoryPage> {
+  historyPage(id: string, before?: number, after?: number, chain = false, signal?: AbortSignal): Promise<HistoryPage> {
     const params = new URLSearchParams();
     if (before) params.set('before', String(before));
     if (after) params.set('after', String(after));
     if (chain) params.set('chain', '1');
-    return this.request('GET', `/api/threads/${id}/history${params.size ? `?${params}` : ''}`);
+    return this.request('GET', `/api/threads/${id}/history${params.size ? `?${params}` : ''}`, undefined, { signal });
   }
 
   historyHandover(id: string, full = false): Promise<{ source: { sourceId: string; agent: string; title: string }; turnId: string | null; reason: string | null; text?: string }> {
@@ -1503,8 +1504,17 @@ export class Api {
     return this.request('POST', `/api/threads/${threadId}/cancel`);
   }
 
-  decide(approvalId: string, decision: { optionId: string } | { cancel: true }): Promise<void> {
-    return this.request('POST', `/api/approvals/${approvalId}`, decision);
+  async decide(approvalId: string, decision: { optionId: string } | { cancel: true }): Promise<void> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15_000);
+    try {
+      await this.request('POST', `/api/approvals/${approvalId}`, decision, { signal: controller.signal });
+    } catch (e) {
+      if (controller.signal.aborted) throw new Error(t('sheet.approval.timeout'));
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   answerInput(id: string, answer: UserInputAnswer): Promise<void> {
