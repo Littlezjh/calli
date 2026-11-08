@@ -5,7 +5,7 @@ import { formatReset, quotaLeft, quotaLevel } from '../quota';
 import { useAgentQuota, useQuotaNavigation } from '../quota-reading';
 import { quotaStale } from './QuotaReadout';
 import { createPortal } from 'react-dom';
-import { IconClock, QuotaRing } from './icons';
+import { IconChevron, IconClock, QuotaRing } from './icons';
 
 
 /** Space between chips and before the "+N" chip, in px. Matches the gap in styles.css. */
@@ -77,7 +77,7 @@ export function AgentQuota({ api, agent }: { api: Api; agent: string }) {
   const [preview, setPreview] = useState(false);
   useEffect(() => { setPinned(false); setPreview(false); }, [api, agent]);
 
-  if (!quota?.windows.length) return <div className="agent-quota"><button type="button" className="agent-quota-note" disabled={loading} onClick={() => void reading.refresh()}>{loading ? t('quota.loading') : failed ? t('quota.unavailable') : t('quota.empty')}</button><QuotaActions reading={reading} agent={agent} /></div>;
+  if (!quota?.windows.length) return <QuotaEmpty reading={reading} agent={agent} pinned={pinned} setPinned={setPinned} />;
 
   const windows = windowsOf(quota);
   const stale = quotaStale(reading);
@@ -87,6 +87,29 @@ export function AgentQuota({ api, agent }: { api: Api; agent: string }) {
   const status = failed ? `${t('quota.cached')} · ${updated}` : loading ? `${t('quota.updating')} · ${updated}` : updated;
   return <QuotaView windows={windows} stale={stale} status={status} reading={reading} agent={agent}
     pinned={pinned} setPinned={setPinned} preview={preview} setPreview={setPreview} />;
+}
+
+/** Missing readings stay one line; explanations and actions appear only when requested. */
+function QuotaEmpty({ reading, agent, pinned, setPinned }: {
+  reading: ReturnType<typeof useAgentQuota>; agent: string; pinned: boolean; setPinned: (v: boolean) => void;
+}) {
+  const detailsId = useId();
+  const status = t(reading.loading ? 'quota.loading' : reading.error ? 'quota.unavailable' : 'quota.empty');
+  return <div className={`agent-quota agent-quota-empty${reading.error ? ' attention' : ''}`}
+    data-menu-disclosure={pinned ? 'open' : undefined}
+    onKeyDown={(e) => {
+      if (e.key === 'Escape' && pinned) { e.stopPropagation(); setPinned(false); }
+    }}>
+    <button type="button" className="agent-quota-note" aria-expanded={pinned}
+      aria-controls={pinned ? detailsId : undefined} aria-label={`${status} · ${t('quota.showDetails')}`}
+      title={status} aria-busy={reading.loading} onClick={() => setPinned(!pinned)}>
+      <span>{reading.error || reading.loading ? status : t('quota.notReported')}</span><IconChevron size={11} open={pinned} />
+    </button>
+    {pinned && <div id={detailsId}>
+      <div className="agent-quota-status">{status}</div>
+      <QuotaActions reading={reading} agent={agent} />
+    </div>}
+  </div>;
 }
 
 function QuotaView({ windows, stale, status, pinned, setPinned, preview, setPreview, reading, agent }: {

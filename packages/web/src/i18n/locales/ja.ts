@@ -1680,6 +1680,8 @@ export const ja: Messages = {
   'pickers.addAccount': (agent: string) => `${agent} · 追加するとこのアカウントを使います`,
   'pickers.contextUnknown': 'コンテキストの使用量はまだ取得していません。次の応答のあとに更新されます。',
   'pickers.contextUsage': 'コンテキストの使用量',
+  'pickers.contextUsagePercent': (percent: number) => `コンテキスト使用量 ${percent}% · 詳細を見る`,
+  'pickers.contextUsageUnknown': 'コンテキストの使用量は不明 · 詳細を見る',
   'pickers.contextHigh': '。もうすぐいっぱいです。エージェントが間もなく以前の内容を自動で圧縮する可能性があります。',
   'pickers.submitting': '送信中…',
   'pickers.compactQueued': '圧縮を予約済み',

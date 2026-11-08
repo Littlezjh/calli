@@ -248,6 +248,33 @@ test('fast controls accept older Hub catalogs without treating economy or unknow
   assert.equal(isFastSpeed({ id: 'custom-tier', label: 'Custom', isFast: true }), true);
 });
 
+test('context rings stay compact and distinguish unknown, empty and full usage in every locale', async () => {
+  const { createElement } = await import('react');
+  const { renderToStaticMarkup } = await import('react-dom/server');
+  const { UsageMeter } = await import('../src/components/Pickers.js');
+  try {
+    for (const locale of ['zh', 'en', 'ja'] as const) {
+      setLocale(locale);
+      for (const percent of [null, 0, 25, 80, 100]) {
+        const html = renderToStaticMarkup(createElement(UsageMeter, {
+          usage: percent === null ? null : { used: percent * 1000, size: 100000 },
+        }));
+        assert.match(html, /class="usage/);
+        assert.match(html, /aria-label="[^"]+"/);
+        assert.equal(html.includes(' high'), percent !== null && percent >= 80);
+        assert.equal(html.includes(' unknown'), percent === null);
+        assert.equal(html.includes('class="usage-fill"'), percent !== null && percent > 0);
+        if (percent !== null) {
+          assert.ok(html.includes(`${percent}%`), 'the accessible name includes the current proportion');
+          if (percent > 0) assert.ok(html.includes(`stroke-dasharray="${percent} 100"`));
+        }
+        assert.equal(html.includes('<span>'), false, 'only the ring takes toolbar space');
+        assert.equal(html.includes('context-compact'), false, 'details mount only when opened');
+      }
+    }
+  } finally { setLocale('zh'); }
+});
+
 test('a CLI without a native catalog exposes no model or effort picker, including member controls', async () => {
   const { createElement } = await import('react');
   const { renderToStaticMarkup } = await import('react-dom/server');

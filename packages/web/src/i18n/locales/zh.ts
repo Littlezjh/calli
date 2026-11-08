@@ -1682,6 +1682,8 @@ export const zh = {
   'pickers.addAccount': (agent: string) => `${agent} · 添加后用这个账号`,
   'pickers.contextUnknown': '暂未获取上下文用量，下一次响应后更新。',
   'pickers.contextUsage': '上下文用量',
+  'pickers.contextUsagePercent': (percent: number) => `上下文已用 ${percent}% · 查看详情`,
+  'pickers.contextUsageUnknown': '上下文用量未知 · 查看详情',
   'pickers.contextHigh': '。快满了，agent 可能很快会自动压缩前面的内容。',
   'pickers.submitting': '正在提交…',
   'pickers.compactQueued': '已排队压缩',

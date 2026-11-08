@@ -2414,9 +2414,9 @@ html.list-open body {
 .composer-bar > .pop:has(> .model-control-trigger) { min-width: 0; }
 .composer-bar .composer-permission { width: 40px; height: 40px; flex: none; }
 .composer-voice { flex: none; }
-.model-control-trigger.high, .model-control-trigger.high .model-trigger-name, .model-context.high .context-percent { color: var(--warn); }
-.model-control-trigger.high .gauge-fill { stroke: var(--warn); }
-.model-context { border-top: 1px solid var(--border); margin-top: 8px; padding: 8px 0; }
+.composer-bar > .pop:has(> .usage) { flex: none; }
+.pop-panel.anchored-pop.context-usage-panel { width: min(320px, calc(100vw - 24px)); }
+.context-usage-panel.high .context-percent { color: var(--warn); }
 .context-percent { float: right; font-variant-numeric: tabular-nums; color: var(--muted); }
 
 /* On a phone, a running turn with an empty box leaves one line: add, write, stop. Touching the
@@ -2642,7 +2642,12 @@ html.list-open body {
 .agent-picker-row > .agent-picker-item:not(:last-child) { padding-bottom: 2px; }
 
 .agent-quota { position: relative; min-width: 0; padding: 0 10px 7px var(--quota-inset); font-size: 12px; line-height: 1.4; }
-.agent-quota-note { display: block; padding: 2px 0; color: var(--muted); }
+.agent-quota-note { display: flex; align-items: center; gap: 5px; width: fit-content; max-width: 100%; min-height: 24px; padding: 2px 0; color: var(--muted); }
+.agent-quota.agent-quota-empty { padding-bottom: 7px; }
+.agent-quota-note > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.agent-quota-note > svg { flex: none; }
+.agent-quota-empty.attention .agent-quota-note { color: var(--warn); }
+.agent-quota-note:hover, .agent-quota-note[aria-expanded='true'] { color: var(--text); }
 .agent-quota-summary {
   display: flex;
   align-items: center;
@@ -6911,16 +6916,15 @@ div.file-card:hover { background: var(--surface); }
 .usage {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  min-height: 30px;
-  padding: 0 8px;
+  justify-content: center;
+  width: 36px;
+  height: 40px;
+  padding: 0;
   border: 0;
   /* Round like every other control in the bar, never a square tile. */
   border-radius: var(--radius-pill);
   background: transparent;
-  color: var(--faint);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
+  color: var(--muted);
 }
 
 /* A tap leaves :hover stuck on a phone; only a pointer that can hover gets the hover fill. */
@@ -9477,7 +9481,7 @@ div.file-card:hover { background: var(--surface); }
   .composer-bar { gap: 2px; }
   .composer-bar .send-btn { margin-left: 0; }
   .composer-bar > .pop:has(> .usage) { flex: none; }
-  .composer-bar .usage { padding-inline: 4px; }
+  .composer-bar .usage { width: 32px; }
   .composer-bar .plan-pill { justify-content: center; width: 32px; padding: 0; }
   .composer-bar .plan-pill > span, .composer-bar .plan-pill > svg:last-child { display: none; }
   .model-control-trigger { gap: 4px; padding-inline: 6px; }
@@ -9618,8 +9622,6 @@ div.file-card:hover { background: var(--surface); }
 @media (max-width: 640px) {
   /* The mark says which agent; its name is in the menu it opens. */
   .agent-btn.has-mark > span { display: none; }
-  /* Agents without a model picker keep a compact context fallback. */
-  .composer-bar .usage > span { display: none; }
 }
 .machine-trigger { max-width: 100%; }
 .machine-trigger > span:not(.host-dot) { max-width: 180px; }

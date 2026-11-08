@@ -39,7 +39,12 @@ test('the simplified composer fits narrow screens and keeps permission, collabor
         await permission.waitFor();
         assert.equal(await permission.innerText(), '', 'permissions use the existing icon without the wide text');
         assert.equal(await permission.locator('svg').count(), 1);
-        assert.equal(await page.locator('.composer .usage, .composer .chat-quota-trigger, .composer .coord-tool').count(), 0);
+        assert.equal(await page.locator('.composer .chat-quota-trigger, .composer .coord-tool').count(), 0);
+        const usage = page.locator('.composer .usage');
+        await usage.waitFor();
+        assert.equal(await usage.count(), 1, 'the composer has exactly one context ring');
+        assert.equal(await usage.locator('svg').count(), 1);
+        assert.equal(await usage.innerText(), '');
         assert.equal(await page.locator('.topbar [role=meter], .chat-quota-preview').count(), 0);
         assert.equal(quotaReads, 0, 'chat does not read quotas until the menu opens');
         const fits = async () => {
@@ -51,6 +56,12 @@ test('the simplified composer fits narrow screens and keeps permission, collabor
             }).map(button => button.getAttribute('aria-label'));
           });
           assert.deepEqual(overflow, [], `all composer actions fit at ${width}px`);
+          assert.equal(await usage.count(), 1);
+          assert.ok(await page.locator('.composer-bar').evaluate(bar => {
+            const ring = bar.querySelector('.usage')?.getBoundingClientRect();
+            const model = bar.querySelector('.model-control-trigger')?.getBoundingClientRect();
+            return ring && model && ring.width > 0 && model.width > 0 && ring.right <= model.left + 1;
+          }), 'the context ring stays left of the model button');
           assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
         };
         await page.getByRole('button', { name: '停止', exact: true }).waitFor();
@@ -66,12 +77,21 @@ test('the simplified composer fits narrow screens and keeps permission, collabor
         assert.equal(quotaReads, 0);
         await page.keyboard.press('Escape');
         const model = page.locator('.model-control-trigger'); await model.click();
-        await page.locator('.model-context').waitFor();
+        const modelPanel = page.locator('.model-control-panel');
+        await modelPanel.waitFor();
+        assert.equal(await modelPanel.locator('.model-context, .context-percent').count(), 0);
+        assert.equal(await modelPanel.getByText('上下文', { exact: true }).count(), 0);
+        assert.equal(await modelPanel.getByRole('button', { name: /压缩/ }).count(), 0);
+        await page.keyboard.press('Escape');
+        await usage.click();
+        const usagePanel = page.locator('.context-usage-panel');
+        await usagePanel.waitFor();
+        assert.equal(await modelPanel.count(), 0);
         if (mobile) {
           await page.setViewportSize({ width, height: 460 });
           await page.waitForFunction(() => {
-            const r = document.querySelector('.model-control-panel')?.getBoundingClientRect();
-            return r && r.y >= 0 && r.bottom <= innerHeight + 1;
+            const r = document.querySelector('.context-usage-panel')?.getBoundingClientRect();
+            return r && r.x >= 0 && r.right <= innerWidth + 1 && r.y >= 0 && r.bottom <= innerHeight + 1;
           });
           await fits();
           if (shots) await page.screenshot({ path: join(shots, `composer-keyboard-${width}-${colorScheme}.png`), animations: 'disabled' });

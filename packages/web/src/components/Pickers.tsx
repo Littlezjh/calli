@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { isFastSpeed, type AgentInfo, type Api, type ModelOption } from '../api';
 import { usageSummary, type Usage } from '../timeline';
 import { EFFORT_LABELS, PERMISSION_LABELS, PERMISSION_ORDER, permissionHint } from '../permissions';
-import { AgentMark, IconBolt, IconEffortGauge, IconCompress, IconRefresh, IconCheck, IconChevron, IconFolder, IconHand, IconPlus, IconShield, IconShieldAlert, IconSparkle, IconWorktree } from './icons';
+import { AgentMark, ContextRing, IconBolt, IconEffortGauge, IconCompress, IconRefresh, IconCheck, IconChevron, IconFolder, IconHand, IconPlus, IconShield, IconShieldAlert, IconSparkle, IconWorktree } from './icons';
 import { Popover } from './Popover';
 import { EffortSlider } from './EffortSlider';
 import { AgentQuota } from './AgentQuota';
@@ -86,9 +86,6 @@ export function PermissionPicker({ modes, value, onChange, canAsk, openSignal, q
 }
 
 interface ModelProps {
-  /** Context details share the model panel instead of adding a second toolbar dial. */
-  context?: ReactNode;
-  contextHigh?: boolean;
   onDiagnose?: () => void;
   /** False when the CLI does not expose a model catalog at all, rather than one that failed to load. */
   catalog?: boolean;
@@ -223,12 +220,12 @@ export function ModelPicker(props: ModelProps) {
         openSignal={openSignal}
         onOpen={props.onOpen}
         align="end"
-        triggerClassName={`tool-btn model-control-trigger${props.contextHigh ? ' high' : ''}`}
+        triggerClassName="tool-btn model-control-trigger"
         triggerLabel={t('pickers.modelNoneLabel')}
         triggerTitle={t('pickers.noModels')}
         trigger={<><span className="model-trigger-name">{t('statusPanel.model')}</span><IconChevron size={13} open /></>}
       >
-        {close => <><div className="pop-title">{t('pickers.noModels')}</div><p className="member-model-empty">{t('pickers.noModelsHint')}</p>{props.onDiagnose && <button type="button" role="menuitem" className="pop-item compact" onClick={() => { close(); props.onDiagnose?.(); }}><span className="pop-item-label">{t('pickers.diagnose')}</span></button>}{props.context}</>}
+        {close => <><div className="pop-title">{t('pickers.noModels')}</div><p className="member-model-empty">{t('pickers.noModelsHint')}</p>{props.onDiagnose && <button type="button" role="menuitem" className="pop-item compact" onClick={() => { close(); props.onDiagnose?.(); }}><span className="pop-item-label">{t('pickers.diagnose')}</span></button>}</>}
       </Popover>
     );
   }
@@ -262,9 +259,9 @@ export function ModelPicker(props: ModelProps) {
       onOpen={props.onOpen}
       align="end"
       panelClassName="model-control-panel"
-      triggerClassName={`tool-btn model-control-trigger${narrow && levels.length > 0 ? ' dial-only' : ''}${props.contextHigh ? ' high' : ''}`}
-      triggerTitle={summary + (props.contextHigh ? t('pickers.contextHigh') : '')}
-      triggerLabel={t('pickers.modelAndEffortIs', summary) + (props.contextHigh ? t('pickers.contextHigh') : '')}
+      triggerClassName={`tool-btn model-control-trigger${narrow && levels.length > 0 ? ' dial-only' : ''}`}
+      triggerTitle={summary}
+      triggerLabel={t('pickers.modelAndEffortIs', summary)}
       trigger={<>
         {/* A phone has room for the dial alone; the card it opens names the model. */}
         {!(narrow && levels.length > 0) && <span className="model-trigger-name">{modelName(models, model)}</span>}
@@ -272,7 +269,7 @@ export function ModelPicker(props: ModelProps) {
         {!narrow && <IconChevron size={13} open />}
       </>}
     >
-      {() => <><ModelControl {...props} />{props.context}</>}
+      {() => <ModelControl {...props} />}
     </Popover>
   );
 }
@@ -549,19 +546,17 @@ export function AgentPicker({ api, agents, value, onChange, accounts = [], onAdd
 }
 
 /** How full the agent's context window is: a small ring that opens to the numbers. */
-export function UsageMeter({ usage, onCompact, running, compactDisabled, compactQueued, inline = false }: {
+export function UsageMeter({ usage, onCompact, running, compactDisabled, compactQueued }: {
   usage: Usage | null;
   onCompact?: () => Promise<void>;
   running?: boolean;
   compactDisabled?: boolean;
   compactQueued?: boolean;
-  inline?: boolean;
 }) {
   const [compacting, setCompacting] = useState(false);
   const { percent, high, detail } = usage ? usageSummary(usage)
-    : { percent: 0, high: false, detail: t('pickers.contextUnknown') };
-  // A ring of radius 6 has a circumference of about 37.7; the dash shows the used share of it.
-  const circumference = 2 * Math.PI * 6;
+    : { percent: null, high: false, detail: t('pickers.contextUnknown') };
+  const label = percent === null ? t('pickers.contextUsageUnknown') : t('pickers.contextUsagePercent', percent);
   const details = (close: () => void) => <>
     <div className="pop-title">{t('statusPanel.context')}{usage && <span className="context-percent">{percent}%</span>}</div>
     <div className="pop-note">{detail}{high && t('pickers.contextHigh')}</div>
@@ -577,31 +572,15 @@ export function UsageMeter({ usage, onCompact, running, compactDisabled, compact
       </span>
     </button>}
   </>;
-  if (inline) return <section className={`model-context${high ? ' high' : ''}`} aria-label={t('pickers.contextUsage')}>{details(() => {})}</section>;
   return (
     <Popover
       label={t('pickers.contextUsage')}
       align="end"
-      triggerClassName={`usage${high ? ' high' : ''}`}
-      trigger={
-        <>
-          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-            <circle className="usage-track" cx="8" cy="8" r="6" fill="none" strokeWidth="2.2" />
-            <circle
-              className="usage-fill"
-              cx="8"
-              cy="8"
-              r="6"
-              fill="none"
-              strokeWidth="2.2"
-              strokeLinecap="round"
-              strokeDasharray={`${(percent / 100) * circumference} ${circumference}`}
-              transform="rotate(-90 8 8)"
-            />
-          </svg>
-          <span>{usage ? `${percent}%` : t('statusPanel.context')}</span>
-        </>
-      }
+      panelClassName={`context-usage-panel${high ? ' high' : ''}`}
+      triggerClassName={`usage${high ? ' high' : ''}${percent === null ? ' unknown' : ''}`}
+      triggerLabel={label}
+      triggerTitle={label + (high ? t('pickers.contextHigh') : '')}
+      trigger={<ContextRing percent={percent} size={20} />}
     >
       {details}
     </Popover>

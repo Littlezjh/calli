@@ -40,7 +40,7 @@ import { attentionCount, pageTitle } from './notices';
 import { folderName } from './paths';
 import { ThreadPlace } from './components/ThreadPlace';
 import { PERMISSION_LABELS, PERMISSION_ORDER, permissionHint, startingPermission } from './permissions';
-import { buildTimeline, toMarkdown, turnPreviews, usageSummary, type StoredEvent, type Timeline } from './timeline';
+import { buildTimeline, toMarkdown, turnPreviews, type StoredEvent, type Timeline } from './timeline';
 import { newerBuildAvailable } from './version';
 import { AppearancePanel } from './components/AppearancePanel';
 import { ActionSheet, type SheetTarget } from './components/ActionSheet';
@@ -2679,20 +2679,17 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   // Older daemons advertise /compact before they expose the dedicated capability.
   const canCompact = activeCaps?.compact ?? (commandsByKey[commandsKey] ?? []).some((command) => command.name === 'compact' && command.kind !== 'skill');
 
-  const contextDetails = selected && (timeline.usage || canCompact) ? <UsageMeter
-        inline={activeCaps?.modelCatalog !== false}
+  const right = (
+    <>
+      {selected && (timeline.usage || canCompact) && <UsageMeter
+        key={selected.id}
         usage={timeline.usage}
         onCompact={canCompact ? () => send('/compact', []) : undefined}
         running={running}
         compactQueued={selected.queued?.some((message) => message.text.trim() === '/compact')}
         compactDisabled={(selected.queued?.length ?? 0) >= MAX_QUEUED}
-      /> : undefined;
-  const right = (
-    <>
-      {activeCaps?.modelCatalog === false && contextDetails}
+      />}
       <ModelPicker
-        context={contextDetails}
-        contextHigh={timeline.usage ? usageSummary(timeline.usage).high : false}
         catalog={activeCaps?.modelCatalog}
         models={models}
         model={model}

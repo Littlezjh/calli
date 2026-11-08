@@ -49,6 +49,16 @@ async function selectThread(page, thread, mobile) {
   if (mobile) await page.locator('.composer textarea').tap();
 }
 
+async function expectUsage(page, percent) {
+  const usage = page.locator('.composer .usage');
+  const label = percent === null ? '上下文用量未知 · 查看详情' : `上下文已用 ${percent}% · 查看详情`;
+  await page.waitForFunction(label => document.querySelector('.composer .usage')?.getAttribute('aria-label') === label, label);
+  assert.equal(await usage.getAttribute('aria-label'), label);
+  assert.equal(await usage.innerText(), '', 'the ring has no visible percentage text');
+  assert.equal(await usage.locator('svg').count(), 1);
+  return usage;
+}
+
 test('Codex shows current context on desktop and phone in both themes, including after reload', async () => {
   const thread = await makeThread('codex', 'context regression');
   await send(thread, 'usage');
@@ -60,26 +70,44 @@ test('Codex shows current context on desktop and phone in both themes, including
       });
       try {
         const page = await context.newPage();
+        let modelReads = 0;
+        page.on('request', request => { if (/^\/api\/agents\/[^/]+\/models$/.test(new URL(request.url()).pathname)) modelReads++; });
+        const modelsLoaded = page.waitForResponse(response => new URL(response.url()).pathname === '/api/agents/codex/models' && response.ok());
         await openUi(page, daemon);
         await selectThread(page, thread, mobile);
-        await page.locator('.model-control-trigger').click();
-        const meter = page.locator('.model-context .context-percent');
+        await modelsLoaded;
+        const usage = await expectUsage(page, 71);
+        const model = page.locator('.model-control-trigger');
+        await model.waitFor();
+        // Read both controls in one frame while the desktop sidebar is still settling.
+        assert.ok(await page.evaluate(() => {
+          const ring = document.querySelector('.composer .usage')?.getBoundingClientRect();
+          const model = document.querySelector('.composer .model-control-trigger')?.getBoundingClientRect();
+          return ring && model && ring.width > 0 && model.width > 0 && ring.right <= model.left + 1;
+        }), 'the context ring is left of the model button');
+        const readsBefore = modelReads;
+        await usage.click();
+        const panel = page.locator('.context-usage-panel');
+        const meter = panel.locator('.context-percent');
         await meter.waitFor();
         assert.equal(await meter.innerText(), '71%');
-        assert.equal(await page.locator('.model-context.high').count(), 0);
-        await page.locator('.pop-note', { hasText: '上下文已用' }).waitFor();
-        assert.equal(await page.locator('.pop-note', { hasText: '上下文已用' }).innerText(), '上下文已用 184k / 258k');
-        // Let the phone drawer and bottom sheet finish moving before inspecting their bounds.
+        assert.equal(await page.locator('.context-usage-panel.high').count(), 0);
+        assert.equal(await page.locator('.model-control-panel').count(), 0, 'the ring opens only context details');
+        await panel.locator('.pop-note', { hasText: '上下文已用' }).waitFor();
+        assert.equal(await panel.locator('.pop-note', { hasText: '上下文已用' }).innerText(), '上下文已用 184k / 258k');
+        // Let the phone drawer and anchored menu finish moving before inspecting their bounds.
         await page.waitForTimeout(450);
-        const bounds = await page.locator('.model-control-panel').boundingBox();
-        assert.ok(bounds && bounds.y >= 0 && bounds.y + bounds.height <= page.viewportSize().height + 1);
+        assert.equal(modelReads, readsBefore, 'opening context details does not request the model catalog');
+        const bounds = await panel.boundingBox();
+        assert.ok(bounds && bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= page.viewportSize().width + 1 && bounds.y + bounds.height <= page.viewportSize().height + 1);
         if (process.env.CALLI_E2E_SHOTS_DIR) {
           mkdirSync(process.env.CALLI_E2E_SHOTS_DIR, { recursive: true });
           await page.screenshot({ path: join(process.env.CALLI_E2E_SHOTS_DIR, `context-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`) });
         }
         await openUi(page, daemon);
         await selectThread(page, thread, mobile);
-        await page.locator('.model-control-trigger').click();
+        await expectUsage(page, 71);
+        await usage.click();
         await meter.waitFor();
         assert.equal(await meter.innerText(), '71%');
       } finally {
@@ -93,8 +121,9 @@ test('Codex shows current context on desktop and phone in both themes, including
     const page = await context.newPage();
     await openUi(page, daemon);
     await selectThread(page, thread, false);
-    await page.locator('.model-control-trigger').click();
-    const meter = page.locator('.model-context .context-percent');
+    const usage = await expectUsage(page, 5);
+    await usage.click();
+    const meter = page.locator('.context-usage-panel .context-percent');
     await meter.waitFor();
     assert.equal(await meter.innerText(), '5%');
   } finally {
@@ -110,19 +139,25 @@ test('Pi clears its previous context after compaction and measures it again afte
     const page = await context.newPage();
     await openUi(page, daemon);
     await selectThread(page, thread, false);
-    await page.locator('.model-control-trigger').click();
-    const meter = page.locator('.model-context .context-percent');
+    const usage = await expectUsage(page, 1);
+    await usage.click();
+    const panel = page.locator('.context-usage-panel');
+    const meter = panel.locator('.context-percent');
     await meter.waitFor();
     assert.equal(await meter.innerText(), '1%');
-    await send(thread, '/compact');
-    await meter.waitFor({ state: 'hidden' });
+    await panel.getByRole('button', { name: '压缩 精简较早的对话，释放上下文', exact: true }).click();
+    await panel.waitFor({ state: 'hidden' });
+    assert.equal(await usage.getAttribute('aria-expanded'), 'false');
+    await expectUsage(page, null);
     await openUi(page, daemon);
     await selectThread(page, thread, false);
     await page.getByText('已压缩上下文：150.0k → 约 32.0k tokens。', { exact: true }).waitFor();
-    await page.locator('.model-control-trigger').click();
-    assert.equal(await meter.count(), 0);
-    await page.getByText('暂未获取上下文用量，下一次响应后更新。', { exact: true }).waitFor();
+    await expectUsage(page, null);
+    await usage.click();
+    await panel.getByText('暂未获取上下文用量，下一次响应后更新。', { exact: true }).waitFor();
+    assert.equal(await meter.count(), 0, 'unknown context is not shown as a percentage');
     await send(thread, 'hello again');
+    await expectUsage(page, 1);
     await meter.waitFor();
     assert.equal(await meter.innerText(), '1%');
   } finally {

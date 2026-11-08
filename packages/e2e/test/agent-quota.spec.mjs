@@ -140,8 +140,20 @@ test('cached quota survives reload and failed reads; unknown, empty and exhauste
     await first.getByText('剩余 0%', { exact: true }).waitFor();
     assert.deepEqual(await remaining(first), ['0', '100']);
     await first.getByText('7 小时', { exact: true }).waitFor();
-    await account(page, 'Codex 2').getByText('服务未提供额度信息', { exact: true }).waitFor();
-    assert.equal(await account(page, 'Codex 2').getByRole('meter').count(), 0);
+    const empty = account(page, 'Codex 2');
+    await empty.getByText('未提供', { exact: true }).waitFor();
+    assert.equal(await empty.getByRole('meter').count(), 0);
+    assert.equal(await empty.locator('.quota-quick-actions').count(), 0, 'missing quota does not reserve an action row');
+    assert.equal(await empty.getByText('服务未提供额度信息', { exact: true }).count(), 0, 'long explanation starts collapsed');
+    assert.ok((await empty.locator('.agent-quota').boundingBox()).height <= 32, 'missing quota uses one compact line');
+    const selectedBefore = await page.locator('.agent-btn:visible').textContent();
+    await empty.locator('.agent-quota-note').click();
+    await empty.getByText('服务未提供额度信息', { exact: true }).waitFor();
+    assert.equal(await page.locator('.agent-btn:visible').textContent(), selectedBefore, 'disclosure does not select the account');
+    await empty.getByRole('button', { name: '刷新 codex2 的额度', exact: true }).waitFor();
+    await page.keyboard.press('Escape');
+    assert.equal(await empty.locator('.quota-quick-actions').count(), 0);
+    assert.equal(await page.locator('.agent-picker-panel').count(), 1, 'Escape closes empty-quota details first');
     await fits(page);
     await page.keyboard.press('Escape');
     await page.keyboard.press('Escape');
@@ -154,6 +166,56 @@ test('cached quota survives reload and failed reads; unknown, empty and exhauste
     assert.equal(await page.getByRole('meter').count(), 0);
     assert.equal(await summary(first).count(), 0);
   } finally { await context.close(); }
+});
+
+test('missing quota stays one line through loading, refresh and failure in both themes and sizes', async () => {
+  for (const width of [1400, 320]) for (const colorScheme of ['light', 'dark']) {
+    const mobile = width < 640;
+    const context = await browser.newContext({ viewport: { width, height: mobile ? 844 : 900 }, isMobile: mobile, hasTouch: mobile, colorScheme });
+    try {
+      const page = await context.newPage(); page.setDefaultTimeout(10_000);
+      let release;
+      let hold = new Promise(resolve => { release = resolve; });
+      let failed = false;
+      await page.route('**/api/agents/*/quota*', async route => {
+        await hold;
+        await route.fulfill(failed ? { status: 503, json: { error: 'unavailable' } }
+          : { json: { windows: [], checkedAt: new Date().toISOString() } });
+      });
+      await openUi(page, daemon);
+      await openAccounts(page);
+      const row = account(page, 'Codex 2');
+      const empty = row.locator('.agent-quota-empty'), note = empty.locator('.agent-quota-note');
+      await note.getByText('正在查询额度…', { exact: true }).waitFor();
+      const loadingHeight = (await empty.boundingBox()).height;
+      release();
+      await note.getByText('未提供', { exact: true }).waitFor();
+      const emptyHeight = (await empty.boundingBox()).height;
+      assert.equal(emptyHeight, loadingHeight, 'the first read does not change row height');
+      assert.ok(emptyHeight <= 32);
+      assert.equal(await empty.locator('.quota-quick-actions').count(), 0);
+      await fits(page);
+      await shot(page, `agent-quota-empty-${width}-${colorScheme}`);
+      await row.getByRole('menuitemradio').focus();
+      await page.keyboard.press('Tab');
+      assert.equal(await note.evaluate(el => el === document.activeElement), true);
+      await page.keyboard.press('Enter');
+      await empty.getByText('服务未提供额度信息', { exact: true }).waitFor();
+      await shot(page, `agent-quota-empty-details-${width}-${colorScheme}`);
+      hold = new Promise(resolve => { release = resolve; });
+      failed = true;
+      await empty.getByRole('button', { name: '刷新 codex2 的额度', exact: true }).click();
+      await page.keyboard.press('Escape');
+      await note.getByText('正在查询额度…', { exact: true }).waitFor();
+      release();
+      await note.getByText('额度暂不可用', { exact: true }).waitFor();
+      assert.equal((await empty.boundingBox()).height, emptyHeight, 'errors keep the compact layout');
+      assert.equal(await empty.getByRole('meter').count(), 0, 'missing usage is never reported as zero');
+      await note.click();
+      await empty.getByRole('button', { name: '刷新 codex2 的额度', exact: true }).getByText('重试', { exact: true }).waitFor();
+      await fits(page);
+    } finally { await context.close(); }
+  }
 });
 
 test('narrow summaries keep exhaustion visible and expose every omitted pool on click', async () => {

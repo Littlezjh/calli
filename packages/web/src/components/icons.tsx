@@ -557,6 +557,17 @@ export const IconEffortGauge = ({ level, size = 18 }: { level: number | null; si
   );
 };
 
+/** Current context occupancy, not remaining quota. Unknown is a question mark, never an empty meter. */
+export const ContextRing = ({ percent, size = 20 }: { percent: number | null; size?: number }) => (
+  <svg className="context-ring" width={size} height={size} viewBox="0 0 20 20" aria-hidden="true">
+    <circle className="usage-track" cx="10" cy="10" r="7.5" fill="none" strokeWidth={2} />
+    {percent === null
+      ? <path d="M8.5 8a1.5 1.5 0 0 1 3 0c0 1-1.5 1-1.5 2M10 12.5v.1" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" />
+      : percent > 0 && <circle className="usage-fill" cx="10" cy="10" r="7.5" fill="none" strokeWidth={2}
+        pathLength={100} strokeDasharray={`${Math.min(100, percent)} 100`} transform="rotate(-90 10 10)" />}
+  </svg>
+);
+
 /**
  * How much of a quota window is left, as a ring that empties clockwise from the top.
  * The track and fill take their colours from CSS (`.quota-ring-track`, `.quota-ring-fill`).

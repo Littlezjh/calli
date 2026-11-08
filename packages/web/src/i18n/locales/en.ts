@@ -1682,6 +1682,8 @@ export const en: Messages = {
   'pickers.addAccount': (agent: string) => `${agent} · add to use this account`,
   'pickers.contextUnknown': 'Context usage is not known yet; it updates after the next response.',
   'pickers.contextUsage': 'Context usage',
+  'pickers.contextUsagePercent': (percent: number) => `${percent}% of context used · View details`,
+  'pickers.contextUsageUnknown': 'Context usage unknown · View details',
   'pickers.contextHigh': '. Almost full; the agent may soon compact the earlier conversation automatically.',
   'pickers.submitting': 'Submitting…',
   'pickers.compactQueued': 'Compaction queued',
