@@ -111,7 +111,8 @@ test('adaptive overview waits at its trigger, fits without scrolling and preserv
         await page.locator('.preview-scrim').waitFor();
         await page.locator('.preview-bar').getByRole('button', { name: '关闭预览' }).click();
         assert.equal(await detail.locator('input').inputValue(), 'report-7');
-        await detail.locator('.overview-details-head button').click();
+        if (mobile) await detail.locator('.overview-details-head button').click();
+        else await page.evaluate(() => history.back());
         await detail.waitFor({ state: 'detached' });
         await panel.locator('.thread-overview[data-ready="true"]').waitFor();
         assert.equal(await page.locator('.main > [inert]').count(), 0, 'the conversation is interactive again');
@@ -171,6 +172,19 @@ test('cancelled cold opens stay closed; failures can retry, and another thread n
       const detail = page.locator('.overview-details-page');
       await detail.waitFor();
       assert.equal(await detail.locator('.overview-rowwrap').count(), 8);
+      await detail.evaluate(el => {
+        const touch = x => new Touch({ identifier: 1, target: el, clientX: x, clientY: 200 });
+        el.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, touches: [touch(4)] }));
+        el.dispatchEvent(new TouchEvent('touchmove', { bubbles: true, touches: [touch(140)] }));
+        el.dispatchEvent(new TouchEvent('touchend', { bubbles: true, touches: [] }));
+      });
+      assert.equal(await page.locator('.app.drawer-open').count(), 0, 'an edge swipe on the detail must not open the thread list');
+      await page.evaluate(() => history.back());
+      await detail.waitFor({ state: 'detached', timeout: 2500 });
+      await panel.waitFor();
+      assert.equal(await page.locator('.app.drawer-open').count(), 0, 'Back leaves the detail before opening the thread list');
+      await panel.locator('.overview-foot .overview-trace').click();
+      await detail.waitFor();
       await detail.locator('.overview-details-head button').click();
       await panel.waitFor();
       await page.keyboard.press('Escape');

@@ -55,7 +55,6 @@ export function Menu({ label, x, y, corner = 'top-left', items, header, onClose 
   const panelRef = useRef<HTMLDivElement>(null);
   const branchRef = useRef<HTMLDivElement>(null);
   const [openPath, setOpenPath] = useState<string[]>([]);
-  const [pos, setPos] = useState({ left: x, top: y, subLeft: x, subTop: y, ready: false });
   // A menu opened under a finger (a long press) ignores that finger: lifting it must not pick
   // the row that slid in beneath it, nor close the menu. Safari sends the lifted finger's mouse
   // press and click a moment later, wherever it now is, so those are swallowed too, and the menu
@@ -106,19 +105,22 @@ export function Menu({ label, x, y, corner = 'top-left', items, header, onClose 
     const place = () => {
       const el = panelRef.current;
       if (!el) return;
-      const rect = el.getBoundingClientRect();
+      // Measure layout dimensions: the opening animation must not feed back into placement.
+      const rect = { width: el.offsetWidth, height: el.offsetHeight };
       const viewport = window.visualViewport;
       const minY = (viewport?.offsetTop ?? 0) + EDGE;
       const bottom = (viewport?.offsetTop ?? 0) + (viewport?.height ?? innerHeight);
       const [wantLeft, wantTop] = corner === 'bottom-right' ? [x - rect.width, y - rect.height] : [x, y];
       const left = Math.max(EDGE, Math.min(wantLeft, innerWidth - rect.width - EDGE));
       const top = Math.max(minY, Math.min(wantTop, bottom - rect.height - EDGE));
-      const child = branchRef.current?.getBoundingClientRect();
-      const childLeft = child && left + rect.width + child.width + EDGE * 2 <= innerWidth ? left + rect.width + EDGE : left - (child?.width ?? 0) - EDGE;
-      const subLeft = Math.max(EDGE, Math.min(childLeft, innerWidth - (child?.width ?? 0) - EDGE));
-      const subTop = Math.max(minY, Math.min(top, bottom - (child?.height ?? 0) - EDGE));
-      const next = { left, top, subLeft, subTop, ready: true };
-      setPos(previous => previous.left === left && previous.top === top && previous.subLeft === subLeft && previous.subTop === subTop && previous.ready ? previous : next);
+      const child = branchRef.current;
+      const childLeft = child && left + rect.width + child.offsetWidth + EDGE * 2 <= innerWidth ? left + rect.width + EDGE : left - (child?.offsetWidth ?? 0) - EDGE;
+      const subLeft = Math.max(EDGE, Math.min(childLeft, innerWidth - (child?.offsetWidth ?? 0) - EDGE));
+      const subTop = Math.max(minY, Math.min(top, bottom - (child?.offsetHeight ?? 0) - EDGE));
+      // Placement is DOM geometry, not React state. Recreated items and queued observers
+      // must not schedule another synchronous render while a branch is being removed.
+      Object.assign(el.style, { left: `${left}px`, top: `${top}px`, visibility: 'visible' });
+      if (child) Object.assign(child.style, { left: `${subLeft}px`, top: `${subTop}px`, visibility: 'visible' });
     };
     place();
     const observer = new ResizeObserver(place);
@@ -215,10 +217,10 @@ export function Menu({ label, x, y, corner = 'top-left', items, header, onClose 
   return createPortal(
     <div ref={rootRef} className={armed ? undefined : 'sheet-unarmed'}>
       <div ref={panelRef} className={`menu-panel menu-float${narrow ? ' menu-touch' : ''}${header ? ' menu-with-header' : ''}`} role="menu" aria-label={narrow && branch ? branch.label : label}
-        style={{ left: pos.left, top: pos.top, visibility: pos.ready ? 'visible' : 'hidden' }}>
+        style={{ left: x, top: y, visibility: 'hidden' }}>
         {narrow && branch ? branchContent : <>{header}{list(items, false)}</>}
       </div>
-      {!narrow && branch && <div ref={branchRef} className="menu-panel menu-sub menu-branch" role="menu" aria-label={branch.label} style={{ left: pos.subLeft, top: pos.subTop }}>{branchContent}</div>}
+      {!narrow && branch && <div ref={branchRef} className="menu-panel menu-sub menu-branch" role="menu" aria-label={branch.label} style={{ left: x, top: y, visibility: 'hidden' }}>{branchContent}</div>}
     </div>, document.body,
   );
 }

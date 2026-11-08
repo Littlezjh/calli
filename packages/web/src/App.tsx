@@ -2102,6 +2102,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   // steps as the top-left button, one at a time. Nothing left to undo hands the swipe to the browser.
   appBack.current = () => {
     if (listOpen) { setDrawer(false); return true; }
+    if (activeOverviewDetail) { closeOverviewDetail(); return true; }
     if (onSettings) {
       if (settingsPath.includes('/')) openSettings(settingsPath.slice(0, settingsPath.lastIndexOf('/')));
       else if (settingsPath && !(settingsOrigin.current?.entry === 'quota' && settingsPath === 'quota')) openSettings('');

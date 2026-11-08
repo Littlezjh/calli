@@ -130,6 +130,6 @@ test('a service pointing at another checkout stops before restarting', async (t)
   const f = await fixture(t, { threadsScript: IDLE, serviceDir: join(tmpdir(), 'calli-restart-elsewhere') });
   const result = f.run(['--no-build']);
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /The service runs .*calli-restart-elsewhere, not .*remote-agent-hub\./);
+  assert.ok(result.stderr.includes(`The service runs ${join(tmpdir(), 'calli-restart-elsewhere')}, not ${repo}. Restart it from there.`), result.stderr);
   assert.equal(f.read('systemctl.log'), '');
 });

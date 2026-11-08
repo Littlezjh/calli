@@ -61,6 +61,13 @@ test('the overview panel reads the thread from one top-bar button, and a change 
     });
     assert.ok(room.gap >= 12, `the panel leaves ${room.gap}px beside the column`);
     await panel.locator('.overview-row', { hasText: 'app.ts' }).waitFor();
+    // History can arrive after outputs. Reopen after the full list knows the plan, so this
+    // assertion checks a fresh preview rather than depending on the order of two requests.
+    await panel.locator('.overview-foot .overview-trace').click();
+    const all = page.locator('.overview-details-page');
+    await all.locator('.overview-plan .plan-entry').first().waitFor();
+    await all.locator('.overview-details-head button').click();
+    await panel.waitFor();
     const groups = await panel.locator('.overview-toggle strong').allTextContents();
     assert.deepEqual(groups.slice(0, 4), ['计划', '变更', '图片', '文件']);
     assert.equal(await panel.locator('.overview-plan .plan-entry').count(), 3);
@@ -101,7 +108,7 @@ test('the overview panel reads the thread from one top-bar button, and a change 
 
     // The standing panel stays through the conversation, the input and Escape; only its own
     // button above it puts it away, and the choice survives a reload.
-    await page.locator('.thread .row.user .bubble').last().click();
+    await page.locator('.main > .scroller').click({ position: { x: 12, y: 160 } });
     await panel.waitFor();
     await page.locator('.composer textarea').click();
     await page.keyboard.press('Escape');

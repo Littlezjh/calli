@@ -89,11 +89,15 @@ test('the compact thread menu preserves nested actions, keyboard return and the 
         await root.getByRole('menuitem', named('复制')).click();
         await branch.getByRole('menuitem', named('工作目录')).waitFor();
         assert.equal(await branch.getByRole('menuitem').count(), 5, 'back plus every original copy action');
+        await page.waitForFunction(() => document.activeElement?.classList.contains('menu-back'));
         await page.keyboard.press('Escape');
+        await page.waitForFunction(() => document.activeElement?.dataset.menuId === 'copy');
         await root.getByRole('menuitem', named('分叉与交接')).click();
         await branch.getByRole('menuitem', named('分叉')).waitFor();
         await branch.getByRole('menuitem', named('交接')).waitFor();
+        await page.waitForFunction(() => document.activeElement?.classList.contains('menu-back'));
         await page.keyboard.press('Escape');
+        await page.waitForFunction(() => document.activeElement?.dataset.menuId === 'continuation');
         await root.getByRole('menuitem', named('永久删除')).click();
         const removal = page.getByRole('dialog'); await removal.waitFor();
         await removal.getByRole('button', named('取消')).click();
