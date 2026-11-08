@@ -426,6 +426,17 @@ rl.on('line', (line) => {
         } else out({ jsonrpc: '2.0', id, method: 'elicitation/create', params: { sessionId, mode: 'form', toolCallId: 'ask', message: '优先支持哪一端？', requestedSchema: { type: 'object', properties: { question_0: { type: 'string', oneOf: [{ const: '桌面和手机', title: '桌面和手机' }, { const: '先做桌面', title: '先做桌面' }] }, question_0_custom: { type: 'string', title: '补充回答' } } } } });
         return;
       }
+      if (planCommand === 'plan-question-steps') {
+        pendingPrompt = msg;
+        const id = nextAgentRequestId++;
+        awaitingInput.set(id, { prompt: msg.id, kind: 'question' });
+        out({ jsonrpc: '2.0', id, method: 'elicitation/create', params: { sessionId, mode: 'form', toolCallId: 'ask', message: '分步表单', requestedSchema: { type: 'object', properties: {
+          question_0: { type: 'string', description: '先做哪一端', oneOf: [{ const: '桌面和手机', title: '桌面和手机' }, { const: '先做桌面', title: '先做桌面' }] },
+          question_0_custom: { type: 'string', title: '补充说明' },
+          question_1: { type: 'string', description: '要不要截图', oneOf: [{ const: '需要截图', title: '需要截图' }, { const: '不用截图', title: '不用截图' }] },
+        } } } });
+        return;
+      }
       if (process.env.FAKE_LIVE_USAGE && text.includes('live usage')) {
         claudeUsage(sessionId, process.cwd(), msg.id);
         pendingPrompt = msg;
