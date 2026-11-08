@@ -37,15 +37,42 @@ test('glass chrome has scrolling content behind it without hiding either end of 
         return { scroller: rect('.main > .scroller'), top: rect('.topbar'), input: rect('.composer-box'), thread: rect('.thread'), blur };
       });
       let bounds = await measure();
-      assert.ok(bounds.scroller.top <= bounds.top.top + 1, 'content scrolls behind the top controls');
-      assert.ok(bounds.scroller.bottom >= bounds.input.bottom, 'content scrolls behind the input');
+      if (mobile) {
+        assert.ok(bounds.scroller.top <= bounds.top.top + 1, 'content scrolls behind the top controls');
+        assert.ok(bounds.scroller.bottom >= bounds.input.bottom, 'content scrolls behind the input');
+      } else {
+        // A wide screen keeps the chrome solid, as Codex does: one band above the conversation, an
+        // opaque composer card, plain top-bar buttons, and nothing sliding under any of it.
+        const solid = await page.evaluate(() => {
+          const top = document.querySelector('.main > .topbar');
+          const pill = document.querySelector('.topbar-actions');
+          const box = document.querySelector('.composer-box');
+          const scroller = document.querySelector('.main > .scroller');
+          const cs = (el, pseudo) => getComputedStyle(el, pseudo);
+          return {
+            band: [cs(top).backgroundColor, cs(top).borderBottomWidth, cs(top, '::before').display, cs(top, '::after').display].join('|'),
+            pill: [cs(pill).backgroundColor, cs(pill).backdropFilter, cs(pill).boxShadow].join('|'),
+            box: [cs(box).backgroundColor, cs(box).backdropFilter].join('|'),
+            margins: [cs(scroller).marginTop, cs(scroller).marginBottom].join('|'),
+          };
+        });
+        assert.ok(!/rgba\(0, 0, 0, 0\)|transparent/.test(solid.band.split('|')[0]), 'the top bar is a solid band');
+        assert.match(solid.band, /1px\|none\|none$/, 'with a hairline and no fade bands over a wide conversation');
+        assert.ok(solid.pill.startsWith('rgba(0, 0, 0, 0)'), 'no capsule behind the top bar buttons');
+        assert.equal(solid.pill.split('|')[1], 'none', 'the buttons carry no backdrop blur');
+        assert.notEqual(solid.box.split('|')[0], 'rgba(0, 0, 0, 0)', 'the composer card has a surface of its own');
+        assert.equal(solid.box.split('|')[1], 'none', 'the composer card is opaque');
+        assert.equal(solid.margins, '0px|0px', 'the conversation does not slide under the chrome');
+        assert.ok(bounds.scroller.top >= bounds.top.bottom - 1, 'a wide screen starts the conversation below the band');
+        assert.ok(bounds.scroller.bottom <= bounds.input.top + 1, 'a wide screen ends the conversation above the composer');
+      }
       await scroller.evaluate(el => { el.scrollTop = 0; });
       bounds = await measure();
       assert.ok(bounds.thread.top >= bounds.top.bottom, 'the first message starts below the header');
       await scroller.evaluate(el => { el.scrollTop = el.scrollHeight; });
       bounds = await measure();
       assert.ok(bounds.thread.bottom <= bounds.input.top - 10, 'the last message remains above the input');
-      assert.ok(bounds.thread.bottom <= bounds.blur, 'at rest the newest output stays clear of the blur under the composer');
+      if (mobile) assert.ok(bounds.thread.bottom <= bounds.blur, 'at rest the newest output stays clear of the blur under the composer');
       await page.locator('.composer textarea').fill('多行输入\n检查输入框增高\n仍保留最后一条消息\n以及底部操作');
       await page.waitForTimeout(100);
       await scroller.evaluate(el => { el.scrollTop = el.scrollHeight; });
@@ -82,6 +109,11 @@ test('glass chrome has scrolling content behind it without hiding either end of 
       await page.getByRole('menuitem', { name: '整理线程', exact: true }).waitFor();
       await page.screenshot({ path: `${shots}/menu-${mobile ? 'phone' : 'desktop'}-${theme}.png` });
       await page.keyboard.press('Escape');
+      // Escape is a keypress, so focus returns to the button with :focus-visible matched — the
+      // moment a ring can look like a stray box. Round buttons hug their ring instead.
+      const ring = await page.locator('.topbar-more').evaluate(el => ({ offset: getComputedStyle(el).outlineOffset, style: getComputedStyle(el).outlineStyle }));
+      assert.equal(ring.style, 'solid');
+      assert.equal(ring.offset, '-2px', 'the top bar buttons hug their focus ring instead of wearing a stray box');
       await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-transparency', value: 'reduce' }] });
       assert.equal(await page.locator('.composer-box').evaluate(el => getComputedStyle(el).backdropFilter), 'none', 'reduced transparency keeps the opaque fallback');
       await cdp.detach();
