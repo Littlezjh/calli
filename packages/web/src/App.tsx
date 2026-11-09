@@ -1855,7 +1855,24 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       if (!api || !selectedId) throw new Error('no thread');
       const ref = fileRef(raw);
       // Asked first, so a file the thread cannot show falls back to copying its path.
-      const file = await api.threadText(selectedId, ref.path);
+      let file;
+      try {
+        file = await api.threadText(selectedId, ref.path);
+      } catch (error) {
+        // The link may name a folder: stand the file browser's tree in it instead.
+        if (error instanceof ApiError && error.status === 404) {
+          try {
+            const listing = await api.threadTree(selectedId, ref.path);
+            setFilesThreadId(selectedId);
+            setAgentsOpen(false);
+            setFiles({ path: null, folder: listing.path, seq: ++filesSeq.current });
+            return;
+          } catch {
+            // Not a folder either: the original error stands.
+          }
+        }
+        throw error;
+      }
       setFilesThreadId(selectedId);
       setAgentsOpen(false);
       setFiles({ path: file.path, line: ref.line, file, seq: ++filesSeq.current });
@@ -3183,7 +3200,20 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
               onSegmentFork={(thread, turn) => threadActions.forkAt(thread, turn)}
               onSegmentFile={async (thread, raw) => {
                 const ref = fileRef(raw);
-                const file = await api.threadText(thread.id, ref.path);
+                let file;
+                try {
+                  file = await api.threadText(thread.id, ref.path);
+                } catch (error) {
+                  if (error instanceof ApiError && error.status === 404) {
+                    try {
+                      const listing = await api.threadTree(thread.id, ref.path);
+                      setAgentsOpen(false); setFilesThreadId(thread.id);
+                      setFiles({ path: null, folder: listing.path, seq: ++filesSeq.current });
+                      return;
+                    } catch { /* Not a folder either. */ }
+                  }
+                  throw error;
+                }
                 setAgentsOpen(false); setFilesThreadId(thread.id);
                 setFiles({ path: file.path, line: ref.line, file, seq: ++filesSeq.current });
               }}

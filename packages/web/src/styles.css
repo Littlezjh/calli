@@ -8159,11 +8159,93 @@ div.file-card:hover { background: var(--surface); }
   background: var(--sidebar);
 }
 
+/* Nothing open: the folder list is the panel's content, not a side column. */
+.files-body.only-tree .files-tree {
+  flex: 1;
+  width: auto;
+  border-left: 0;
+  background: var(--bg);
+}
+
 .files-tree-scroll {
   flex: 1;
   overflow: auto;
   padding: 0 6px 12px;
   overscroll-behavior: contain;
+}
+
+/* Where the tree stands and what to look for, on one quiet line above it. */
+.files-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  margin: 10px 8px 6px;
+}
+
+.files-toolbar .files-roots {
+  margin: 0;
+}
+
+.files-toolbar .files-filter {
+  flex: 1;
+  margin: 0;
+  height: 28px;
+}
+
+/* Where the tree stands — the thread's folder, a project, the home directory — and the choice. */
+.files-roots {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 8px 0;
+  padding: 0 9px;
+  height: 28px;
+  max-width: 45%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12.5px;
+  flex: none;
+}
+
+.files-roots:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.files-roots-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.files-roots-row .files-roots-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.files-roots-text-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.files-roots-text-kind {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.files-roots-note {
+  margin: 10px 12px;
 }
 
 .files-filter {
@@ -8204,18 +8286,19 @@ div.file-card:hover { background: var(--surface); }
 }
 
 .files-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
   width: 100%;
-  min-height: 28px;
-  padding: 3px 8px;
+  min-height: 27px;
+  padding: 2px 8px;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: 5px;
   background: none;
   color: var(--text);
   font: inherit;
-  font-size: 13px;
+  font-size: 12.8px;
   text-align: left;
 }
 
@@ -8228,9 +8311,28 @@ div.file-card:hover { background: var(--surface); }
   background: var(--hover);
 }
 
+/* The open file carries an ink bar at its left edge, like the page a book is open at. */
 .files-row.current {
   background: var(--active);
-  font-weight: 600;
+}
+
+.files-row.current::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 5px;
+  bottom: 5px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.files-size {
+  margin-left: auto;
+  padding-left: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--faint);
 }
 
 .files-row.ignored {
@@ -8471,6 +8573,21 @@ div.file-card:hover { background: var(--surface); }
   border-radius: var(--radius-sm);
   background: var(--code-bg);
   object-fit: contain;
+  box-shadow: var(--shadow-card);
+}
+
+/* A report the browser reads in its own viewer, in the same frame the video player uses. */
+.files-pdf {
+  height: 100%;
+  padding: 16px;
+}
+
+.files-pdf iframe {
+  width: 100%;
+  height: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
   box-shadow: var(--shadow-card);
 }
 
@@ -9601,14 +9718,12 @@ div.file-card:hover { background: var(--surface); }
 .dialog.project-browser {
   display: flex;
   flex-direction: column;
-  width: min(560px, 100%);
+  width: min(540px, 100%);
+  /* A long path in the foot is nowrap text; without this the scrim's grid track grows to fit it
+     and the sheet spills past a phone screen. Inside a definite width it ellipsizes instead. */
+  min-width: 0;
   max-height: 86dvh;
   border-radius: var(--radius-lg);
-}
-.project-browser-machine {
-  margin: 6px 0 16px;
-  color: var(--muted);
-  font-size: 13px;
 }
 .project-browser-controls {
   flex: 1;
@@ -9621,43 +9736,148 @@ div.file-card:hover { background: var(--surface); }
   margin: 0;
   border: 0;
 }
-.project-browser-nav { display: flex; gap: 6px; flex-wrap: wrap; }
-.project-browser-path {
-  margin: 12px 0;
-  font-family: var(--mono);
-  font-size: 12px;
-  color: var(--muted);
-  overflow-wrap: anywhere;
-  max-height: 64px;
-  overflow-y: auto;
+.project-browser-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 12px;
 }
-.project-browser input.picker-search { width: 100%; margin: 0 0 10px; flex-shrink: 0; }
-.project-browser-list { flex: 1; min-height: 80px; overflow-y: auto; }
+/* The picker's own title row names the machine too; the dialog's built-in heading stays in the
+   accessibility tree only, so the same words are not shown twice. */
+.dialog.project-browser .dialog-title {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.project-browser-title h2 { font-size: 15.5px; margin: 0; }
+.project-browser-machine { font-size: 12px; color: var(--faint); }
+/* The one input: an address when it starts with / or ~, a filter word otherwise. */
+.project-browser-goto {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  height: 40px;
+  padding: 0 6px 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--faint);
+}
+.project-browser-goto:focus-within { border-color: var(--muted); }
+.project-browser-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: none;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+}
+.project-browser-go {
+  flex: none;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--accent-fg);
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+/* One quiet line of guidance under the input; errors land here too, with their retry. */
+.project-browser-hint {
+  min-height: 22px;
+  margin: 7px 2px 2px;
+  font-size: 12px;
+  color: var(--faint);
+}
+.project-browser-hint.error { color: var(--danger); }
+.project-browser-hint .ghost { padding: 2px 8px; font-size: 12px; }
+.project-browser-list { flex: 1; min-height: 120px; max-height: 42dvh; overflow-y: auto; }
+.project-browser-added { margin: 4px 2px 6px; color: var(--faint); font-size: 12px; }
+/* A row chooses its folder; the chevron beside it steps in, and shows only when pointed at. */
+.project-browser-row { position: relative; }
 .project-browser-folder {
   display: flex;
   width: 100%;
   align-items: center;
-  gap: 12px;
-  padding: 12px 10px;
+  gap: 9px;
+  height: 32px;
+  padding: 0 34px 0 8px;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: 6px;
   background: transparent;
   text-align: left;
+  font-size: 13.5px;
+  color: var(--text);
 }
 .project-browser-folder:hover { background: var(--hover); }
+.project-browser-row.picked .project-browser-folder {
+  background: var(--active);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  font-weight: 600;
+}
 .project-browser-folder > svg { flex-shrink: 0; color: var(--muted); }
-.project-browser-folder > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.project-browser-folder small { display: block; color: var(--muted); margin-top: 4px; overflow-wrap: anywhere; }
-.project-browser-note { color: var(--muted); font-size: 13px; line-height: 1.6; margin: 12px 0; }
-.project-browser-error { color: var(--danger); font-size: 13px; line-height: 1.6; margin-top: 10px; }
-.project-browser-manage { align-self: flex-start; margin-top: 8px; }
+.project-browser-folder > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-browser-folder small { color: var(--faint); font-size: 11.5px; margin-left: 8px; overflow: hidden; text-overflow: ellipsis; }
+.project-browser-enter {
+  position: absolute;
+  top: 50%;
+  right: 3px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--muted);
+  opacity: 0;
+}
+.project-browser-row:hover .project-browser-enter, .project-browser-enter:focus-visible { opacity: 1; }
+.project-browser-enter:hover { background: var(--surface); color: var(--text); }
+.project-browser-folder.up { color: var(--muted); }
+.project-browser-tw { display: inline-flex; width: 15px; flex: none; }
+.project-browser-up { font-family: var(--mono); font-size: 12.5px; width: 20px; text-align: center; flex: none; }
+.project-browser-up-hint { font-size: 12px; color: var(--faint); }
+.project-browser-note { color: var(--faint); font-size: 12.5px; margin: 10px 2px; }
+/* The foot names where the list stands, with the few ways out of it. */
+.project-browser-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--border);
+}
+.project-browser-foot .ghost { padding: 3px 8px; font-size: 12.5px; flex: none; }
+.project-browser-foot-links { display: flex; gap: 2px; flex: none; }
+.project-browser-where {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+}
 .project-browser .dialog-actions { flex-shrink: 0; margin-top: 12px; }
 @media (max-width: 700px) {
   .dialog.project-browser {
     width: 100%;
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   }
-  .project-browser input.picker-search { font-size: 16px; }
+  .project-browser-input { font-size: 16px; }
+  .project-browser-list { max-height: none; }
 }
 
 /* Keep the run location visible alongside the project, including on small screens: one line, and

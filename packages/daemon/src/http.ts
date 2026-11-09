@@ -1308,14 +1308,20 @@ export function createHttpServer(deps: HttpDeps): Server {
         return sendJson(res, 200, { url: `/api/threads/${threadId}/download?${query}`, name: file.name, size: file.size, mimeType: file.mimeType });
       }
 
+      // GET /api/threads/:id/roots: the folders the file browser can stand on, for the root switcher
+      if (method === 'GET' && sub === 'roots') {
+        return sendJson(res, 200, manager.threadRoots(threadId));
+      }
+
       // GET /api/threads/:id/tree?path=: one folder of the thread's directory, for the file browser
       if (method === 'GET' && sub === 'tree') {
         return sendJson(res, 200, await manager.listThreadDir(threadId, url.searchParams.get('path')));
       }
 
-      // GET /api/threads/:id/find?q=: files in the thread directory whose path matches, for the browser's filter
+      // GET /api/threads/:id/find?q=&path=: files under a browse root whose path matches, for the browser's filter
       if (method === 'GET' && sub === 'find') {
-        return sendJson(res, 200, await manager.findThreadFiles(threadId, url.searchParams.get('q') ?? ''));
+        const under = url.searchParams.get('path');
+        return sendJson(res, 200, await manager.findThreadFiles(threadId, url.searchParams.get('q') ?? '', under === null ? undefined : under));
       }
 
       // GET /api/threads/:id/text?path=: a text file's contents, for the file viewer (read only)

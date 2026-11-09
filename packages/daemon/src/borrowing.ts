@@ -293,7 +293,9 @@ export class BorrowingService {
       const artifacts: ToolArtifact[] = [];
       for (const path of collected.images ?? []) {
         try {
-          const { real } = this.manager.resolveInThread(job.threadId!, path, new HttpError(404, 'artifact outside task workspace'));
+          // Task scope: a borrowed tool's artifact counts only from the task's own folders, not
+          // from the file browser's wider choice of where a person may read.
+          const { real } = this.manager.resolveInThread(job.threadId!, path, new HttpError(404, 'artifact outside task workspace'), 'task');
           const image = this.manager.getThreadImage(job.threadId!, real);
           if (image.mimeType === 'image/svg+xml') continue;
           const bytes = readFileSync(image.path);

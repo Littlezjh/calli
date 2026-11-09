@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="zh" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>文件浏览重做 · 变体选型</title>
+<style>
+  /* ---- calli design tokens (copied from styles.css) ---- */
+  :root, [data-palette='paper'] {
+    --bg: #f8f6f1; --sidebar: #f1efe9; --surface: #ffffff; --surface-2: #fbfaf7;
+    --text: #1f1e1c; --muted: #827f77; --faint: #a9a69e;
+    --border: #e5e2da; --border-strong: #d6d2c8;
+    --hover: rgba(31,30,28,.045); --active: rgba(31,30,28,.08);
+    --accent: #1f1e1c; --accent-fg: #ffffff;
+    --accent-soft: color-mix(in srgb, var(--accent) 66%, var(--bg));
+    --positive: #2f7d5b; --warn: #c2410c; --danger: #b42318;
+    --scrim: rgba(24,23,21,.32);
+    --shadow-pop: 0 14px 40px rgba(31,30,28,.14), 0 2px 6px rgba(31,30,28,.06);
+    --shadow-card: 0 1px 2px rgba(31,30,28,.04), 0 6px 20px rgba(31,30,28,.05);
+    --radius-pill: 999px; --radius-sm: 8px; --radius: 12px; --radius-lg: 18px;
+    --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Noto Sans CJK SC', 'Microsoft YaHei', sans-serif;
+    --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+    color-scheme: light;
+  }
+  :root[data-theme='dark'] {
+    --bg: #1b1a18; --sidebar: #161514; --surface: #252422; --surface-2: #201f1d;
+    --text: #ecebe7; --muted: #9a978f; --faint: #6f6c65;
+    --border: #32302c; --border-strong: #423f3a;
+    --hover: rgba(236,235,231,.06); --active: rgba(236,235,231,.1);
+    --accent: #ecebe7; --accent-fg: #1b1a18;
+    --positive: #3f9a72; --warn: #f0935a; --danger: #f97066;
+    --scrim: rgba(0,0,0,.55);
+    --shadow-pop: 0 14px 40px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.3);
+    --shadow-card: 0 1px 2px rgba(0,0,0,.3), 0 6px 20px rgba(0,0,0,.25);
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.5 var(--font); }
+
+  /* ---- playground chrome ---- */
+  .pg-bar {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 10px 18px; border-bottom: 1px solid var(--border);
+    background: var(--sidebar); position: sticky; top: 0; z-index: 20;
+  }
+  .pg-title { font-weight: 700; margin-right: 4px; }
+  .pg-group { display: flex; align-items: center; gap: 4px; }
+  .pg-group-label { font-size: 12px; color: var(--muted); margin: 0 4px 0 8px; }
+  .pg-tab {
+    border: 1px solid transparent; background: none; color: var(--muted);
+    font: inherit; font-size: 13px; padding: 5px 11px; border-radius: var(--radius-pill); cursor: pointer;
+  }
+  .pg-tab:hover { background: var(--hover); color: var(--text); }
+  .pg-tab.on { background: var(--accent); color: var(--accent-fg); }
+  .pg-theme { margin-left: auto; }
+  .pg-note { width: 100%; color: var(--muted); font-size: 12.5px; }
+  .pg-stage { position: relative; min-height: calc(100dvh - 54px); overflow: hidden; }
+
+  /* fake app behind the variants */
+  .fake-app {
+    position: absolute; inset: 0; display: flex;
+    filter: saturate(.9);
+  }
+  .fake-side { width: 240px; background: var(--sidebar); border-right: 1px solid var(--border); padding: 18px 16px; }
+  .fake-side h1 { font-size: 15px; margin: 0 0 14px; }
+  .fake-side .row { height: 26px; border-radius: 6px; background: var(--hover); margin-bottom: 8px; width: 82%; }
+  .fake-side .row.short { width: 55%; }
+  .fake-chat { flex: 1; padding: 26px 40px; }
+  .fake-chat .bubble { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 18px; max-width: 520px; margin-bottom: 14px; color: var(--muted); }
+  .fake-chat .bubble.me { background: var(--surface-2); margin-left: auto; }
+  .scrim { position: absolute; inset: 0; background: var(--scrim); backdrop-filter: blur(2px); }
+
+  .caption { position: absolute; left: 18px; bottom: 14px; z-index: 30; max-width: 520px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); box-shadow: var(--shadow-card); padding: 10px 14px; font-size: 12.5px; color: var(--muted); }
+  .caption b { color: var(--text); }
+
+  svg { flex: none; }
+
+  /* ============ shared bits inside variants ============ */
+  .btn { font: inherit; font-size: 13.5px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); padding: 8px 16px; cursor: pointer; }
+  .btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .icon { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: var(--radius-sm); border: 0; background: none; color: var(--muted); cursor: pointer; }
+  .icon:hover { background: var(--hover); color: var(--text); }
+
+  /* ============ A · VS Code 极简 ============ */
+  .vA-dialog {
+    position: absolute; z-index: 10; left: 50%; top: 50%; transform: translate(-50%, -52%);
+    width: min(540px, calc(100vw - 48px)); background: var(--surface);
+    border-radius: var(--radius-lg); box-shadow: var(--shadow-pop);
+    padding: 18px 18px 14px; display: flex; flex-direction: column;
+  }
+  .vA-title { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
+  .vA-title h2 { font-size: 15.5px; margin: 0; }
+  .vA-title .machine { font-size: 12px; color: var(--faint); }
+  .vA-input { display: flex; align-items: center; gap: 8px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface-2); padding: 0 6px 0 12px; height: 40px; }
+  .vA-input:focus-within { border-color: var(--muted); }
+  .vA-input svg { color: var(--faint); }
+  .vA-input input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; color: var(--text); font: 13.5px/1 var(--mono); }
+  .vA-hint { min-height: 20px; margin: 6px 2px 2px; font-size: 12px; color: var(--faint); }
+  .vA-list { margin: 4px -6px 0; max-height: 292px; overflow: auto; padding: 0 6px; }
+  .vA-row {
+    display: flex; align-items: center; gap: 9px; height: 32px; padding: 0 8px;
+    border-radius: 6px; cursor: pointer; font-size: 13.5px;
+  }
+  .vA-row svg { color: var(--muted); }
+  .vA-row:hover { background: var(--hover); }
+  .vA-row.sel { background: var(--active); box-shadow: inset 0 0 0 1px var(--border-strong); }
+  .vA-row.up { color: var(--muted); }
+  .vA-row .go { margin-left: auto; opacity: 0; color: var(--muted); display: inline-flex; }
+  .vA-row:hover .go { opacity: 1; }
+  .vA-foot { display: flex; align-items: center; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+  .vA-foot .crumb { flex: 1; min-width: 0; font-size: 12px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .vA-foot .actions { display: flex; gap: 8px; }
+  .vA-foot .btn { padding: 6px 14px; }
+
+  /* ============ B · 图1 精修 ============ */
+  .vB-dialog {
+    position: absolute; z-index: 10; left: 50%; top: 50%; transform: translate(-50%, -52%);
+    width: min(600px, calc(100vw - 48px)); background: var(--surface);
+    border-radius: var(--radius-lg); box-shadow: var(--shadow-pop);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .vB-head { display: flex; align-items: center; gap: 10px; padding: 14px 16px 10px; }
+  .vB-head h2 { font-size: 15.5px; margin: 0; flex: 1; }
+  .vB-head .machine { font-size: 12px; color: var(--faint); border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 2px 10px; }
+  .vB-crumbs { display: flex; align-items: center; gap: 2px; padding: 0 12px 10px; font-size: 13px; color: var(--muted); border-bottom: 1px solid var(--border); }
+  .vB-crumbs button { border: 0; background: none; color: inherit; font: inherit; padding: 3px 7px; border-radius: 6px; cursor: pointer; }
+  .vB-crumbs button:hover { background: var(--hover); color: var(--text); }
+  .vB-crumbs .here { color: var(--text); font-weight: 600; padding: 3px 7px; }
+  .vB-crumbs .sep { color: var(--border-strong); }
+  .vB-crumbs .roots { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; border: 0; background: none; color: var(--faint); font-size: 12px; cursor: pointer; padding: 3px 7px; border-radius: 6px; }
+  .vB-crumbs .roots:hover { background: var(--hover); color: var(--text); }
+  .vB-list { flex: 1; min-height: 280px; max-height: 320px; overflow: auto; padding: 6px 8px; }
+  .vB-row {
+    display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px 0 8px;
+    border-radius: var(--radius-sm); cursor: pointer; font-size: 13.5px; position: relative;
+  }
+  .vB-row:hover { background: var(--hover); }
+  .vB-row.sel { background: var(--active); }
+  .vB-row.sel::before { content: ''; position: absolute; left: 0; top: 7px; bottom: 7px; width: 3px; border-radius: 2px; background: var(--accent); }
+  .vB-row svg { color: var(--muted); }
+  .vB-row .name { flex: 1; min-width: 0; }
+  .vB-row .count { font-size: 12px; color: var(--faint); }
+  .vB-row .go { opacity: 0; color: var(--muted); }
+  .vB-row:hover .go { opacity: 1; }
+  .vB-row.up { color: var(--muted); }
+  .vB-row.up .name { font-family: var(--mono); font-size: 12.5px; }
+  .vB-filter { display: flex; align-items: center; gap: 8px; margin: 8px 12px 10px; padding: 0 10px; height: 34px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--muted); }
+  .vB-filter input { flex: 1; border: 0; outline: 0; background: none; color: var(--text); font-size: 13px; }
+  .vB-foot { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border); background: var(--surface-2); }
+
+  /* ============ C · 侧栏式 ============ */
+  .vC-dialog {
+    position: absolute; z-index: 10; left: 50%; top: 50%; transform: translate(-50%, -52%);
+    width: min(680px, calc(100vw - 48px)); background: var(--surface);
+    border-radius: var(--radius-lg); box-shadow: var(--shadow-pop);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .vC-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px 10px; }
+  .vC-head h2 { font-size: 15px; margin: 0; flex: 1; }
+  .vC-body { display: flex; min-height: 320px; max-height: 380px; border-top: 1px solid var(--border); }
+  .vC-rail { width: 176px; flex: none; border-right: 1px solid var(--border); background: var(--surface-2); padding: 8px; overflow: auto; }
+  .vC-rail .rail-label { font-size: 11.5px; color: var(--faint); padding: 8px 8px 4px; }
+  .vC-rail .rail-item {
+    display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px;
+    border-radius: 6px; font-size: 13px; cursor: pointer; color: var(--muted);
+  }
+  .vC-rail .rail-item svg { color: var(--faint); }
+  .vC-rail .rail-item:hover { background: var(--hover); color: var(--text); }
+  .vC-rail .rail-item.on { background: var(--active); color: var(--text); font-weight: 600; }
+  .vC-rail .rail-item.on svg { color: var(--text); }
+  .vC-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .vC-crumbs { display: flex; align-items: center; gap: 2px; padding: 10px 12px 8px; font-size: 13px; color: var(--muted); border-bottom: 1px solid var(--border); }
+  .vC-crumbs button { border: 0; background: none; color: inherit; font: inherit; padding: 3px 6px; border-radius: 6px; cursor: pointer; }
+  .vC-crumbs button:hover { background: var(--hover); color: var(--text); }
+  .vC-crumbs .here { color: var(--text); font-weight: 600; padding: 3px 6px; }
+  .vC-crumbs .sep { color: var(--border-strong); }
+  .vC-list { flex: 1; overflow: auto; padding: 6px 8px; }
+  .vC-row { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px 0 8px; border-radius: var(--radius-sm); cursor: pointer; font-size: 13.5px; }
+  .vC-row:hover { background: var(--hover); }
+  .vC-row.sel { background: var(--active); }
+  .vC-row svg { color: var(--muted); }
+  .vC-row .name { flex: 1; min-width: 0; }
+  .vC-row .go { color: var(--faint); }
+  .vC-foot { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--border); }
+  .vC-foot .path { flex: 1; min-width: 0; font: 12px var(--mono); color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* ============ D · 紧凑树面板 ============ */
+  .vD-panel {
+    position: absolute; z-index: 10; top: 0; bottom: 0; right: 0;
+    width: min(560px, 62vw); background: var(--bg); border-left: 1px solid var(--border);
+    display: flex; flex-direction: column; box-shadow: var(--shadow-card);
+  }
+  .vD-head { display: flex; align-items: center; gap: 6px; height: 54px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--border); }
+  .vD-head .crumbs { flex: 1; min-width: 0; display: flex; align-items: center; gap: 2px; font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; }
+  .vD-head .crumbs button { border: 0; background: none; color: inherit; font: inherit; padding: 3px 5px; border-radius: 5px; cursor: pointer; }
+  .vD-head .crumbs button:hover { background: var(--hover); color: var(--text); }
+  .vD-head .crumbs .here { color: var(--text); font-weight: 600; }
+  .vD-tree { flex: 1; overflow: auto; padding: 8px 8px 16px; }
+  .vD-tools { display: flex; align-items: center; gap: 8px; padding: 10px 12px 6px; }
+  .vD-chip { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface); color: var(--muted); font-size: 12.5px; cursor: pointer; }
+  .vD-chip:hover { color: var(--text); border-color: var(--border-strong); }
+  .vD-filter { flex: 1; display: flex; align-items: center; gap: 7px; height: 28px; padding: 0 9px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--faint); }
+  .vD-filter input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; color: var(--text); font-size: 12.5px; }
+  .vD-row { display: flex; align-items: center; gap: 6px; height: 27px; border-radius: 5px; font-size: 12.8px; cursor: pointer; position: relative; color: var(--text); }
+  .vD-row:hover { background: var(--hover); }
+  .vD-row.current { background: var(--active); }
+  .vD-row.current::before { content: ''; position: absolute; left: 0; top: 5px; bottom: 5px; width: 3px; border-radius: 2px; background: var(--accent); }
+  .vD-row .tw { width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; color: var(--faint); flex: none; }
+  .vD-row svg.f { color: var(--faint); }
+  .vD-row .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .vD-guide { position: absolute; left: 15px; top: 0; bottom: 0; width: 1px; background: var(--border); }
+  .vD-row .size { margin-left: auto; font: 11px var(--mono); color: var(--faint); padding-right: 6px; }
+
+  /* ============ E · 表格式面板 ============ */
+  .vE-panel { position: absolute; z-index: 10; top: 0; bottom: 0; right: 0; width: min(560px, 62vw); background: var(--bg); border-left: 1px solid var(--border); display: flex; flex-direction: column; }
+  .vE-head { display: flex; align-items: center; height: 54px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--border); }
+  .vE-where { padding: 14px 16px 4px; display: flex; align-items: center; gap: 8px; }
+  .vE-where .loc { display: flex; align-items: center; gap: 4px; font-size: 14px; font-weight: 650; }
+  .vE-where .loc svg { color: var(--muted); }
+  .vE-where .switch { margin-left: auto; }
+  .vE-sub { padding: 0 16px 8px; font-size: 12px; color: var(--faint); font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .vE-filter { display: flex; align-items: center; gap: 8px; margin: 4px 14px 10px; padding: 0 11px; height: 32px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--muted); }
+  .vE-filter input { flex: 1; border: 0; outline: 0; background: none; color: var(--text); font-size: 13px; }
+  .vE-list { flex: 1; overflow: auto; padding: 0 10px 14px; }
+  .vE-row { display: flex; align-items: center; gap: 11px; height: 34px; padding: 0 10px; border-radius: var(--radius-sm); font-size: 13.5px; cursor: pointer; }
+  .vE-row:hover { background: var(--hover); }
+  .vE-row.current { background: var(--active); }
+  .vE-row svg { color: var(--muted); }
+  .vE-row.dir svg { color: var(--text); opacity: .75; }
+  .vE-row .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .vE-row .meta { font: 11.5px var(--mono); color: var(--faint); }
+  .vE-empty { text-align: center; color: var(--faint); font-size: 13px; padding: 28px 0 8px; }
+
+  /* ============ F · 产出优先面板 ============ */
+  .vF-panel { position: absolute; z-index: 10; top: 0; bottom: 0; right: 0; width: min(560px, 62vw); background: var(--bg); border-left: 1px solid var(--border); display: flex; flex-direction: column; }
+  .vF-head { display: flex; align-items: center; height: 54px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--border); font-weight: 650; }
+  .vF-scroll { flex: 1; overflow: auto; padding: 4px 0 20px; }
+  .vF-sec { padding: 16px 16px 6px; font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+  .vF-sec .n { font: 11px var(--mono); color: var(--faint); background: var(--hover); border-radius: var(--radius-pill); padding: 1px 8px; }
+  .vF-item { display: flex; align-items: center; gap: 10px; margin: 0 10px; height: 36px; padding: 0 10px; border-radius: var(--radius-sm); font-size: 13.5px; cursor: pointer; }
+  .vF-item:hover { background: var(--hover); }
+  .vF-item svg { color: var(--muted); }
+  .vF-item .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .vF-item .delta { font: 11.5px var(--mono); }
+  .vF-item .delta .add { color: var(--positive); }
+  .vF-item .delta .del { color: var(--danger); }
+  .vF-item .when { margin-left: auto; font-size: 12px; color: var(--faint); flex: none; }
+  .vF-more { margin: 2px 16px 0; font-size: 12.5px; color: var(--muted); background: none; border: 0; cursor: pointer; padding: 4px 0; text-align: left; }
+  .vF-more:hover { color: var(--text); }
+  .vF-filter { display: flex; align-items: center; gap: 8px; margin: 8px 14px 4px; padding: 0 11px; height: 30px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--muted); }
+  .vF-filter input { flex: 1; border: 0; outline: 0; background: none; color: var(--text); font-size: 12.5px; }
+</style>
+</head>
+<body>
+<header class="pg-bar">
+  <span class="pg-title">文件浏览重做</span>
+  <span class="pg-group">
+    <span class="pg-group-label">目录选择器</span>
+    <button class="pg-tab on" data-v="A">A · 极简单框</button>
+    <button class="pg-tab" data-v="B">B · 面包屑精修</button>
+    <button class="pg-tab" data-v="C">C · 侧栏位置</button>
+  </span>
+  <span class="pg-group">
+    <span class="pg-group-label">文件面板</span>
+    <button class="pg-tab" data-v="D">D · 紧凑树</button>
+    <button class="pg-tab" data-v="E">E · 表格列表</button>
+    <button class="pg-tab" data-v="F">F · 产出优先</button>
+  </span>
+  <button class="btn pg-theme" id="theme">深色</button>
+  <span class="pg-note">点行可以选中/展开；每个变体下面写了参考来源。看完告诉我：选择器选哪个、面板选哪个（可以混搭细节）。</span>
+</header>
+<main class="pg-stage" id="stage"></main>
+
+<script>
+const FOLDER = (s = 16) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h6l2 2h10v11H3z"/></svg>`;
+const FILEI = (s = 16) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4"/></svg>`;
+const HOMEI = (s = 14) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11l8-7 8 7v9h-5.5v-6h-5v6H4z"/></svg>`;
+const CHEV = (s = 14, open) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="${open ? 'transform:rotate(90deg)' : ''}"><path d="M9 5l7 7-7 7"/></svg>`;
+const SEARCH = (s = 14) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6"/><path d="M16 16l4.5 4.5"/></svg>`;
+const FOLDERS2 = (s = 14) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h6l2 2h10v11H3z"/><path d="M5.5 5.5H12l2 2h5.5"/></svg>`;
+
+const HOME_DIR = '/home/liuhuadong.hans';
+const tree = {
+  name: 'home', path: HOME_DIR, dirs: [
+    { name: 'code', dirs: [
+      { name: 'remote-agent-hub', files: [['AGENTS.md','6 KB'],['package.json','2 KB']] , dirs: [{ name: 'docs', dirs: [{ name: 'design', files: [['collab-result-playground.html','18 KB']] }] }, { name: 'scripts' }] },
+      { name: 'codex', files: [['README.md','12 KB']] },
+      { name: 'pi', files: [['pi.py','45 KB']] },
+    ]},
+    { name: 'workdir', dirs: [ { name: 'alliance_ai', dirs: [{ name: 'cmd' }, { name: 'conf' }, { name: 'docs' }] } ] },
+    { name: '.pi', files: [['auth.json','1 KB']], dirs: [{ name: 'agent', dirs: [{ name: 'sessions' }] }] },
+    { name: '.claude', files: [['settings.json','3 KB']] },
+  ],
+  files: [['notes.md','1 KB']],
+};
+function find(path) {
+  const parts = path.replace(/^\/home\/liuhuadong\.hans/, '').split('/').filter(Boolean);
+  let node = tree;
+  for (const p of parts) {
+    const next = (node.dirs ?? []).find((d) => d.name === p);
+    if (!next) return node;
+    node = next;
+  }
+  return node;
+}
+
+const stage = document.getElementById('stage');
+const captions = {
+  A: '<b>A · 极简单框</b>（参考 VS Code 远程选目录 SimpleFileDialog）：一个输入框既是路径又是筛选，行最紧凑；面包屑退到页脚一行小字。一切从简，靠输入框扛导航。',
+  B: '<b>B · 面包屑精修</b>（图 1 的结构，视觉参考 GTK/JetBrains 对话框）：路径通过顶部面包屑表达，选中行有左侧墨条，进入箭头只在悬停时出现；页脚浅底放动作。',
+  C: '<b>C · 侧栏位置</b>（参考 macOS Finder 打开对话框）：左边一栏固定「可用目录/家目录/项目」，右边才是文件夹列表——根位置一目了然，项目多时最从容。',
+  D: '<b>D · 紧凑树</b>（参考 VS Code 资源管理器/Codex 文件面板）：行高 27px、当前文件左墨条、右侧尺寸；位置芯片与筛选同一行，整栏信息密度高而安静。',
+  E: '<b>E · 表格列表</b>（参考 filebrowser 列表视图）：每行名称在左、尺寸在右（等宽小字），文件夹/文件靠图标深浅区分；当前位置变成标题行。',
+  F: '<b>F · 产出优先</b>（参考 Codex 变更文件/AiderDesk updated files）：打开先看到这轮会话写了什么（改动带 +/− 行数），往下才是完整文件树。',
+};
+
+function fakeApp() {
+  return `<div class="fake-app"><div class="fake-side"><h1>Calli</h1><div class="row"></div><div class="row short"></div><div class="row"></div><div class="row short"></div></div>
+  <div class="fake-chat"><div class="bubble">把 auth.json 精简到 9 个模型，magpie 写回的也只有这 9 个……</div><div class="bubble me">好，再看看 sessions 目录</div><div class="bubble">已清理，见 ~/.pi/agent/sessions</div></div></div>`;
+}
+
+/* ---------- A ---------- */
+let aPath = HOME_DIR + '/code', aSel = null;
+function renderA() {
+  const node = find(aPath);
+  const rows = node.dirs.map((d) => `<div class="vA-row${aSel === d.name ? ' sel' : ''}" data-name="${d.name}">${FOLDER()}<span>${d.name}</span><span class="go">${CHEV(13)}</span></div>`).join('');
+  const files = (node.files ?? []).map((f) => `<div class="vA-row" style="color:var(--faint);cursor:default">${FILEI()}<span>${f[0]}</span></div>`).join('');
+  const up = aPath !== HOME_DIR ? `<div class="vA-row up" data-up>${CHEV(13, true)}<span>..</span></div>` : '';
+  stage.innerHTML = fakeApp() + `<div class="scrim"></div>
+  <div class="vA-dialog" role="dialog" aria-label="在哪个目录里工作？">
+    <div class="vA-title"><h2>在哪个目录里工作？</h2><span class="machine">本机</span></div>
+    <div class="vA-input">${SEARCH()}<input value="${aPath}" spellcheck="false"><span style="font-size:12px;color:var(--faint)">Enter 前往</span></div>
+    <div class="vA-hint">${aSel ? '已选 ' + aSel + ' · 双击进入' : '输入 / 或 ~ 开头的路径前往；文字直接筛选'}</div>
+    <div class="vA-list">${up}${rows}${files}</div>
+    <div class="vA-foot">
+      <span class="crumb">${aPath}</span>
+      <span class="actions"><button class="btn">取消</button><button class="btn primary" ${aSel ? '' : 'disabled'}>${aSel ? '选择 ' + aSel : '用这个目录'}</button></span>
+    </div>
+  </div>
+  <div class="caption">${captions.A}</div>`;
+  stage.querySelectorAll('.vA-row[data-name]').forEach((r) => {
+    r.onclick = () => { aSel = aSel === r.dataset.name ? null : r.dataset.name; renderA(); };
+    r.ondblclick = () => { aPath += '/' + r.dataset.name; aSel = null; renderA(); };
+  });
+  const u = stage.querySelector('[data-up]'); if (u) u.onclick = () => { aPath = aPath.replace(/\/[^/]+$/, ''); aSel = null; renderA(); };
+}
+
+/* ---------- B ---------- */
+let bPath = HOME_DIR + '/code/remote-agent-hub', bSel = null;
+function crumbsHTML(path, here) {
+  const parts = path.slice(HOME_DIR.length).split('/').filter(Boolean);
+  let acc = HOME_DIR, out = `<button data-go="${HOME_DIR}">${HOMEI(13)}</button>`;
+  parts.forEach((p, i) => {
+    acc += '/' + p;
+    out += `<span class="sep">›</span>` + (i === parts.length - 1 && here ? `<span class="here">${p}</span>` : `<button data-go="${acc}">${p}</button>`);
+  });
+  return out;
+}
+function renderB() {
+  const node = find(bPath);
+  const rows = node.dirs.map((d) => `<div class="vB-row${bSel === d.name ? ' sel' : ''}" data-name="${d.name}">${FOLDER()}<span class="name">${d.name}</span><span class="go">${CHEV(13)}</span></div>`).join('');
+  const up = bPath !== HOME_DIR ? `<div class="vB-row up" data-up><span class="name">..</span><span style="font-size:12px">上一级</span></div>` : '';
+  stage.innerHTML = fakeApp() + `<div class="scrim"></div>
+  <div class="vB-dialog" role="dialog" aria-label="在哪个目录里工作？">
+    <div class="vB-head"><h2>在哪个目录里工作？</h2><span class="machine">本机</span></div>
+    <div class="vB-crumbs">${crumbsHTML(bPath, true)}<button class="roots">${FOLDERS2(13)} 可用目录</button></div>
+    <div class="vB-list">${up}${rows}</div>
+    <div class="vB-filter">${SEARCH()}<input placeholder="筛选当前目录下的文件夹"></div>
+    <div class="vB-foot"><button class="btn">取消</button><button class="btn primary" ${bSel ? '' : 'disabled'}>${bSel ? '选择文件夹' : '用这个目录'}</button></div>
+  </div>
+  <div class="caption">${captions.B}</div>`;
+  stage.querySelectorAll('.vB-row[data-name]').forEach((r) => {
+    r.onclick = () => { bSel = bSel === r.dataset.name ? null : r.dataset.name; renderB(); };
+    r.ondblclick = () => { bPath += '/' + r.dataset.name; bSel = null; renderB(); };
+  });
+  const u = stage.querySelector('[data-up]'); if (u) u.onclick = () => { bPath = bPath.replace(/\/[^/]+$/, ''); bSel = null; renderB(); };
+  stage.querySelectorAll('[data-go]').forEach((b) => b.onclick = () => { bPath = b.dataset.go; bSel = null; renderB(); });
+}
+
+/* ---------- C ---------- */
+let cPath = HOME_DIR + '/workdir/alliance_ai', cSel = null;
+function renderC() {
+  const node = find(cPath);
+  const rail = (label, items) => `<div class="rail-label">${label}</div>` + items.map((i) => `<div class="rail-item${i.on ? ' on' : ''}" data-go="${i.path}">${i.icon}${i.name}</div>`).join('');
+  const rows = node.dirs.map((d) => `<div class="vC-row${cSel === d.name ? ' sel' : ''}" data-name="${d.name}">${FOLDER()}<span class="name">${d.name}</span><span class="go">${CHEV(13)}</span></div>`).join('');
+  stage.innerHTML = fakeApp() + `<div class="scrim"></div>
+  <div class="vC-dialog" role="dialog" aria-label="在哪个目录里工作？">
+    <div class="vC-head"><h2>选择工作目录</h2><button class="btn">取消</button></div>
+    <div class="vC-body">
+      <div class="vC-rail">
+        ${rail('位置', [{ name: '家目录', path: HOME_DIR, icon: HOMEI(13) }, { name: '可用目录', path: HOME_DIR + '/code', icon: FOLDERS2(13), on: true }])}
+        ${rail('项目', [ { name: 'remote-agent-hub', path: HOME_DIR + '/code/remote-agent-hub', icon: FOLDER(13) }, { name: 'alliance_ai', path: HOME_DIR + '/workdir/alliance_ai', icon: FOLDER(13) }, { name: 'magpie', path: HOME_DIR + '/code/magpie', icon: FOLDER(13) } ])}
+      </div>
+      <div class="vC-main">
+        <div class="vC-crumbs">${crumbsHTML(cPath, true)}</div>
+        <div class="vC-list">${rows || '<div style="color:var(--faint);font-size:13px;padding:14px">没有子文件夹</div>'}</div>
+      </div>
+    </div>
+    <div class="vC-foot"><span class="path">${cPath}${cSel ? '/' + cSel : ''}</span><button class="btn primary">${cPath === HOME_DIR ? '进入具体项目' : (cSel ? '选择文件夹' : '添加并使用')}</button></div>
+  </div>
+  <div class="caption">${captions.C}</div>`;
+  stage.querySelectorAll('.vC-row[data-name]').forEach((r) => {
+    r.onclick = () => { cSel = cSel === r.dataset.name ? null : r.dataset.name; renderC(); };
+    r.ondblclick = () => { cPath += '/' + r.dataset.name; cSel = null; renderC(); };
+  });
+  stage.querySelectorAll('.vC-rail [data-go]').forEach((b) => b.onclick = () => { cPath = b.dataset.go; cSel = null; renderC(); });
+  stage.querySelectorAll('.vC-crumbs [data-go]').forEach((b) => b.onclick = () => { cPath = b.dataset.go; cSel = null; renderC(); });
+}
+
+/* ---------- D ---------- */
+const openSet = new Set([HOME_DIR + '/code', HOME_DIR + '/code/remote-agent-hub']);
+function renderD() {
+  const row = (name, path, depth, isDir, file) => {
+    const open = openSet.has(path);
+    const current = path.endsWith('AGENTS.md');
+    const icon = isDir ? FOLDER(14) : FILEI(14);
+    return `<div class="vD-row${current ? ' current' : ''}" data-path="${path}" data-dir="${isDir ? 1 : 0}" style="padding-left:${6 + depth * 14}px">
+      <span class="tw">${isDir ? CHEV(11, open) : ''}</span>${icon}
+      <span class="name">${name}</span>${!isDir && file ? `<span class="size">${file[1]}</span>` : ''}
+    </div>`;
+  };
+  const walk = (node, path, depth) => {
+    let out = row(node.name, path, depth, true);
+    if (openSet.has(path)) {
+      for (const d of node.dirs ?? []) out += walk(d, path + '/' + d.name, depth + 1);
+      for (const f of node.files ?? []) out += row(f[0], path + '/' + f[0], depth + 1, false, f);
+    }
+    return out;
+  };
+  let body = '';
+  for (const d of tree.dirs) body += walk(d, HOME_DIR + '/' + d.name, 0);
+  for (const f of tree.files ?? []) body += row(f[0], HOME_DIR + '/' + f[0], 0, false, f);
+  stage.innerHTML = fakeApp() + `
+  <div class="vD-panel" role="region" aria-label="文件">
+    <div class="vD-head">
+      <span class="crumbs"><button data-go="${HOME_DIR}">home</button><span style="color:var(--border-strong)">›</span><button data-go="${HOME_DIR}/code">code</button><span style="color:var(--border-strong)">›</span><span class="here">remote-agent-hub</span><span style="color:var(--border-strong)">›</span><span class="here" style="font-weight:400">AGENTS.md</span></span>
+      <button class="icon" title="关闭">${CHEV(13)}</button>
+    </div>
+    <div class="vD-tree">
+      <div class="vD-tools"><span class="vD-chip">${FOLDERS2(13)} home</span><span class="vD-filter">${SEARCH()}<input placeholder="筛选文件…"></span></div>
+      ${body}
+    </div>
+  </div>
+  <div class="caption">${captions.D}</div>`;
+  stage.querySelectorAll('.vD-row[data-dir="1"]').forEach((r) => r.onclick = () => { const p = r.dataset.path; openSet.has(p) ? openSet.delete(p) : openSet.add(p); renderD(); });
+  stage.querySelectorAll('.vD-head [data-go]').forEach((b) => b.onclick = () => {});
+}
+
+/* ---------- E ---------- */
+let ePath = HOME_DIR + '/code/remote-agent-hub';
+function renderE() {
+  const node = find(ePath);
+  const dirs = (node.dirs ?? []).map((d) => `<div class="vE-row dir" data-name="${d.name}">${FOLDER()}<span class="name">${d.name}</span><span class="meta">${((d.dirs ?? []).length + (d.files ?? []).length) || ''}${(d.dirs ?? []).length + (d.files ?? []).length ? ' 项' : ''}</span></div>`).join('');
+  const files = (node.files ?? []).map((f) => `<div class="vE-row"><svg class="f" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="color:var(--faint)"><path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4"/></svg><span class="name">${f[0]}</span><span class="meta">${f[1]}</span></div>`).join('');
+  const parts = ePath.slice(HOME_DIR.length).split('/').filter(Boolean);
+  stage.innerHTML = fakeApp() + `
+  <div class="vE-panel" role="region" aria-label="文件">
+    <div class="vE-head"><span style="flex:1;font-weight:650">文件</span><button class="icon" title="关闭">${CHEV(13)}</button></div>
+    <div class="vE-where">
+      <span class="loc"><span data-go="${HOME_DIR}" style="cursor:pointer">${HOMEI(15)}</span>${parts.map((p, i) => `<span style="color:var(--border-strong)">›</span><span data-go="${HOME_DIR + '/' + parts.slice(0, i + 1).join('/')}" style="cursor:pointer;${i === parts.length - 1 ? '' : 'color:var(--muted);font-weight:400'}">${p}</span>`).join('')}</span>
+      <button class="vD-chip switch">${FOLDERS2(13)} 切换</button>
+    </div>
+    <div class="vE-sub">${ePath}</div>
+    <div class="vE-filter">${SEARCH()}<input placeholder="筛选文件…"></div>
+    <div class="vE-list">${dirs}${files}<div class="vE-empty">${(node.dirs ?? []).length + (node.files ?? []).length ? '' : '空文件夹'}</div></div>
+  </div>
+  <div class="caption">${captions.E}</div>`;
+  stage.querySelectorAll('.vE-row.dir').forEach((r) => r.onclick = () => { ePath += '/' + r.dataset.name; renderE(); });
+  stage.querySelectorAll('[data-go]').forEach((b) => b.onclick = () => { ePath = b.dataset.go; renderE(); });
+}
+
+/* ---------- F ---------- */
+function renderF() {
+  const changed = [
+    ['auth.json', '+12', '−48', '2 分钟前'], ['models.json', '+9', '−0', '2 分钟前'],
+    ['README.md', '+3', '−1', '10 分钟前'], ['说明.md', '+86', '−12', '半小时前'],
+  ];
+  const imgs = [['图表-模型分布.png', '182 KB'], ['架构图.svg', '24 KB']];
+  stage.innerHTML = fakeApp() + `
+  <div class="vF-panel" role="region" aria-label="文件">
+    <div class="vF-head"><span style="flex:1">文件</span><button class="icon" title="关闭">${CHEV(13)}</button></div>
+    <div class="vF-scroll">
+      <div class="vF-sec">这轮改了什么<span class="n">4</span></div>
+      ${changed.map((c) => `<div class="vF-item">${FILEI()}<span class="name">${c[0]}</span><span class="delta"><span class="add">${c[1]}</span> <span class="del">${c[2]}</span></span><span class="when">${c[3]}</span></div>`).join('')}
+      <button class="vF-more">查看完整 diff ›</button>
+      <div class="vF-sec">产出的图片<span class="n">2</span></div>
+      ${imgs.map((c) => `<div class="vF-item">${FILEI()}<span class="name">${c[0]}</span><span class="when">${c[1]}</span></div>`).join('')}
+      <div class="vF-sec">项目文件<span class="n">全部</span></div>
+      <div style="padding:0 10px 6px">
+        <div class="vF-filter">${SEARCH()}<input placeholder="筛选文件…"></div>
+      </div>
+      <div style="padding:0 10px">
+        ${[['code', true], ['workdir', true], ['.pi', true], ['notes.md', false, '1 KB'], ['auth.json', false, '1 KB']].map((r) => `<div class="vF-item">${r[1] ? FOLDER() : FILEI()}<span class="name">${r[0]}</span><span class="when">${r[2] ?? ''}</span></div>`).join('')}
+      </div>
+    </div>
+  </div>
+  <div class="caption">${captions.F}</div>`;
+}
+
+const renderers = { A: renderA, B: renderB, C: renderC, D: renderD, E: renderE, F: renderF };
+let current = 'A';
+document.querySelectorAll('.pg-tab').forEach((t) => t.onclick = () => {
+  document.querySelectorAll('.pg-tab').forEach((x) => x.classList.remove('on'));
+  t.classList.add('on');
+  current = t.dataset.v;
+  renderers[current]();
+});
+document.getElementById('theme').onclick = () => {
+  const root = document.documentElement;
+  const dark = root.dataset.theme !== 'dark';
+  root.dataset.theme = dark ? 'dark' : 'light';
+  document.getElementById('theme').textContent = dark ? '浅色' : '深色';
+};
+renderA();
+</script>
+</body>
+</html>
