@@ -790,6 +790,7 @@ export const zh = {
   'step.running': '运行中',
   'step.ended': '已结束',
   'step.done': '完成',
+  'step.exitedPlanMode': '已退出计划模式',
   'compaction.in_progress': '正在压缩上下文…',
   'compaction.completed': '上下文已压缩',
   'compaction.automatic': '上下文已自动压缩',
@@ -1027,11 +1028,11 @@ export const zh = {
   'sideChat.placeholder': '问点什么…',
   'composer.noThread': '没有打开的线程',
 
-  // Plan card, plan reader, and the bottom sheet that asks for decisions
+  // Plan document and the bottom sheet that asks for decisions
   'plan.cardTitle': '计划',
   'plan.cardStreaming': '正在整理计划',
-  'plan.openFull': '查看完整计划',
-  'plan.readerTitle': '查看计划',
+  'plan.showAll': '查看整份',
+  'plan.collapse': '收起',
   'plan.download': '下载方案',
   'plan.copy': '拷贝方案',
   'plan.copyDone': '已复制',
@@ -1070,6 +1071,7 @@ export const zh = {
   'trace.ended': (asked: string) => `提问已结束 · ${asked}`,
   'trace.planSkipped': '已跳过方案',
   'trace.planConfirmed': '已确认执行',
+  'trace.planAuto': '已自动执行 · 完全访问',
   'trace.planReturned': (said: string) => `已退回方案：${said}`,
   'trace.allowed': (title: string) => `已允许 · ${title}`,
   'trace.rejected': (title: string) => `已拒绝 · ${title}`,

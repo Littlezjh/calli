@@ -27,6 +27,12 @@ export interface UserInputRequest {
   kind?: 'question' | 'plan';
   plan?: string;
   questions: UserQuestion[];
+  /**
+   * Nothing is really being asked: the decision this carries has already been made on the user's
+   * behalf by their settings (full access approves a plan gate itself). The request is recorded in
+   * the thread like any other — the plan stays readable — but no sheet ever waits for a person.
+   */
+  auto?: UserInputAnswer;
 }
 export type UserInputAnswer = { answers: Record<string, string[]> } | { cancelled: true };
 

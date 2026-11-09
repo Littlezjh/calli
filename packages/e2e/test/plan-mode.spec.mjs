@@ -18,8 +18,8 @@ const questionSheet = page => page.getByRole('dialog', { name: '智能体提问'
 const planSheet = page => page.getByRole('dialog', { name: '计划审批' });
 const composerHidden = page => page.locator('.composer-box').evaluate(el => getComputedStyle(el).visibility === 'hidden');
 
-const create = async (agent, title, workMode = 'plan') => {
-  const res = await api(daemon, '/api/threads', { method: 'POST', body: JSON.stringify({ agent, title, cwd: daemon.workdir, workMode, permissionMode: 'full_access' }) });
+const create = async (agent, title, workMode = 'plan', permissionMode = 'full_access') => {
+  const res = await api(daemon, '/api/threads', { method: 'POST', body: JSON.stringify({ agent, title, cwd: daemon.workdir, workMode, permissionMode }) });
   assert.equal(res.status, 201); return res.json();
 };
 const select = async (page, title, mobile) => {
@@ -138,15 +138,18 @@ test('questions answer from the sheet, leave a faint line, and the plan opens at
       await page.locator('.composer textarea[placeholder="继续这个线程"]').waitFor({ state: 'attached' });
       // The plan is in: plan mode is over, and whether to run it is asked in the sheet.
       await planSheet(page).getByText('是否执行该方案？', { exact: true }).waitFor();
-      // The card opens the whole plan; Esc brings the thread back.
-      await page.locator('.proposal .proposal-body').first().click();
-      await page.locator('.plan-reader').waitFor();
-      await page.locator('.plan-reader').getByText('实施计划').first().waitFor();
-      await page.locator('.plan-reader').getByRole('button', { name: '下载方案' }).waitFor();
-      await page.locator('.plan-reader').getByRole('button', { name: '拷贝方案' }).waitFor();
-      if (shots) await page.screenshot({ path: join(shots, `plan-reader-${device}-${colorScheme}.png`), animations: 'disabled' });
-      await page.keyboard.press('Escape');
-      await page.locator('.plan-reader').waitFor({ state: 'detached' });
+      // The plan is a document in the thread: cut where it runs long, opened to the whole of it
+      // in place — no overlay, no separate screen.
+      const more = page.locator('.proposal-more').first();
+      await more.waitFor();
+      await more.getByText('查看整份', { exact: true }).waitFor();
+      if (shots) await page.screenshot({ path: join(shots, `plan-cut-${device}-${colorScheme}.png`), animations: 'disabled' });
+      await more.click();
+      await page.locator('.proposal.full').first().waitFor();
+      await page.getByText('保留当前会话和权限设置。').first().waitFor();
+      if (shots) await page.screenshot({ path: join(shots, `plan-open-${device}-${colorScheme}.png`), animations: 'disabled' });
+      await page.locator('.proposal-more').first().click();
+      await page.locator('.proposal.full').first().waitFor({ state: 'detached' });
       const before = await (await api(daemon, `/api/threads/${thread.id}`)).json();
       await planSheet(page).getByRole('button', { name: '确认执行该方案', exact: true }).click();
       await page.getByText(/按我们讨论的计划开始执行/).first().waitFor();
@@ -170,25 +173,46 @@ test('native plan approvals and stopped questions leave their trace', { timeout:
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   try {
     const page = await context.newPage();
-    for (const agent of ['claude', 'zcode']) {
-      const title = `原生计划审批 ${agent}`;
-      const thread = await create(agent, title);
-      await select(page, title, false);
-      await send(page, 'plan-approval');
-      // The plan itself is the card in the thread; the decision is the sheet.
-      await page.locator('.proposal').getByText('实施计划').first().waitFor();
-      await planSheet(page).getByText('是否执行该方案？', { exact: true }).waitFor();
-      await planSheet(page).getByRole('button', { name: '确认执行该方案', exact: true }).click();
-      await page.getByText('已确认执行', { exact: true }).waitFor();
-      await page.getByRole('button', { name: '停止', exact: true }).waitFor({ state: 'hidden' });
-      const updated = await waitIdle(thread.id);
-      assert.equal(updated.workMode, 'execute');
-      assert.equal((await events(thread.id)).filter(e => e.type === 'turn.started').length, 1);
-    }
+    // Full access carries Claude's plan gate itself: the plan is the card, the trace says it ran,
+    // and no sheet ever waits for a person.
+    const auto = await create('claude', '原生计划审批 claude');
+    await select(page, '原生计划审批 claude', false);
+    await send(page, 'plan-approval');
+    await page.locator('.proposal').getByText('实施计划').first().waitFor();
+    await page.getByText('已自动执行 · 完全访问', { exact: true }).waitFor();
+    assert.equal(await page.locator('.action-sheet').count(), 0, 'full access asks nobody about the plan');
+    await page.getByRole('button', { name: '停止', exact: true }).waitFor({ state: 'hidden' });
+    const ranByItself = await waitIdle(auto.id);
+    assert.equal(ranByItself.workMode, 'execute');
+    assert.equal((await events(auto.id)).filter(e => e.type === 'turn.started').length, 1);
+    // Asked the ordinary way — zcode has no permission levels — the sheet does the deciding.
+    const title = '原生计划审批 zcode';
+    const thread = await create('zcode', title);
+    await select(page, title, false);
+    await send(page, 'plan-approval');
+    // The plan itself is the card in the thread; the decision is the sheet.
+    await page.locator('.proposal').getByText('实施计划').first().waitFor();
+    await planSheet(page).getByText('是否执行该方案？', { exact: true }).waitFor();
+    await planSheet(page).getByRole('button', { name: '确认执行该方案', exact: true }).click();
+    await page.getByText('已确认执行', { exact: true }).waitFor();
+    await page.getByRole('button', { name: '停止', exact: true }).waitFor({ state: 'hidden' });
+    const updated = await waitIdle(thread.id);
+    assert.equal(updated.workMode, 'execute');
+    assert.equal((await events(thread.id)).filter(e => e.type === 'turn.started').length, 1);
+    // Claude asked at a lesser level still reads the plan before it runs.
+    const asked = await create('claude', '原生计划审批 提问', 'plan', 'ask');
+    await select(page, '原生计划审批 提问', false);
+    await send(page, 'plan-approval');
+    await page.locator('.proposal').getByText('实施计划').first().waitFor();
+    await planSheet(page).getByText('是否执行该方案？', { exact: true }).waitFor();
+    await planSheet(page).getByRole('button', { name: '确认执行该方案', exact: true }).click();
+    await page.getByText('已确认执行', { exact: true }).waitFor();
+    await page.getByRole('button', { name: '停止', exact: true }).waitFor({ state: 'hidden' });
+    assert.equal((await waitIdle(asked.id)).workMode, 'execute');
     // A question the turn ran out under says so; one skipped says that instead.
-    const title = '取消计划提问';
-    const stopped = await create('codex', title);
-    await select(page, title, false); await send(page, 'plan-question');
+    const stopTitle = '取消计划提问';
+    const stopped = await create('codex', stopTitle);
+    await select(page, stopTitle, false); await send(page, 'plan-question');
     await questionSheet(page).getByRole('radio', { name: /桌面和手机/ }).waitFor();
     assert.equal((await api(daemon, `/api/threads/${stopped.id}/cancel`, { method: 'POST', body: '{}' })).status, 200);
     await page.getByText('提问已结束 · 优先支持哪一端？', { exact: true }).waitFor();

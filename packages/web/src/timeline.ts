@@ -229,7 +229,7 @@ export type Item =
    * A question or plan approval the agent asked. `ended` on a cancelled answer means the turn ran
    * out under it (stopped, failed), not that the user chose to leave it unanswered.
    */
-  | { kind: 'input'; key: string; turnId: string; inputId: string; title: string; inputKind?: string; plan?: string; questions: import('./api').UserQuestion[]; answer: import('./api').UserInputAnswer | { cancelled: true; ended: true } | null }
+  | { kind: 'input'; key: string; turnId: string; inputId: string; title: string; inputKind?: string; plan?: string; questions: import('./api').UserQuestion[]; answer: import('./api').UserInputAnswer | { cancelled: true; ended: true } | null; auto?: boolean }
   | { kind: 'voice-recap'; key: string; turnId: null; sessionId: string; seconds: number; count: number }
   | { kind: 'user'; voice?: boolean; background?: boolean; streaming?: boolean; handoverCollapsed?: boolean; workMode?: string; key: string; turnId: string; text: string; images: ImageRef[]; videos?: VideoRef[]; fromTerminal?: boolean; scheduled?: boolean; coordination?: CoordinationNote; channel?: TurnChannel }
   /** The turn's answer: the text after everything the agent did. */
@@ -787,7 +787,9 @@ export function buildTimeline(events: StoredEvent[], speech: readonly VoiceTrans
         // The question interrupts the turn's flow: work that goes on after it lands below it.
         open.work = null;
         open.answer = null;
-        items.push({ kind: 'input', key, turnId: turn, inputId: String(ev.data.inputId), title: ev.data.title, inputKind: ev.data.kind, plan: ev.data.plan, questions: ev.data.questions ?? [], answer: null });
+        // An answered-in-advance request (full access approves a plan itself) arrives with the
+        // decision attached: recorded, never asked.
+        items.push({ kind: 'input', key, turnId: turn, inputId: String(ev.data.inputId), title: ev.data.title, inputKind: ev.data.kind, plan: ev.data.plan, questions: ev.data.questions ?? [], answer: (ev.data.auto as import('./api').UserInputAnswer | undefined) ?? null, ...(ev.data.auto ? { auto: true } : {}) });
         break;
       case 'input.resolved':
         for (const it of items) if (it.kind === 'input' && it.inputId === ev.data.inputId) {
@@ -1063,8 +1065,14 @@ const hasVerb = (kind: string): kind is (typeof STEP_VERBS)[number] => (STEP_VER
 /** `cd <dir> && …` at the start of a command: where it ran, which the row's detail still shows. */
 const LEADING_CD = /^cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*(?:&&|;)\s*(?=\S)/;
 
-/** The step's one line, verb first: "Ran npm test". A command is named by what it runs, not by the directory it first steps into. */
+/** The fixed title Claude Code's bridge gives the plan-exit tool call, whatever was planned. */
+const EXITED_PLAN_TITLE = 'Exited Plan Mode';
+
+/** The step's one line, verb first: "Ran npm test". A command is named by what it runs, not by the
+ *  directory it first steps into; the bridge's fixed plan-exit title says itself in the thread's
+ *  own language instead of the one Claude Code ships in. */
 export function stepTitle(step: Step): string {
+  if (step.title === EXITED_PLAN_TITLE) return t('step.exitedPlanMode');
   const title = step.kind === 'execute' ? step.title.replace(LEADING_CD, '') : step.title;
   return hasVerb(step.kind) ? t(`step.${step.kind}`, title) : title;
 }

@@ -152,6 +152,11 @@ const LIST_BEFORE = `  const rowHeight = useMemo(() => measureRow(items[0]), [it
 const LIST_AFTER = `  // Rows are measured once their images load; until then each keeps the height it was given.
   const rowHeight = useStableHeight(measureRow, items);
 `;
+const FILTERS_BEFORE = `  const [category, setCategory] = useState<Category>('all');
+`;
+const FILTERS_AFTER = `  // The filters live in the URL, so a refresh or a shared link keeps them.
+  const [category, setCategory] = useQueryParam<Category>('category', 'all');
+`;
 
 /** The two preview pictures the dark-mode thread drew of its settings page: neutral greys, no real project. */
 const settingsMock = (page: string, card: string, line: string, edge: string, filled: string) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 200">
@@ -399,6 +404,53 @@ export function demoData(now = Date.now()): DemoData {
     routes.add(turn, at(124), 'turn.done', { stopReason: 'end_turn' });
   }
 
+  // A plan Claude held itself until it was told to go: the native approval, its card and its trace.
+  const filters = log('demo-filters');
+  {
+    const turn = 'turn-filters-1';
+    filters.add(null, at(75), 'thread.created');
+    filters.add(turn, at(74), 'turn.started', { text: '商品列表想按类目和价格筛一下，先出个方案，先别动代码。', workMode: 'plan' });
+    filters.add(turn, at(74), 'reasoning.delta', { text: '筛选状态放 URL 查询参数里最稳，刷新和分享都能保住。先看列表页和数据层现在长什么样。' });
+    filters.add(turn, at(73), 'tool.start', { id: 'f1', title: 'src/pages/Products.tsx', kind: 'read' });
+    filters.add(turn, at(73), 'tool.end', { id: 'f1', status: 'completed' });
+    filters.add(turn, at(72), 'tool.start', { id: 'f2', title: 'rg "listProducts" src', kind: 'execute', input: { command: 'rg "listProducts" src' } });
+    filters.add(turn, at(72), 'tool.end', { id: 'f2', status: 'completed', output: 'src/api/products.ts:14:export function listProducts(query) {' });
+    filters.add(turn, at(71), 'message.delta', { text: '看完了，接口本身已经收查询参数，只差前端把筛选接进去。方案如下，改动都落在列表页这一侧。' });
+    // The bridge titles the plan-exit tool call the way Claude Code's own UI does.
+    filters.add(turn, at(70), 'tool.start', { id: 'f3', title: 'Exited Plan Mode', kind: 'other' });
+    filters.add(turn, at(69), 'tool.end', { id: 'f3', status: 'completed' });
+    filters.add(turn, at(69), 'input.request', {
+      inputId: 'demo-plan-approval',
+      title: '计划已准备好',
+      kind: 'plan',
+      // Full access answered this gate itself: the plan stays on record, nobody was asked.
+      auto: { answers: { approval: ['exit-plan-bypass'] } },
+      plan: [
+        '## 商品筛选方案',
+        '',
+        '筛选状态放进 URL 查询参数（`?category=&max=`），刷新、后退和分享链接都能保住；数据层只做透传，不另建状态。',
+        '',
+        '| 文件 | 改动 |',
+        '|---|---|',
+        '| `src/pages/Products.tsx` | 筛选栏 UI，读写查询参数 |',
+        '| `src/api/products.ts` | 类型补上筛选字段 |',
+        '| `src/i18n/locales/{zh,en}.ts` | 筛选项文案 |',
+        '',
+        '明确不做：服务端聚合筛选（接口已支持）、价格区间滑块（先用两个输入框）。',
+      ].join('\n'),
+      questions: [{ id: 'approval', question: '是否按此计划开始执行？', options: [{ value: 'exit-plan-bypass', label: '开始执行' }] }],
+    });
+    filters.add(turn, at(66), 'tool.start', {
+      id: 'f4',
+      title: 'src/pages/Products.tsx',
+      kind: 'edit',
+      content: [{ type: 'diff', path: `${STOREFRONT}/src/pages/Products.tsx`, oldText: FILTERS_BEFORE, newText: FILTERS_AFTER }],
+    });
+    filters.add(turn, at(65), 'tool.end', { id: 'f4', status: 'completed' });
+    filters.add(turn, at(64), 'message.delta', { text: '筛选栏接好了：类目和价格都进 URL，刷新后还在。文案中英文各补了三条，测试跑过，改动就这些。' });
+    filters.add(turn, at(64), 'turn.done', { stopReason: 'end_turn' });
+  }
+
   // Started by the weekly schedule; the answer is a table.
   const weekly = log('demo-weekly');
   {
@@ -545,6 +597,7 @@ export function demoData(now = Date.now()): DemoData {
     thread({ id: 'demo-tests', agent: 'codex', cwd: NOTES_API, title: '补齐 /users 接口测试', unread: true, preview: '给 /users 接口补上缺的测试。', report: { stage: 'review', note: '补了 12 个用例，本地全部通过', at: at(16) } }, 16),
     thread({ id: 'demo-dark-mode', agent: 'codex', cwd: STOREFRONT, title: '设置页加深色模式', preview: '设置页加一个深色模式开关', model: 'gpt-5.5', effort: 'high', doneAt: at(30) }, 38),
     thread({ id: 'demo-routes', agent: 'codex', cwd: NOTES_API, title: '迁移到新的路由写法', workMode: 'plan', preview: '想把接口迁到新的路由写法' }, 124),
+    thread({ id: 'demo-filters', agent: 'claude', cwd: STOREFRONT, title: '商品列表加筛选', preview: '筛选栏接好了：类目和价格都进 URL', model: 'opus', permissionMode: 'full_access', doneAt: at(64) }, 74),
     thread({ id: 'demo-weekly', agent: 'pi', cwd: NOTES_API, title: '上周周报', sectionId: 'demo-reports', permissionMode: 'full_access', preview: '整理上周的提交记录', schedule: { id: 'demo-schedule', name: '每周一周报' } }, 60 * 26 - 1),
   ];
   const byId = (id: string) => threads.filter((t) => t.id === id);
@@ -856,6 +909,7 @@ export function demoData(now = Date.now()): DemoData {
       'demo-dark-mode': dark.events,
       'demo-scroll-fix': scroll.events,
       'demo-routes': routes.events,
+      'demo-filters': filters.events,
       'demo-weekly': weekly.events,
       'demo-tests': tests.events,
     },

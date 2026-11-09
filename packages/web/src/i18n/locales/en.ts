@@ -790,6 +790,7 @@ export const en: Messages = {
   'step.running': 'Running',
   'step.ended': 'Ended',
   'step.done': 'Done',
+  'step.exitedPlanMode': 'Exited plan mode',
   'compaction.in_progress': 'Compacting context…',
   'compaction.completed': 'Context compacted',
   'compaction.automatic': 'Context compacted automatically',
@@ -1027,11 +1028,11 @@ export const en: Messages = {
   'sideChat.placeholder': 'Ask something…',
   'composer.noThread': 'No open thread',
 
-  // Plan card, plan reader, and the bottom sheet that asks for decisions
+  // Plan document and the bottom sheet that asks for decisions
   'plan.cardTitle': 'Plan',
   'plan.cardStreaming': 'Drafting the plan',
-  'plan.openFull': 'Open the whole plan',
-  'plan.readerTitle': 'View plan',
+  'plan.showAll': 'Show the whole plan',
+  'plan.collapse': 'Show less',
   'plan.download': 'Download plan',
   'plan.copy': 'Copy plan',
   'plan.copyDone': 'Copied',
@@ -1070,6 +1071,7 @@ export const en: Messages = {
   'trace.ended': (asked: string) => `Question ended · ${asked}`,
   'trace.planSkipped': 'Plan skipped',
   'trace.planConfirmed': 'Plan confirmed',
+  'trace.planAuto': 'Ran automatically · full access',
   'trace.planReturned': (said: string) => `Sent back: ${said}`,
   'trace.allowed': (title: string) => `Allowed · ${title}`,
   'trace.rejected': (title: string) => `Rejected · ${title}`,

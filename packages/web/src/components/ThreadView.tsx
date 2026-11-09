@@ -51,8 +51,8 @@ import {
 } from '../timeline';
 import { VoiceCloud } from './VoiceOrb';
 import { Lightbox } from './Lightbox';
-import { PlanCopyButton, PlanDownloadButton, PlanReader } from './PlanReader';
-import { IconBell, ActivityIcon, IconArrowRight, IconCheck, IconChevron, IconClose, IconCompact, IconCopy, IconEdit, IconExternal, IconFile, IconFork, IconHand, IconHandover, IconList, IconQuote, IconTray, IconWorktree } from './icons';
+import { PlanCopyButton, PlanDownloadButton } from './plan-tools';
+import { IconBell, ActivityIcon, IconArrowRight, IconCheck, IconChevron, IconClose, IconCompact, IconCopy, IconEdit, IconExternal, IconFile, IconFork, IconHand, IconHandover, IconQuote, IconTray, IconWorktree } from './icons';
 import { t } from '../i18n';
 
 // The daemon's confirmation marker is replaced by the localized notice label.
@@ -935,7 +935,24 @@ function MarkdownDiv({ node: _node, ...props }: ComponentProps<'div'> & { node?:
   );
 }
 
-const MARKDOWN_COMPONENTS = { pre: CodeBlock, img: MarkdownImage, a: MarkdownLink, div: MarkdownDiv };
+/**
+ * Inline code that folds at its own separators: a long path in a plan's file table wraps after a
+ * `/` or before its extension, instead of the token being snapped in half wherever the column
+ * happens to run out. Wide columns never wrap, so nothing changes where it fits.
+ */
+function BreakableCode({ children, ...props }: ComponentProps<'code'>) {
+  const text = typeof children === 'string' ? children : null;
+  if (text === null || !/[/.]/.test(text)) return <code {...props}>{children}</code>;
+  // 'src/pages/Products.tsx' → ['src/', 'pages/', 'Products', '.tsx'], joined with break chances.
+  const parts = text.split(/(?<=\/)|(?=\.)/);
+  return (
+    <code {...props}>
+      {parts.map((part, i) => <Fragment key={i}>{i > 0 && <wbr />}{part}</Fragment>)}
+    </code>
+  );
+}
+
+const MARKDOWN_COMPONENTS = { pre: CodeBlock, img: MarkdownImage, a: MarkdownLink, div: MarkdownDiv, code: BreakableCode };
 const MARKDOWN_PLUGINS = [remarkGfm, trimAutolinkJunk];
 /**
  * Markdown drops addresses it does not know, `file://` among them, leaving a link that reloads
@@ -1075,13 +1092,11 @@ function FileImage({ path, roots, load, onOpen }: { path: string; roots: string[
   );
 }
 
-/** How deep a plan card goes before the rest fades away, and over what distance it fades. */
-const PLAN_FADE_PX = 64;
-
 /**
- * A plan in the thread: a small card holding the opening of the plan, fading out where it is cut,
- * and opening to the whole of it. While it is still being written it follows along, pinned to the
- * newest lines with the top fading instead.
+ * A plan in the thread as a document, not a card: a quiet plan label, the plan's own text flowing
+ * on the page beside a rule that dissolves with it, cut with a fade where it runs long and opened
+ * to the whole of it in place. While it is still being written it follows along, pinned to the
+ * newest lines with the top fading instead — the way Codex's Proposed Plan reads in the flow.
  */
 function ProposalCard({ text, streaming = false }: { text: string; streaming?: boolean }) {
   const [open, setOpen] = useState(false);
@@ -1091,28 +1106,28 @@ function ProposalCard({ text, streaming = false }: { text: string; streaming?: b
     const el = scrollRef.current;
     if (!el) return;
     if (streaming) el.scrollTop = el.scrollHeight;
-    setOverflow(el.scrollHeight - el.clientHeight > PLAN_FADE_PX / 2);
+    setOverflow(el.scrollHeight - el.clientHeight > 8);
   }, [text, streaming]);
   return (
     <div className="row">
-      <section className={`proposal${streaming ? ' streaming' : ''}${overflow ? ' overflow' : ''}`}>
+      <section className={`proposal${streaming ? ' streaming' : ''}${overflow ? ' overflow' : ''}${open ? ' full' : ''}`}>
         <div className="proposal-head">
-          <span className="proposal-title">
-            <IconList size={16} />
-            {streaming ? t('plan.cardStreaming') : t('plan.cardTitle')}
-          </span>
+          <span className="proposal-label">{streaming ? t('plan.cardStreaming') : t('plan.cardTitle')}</span>
           <span className="proposal-tools">
             <PlanDownloadButton text={text} />
             <PlanCopyButton text={text} />
           </span>
         </div>
-        <button type="button" className="proposal-body" aria-label={t('plan.openFull')} title={t('plan.openFull')} onClick={() => setOpen(true)}>
-          <div className="proposal-scroll" ref={scrollRef}>
-            <Prose text={text} />
-          </div>
-        </button>
+        <div className="proposal-scroll" ref={scrollRef}>
+          <Prose text={text || t('plan.empty')} />
+        </div>
+        {overflow && !streaming && (
+          <button type="button" className="proposal-more" aria-expanded={open} onClick={() => setOpen(v => !v)}>
+            <IconChevron size={13} open={open} />
+            {open ? t('plan.collapse') : t('plan.showAll')}
+          </button>
+        )}
       </section>
-      {open && <PlanReader text={text} onClose={() => setOpen(false)} />}
     </div>
   );
 }
@@ -1140,6 +1155,8 @@ function planTrace(item: Extract<Item, { kind: 'input' }>): Trace {
   const answer = item.answer;
   if (!answer) return null;
   if ('cancelled' in answer) return { icon: 'hand', text: t('trace.planSkipped') };
+  // Full access answered the gate itself; the trace says so rather than claiming the person did.
+  if (item.auto) return { icon: 'check', text: t('trace.planAuto') };
   const q = item.questions[0];
   const said = q ? (answer.answers[q.id] ?? [])[0] ?? '' : '';
   if (q && said === q.options[0]?.value) return { icon: 'check', text: t('trace.planConfirmed') };

@@ -574,8 +574,12 @@ export class ExtensionHost {
         return;
       case 'approval.request':
       case 'input.request': {
-        const wait = this.waitOf(ev);
-        if (wait) this.publish('attention.raised', { wait }, ev.seq);
+        // A request that arrives already answered (full access approves a plan itself) waits for
+        // nobody, so no attention is raised for it — the thread just goes on.
+        if (!ev.data.auto) {
+          const wait = this.waitOf(ev);
+          if (wait) this.publish('attention.raised', { wait }, ev.seq);
+        }
         this.announce(ev.threadId, ev.seq);
         return;
       }
