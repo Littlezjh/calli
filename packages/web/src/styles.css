@@ -13412,6 +13412,9 @@ body:has(.settings-page, .action-sheet) .pet { display: none; }
 .menu-touch { overflow-y: auto; overscroll-behavior: contain; -webkit-touch-callout: none; user-select: none; }
 .sheet-unarmed .menu-touch { pointer-events: none; }
 .menu-row, .pop-item, .pop-item.compact { min-height: 40px; gap: 10px; padding: 9px 11px; font-size: 14px; line-height: 1.4; border-radius: var(--radius-sm); }
+/* The open thread's menu carries its whole first level, so its rows are a little shorter than
+   the rest; a phone still keeps a comfortable 44px touch target. */
+.menu-dense .menu-row { min-height: 36px; padding: 7px 11px; }
 .menu-row:focus-visible, .pop-item:focus-visible { outline-offset: -2px; background: var(--hover); }
 .menu-sep { margin: 8px 10px; background: var(--border); }
 .pop-panel.anchored-pop { position: fixed; top: var(--pop-top); left: var(--pop-left); right: auto; bottom: auto; width: max-content; min-width: min(260px, calc(100vw - 24px)); max-width: min(380px, calc(100vw - 24px)); max-height: var(--pop-height, 520px); overflow-y: auto; overscroll-behavior: contain; z-index: 80; animation: pop-in .14s ease-out; }
@@ -13512,6 +13515,7 @@ body:has(.settings-page, .action-sheet) .pet { display: none; }
 }
 @media (max-width: 640px) {
   .menu-row, .pop-item, .pop-item.compact { min-height: 46px; font-size: 15px; padding: 11px 12px; }
+  .menu-dense .menu-row { min-height: 44px; padding: 9px 12px; }
   .menu-float { min-width: min(280px, calc(100vw - 24px)); }
 }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {

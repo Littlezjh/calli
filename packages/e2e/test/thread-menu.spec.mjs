@@ -53,9 +53,9 @@ test('the compact thread menu preserves nested actions, keyboard return and the 
         // Thread items now sit at the first level instead of behind "整理", so the page menu grew
         // by a row; it still fits a phone screen without scrolling.
         const pageMenu = await root.boundingBox();
-        assert.ok(pageMenu.height <= (mobile ? 480 : 470), 'the page menu stays within the accepted footprint');
+        assert.ok(pageMenu.height <= (mobile ? 460 : 430), 'the page menu stays within the accepted footprint');
         assert.ok(pageMenu.y + pageMenu.height <= page.viewportSize().height, 'the whole page menu is on screen');
-        assert.equal(await root.locator('.menu-row').first().evaluate(el => el.offsetHeight), mobile ? 46 : 40);
+        assert.equal(await root.locator('.menu-row').first().evaluate(el => el.offsetHeight), mobile ? 44 : 36);
         assert.equal(await root.getByRole('meter').count(), 2, 'only the main pair occupies the root menu');
         assert.ok((await root.locator('[role=status]').innerText()).includes('2 项偏低'), 'warnings include hidden pools');
         assert.ok((await root.locator('[role=status]').innerText()).includes('模型繁忙'), 'busy models remain visible');
