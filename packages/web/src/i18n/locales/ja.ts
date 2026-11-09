@@ -1,7 +1,6 @@
 import type { Messages } from './zh';
 
 export const ja: Messages = {
-  'actions.organizeThread': 'スレッドを整理',
   'actions.forkAndHandover': '分岐と引き継ぎ',
   'quota.menuLowCount': (count: number) => `${count} 件の残り僅か`,
   'quota.menuCached': '更新失敗 · 前回の値',
@@ -1934,12 +1933,12 @@ export const ja: Messages = {
   'actions.copyFailed': 'コピーに失敗しました。テキストを選択して手動でコピーしてください',
   'actions.terminal': 'ターミナルを開く',
   'actions.rename': '名前を変更',
+  'actions.markRead': '既読にする',
+  'actions.markUnread': '未読にする',
   'actions.autotitle': 'タイトルを付け直す',
   'actions.autotitling': 'タイトルを考え中…',
   'actions.unpin': 'ピン留めを外す',
   'actions.pin': 'ピン留め',
-  'actions.markRead': '既読にする',
-  'actions.markUnread': '未読にする',
   'actions.moveToSection': 'セクションへ移動',
   'actions.unfile': 'セクションから外す',
   'actions.newSection': '新しいセクション…',

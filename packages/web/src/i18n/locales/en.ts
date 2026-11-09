@@ -3,7 +3,6 @@ import type { Messages } from './zh';
 const plural = (n: number, one: string, other: string) => `${n} ${n === 1 ? one : other}`;
 
 export const en: Messages = {
-  'actions.organizeThread': 'Organize thread',
   'actions.forkAndHandover': 'Fork and hand over',
   'quota.menuLowCount': (count: number) => `${count} ${count === 1 ? 'limit low' : 'limits low'}`,
   'quota.menuCached': 'Failed · Cached',
@@ -1936,12 +1935,12 @@ export const en: Messages = {
   'actions.copyFailed': 'Copying failed; select the text and copy it by hand',
   'actions.terminal': 'Open terminal',
   'actions.rename': 'Rename',
+  'actions.markRead': 'Mark as read',
+  'actions.markUnread': 'Mark as unread',
   'actions.autotitle': 'Name it again',
   'actions.autotitling': 'Naming…',
   'actions.unpin': 'Unpin',
   'actions.pin': 'Pin',
-  'actions.markRead': 'Mark as read',
-  'actions.markUnread': 'Mark as unread',
   'actions.moveToSection': 'Move to section',
   'actions.unfile': 'Remove from section',
   'actions.newSection': 'New section…',
