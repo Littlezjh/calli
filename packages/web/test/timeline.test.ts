@@ -549,6 +549,8 @@ test('stepTitle puts a verb first and stepStatusLabel shows the state', () => {
   assert.equal(stepStatusLabel({ ...base, kind: 'other', status: 'interrupted' }), '已结束');
   assert.equal(stepStatusLabel({ ...base, kind: 'execute', status: 'failed', startedAt: '2026-10-10T00:00:00.000Z', endedAt: '2026-10-10T00:00:00.900Z' }), '0.9 秒');
   assert.equal(stepTitle({ ...base, kind: 'other', status: 'completed' }), 'npm test');
+  // Claude's bridge titles the plan-exit call with this fixed string; the thread speaks its own language.
+  assert.equal(stepTitle({ ...base, kind: 'other', status: 'completed', title: 'Exited Plan Mode' }), '已退出计划模式');
   // A command is named by what it runs; the directory it steps into first says nothing in one line.
   assert.equal(stepTitle({ ...base, kind: 'execute', status: 'completed', title: 'cd /srv/app && git status --short' }), '运行了 git status --short');
   assert.equal(stepTitle({ ...base, kind: 'execute', status: 'completed', title: 'cd "/srv/my app"; ls' }), '运行了 ls');
@@ -914,6 +916,26 @@ test('native questions replay answers and cease waiting after cancellation or da
   assert.ok(old && old.kind === 'input');
   assert.deepEqual(old.answer, { cancelled: true, ended: true });
   assert.equal(interrupted.awaitingApproval, false);
+});
+
+test('a plan gate full access answered itself arrives recorded, never waiting', () => {
+  const tl = buildTimeline([
+    ev('turn.started', { text: '先出方案', workMode: 'plan' }),
+    ev('input.request', {
+      inputId: 'p1', title: '计划已准备好', kind: 'plan',
+      auto: { answers: { approval: ['exit-plan-bypass'] } },
+      plan: '## 实施计划\n\n1. 阅读代码',
+      questions: [{ id: 'approval', question: '是否按此计划开始执行？', options: [{ value: 'exit-plan-bypass', label: '开始执行' }] }],
+    }),
+    ev('turn.done', {}),
+  ]);
+  assert.equal(tl.awaitingApproval, false, 'nobody is asked, so the thread is not waiting');
+  const item = tl.items.find(it => it.kind === 'input');
+  assert.ok(item && item.kind === 'input');
+  assert.equal(item.auto, true);
+  assert.ok(item.answer && 'answers' in item.answer);
+  assert.deepEqual(item.answer.answers, { approval: ['exit-plan-bypass'] });
+  assert.equal(item.plan, '## 实施计划\n\n1. 阅读代码');
 });
 
 test('work after a question, plan or approval lands below the card, and tools started above still get their result', () => {

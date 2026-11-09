@@ -9,6 +9,18 @@ import { basename } from 'node:path';
 import { createInterface } from 'node:readline';
 
 const args = process.argv.slice(2);
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+
+// Model an MCP server which outlives its launcher and ignores graceful termination.
+if (process.env.FAKE_PI_CHILDREN && !args.includes('--no-mcp')) {
+  const child = spawn(process.execPath, ['-e', "process.on('SIGTERM', () => {}); process.stdout.write('ready'); setInterval(() => {}, 1000);"], {
+    stdio: ['ignore', 'pipe', 'ignore'],
+    detached: true,
+  });
+  await once(child.stdout, 'data');
+  appendFileSync(process.env.FAKE_PI_CHILDREN, JSON.stringify({ pid: child.pid, kind: args[0] === 'mcp' ? 'mcp' : 'session' }) + '\n');
+}
 const catalogState = () => process.env.FAKE_PI_CATALOG_FILE ? JSON.parse(readFileSync(process.env.FAKE_PI_CATALOG_FILE, 'utf8')) : {};
 if (process.env.FAKE_PI_PROBE_LOG) appendFileSync(process.env.FAKE_PI_PROBE_LOG, JSON.stringify({ kind: args[0] === 'mcp' ? 'mcp' : args.includes('--no-session') ? 'catalog' : 'session', noMcp: args.includes('--no-mcp') }) + '\n');
 // `pi mcp list --json` is a shell command, not an RPC session: FAKE_PI_MCP=1 reports the zai vision

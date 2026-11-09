@@ -58,8 +58,8 @@ try {
 
   await open(page, '正在干的活');
 
-  // Archiving the open thread: the row vanishes from the list, the undo waits under the header.
-  await page.locator('.topbar-more').click();
+  // Archiving from the thread's row in the list: the row vanishes, the undo waits under the header.
+  await page.locator('.sidebar .thread-row', { hasText: '正在干的活' }).click({ button: 'right' });
   await page.getByRole('menuitem', { name: '归档' }).click();
   await page.locator('.notice-row').waitFor({ timeout: 5000 });
   await theme(page, 'light');
@@ -72,7 +72,8 @@ try {
 
   // A copy on its way: the busy line sits by the title until the new thread opens.
   await page.locator('.topbar-more').click();
-  await page.getByRole('menuitem', { name: '分叉' }).click();
+  await page.getByRole('menuitem', { name: '分叉与交接', exact: true }).click();
+  await page.getByRole('menuitem', { name: '分叉', exact: true }).click();
   await page.locator('.topbar-busy').waitFor({ timeout: 5000 });
   await theme(page, 'light');
   await shoot(page, '.topbar', 'busy-desktop-light');
@@ -87,9 +88,11 @@ try {
   await phone.waitForFunction(() => getComputedStyle(document.querySelector('.sidebar')).visibility === 'hidden');
   await theme(phone, 'light');
   await shoot(phone, '.topbar', 'dot-phone-light');
-  await phone.locator('.topbar-more').click();
+  await phone.locator('.menu-btn').click();
+  await phone.locator('.sidebar .thread-row', { hasText: '正在干的活' }).click({ button: 'right' });
   await phone.getByRole('menuitem', { name: '归档' }).click();
   await phone.locator('.notice-row').waitFor({ timeout: 5000 });
+  if (await phone.evaluate(() => document.documentElement.classList.contains('list-open'))) await phone.locator('.menu-btn').click();
   await shoot(phone, '.main', 'undo-phone-light');
   await phone.getByRole('button', { name: '撤销' }).click();
   await phone.locator('.menu-btn').click();

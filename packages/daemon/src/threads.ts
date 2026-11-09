@@ -46,6 +46,7 @@ import { SkillsManager } from './skills.js';
 import { isWithinWorkdirs, Workdirs } from './workdirs.js';
 import { coalesceToolEvents, compactDeltas, toolText, type EmittedEvent, type EventType, type StoredEvent, type TurnChannel } from './events.js';
 import type { SearchHit, SectionRecord, Store, ThreadRecord, ThreadWorktree, TodoProposal, TodoRecord, TodoUrgency } from './store.js';
+import { readBrief, type ThreadBrief } from './brief.js';
 import { urgencyOf } from './store.js';
 import { todoStages } from './todo-stage.js';
 import { batchShape, mergeBatches, type TurnBatch } from './turn-batch.js';
@@ -155,6 +156,8 @@ export type ThreadView = Omit<ThreadRecord, 'worktree' | 'handover' | 'writing'>
   terminalActivity: boolean;
   /** When the running turn started; null while nothing runs. */
   runningSince: string | null;
+  /** Why the thread stopped, while its status is `error`: the latest turn's failure. */
+  failure?: { code: string | null; message: string; at: string } | null;
 };
 
 interface QueuedTurn {
@@ -1230,7 +1233,9 @@ export class ThreadManager {
       ...(modelQueueState.message !== undefined ? { message: modelQueueState.message } : {}),
       updatedAt: modelQueueState.updatedAt,
     } : null;
-    return { ...thread, writing: thread.writing ? { ...thread.writing, habits: habitsPath() } : null, handover: thread.handover ? { ...thread.handover, mode: this.store.handoverMode(thread)!, automatic: thread.handover.mode === 'continue' } : null, autoHandover: { ...this.autoHandover.view(thread.id), resume: this.quotaResume.view(thread.id) }, worktree, resumeCommand, cwdReal, waiting, waitingReason, queued, modelQueue, terminalActivity, scratch, runningSince, coordination: this.coordination?.metadata(thread.id) };
+    const failed = thread.status === 'error' ? this.store.lastTurnFailure(thread.id) : null;
+    const failure = failed ? { code: failed.code, message: failed.message.slice(0, 500), at: failed.at } : null;
+    return { ...thread, failure, writing: thread.writing ? { ...thread.writing, habits: habitsPath() } : null, handover: thread.handover ? { ...thread.handover, mode: this.store.handoverMode(thread)!, automatic: thread.handover.mode === 'continue' } : null, autoHandover: { ...this.autoHandover.view(thread.id), resume: this.quotaResume.view(thread.id) }, worktree, resumeCommand, cwdReal, waiting, waitingReason, queued, modelQueue, terminalActivity, scratch, runningSince, coordination: this.coordination?.metadata(thread.id) };
   }
 
   /**
@@ -2620,6 +2625,28 @@ export class ThreadManager {
       turnId, source: { retry: failedTurn }, displayText: text,
       claim: () => this.coordination?.retryHandoverTurn(id, failedTurn, turnId),
     }, true);
+  }
+
+  /** The facts behind a thread that wants the person, for the companion to put in words. Read-only, no model. */
+  threadBrief(id: string): ThreadBrief {
+    const thread = this.getThread(id);
+    const pendingApprovals = [...this.approvals].filter(([, approval]) => approval.threadId === id).map(([approvalId]) => approvalId);
+    return readBrief(this.store, thread, { pendingApprovals, resume: this.quotaResume.view(id) !== null });
+  }
+
+  /**
+   * The person's 「接着做」 on a thread that stopped on an error: the failed ask goes out again, as
+   * the quota watch would send it, and any watch on the thread is dropped since it is moot now.
+   */
+  async retryFailedTurn(id: string): Promise<ThreadView> {
+    const thread = this.getThread(id);
+    if (thread.archivedAt) throw new HttpError(409, 'the thread is archived');
+    if (this.running.has(id) || this.threadView(id).waiting) throw new HttpError(409, 'the thread is busy');
+    const failed = thread.status === 'error' ? this.store.lastTurnFailure(id) : null;
+    if (!failed) throw new HttpError(409, 'the thread did not stop on an error');
+    this.quotaResume.drop(id);
+    await this.retryAutoHandoverTurn(id, failed.turnId);
+    return this.threadView(id);
   }
 
   /**

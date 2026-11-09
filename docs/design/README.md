@@ -10,6 +10,8 @@
 | `voice-mode.jpg`、`voice-mode-dark.jpg` | `voice-mode.html` 的亮色、深色截图，打不开 HTML 时看这两张 |
 | `agent-direct-message.html` | 智能体面板里直接给成员发消息：空闲、运行中排队、「让主智能体调整」带草稿回主线程，桌面与手机、亮暗 |
 | `glass-playground.html` | 玻璃控件（顶栏按钮、标题后的渐隐、输入框）的材质调参：当前与调整后对比，亮暗，滑条调填充、模糊、亮边、阴影、背景带。已采用的参数在 `styles.css` 顶部 `--glass-*` |
+| `plan-card-playground.html` | 计划在线程里的呈现方案对比：A 现状卡片（对照）、B 文档式（无框引文区）、C 摘要行（一行展开）、D 重排版卡片（按方案结构重排），各含「已自动执行」与「待确认」两种决策状态，亮暗、桌面手机可切；地址栏 hash 可直达（如 `#d-dark-phone`） |
+| `plan-card-playground-light.png`、`plan-card-playground-dark.png` | 上一行 HTML 的亮色、深色四案对比截图，打不开 HTML 时看这两张 |
 | `voice-mode.html` | 实时语音：球、控制行、边聊边做、结束后的折叠与文字结果（说明见 `../voice-ui-design.md`） |
 
 ## 和实现不一样的地方

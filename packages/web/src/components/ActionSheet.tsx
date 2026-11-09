@@ -254,7 +254,7 @@ function QuestionSheet({ item, index, total, onAnswer }: {
           <button
             type="button"
             className="primary"
-            disabled={busy || (last ? !ready : !answeredHere)}
+            disabled={busy || (last ? !ready : !(q.required === false || answeredHere))}
             onClick={() => (last ? void submit({ answers: values }) : setQi(qi + 1))}
           >
             {last ? t('sheet.submit') : t('sheet.next')}

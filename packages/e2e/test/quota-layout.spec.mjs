@@ -134,13 +134,6 @@ test('A keeps the title and files compact, and quota refreshes do not add or rem
         await sameBox(meter, meterBox, 'finished detail refresh retains meter position');
         await page.locator('.settings-topbar').getByRole('button', { name: '返回', exact: true }).click();
         await page.locator('.settings-topbar').getByRole('button', { name: '返回', exact: true }).click();
-        if (!mobile) {
-          await page.locator('.sidebar .thread-item', { hasText: other.title }).click({ button: 'right' });
-          await page.getByRole('menuitem', { name: '文件', exact: true }).click();
-          await page.locator('.files-panel').getByText('other-thread.md', { exact: true }).waitFor();
-          assert.equal(await page.locator('.topbar-title').innerText(), thread.title, 'browsing another thread does not select it');
-          await page.locator('.files-panel').getByRole('button', { name: '关闭文件', exact: true }).click();
-        }
         assert.deepEqual(errors, []);
       } finally { await context.close(); }
     }

@@ -426,6 +426,17 @@ rl.on('line', (line) => {
         } else out({ jsonrpc: '2.0', id, method: 'elicitation/create', params: { sessionId, mode: 'form', toolCallId: 'ask', message: '优先支持哪一端？', requestedSchema: { type: 'object', properties: { question_0: { type: 'string', oneOf: [{ const: '桌面和手机', title: '桌面和手机' }, { const: '先做桌面', title: '先做桌面' }] }, question_0_custom: { type: 'string', title: '补充回答' } } } } });
         return;
       }
+      if (planCommand === 'plan-question-steps') {
+        pendingPrompt = msg;
+        const id = nextAgentRequestId++;
+        awaitingInput.set(id, { prompt: msg.id, kind: 'question' });
+        out({ jsonrpc: '2.0', id, method: 'elicitation/create', params: { sessionId, mode: 'form', toolCallId: 'ask', message: '分步表单', requestedSchema: { type: 'object', properties: {
+          question_0: { type: 'string', description: '先做哪一端', oneOf: [{ const: '桌面和手机', title: '桌面和手机' }, { const: '先做桌面', title: '先做桌面' }] },
+          question_0_custom: { type: 'string', title: '补充说明' },
+          question_1: { type: 'string', description: '要不要截图', oneOf: [{ const: '需要截图', title: '需要截图' }, { const: '不用截图', title: '不用截图' }] },
+        } } } });
+        return;
+      }
       if (process.env.FAKE_LIVE_USAGE && text.includes('live usage')) {
         claudeUsage(sessionId, process.cwd(), msg.id);
         pendingPrompt = msg;
@@ -570,7 +581,11 @@ rl.on('line', (line) => {
           method: 'session/request_permission',
           params: {
             sessionId,
-            toolCall: dsh ? { toolCallId: 't1' } : { toolCallId: 't2', title: 'Edit file', kind: 'edit' },
+            toolCall: dsh ? { toolCallId: 't1' }
+              // "approve install": a shell command; "approve lockfile": an edit that names its file.
+              : text.includes('approve install') ? { toolCallId: 't2', title: 'npm install lodash', kind: 'execute', rawInput: { command: 'npm install lodash\n--save' } }
+              : text.includes('approve lockfile') ? { toolCallId: 't2', title: 'Edit package-lock.json', kind: 'edit', rawInput: { file_path: `${process.cwd()}/package-lock.json` } }
+              : { toolCallId: 't2', title: 'Edit file', kind: 'edit' },
             options: dsh
               ? [
                   { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
@@ -582,6 +597,10 @@ rl.on('line', (line) => {
                 ],
           },
         });
+      }
+      // A provider error that is not about quota; its request number differs on every attempt.
+      if (text.includes('flaky')) {
+        return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: `Internal error: upstream connection reset (request ${Math.floor(Math.random() * 90000) + 10000})` } });
       }
       // FAKE_ACP_PLAN_LEFT stands for another account whose plan still has room.
       if (text.includes('out of plan') && !process.env.FAKE_ACP_PLAN_LEFT) {

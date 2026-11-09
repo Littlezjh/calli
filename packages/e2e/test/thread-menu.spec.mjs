@@ -32,12 +32,29 @@ test('the compact thread menu preserves nested actions, keyboard return and the 
         await page.locator('.composer textarea').fill('Draft survives nested menus');
         const root = page.locator('.menu-float');
         const branch = page.locator(mobile ? '.menu-float' : '.menu-branch');
-        const open = async () => { await page.locator('.topbar-more').click(); await root.waitFor(); };
-        const organize = async () => { await root.getByRole('menuitem', named('整理线程')).click(); await branch.getByRole('menuitem', named('重命名')).waitFor(); };
+        // The open thread's "…" serves the conversation; the list's row menu manages the row.
+        const closeList = async () => {
+          if (!mobile || !(await page.evaluate(() => document.documentElement.classList.contains('list-open')))) return;
+          // Picking the open thread's own row folds the list away and stays where it is.
+          await page.locator('.sidebar .thread-row.active .thread-item').click();
+          await page.waitForFunction(() => !document.documentElement.classList.contains('list-open'));
+        };
+        const open = async () => { await closeList(); await page.locator('.topbar-more').click(); await root.waitFor(); };
+        const openList = async () => {
+          if (mobile && !(await page.evaluate(() => document.documentElement.classList.contains('list-open')))) await page.locator('.menu-btn').click();
+          // The open thread's row, by state: the rename below changes the title mid-test.
+          await page.locator('.sidebar .thread-row.active').click({ button: 'right' });
+          await root.waitFor();
+        };
         await open();
         await root.locator('.quota-preview[aria-busy=false]').waitFor();
-        assert.deepEqual(await root.locator(':scope > .menu-cell .menu-label').allTextContents(), ['文件', '打开终端', '整理线程', '复制', '分叉与交接', '归档', '永久删除']);
-        assert.ok((await root.boundingBox()).height <= (mobile ? 466 : 424), 'the menu matches the selected A footprint');
+        assert.deepEqual(await root.locator(':scope > .menu-cell .menu-label').allTextContents(),
+          mobile ? ['文件', '打开终端', '置顶', '标记为未读', '重命名', '复制', '分叉与交接'] : ['文件', '打开终端', '置顶', '标记为未读', '重命名', '复制', '分叉与交接', '轨迹']);
+        // Thread items now sit at the first level instead of behind "整理", so the page menu grew
+        // by a row; it still fits a phone screen without scrolling.
+        const pageMenu = await root.boundingBox();
+        assert.ok(pageMenu.height <= (mobile ? 480 : 470), 'the page menu stays within the accepted footprint');
+        assert.ok(pageMenu.y + pageMenu.height <= page.viewportSize().height, 'the whole page menu is on screen');
         assert.equal(await root.locator('.menu-row').first().evaluate(el => el.offsetHeight), mobile ? 46 : 40);
         assert.equal(await root.getByRole('meter').count(), 2, 'only the main pair occupies the root menu');
         assert.ok((await root.locator('[role=status]').innerText()).includes('2 项偏低'), 'warnings include hidden pools');
@@ -46,42 +63,51 @@ test('the compact thread menu preserves nested actions, keyboard return and the 
         assert.ok(headline.x + headline.width <= account.x + 1, 'warnings and the account label do not overlap');
         if (shots) await page.screenshot({ path: join(shots, `menu-root-${width}-${theme}.png`) });
 
+        await openList();
+        assert.deepEqual(await root.locator(':scope > .menu-cell .menu-label').allTextContents(), ['置顶', '移到分区', '关联到计划', '归档', '永久删除']);
+        assert.equal(await root.getByRole('meter').count(), 0, 'a row menu carries no quota header');
+        if (shots) await page.screenshot({ path: join(shots, `menu-list-${width}-${theme}.png`) });
+        await page.keyboard.press('Escape'); await root.waitFor({ state: 'detached' });
+
         // The child has its own keyboard scope. Escape returns one level and restores the trigger.
-        await root.getByRole('menuitem', named('整理线程')).focus();
+        await open();
+        await root.getByRole('menuitem', named('复制')).focus();
         await page.keyboard.press('ArrowRight');
         await page.waitForFunction(() => document.activeElement?.classList.contains('menu-back'));
-        await branch.getByRole('menuitem', named('移到分区')).focus();
+        await page.keyboard.press('Escape');
+        await page.waitForFunction(() => document.activeElement?.dataset.menuId === 'copy');
+        assert.equal(await root.getByRole('menuitem', named('复制')).evaluate(el => el === document.activeElement), true);
+        await page.keyboard.press('Escape'); await root.waitFor({ state: 'detached' });
+
+        await openList();
+        await root.getByRole('menuitem', named('移到分区')).focus();
         await page.keyboard.press('ArrowRight');
         await branch.getByRole('menuitemradio', named(section.name)).waitFor();
         const bounds = await branch.boundingBox();
         assert.ok(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= width + 1 && bounds.y + bounds.height <= page.viewportSize().height + 1);
         await page.keyboard.press('Escape');
         await page.waitForFunction(() => document.activeElement?.dataset.menuId === 'section');
-        assert.equal(await branch.getByRole('menuitem', named('移到分区')).evaluate(el => el === document.activeElement), true);
-        await page.keyboard.press('Escape');
-        await page.waitForFunction(() => document.activeElement?.dataset.menuId === 'organize');
-        assert.equal(await root.getByRole('menuitem', named('整理线程')).evaluate(el => el === document.activeElement), true);
+        assert.equal(await root.getByRole('menuitem', named('移到分区')).evaluate(el => el === document.activeElement), true);
         await page.keyboard.press('Escape'); await root.waitFor({ state: 'detached' });
 
-        await open(); await organize();
-        if (shots) await page.screenshot({ path: join(shots, `menu-organize-${width}-${theme}.png`) });
-        await branch.getByRole('menuitem', named('重命名')).click();
+        await open();
+        await root.getByRole('menuitem', named('重命名')).click();
         const dialog = page.getByRole('dialog', named('重命名线程'));
         await dialog.getByLabel('线程名称').fill(thread.title + ' renamed');
         await dialog.getByRole('button', named('保存')).click();
         await page.locator('.topbar-title', { hasText: thread.title + ' renamed' }).waitFor();
 
-        await open(); await organize();
+        await openList();
         const pinned = page.waitForResponse(response => response.request().method() === 'PATCH' && response.url().endsWith('/api/threads/' + thread.id));
-        await branch.getByRole('menuitem', named('置顶')).click(); await pinned;
+        await root.getByRole('menuitem', named('置顶')).click(); await pinned;
         assert.equal((await (await api(daemon, '/api/threads/' + thread.id)).json()).pinned, true);
-        await open(); await organize();
-        await branch.getByRole('menuitem', named('移到分区')).click();
+        await openList();
+        await root.getByRole('menuitem', named('移到分区')).click();
         const filed = page.waitForResponse(response => response.request().method() === 'PATCH' && response.url().endsWith('/api/threads/' + thread.id));
         await branch.getByRole('menuitemradio', named(section.name)).click(); await filed;
         assert.equal((await (await api(daemon, '/api/threads/' + thread.id)).json()).sectionId, section.id);
-        await open(); await organize();
-        await branch.getByRole('menuitem', named('关联到计划')).click();
+        await openList();
+        await root.getByRole('menuitem', named('关联到计划')).click();
         const linked = page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith('/api/todos/' + todo.id + '/threads'));
         await branch.getByRole('menuitemradio', named(todo.text)).click(); await linked;
 
@@ -98,6 +124,10 @@ test('the compact thread menu preserves nested actions, keyboard return and the 
         await page.waitForFunction(() => document.activeElement?.classList.contains('menu-back'));
         await page.keyboard.press('Escape');
         await page.waitForFunction(() => document.activeElement?.dataset.menuId === 'continuation');
+        await page.keyboard.press('Escape');
+        await root.waitFor({ state: 'detached' });
+
+        await openList();
         await root.getByRole('menuitem', named('永久删除')).click();
         const removal = page.getByRole('dialog'); await removal.waitFor();
         await removal.getByRole('button', named('取消')).click();

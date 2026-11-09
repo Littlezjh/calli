@@ -38,14 +38,35 @@ test('glass chrome has scrolling content behind it without hiding either end of 
       });
       let bounds = await measure();
       assert.ok(bounds.scroller.top <= bounds.top.top + 1, 'content scrolls behind the top controls');
-      assert.ok(bounds.scroller.bottom >= bounds.input.bottom, 'content scrolls behind the input');
+      if (mobile) {
+        assert.ok(bounds.scroller.bottom >= bounds.input.bottom, 'content scrolls behind the input');
+      } else {
+        // A wide screen keeps the glass top bar but draws the composer as an opaque card,
+        // with the conversation ending above it.
+        const solid = await page.evaluate(() => {
+          const top = document.querySelector('.main > .topbar');
+          const pill = document.querySelector('.topbar-actions');
+          const box = document.querySelector('.composer-box');
+          const cs = (el, pseudo) => getComputedStyle(el, pseudo);
+          return {
+            band: [cs(top).borderBottomWidth, cs(top, '::before').display, cs(top, '::after').display].join('|'),
+            pill: cs(pill).backdropFilter,
+            box: [cs(box).backgroundColor, cs(box).backdropFilter].join('|'),
+          };
+        });
+        assert.equal(solid.band, '0px|block|block', 'the top bar keeps its fade bands and draws no hairline');
+        assert.notEqual(solid.pill, 'none', 'the top bar buttons keep their glass capsule');
+        assert.notEqual(solid.box.split('|')[0], 'rgba(0, 0, 0, 0)', 'the composer card has a surface of its own');
+        assert.equal(solid.box.split('|')[1], 'none', 'the composer card is opaque');
+        assert.ok(bounds.scroller.bottom <= bounds.input.top + 1, 'a wide screen ends the conversation above the composer');
+      }
       await scroller.evaluate(el => { el.scrollTop = 0; });
       bounds = await measure();
       assert.ok(bounds.thread.top >= bounds.top.bottom, 'the first message starts below the header');
       await scroller.evaluate(el => { el.scrollTop = el.scrollHeight; });
       bounds = await measure();
       assert.ok(bounds.thread.bottom <= bounds.input.top - 10, 'the last message remains above the input');
-      assert.ok(bounds.thread.bottom <= bounds.blur, 'at rest the newest output stays clear of the blur under the composer');
+      if (mobile) assert.ok(bounds.thread.bottom <= bounds.blur, 'at rest the newest output stays clear of the blur under the composer');
       await page.locator('.composer textarea').fill('多行输入\n检查输入框增高\n仍保留最后一条消息\n以及底部操作');
       await page.waitForTimeout(100);
       await scroller.evaluate(el => { el.scrollTop = el.scrollHeight; });
@@ -79,9 +100,14 @@ test('glass chrome has scrolling content behind it without hiding either end of 
       }
       await page.screenshot({ path: `${shots}/chat-${mobile ? 'phone' : 'desktop'}-${theme}.png` });
       await page.locator('.topbar-more').click();
-      await page.getByRole('menuitem', { name: '整理线程', exact: true }).waitFor();
+      await page.getByRole('menuitem', { name: '复制', exact: true }).waitFor();
       await page.screenshot({ path: `${shots}/menu-${mobile ? 'phone' : 'desktop'}-${theme}.png` });
       await page.keyboard.press('Escape');
+      // Escape is a keypress, so focus returns to the button with :focus-visible matched — the
+      // moment a ring can look like a stray box. Round buttons hug their ring instead.
+      const ring = await page.locator('.topbar-more').evaluate(el => ({ offset: getComputedStyle(el).outlineOffset, style: getComputedStyle(el).outlineStyle }));
+      assert.equal(ring.style, 'solid');
+      assert.equal(ring.offset, '-2px', 'the top bar buttons hug their focus ring instead of wearing a stray box');
       await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-transparency', value: 'reduce' }] });
       assert.equal(await page.locator('.composer-box').evaluate(el => getComputedStyle(el).backdropFilter), 'none', 'reduced transparency keeps the opaque fallback');
       await cdp.detach();
