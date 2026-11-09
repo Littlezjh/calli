@@ -29,6 +29,8 @@ interface Props {
   items: MenuEntry[];
   /** Optional account summary, mounted only while the root menu is visible. */
   header?: ReactNode;
+  /** Tighter rows, for a menu that carries many first-level actions and must stay short. */
+  dense?: boolean;
   onClose: () => void;
 }
 
@@ -49,7 +51,7 @@ if (typeof document !== 'undefined') {
  * Wide screens keep the root beside one branch; deeper groups replace the branch's contents.
  * Phones: the same anchored surface, with a submenu replacing its parent list.
  */
-export function Menu({ label, x, y, corner = 'top-left', items, header, onClose }: Props) {
+export function Menu({ label, x, y, corner = 'top-left', items, header, dense, onClose }: Props) {
   const narrow = useIsNarrow();
   const rootRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -216,7 +218,7 @@ export function Menu({ label, x, y, corner = 'top-left', items, header, onClose 
   const branchContent = branch && <><button type="button" role="menuitem" className="menu-back" onClick={back}><span className="menu-back-icon"><IconChevron size={14} /></span>{branch.label}</button>{list(entries, true)}</>;
   return createPortal(
     <div ref={rootRef} className={armed ? undefined : 'sheet-unarmed'}>
-      <div ref={panelRef} className={`menu-panel menu-float${narrow ? ' menu-touch' : ''}${header ? ' menu-with-header' : ''}`} role="menu" aria-label={narrow && branch ? branch.label : label}
+      <div ref={panelRef} className={`menu-panel menu-float${narrow ? ' menu-touch' : ''}${header ? ' menu-with-header' : ''}${dense ? ' menu-dense' : ''}`} role="menu" aria-label={narrow && branch ? branch.label : label}
         style={{ left: x, top: y, visibility: 'hidden' }}>
         {narrow && branch ? branchContent : <>{header}{list(items, false)}</>}
       </div>

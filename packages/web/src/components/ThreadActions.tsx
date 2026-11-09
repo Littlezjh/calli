@@ -251,7 +251,6 @@ export function useThreadActions(deps: Deps) {
   const pageItems = (thread: Thread): MenuEntry[] => [
     { id: 'files', label: t('files.files'), icon: IconFiles, onSelect: () => onOpenFiles(thread) },
     { id: 'terminal', label: t('actions.terminal'), icon: IconTerminal, onSelect: onOpenTerminal },
-    'separator',
     { id: 'pin', label: thread.pinned ? t('actions.unpin') : t('actions.pin'), icon: IconPin, onSelect: () => run('pin', thread) },
     {
       id: 'unread',
@@ -261,7 +260,6 @@ export function useThreadActions(deps: Deps) {
     },
     { id: 'rename', label: t('actions.rename'), icon: IconEdit, onSelect: () => run('rename', thread) },
     ...(autotitle ? [{ id: 'autotitle', label: t('actions.autotitle'), icon: IconSparkle, onSelect: () => void autoName(thread) }] : []),
-    'separator',
     {
       id: 'copy',
       label: t('common.copy'),
@@ -474,6 +472,7 @@ export function useThreadActions(deps: Deps) {
           x={menu.x}
           y={menu.y}
           items={'thread' in menu ? (menu.where === 'list' ? listItems(menu.thread) : pageItems(menu.thread)) : sectionItems(menu.section)}
+          dense={menu.where === 'page'}
           // The quota belongs to the conversation being read, not to a row in the list.
           header={api && menu.where === 'page' && 'thread' in menu && agents.some(agent => agent.id === menu.thread.agent && !agent.hidden && agent.capabilities.quota)
             ? <ChatQuotaMenu api={api} agent={menu.thread.agent} label={agents.find(agent => agent.id === menu.thread.agent)!.label} close={() => setMenu(null)} /> : undefined}
