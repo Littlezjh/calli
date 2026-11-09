@@ -282,7 +282,7 @@ const CHEV = (s = 14, open) => `<svg width="${s}" height="${s}" viewBox="0 0 24 
 const SEARCH = (s = 14) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6"/><path d="M16 16l4.5 4.5"/></svg>`;
 const FOLDERS2 = (s = 14) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h6l2 2h10v11H3z"/><path d="M5.5 5.5H12l2 2h5.5"/></svg>`;
 
-const HOME_DIR = '/home/liuhuadong.hans';
+const HOME_DIR = '/home/me';
 const tree = {
   name: 'home', path: HOME_DIR, dirs: [
     { name: 'code', dirs: [
@@ -297,7 +297,7 @@ const tree = {
   files: [['notes.md','1 KB']],
 };
 function find(path) {
-  const parts = path.replace(/^\/home\/liuhuadong\.hans/, '').split('/').filter(Boolean);
+  const parts = path.replace(/^\/home\/me/, '').split('/').filter(Boolean);
   let node = tree;
   for (const p of parts) {
     const next = (node.dirs ?? []).find((d) => d.name === p);

@@ -68,7 +68,7 @@ test('linkTarget: web addresses open elsewhere, files on the host are never navi
 import { navCrumbs } from '../src/paths.js';
 
 test('navCrumbs walks from the home directory, and collapses a deep middle', () => {
-  const home = '/home/liuhuadong.hans';
+  const home = '/home/me';
   assert.deepEqual(navCrumbs(`${home}/workdir/ai`, home), [
     { name: '', path: home, home: true },
     { name: 'workdir', path: `${home}/workdir` },
@@ -86,11 +86,11 @@ test('navCrumbs walks from the home directory, and collapses a deep middle', () 
 });
 
 test('navCrumbs starts at the filesystem root for a path outside any home', () => {
-  assert.deepEqual(navCrumbs('/data00/work/repo', '/home/me'), [
+  assert.deepEqual(navCrumbs('/mnt/work/repo', '/home/me'), [
     { name: '', path: '/' },
-    { name: 'data00', path: '/data00' },
-    { name: 'work', path: '/data00/work' },
-    { name: 'repo', path: '/data00/work/repo' },
+    { name: 'mnt', path: '/mnt' },
+    { name: 'work', path: '/mnt/work' },
+    { name: 'repo', path: '/mnt/work/repo' },
   ]);
   const collapsed = navCrumbs('/srv/a/b/c/d', null);
   assert.deepEqual(collapsed, [
