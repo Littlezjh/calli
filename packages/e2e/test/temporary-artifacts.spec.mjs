@@ -51,7 +51,10 @@ test('temporary images, reports and files elsewhere open from answers on desktop
         await panel.getByText('这份报告可以直接在当前线程中阅读。', { exact: true }).waitFor();
         await shot('temporary-report');
         if (mobile) {
-          await panel.getByRole('button', { name: '浏览文件夹', exact: true }).click();
+          // On a phone the folder view is a step behind the file's own "more" menu; the popover
+          // sits in an anchored layer of its own, not inside the panel.
+          await panel.getByRole('button', { name: '文件的更多操作', exact: true }).click();
+          await page.getByRole('menuitem', { name: '浏览文件夹', exact: true }).click();
           await panel.getByRole('tree').waitFor();
           assert.equal(await panel.getByText('打不开这个文件夹', { exact: true }).count(), 0);
           await panel.getByRole('button', { name: '回到文件', exact: true }).click();

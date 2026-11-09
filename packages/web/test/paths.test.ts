@@ -64,3 +64,40 @@ test('linkTarget: web addresses open elsewhere, files on the host are never navi
     assert.deepEqual(linkTarget(href), { kind: 'none' }, href);
   }
 });
+
+import { navCrumbs } from '../src/paths.js';
+
+test('navCrumbs walks from the home directory, and collapses a deep middle', () => {
+  const home = '/home/me';
+  assert.deepEqual(navCrumbs(`${home}/workdir/ai`, home), [
+    { name: '', path: home, home: true },
+    { name: 'workdir', path: `${home}/workdir` },
+    { name: 'ai', path: `${home}/workdir/ai` },
+  ]);
+  const deep = navCrumbs(`${home}/a/b/c/d/e/f`, home);
+  assert.deepEqual(deep, [
+    { name: '', path: home, home: true },
+    { name: 'a', path: `${home}/a` },
+    { dot: true },
+    { name: 'e', path: `${home}/a/b/c/d/e` },
+    { name: 'f', path: `${home}/a/b/c/d/e/f` },
+  ], 'the first step, the dots, and the last two');
+  assert.deepEqual(navCrumbs(home, home), [{ name: '', path: home, home: true }]);
+});
+
+test('navCrumbs starts at the filesystem root for a path outside any home', () => {
+  assert.deepEqual(navCrumbs('/mnt/work/repo', '/home/me'), [
+    { name: '', path: '/' },
+    { name: 'mnt', path: '/mnt' },
+    { name: 'work', path: '/mnt/work' },
+    { name: 'repo', path: '/mnt/work/repo' },
+  ]);
+  const collapsed = navCrumbs('/srv/a/b/c/d', null);
+  assert.deepEqual(collapsed, [
+    { name: '', path: '/' },
+    { name: 'srv', path: '/srv' },
+    { dot: true },
+    { name: 'c', path: '/srv/a/b/c' },
+    { name: 'd', path: '/srv/a/b/c/d' },
+  ]);
+});

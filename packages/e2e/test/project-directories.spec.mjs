@@ -37,6 +37,14 @@ async function openPicker(page) {
   await page.getByRole('menuitem', { name: '打开其他目录…' }).click();
   return page.getByRole('dialog', { name: '在哪个目录里工作？' });
 }
+/** The one input: an address is submitted with Enter, a filter word just typed. */
+async function gotoPath(dialog, value) {
+  await dialog.locator('.project-browser-input').fill(value);
+  await dialog.locator('.project-browser-input').press('Enter');
+}
+async function typeFilter(dialog, value) {
+  await dialog.locator('.project-browser-input').fill(value);
+}
 async function newPage(mobile = false, colorScheme = 'light') {
   const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1400, height: 900 }, isMobile: mobile, hasTouch: mobile, colorScheme });
   await context.addInitScript(() => localStorage.setItem('calli.host', 'devbox'));
@@ -60,32 +68,35 @@ for (const mobile of [false, true]) for (const colorScheme of ['light', 'dark'])
     const page = await newPage(mobile, colorScheme);
     try {
       let dialog = await openPicker(page);
-      await dialog.getByRole('button', { name: '浏览家目录', exact: true }).click();
-      await dialog.locator('.project-browser-path', { hasText: remoteHome }).waitFor();
+      await gotoPath(dialog, '~');
+      await dialog.getByRole('button', { name, exact: true }).waitFor();
       assert.equal(await dialog.getByRole('button', { name: 'local-only', exact: true }).count(), 0);
       assert.ok(await dialog.getByRole('button', { name: '添加并使用', exact: true }).isDisabled());
       await dialog.getByRole('button', { name: '取消', exact: true }).click();
       assert.deepEqual(await (await api(remote, '/api/config')).json(), remoteBefore, 'browsing and cancelling adds nothing');
 
       dialog = await openPicker(page);
-      await dialog.getByRole('button', { name: '浏览家目录', exact: true }).click();
-      await dialog.getByLabel('搜索当前目录').fill('不存在的文件夹');
+      await gotoPath(dialog, '~');
+      await typeFilter(dialog, '不存在的文件夹');
       await dialog.getByText('没有匹配的文件夹').waitFor();
       assert.equal(await dialog.locator('.project-browser-folder').count(), 0);
-      await dialog.getByLabel('搜索当前目录').fill(name);
-      await dialog.getByRole('button', { name, exact: true }).click();
+      await typeFilter(dialog, name);
+      // A click chooses the folder; a double click steps into it.
+      await dialog.getByRole('button', { name, exact: true }).dblclick();
       await dialog.getByRole('button', { name: 'a', exact: true }).waitFor();
       if (!mobile && colorScheme === 'light') {
-        for (const folder of ['a', 'b', 'c', 'd', 'e', 'f']) await dialog.getByRole('button', { name: folder, exact: true }).click();
-        await dialog.locator('.project-browser-path', { hasText: deep }).waitFor();
+        for (const folder of ['a', 'b', 'c', 'd', 'e', 'f']) await dialog.locator('.project-browser-folder', { hasText: folder }).dblclick();
+        await dialog.locator('.project-browser-input').evaluate((el, deep) => el.value === deep || Promise.reject(new Error(`input shows ${el.value}`)), deep);
         for (let i = 0; i < 6; i++) {
           const response = page.waitForResponse((res) => res.url().includes('/project-directories?') && res.ok());
           await dialog.getByRole('button', { name: '上一级', exact: true }).click();
           await response;
         }
       }
-      await dialog.locator('.project-browser-path', { hasText: project }).waitFor();
+      await dialog.locator('.project-browser-input').evaluate((el, project) => el.value === project || Promise.reject(new Error(`input shows ${el.value}`)), project);
       await dialog.getByRole('button', { name: '添加并使用', exact: true }).waitFor();
+      // The phone sheet slides in from below; measure once that entry animation has settled.
+      await dialog.evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((a) => a.finished)));
       const bounds = await dialog.boundingBox();
       assert.ok(bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= page.viewportSize().width + 1 && bounds.y + bounds.height <= page.viewportSize().height + 1);
       if (process.env.CALLI_E2E_SHOTS_DIR) {
@@ -126,10 +137,11 @@ test('a late home response cannot overwrite the configured roots view', async ()
   try {
     let release;
     const held = new Promise((r) => { release = r; });
-    await page.route('**/project-directories', async (route) => { await held; await route.continue(); });
+    // Every browse carries the path as a query, so the pattern must reach past '?' to hold them.
+    await page.route('**/project-directories*', async (route) => { await held; await route.continue(); });
     const dialog = await openPicker(page);
-    const request = page.waitForRequest('**/project-directories');
-    await dialog.getByRole('button', { name: '浏览家目录', exact: true }).click();
+    const request = page.waitForRequest('**/project-directories*');
+    await gotoPath(dialog, '~');
     await request;
     await dialog.getByRole('button', { name: '可用目录', exact: true }).click();
     release();
@@ -145,7 +157,7 @@ test('older remote daemons keep configured browsing and explain the home upgrade
     await page.route('**/project-directories*', (route) => route.fulfill({ status: 404, json: { error: 'not found' } }));
     const dialog = await openPicker(page);
     await page.waitForFunction(() => !document.querySelector('.project-browser .primary')?.disabled);
-    await dialog.getByRole('button', { name: '浏览家目录', exact: true }).click();
+    await gotoPath(dialog, '~');
     await dialog.getByRole('alert').getByText(/尚不支持浏览家目录/).waitFor();
     await dialog.getByRole('button', { name: '手动添加目录…' }).click();
     await page.getByRole('dialog', { name: '可用目录', exact: true }).waitFor();
@@ -160,8 +172,8 @@ test('a failed add keeps the draft unchanged and can be retried; long lists stay
   const page = await newPage(true);
   try {
     const dialog = await openPicker(page);
-    await dialog.getByRole('button', { name: '浏览家目录', exact: true }).click();
-    await dialog.getByRole('button', { name: '待添加项目', exact: true }).click();
+    await gotoPath(dialog, '~');
+    await dialog.getByRole('button', { name: '待添加项目', exact: true }).dblclick();
     await dialog.getByRole('button', { name: 'folder-44', exact: true }).scrollIntoViewIfNeeded();
     assert.ok(await dialog.getByRole('button', { name: '添加并使用', exact: true }).isVisible());
     assert.ok(await dialog.locator('.project-browser-list').evaluate((el) => el.scrollHeight > el.clientHeight));

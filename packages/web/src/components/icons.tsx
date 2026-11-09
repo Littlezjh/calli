@@ -194,6 +194,20 @@ export const IconFolder = (p: { size?: number }) => (
     <path d="M3 6h6l2 2h10v11H3z" />
   </Svg>
 );
+
+export const IconHome = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M4 11l8-7 8 7v9h-5.5v-6h-5v6H4z" />
+  </Svg>
+);
+
+/** Two folders, for the file browser's choice of where its tree stands. */
+export const IconFolders = (p: { size?: number }) => (
+  <Svg {...p}>
+    <path d="M3 8h6l2 2h10v11H3z" />
+    <path d="M5.5 5.5H12l2 2h5" />
+  </Svg>
+);
 export const IconShield = (p: { size?: number }) => (
   <Svg {...p}>
     <path d="M12 3l7 3v5c0 4.5-3 8.2-7 10-4-1.8-7-5.5-7-10V6z" />

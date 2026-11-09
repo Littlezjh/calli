@@ -655,6 +655,8 @@ export interface DirectoryInfo {
 
 export interface ProjectDirectoryInfo {
   path: string;
+  /** Where the breadcrumb trail starts; absent on older daemons. */
+  home?: string;
   parent: string | null;
   directories: Array<{ name: string; path: string }>;
   allowed: boolean;
@@ -1463,6 +1465,11 @@ export class Api {
     return this.request('GET', `/api/threads/${threadId}/tree${path ? `?path=${encodeURIComponent(path)}` : ''}`);
   }
 
+  /** The folders the file browser can stand on: the thread's own, the agent's session folders, the project directories, the home directory. */
+  threadRoots(threadId: string): Promise<{ roots: Array<{ path: string; kind: 'thread' | 'session' | 'project' | 'home' }> }> {
+    return this.request('GET', `/api/threads/${threadId}/roots`);
+  }
+
   /** A text file in the thread's directory. A binary one comes back with `text: null`. */
   threadText(threadId: string, path: string): Promise<TextFile> {
     return this.request('GET', `/api/threads/${threadId}/text?path=${encodeURIComponent(path)}`);
@@ -1486,9 +1493,9 @@ export class Api {
     return this.request('PUT', `/api/threads/${threadId}/writing/text?path=${encodeURIComponent(path)}`, { text, baseHash });
   }
 
-  /** Files in the thread's directory whose path has every word of the query, relative to `root`. */
-  findFiles(threadId: string, query: string): Promise<{ root: string; paths: string[]; truncated: boolean }> {
-    return this.request('GET', `/api/threads/${threadId}/find?q=${encodeURIComponent(query)}`);
+  /** Files under a browse root whose path has every word of the query, relative to that root. */
+  findFiles(threadId: string, query: string, path?: string): Promise<{ root: string; paths: string[]; truncated: boolean }> {
+    return this.request('GET', `/api/threads/${threadId}/find?q=${encodeURIComponent(query)}${path ? `&path=${encodeURIComponent(path)}` : ''}`);
   }
 
   /**
