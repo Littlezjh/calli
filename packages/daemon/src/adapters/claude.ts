@@ -55,32 +55,11 @@ interface GatewayCatalogModel {
   };
 }
 
-const CLAUDE_GATEWAY_OPENROUTER_4O = /(?:^|[-_\s])(?:openrouter|openroute)-4o(?:$|[-_[\]\s])/i;
+const CLAUDE_GATEWAY_ROUTING_GROUP = /^auto\//;
 
-function isOpenrouter4O(text: string): boolean {
-  return CLAUDE_GATEWAY_OPENROUTER_4O.test(text);
-}
-
-function isGpt55OrNewer(text: string): boolean {
-  const match = /\bgpt[-\s]?(\d+)(?:[.-](\d+))?/i.exec(text);
-  if (!match) return false;
-  const major = Number(match[1]);
-  const minor = match[2] === undefined ? 0 : Number(match[2]);
-  return major > 5 || major === 5 && minor >= 5;
-}
-
+/** The gateway's key curates the catalog; the picker only hides routing groups, which duplicate the direct models by name. */
 function showClaudeGatewayModel(model: GatewayCatalogModel): boolean {
-  const searchable = `${model.id} ${model.display_name ?? ''}`;
-  // Ferry exposes a broad shared catalog; Calli's Claude picker stays on the curated models we want users to choose.
-  return isGpt55OrNewer(searchable) || isOpenrouter4O(searchable);
-}
-
-function orderClaudeGatewayModels(models: ModelOption[]): ModelOption[] {
-  // Keep Opus 5.5 easy to reach while preserving Ferry's order within each bucket.
-  return [
-    ...models.filter(model => isOpenrouter4O(`${model.id} ${model.label}`)),
-    ...models.filter(model => !isOpenrouter4O(`${model.id} ${model.label}`)),
-  ];
+  return !CLAUDE_GATEWAY_ROUTING_GROUP.test(model.id);
 }
 
 /** The same opt-in discovery endpoint Claude Code uses for a configured gateway. */
@@ -132,7 +111,7 @@ async function gatewayModels(url: string, headers: Record<string, string>, env: 
       if (queue) model.queueObservedAt = queue.at;
     }
   }
-  return orderClaudeGatewayModels(models);
+  return models;
 }
 
 /**
