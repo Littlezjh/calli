@@ -5,6 +5,31 @@ export function folderName(path: string): string {
   return parts[parts.length - 1] ?? path;
 }
 
+/** One step of a picker's breadcrumb trail. `home` marks the home-directory step. */
+export interface NavCrumb {
+  name: string;
+  path: string;
+  home?: boolean;
+}
+
+/**
+ * The clickable trail above a folder list: from the home directory (the usual top) or the
+ * filesystem root down to `path`, one step per folder. Deep middles collapse into a single
+ * unclickable `…` step, so the trail stays on one line however far down it goes.
+ */
+export function navCrumbs(path: string, home: string | null): Array<NavCrumb | { dot: true }> {
+  const clean = path.replace(/\/+$/, '') || '/';
+  const base = home && home !== '/' && (clean === home || clean.startsWith(`${home}/`)) ? home : '/';
+  const top: NavCrumb = base === '/' ? { name: '', path: '/' } : { name: '', path: base, home: true };
+  const parts = clean === base ? [] : clean.slice(base === '/' ? 1 : base.length + 1).split('/').filter(Boolean);
+  const crumbs: NavCrumb[] = parts.map((name, i) => ({
+    name,
+    path: base === '/' ? `/${parts.slice(0, i + 1).join('/')}` : `${base}/${parts.slice(0, i + 1).join('/')}`,
+  }));
+  if (crumbs.length <= 3) return [top, ...crumbs];
+  return [top, crumbs[0]!, { dot: true }, crumbs[crumbs.length - 2]!, crumbs[crumbs.length - 1]!];
+}
+
 const withSlash = (root: string) => (root.endsWith('/') ? root : `${root}/`);
 
 /**
@@ -49,6 +74,9 @@ export const IMAGE_FILE = /\.(?:png|jpe?g|gif|webp|svg)$/i;
 
 /** File names the browser can play itself. Shown with a player rather than as binary. */
 export const VIDEO_FILE = /\.(?:mp4|m4v|mov|webm)$/i;
+
+/** PDF reports the browser shows in its own viewer, streamed from a signed link. */
+export const PDF_FILE = /\.pdf$/i;
 
 export type LinkTarget =
   /** An address on the web: opens in a tab of its own, so the hub stays where it is. */

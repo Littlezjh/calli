@@ -17,6 +17,7 @@ import { parseProgress, progressInstructions } from './progress-report.js';
 import { habitsPath, isEditableArticle, isWritingStage, newestArticle, noteFile, saveArticle, writingInstructions, type WritingState } from './writing.js';
 import { randomUUID } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import {
   EFFORT_LEVELS,
@@ -1233,35 +1234,93 @@ export class ThreadManager {
   }
 
   /**
-   * Where a path the page asked about really is, if the thread may show it: inside the thread's
-   * directory, or the agent's own folder for this session. Symlinks are resolved first, so a link
-   * inside cannot point the way out. Anything else is "not found", whether it exists or not.
+   * The folders the file browser may stand on, most specific first: the thread's own directory,
+   * the agent's folders for this session, this machine's project directories, and the home
+   * directory. Read only, like every file the hub shows. Gone folders are left out.
+   */
+  private browseRoots(thread: ThreadRecord): Array<{ path: string; kind: 'thread' | 'session' | 'project' | 'home' }> {
+    const adapter = this.adapters.get(thread.agent);
+    const named: Array<[string, 'thread' | 'session' | 'project' | 'home']> = [
+      [thread.cwd, 'thread'],
+      ...(thread.agentSessionId
+        ? (adapter?.artifactDirs?.(thread.agentSessionId) ?? []).map((path): [string, 'session'] => [path, 'session'])
+        : []),
+      ...this.dirs.roots().map((path): [string, 'project'] => [path, 'project']),
+      [homedir(), 'home'],
+    ];
+    const roots: Array<{ path: string; kind: 'thread' | 'session' | 'project' | 'home' }> = [];
+    const seen = new Set<string>();
+    for (const [path, kind] of named) {
+      let real: string;
+      try {
+        real = realpathSync(path);
+      } catch {
+        continue;
+      }
+      if (seen.has(real)) continue;
+      seen.add(real);
+      roots.push({ path: real, kind });
+    }
+    return roots;
+  }
+
+  /**
+   * The folders of the task itself, without the file browser's wider choice: the thread's own
+   * directory and the agent's folders for this session. A borrowed tool's verified artifacts must
+   * come from here, not from anywhere the browser may read.
+   */
+  private taskRoots(thread: ThreadRecord): Array<{ path: string; kind: 'thread' | 'session' | 'project' | 'home' }> {
+    const adapter = this.adapters.get(thread.agent);
+    const named: Array<[string, 'thread' | 'session']> = [
+      [thread.cwd, 'thread'],
+      ...(thread.agentSessionId
+        ? (adapter?.artifactDirs?.(thread.agentSessionId) ?? []).map((path): [string, 'session'] => [path, 'session'])
+        : []),
+    ];
+    const roots: Array<{ path: string; kind: 'thread' | 'session' | 'project' | 'home' }> = [];
+    const seen = new Set<string>();
+    for (const [path, kind] of named) {
+      let real: string;
+      try {
+        real = realpathSync(path);
+      } catch {
+        continue;
+      }
+      if (seen.has(real)) continue;
+      seen.add(real);
+      roots.push({ path: real, kind });
+    }
+    return roots;
+  }
+
+  /**
+   * Where a path the page asked about really is, if the thread may show it: inside one of the
+   * folders the file browser may stand on (see browseRoots), or with `task` scope, only the
+   * thread's own directory and the agent's session folders. Symlinks are resolved first, so a
+   * link inside cannot point the way out. Anything else is "not found", whether it exists or not.
    * `root` is the real path of the folder it was found in, which the file browser counts from.
    */
-  resolveInThread(threadId: string, rawPath: unknown, notFound: HttpError): { real: string; root: string } {
+  resolveInThread(threadId: string, rawPath: unknown, notFound: HttpError, scope: 'browse' | 'task' = 'browse'): { real: string; root: string } {
     const thread = this.getThread(threadId);
     if (rawPath !== undefined && rawPath !== null && typeof rawPath !== 'string') throw new HttpError(400, 'path must be a string');
     if (typeof rawPath === 'string' && rawPath.length > 4096) throw new HttpError(400, 'path is too long');
-    const given = !rawPath ? thread.cwd : rawPath.startsWith('file://') ? rawPath.slice('file://'.length) : rawPath;
+    const given = !rawPath ? thread.cwd : expandHome(stripFileUrl(rawPath));
 
-    const adapter = this.adapters.get(thread.agent);
-    const roots = [thread.cwd, ...(thread.agentSessionId ? (adapter?.artifactDirs?.(thread.agentSessionId) ?? []) : [])];
     let real: string;
     try {
       real = realpathSync(isAbsolute(given) ? given : resolve(thread.cwd, given));
     } catch {
       throw notFound;
     }
-    for (const root of roots) {
-      let base: string;
-      try {
-        base = realpathSync(root);
-      } catch {
-        continue;
-      }
-      if (real === base || real.startsWith(base.endsWith(sep) ? base : base + sep)) return { real, root: base };
+    for (const root of scope === 'browse' ? this.browseRoots(thread) : this.taskRoots(thread)) {
+      if (real === root.path || real.startsWith(root.path.endsWith(sep) ? root.path : root.path + sep)) return { real, root: root.path };
     }
     throw notFound;
+  }
+
+  /** The folders the file browser can stand on, for the page's root switcher. */
+  threadRoots(threadId: string): { roots: Array<{ path: string; kind: 'thread' | 'session' | 'project' | 'home' }> } {
+    return { roots: this.browseRoots(this.getThread(threadId)) };
   }
 
   /**
@@ -1311,10 +1370,10 @@ export class ThreadManager {
     return { root, path: real, ...(await listDir(real)) };
   }
 
-  /** Files under the thread's directory whose path matches a search, relative to it. */
-  async findThreadFiles(threadId: string, query: unknown): Promise<{ root: string; paths: string[]; truncated: boolean }> {
+  /** Files under the thread's directory (or another browse root, when `rawPath` names one) whose path matches a search, relative to it. */
+  async findThreadFiles(threadId: string, query: unknown, rawPath?: unknown): Promise<{ root: string; paths: string[]; truncated: boolean }> {
     if (typeof query !== 'string' || query.length > 200) throw new HttpError(400, 'q must be a short string');
-    const { real } = this.resolveInThread(threadId, null, new HttpError(404, 'the thread directory is gone'));
+    const { real } = this.resolveInThread(threadId, rawPath ?? null, new HttpError(404, 'the thread directory is gone'));
     return { root: real, ...(await findFiles(real, query)) };
   }
 
@@ -1404,11 +1463,7 @@ export class ThreadManager {
     } catch (error) {
       if (error !== notFound) throw error;
     }
-    let given = rawPath;
-    if (/^file:\/\//i.test(given)) {
-      given = given.slice(7);
-      try { given = decodeURIComponent(given); } catch { /* A literal percent sign. */ }
-    }
+    let given = expandHome(stripFileUrl(rawPath));
     const path = resolve(this.getThread(threadId).cwd, given);
     const real = referencedFile(path);
     if (!real) throw notFound;
@@ -3364,4 +3419,23 @@ export class ThreadManager {
     }, 0);
     timer.unref?.();
   }
+}
+
+/** A `file://` prefix, as answers and the page both write paths, is not part of the path itself. */
+export function stripFileUrl(raw: string): string {
+  if (!/^file:\/\//i.test(raw)) return raw;
+  let rest = raw.slice('file://'.length);
+  try {
+    rest = decodeURIComponent(rest);
+  } catch {
+    // A literal percent sign: use it as written.
+  }
+  return rest;
+}
+
+/** `~` and `~/…` stand for the daemon user's home directory, as answers often spell them. */
+export function expandHome(given: string): string {
+  if (given === '~') return homedir();
+  if (given.startsWith('~/')) return join(homedir(), given.slice(2));
+  return given;
 }

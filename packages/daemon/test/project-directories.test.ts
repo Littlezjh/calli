@@ -51,3 +51,21 @@ test('project browsing lists folders lazily without extending workdirs, and conf
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('project browsing takes ~ for the home directory, and says where home is', () => {
+  const root = mkdtempSync(join(tmpdir(), 'calli-project-tilde-'));
+  const home = join(root, 'home');
+  const project = join(home, 'project');
+  mkdirSync(project, { recursive: true });
+  try {
+    const listed = listProjectDirectories([], '~', home);
+    assert.equal(listed.path, home);
+    assert.equal(listed.home, home, 'the trail starts at home');
+    const inside = listProjectDirectories([], '~/project', home);
+    assert.equal(inside.path, project);
+    assert.equal(inside.parent, home);
+    assert.throws(() => listProjectDirectories([], '~nope/relative', home), (e) => e instanceof HttpError && e.status === 400);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

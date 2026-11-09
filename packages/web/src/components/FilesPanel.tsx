@@ -6,21 +6,23 @@ import { countWords, highlightWritingSource, isArticleFile, rehypeArticleMarks }
 import { copyText } from '../clipboard';
 import { crumbsOf, escapeHtml, foldersTo, languageOf, parentDir, resolveRelative, sizeLabel, splitHighlighted } from '../files';
 import { pictureUrl, saveAs } from '../images';
-import { IMAGE_FILE, VIDEO_FILE } from '../paths';
+import { folderName, IMAGE_FILE, PDF_FILE, VIDEO_FILE } from '../paths';
 import { enlargeMermaidDiagram, renderMermaidDiagram } from '../mermaid';
 import { conflictHash, readBodyDraft, relativePicture, stageLabel, writeBodyDraft } from '../writing';
 import { Dialog } from './Dialog';
 import { Lightbox } from './Lightbox';
 import { Popover } from './Popover';
-import { IconChevron, IconClose, IconCopy, IconDownload, IconFile, IconFolder, IconMore, IconSearch, IconSidebar, IconWrap } from './icons';
+import { IconChevron, IconClose, IconCopy, IconDownload, IconFile, IconFolder, IconFolders, IconMore, IconSearch, IconSidebar, IconWrap } from './icons';
 import { t } from '../i18n';
 
-/** What the panel is asked to show: a file (at a line), or with no path, the thread's folder. */
+/** What the panel is asked to show: a file (at a line), a folder in the tree, or with no path, the thread's folder. */
 export interface FilesTarget {
   path: string | null;
   line?: number;
   /** Already fetched by whoever opened the panel, so it is not asked for twice. */
   file?: TextFile;
+  /** A folder to stand the tree in, as when an answer's link names a directory. */
+  folder?: string;
   /** A new number each time something is opened, so opening the same file again scrolls to it again. */
   seq: number;
 }
@@ -48,6 +50,7 @@ type Shown =
   | { state: 'text'; file: TextFile }
   | { state: 'picture'; file: TextFile; url: string }
   | { state: 'video'; file: TextFile; url: string }
+  | { state: 'pdf'; file: TextFile; url: string }
   | { state: 'error'; path: string; message: string };
 
 /**
@@ -106,7 +109,17 @@ export function FilesPanel({ api, threadId, target, phone, revision, writingStag
   const [source, setSource] = useState(false);
   const [width, setWidth] = useState(() => clampWidth(savedWidth()));
   const [query, setQuery] = useState('');
-  const [found, setFound] = useState<{ query: string; paths: string[]; truncated: boolean } | null>(null);
+  const [found, setFound] = useState<{ query: string; root: string; paths: string[]; truncated: boolean } | null>(null);
+  // Where the tree may stand, for the root switcher: fetched the first time it is asked for.
+  const [rootList, setRootList] = useState<Array<{ path: string; kind: string }> | null>(null);
+  const rootsRef = useRef<Promise<Array<{ path: string; kind: string }>> | null>(null);
+  const loadRoots = useCallback(() => {
+    rootsRef.current ??= api.threadRoots(threadId).then((r) => {
+      setRootList(r.roots);
+      return r.roots;
+    }).catch(() => [] as Array<{ path: string; kind: string }>);
+    return rootsRef.current;
+  }, [api, threadId]);
   // On a phone: the file, or the folder being looked through.
   const [phoneFolder, setPhoneFolder] = useState<string | null>(target.path ? null : '');
   const [copied, setCopied] = useState(false);
@@ -152,7 +165,8 @@ export function FilesPanel({ api, threadId, target, phone, revision, writingStag
       setDirs((m) => (m.get(key) && m.get(key) !== 'error' ? m : new Map(m).set(key, 'loading')));
       try {
         const listing = await api.threadTree(threadId, path ?? undefined);
-        if (!path) setRoot(listing.root);
+        // The thread's folder is only the starting point: a link may already have moved the tree.
+        if (!path) setRoot((r) => r ?? listing.root);
         setDirs((m) => {
           const next = new Map(m).set(listing.path, listing);
           if (!path) next.delete('');
@@ -219,6 +233,17 @@ export function FilesPanel({ api, threadId, target, phone, revision, writingStag
             // No link: fall through to the binary notice, which still offers a download.
           }
         }
+        // A report the browser reads in its own viewer, streamed the same way.
+        if (PDF_FILE.test(file.path)) {
+          try {
+            const link = await api.downloadLink(threadId, file.path, false);
+            if (generation !== fileGeneration.current) return;
+            setShown({ state: 'pdf', file, url: link.url });
+            return;
+          } catch {
+            // No link: the binary notice with its download button stands in.
+          }
+        }
         if (generation !== fileGeneration.current) return;
         setShown({ state: 'text', file });
         // The body takes the page: well over half the window with the tree folded away, until the
@@ -236,9 +261,10 @@ export function FilesPanel({ api, threadId, target, phone, revision, writingStag
     [api, threadId, writingHabits],
   );
 
-  // Each time something is opened from outside: a file, or the folder alone.
+  // Each time something is opened from outside: a file, a folder, or the thread's folder alone.
   useEffect(() => {
     if (target.path) void openFile(target.path, target.line, target.file);
+    else if (target.folder) void revealFolder(target.folder);
     else setPhoneFolder('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target.seq]);
@@ -254,22 +280,22 @@ export function FilesPanel({ api, threadId, target, phone, revision, writingStag
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [root, filePath]);
 
-  // The filter looks through the whole folder, not just what the tree has opened.
+  // The filter looks through the root the tree stands on, not just what it has opened.
   useEffect(() => {
     const q = query.trim();
     if (!q) return setFound(null);
     let alive = true;
     const timer = setTimeout(() => {
       api
-        .findFiles(threadId, q)
-        .then((r) => alive && setFound({ query: q, paths: r.paths, truncated: r.truncated }))
-        .catch(() => alive && setFound({ query: q, paths: [], truncated: false }));
+        .findFiles(threadId, q, root ?? undefined)
+        .then((r) => alive && setFound({ query: q, root: r.root, paths: r.paths, truncated: r.truncated }))
+        .catch(() => alive && setFound({ query: q, root: root ?? '', paths: [], truncated: false }));
     }, 180);
     return () => {
       alive = false;
       clearTimeout(timer);
     };
-  }, [api, threadId, query]);
+  }, [api, threadId, query, root]);
 
   const toggleFolder = (path: string) => {
     setExpanded((s) => {
@@ -293,6 +319,41 @@ export function FilesPanel({ api, threadId, target, phone, revision, writingStag
     if (root) for (const folder of [...foldersTo(root, path), path]) if (!dirs.has(folder)) void loadDir(folder);
     setExpanded((s) => new Set([...s, ...(root ? foldersTo(root, path) : []), path]));
   };
+
+  /** Stands the tree on another root: the thread's folder, a project directory, or the home directory. */
+  const switchRoot = (path: string) => {
+    if (path === root) return;
+    setRoot(path);
+    setExpanded(new Set());
+    setQuery('');
+    void loadDir(path);
+    if (phone) setPhoneFolder(path);
+  };
+
+  /**
+   * A folder named from outside, as an answer's link does: stand the tree on the root that holds
+   * it (or the folder itself when no root does), then open the tree down to it.
+   */
+  const revealFolder = useCallback(
+    async (path: string) => {
+      let base = root;
+      if (!base || !(path === base || path.startsWith(`${base}/`))) {
+        const roots = await loadRoots();
+        base = roots.find((r) => path === r.path || path.startsWith(`${r.path}/`))?.path ?? null;
+      }
+      const stand = base ?? path;
+      if (stand !== root) {
+        setRoot(stand);
+        setExpanded(new Set());
+      }
+      if (phone) setPhoneFolder(path);
+      else setTreeOpen(true);
+      const steps = [stand, ...foldersTo(stand, path).slice(1), path];
+      for (const folder of steps) if (!dirs.has(folder)) void loadDir(folder);
+      setExpanded((s) => new Set([...s, ...steps]));
+    },
+    [root, phone, loadRoots, loadDir, dirs],
+  );
 
   const copyPath = async () => {
     if (!filePath) return;
@@ -518,10 +579,54 @@ export function FilesPanel({ api, threadId, target, phone, revision, writingStag
     </label>
   );
 
-  const results = found && root && (
+  /** Says where the tree stands — the thread's folder, a project directory, the home directory —
+   * and offers the choice; the list itself is read only when the menu is opened. */
+  const rootsMenu = (
+    <Popover
+      label={t('files.roots')}
+      triggerLabel={t('files.roots')}
+      triggerTitle={root ?? t('files.roots')}
+      triggerClassName="files-roots"
+      placement="below"
+      align="start"
+      onOpen={loadRoots}
+      trigger={
+        <>
+          <IconFolders size={14} />
+          <span className="files-roots-name">{root ? folderName(root) : t('common.loading')}</span>
+          <IconChevron size={12} open />
+        </>
+      }
+    >
+      {close => <>
+        {rootList === null && <div className="files-note files-roots-note">{t('common.loading')}</div>}
+        {rootList?.map((r) => (
+          <button
+            key={r.path}
+            type="button"
+            role="menuitemradio"
+            aria-checked={r.path === root}
+            className={`pop-item files-roots-row${r.path === root ? ' on' : ''}`}
+            onClick={() => {
+              close();
+              switchRoot(r.path);
+            }}
+          >
+            <IconFolder size={15} />
+            <span className="files-roots-text">
+              <span className="files-roots-text-name">{folderName(r.path)}</span>
+              <span className="files-roots-text-kind">{rootKindLabel(r.kind)}</span>
+            </span>
+          </button>
+        ))}
+      </>}
+    </Popover>
+  );
+
+  const results = found && (
     <div className="files-results" role="list">
       {found.paths.map((rel) => {
-        const path = `${root}/${rel}`;
+        const path = `${found.root}/${rel}`;
         const slash = rel.lastIndexOf('/');
         return (
           <button
@@ -636,6 +741,11 @@ export function FilesPanel({ api, threadId, target, phone, revision, writingStag
           <video src={shown.url} controls playsInline preload="metadata" />
         </div>
       )}
+      {shown?.state === 'pdf' && (
+        <div className="files-pdf">
+          <iframe src={shown.url} title={shown.file.path} loading="lazy" />
+        </div>
+      )}
       {shown?.state === 'text' && shown.file.text === null && (
         <div className="files-empty">
           <IconFile size={30} />
@@ -736,7 +846,10 @@ export function FilesPanel({ api, threadId, target, phone, revision, writingStag
         </div>
         {inFolder ? (
           <div className="files-list">
-            {filter}
+            <div className="files-toolbar">
+              {rootsMenu}
+              {filter}
+            </div>
             {results ?? (folder ? <div role="tree">{treeRows(folder, 0)}</div> : <div className="files-note">{t('common.loading')}</div>)}
           </div>
         ) : (
@@ -797,11 +910,15 @@ export function FilesPanel({ api, threadId, target, phone, revision, writingStag
           </button>
         </div>
       </div>
-      <div className="files-body">
-        {viewer}
+      {/* Nothing open: the folder is the content, not a dead pane beside an empty viewer. */}
+      <div className={`files-body${shown === null && !editing && treeOpen ? ' only-tree' : ''}`}>
+        {!(shown === null && !editing && treeOpen) && viewer}
         {treeOpen && (
           <div className="files-tree">
-            {filter}
+            <div className="files-toolbar">
+              {rootsMenu}
+              {filter}
+            </div>
             <div className="files-tree-scroll">{results ?? (root ? <div role="tree">{treeRows(root, 0)}</div> : <div className="files-note">{t('common.loading')}</div>)}</div>
           </div>
         )}
@@ -862,13 +979,14 @@ function EntryRow({ entry, depth, open, current, onClick }: { entry: FolderEntry
     <button
       type="button"
       className={`files-row${current ? ' current' : ''}${entry.ignored ? ' ignored' : ''}`}
-      style={{ paddingLeft: 8 + depth * 14 }}
+      style={{ paddingLeft: 6 + depth * 14 }}
       title={dir ? undefined : entry.size !== undefined ? `${entry.name} · ${sizeLabel(entry.size)}` : entry.name}
       onClick={onClick}
     >
-      <span className="files-caret">{dir && <IconChevron size={12} open={open} />}</span>
+      <span className="files-caret">{dir && <IconChevron size={11} open={open} />}</span>
       {dir ? <IconFolder size={14} /> : <IconFile size={14} />}
       <span className="files-name">{entry.name}</span>
+      {!dir && entry.size !== undefined && <span className="files-size">{sizeLabel(entry.size)}</span>}
     </button>
   );
 }
@@ -936,6 +1054,17 @@ function DownloadButton({ api, threadId, path, label, icon, menu }: { api: Api; 
       <span>{busy ? t('files.downloading') : title}</span>
     </button>
   );
+}
+
+/** What a root is, as the switcher says it: the thread's own folder, the agent's session folder, a project directory, the home directory. */
+function rootKindLabel(kind: string): string {
+  switch (kind) {
+    case 'thread': return t('files.rootThread');
+    case 'session': return t('files.rootSession');
+    case 'project': return t('files.rootProject');
+    case 'home': return t('files.rootHome');
+    default: return kind;
+  }
 }
 
 /** Rows of code with their numbers; the line a link pointed at is marked and scrolled to. */

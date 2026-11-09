@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { get, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -2169,12 +2169,78 @@ test('browse: folders and text files in the thread directory can be read, and no
     assert.equal((await text('src')).status, 404, 'a folder is not a file');
     assert.equal((await text('')).status, 400);
     assert.equal((await tree('src/a2.ts')).status, 404, 'a file is not a folder');
-    assert.equal((await tree('..')).status, 404);
+    const up = (await tree('..')).json() as Promise<{ root: string }>;
+    assert.equal((await up).root, realpathSync(workdir), 'the project root above the thread is itself a browse root');
+    assert.equal((await tree('../..')).status, 404, 'above the project root is outside');
     assert.equal((await tree(dataDir)).status, 404);
     assert.equal((await api(`/api/threads/${thread.id}/tree`, {}, false)).status, 401);
     assert.equal((await api(`/api/threads/${thread.id}/text?path=src/a2.ts`, { method: 'POST' })).status, 404, 'read only');
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('browse: the file browser stands on the thread directory, project directories and the home directory', async () => {
+  const second = mkdtempSync(join(tmpdir(), 'calli-second-root-'));
+  const homeCorner = mkdtempSync(join(homedir(), '.calli-home-browse-'));
+  const corner = mkdirSync(join(workdir, 'browse-roots'), { recursive: true });
+  writeFileSync(join(second, 'util.ts'), 'export const u = 1;\n');
+  writeFileSync(join(corner, 'local.txt'), 'thread file\n');
+  writeFileSync(join(homeCorner, 'note.md'), '# home note\n');
+  try {
+    assert.equal((await api('/api/workdirs', { method: 'POST', body: JSON.stringify({ path: second }) })).status, 200);
+    const thread = await newThread({ agent: 'claude', cwd: corner });
+    const tree = (path?: string) => api(`/api/threads/${thread.id}/tree${path === undefined ? '' : `?path=${encodeURIComponent(path)}`}`);
+    const roots = (await (await api(`/api/threads/${thread.id}/roots`)).json()) as { roots: Array<{ path: string; kind: string }> };
+    assert.deepEqual(roots.roots, [
+      { path: realpathSync(corner), kind: 'thread' },
+      { path: realpathSync(workdir), kind: 'project' },
+      { path: realpathSync(second), kind: 'project' },
+      { path: realpathSync(homedir()), kind: 'home' },
+    ], 'most specific first, the thread directory deduped against the project root');
+
+    const project = (await (await tree(second)).json()) as { entries: Array<{ name: string }> };
+    assert.ok(project.entries.some((e) => e.name === 'util.ts'), 'another project root is browsable');
+    const found = (await (await api(`/api/threads/${thread.id}/find?q=util&path=${encodeURIComponent(second)}`)).json()) as { paths: string[] };
+    assert.deepEqual(found.paths, ['util.ts'], 'the filter searches the root it is given');
+    const local = (await (await api(`/api/threads/${thread.id}/find?q=local`)).json()) as { paths: string[] };
+    assert.deepEqual(local.paths, ['local.txt'], 'without a path it searches the thread directory');
+
+    const homeTree = (await (await tree(homeCorner)).json()) as typeof project;
+    assert.ok(homeTree.entries.some((e) => e.name === 'note.md'), 'the home directory is browsable');
+    const note = (await (await api(`/api/threads/${thread.id}/text?path=${encodeURIComponent(join(homeCorner, 'note.md'))}`)).json()) as { text: string };
+    assert.equal(note.text, '# home note\n');
+
+    assert.equal((await tree(tmpdir())).status, 404, 'the temp root is not a browse root');
+    assert.equal((await tree('/etc')).status, 404, 'nor is the system');
+
+    // A removed project root stops being browsable at once.
+    assert.equal((await api(`/api/workdirs?path=${encodeURIComponent(second)}`, { method: 'DELETE' })).status, 200);
+    assert.equal((await tree(second)).status, 404);
+  } finally {
+    rmSync(second, { recursive: true, force: true });
+    rmSync(homeCorner, { recursive: true, force: true });
+    rmSync(corner, { recursive: true, force: true });
+  }
+});
+
+test('browse: ~ paths open, as answers and the file browser spell them', async () => {
+  const corner = mkdtempSync(join(homedir(), '.calli-tilde-'));
+  const file = join(corner, 'answer.md');
+  writeFileSync(file, '# written home\n');
+  try {
+    const thread = await newThread({ agent: 'claude' });
+    const spelled = `~/${relative(homedir(), file)}`;
+    const text = (path: string) => api(`/api/threads/${thread.id}/text?path=${encodeURIComponent(path)}`);
+    const read = await text(spelled);
+    assert.equal(read.status, 200, 'a ~ path reaches the file under the home root');
+    assert.equal(((await read.json()) as { text: string }).text, '# written home\n');
+    const tree = await api(`/api/threads/${thread.id}/tree?path=${encodeURIComponent(spelled.replace(/\/[^/]+$/, ''))}`);
+    assert.equal(tree.status, 200, 'a ~ path works for the tree as well');
+    const home = await api(`/api/threads/${thread.id}/tree?path=~`);
+    assert.equal(home.status, 200, 'a bare ~ is the home directory');
+  } finally {
+    rmSync(corner, { recursive: true, force: true });
   }
 });
 
@@ -3201,7 +3267,8 @@ test('outputs expand home paths and their exact referenced images can be preview
     assert.equal(outputs.images[0].path, path);
     assert.equal(Object.hasOwn(outputs.images[0], 'missing'), false);
     assert.equal((await api(`/api/threads/${thread.id}/files?path=${encodeURIComponent(path)}`)).status, 200);
-    assert.equal((await api(`/api/threads/${thread.id}/files?path=${encodeURIComponent(sibling)}`)).status, 403);
+    // The home directory is a browse root, so a neighbour there is readable in its own right.
+    assert.equal((await api(`/api/threads/${thread.id}/files?path=${encodeURIComponent(sibling)}`)).status, 200);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
