@@ -37,33 +37,27 @@ test('glass chrome has scrolling content behind it without hiding either end of 
         return { scroller: rect('.main > .scroller'), top: rect('.topbar'), input: rect('.composer-box'), thread: rect('.thread'), blur };
       });
       let bounds = await measure();
+      assert.ok(bounds.scroller.top <= bounds.top.top + 1, 'content scrolls behind the top controls');
       if (mobile) {
-        assert.ok(bounds.scroller.top <= bounds.top.top + 1, 'content scrolls behind the top controls');
         assert.ok(bounds.scroller.bottom >= bounds.input.bottom, 'content scrolls behind the input');
       } else {
-        // A wide screen keeps the chrome solid, as Codex does: one band above the conversation, an
-        // opaque composer card, plain top-bar buttons, and nothing sliding under any of it.
+        // A wide screen keeps the glass top bar but draws the composer as an opaque card,
+        // with the conversation ending above it.
         const solid = await page.evaluate(() => {
           const top = document.querySelector('.main > .topbar');
           const pill = document.querySelector('.topbar-actions');
           const box = document.querySelector('.composer-box');
-          const scroller = document.querySelector('.main > .scroller');
           const cs = (el, pseudo) => getComputedStyle(el, pseudo);
           return {
-            band: [cs(top).backgroundColor, cs(top).borderBottomWidth, cs(top, '::before').display, cs(top, '::after').display].join('|'),
-            pill: [cs(pill).backgroundColor, cs(pill).backdropFilter, cs(pill).boxShadow].join('|'),
+            band: [cs(top).borderBottomWidth, cs(top, '::before').display, cs(top, '::after').display].join('|'),
+            pill: cs(pill).backdropFilter,
             box: [cs(box).backgroundColor, cs(box).backdropFilter].join('|'),
-            margins: [cs(scroller).marginTop, cs(scroller).marginBottom].join('|'),
           };
         });
-        assert.ok(!/rgba\(0, 0, 0, 0\)|transparent/.test(solid.band.split('|')[0]), 'the top bar is a solid band');
-        assert.match(solid.band, /1px\|none\|none$/, 'with a hairline and no fade bands over a wide conversation');
-        assert.ok(solid.pill.startsWith('rgba(0, 0, 0, 0)'), 'no capsule behind the top bar buttons');
-        assert.equal(solid.pill.split('|')[1], 'none', 'the buttons carry no backdrop blur');
+        assert.equal(solid.band, '0px|block|block', 'the top bar keeps its fade bands and draws no hairline');
+        assert.notEqual(solid.pill, 'none', 'the top bar buttons keep their glass capsule');
         assert.notEqual(solid.box.split('|')[0], 'rgba(0, 0, 0, 0)', 'the composer card has a surface of its own');
         assert.equal(solid.box.split('|')[1], 'none', 'the composer card is opaque');
-        assert.equal(solid.margins, '0px|0px', 'the conversation does not slide under the chrome');
-        assert.ok(bounds.scroller.top >= bounds.top.bottom - 1, 'a wide screen starts the conversation below the band');
         assert.ok(bounds.scroller.bottom <= bounds.input.top + 1, 'a wide screen ends the conversation above the composer');
       }
       await scroller.evaluate(el => { el.scrollTop = 0; });

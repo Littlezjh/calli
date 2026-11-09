@@ -13526,24 +13526,18 @@ body:has(.settings-page, .action-sheet) .pet { display: none; }
   .main:has(> .composer-slot) > .topbar::after { background: var(--bg); -webkit-backdrop-filter: none; backdrop-filter: none; }
   .composer-slot::before, .composer-slot::after { display: none; }
 }
-/* A wide screen draws the chrome solid, as Codex does: the top bar is one band of the list's
-   colour with a hairline under it, and the composer is an opaque card with its soft halo. The
-   conversation ends at both edges instead of sliding under translucent controls, where a
-   70%-surface wash reads as smudged text, and the top bar's buttons float plainly, with no
-   capsule around them. Phones keep the glass: there the bands answer the system status area. */
+/* A wide screen draws the composer solid: an opaque card with its soft halo, and the conversation
+   ends above it instead of sliding under a translucent box. The top bar keeps its glass buttons, but
+   with no status area above it the wash covers the whole row in the page's colour and fades out
+   only below it, so text never runs into the title. */
 @media (min-width: 900px) {
+  .main:has(> .composer-slot) > .topbar::after { background: linear-gradient(var(--bg) calc(100% - 16px), transparent); }
+  .main:has(> .composer-slot) > .topbar::before { -webkit-mask-image: linear-gradient(transparent calc(100% - 20px), #000 calc(100% - 16px), transparent); mask-image: linear-gradient(transparent calc(100% - 20px), #000 calc(100% - 16px), transparent); }
   .main:has(> .composer-slot) > .scroller {
-    margin-top: 0;
     margin-bottom: 0;
-    padding-top: 14px;
     padding-bottom: var(--composer-clear);
-    scroll-padding-top: 14px;
     scroll-padding-bottom: var(--composer-clear);
   }
-  .main:has(> .composer-slot) > .topbar { background: var(--sidebar); border-bottom: 1px solid var(--border); }
-  .main:has(> .composer-slot) > .topbar::before,
-  .main:has(> .composer-slot) > .topbar::after { display: none; }
-  .topbar-actions { padding: 0; background: none; border-color: transparent; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
   .composer-box { background: var(--surface); border-color: var(--border); box-shadow: var(--glass-halo); -webkit-backdrop-filter: none; backdrop-filter: none; }
 }
 @media (prefers-reduced-motion: reduce) {
