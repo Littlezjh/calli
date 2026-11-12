@@ -1128,7 +1128,6 @@ function FileImage({ path, roots, load, onOpen }: { path: string; roots: string[
       <button type="button" onClick={() => onOpen(url, path)} aria-label={t('view.enlargePath', path)}>
         <img src={url} alt={path} />
       </button>
-      <figcaption title={path}>{relativePath(path, roots)}</figcaption>
     </figure>
   );
 }
