@@ -2252,6 +2252,7 @@ export const zh = {
   'view.proposal': '方案',
   'view.planning': '正在整理计划',
   'view.copyAnswer': '复制回答',
+  'view.openThread': '跳转到该会话',
   'view.editMessage': '编辑这条消息',
   'view.editHint': '从这里重新生成，文件保持当前状态。',
   'view.editSend': '发送修改',

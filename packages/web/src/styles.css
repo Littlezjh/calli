@@ -1607,13 +1607,16 @@ html.list-open body {
   text-underline-offset: 3px;
 }
 
-/* A link to a file on the agent's host: a click opens the picture or copies the path, it goes nowhere. */
-.markdown a.file-link {
+/* A link to a file on the agent's host: a click opens the picture or copies the path, it goes nowhere.
+   A link to another thread of this hub is the same kind of non-address: a click opens the thread. */
+.markdown a.file-link,
+.markdown a.thread-link {
   position: relative;
   cursor: pointer;
 }
 
-.markdown a.file-link:focus-visible {
+.markdown a.file-link:focus-visible,
+.markdown a.thread-link:focus-visible {
   outline: 2px solid var(--border-strong);
   outline-offset: 2px;
   border-radius: 3px;

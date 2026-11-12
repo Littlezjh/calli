@@ -1894,6 +1894,20 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     void refreshThreads(); // the server decides the order
   };
 
+  /**
+   * Opens the thread a message names by id, whole or as the short prefix the assistant cites.
+   * A thread outside the list (archived, on another screen) is still fetched and opened; an id
+   * nothing answers is left to the error banner rather than quietly doing nothing.
+   */
+  const openThreadById = (id: string) => {
+    const known = threads.find(t => t.id === id);
+    if (known) { openThread(known); return; }
+    const ref = id.toLowerCase();
+    const prefixed = threads.filter(t => t.id.toLowerCase().startsWith(ref));
+    if (prefixed.length === 1) { openThread(prefixed[0]!); return; }
+    if (api) void api.thread(id).then(openThread).catch(handleError);
+  };
+
   const autotitleExt = extensions?.find((e) => e.manifest.id === 'autotitle');
   const boardExt = extensions?.find((e) => e.manifest.id === 'board');
   const threadActions = useThreadActions({
@@ -3302,6 +3316,9 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
                 if (known) { openThread(known); return; }
                 if (api) void api.thread(id).then(openThread).catch(handleError);
               }}
+              // A message names another thread in passing; the link opens it like a pick in the list.
+              threads={threads}
+              onOpenThread={openThreadById}
               hasOlder={hasOlder}
               loadingOlder={loadingOlder}
               onLoadOlder={loadOlder}
@@ -3628,6 +3645,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           onClose={() => setSideAsk(null)}
           onError={handleError}
           onThreadCreated={(t) => setThreads((prev) => [t, ...prev.filter((x) => x.id !== t.id)])}
+          threads={threads}
+          onOpenThread={(id) => { setSideAsk(null); openThreadById(id); }}
         />
       )}
       {api && diffFile && diffFile.threadId === selected?.id && (

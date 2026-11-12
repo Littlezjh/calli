@@ -36,6 +36,10 @@ interface Props {
   onError: (e: unknown) => void;
   /** The side chat became a thread of its own: keep the sidebar list in step. */
   onThreadCreated: (thread: Thread) => void;
+  /** Threads an answer here may name in passing, turned into jump links. */
+  threads?: Array<{ id: string; title: string }>;
+  /** Opens the thread such a mention names; the panel closes so the thread is in full view. */
+  onOpenThread?: (threadId: string) => void;
 }
 
 /**
@@ -58,6 +62,8 @@ export function SideChat({
   onClose,
   onError,
   onThreadCreated,
+  threads,
+  onOpenThread,
 }: Props) {
   const [thread, setThread] = useState<Thread | null>(null);
   const [events, setEvents] = useState<StoredEvent[]>([]);
@@ -175,6 +181,8 @@ export function SideChat({
               roots={roots}
               loadImage={loadImage}
               loadFile={loadFile}
+              threads={threads}
+              onOpenThread={onOpenThread}
             />
           ) : (
             <div className="side-chat-intro">
