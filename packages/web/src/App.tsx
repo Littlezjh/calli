@@ -2432,7 +2432,11 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         thread = await api.updateThread(id, { archived: false });
         if (active) setArchiveKey(key => key + 1);
       }
-      if (active) openThread(thread);
+      if (active) {
+        openThread(thread);
+        const previewPath = new URLSearchParams(threadLink.split('?')[1]).get('preview');
+        if (previewPath) setPreview({ threadId: id, path: previewPath });
+      }
     }).catch(() => {
       if (active) setError(t('app.threadNotFound'));
     }).finally(() => {
@@ -3641,7 +3645,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
       )}
       </div>
       {preview && api && (
-        <PreviewPanel api={api} threadId={preview.threadId} path={preview.path} onClose={() => setPreview(null)} onError={handleError} />
+        <PreviewPanel key={`${hostId ?? ''}:${preview.threadId}:${preview.path}`} api={api} threadId={preview.threadId} path={preview.path} onClose={() => setPreview(null)} onError={handleError} />
       )}
       {desktop !== 'closed' && (
         <DesktopPanel api={api} hidden={desktop === 'minimized'} onMinimize={() => setDesktop('minimized')} onClose={() => setDesktop('closed')} />

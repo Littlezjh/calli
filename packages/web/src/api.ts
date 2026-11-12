@@ -1,3 +1,4 @@
+import type { PreviewNote, PreviewPick } from './preview-notes';
 import type { ContextReference } from './context-references';
 import type { GitStatus, GitLog, GitCommitFiles, GitDiff, GitOperation } from '../../daemon/src/git';
 export type { GitStatus, GitLog, GitCommitFiles, GitDiff, GitOperation, GitFile, GitCommit } from '../../daemon/src/git';
@@ -1774,6 +1775,11 @@ export class Api {
   previewLink(threadId: string, path: string): Promise<{ url: string }> {
     return this.request('GET', `/api/threads/${threadId}/preview-link?path=${encodeURIComponent(path)}`);
   }
+
+  previewNotes(threadId: string, page: string): Promise<PreviewNote[]> { return this.request('GET', `/api/threads/${threadId}/preview-notes?page=${encodeURIComponent(page)}`); }
+  addPreviewNote(threadId: string, page: string, pick: PreviewPick, comment: string): Promise<PreviewNote> { return this.request('POST', `/api/threads/${threadId}/preview-notes`, { page, ...pick, comment }); }
+  removePreviewNote(threadId: string, id: string): Promise<void> { return this.request('DELETE', `/api/threads/${threadId}/preview-notes/${id}`); }
+  sendPreviewNotes(threadId: string, page: string, ids: string[]): Promise<{ turnId: string } | { queued: true; id: string }> { return this.request('POST', `/api/threads/${threadId}/preview-notes/send`, { page, ids }); }
 
   /** Creates an empty successor in the same directory and worktree, without starting an agent turn. */
   handoverSettings(): Promise<HandoverSettings> { return this.request('GET', '/api/handover-settings'); }

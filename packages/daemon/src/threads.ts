@@ -1,3 +1,4 @@
+import { PreviewNotes } from './preview-notes.js';
 import { ContextReferences } from './context-references.js';
 import { GitManager, gitWorktreeRoot } from './git.js';
 import { PersonalBriefSchedule } from './personal-brief-schedule.js';
@@ -382,6 +383,7 @@ export class ThreadManager {
   /** Where threads may work; directories can be added from the page while the hub runs. */
   readonly dirs: Workdirs;
   readonly references: ContextReferences;
+  readonly previewNotes: PreviewNotes;
   readonly autoHandover: AutoHandover;
   readonly autoCompact: AutoCompact;
   readonly personal: PersonalService;
@@ -400,6 +402,7 @@ export class ThreadManager {
   ) {
     this.dirs = Array.isArray(workdirs) ? new Workdirs(workdirs) : workdirs;
     this.references = new ContextReferences(store, this);
+    this.previewNotes = new PreviewNotes(store, this);
     this.injections = new Injections(store);
     this.autoHandover = new AutoHandover(store, this);
     this.quotaResume = new QuotaResume(store, this, this.autoHandover);

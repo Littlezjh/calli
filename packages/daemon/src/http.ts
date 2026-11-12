@@ -17,6 +17,7 @@ import { refuse, type Desktop } from './desktop.js';
 import { HttpError } from './errors.js';
 import type { ExtensionHost } from './extension-host.js';
 import type { HostRegistry } from './hosts.js';
+import { PREVIEW_PICKER } from './preview-picker.js';
 import { checkGrant, cookieValue, LEGACY_PREVIEW_COOKIE, makeGrant, PREVIEW_COOKIE, readPreviewFile } from './preview.js';
 import type { Scheduler } from './scheduler.js';
 import type { TerminalEvent, TerminalManager } from './terminals.js';
@@ -300,6 +301,7 @@ export function createHttpServer(deps: HttpDeps): Server {
       return;
     }
 
+    if (path === '/api/preview-bridge.js' && method === 'GET') { res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }); res.end(PREVIEW_PICKER); return; }
     if (path === '/api/health') return sendJson(res, 200, { ok: true, version });
     // A machine that connects out to this hub, with its own join token rather than the hub's.
     if (path.startsWith('/api/relay/') && hosts && !trusted) return hosts.relay.handle(req, res, path);
@@ -1088,6 +1090,15 @@ export function createHttpServer(deps: HttpDeps): Server {
       const threadId = parts[2];
       const sub = parts[3];
 
+      if (sub === 'preview-notes') {
+        if (!parts[4] && method === 'GET') return sendJson(res, 200, manager.previewNotes.list(threadId, url.searchParams.get('page')));
+        if (!parts[4] && method === 'POST') return sendJson(res, 201, manager.previewNotes.create(threadId, await readJson(req, 32768)));
+        if (parts[4] === 'send' && !parts[5] && method === 'POST') return sendJson(res, 202, await manager.previewNotes.send(threadId, await readJson(req, 8192)));
+        if (parts[4] && !parts[5] && method === 'GET') return sendJson(res, 200, manager.previewNotes.read(threadId, parts[4]));
+        if (parts[4] && !parts[5] && method === 'DELETE') { manager.previewNotes.remove(threadId, parts[4]); res.writeHead(204).end(); return; }
+        throw new HttpError(404, 'not found');
+      }
+
       // GET /api/threads/:id/coordination/result/:deliveryId: the hub's copy of a remote member's
       // result file. It is text the member wrote, so it downloads instead of rendering as a page.
       if (method === 'GET' && sub === 'coordination' && parts[4] === 'result' && parts[5]) {
@@ -1468,7 +1479,14 @@ export function createHttpServer(deps: HttpDeps): Server {
           .join('/');
         checkGrant(token, threadId, cookieValue(req.headers.cookie, PREVIEW_COOKIE) ?? cookieValue(req.headers.cookie, LEGACY_PREVIEW_COOKIE));
         const { real } = manager.threadFile(threadId, rel);
-        const { body, contentType } = readPreviewFile(real);
+        const file = readPreviewFile(real);
+        let body = file.body;
+        const contentType = file.contentType;
+        if (contentType.startsWith('text/html')) {
+          const injection = '<script src="/api/preview-bridge.js"></script>';
+          const html = body.toString('utf8');
+          body = Buffer.from(html.includes('</body>') ? html.replace('</body>', injection + '</body>') : html + injection);
+        }
         res.writeHead(200, {
           'Content-Type': contentType,
           'X-Content-Type-Options': 'nosniff',
