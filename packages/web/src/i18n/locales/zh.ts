@@ -715,6 +715,7 @@ export const zh = {
   "auto.step.copy": "正在复制原会话",
   "auto.step.handover": "正在交接",
   "auto.stopped": "没有可用的接手目标，已停止自动交接",
+  "auto.targetGone": (target: string) => `${target} 已不可用，已停止自动交接`,
   "auto.cancel": "取消这次交接",
   "auto.failed": "自动交接失败",
   "auto.method": "交接方式",

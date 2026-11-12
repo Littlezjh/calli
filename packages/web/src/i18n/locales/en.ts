@@ -715,6 +715,7 @@ export const en: Messages = {
   "auto.step.copy": "Copying the conversation",
   "auto.step.handover": "Handing over",
   "auto.stopped": "No successor available. Automatic handover stopped.",
+  "auto.targetGone": (target: string) => `${target} is no longer available. Automatic handover stopped.`,
   "auto.cancel": "Cancel this handover",
   "auto.failed": "Automatic handover failed",
   "auto.method": "Handover",

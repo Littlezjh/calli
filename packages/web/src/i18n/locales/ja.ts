@@ -713,6 +713,7 @@ export const ja: Messages = {
   "auto.step.copy": "会話をコピー中",
   "auto.step.handover": "引き継ぎ中",
   "auto.stopped": "利用可能な引き継ぎ先がないため停止しました",
+  "auto.targetGone": (target: string) => `${target} が利用できなくなったため停止しました`,
   "auto.cancel": "今回の引き継ぎをキャンセル",
   "auto.failed": "自動引き継ぎに失敗しました",
   "auto.method": "引き継ぎ方法",

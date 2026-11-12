@@ -158,7 +158,22 @@ export class AutoHandover {
   }
   private isBlocked(t: HandoverTarget): boolean { return this.blocked().some(b => b.agent === t.agent && (!b.model || !t.model || b.model === t.model)); }
   private async quota(agent: string): Promise<PlanQuota | null> {
-    try { const q = await this.manager.agentQuota(agent, true); return freshQuota(q) ? q : null; } catch { return null; }
+    try {
+      let q = await this.manager.agentQuota(agent, true);
+      // A recent self-report holds a refresh back, but a reading too old to decide on is read again.
+      if (!freshQuota(q)) q = await this.manager.agentQuota(agent, true, true);
+      return freshQuota(q) ? q : null;
+    } catch { return null; }
+  }
+  /**
+   * A candidate's usage: as of now when it can be read, else the last reading known. Failing to read
+   * an account is no evidence that it is used up, so `unreadable` does not rule it out.
+   */
+  private async candidateQuota(agent: string): Promise<{ quota: PlanQuota | null; fresh: boolean; unreadable: boolean }> {
+    const fresh = await this.quota(agent);
+    if (fresh || !this.manager.readsQuota(agent)) return { quota: fresh, fresh: !!fresh, unreadable: false };
+    const last = this.manager.lastQuota(agent);
+    return { quota: last, fresh: false, unreadable: !last };
   }
   async targets(id: string): Promise<HandoverTarget[]> {
     const thread = this.manager.getThread(id);
@@ -180,16 +195,16 @@ export class AutoHandover {
       const targetModel = await this.manager.handoverModel(target.agent, target.model);
       if (target.model && !targetModel || target.agent === thread.agent && (!target.model || targetModel === model)) continue;
       const concrete = { agent: target.agent, ...(targetModel ? { model: targetModel } : {}) };
-      const quota = await this.quota(target.agent);
+      const { quota, fresh, unreadable } = await this.candidateQuota(target.agent);
       // Unlisted, a candidate has to prove it is a subscription: a plan with usage windows. A bridge
       // to a third-party model runs on the same adapter but has none, and takes over only when the
-      // order names it.
-      if (!listed && !quota?.windows.length) continue;
-      if (quota) this.recover(concrete, quota);
+      // order names it. An account whose usage cannot be read is not taken for a bridge.
+      if (!listed && !unreadable && !quota?.windows.length) continue;
+      if (quota && fresh) this.recover(concrete, quota);
       if (this.isBlocked(concrete)) continue;
       const windows = quota ? instanceWindows(quota, targetModel) : [];
       // Switching within an instance needs positive evidence of an independent, healthy model pool.
-      if (target.agent === thread.agent && (!quota || !model || !targetModel || !quota.windows.some(w => w.modelIds?.includes(model))
+      if (target.agent === thread.agent && (!quota || !fresh || !model || !targetModel || !quota.windows.some(w => w.modelIds?.includes(model))
         || !quota.windows.some(w => w.modelIds?.includes(targetModel)))) continue;
       if (windows.some(w => w.usedPercent >= this.settings().threshold)) continue;
       out.push(target);
@@ -244,7 +259,8 @@ export class AutoHandover {
       if (attempt.cancelled || !this.view(id).enabled || this.closed || this.manager.threadView(id).waiting || this.manager.getThread(id).archivedAt) return 'parked';
       // Availability and quota may have changed while the summary was being written.
       if (!(await this.targets(id)).some(t => t.agent === target.agent && t.model === target.model)) {
-        this.notices.set(id, { state: 'stopped', reason: attempt.view.reason }); return 'parked';
+        // The chosen target is named: the brief already said it would take over.
+        this.notices.set(id, { state: 'stopped', reason: attempt.view.reason, target }); return 'parked';
       }
       if (attempt.cancelled) return 'parked';
       // From here the move is under way and the person can no longer call it off.

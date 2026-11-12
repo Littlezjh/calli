@@ -484,7 +484,7 @@ export class ThreadManager {
    * Plan usage of an agent instance. The probe costs a CLI run (claude's takes seconds), so the
    * answer is reused for a minute and concurrent callers share one run.
    */
-  agentQuota(agent: string, refresh = false): Promise<PlanQuota> {
+  agentQuota(agent: string, refresh = false, force = false): Promise<PlanQuota> {
     const adapter = this.adapters.get(agent);
     if (!adapter) throw new HttpError(404, `unknown agent: ${agent}`);
     if (!adapter.capabilities.quota || !adapter.fetchQuota) throw new HttpError(400, `${agent} has no plan usage to read`);
@@ -493,7 +493,7 @@ export class ThreadManager {
     // Even a refresh does not probe right after the agent said it: the usage endpoint can turn a
     // probe away, and it would not know more.
     const observed = this.observedQuotaAt.get(agent);
-    if (refresh && hit && observed !== undefined && Date.now() - observed < OBSERVED_FRESH_MS) return hit.value;
+    if (refresh && !force && hit && observed !== undefined && Date.now() - observed < OBSERVED_FRESH_MS) return hit.value;
     const value = adapter.fetchQuota().catch((err) => {
       // A failed probe is not worth caching; the next caller can try again right away.
       if (this.quotaCache.get(agent)?.value === value) this.quotaCache.delete(agent);
@@ -503,6 +503,15 @@ export class ThreadManager {
     void value.then(q => { this.lastGoodQuota.set(agent, { at: Date.now(), quota: q }); this.publishQuota(agent, q); }).catch(() => undefined);
     return value;
   }
+
+  /** Whether this instance has plan usage to read at all; a bridge to a third-party model has none. */
+  readsQuota(agent: string): boolean {
+    const adapter = this.adapters.get(agent);
+    return !!adapter?.capabilities.quota && !!adapter.fetchQuota;
+  }
+
+  /** The last reading that came through, however old; null when none ever did. */
+  lastQuota(agent: string): PlanQuota | null { return this.lastGoodQuota.get(agent)?.quota ?? null; }
 
   /** What the agent itself said while answering beats any probe: it feeds the same cache the
    *  probes fill, so decisions and the dashboard read one truth. */
