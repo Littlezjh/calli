@@ -66,7 +66,8 @@ test('lightning toggles speed, restores selection, sends in Plan and clears on m
       await page.getByRole('menuitemradio', { name: 'GPT Small', exact: true }).click();
       await page.locator('.model-speed-toggle').waitFor({ state: 'hidden' });
       const updated = await (await api(daemon, `/api/threads/${thread.id}`)).json();
-      assert.equal(updated.model, 'gpt-small'); assert.equal(updated.speed, 'default'); assert.equal(updated.effort, 'high');
+      assert.equal(updated.model, 'gpt-small'); assert.equal(updated.speed, 'default');
+      assert.equal(updated.effort, null, 'a model without a saved effort starts at its own default');
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
     } finally { await context.close(); }
   }

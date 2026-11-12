@@ -36,7 +36,7 @@ import { buildProjectOptions } from './projects';
 import { rootRows, withWorkdirs } from './workdirs';
 import { isBounce, useAppHistory } from './appHistory';
 import { useAppearance, useInTitlebar, useIsCompact, useListSwipe, useMinWidth, useStoredFlag } from './hooks';
-import { mergeAgentChoice, parseAgentChoices, type AgentChoices } from './agent-choice';
+import { useModelPreferences } from './model-preferences';
 import { useHosts } from './hosts';
 import type { PreparedImage } from './images';
 import { restoreVideos, type PreparedVideo } from './videos';
@@ -120,7 +120,7 @@ import { NewProjectDialog, ProjectPicker, RootsDialog } from './components/Proje
 import { NoteMarks, type NoteMark } from './components/NoteMarks';
 import { ConnectDialog, DemoBar } from './components/ConnectDialog';
 import { DemoApi, DemoError } from './demo/DemoApi';
-import { type DraftModelPreference, switchDraftModelPreference } from './draft-preferences';
+import { EMPTY_MODEL_PREFERENCE, type DraftModelPreference } from '../../daemon/src/model-preferences';
 import { QUICK_SWITCH_HIDDEN_KEY, clampQuickSwitchBottom, savedQuickSwitchBottom, saveQuickSwitchBottom } from './quick-switch';
 import { IconCheck, IconBell, AgentMark, IconActivity, IconAgents, IconArchive, IconArrowLeft, IconArrowDown, IconBack, IconClose, IconEdit, IconFolder, IconGauge, IconGlobe, IconImport, IconList, IconMenu, IconSettings, IconMore, IconOverview, IconPalette, IconPlus, IconPuzzle, IconServer, IconSidebar, IconSignIn, IconSignOut, IconSparkle, IconTerminal, IconTrace, IconLanguage, IconWaveform, IconSideChat } from './components/icons';
 import { StatReadings } from './components/SessionStats';
@@ -238,15 +238,6 @@ const OVERVIEW_OPEN_KEY = 'calli.overview.open';
 
 /** What members of each instance start with, remembered on this device for the next team. */
 const MEMBER_DEFAULTS_KEY = 'calli.coord.defaults';
-/** The model, effort and speed last chosen per instance: its next new thread starts there. */
-const AGENT_CHOICE_KEY = 'calli.agent.choice';
-const readAgentChoices = (): AgentChoices => parseAgentChoices(localStorage.getItem(AGENT_CHOICE_KEY));
-const rememberAgentChoice = (agent: string, choice: Partial<Record<'model' | 'effort' | 'speed', string | null>>) => {
-  try {
-    localStorage.setItem(AGENT_CHOICE_KEY, JSON.stringify(mergeAgentChoice(readAgentChoices(), agent, choice)));
-  } catch { /* a full or blocked store just stops remembering */ }
-};
-
 /** A plan the user chose to leave be, by thread: the proposal's key, so a reload does not ask again. */
 const PLAN_SKIP_KEY = 'calli:plan-skipped';
 
@@ -751,13 +742,12 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const [draftWriting, setDraftWriting] = useState<WritingStage | null>(null);
   const [writingBusy, setWritingBusy] = useState(false);
   const [draftPermission, setDraftPermission] = useState('auto_edit');
-  const [draftModel, setDraftModel] = useState<string | null>(null);
-  const [draftEffort, setDraftEffort] = useState<string | null>(null);
-  const [draftSpeed, setDraftSpeed] = useState<string | null>(null);
-  const draftModelPreferences = useRef<Record<string, DraftModelPreference>>({});
-  const draftPreferencesApi = useRef<Api | null>(api);
-  const draftPreferenceSave = useRef<{ api: Api | null; pending: Record<string, DraftModelPreference> | null; running: boolean }>({ api, pending: null, running: false });
+  const modelPreferences = useModelPreferences(api, error => setError(message(error)));
   const [modelsByAgent, setModelsByAgent] = useState<Record<string, ModelOption[]>>(() => (keepThreads ? cachedModels(hostId) ?? {} : {}));
+  const draftCaps = agents.find(agent => agent.id === draftAgent)?.capabilities;
+  const draftChoice = fitDraftModelPreference(modelPreferences.preferences[draftAgent] ?? EMPTY_MODEL_PREFERENCE,
+    modelsByAgent[draftAgent] ?? [], draftCaps?.effortLevels ?? [], Boolean(draftCaps?.speed));
+  const { model: draftModel, effort: draftEffort, speed: draftSpeed } = draftChoice;
   const modelVersions = useRef<Record<string, number>>({});
   const [commandsByKey, setCommandsByKey] = useState<Record<string, SlashCommand[]>>({});
   const [drawer, setDrawer] = useState(start === 'list');
@@ -1000,109 +990,14 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const latestSegment = selected ? latestHandoverThread(selected, threads) : null;
   const viewingEarlier = Boolean(selected && latestSegment && latestSegment.id !== selected.id);
   const mergedHandover = !api.demo && singleSegmentId !== selectedId && Boolean(selected?.handover?.mode === 'continue' || viewingEarlier);
-  const flushDraftModelPreferences = (targetApi: Api) => {
-    const save = draftPreferenceSave.current;
-    if (save.api !== targetApi || save.running || targetApi.demo || !save.pending) return;
-    const preferences = save.pending;
-    save.pending = null;
-    save.running = true;
-    void targetApi.saveDraftModelPreferences(preferences)
-      .then((saved) => {
-        if (draftPreferencesApi.current === targetApi && draftPreferenceSave.current.api === targetApi && !draftPreferenceSave.current.pending) {
-          draftModelPreferences.current = saved;
-        }
-      })
-      .catch((e) => {
-        if (draftPreferencesApi.current === targetApi && draftPreferenceSave.current.api === targetApi) setError(message(e));
-      })
-      .finally(() => {
-        if (draftPreferenceSave.current.api !== targetApi) return;
-        draftPreferenceSave.current.running = false;
-        flushDraftModelPreferences(targetApi);
-      });
-  };
-  const persistDraftModelPreferences = (preferences: Record<string, DraftModelPreference>) => {
-    draftPreferencesApi.current = api;
-    draftModelPreferences.current = preferences;
-    if (!api.demo) {
-      if (draftPreferenceSave.current.api !== api) draftPreferenceSave.current = { api, pending: null, running: false };
-      draftPreferenceSave.current.pending = preferences;
-      flushDraftModelPreferences(api);
-    }
-  };
-  const flushDraftModelPreferencesOnExit = (targetApi: Api) => {
-    const save = draftPreferenceSave.current;
-    if (targetApi.demo || draftPreferencesApi.current !== targetApi || save.api !== targetApi || (!save.pending && !save.running)) return;
-    void targetApi.saveDraftModelPreferences(draftModelPreferences.current, { keepalive: true }).catch(() => undefined);
-  };
-  const ensureDraftPreferenceApi = () => {
-    if (draftPreferencesApi.current === api) return true;
-    draftPreferencesApi.current = api;
-    draftModelPreferences.current = {};
-    draftPreferenceSave.current = { api, pending: null, running: false };
-    return false;
-  };
-  const selectDraftAgent = (id: string, list = agents, rememberCurrent = true) => {
-    const sameDaemon = ensureDraftPreferenceApi();
-    const remembered = switchDraftModelPreference(
-      draftModelPreferences.current,
-      rememberCurrent && sameDaemon ? draftAgent : '',
-      { model: draftModel, effort: draftEffort, speed: draftSpeed },
-      id,
-    );
-    if (remembered.preferences !== draftModelPreferences.current) persistDraftModelPreferences(remembered.preferences);
-    const caps = list.find((item) => item.id === id)?.capabilities;
-    const fitted = fitDraftModelPreference(remembered.preference, modelsByAgent[id] ?? [], caps?.effortLevels ?? [], Boolean(caps?.speed));
+  const selectDraftAgent = (id: string, list = agents) => {
+    const caps = list.find(item => item.id === id)?.capabilities;
     setDraftAgent(id);
     setDraftWorkMode('execute');
-    setDraftModel(fitted.model);
-    setDraftEffort(fitted.effort);
-    setDraftSpeed(fitted.speed);
-    // Each agent starts at its own level: one that cannot ask starts where it can work.
     if (caps) setDraftPermission(startingPermission(caps));
   };
-  const rememberActiveDraftModelPreference = (next: DraftModelPreference) => {
-    if (!draftAgent) return;
-    if (!ensureDraftPreferenceApi()) return;
-    persistDraftModelPreferences({
-      ...draftModelPreferences.current,
-      [draftAgent]: next,
-    });
-  };
-  const fitActiveDraftModelPreference = (agent: string, list: ModelOption[]) => {
-    if (selected || !agent || agent !== draftAgent) return;
-    const caps = agents.find((item) => item.id === agent)?.capabilities;
-    const fitted = fitDraftModelPreference(
-      { model: draftModel, effort: draftEffort, speed: draftSpeed },
-      list,
-      caps?.effortLevels ?? [],
-      Boolean(caps?.speed),
-    );
-    if (fitted.model !== draftModel) setDraftModel(fitted.model);
-    if (fitted.effort !== draftEffort) setDraftEffort(fitted.effort);
-    if (fitted.speed !== draftSpeed) setDraftSpeed(fitted.speed);
-    rememberActiveDraftModelPreference(fitted);
-  };
-  useEffect(() => {
-    if (selected || !draftAgent) return;
-    fitActiveDraftModelPreference(draftAgent, modelsByAgent[draftAgent] ?? []);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected?.id, draftAgent, draftModel, draftEffort, draftSpeed, modelsByAgent, agents, hostId]);
-  useEffect(() => {
-    if (api.demo) return;
-    const flush = () => flushDraftModelPreferencesOnExit(api);
-    const flushWhenHidden = () => {
-      if (document.visibilityState === 'hidden') flush();
-    };
-    window.addEventListener('pagehide', flush);
-    window.addEventListener('beforeunload', flush);
-    document.addEventListener('visibilitychange', flushWhenHidden);
-    return () => {
-      window.removeEventListener('pagehide', flush);
-      window.removeEventListener('beforeunload', flush);
-      document.removeEventListener('visibilitychange', flushWhenHidden);
-    };
-  }, [api]);
+  // Returning to the new-thread page also picks up choices made on another device.
+  useEffect(() => { if (!selectedId) void modelPreferences.refresh(); }, [selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     let cancelled = false;
     if (!api || !selected?.coordination) { setCoordination(null); return; }
@@ -1426,17 +1321,14 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     let cancelled = false;
     (async () => {
       try {
-        const [a, c, , s, sc, preferences] = await Promise.all([
+        const [a, c, , s, sc] = await Promise.all([
           api.agents(),
           api.workdirs(),
           threadFeed.read(),
           api.sections(),
           api.schedules().catch(() => []),
-          api.draftModelPreferences().catch(() => ({} as Record<string, DraftModelPreference>)),
         ]);
         if (cancelled) return;
-        draftPreferencesApi.current = api;
-        draftModelPreferences.current = preferences;
         setAgents(a);
         setAgentsKnown(true);
         applyWorkdirs(c);
@@ -1448,7 +1340,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         setDraftCwd((cur) => cur || c.workdirs[0] || '');
         const first = a.find((x) => x.available && !x.hidden);
         const kept = draftAgent && a.some((x) => x.id === draftAgent && !x.hidden) ? draftAgent : first?.id ?? '';
-        selectDraftAgent(kept, a, false);
+        selectDraftAgent(kept, a);
         if (!demo) {
           const dismissed = localStorage.getItem('calli_onboard_dismissed') === '1';
           const needsOnboard = a.length === 0 || a.filter((x) => x.available).length === 0;
@@ -2382,6 +2274,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     }));
 
   const newThread = (opts: { cwd?: string; sectionId?: string | null; scratch?: boolean } = {}) => navigate(() => {
+    void modelPreferences.refresh();
     if (showcase) { showcase.onInstall(); return; }
     setSelectedId(null);
     setView('thread');
@@ -2514,32 +2407,9 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   };
 
   const permission = selected ? selected.permissionMode : draftPermission;
-  // A remembered model can be gone from the instance's list (an update, a removed plan): fall
-  // back to its default rather than offering a model that cannot be started.
-  const draftModels = modelsByAgent[draftAgent];
-  useEffect(() => {
-    if (draftModels?.length && draftModel && !draftModels.some((m) => m.id === draftModel)) setDraftModel(null);
-  }, [draftModels, draftModel]);
   const model = selected ? selected.model : draftModel;
   const effort = selected ? selected.effort : draftEffort;
   const speed = selected ? selected.speed ?? null : draftSpeed;
-
-  // A new thread starts where the last one of that instance was left: the remembered model,
-  // effort and speed. Applied once on mount; pickAgent does the same for every switch.
-  useEffect(() => {
-    const remembered = readAgentChoices()[draftAgent];
-    if (remembered) {
-      if (remembered.model) setDraftModel(remembered.model);
-      if (remembered.effort) setDraftEffort(remembered.effort);
-      if (remembered.speed) setDraftSpeed(remembered.speed);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  // The choice made in the draft is remembered while it is the draft being composed.
-  useEffect(() => {
-    if (!selected && draftAgent) rememberAgentChoice(draftAgent, { model: draftModel, effort: draftEffort, speed: draftSpeed });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftModel, draftEffort, draftSpeed, draftAgent, selected?.id]);
 
   const updateSelected = (patch: { speed?: string | null; permissionMode?: string; model?: string | null; effort?: string | null }) => {
     if (!selected) return;
@@ -2548,11 +2418,11 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     const before = { permissionMode: selected.permissionMode, model: selected.model, effort: selected.effort, speed: selected.speed };
     setThreads((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
     api
-      .updateThread(id, patch)
+      .updateThread(id, { ...patch, rememberModelChoice: true })
       .then((updated) => {
         setThreads((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
         if (patch.model !== undefined || patch.effort !== undefined || patch.speed !== undefined) {
-          rememberAgentChoice(updated.agent, { model: updated.model, effort: updated.effort, speed: updated.speed });
+          void modelPreferences.refresh();
         }
       })
       .catch((e) => {
@@ -2861,26 +2731,23 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         compactDisabled={(selected.queued?.length ?? 0) >= MAX_QUEUED}
       />}
       <ModelPicker
+        preferenceStatus={!selected ? modelPreferences.status : undefined}
+        onRetryPreference={() => void modelPreferences.refresh()}
         catalog={activeCaps?.modelCatalog}
         models={models}
         model={model}
         efforts={effortLevels}
         effort={effort}
         speed={speed}
-        onSpeed={activeCaps?.speed ? v => selected ? updateSelected({ speed: v }) : (rememberActiveDraftModelPreference({ model: draftModel, effort: draftEffort, speed: v }), setDraftSpeed(v)) : undefined}
+        onSpeed={activeCaps?.speed ? v => selected ? updateSelected({ speed: v }) : modelPreferences.change(draftAgent, { model: draftModel, speed: v }) : undefined}
         onDiagnose={() => openObservability('diagnostics', activeAgent)}
         openSignal={modelSignal}
         onOpen={() => refreshActiveModels(true)}
         onModel={(v) => {
-          if (selected) return updateSelected({ model: v }); // the daemon drops an effort the new model lacks
-          const nextSpeed = draftSpeed && speedsForModel(models, v).some(s => s.id === draftSpeed) ? draftSpeed : null;
-          const nextEffort = draftEffort && effortsForModel(models, v, effortLevels).includes(draftEffort) ? draftEffort : null;
-          rememberActiveDraftModelPreference({ model: v, effort: nextEffort, speed: nextSpeed });
-          setDraftModel(v);
-          if (draftSpeed !== nextSpeed) setDraftSpeed(nextSpeed);
-          if (draftEffort !== nextEffort) setDraftEffort(nextEffort);
+          if (selected) return updateSelected({ model: v });
+          modelPreferences.change(draftAgent, { model: v });
         }}
-        onEffort={(v) => selected ? updateSelected({ effort: v }) : (rememberActiveDraftModelPreference({ model: draftModel, effort: v, speed: draftSpeed }), setDraftEffort(v))}
+        onEffort={(v) => selected ? updateSelected({ effort: v }) : modelPreferences.change(draftAgent, { model: draftModel, effort: v })}
       />
 
     </>
@@ -3521,7 +3388,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           draftKey={composerDraftKey}
           voiceControls={voice.state.active ? <VoiceControls session={voice.state} onMute={voice.toggleMute} onStop={() => void voice.stop()} /> : undefined}
           running={voice.state.active ? false : running}
-          disabled={modeBusy || (!selected && !draftCwd)}
+          disabled={modeBusy || (!selected && (!draftCwd || modelPreferences.status !== 'ready'))}
           placeholder={voice.state.active ? t('app.placeholder.continue') : onRouterThread && !running ? t('pet.threadPlaceholder') : demo ? t('app.placeholder.demo') : workMode === 'plan' && !running ? t('composerMenu.planOn') : writing && !running ? t('writing.placeholder') : selected ? (running ? t('sideChat.queuePlaceholder') : t('app.placeholder.continue')) : draftScratch ? t('app.placeholder.scratch') : t('app.placeholder.startIn', folderName(draftCwd))}
           onSend={voice.state.active ? async (text, images, _mentions, videos = []) => {
             try { await voice.appendText(text, images.map(img => ({ data: img.data, mimeType: img.mimeType })), await Promise.all(videos.map(async video => (await api.uploadVideo(selectedId!, video.file)).id))); }

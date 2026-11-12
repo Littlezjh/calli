@@ -333,6 +333,7 @@ export function createHttpServer(deps: HttpDeps): Server {
     if (path === '/api/draft-model-preferences') {
       if (method === 'GET') return sendJson(res, 200, await manager.draftModelPreferences());
       if (method === 'PUT') return sendJson(res, 200, await manager.saveDraftModelPreferences(await readJson(req)));
+      if (method === 'PATCH') return sendJson(res, 200, await manager.patchDraftModelPreference(await readJson(req)));
     }
     if (path === '/api/personal/settings') {
       if (method === 'GET') return sendJson(res, 200, await manager.personal.settingsView());
@@ -1150,6 +1151,7 @@ export function createHttpServer(deps: HttpDeps): Server {
           res,
           200,
           await manager.updateThread(threadId, {
+            rememberModelChoice: body.rememberModelChoice,
             title: body.title,
             pinned: body.pinned,
             workMode: body.workMode,
