@@ -51,7 +51,7 @@ for (const phone of [false, true]) for (const theme of ['light', 'dark']) test(`
     await page.getByRole('menuitemradio', { name: `Coding ${label}`, exact: true }).waitFor();
     await page.screenshot({ path: `${shots}/${label}-picker.png`, fullPage: true, animations: 'disabled' });
     await page.getByRole('menuitemradio', { name: `Coding ${label}`, exact: true }).click();
-    await page.locator('.team-text-only').waitFor();
+    assert.equal(await page.locator('.team-text-only').count(), 0);
     await page.locator('.composer textarea').fill('TEAM_FLOW');
     await page.locator('.send-btn').click();
     await page.getByRole('button', { name: '确认完成', exact: true }).waitFor({ timeout: 15000 });

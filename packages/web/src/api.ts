@@ -197,7 +197,7 @@ export interface ThreadStats {
 /** The model and thinking effort members of one instance start with; null leaves the agent's own. */
 export interface MemberDefault { model: string | null; effort: string | null; /** Set where this instance's members differ from the team's level. */ permission?: string }
 export type TeamStatus = 'running' | 'awaiting_confirm' | 'needs_attention' | 'done';
-export interface TeamSummary { id: string; name: string; description?: string; entry: string; memberCount: number }
+export interface TeamSummary { id: string; name: string; description?: string; entry: string; memberCount: number; entryAgent?: string; entryModel?: string | null }
 export interface TeamMember { name: string; agent: string; model?: string; effort?: string; cwd?: string; instruction?: string }
 export interface TeamDefinition {
   id?: string; name: string; description?: string; entry: string; members: TeamMember[];
@@ -1492,7 +1492,7 @@ export class Api {
   deleteTeam(id: string): Promise<void> { return this.request('DELETE', `/api/teams/${id}`); }
   importTeam(value: unknown): Promise<TeamDefinition> { return this.request('POST', '/api/teams/import', value); }
   exportTeam(id: string): Promise<TeamDefinition> { return this.request('GET', `/api/teams/${id}/export`); }
-  dispatchTeam(id: string, text: string, cwd: string): Promise<{ taskId: string; threadId: string }> { return this.request('POST', `/api/teams/${id}/tasks`, { text, cwd, source: { kind: 'web' } }); }
+  dispatchTeam(id: string, text: string, cwd: string, images: OutgoingImage[] = []): Promise<{ taskId: string; threadId: string }> { return this.request('POST', `/api/teams/${id}/tasks`, { text, ...(images.length ? { images } : {}), cwd, source: { kind: 'web' } }); }
 
   coordination(id: string): Promise<Coordination | null> { return this.request('GET', `/api/threads/${id}/coordination`); }
   /** Turns of any thread on this machine, archived ones too, in which the words were said. */

@@ -29,6 +29,7 @@ import type { VoiceService } from './voice-service.js';
 import { sendToolArtifact } from './borrowing-server.js';
 import { PetService } from './pets.js';
 import { todoStages } from './todo-stage.js';
+import { teamMessage } from './teams.js';
 
 export interface HttpDeps {
   push?: PushService;
@@ -1075,7 +1076,10 @@ export function createHttpServer(deps: HttpDeps): Server {
       const teams = manager.coordination?.definitions;
       if (!teams) throw new HttpError(501, '团队服务未启用');
       const id = parts[2], sub = parts[3];
-      if (!id && method === 'GET') return sendJson(res, 200, teams.list().map(({ id, name, description, entry, members }) => ({ id, name, description, entry, memberCount: members.length })));
+      if (!id && method === 'GET') return sendJson(res, 200, teams.list().map(({ id, name, description, entry, members }) => {
+        const recipient = members.find(m => m.name === entry)!;
+        return { id, name, description, entry, memberCount: members.length, entryAgent: recipient.agent, entryModel: recipient.model ?? null };
+      }));
       if (!id && method === 'POST') return sendJson(res, 201, teams.save(await readJson(req)));
       if (id === 'template' && method === 'GET') return sendJson(res, 200, await teams.template());
       if (id === 'import' && method === 'POST') return sendJson(res, 201, teams.import(await readJson(req)));
@@ -1084,8 +1088,8 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (id && !sub && method === 'DELETE') { teams.remove(id); res.writeHead(204).end(); return; }
       if (id && sub === 'export' && method === 'GET') return sendJson(res, 200, teams.export(id));
       if (id && sub === 'tasks' && method === 'POST') {
-        const body = await readJson(req);
-        return sendJson(res, 202, await teams.dispatch({ teamId: id, text: body.text, cwd: body.cwd, source: { kind: body.source?.kind === 'web' ? 'web' : body.source?.kind === 'cli' ? 'cli' : 'http' } }));
+        const body = await readJson(req, MAX_TURN_BODY);
+        return sendJson(res, 202, await teams.dispatch({ teamId: id, text: body.text, images: body.images, cwd: body.cwd, source: { kind: body.source?.kind === 'web' ? 'web' : body.source?.kind === 'cli' ? 'cli' : 'http' } }));
       }
       throw new HttpError(404, 'not found');
     }
@@ -1332,7 +1336,11 @@ export function createHttpServer(deps: HttpDeps): Server {
 
       if (method === 'POST' && sub === 'turns') {
         const body = await readJson(req, MAX_TURN_BODY);
-        if (manager.coordination?.metadata(threadId)?.team && (typeof body.text !== 'string' || !body.text.trim() || body.text.length > 32000)) throw new HttpError(400, '团队任务需要 1～32000 字符');
+        if (manager.coordination?.metadata(threadId)?.team) {
+          const { images } = teamMessage(body);
+          const thread = manager.threadView(threadId);
+          await manager.checkImages(thread.agent, thread.model, images);
+        }
         await manager.coordination?.previewMentions(threadId, typeof body.text === 'string' ? body.text : '', body.mentions, body.collaboration);
         await manager.coordination?.userSpoke(threadId);
         return sendJson(res, 202, await manager.startTurn(threadId, { text: body.text, images: body.images, videos: body.videos, queue: body.queue, mentions: body.mentions, collaboration: body.collaboration, workMode: body.workMode, fromUser: true }));

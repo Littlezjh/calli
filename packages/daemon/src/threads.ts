@@ -2421,6 +2421,17 @@ export class ThreadManager {
     return { turnId: newTurnId, revision: this.store.history.latest(threadId) };
   }
 
+  /** Check before creating a team task or reopening one; invalid pictures must not change its state. */
+  async checkImages(agent: string, model: string | null, images: unknown[]): Promise<void> {
+    if (!images.length) return;
+    const adapter = this.adapters.get(agent);
+    if (!adapter?.capabilities.images) throw new HttpError(400, `${agent} does not accept images`);
+    let option = await this.modelOption(adapter, model);
+    if (adapter.modelForImages) option = await adapter.modelForImages(model);
+    if (option?.images === false && !option.imagesVia) throw new HttpError(400, `${option.label} cannot read images; pick another model`);
+    this.attachments.check(images);
+  }
+
   /**
    * Starts a turn in the background and returns its id right away.
    * A turn needs text, images, or both. Images are checked and stored before anything else changes.
@@ -2540,11 +2551,7 @@ export class ThreadManager {
     const text = askProgress ? progressInstructions(written, gate) : written;
 
     if (rawImages.length > 0) {
-      const adapter = this.adapters.get(thread.agent);
-      if (!adapter?.capabilities.images) throw new HttpError(400, `${thread.agent} does not accept images`);
-      let option = await this.modelOption(adapter, thread.model);
-      if (adapter.modelForImages) option = await adapter.modelForImages(thread.model);
-      if (option?.images === false && !option.imagesVia) throw new HttpError(400, `${option.label} cannot read images; pick another model`);
+      await this.checkImages(thread.agent, thread.model, rawImages);
       // The model lookup above can take a moment, so check again before claiming the thread.
       if (this.running.has(threadId)) throw new HttpError(409, 'a turn is already running in this thread');
       if (this.changingModes.has(threadId) || input.workMode === undefined && this.getThread(threadId).workMode !== thread.workMode) throw new HttpError(409, '工作模式已变化，请重新发送');

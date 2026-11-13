@@ -24,4 +24,7 @@ test('team recipients and team API use the dedicated dispatch route with web sou
   await api.dispatchTeam('1', 'Build', '/project');
   assert.deepEqual(requests.map(r => r.slice(0, 2)), [['GET', '/api/teams'], ['GET', '/api/teams/1'], ['GET', '/api/teams/template'], ['POST', '/api/teams'], ['PUT', '/api/teams/1'], ['POST', '/api/teams/import'], ['GET', '/api/teams/1/export'], ['DELETE', '/api/teams/1'], ['POST', '/api/teams/1/tasks']]);
   assert.deepEqual(requests.at(-1)[2], { text: 'Build', cwd: '/project', source: { kind: 'web' } });
+  const images = [{ mimeType: 'image/png', data: 'aGVsbG8=' }];
+  await api.dispatchTeam('1', '', '/project', images);
+  assert.deepEqual(requests.at(-1), ['POST', '/api/teams/1/tasks', { text: '', images, cwd: '/project', source: { kind: 'web' } }]);
 });

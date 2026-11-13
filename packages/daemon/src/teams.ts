@@ -14,6 +14,15 @@ export interface TeamDefinition {
   budget?: { maxDeliveries?: number }; createdAt: string; updatedAt: string;
 }
 export type TeamSource = { kind: 'http' | 'web' | 'cli' };
+/** Team messages follow the normal image contract, with a shorter text limit. */
+export function teamMessage(input: { text?: unknown; images?: unknown }): { text: string; images: unknown[] } {
+  if (input.text !== undefined && typeof input.text !== 'string') throw new HttpError(400, '任务文字必须是字符串');
+  if (input.images !== undefined && !Array.isArray(input.images)) throw new HttpError(400, 'images must be an array');
+  const text = typeof input.text === 'string' ? input.text.trim() : '';
+  const images = Array.isArray(input.images) ? input.images : [];
+  if ((!text && !images.length) || (typeof input.text === 'string' && input.text.length > 32000)) throw new HttpError(400, '团队任务需要文字或图片，文字最多 32000 字符');
+  return { text, images };
+}
 export type TaskStatus = 'running' | 'awaiting_confirm' | 'needs_attention' | 'done';
 export interface TeamTask {
   taskId: string; teamId: string; snapshot: TeamDefinition; status: TaskStatus; source: TeamSource; entry: string;
@@ -94,11 +103,13 @@ export class TeamsManager {
       if (m.cwd) this.cwd(m.cwd);
     }
   }
-  async dispatch(input: { teamId: string; text: string; cwd: string; source: TeamSource }): Promise<{ taskId: string; threadId: string }> {
+  async dispatch(input: { teamId: string; text?: unknown; images?: unknown; cwd: string; source: TeamSource }): Promise<{ taskId: string; threadId: string }> {
     const snapshot = this.get(input.teamId);
     const cwd = this.cwd(input.cwd);
-    if (typeof input.text !== 'string' || !input.text.trim() || input.text.length > 32000) throw new HttpError(400, '任务需要 1～32000 字符');
+    const { text, images } = teamMessage(input);
     await this.available(snapshot);
-    return this.coordination.startTeam(snapshot, input.text, cwd, input.source);
+    const entry = snapshot.members.find(m => m.name === snapshot.entry)!;
+    await this.manager.checkImages(entry.agent, entry.model ?? null, images);
+    return this.coordination.startTeam(snapshot, text, cwd, input.source, images);
   }
 }

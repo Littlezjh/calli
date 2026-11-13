@@ -1685,7 +1685,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   };
 
   // The agent and directory the composer is talking to: the thread's, or the draft's for a new thread.
-  const activeAgent = selected?.agent ?? draftAgent;
+  const draftTeamDefinition = draftTeam ? teamDefinitions.find(team => team.id === draftTeam) : undefined;
+  const activeAgent = selected?.agent ?? draftTeamDefinition?.entryAgent ?? draftAgent;
   const activeCwd = selected?.cwd ?? draftCwd;
   const commandsKey = `${activeAgent}\n${activeCwd}`;
   const lastFocusModelRefresh = useRef<{ agent: string; at: number } | null>(null);
@@ -2014,8 +2015,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     try {
       let id = selectedId;
       if (!id && draftTeam) {
-        if (images.length || videos.length) throw new Error(t('teams.attachments'));
-        const task = await api.dispatchTeam(draftTeam, text, draftCwd);
+        if (videos.length) throw new Error(t('teams.attachments'));
+        const task = await api.dispatchTeam(draftTeam, text, draftCwd, images.map(({ data, mimeType }) => ({ data, mimeType })));
         setSelectedId(task.threadId); setDraftTeam(null); setDraftSectionId(null);
         setView('thread'); void refreshThreads(); return;
       }
@@ -2428,7 +2429,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   };
 
   const permission = selected ? selected.permissionMode : draftPermission;
-  const model = selected ? selected.model : draftModel;
+  const model = selected ? selected.model : draftTeam ? draftTeamDefinition?.entryModel ?? null : draftModel;
   const effort = selected ? selected.effort : draftEffort;
   const speed = selected ? selected.speed ?? null : draftSpeed;
 
@@ -2554,7 +2555,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   // agent's raw /goal everywhere, as the phone's compact menu already did.
   const hiddenCommands = [...(models.length ? ['model'] : []), ...(effortLevels.length ? ['effort'] : []), ...(activeCaps?.quota ? ['usage'] : []), ...(activeCaps?.goal ? ['goal'] : [])];
 
-  const attachBlocked = !selected && draftTeam ? t('teams.attachments') : !activeCaps?.images ? t('app.noImages', agentLabel(activeAgent)) : imagesBlocked(models, model);
+  const attachBlocked = !selected && draftTeam && !draftTeamDefinition?.entryAgent ? t('teams.entryUnavailable') : !activeCaps?.images ? t('app.noImages', agentLabel(activeAgent)) : imagesBlocked(models, model);
 
   // The top bar names a thread's agent and directory, so the composer does not repeat them: its
   // strip is only for choosing them, before the thread exists.
@@ -3406,7 +3407,6 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           }} />}
         {showcase ? showcase.composer(selectedId) : <>
         {selected?.coordination?.team && selected.coordination.rootId === selected.id && ['awaiting_confirm', 'needs_attention'].includes(selected.coordination.team.status) && <div className="team-task-notice">{selected.coordination.team.status === 'needs_attention' && <span>{selected.coordination.team.error}</span>}{selected.coordination.team.status === 'awaiting_confirm' && <button className="ghost" onClick={() => void api.configureCoordination(selected.id, { action: 'confirm' }).then(value => { setCoordination(value); void refreshThreads(); }).catch(handleError)}>{t('teams.confirm')}</button>}</div>}
-        {!selected && draftTeam && <div className="team-text-only">{t('teams.attachments')}</div>}
         {voice.state.error ? <div className="voice-reconnect-row"><button className="voice-reconnect" onClick={() => void voice.start()}>{t('voice.reconnect')}</button><VoiceControls session={voice.state} onMute={voice.toggleMute} onStop={voice.dismissError} /></div> : viewingEarlier && latestSegment ? <HandoverComposer
           key={latestSegment.id} api={api} thread={latestSegment} sourceId={selected!.id} label={agentLabel(latestSegment.agent)} hostId={hostId}
           attachBlocked={capsOf(latestSegment.agent)?.images ? null : t('app.noImages', agentLabel(latestSegment.agent))}
@@ -3467,7 +3467,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           actions={hubActions}
           hiddenCommands={hiddenCommands}
           onAction={runHubAction}
-          attachmentsBlocked={!selected && draftTeam ? t('teams.attachments') : undefined}
+          uploadsBlocked={!selected && draftTeam ? t('teams.attachments') : undefined}
           attachBlocked={attachBlocked}
           attachNote={imagesNote(models, model)}
           onError={setError}

@@ -185,6 +185,8 @@ interface Props {
   /** Why pictures cannot be attached right now, or null when they can. */
   attachBlocked: string | null;
   attachmentsBlocked?: string;
+  /** New team tasks accept pictures but cannot upload other files before a thread exists. */
+  uploadsBlocked?: string;
   /** Something worth knowing about how attached pictures will be read, shown on the attach button. */
   attachNote?: string | null;
   onError: (message: string) => void;
@@ -250,6 +252,7 @@ export function Composer({
   onAction,
   attachBlocked,
   attachmentsBlocked,
+  uploadsBlocked,
   attachNote,
   onError,
   queued: queuedProp,
@@ -600,7 +603,8 @@ export function Composer({
     // Pictures go to the model as pictures, videos can be previewed here; anything else is a plain file.
     const pictures = files.filter((f) => f.type.startsWith('image/'));
     const uploads = files.filter((f) => !f.type.startsWith('image/'));
-    if (uploads.length) {
+    if (uploads.length && uploadsBlocked) onError(uploadsBlocked);
+    if (uploads.length && !uploadsBlocked) {
       let room = MAX_UPLOADS - videos.length;
       let videoRoom = MAX_VIDEOS - videos.filter(isPlayable).length;
       const ready: PreparedVideo[] = [];
@@ -824,6 +828,7 @@ export function Composer({
       return;
     }
     if (attachmentsBlocked && (images.length || videos.length)) return onError(attachmentsBlocked);
+    if (uploadsBlocked && videos.length) return onError(uploadsBlocked);
     if (images.length && attachBlocked) return onError(attachBlocked);
     if (taker && (images.length || videos.length)) return onError(t('composer.takeoverAttachments'));
     setBusy(true);
@@ -1254,6 +1259,7 @@ export function Composer({
             <input
               ref={fileRef}
               type="file"
+              accept={uploadsBlocked ? 'image/*' : undefined}
               multiple
               hidden
               onChange={(e) => {

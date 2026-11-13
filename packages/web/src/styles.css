@@ -12216,7 +12216,6 @@ button.trace-step-head:hover { background: var(--hover); }
 .team-task-status.attention, .team-task-notice { color: var(--warn); }
 .team-task-notice { display: flex; align-items: center; gap: 12px; justify-content: space-between; font-size: 13px; padding: 8px 12px; max-width: var(--content-w); margin: 0 auto; }
 .team-task-notice > button { margin-left: auto; }
-.team-text-only { color: var(--muted); font-size: 12px; padding: 8px 12px; }
 @media (max-width: 600px) {
   .teams-page { padding: 22px 18px 48px; }
   .teams-page h1 { font-size: 22px; }

@@ -1090,14 +1090,14 @@ export class CoordinationManager {
     return { taskId: randomUUID(), teamId: snapshot.id, snapshot: structuredClone(snapshot), entry: snapshot.entry, source,
       status: 'running', resultTurnId: null, deliveries: 0, delegations: [], processed: [], history: [], createdAt: new Date().toISOString() };
   }
-  async startTeam(snapshot: TeamDefinition, text: string, cwd: string, source: TeamSource) {
+  async startTeam(snapshot: TeamDefinition, text: string, cwd: string, source: TeamSource, images: unknown[] = []) {
     return this.serial(async () => {
       const entry = snapshot.members.find(m => m.name === snapshot.entry)!;
       const t: Team = { rootId: '', paused: false, directories: this.manager.dirs.all(), agents: [...new Set(snapshot.members.map(m => m.agent))], members: [], deliveries: [], team: this.newTask(snapshot, source) };
       const root = await this.manager.createThread({ agent: entry.agent, cwd, model: entry.model, effort: entry.effort,
-        permissionMode: await this.permissionFor(t, entry.agent), title: `${snapshot.name} · ${text.split('\n')[0].slice(0, 70)}` });
+        permissionMode: await this.permissionFor(t, entry.agent), title: text ? `${snapshot.name} · ${text.split('\n')[0].slice(0, 70)}` : snapshot.name });
       t.rootId = root.id; this.teams.set(root.id, t); this.changed(t);
-      try { await this.manager.startTurn(root.id, { text }); }
+      try { await this.manager.startTurn(root.id, { text, images }); }
       catch (err) { this.attention(t, err instanceof Error ? err.message : String(err)); this.changed(t); }
       return { taskId: t.team!.taskId, threadId: root.id };
     });
