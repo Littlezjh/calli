@@ -133,6 +133,35 @@ export class PersonalService {
     return { ...settings, directoryDisplay: display(settings.directory), directoryIsDefault: settings.directory === defaultDirectory,
       defaultDirectory, defaultDirectoryDisplay: display(defaultDirectory), routerThreadId: this.router.status().threadId };
   }
+  /**
+   * Switches her agent from the conversation itself. With a conversation under way the new agent takes
+   * it over through the ordinary handover (a summary, or the session itself for another account of the
+   * same agent), so it goes on knowing what was said; without one only the setting changes.
+   */
+  async switchAgent(input: Record<string, unknown>): Promise<{ threadId: string | null; settings: PersonalSettings }> {
+    const agent = input.agent, model = input.model ?? undefined;
+    if (typeof agent !== 'string' || !this.adapters.has(agent)) throw new HttpError(400, 'unknown personal agent');
+    if (model !== undefined && (typeof model !== 'string' || !model || model.length > 200)) throw new HttpError(400, 'model must be a string');
+    const current = this.router.status().threadId;
+    const thread = current ? this.store.getThread(current) : null;
+    // A handover branches off a busy thread rather than waiting, so refuse first: a switch never
+    // leaves her answering in one conversation while the new agent starts another.
+    const busy = () => { const view = thread && this.manager.threadView(thread.id); return Boolean(view && (view.runningSince || view.queued.length)); };
+    if (thread && thread.agent !== agent && busy()) throw new HttpError(409, 'the assistant is answering; switch after this turn');
+    const info = (await this.manager.listAgents()).find(item => item.id === agent);
+    if (!info?.available) throw new HttpError(409, 'agent is not available');
+    if (thread && thread.agent !== agent) {
+      if (busy()) throw new HttpError(409, 'the assistant is answering; switch after this turn');
+      const successor = await this.manager.takeOver(thread.id, agent, model, undefined);
+      this.router.adopt(successor.id);
+      // The setting matches the thread exactly, or the Router would replace it on the next message.
+      this.putSettings({ agent, model: successor.model ?? null });
+      return { threadId: successor.id, settings: this.settings() };
+    }
+    this.putSettings({ agent, model: model ?? null });
+    return { threadId: current, settings: this.settings() };
+  }
+
   putSettings(input: Record<string, unknown>): PersonalSettings {
     // Compare the stored value, not the resolved directory: a broken path must stay resettable.
     const previousDirectory = input.directory !== undefined ? this.storedSettings().directory : undefined;

@@ -10,7 +10,7 @@ import { useIsNarrow, useMinWidth } from '../hooks';
 import { formatTime, t } from '../i18n';
 import { ActionSheet, type SheetTarget } from './ActionSheet';
 import { Composer } from './Composer';
-import { ModelPicker, effortsForModel } from './Pickers';
+import { AgentPicker, ModelPicker, effortsForModel } from './Pickers';
 import { ThreadView } from './ThreadView';
 import { RunControls, RunSummary, type ProactiveState } from './ProactiveRuns';
 import { DeskPage } from './DeskPage';
@@ -357,22 +357,36 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
     </nav>
   </>;
 
-  // Who she is and which model she thinks with, as every thread's composer shows: the agent opens her
-  // settings (changing it starts a new conversation there); the model and effort are this thread's own.
+  // Who she is and which model she thinks with, picked right here as a thread's composer does. A new
+  // agent takes over this conversation through the ordinary handover (a brief of what was said), so
+  // it goes on knowing the talk; her matters and notes live in the hub and never needed carrying.
   const caps = thread ? agents.find(agent => agent.id === thread.agent)?.capabilities : undefined;
   const [models, setModels] = useState<ModelOption[]>([]);
+  const [handingTo, setHandingTo] = useState<string | null>(null);
   const loadModels = useCallback((refresh = false) => {
     if (!thread?.agent) return;
     void api.models(thread.agent, refresh).then(setModels).catch(() => undefined);
   }, [api, thread?.agent]);
   useEffect(() => { setModels([]); loadModels(); }, [loadModels]);
+  const switchAgent = (agent: string) => {
+    if (!thread || agent === thread.agent || handingTo) return;
+    setHandingTo(agent); setError('');
+    void api.switchPersonalAgent(agent)
+      .then(result => { onPersonalChange(result.settings); if (result.threadId) setThreadId(result.threadId); })
+      .catch(e => setError(e instanceof ApiError && e.status === 409 ? t('desk.switchBusy') : message(e)))
+      .finally(() => setHandingTo(null));
+  };
   const updateModel = (patch: { model?: string | null; effort?: string | null }) => {
     if (!thread) return;
     const before = thread;
     setThread({ ...thread, ...patch });
     void api.updateThread(thread.id, { ...patch, rememberModelChoice: true }).then(setThread).catch(e => { setThread(before); report(e); });
+    // Her setting follows the thread's model, or her next message would start a new conversation.
+    if (patch.model !== undefined && personal) void api.savePersonalSettings({ ...personal, model: patch.model }).then(onPersonalChange).catch(report);
   };
-  const composerLeft = thread ? <button type="button" className="tool-btn chat-agent" onClick={onConfigure} title={t('desk.agentChange')}>{agentLabel(thread.agent)}</button> : null;
+  const composerLeft = thread ? <span aria-busy={Boolean(handingTo)} className="chat-agent-pick">
+    <AgentPicker api={api} agents={agents} value={handingTo ?? thread.agent} onChange={switchAgent} />
+  </span> : null;
   const composerRight = thread && caps ? <ModelPicker catalog={caps.modelCatalog} models={models} model={thread.model ?? null}
     efforts={caps.effortLevels ?? []} effort={thread.effort ?? null} onOpen={() => loadModels(true)}
     onModel={model => updateModel({ model, effort: thread.effort && effortsForModel(models, model, caps.effortLevels ?? []).includes(thread.effort) ? thread.effort : null })}
@@ -380,7 +394,7 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
 
   const composer = <div className="chat-composer">
     <Composer attachBlocked={null} attachmentsBlocked={threadId ? undefined : t('desk.chatAttachFirst')} restore={null} note={null}
-      draftKey={threadId ? `assistant-home:${threadId}` : 'assistant-home:new'} running={running} placeholder={t('desk.chatPlaceholder')}
+      draftKey={threadId ? `assistant-home:${threadId}` : 'assistant-home:new'} running={running} placeholder={handingTo ? t('desk.handingOver', agentLabel(handingTo)) : t('desk.chatPlaceholder')} disabled={Boolean(handingTo)}
       onSend={async (text, images, _mentions, videos = []) => {
         await send(text, images.map(({ data, mimeType }) => ({ data, mimeType })),
           await Promise.all(videos.map(async video => (await api.uploadVideo(threadId!, video.file)).id)));
@@ -404,6 +418,8 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
         <div className="chat-flow" ref={scroll} onScroll={() => { const el = scroll.current; if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120; }}>
           {threadError && <p className="chat-error" role="alert">{threadError} <button className="ghost" onClick={() => onOpenThread(threadId!)}>{t('threadPeek.open')}</button></p>}
           {!loaded && !threadError && <div className="loading-note">{t('common.loading')}</div>}
+          {/* After an agent switch the earlier talk is one tap away, at the top where it would have been. */}
+          {loaded && cursor === null && thread?.handover?.sourceId && <button className="chat-earlier" onClick={() => onOpenThread(thread.handover!.sourceId)}>{t('desk.earlierWith', agentLabel(thread.handover.agent))}</button>}
           {loaded && <ThreadView historyApi={api} historyThreadId={threadId!}
             items={timeline.items} roots={thread ? [thread.cwd, thread.cwdReal] : []} loadImage={loadImage} loadFile={loadFile}
             autoRetry={!api.demo && thread?.autoRetry ? {

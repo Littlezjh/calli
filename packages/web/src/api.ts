@@ -1274,6 +1274,8 @@ export class Api {
   draftModelPreferences(): Promise<Record<string, DraftModelPreference>> { return this.request('GET', '/api/draft-model-preferences'); }
   patchDraftModelPreference(agent: string, patch: ModelPreferencePatch): Promise<DraftModelPreference> { return this.request('PATCH', '/api/draft-model-preferences', { agent, ...patch }, { keepalive: true }); }
   personalSettings(): Promise<PersonalSettings> { return this.request('GET', '/api/personal/settings'); }
+  /** Switches her agent in place; a conversation under way is handed over to the new one. */
+  switchPersonalAgent(agent: string): Promise<{ threadId: string | null; settings: PersonalSettings }> { return this.request('POST', '/api/personal/agent', { agent }); }
   savePersonalSettings(value: PersonalSettings): Promise<PersonalSettings> { return this.request('PUT', '/api/personal/settings', value); }
   personalPlan(range: PlanRange, signal?: AbortSignal): Promise<PersonalPlan> { return this.request('GET', `/api/personal/plan?range=${range}`, undefined, { signal }); }
   personalBrief(kind: 'morning' | 'evening'): Promise<PersonalBrief | null> { return this.request('GET', `/api/personal/brief?kind=${kind}`); }

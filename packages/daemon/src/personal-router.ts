@@ -145,6 +145,19 @@ export class PersonalRouter {
     } finally { this.archiving = false; }
   }
 
+  /**
+   * Makes a thread that took over from hers (an agent switch's handover) her conversation. The old
+   * one is archived once it is quiet; the next human message reintroduces her instructions.
+   */
+  adopt(threadId: string): void {
+    const state = this.state();
+    if (state.threadId === threadId) return;
+    const replaced = state.threadId && state.threadId !== threadId ? state.threadId : null;
+    this.store.saveHubSetting(KEY, { ...state, threadId, introduced: false, lastReply: null, lastReplyAt: null,
+      retiring: [...(state.retiring ?? []), ...(replaced ? [replaced] : [])] });
+    void this.archiveRetired();
+  }
+
   private state(): RouterState {
     return this.store.hubSetting(KEY, { threadId: null, introduced: false, lastReply: null, lastReplyAt: null });
   }

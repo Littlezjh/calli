@@ -735,3 +735,42 @@ test('threads say rechecks the same human turn after waiting for target setup', 
     assert.equal(h.manager.threadView(target.id).queued.length, 0);
   } finally { await h.close(); }
 });
+
+test('switching her agent hands the conversation over in place and keeps it hers', async () => {
+  const h = await setup(); try {
+    h.adapters.set('pi2', new PiRpcAdapter([process.execPath, resolve('test/fixtures/fake-pi.mjs')]));
+    // Without a conversation only the setting changes.
+    const quiet = await (await h.request('/api/personal/agent', { agent:'pi2' })).json() as { threadId:string|null; settings:{ agent:string } };
+    assert.equal(quiet.threadId, null); assert.equal(quiet.settings.agent, 'pi2');
+    h.manager.personal.putSettings({ agent:'pi', model:'fake/plain' });
+    const first = await h.say('今天要开周会');
+    await wait(() => h.router.status().status === 'idle');
+    assert.equal((await h.request('/api/personal/agent', { agent:'nobody' })).status, 400);
+    const response = await h.request('/api/personal/agent', { agent:'pi2' });
+    assert.equal(response.status, 200, await response.clone().text());
+    const switched = await response.json() as { threadId:string; settings:{ agent:string; model:string|null } };
+    assert.notEqual(switched.threadId, first.threadId, 'the new agent goes on in a thread of its own');
+    const successor = h.store.getThread(switched.threadId)!;
+    assert.equal(successor.agent, 'pi2');
+    assert.equal(switched.settings.agent, 'pi2'); assert.equal(switched.settings.model, successor.model ?? null);
+    assert.equal(h.router.status().threadId, switched.threadId, 'she adopts the successor');
+    const brief = String(h.store.listEventsOfType(switched.threadId, 'turn.started')[0].data.text);
+    assert.match(brief, /接手/, 'the successor starts from the handover brief');
+    await wait(() => h.router.status().status === 'idle');
+    await wait(() => Boolean(h.store.getThread(first.threadId)!.archivedAt));
+    // The next message stays in the successor instead of starting yet another conversation.
+    await wait(() => !h.manager.threadView(switched.threadId).runningSince);
+    const next = await h.say('接着说');
+    assert.equal(next.threadId, switched.threadId);
+    await wait(() => h.store.listEventsOfType(switched.threadId, 'turn.started').length === 2 && !h.manager.threadView(switched.threadId).runningSince);
+    assert.match(String(h.store.listEventsOfType(switched.threadId, 'turn.started')[1].data.text), /<calli-personal-router>/, 'her instructions come back with the next message');
+    // A conversation mid-answer is never cut off. (The fixture's turns end too fast to catch, so the
+    // thread reports itself running.)
+    const view = h.manager.threadView.bind(h.manager);
+    h.manager.threadView = (id: string) => id === switched.threadId ? { ...view(id), runningSince: new Date().toISOString() } : view(id);
+    assert.equal((await h.request('/api/personal/agent', { agent:'pi' })).status, 409);
+    h.manager.threadView = view;
+    assert.equal(h.router.status().threadId, switched.threadId, 'a refused switch leaves her conversation alone');
+    assert.equal(h.manager.personal.settings().agent, 'pi2');
+  } finally { await h.close(); }
+});

@@ -13037,6 +13037,8 @@ button.trace-step-head:hover { background: var(--hover); }
 
 /* What cannot wait sits folded above the composer: one line with the count, one row per ask,
    one row open at a time, so the talk keeps the screen. */
+.chat-earlier { display: block; margin: 10px auto 4px; padding: 4px 12px; border: 0; border-radius: var(--radius-pill); background: none; color: var(--muted); font-size: 12px; }
+.chat-earlier:hover { background: var(--hover); color: var(--text); }
 .chat-asks { flex: none; display: flex; flex-direction: column; gap: 6px; width: min(760px, 100%); margin: 0 auto; padding: 4px 16px 0; }
 .chat-asks:empty { display: none; }
 .chat-tray { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-card); overflow: hidden; }
