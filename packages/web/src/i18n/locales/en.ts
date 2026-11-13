@@ -2256,6 +2256,7 @@ export const en: Messages = {
   'view.planning': 'Drafting the plan',
   'view.copyAnswer': 'Copy answer',
   'view.openThread': 'Go to this thread',
+  'view.copyQuote': 'Copy as quote',
   'view.editMessage': 'Edit this message',
   'view.editHint': 'Regenerates from here. Files stay as they are.',
   'view.editSend': 'Send edit',

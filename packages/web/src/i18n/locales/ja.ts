@@ -2252,6 +2252,7 @@ export const ja: Messages = {
   'view.planning': 'プランを作成中',
   'view.copyAnswer': '回答をコピー',
   'view.openThread': 'このスレッドへ移動',
+  'view.copyQuote': '引用としてコピー',
   'view.editMessage': 'このメッセージを編集',
   'view.editHint': 'ここから再生成します。ファイルは現在のままです。',
   'view.editSend': '編集を送信',
