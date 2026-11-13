@@ -93,6 +93,7 @@ export const en: Messages = {
   'quota.menuCached': 'Failed · Cached',
   'quota.percent': (percent: number) => `${percent}%`,
   'quota.notReported': 'Not reported',
+  'quota.balance': 'Balance',
   'quota.morePools': (count: number) => `${count} more model ${count === 1 ? 'pool' : 'pools'}`,
   'quota.query': 'Check quota',
   'pickers.permissionIs': (mode: string) => `Permissions: ${mode}`,

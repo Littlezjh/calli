@@ -1,6 +1,6 @@
-import type { QuotaWindow } from '../api';
+import type { QuotaBalance, QuotaWindow } from '../api';
 import { formatDateTime, t } from '../i18n';
-import { formatReset, periodName, quotaGroups, quotaLeft, quotaSlots } from '../quota';
+import { balanceEmpty, formatReset, periodName, quotaGroups, quotaLeft, quotaSlots } from '../quota';
 import type { QuotaReading } from '../quota-reading';
 import { IconChevron } from './icons';
 
@@ -27,6 +27,16 @@ export function QuotaPair({ windows, stale = false, summary = false }: { windows
     : <div key={label} className="quota-missing"><div className="quota-meter-label"><span>{periodName(label)}</span><span>{t('quota.notReported')}</span></div><div className="quota-missing-track" /></div>)}</div>;
 }
 
+/** Pay-as-you-go balances in one line: the amount as reported, coloured only once it runs out. */
+export function QuotaBalances({ balances, stale = false }: { balances?: QuotaBalance[]; stale?: boolean }) {
+  if (!balances?.length) return null;
+  return <div className={`quota-balances${stale ? ' stale' : ''}`}>{balances.map((balance, index) =>
+    <span key={`${balance.scope}:${index}`} className={`quota-balance${balanceEmpty(balance) ? ' exhausted' : ''}`}
+      aria-label={`${balance.scope} · ${t('quota.balance')} ${balance.amount}${stale ? ` · ${t('quota.cachedReading')}` : ''}`}>
+      <span>{balance.scope}</span><strong>{balance.amount}</strong>
+    </span>)}</div>;
+}
+
 /** Match a reading's footprint without presenting invented values or periods. */
 function QuotaPlaceholder({ detail = false, summary = false }: { detail?: boolean; summary?: boolean }) {
   return <div className="quota-meter quota-placeholder" aria-hidden="true">
@@ -43,13 +53,16 @@ export function QuotaPreview({ reading, summary = false }: { reading: QuotaReadi
   const stale = quotaStale(reading);
   if (summary) return <div className="quota-preview compact" aria-busy={reading.loading}>
     {groups[0] ? <QuotaPair windows={groups[0].windows} stale={stale} summary />
+      : reading.quota?.balances?.length ? null
       : !reading.quota && !reading.error ? <div className="quota-pair"><QuotaPlaceholder summary /><QuotaPlaceholder summary /></div>
         : <p className="quota-preview-empty">{t(reading.error ? 'quota.unavailable' : 'quota.empty')}</p>}
+    <QuotaBalances balances={reading.quota?.balances} stale={stale} />
   </div>;
   return <div className="quota-preview" aria-busy={reading.loading}>
     {!reading.quota && !reading.error && <div className="quota-pair"><QuotaPlaceholder /><QuotaPlaceholder /></div>}
     {groups[0]?.scope && <div className="quota-pool-name">{groups[0].scope}</div>}
     {groups[0] && <QuotaPair windows={groups[0].windows} stale={stale} />}
+    <QuotaBalances balances={reading.quota?.balances} stale={stale} />
     <QuotaReadingStatus reading={reading} />
     {groups.length > 1 && <details className="quota-pools"><summary><IconChevron size={12} />{t('quota.morePools', groups.length - 1)}</summary>
       {groups.slice(1).map((group, index) => <div className="quota-pool" key={index}><div className="quota-pool-name">{group.scope}</div><QuotaPair windows={group.windows} stale={stale} /></div>)}
@@ -62,8 +75,8 @@ export function QuotaReadingStatus({ reading, detail = false }: { reading: Quota
   const stale = quotaStale(reading);
   const constrained = quota?.windows.filter(window => window.usedPercent >= 80).length ?? 0;
   const exhausted = quota?.windows.some(window => window.usedPercent >= 100);
-  const status = error ? quota?.windows.length ? t('quota.cached') : t('quota.unavailable')
-    : !quota ? t('quota.loading') : !quota.windows.length ? t('quota.empty') : stale ? t('quota.cachedReading') : '';
+  const status = error ? quota?.windows.length || quota?.balances?.length ? t('quota.cached') : t('quota.unavailable')
+    : !quota ? t('quota.loading') : !quota.windows.length && !quota.balances?.length ? t('quota.empty') : stale ? t('quota.cachedReading') : '';
   return <div className={`quota-reading-status${error || constrained ? ' attention' : ''}${!quota && !error && !detail ? ' sr-only' : ''}`} role="status">
     {status && <span>{status}</span>}
     {!stale && exhausted ? <span>{t('quota.exhausted')}</span> : !stale && constrained > 0 ? <span>{t('quota.lowCount', constrained)}</span> : null}
@@ -79,6 +92,9 @@ export function QuotaWindows({ reading, detail = false }: { reading: QuotaReadin
     <QuotaReadingStatus reading={reading} detail />
     {!reading.quota && !reading.error && <><QuotaPlaceholder detail={detail} /><QuotaPlaceholder detail={detail} /></>}
     {reading.quota?.windows.map((window, index) => <QuotaMeter key={`${window.label}:${window.scope ?? ''}:${index}`} window={window} stale={quotaStale(reading)} detail={detail} />)}
+    {reading.quota?.balances?.map((balance, index) => <div key={`${balance.scope}:${index}`} className={`quota-balance-row${balanceEmpty(balance) ? ' exhausted' : ''}${quotaStale(reading) ? ' stale' : ''}`}>
+      <span>{balance.scope} · {t('quota.balance')}</span><strong>{balance.amount}</strong>
+    </div>)}
     {reading.quota?.note && <p className="quota-note">{reading.quota.note}</p>}
   </div>;
 }
