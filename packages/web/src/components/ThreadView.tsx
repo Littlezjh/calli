@@ -11,7 +11,9 @@ import { trimAutolinkJunk } from '../markdown-links';
 import { placeImages, stripPaths } from '../image-places';
 import { highlightLanguage, languageName } from '../code-language';
 import { enlargeMermaidDiagram, renderMermaidDiagram } from '../mermaid';
-import { copyText } from '../clipboard';
+import { copyRich, copyText, quoteMarkdown } from '../clipboard';
+import { flushSync } from 'react-dom';
+import { createRoot } from 'react-dom/client';
 import { diffLines, numberLines } from '../diff';
 import { pictureUrl, svgPicture } from '../images';
 import { SentVideo } from './VideoPreview';
@@ -55,7 +57,7 @@ import {
 import { VoiceCloud } from './VoiceOrb';
 import { Lightbox } from './Lightbox';
 import { PlanCopyButton, PlanDownloadButton } from './plan-tools';
-import { IconBell, ActivityIcon, IconArrowRight, IconCheck, IconChevron, IconClose, IconCompact, IconCopy, IconEdit, IconExternal, IconFile, IconFork, IconHand, IconHandover, IconPaperclip, IconQuote, IconRead, IconSparkle, IconTray, IconWorktree } from './icons';
+import { IconBell, ActivityIcon, IconArrowRight, IconCheck, IconChevron, IconClipboard, IconClose, IconCompact, IconCopy, IconEdit, IconExternal, IconFile, IconFork, IconHand, IconHandover, IconPaperclip, IconQuote, IconRead, IconSparkle, IconTray, IconWorktree } from './icons';
 import { t } from '../i18n';
 
 // The daemon's confirmation marker is replaced by the localized notice label.
@@ -136,6 +138,7 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
   useEffect(() => { setSelection(null); setContextMenu(null); }, [historyThreadId]);
   const actionsFor = (text: string, turnId: string, element?: HTMLElement): MessageAction[] => [
     { key: 'copy', label: t('view.copyAnswer'), icon: IconCopy, run: async () => { if (!await copyText(text)) throw new Error(t('view.copyFailed')); } },
+    { key: 'copyQuote', label: t('view.copyQuote'), icon: IconClipboard, run: async () => { if (!await copyRich(quoteMarkdown(text), quoteHtml(text))) throw new Error(t('view.copyFailed')); } },
     ...(onQuote ? [{ key: 'quote', label: t('references.quote'), icon: IconQuote, run: () => onQuote(text, turnId, historyThreadId) }] : []),
     ...(onHandToAssistant ? [{ key: 'assistant', label: t('messageActions.assistant'), icon: IconSparkle, run: () => onHandToAssistant(text, turnId, historyThreadId) }] : []),
     ...(onMessageContext ? [{ key: 'context', label: t('messageActions.context'), icon: IconPaperclip, run: () => onMessageContext(text, turnId, historyThreadId) }] : []),
@@ -994,6 +997,19 @@ function BreakableCode({ children, ...props }: ComponentProps<'code'>) {
 
 const MARKDOWN_COMPONENTS = { pre: CodeBlock, img: MarkdownImage, a: MarkdownLink, div: MarkdownDiv, code: BreakableCode };
 const MARKDOWN_PLUGINS = [remarkGfm, trimAutolinkJunk];
+
+/**
+ * A message as a block quote for another app's editor. Plain Markdown, none of this page's own
+ * blocks (copy buttons, highlighting, previews), drawn synchronously so the copy keeps the click.
+ */
+function quoteHtml(text: string): string {
+  const box = document.createElement('div');
+  const root = createRoot(box);
+  flushSync(() => root.render(<Markdown remarkPlugins={[remarkGfm]}>{text.trim()}</Markdown>));
+  const html = box.innerHTML;
+  root.unmount();
+  return `<blockquote style="margin:0;padding-left:12px;border-left:3px solid #d0d7de">${html}</blockquote>`;
+}
 /**
  * Markdown drops addresses it does not know, `file://` among them, leaving a link that reloads
  * the page. Every address is kept instead: links and images are drawn by the components above,
