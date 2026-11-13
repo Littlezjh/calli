@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ApiError, type AgentInfo, type Api, type PersonalSettings, type ProactiveAction, type ProactiveRun, type Thread, type Todo } from '../api';
+import { ApiError, type AgentInfo, type ModelOption, type Api, type PersonalSettings, type ProactiveAction, type ProactiveRun, type Thread, type Todo } from '../api';
 import { historyPage, mergeHistory, mergeHistoryPage, watchHistory } from '../history';
 import { replaceRun, startConflict, askingPins, askLine } from '../proactive';
 import { buildDesk, briefStatus, type BriefStatus } from '../desk';
@@ -10,6 +10,7 @@ import { useIsNarrow, useMinWidth } from '../hooks';
 import { formatTime, t } from '../i18n';
 import { ActionSheet, type SheetTarget } from './ActionSheet';
 import { Composer } from './Composer';
+import { ModelPicker, effortsForModel } from './Pickers';
 import { ThreadView } from './ThreadView';
 import { RunControls, RunSummary, type ProactiveState } from './ProactiveRuns';
 import { DeskPage } from './DeskPage';
@@ -356,6 +357,27 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
     </nav>
   </>;
 
+  // Who she is and which model she thinks with, as every thread's composer shows: the agent opens her
+  // settings (changing it starts a new conversation there); the model and effort are this thread's own.
+  const caps = thread ? agents.find(agent => agent.id === thread.agent)?.capabilities : undefined;
+  const [models, setModels] = useState<ModelOption[]>([]);
+  const loadModels = useCallback((refresh = false) => {
+    if (!thread?.agent) return;
+    void api.models(thread.agent, refresh).then(setModels).catch(() => undefined);
+  }, [api, thread?.agent]);
+  useEffect(() => { setModels([]); loadModels(); }, [loadModels]);
+  const updateModel = (patch: { model?: string | null; effort?: string | null }) => {
+    if (!thread) return;
+    const before = thread;
+    setThread({ ...thread, ...patch });
+    void api.updateThread(thread.id, { ...patch, rememberModelChoice: true }).then(setThread).catch(e => { setThread(before); report(e); });
+  };
+  const composerLeft = thread ? <button type="button" className="tool-btn chat-agent" onClick={onConfigure} title={t('desk.agentChange')}>{agentLabel(thread.agent)}</button> : null;
+  const composerRight = thread && caps ? <ModelPicker catalog={caps.modelCatalog} models={models} model={thread.model ?? null}
+    efforts={caps.effortLevels ?? []} effort={thread.effort ?? null} onOpen={() => loadModels(true)}
+    onModel={model => updateModel({ model, effort: thread.effort && effortsForModel(models, model, caps.effortLevels ?? []).includes(thread.effort) ? thread.effort : null })}
+    onEffort={effort => updateModel({ effort })} /> : null;
+
   const composer = <div className="chat-composer">
     <Composer attachBlocked={null} attachmentsBlocked={threadId ? undefined : t('desk.chatAttachFirst')} restore={null} note={null}
       draftKey={threadId ? `assistant-home:${threadId}` : 'assistant-home:new'} running={running} placeholder={t('desk.chatPlaceholder')}
@@ -364,7 +386,7 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
           await Promise.all(videos.map(async video => (await api.uploadVideo(threadId!, video.file)).id)));
       }}
       onStop={() => threadId && void api.cancel(threadId).catch(report)} onError={setError}
-      header={null} left={null} right={null} commands={[]} actions={[]} hiddenCommands={[]} onAction={() => undefined}
+      header={null} left={composerLeft} right={composerRight} commands={[]} actions={[]} hiddenCommands={[]} onAction={() => undefined}
       queued={thread?.queued ?? []}
       onRemoveQueued={id => threadId && void api.removeQueued(threadId, id).then(refresh).catch(report)}
       onEditQueued={async id => {

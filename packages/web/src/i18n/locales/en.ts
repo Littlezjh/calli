@@ -387,6 +387,7 @@ export const en: Messages = {
   "brief.failedHint": "This one didn't go out. Check the push settings.",
   "desk.metaMore": "More status",
   "desk.chat": "Chat with the assistant",
+  "desk.agentChange": "Change the assistant’s agent",
   "desk.asksCount": (n: number) => `${n} ${n === 1 ? 'question' : 'questions'} for you`,
   "desk.starterUrgent": "What's most urgent today?",
   "horizon.label": "Time range",

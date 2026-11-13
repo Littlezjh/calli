@@ -385,6 +385,7 @@ export const ja: Messages = {
   "brief.failedHint": "今回は送れませんでした。プッシュ設定を確認してください。",
   "desk.metaMore": "その他の状態",
   "desk.chat": "アシスタントと話す",
+  "desk.agentChange": "アシスタントの agent を変更",
   "desk.asksCount": (n: number) => `${n} 件の返事待ち`,
   "desk.starterUrgent": "今日いちばん急ぐことは？",
   "horizon.label": "期間",

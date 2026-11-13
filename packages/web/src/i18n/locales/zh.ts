@@ -387,6 +387,7 @@ export const zh = {
   "brief.failedHint": "这次没推送出去，看一下推送设置。",
   "desk.metaMore": "更多状态",
   "desk.chat": "和助手聊",
+  "desk.agentChange": "换助手用的 agent",
   "desk.asksCount": (n: number) => `${n} 个等你回答`,
   "desk.starterUrgent": "今天最紧急的是什么？",
   "horizon.label": "时间范围",
