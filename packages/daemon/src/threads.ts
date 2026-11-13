@@ -517,8 +517,11 @@ export class ThreadManager {
    *  probes fill, so decisions and the dashboard read one truth. */
   private observeQuota(agent: string, observed: PlanQuota): void {
     // The agent names its windows, not its plan; the plan a probe read still holds.
-    const plan = observed.plan ?? this.lastGoodQuota.get(agent)?.quota.plan;
-    const quota = plan ? { ...observed, plan } : observed;
+    const last = this.lastGoodQuota.get(agent)?.quota;
+    const plan = observed.plan ?? last?.plan;
+    // Nor does it name the balances of keys billed per use; those a probe read still hold too.
+    const balances = observed.balances ?? last?.balances;
+    const quota = { ...observed, ...(plan ? { plan } : {}), ...(balances ? { balances } : {}) };
     this.lastGoodQuota.set(agent, { at: Date.now(), quota });
     this.quotaCache.set(agent, { at: Date.now(), value: Promise.resolve(quota) });
     this.observedQuotaAt.set(agent, Date.now());
@@ -527,7 +530,7 @@ export class ThreadManager {
 
   /** Sends a new reading to open pages, so quota shown anywhere moves as the agent answers. */
   private publishQuota(agent: string, quota: PlanQuota): void {
-    const key = JSON.stringify([quota.windows, quota.plan ?? null, quota.note ?? null]);
+    const key = JSON.stringify([quota.windows, quota.balances ?? null, quota.plan ?? null, quota.note ?? null]);
     if (this.publishedQuota.get(agent) === key) return;
     this.publishedQuota.set(agent, key);
     const event: StoredEvent = { threadId: '', seq: 0, turnId: null, type: 'quota.updated', ts: new Date().toISOString(), data: { agent, quota } };

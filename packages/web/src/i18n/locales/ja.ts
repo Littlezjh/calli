@@ -91,6 +91,7 @@ export const ja: Messages = {
   'quota.menuCached': '更新失敗 · 前回の値',
   'quota.percent': (percent: number) => `${percent}%`,
   'quota.notReported': '未提供',
+  'quota.balance': '残高',
   'quota.morePools': (count: number) => `ほか ${count} 個のモデルプール`,
   'quota.query': '利用枠を確認',
   'pickers.permissionIs': (mode: string) => `権限：${mode}`,

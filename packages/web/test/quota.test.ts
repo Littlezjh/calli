@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { PlanQuota, QuotaWindow } from '../src/api.js';
-import { formatReset, periodName, quotaColumns, quotaGroups, quotaLeft, quotaLevel, quotaRows, quotaSlots, shortReset } from '../src/quota.js';
+import { balanceEmpty, formatReset, periodName, quotaColumns, quotaGroups, quotaLeft, quotaLevel, quotaRows, quotaSlots, shortReset } from '../src/quota.js';
 
 const win = (over: Partial<QuotaWindow> = {}): QuotaWindow => ({ label: '5H', usedPercent: 0, ...over });
 
@@ -71,4 +71,9 @@ test('quotaRows keeps agents that report quota and puts the one in use first', (
   assert.deepEqual(quotaRows(hidden, 'claude').map(agent => agent.id), ['codex', 'traex'], 'a hidden current agent is not brought back to the board');
   assert.deepEqual(quotaRows(hidden.map(agent => ({ ...agent, hidden: true }))), []);
   assert.deepEqual(quotaRows(hidden.map(agent => ({ ...agent, hidden: false })), 'claude').map(agent => agent.id), ['claude', 'codex', 'traex']);
+});
+
+test('a balance runs out only when its number is zero or below; an unreadable amount is not empty', () => {
+  const balance = (amount: string) => balanceEmpty({ scope: 'DeepSeek', amount });
+  assert.deepEqual(['¥60.52', '$0.00', '¥-1.20', '1,024 credits', 'unknown'].map(balance), [false, true, true, false, false]);
 });

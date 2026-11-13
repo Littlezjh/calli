@@ -85,3 +85,14 @@ test('invalid saved quota is ignored and blocked storage still allows in-memory 
   await api.agentQuota('one');
   assert.deepEqual(api.cachedAgentQuota('one'), quota());
 });
+
+test('a stored reading keeps its balances, and a malformed balance discards the reading', async t => {
+  const data = storage(t);
+  const { cachedQuota, rememberQuota } = await import('../src/quota-cache.js');
+  const reading: PlanQuota = { ...quota(), balances: [{ scope: 'DeepSeek', amount: '¥60.52' }] };
+  rememberQuota('/api/agents/one/quota', reading);
+  assert.deepEqual(cachedQuota('/api/agents/one/quota'), reading);
+  const [key, value] = [...data].find(([k]) => k === 'calli.quota.v1')!;
+  data.set(key, value.replace('"amount":"¥60.52"', '"amount":60.52'));
+  assert.equal(cachedQuota('/api/agents/one/quota'), null);
+});

@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { copyClaudeAccount, startClaudeLogin } from './claude-account.js';
+import { fetchGatewayQuota } from './gateway-quota.js';
 import { claudeLiveUsage } from './session-usage.js';
 import { readTraexModelStatus } from './traex.js';
 import { ferryModelKey, readFerryQueueObservations } from './ferry.js';
@@ -230,27 +231,35 @@ export class ClaudeAcpAdapter extends AcpAdapter {
 
   protected readonly modeIds = CLAUDE_MODE_IDS;
 
-  override models(refresh = false): Promise<ModelOption[]> {
+  /** The configured gateway, when discovery is opted into; null for the CLI's own catalog. */
+  private gateway() {
     const configDir = configDirectory(this.env, 'CLAUDE_CONFIG_DIR', ['.claude'], process.cwd());
     let settings: { env?: Record<string, string>; model?: string } = {};
     try {
       settings = JSON.parse(readFileSync(join(configDir, 'settings.json'), 'utf8'));
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return Promise.reject(error);
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
     // Claude applies settings.env after the process environment. Respect account isolation too.
     const env = { ...process.env, ...this.env, ...settings.env };
     const url = env.ANTHROPIC_BASE_URL;
-    if (env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY !== '1' || !url) {
+    if (env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY !== '1' || !url) return null;
+    const headers: Record<string, string> = { 'anthropic-version': '2023-06-01' };
+    if (env.ANTHROPIC_AUTH_TOKEN) headers.Authorization = `Bearer ${env.ANTHROPIC_AUTH_TOKEN}`;
+    else if (env.ANTHROPIC_API_KEY) headers['x-api-key'] = env.ANTHROPIC_API_KEY;
+    return { url, headers, env, defaultModel: env.ANTHROPIC_MODEL || settings.model };
+  }
+
+  override models(refresh = false): Promise<ModelOption[]> {
+    let gateway: ReturnType<ClaudeAcpAdapter['gateway']>;
+    try { gateway = this.gateway(); } catch (error) { return Promise.reject(error); }
+    if (!gateway) {
       const changed = !!this.gatewayKey;
       this.gatewayKey = '';
       this.gatewayProbe = null;
       return super.models(refresh || changed);
     }
-    const headers: Record<string, string> = { 'anthropic-version': '2023-06-01' };
-    if (env.ANTHROPIC_AUTH_TOKEN) headers.Authorization = `Bearer ${env.ANTHROPIC_AUTH_TOKEN}`;
-    else if (env.ANTHROPIC_API_KEY) headers['x-api-key'] = env.ANTHROPIC_API_KEY;
-    const defaultModel = env.ANTHROPIC_MODEL || settings.model;
+    const { url, headers, env, defaultModel } = gateway;
     const key = JSON.stringify([url, headers, defaultModel]);
     if (refresh || key !== this.gatewayKey) this.gatewayProbe = null;
     this.gatewayKey = key;
@@ -404,6 +413,14 @@ export class ClaudeAcpAdapter extends AcpAdapter {
    * writes a one-line session for it (one per refresh, per account), so persistence is switched off.
    */
   async fetchQuota(): Promise<PlanQuota> {
+    // A gateway's account has no subscription of its own; the gateway reports the plans and keys
+    // behind its models, when it can. Otherwise the CLI is asked as for any account.
+    const gateway = this.gateway();
+    if (gateway) {
+      const catalog = await this.models().then(models => models.map(model => model.id), () => null);
+      const quota = await fetchGatewayQuota(gateway.url, gateway.headers, catalog);
+      if (quota) return quota;
+    }
     const configDir = configDirectory(this.env, 'CLAUDE_CONFIG_DIR', ['.claude'], process.cwd());
     const planning = claudePlan(configDir, this.env);
     const stdout = await new Promise<string>((resolve, reject) => {

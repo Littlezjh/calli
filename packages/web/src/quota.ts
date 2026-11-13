@@ -1,4 +1,4 @@
-import type { PlanQuota, QuotaWindow } from './api';
+import type { PlanQuota, QuotaBalance, QuotaWindow } from './api';
 import { formatDate, t } from './i18n';
 
 // A legacy wire value, independent of the interface language.
@@ -75,6 +75,12 @@ export function quotaSlots(windows: QuotaWindow[]): Array<{ label: string; windo
     const matches = windows.filter(window => window.label === label);
     return matches.length ? matches.map(window => ({ label, window })) : [{ label }];
   });
+}
+
+/** Whether a reported balance has run out: its number is zero or below. Unparsable is not empty. */
+export function balanceEmpty(balance: QuotaBalance): boolean {
+  const value = /-?\d[\d,]*(?:\.\d+)?/.exec(balance.amount)?.[0];
+  return value !== undefined && Number(value.replace(/,/g, '')) <= 0;
 }
 
 /** When a window resets, as short as a table cell allows: "14:40" today, "10/12" later. */
