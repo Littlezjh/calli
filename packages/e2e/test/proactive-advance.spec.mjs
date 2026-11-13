@@ -7,7 +7,8 @@ import { arrangeAdvance, routes } from './proactive-fixture.mjs';
 
 const openDesk = async (page, daemon) => {
   await openUi(page, daemon);
-  await page.evaluate(() => { location.hash = '#/desk'; });
+  // The desk is the drawer's own tab on the assistant's home; its address opens it directly.
+  await page.evaluate(() => { location.hash = '#/desk/desk'; });
   await page.getByRole('button', { name: '按进度', exact: true }).click();
   await page.locator('.desk-lanes').waitFor();
 };
@@ -34,7 +35,7 @@ for (const width of [1440, 390]) for (const colorScheme of ['light', 'dark']) {
       await routes(page, data);
       await openDesk(page, daemon);
       await page.getByRole('button', { name: '2 个问题等你回答', exact: true }).waitFor();
-      assert.equal(data.requests.reads(), 0, 'the desk reads only the summary, not full runs');
+      assert.deepEqual(data.requests.searches, [''], 'the conversation reads its decision cards; desk covers add only the summary');
       for (const todo of data.todos.slice(0, 2)) await page.locator(`#desk-pile-${todo.id}`).getByText('等你回答', { exact: true }).waitFor();
       await screenshot(page, `desk-${width}-${colorScheme}`);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'no horizontal page overflow');

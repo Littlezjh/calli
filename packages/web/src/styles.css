@@ -12969,6 +12969,123 @@ button.trace-step-head:hover { background: var(--hover); }
 .desk-time-card dd { margin: 0; text-align: right; }
 .desk-time-card .todo-metadata { margin-bottom: 14px; }
 .desk-action-error { margin: 0 0 24px; color: var(--warn); font-size: 13px; }
+
+/* Her home: the conversation is the page, everything else one drawer away. The scroller
+   yields its scroll to the conversation, which keeps its own. */
+.scroller:has(> .chat-home) { display: flex; padding: 0; overflow: hidden; }
+.chat-home { position: relative; display: flex; flex: 1; min-width: 0; min-height: 0; }
+.chat-main { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
+.chat-top { flex: none; display: flex; align-items: center; gap: 10px; padding: 12px 18px 6px; }
+.chat-top > .sp { flex: 1; }
+.chat-brand { display: inline-flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 600; }
+.chat-ava { display: grid; place-items: center; width: 27px; height: 27px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface-2); color: var(--muted); }
+.chat-entries { display: flex; align-items: center; gap: 2px; }
+.chat-entry { position: relative; display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 0 11px; border: 0; border-radius: var(--radius-pill); background: none; color: var(--muted); font-size: 12.5px; }
+.chat-entry:hover { background: var(--hover); color: var(--text); }
+.chat-badge { min-width: 17px; height: 17px; padding: 0 4px; border-radius: var(--radius-pill); background: var(--hover); color: var(--muted); font-size: 10.5px; line-height: 17px; text-align: center; font-variant-numeric: tabular-nums; }
+.chat-badge.warn { background: var(--warn); color: var(--on-color); }
+.chat-badge.danger { background: var(--danger); color: var(--on-color); }
+
+/* The one line of globe kept on the home: quiet, clickable, never hiding a number. */
+.chat-strip { flex: none; display: flex; align-items: center; justify-content: center; gap: 2px; width: min(760px, 100%); margin: 0 auto; padding: 2px 8px; color: var(--muted); font-size: 12px; }
+.chat-strip button { flex: none; display: inline-flex; align-items: center; min-height: 28px; padding: 0 10px; border: 0; border-radius: var(--radius-pill); background: none; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.chat-strip button:hover { background: var(--hover); color: var(--text); }
+.chat-strip .warn { color: var(--warn); }
+
+/* The conversation: a readable column on its own scroll, the composer under it. */
+.chat-flow { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; width: min(760px, 100%); margin: 0 auto; padding: 10px 16px 8px; scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+.chat-error { margin: 8px 8px 4px; color: var(--warn); font-size: 12.5px; }
+.chat-composer { flex: none; width: min(760px, 100%); margin: 0 auto; padding: 6px 16px calc(12px + var(--safe-bottom)); }
+.chat-composer .composer { width: auto; max-width: none; padding: 0; }
+
+/* Nothing said yet: her hello and three ways to begin. */
+.chat-fresh { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 13px; width: min(560px, calc(100% - 40px)); margin: 0 auto; padding-bottom: 6vh; }
+.chat-fresh .ava { display: grid; place-items: center; width: 52px; height: 52px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface-2); color: var(--muted); }
+.chat-fresh h2 { margin: 0; font-size: 19px; font-weight: 600; letter-spacing: -.02em; }
+.chat-fresh > p { margin: -4px 0 0; color: var(--muted); font-size: 13px; line-height: 1.7; text-align: center; }
+.chat-starters { display: flex; flex-direction: column; gap: 8px; width: 100%; margin-top: 6px; }
+.chat-starter { display: flex; align-items: center; gap: 9px; min-height: 40px; padding: 0 15px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); font-size: 13px; text-align: left; box-shadow: var(--shadow-card); }
+.chat-starter::before { content: ''; width: 5px; height: 5px; border-radius: var(--radius-pill); background: var(--faint); }
+.chat-starter:hover { background: var(--hover); }
+
+/* What cannot wait rides in the conversation, the last thing in it. */
+.chat-asks { display: flex; flex-direction: column; gap: 8px; padding: 8px 8px 2px; }
+.chat-ask { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); padding: 10px 12px; }
+.chat-ask.dispatch { background: var(--surface); }
+.chat-ask-kind { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; color: var(--muted); font-size: 11px; font-weight: 600; }
+.chat-ask-kind.personal-warning { color: var(--warn); }
+.chat-ask-kind svg { flex: none; }
+.chat-ask-body { margin: 0; font-size: 12.5px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-ask-cwd { margin: 6px 0 0; }
+.chat-ask-cwd code { font-family: var(--mono); font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; }
+.chat-ask-acts { display: flex; gap: 8px; margin-top: 9px; }
+.chat-ask-acts .primary, .chat-ask-acts .ghost { min-height: 28px; padding: 0 13px; font-size: 12px; }
+.chat-ask-error { margin: 0; color: var(--warn); font-size: 12.5px; }
+.chat-ask .chat-ask-error { margin: 8px 0 0; }
+.chat-ask .proactive-answer p { font-size: 12.5px; }
+.chat-ask .proactive-answer-form input { font-size: 12.5px; }
+.chat-ask .desk-card-actions { margin-top: 6px; }
+.chat-ask .desk-card-actions .ghost { min-height: 28px; font-size: 12px; }
+
+/* The drawer. Beside the talk when there is room — real width, nothing covered; over the
+   page when there is not; the whole screen on a phone. Its content mounts only when asked. */
+.chat-drawer { display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
+.chat-drawer.side { flex: none; width: min(460px, 42%); border-left: 1px solid var(--border); }
+.chat-drawer.over { position: fixed; top: var(--titlebar-row, calc(52px + env(safe-area-inset-top))); right: 0; bottom: 0; z-index: 48; width: min(460px, calc(100vw - 24px)); border: 1px solid var(--border); border-right: 0; border-radius: var(--radius-lg) 0 0 var(--radius-lg); box-shadow: var(--shadow-pop); animation: chat-drawer-in .28s cubic-bezier(.2,.8,.2,1); }
+@keyframes chat-drawer-in { from { transform: translateX(40px); opacity: 0; } }
+.chat-drawer-scrim { position: fixed; inset: 0; z-index: 47; background: var(--scrim); animation: chat-drawer-fade .2s; }
+@keyframes chat-drawer-fade { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .chat-drawer.over { animation: none; } }
+.chat-drawer-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 13px 10px 11px 16px; border-bottom: 1px solid var(--border); }
+.chat-drawer-head b { font-size: 14px; font-weight: 600; }
+.chat-drawer-head .sp { flex: 1; }
+.chat-drawer-tabs { flex: none; display: flex; gap: 2px; padding: 10px 14px 0; }
+.chat-drawer-tabs button { min-height: 30px; padding: 0 13px; border: 0; border-radius: var(--radius-pill); background: none; color: var(--muted); font-size: 12.5px; }
+.chat-drawer-tabs button[aria-pressed='true'] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-card); font-weight: 600; }
+.chat-drawer-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 14px; scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+
+/* The desk rides inside the drawer, whose width is bounded — so its narrow layout is not a
+   media query here but the only one it gets. */
+.chat-drawer .desk-page { max-width: none; padding: 0; }
+.chat-drawer .desk-header { align-items: flex-start; gap: 20px; flex-direction: column; padding: 0 3px 23px; }
+.chat-drawer .desk-board { padding: 25px 22px 90px; }
+.chat-drawer .desk-top, .chat-drawer .desk-top.has-inbox { grid-template-columns: 1fr; gap: 28px; }
+.chat-drawer .desk-first { padding: 20px; }
+.chat-drawer .desk-lanes, .chat-drawer .desk-lanes.time { grid-template-columns: 1fr; gap: 34px; margin-top: 36px; }
+.chat-drawer .desk-matrix, .chat-drawer .desk-matrix .desk-quad.now .desk-quad-body, .chat-drawer .desk-matrix .desk-quad.quick .desk-quad-body { grid-template-columns: 1fr; }
+.chat-drawer .desk-matrix { gap: 34px; margin-top: 36px; }
+.chat-drawer .desk-fan { grid-template-columns: 1fr; gap: 24px; }
+
+/* The lists: each row one line of title, one of quiet meta, at most one of preview. */
+.chat-sessions { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.chat-sessions button { display: flex; flex-direction: column; gap: 4px; width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); text-align: left; }
+.chat-sessions button:hover { background: var(--hover); }
+.chat-session-title { font-size: 13px; font-weight: 570; color: var(--text); overflow-wrap: anywhere; }
+.chat-session-meta { display: flex; gap: 10px; color: var(--muted); font-size: 11px; }
+.chat-session-meta .warn { color: var(--warn); }
+.chat-session-meta .run { color: var(--positive); }
+.chat-session-meta .err { color: var(--danger); }
+.chat-session-line { color: var(--muted); font-size: 12px; line-height: 1.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-drawer-empty { padding: 26px 8px; color: var(--faint); font-size: 12.5px; text-align: center; }
+.side-by-side .chat-entry-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* While her home has the floor, the floating her steps aside: the composer is her. */
+body:has(.chat-home) .pet { visibility: hidden; }
+
+@media (max-width: 640px) {
+  .chat-top { gap: 4px; padding: 6px 8px 2px; }
+  .chat-brand { font-size: 13.5px; }
+  .chat-entries { gap: 0; margin-left: auto; }
+  .chat-entry { gap: 0; min-width: 40px; min-height: 36px; padding: 0 8px; justify-content: center; }
+  /* Only the icon fits; the label stays, folded away, so the button keeps its name. */
+  .chat-entry-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .chat-strip { justify-content: flex-start; }
+  .chat-strip button, .chat-ask-acts .primary, .chat-ask-acts .ghost, .chat-drawer-tabs button { min-height: 40px; }
+  .chat-composer { padding-bottom: calc(8px + var(--safe-bottom)); }
+  .chat-drawer.over { top: 0; left: 0; width: auto; padding-top: var(--safe-top); padding-bottom: var(--safe-bottom); border: 0; border-radius: 0; animation: chat-drawer-up .3s cubic-bezier(.2,.8,.2,1); }
+}
+@keyframes chat-drawer-up { from { transform: translateY(60px); opacity: 0; } }
+
 @media (max-width: 1150px) and (min-width: 761px) {
   .desk-page { padding: 26px 25px; }
   .desk-board { padding: 26px 19px 130px; }

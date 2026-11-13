@@ -169,9 +169,8 @@ test("her conversation is reached through her, not listed again among the thread
   assert.equal(await sidebar.locator('.thread-title', { hasText: '助手' }).count(), 1, 'only the ordinary namesake is listed');
 
   await sidebar.locator('.side-link', { hasText: '助手' }).click();
-  await page.getByRole('button', { name: '和助手聊', exact: true }).click();
+  // Her home is the conversation itself now: the entry lands in it directly.
   await page.getByText('收到「hello」', { exact: false }).waitFor({ timeout: 15_000 });
-  assert.equal(await page.locator('.topbar-title').first().innerText(), '助手');
-  assert.equal(await page.locator('.composer textarea').getAttribute('placeholder'), '给助手发消息');
+  assert.equal(await page.locator('.chat-composer textarea').getAttribute('placeholder'), '跟助手说…');
   assert.equal(await sidebar.locator('.side-link.active', { hasText: '助手' }).count(), 1, 'her row stands for her conversation too');
 });

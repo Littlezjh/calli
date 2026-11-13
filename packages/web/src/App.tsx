@@ -90,7 +90,7 @@ import { PersonalSettingsDialog } from './components/PersonalSettingsDialog';
 import { buildDesk } from './desk';
 import { SkillsPage } from './components/SkillsPage';
 import { SchedulesPage } from './components/SchedulesPage';
-import { DeskPage } from './components/DeskPage';
+import { AssistantHome } from './components/AssistantPanel';
 import { TodosPage } from './components/TodosPage';
 import { ActivityPage } from './components/ActivityPage';
 import { ExtensionsPage } from './components/ExtensionsPage';
@@ -193,9 +193,9 @@ function viewForHash(hash: string, connected: boolean): MainView | null {
   if (hash.startsWith('#/machines/')) return 'machines';
   if (hash === '#/settings' || hash.startsWith('#/settings/')) return 'settings';
   if (hash.startsWith('#/thread/')) return null;
+  // The desk's address may name the drawer tab it was left on (#/desk/desk, #/desk/sessions…).
+  if (hash === DESK_HASH || hash.startsWith(`${DESK_HASH}/`)) return 'desk';
   switch (hash) {
-    case DESK_HASH:
-      return 'desk';
     case TODOS_HASH:
       return 'todos';
     case SCHEDULES_HASH:
@@ -522,6 +522,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const [threadLink, setThreadLink] = useState(() => window.location.hash.startsWith('#/thread/') ? window.location.hash : null);
   const [schedulePath, setSchedulePath] = useState(() => window.location.hash.startsWith('#/schedules/') ? window.location.hash.slice('#/schedules/'.length) : '');
   const [machinePath, setMachinePath] = useState(() => window.location.hash.startsWith('#/machines/') ? window.location.hash.slice('#/machines/'.length) : '');
+  /** The desk drawer's tab in the address, so a reload lands with the drawer as it was left. */
+  const [deskPath, setDeskPath] = useState(() => /^#\/desk\/(desk|sessions|matters)$/.test(window.location.hash) ? window.location.hash.slice('#/desk/'.length) : '');
   const [settingsPath, setSettingsPath] = useState(() => start === 'machines' ? 'machines' : window.location.hash.replace(/^#\/settings\/?/, ''));
   // `list`: the phone's thread list was open, so closing settings goes back to it.
   const settingsOrigin = useRef<{ view: MainView; thread: string | null; hash: string; scroll: number; pinned: boolean; entry: string; list: boolean } | null>(null);
@@ -1197,12 +1199,12 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const extWant = onExt ? (extOpen ? extensionHash(extOpen) : extTarget ?? '') : '';
   useEffect(() => {
     if (threadLink) return;
-    const want = onSettings ? `#/settings${settingsPath ? `/${settingsPath}` : ''}` : onDesk ? DESK_HASH : onObservability ? OBSERVABILITY_HASH : onMachines ? `${MACHINES_HASH}${machinePath ? `/${machinePath}` : ''}` : onAgents ? AGENTS_HASH : onTeams ? TEAMS_HASH : onTodos ? TODOS_HASH : onSchedules ? `${SCHEDULES_HASH}${schedulePath ? `/${schedulePath}` : ''}` : onActivity ? ACTIVITY_HASH : onSkills ? SKILLS_HASH : onMcp ? MCP_HASH : onExtensions ? EXTENSIONS_HASH : extWant;
+    const want = onSettings ? `#/settings${settingsPath ? `/${settingsPath}` : ''}` : onDesk ? `${DESK_HASH}${deskPath ? `/${deskPath}` : ''}` : onObservability ? OBSERVABILITY_HASH : onMachines ? `${MACHINES_HASH}${machinePath ? `/${machinePath}` : ''}` : onAgents ? AGENTS_HASH : onTeams ? TEAMS_HASH : onTodos ? TODOS_HASH : onSchedules ? `${SCHEDULES_HASH}${schedulePath ? `/${schedulePath}` : ''}` : onActivity ? ACTIVITY_HASH : onSkills ? SKILLS_HASH : onMcp ? MCP_HASH : onExtensions ? EXTENSIONS_HASH : extWant;
     if (window.location.hash !== want) {
       window.history.replaceState(window.history.state, '', want || window.location.pathname + window.location.search);
     }
     appHref.current = window.location.pathname + window.location.search + window.location.hash;
-  }, [schedulePath, machinePath, onSettings, settingsPath, onDesk, onObservability, onMachines, onAgents, onTeams, onTodos, onActivity, onSkills, onSchedules, onMcp, onExtensions, extWant, threadLink]);
+  }, [schedulePath, machinePath, deskPath, onSettings, settingsPath, onDesk, onObservability, onMachines, onAgents, onTeams, onTodos, onActivity, onSkills, onSchedules, onMcp, onExtensions, extWant, threadLink]);
 
   // Whether the directory a new thread would start in is a git repository. Asked once per directory picked.
   useEffect(() => {
@@ -1249,6 +1251,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
         setView(next);
         if (next === 'schedules') setSchedulePath(hash.startsWith('#/schedules/') ? hash.slice('#/schedules/'.length) : '');
       if (next === 'machines') setMachinePath(hash.startsWith('#/machines/') ? hash.slice('#/machines/'.length) : '');
+        if (next === 'desk') setDeskPath(hash.startsWith(`${DESK_HASH}/`) ? hash.slice('#/desk/'.length) : '');
         if (next === 'settings') setSettingsPath(hash.replace(/^#\/settings\/?/, ''));
         if (next === 'ext') setExtTarget(hash);
         setDrawer(false);
@@ -2279,6 +2282,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
     return { you: desk.quadrants.now.length, first: desk.first[0]?.todo.text ?? null };
   }, [onDesk, todos, todosLoading, todosError]);
   const [deskSpread, setDeskSpread] = useState(false);
+  // The caret for her composer: the pet's talk entry bumps it, wherever the person is.
+  const [chatFocus, setChatFocus] = useState(0);
   // A matter her reply named: the desk opens that pile, wherever the person is when they tap it.
   const [revealTodo, setRevealTodo] = useState<string | null>(null);
   const openTodoFromPet = (id: string) => {
@@ -3336,11 +3341,14 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           </div>
         ) : onDesk ? (
           <div key="desk" className="scroller">
-            <DeskPage key={setupNotice?.at} setupNeeded={setupNeeded} onExplore={openExplore} api={api} todos={todos} loading={todosLoading} error={todosError} threads={threads} agents={agents}
+            <AssistantHome key={setupNotice?.at} setupNeeded={setupNeeded} onExplore={openExplore} api={api} todos={todos} loading={todosLoading} error={todosError} threads={threads} agents={agents}
               personal={personal} personalError={personalError} refreshKey={todosKey} onReload={reloadTodos}
               onPersonalChange={setPersonal} onPersonalRetry={reloadPersonal} onOpenThread={pick} onOpenPlans={openTodos}
+              onConfigure={() => openSettings('assistant')} threadsKnown={threadsKnown}
               openFinds={deskFinds} onFindsOpened={() => setDeskFinds(false)}
-              onSpreadChange={setDeskSpread} revealTodoId={revealTodo} onRevealTodo={() => setRevealTodo(null)} />
+              onSpreadChange={setDeskSpread} revealTodoId={revealTodo} onRevealTodo={() => setRevealTodo(null)}
+              path={deskPath} onPathChange={setDeskPath}
+              focusSignal={chatFocus} />
           </div>
         ) : onTodos ? (
           // A scroller of its own: the thread's one pins itself to the bottom, a document starts at the top.
@@ -3685,6 +3693,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           onOpenThread={pick}
           onStatusChange={setPetStatus}
           onConfigure={() => openSettings('assistant')}
+          onChat={() => { if (!onDesk) openDesk(false); setChatFocus(n => n + 1); }}
           todos={todos.filter(todo => !todo.done)}
           onOpenTodo={openTodoFromPet}
         />

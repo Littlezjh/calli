@@ -29,7 +29,8 @@ const settled = async daemon => {
 };
 const openPile = async (page, daemon, id) => {
   await openUi(page, daemon);
-  await page.evaluate(() => { location.hash = '#/desk'; });
+  // The desk is the drawer's own tab on the assistant's home; its address opens it directly.
+  await page.evaluate(() => { location.hash = '#/desk/desk'; });
   await page.locator('.desk-matrix').waitFor();
   await page.getByRole('button', { name: '按进度', exact: true }).click();
   await page.locator(`#desk-pile-${id}`).click();

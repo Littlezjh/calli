@@ -1,5 +1,7 @@
 import type { StoredEvent } from './events.js';
 import { turnOutcome, type TurnEnd } from './lifecycle.js';
+import { turnAnswer } from './coordination.js';
+import { parseProgress } from './progress-report.js';
 import { routerReply } from './personal-router.js';
 import type { TodoRecord } from './store.js';
 import type { ThreadManager } from './threads.js';
@@ -66,6 +68,23 @@ export class WorkerReports {
     // A proactive turn's result (ready, failed) is recorded just after its ending.
     await this.manager.personal.proactive.flush();
     const outcome = turnOutcome(event)!;
+    const dispatch = this.manager.personal.proactive.runs().find(run => run.kind === 'dispatch' && run.status === 'answered' && run.threadId === event.threadId);
+    if (dispatch) {
+      if (!this.worthSaying(event.threadId, outcome) || !event.turnId) return;
+      const events = this.store.voiceAnswerEvents(event.threadId, event.turnId);
+      const answer = turnAnswer(events, event.turnId).trim();
+      const progress = parseProgress(answer);
+      const stage = outcome.outcome === 'error' ? 'blocked' : progress?.stage === 'blocked' ? 'answer'
+        : progress?.stage === 'review' ? 'review' : 'progress';
+      const title = this.store.getTodo(dispatch.matterId)?.text ?? dispatch.title ?? this.store.getThread(event.threadId)!.title;
+      await this.manager.personal.router.receiveWorkerReport({ matterId: dispatch.matterId, threadId: event.threadId, title, stage,
+        summary: clip(outcome.outcome === 'error' ? `失败：${outcome.message ?? ''}` : answer),
+        ...(stage === 'answer' ? { question: progress!.note } : {}),
+        ...(outcome.outcome === 'error' ? { pushed: true } : {}),
+        ...(this.store.listTurnEvents(event.threadId, event.turnId).some(item => item.type === 'agent.notice') ? { notified: true } : {}),
+      });
+      return;
+    }
     for (const todo of this.matters(event.threadId)) {
       const stage = todoStage(this.manager, todo);
       const previous = this.stages.get(todo.id);

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { ProactiveRun, Todo } from '../src/api.js';
-import { addRepo, diffTotals, fileName, isDecision, matterRuns, settingsPayload, proactiveCount, proactiveMatters, removeRepo, replaceRun, runControls } from '../src/proactive.js';
+import { addRepo, askingPins, diffTotals, fileName, isDecision, matterRuns, settingsPayload, proactiveCount, proactiveMatters, removeRepo, replaceRun, runControls, startConflict } from '../src/proactive.js';
 
 let n = 0;
 function run(over: Partial<ProactiveRun> = {}): ProactiveRun {
@@ -33,6 +33,33 @@ test('an action replaces only its own run', () => {
   const next = replaceRun([a, b], { ...a, status: 'merged' });
   assert.equal(next[0].status, 'merged');
   assert.equal(next[1], b);
+});
+
+test('a dispatch proposal offers to begin or pass, and only while it asks', () => {
+  const asking = run({ kind: 'dispatch', status: 'asking', threadId: '', agent: 'codex', cwd: '~/code/app', task: '补测试' });
+  assert.deepEqual(runControls(asking), ['start', 'dismiss']);
+  assert.deepEqual(runControls(run({ kind: 'dispatch', status: 'answered', threadId: 'w1' })), [], 'once begun there is nothing left to decide');
+  assert.deepEqual(runControls(run({ kind: 'dispatch', status: 'discarded' })), []);
+});
+
+test('a refused start jumps only to a thread that truly began', () => {
+  assert.deepEqual(startConflict({ run: { kind: 'dispatch', status: 'answered', threadId: 'w9' } }), { threadId: 'w9' });
+  assert.equal(startConflict({ error: '派活正在开始', run: { kind: 'dispatch', status: 'asking', threadId: '' } }), null, 'message text alone never implies a concurrent start');
+  assert.equal(startConflict({ starting: true, run: { kind: 'dispatch', status: 'asking', threadId: '' } }), 'starting', 'the explicit flag wins over the message text');
+  assert.equal(startConflict({ error: 'agent unavailable', run: { kind: 'dispatch', status: 'asking', threadId: '' } }), null, 'an ordinary validation failure stays visible and retryable');
+  assert.equal(startConflict({ run: { kind: 'dispatch', status: 'discarded', threadId: '' } }), null);
+  assert.equal(startConflict({ run: { kind: 'advance', status: 'answered', threadId: 'w9' } }), null, 'not a dispatch: no jump to read into');
+  assert.equal(startConflict({}), null);
+  assert.equal(startConflict({ run: 'gone' }), null);
+});
+
+test('the panel pins what asks the person, newest first, and nothing else', () => {
+  const older = run({ kind: 'dispatch', status: 'asking', startedAt: new Date(2026, 10, 1, 9).toISOString() });
+  const newer = run({ kind: 'advance', status: 'asking', startedAt: new Date(2026, 10, 1, 11).toISOString() });
+  const quiet = run({ status: 'waiting' });
+  assert.deepEqual(askingPins([quiet, older, newer]).map(item => item.id), [newer.id, older.id]);
+  assert.deepEqual(askingPins([]), []);
+  assert.deepEqual(askingPins(null), []);
 });
 
 test('a spread shows open runs and the latest of each kind, not old attempts or quiet no-ops', () => {

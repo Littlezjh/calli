@@ -4,8 +4,15 @@ import { join } from 'node:path';
 let router = false;
 /** A portable coding agent needs only shell execution, its scoped env and the prompt. */
 export function personalFixture(text) {
-  const command = text.split('\n')[0];
+  const context = text.match(/^<calli-context>\n([\s\S]*?)\n<\/calli-context>\n\n/);
+  const command = text.slice(context?.[0].length ?? 0).split('\n')[0];
   if (text.includes('<calli-personal-router>')) router = true;
+  if (command.startsWith('dispatch-worker-')) {
+    if (!text.includes('不推远端、不给别人发消息、不删除、不付款')) throw new Error('missing dispatch boundary');
+    if (command === 'dispatch-worker-review') return '结果已整理，等你检查。\n[进度] 待验收：请检查测试结果';
+    if (command === 'dispatch-worker-answer') return '请选择 A 还是 B？\n[进度] 需要你：请选择 A 还是 B？';
+    return '已查清第一部分，下一轮继续。\n[进度] 进行中：继续核对';
+  }
   if (router && command === 'router-fixture-fail' && existsSync('.calli/router-retry-ready')) return JSON.stringify({ intro: text.includes('<calli-personal-router>'), profile: text.includes('<calli-personal-profile>') });
   if (router && ['router-fixture-slow', 'router-fixture-fail'].includes(command)) return null;
   if (command === '由 Calli 发起的推进分流。') {
@@ -68,7 +75,15 @@ export function personalFixture(text) {
   }
   if (router) {
     if (process.env.FAKE_PERSONAL_BOARD_LINKS === '1' && text.includes('#/thread/')) return [...text.matchAll(/\[[^\]]+\]\(#\/thread\/[^)]+\)/g)].map(match => match[0]).join('\n');
-    if (command === '<calli-worker-report>') { const report = JSON.parse(text.split('\n').find(line => line.startsWith('{"matterId"'))); if (!report.notified && !report.pushed) cli(['notify', '--text-file', '-'], `「${report.title}」要你看一下`); return `「${report.title}」要你看一下`; }
+    if (command === '<calli-worker-report>') { const report = JSON.parse(text.split('\n').find(line => line.startsWith('{"matterId"'))); if (report.stage !== 'progress' && !report.notified && !report.pushed) cli(['notify', '--text-file', '-'], `「${report.title}」要你看一下`); return `「${report.title}」要你看一下`; }
+    if (command === 'router-fixture-context') return JSON.stringify({ context: context?.[1] ?? null });
+    if (command.startsWith('router-fixture-dispatch ')) {
+      const input = JSON.parse(command.slice('router-fixture-dispatch '.length));
+      const flags = ['dispatch', '--agent', input.agent, '--cwd', input.cwd, '--task-file', '-'];
+      for (const key of ['matter', 'title', 'model']) if (input[key]) flags.push(`--${key}`, input[key]);
+      if (input.now) flags.push('--now');
+      return JSON.stringify(cli(flags, input.task));
+    }
     if (command === 'router-fixture-inspect') return JSON.stringify({ intro: text.includes('<calli-personal-router>'), profile: text.includes('<calli-personal-profile>') });
     if (command === '把早报改到八点半') {
       if (!text.includes('只有人在当前对话里开口要求，才能改')) throw new Error('missing settings permission rule');

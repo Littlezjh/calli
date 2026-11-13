@@ -102,13 +102,13 @@ export function RunControls({ api, run, state }: { api: Api; run: ProactiveRun; 
     </form>
   </div>;
   const label = (control: Exclude<typeof controls[number], 'diff'>) => {
-    if (control === 'dismiss') return t(run.needsRepo ? 'proactive.declineRepo' : run.reason === 'done' ? 'proactive.notDone' : 'proactive.stopWaiting');
+    if (control === 'dismiss') return t(run.kind === 'dispatch' ? 'proactive.noThanks' : run.needsRepo ? 'proactive.declineRepo' : run.reason === 'done' ? 'proactive.notDone' : 'proactive.stopWaiting');
     return t(`proactive.${control}`);
   };
   return <>
     <div className="desk-card-actions">{controls.map(control => control === 'diff'
       ? <button key={control} className="ghost" onClick={() => setViewing(true)}>{t('proactive.viewChanges')}</button>
-      : <button key={control} className={control === 'merge' ? 'primary' : 'ghost'} disabled={Boolean(pending)} aria-busy={pending === control} onClick={() => { if (control === 'discard') setConfirming(true); else state.act(run, control); }}>{label(control)}</button>)}
+      : <button key={control} className={control === 'merge' || control === 'start' ? 'primary' : 'ghost'} disabled={Boolean(pending)} aria-busy={pending === control} onClick={() => { if (control === 'discard') setConfirming(true); else state.act(run, control); }}>{label(control)}</button>)}
     </div>
     {viewing && <DiffDialog api={api} run={run} onClose={() => setViewing(false)} />}
     {confirming && createPortal(<Dialog title={t('proactive.discardTitle')} message={t('proactive.discardHint')} confirmLabel={t('proactive.discard')} danger onCancel={() => setConfirming(false)} onConfirm={() => { setConfirming(false); state.act(run, 'discard'); }} />, document.body)}
@@ -139,7 +139,7 @@ export function ProactiveCard({ api, run, state, style }: { api: Api; run: Proac
   </article>;
 }
 
-function RunSummary({ run }: { run: ProactiveRun }) {
+export function RunSummary({ run }: { run: ProactiveRun }) {
   if (run.status === 'waiting') return <p>{t('proactive.waitingFor', run.wait?.what || run.line || run.summary || t('proactive.service'))}{run.wakeAt && Number.isFinite(Date.parse(run.wakeAt)) && <> · {t('proactive.checkAt', formatDateTime(run.wakeAt, { hour: '2-digit', minute: '2-digit', hour12: false }))}</>}</p>;
   if (run.status === 'asking' && run.reason !== 'done' && run.question?.text) return null;
   const summary = run.status === 'asking' ? run.line || run.summary : run.summary;

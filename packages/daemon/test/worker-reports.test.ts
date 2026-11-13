@@ -270,3 +270,27 @@ test('stage: a waiting thread and a matter waiting on the person are answer; wai
     assert.equal(await h.stageOf(newest), 'idle', 'only the most recently active thread decides');
   } finally { await h.close(); }
 });
+
+test('dispatch results reach the Router with or without a matter, with progress kept in chat', async () => {
+  const h = await setup(); try {
+    for (const [task, stage, linked] of [['dispatch-worker-progress', 'progress', false], ['dispatch-worker-review', 'review', false], ['dispatch-worker-answer', 'answer', true], ['dispatch work fail', 'blocked', false]] as const) {
+      const matter = linked ? h.personal.create({ text: '派发事项' }) : null;
+      const run = h.personal.proactive.proposeDispatch({ agent: 'pi', cwd: h.cwd, task, title: task, matterId: matter?.id ?? '' });
+      const count = h.routerTurns().length;
+      const started = await h.personal.proactive.startDispatch(run.id);
+      await settle(() => h.routerTurns().length === count + 1);
+      const turn = h.routerTurns().at(-1)!;
+      const data = reported(turn.data.text);
+      assert.equal(data.threadId, started.threadId); assert.equal(data.matterId, matter?.id ?? ''); assert.equal(data.stage, stage);
+      assert.equal(data.title, matter?.text ?? task);
+      assert.doesNotMatch(String(turn.data.text), /^<calli-context>\n/);
+      assert.equal(turn.data.personalOrigin, undefined);
+      if (stage === 'answer') assert.equal(data.question, '请选择 A 还是 B？');
+      if (stage === 'blocked') assert.equal(data.pushed, true);
+      await settle(() => h.personal.router.status().status === 'idle');
+      const notices = h.store.listTurnEvents(turn.threadId, turn.turnId!).filter(event => event.type === 'agent.notice');
+      assert.equal(notices.length, stage === 'review' || stage === 'answer' ? 1 : 0);
+      await assert.rejects(h.personal.command(turn.threadId, { op: 'dispatch', agent: 'pi', cwd: h.cwd, task: 'Unrequested task', now: true }), /current turn/);
+    }
+  } finally { await h.close(); }
+});

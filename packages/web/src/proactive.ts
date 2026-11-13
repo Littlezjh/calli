@@ -11,7 +11,7 @@ export const removeRepo = (settings: ProactiveSettings, path: string): Proactive
 /** What the person can still do about a run: say an observation was right, decide on sandbox work, clear away a failed attempt. */
 export type RunControl = 'diff' | ProactiveAction;
 export function runControls(run: ProactiveRun): RunControl[] {
-  if (run.status === 'asking') return run.reason === 'done' ? ['close-matter', 'dismiss'] : ['answer'];
+  if (run.status === 'asking') return run.kind === 'dispatch' ? ['start', 'dismiss'] : run.reason === 'done' ? ['close-matter', 'dismiss'] : ['answer'];
   if (run.status === 'waiting') return ['dismiss'];
   if (run.status === 'observed' && run.needsRepo) return ['allow-repo', 'dismiss'];
   if (run.status === 'observed') return ['approve'];
@@ -21,6 +21,22 @@ export function runControls(run: ProactiveRun): RunControl[] {
   if (run.status === 'failed' && run.branch) return ['discard'];
   return [];
 }
+
+/** What a refused `start` says, from the run the daemon sent back with the 409. Jumping is only for
+ *  one that has truly begun; a concurrent start still on its way keeps its button busy instead. */
+export type StartConflict = { threadId: string } | 'starting';
+export function startConflict(details: Record<string, unknown>): StartConflict | null {
+  const run = details.run;
+  if (!run || typeof run !== 'object') return null;
+  const candidate = run as ProactiveRun;
+  if (candidate.kind !== 'dispatch') return null;
+  if (candidate.status === 'answered' && typeof candidate.threadId === 'string' && candidate.threadId) return { threadId: candidate.threadId };
+  return candidate.status === 'asking' && details.starting === true ? 'starting' : null;
+}
+
+/** The runs a conversation panel pins at its top: only what asks the person, newest first. */
+export const askingPins = (runs: ProactiveRun[] | null): ProactiveRun[] =>
+  (runs ?? []).filter(run => run.status === 'asking').sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
 
 /** Sandbox work in hand or waiting for a decision comes before the note; materials and observations sit quietly after it. */
 export const isDecision = (run: ProactiveRun): boolean => run.status === 'asking' || run.status === 'waiting' || (run.status === 'observed' && Boolean(run.needsRepo)) || (run.kind === 'sandbox' && run.status !== 'observed' && run.status !== 'approved');

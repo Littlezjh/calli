@@ -2473,7 +2473,7 @@ export class ThreadManager {
       const tail = queue.at(-1);
       const merged = input.coalesce && tail?.coalesce && !tail.error ? mergeBatches(tail.coalesce, input.coalesce) : null;
       if (tail && merged) {
-        this.setQueue(threadId, [...queue.slice(0, -1), { ...tail, text: merged.body + merged.context, coalesce: merged, ...batchShape(merged.parts) }]);
+        this.setQueue(threadId, [...queue.slice(0, -1), { ...tail, text: merged.body + merged.context, coalesce: merged, fromUser: merged.parts.some(part => part.kind === 'person'), ...batchShape(merged.parts) }]);
         return { queued: true, id: tail.id };
       }
       if (queue.length >= MAX_QUEUED) throw new HttpError(409, `at most ${MAX_QUEUED} messages can wait in a thread`);
@@ -2519,7 +2519,10 @@ export class ThreadManager {
     }
     this.git.assertTurnAllowed(thread.cwd);
     const { stored, images } = this.attachments.save(threadId, rawImages);
-    const promptText = text + this.attachments.videoNote(threadId, storedVideos);
+    const personalHuman = this.personal.router.status().threadId === threadId && input.fromUser === true
+      && !delivery && !input.scheduled && !input.review && !input.proactive && !input.autoContinuation;
+    const context = personalHuman && !slashCommand ? this.personal.router.context(threadId) : null;
+    const promptText = (context?.text ?? '') + text + this.attachments.videoNote(threadId, storedVideos);
     // Internal callers may attach protocol context. Only the person's words (or a channel
     // summary) belong in the conversation, its queue, and later replay/continuation views.
     const displayText = delivery?.displayText ?? input.displayText ?? originalText.split('\n\n[指定协作对象]')[0];
@@ -2531,6 +2534,7 @@ export class ThreadManager {
         delivery?.claim();
         this.references.grant(threadId, reference.references);
         beforeStart?.(turnId);
+        context?.commit();
         // New work reopens a thread the person had marked done.
         if (thread.doneAt && !slashCommand) this.store.setThreadProgress(threadId, { doneAt: null });
         if (writing?.edited) {
@@ -2555,6 +2559,7 @@ export class ThreadManager {
           workMode: thread.workMode ?? 'execute',
           ...(delivery ? { coordination: delivery.source } : {}),
           ...(fromUser ? { fromUser: true } : {}),
+          ...(personalHuman ? { personalOrigin: 'person' } : {}),
           ...(promptText !== displayText ? { displayText } : {}),
           ...(stored.length ? { images: stored } : {}),
           ...(storedVideos.length ? { videos: storedVideos } : {}),
@@ -2895,6 +2900,12 @@ export class ThreadManager {
       this.dispatchingQueues.delete(threadId);
       this.startNextQueued(threadId);
     });
+  }
+
+  /** A cancelled round cannot authorize new work while its process is still stopping. */
+  activeTurnId(threadId: string): string | null {
+    const run = this.running.get(threadId);
+    return run && !run.cancelRequested ? run.turnId : null;
   }
 
   /**

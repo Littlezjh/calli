@@ -346,6 +346,7 @@ export function createHttpServer(deps: HttpDeps): Server {
     if (parts[1] === 'personal' && parts[2] === 'proactive' && parts[3] === 'runs' && parts[4] && parts.length === 6) {
       if (parts[5] === 'diff' && method === 'GET') return sendJson(res, 200, await manager.personal.proactive.diff(parts[4]));
       if (['merge', 'discard', 'revert'].includes(parts[5]) && method === 'POST') return sendJson(res, 200, await manager.personal.proactive.act(parts[4], parts[5] as 'merge' | 'discard' | 'revert'));
+      if (parts[5] === 'start' && method === 'POST') return sendJson(res, 200, await manager.personal.proactive.startDispatch(parts[4]));
       if (parts[5] === 'answer' && method === 'POST') return sendJson(res, 200, await manager.personal.proactive.answer(parts[4], (await readJson(req))?.answer));
       if (parts[5] === 'close-matter' && method === 'POST') return sendJson(res, 200, manager.personal.proactive.closeMatter(parts[4]));
       if (parts[5] === 'dismiss' && method === 'POST') return sendJson(res, 200, manager.personal.proactive.dismiss(parts[4]));

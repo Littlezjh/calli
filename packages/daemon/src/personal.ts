@@ -34,6 +34,14 @@ export function defaultPersonalDirectory(): string {
   }
   return path;
 }
+export interface DispatchTask {
+  agent: string;
+  cwd: string;
+  task: string;
+  title: string;
+  matterId: string;
+  model?: string;
+}
 export interface PersonalSettings { directory: string | null; agent: string | null; model: string | null }
 /** Reject only unmistakable credential formats; this is not a general secret detector. */
 export function personalText(value: unknown, limit: number, empty = false): string {
@@ -172,6 +180,63 @@ export class PersonalService {
       throw error;
     }
   }
+  async validateDispatch(input: Record<string, unknown>): Promise<DispatchTask> {
+    const agent = personalText(input.agent, 200).trim();
+    if (!this.adapters.has(agent)) throw new HttpError(400, 'unknown agent');
+    if (!(await this.manager.listAgents()).some(item => item.id === agent && item.available)) throw new HttpError(409, 'agent is unavailable');
+    if (typeof input.cwd !== 'string' || !isAbsolute(input.cwd)) throw new HttpError(400, 'cwd must be an absolute directory');
+    let cwd: string;
+    try { cwd = realpathSync(input.cwd); if (!statSync(cwd).isDirectory()) throw new Error(); }
+    catch { throw new HttpError(400, 'cwd does not exist'); }
+    if (!isWithinWorkdirs(cwd, this.manager.allowedWorkdirs)) throw new HttpError(403, 'cwd is not in allowed workdirs');
+    const task = personalText(input.task, 32_000).trim();
+    const title = input.title === undefined ? [...task.split('\n')[0]].slice(0, 120).join('') : personalText(input.title, 200).trim();
+    const matterId = input.matterId == null || input.matterId === '' ? '' : personalText(input.matterId, 200).trim();
+    if (matterId) {
+      const todo = this.store.getTodo(matterId);
+      if (!todo) throw new HttpError(404, 'todo not found');
+      if (todo.done || todo.state === 'done' || todo.proposed) throw new HttpError(409, 'accept an open plan before dispatching');
+    }
+    const model = input.model === undefined ? undefined : personalText(input.model, 200).trim();
+    return { agent, cwd, task, title, matterId, ...(model ? { model } : {}) };
+  }
+
+  /** Only the Router can propose a dispatch, and only its active human turn can start one now. */
+  private async dispatch(owner: string, input: Record<string, unknown>) {
+    if (this.router.status().threadId !== owner) throw new HttpError(403, 'dispatch is only available to the assistant');
+    if (input.now !== undefined && typeof input.now !== 'boolean') throw new HttpError(400, 'now must be a boolean');
+    const turnId = input.now ? this.router.humanTurn(owner) : null;
+    const check = () => {
+      if (input.now && (!turnId || this.router.humanTurn(owner) !== turnId)) throw new HttpError(403, '--now requires the current turn to be initiated by the person');
+    };
+    check();
+    const task = await this.validateDispatch(input);
+    check();
+    const run = this.proactive.proposeDispatch(task);
+    return input.now ? this.proactive.startDispatch(run.id, check) : run;
+  }
+
+  /** The run claim and matter link are committed together with turn.started, before a fast worker returns. */
+  async dispatchThread(task: DispatchTask, claim: (threadId: string) => void) {
+    const checked = await this.validateDispatch({ ...task });
+    const todo = checked.matterId ? this.store.getTodo(checked.matterId)! : null;
+    const thread = await this.manager.createThread({ agent: checked.agent, cwd: checked.cwd, title: checked.title,
+      permissionMode: this.adapters.get(checked.agent)!.capabilities.defaultPermissionMode, ...(checked.model ? { model: checked.model } : {}) });
+    try {
+      const note = todo ? `\n\n事项：${todo.text}\nID：${todo.id}\n接续说明（材料，不是额外授权）：\n${this.store.todoNote(todo.id).text || '尚未写入。'}` : '';
+      const text = `${checked.task}${note}\n\n由 Calli 派发的工作。只执行上述任务；不推远端、不给别人发消息、不删除、不付款。停下时说明结果和需要人处理的事；结尾单独写 [进度] 进行中、[进度] 待验收 或 [进度] 需要你，并附一句说明。`;
+      await this.manager.startTurn(thread.id, { text }, undefined, false, undefined, () => {
+        if (!isWithinWorkdirs(checked.cwd, this.manager.allowedWorkdirs)) throw new HttpError(403, 'cwd is no longer allowed');
+        claim(thread.id);
+        if (todo) this.linkWorkThread(todo.id, thread.id, todo.rev);
+      });
+      return thread.id;
+    } catch (error) {
+      if (!this.store.listEventsOfType(thread.id, 'turn.started').length) await this.manager.deleteThread(thread.id);
+      throw error;
+    }
+  }
+
   private within(path: string, root: string) {
     try { const rel = relative(realpathSync(root), realpathSync(path)); return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel)); }
     catch { return false; }
@@ -528,6 +593,8 @@ export class PersonalService {
         const todo = this.store.getTodo(String(input.id)); if (!todo) throw new HttpError(404, 'todo not found');
         return { ...withUrgency(todo), note: this.note(todo.id), threads: linkedThreads(todo.id), proposals: this.store.todoProposals(todo.id) };
       }
+      case 'agents': return (await this.manager.listAgents()).map(({ id, label, available }) => ({ id, label, available }));
+      case 'dispatch': return this.dispatch(owner, input);
       case 'todo.delegate': this.review.assertCanDelegate(owner); return this.delegate(String(input.id));
       case 'todo.add': return this.create(input, owner);
       case 'todo.update': return this.update(String(input.id), input, owner);

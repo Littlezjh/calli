@@ -8,7 +8,8 @@ const json = async (daemon, path, method = 'GET', body) => {
   return response.status === 204 ? null : response.json();
 };
 const openDesk = async page => {
-  await page.evaluate(() => { location.hash = '#/desk'; });
+  // The desk is the drawer's own tab on the assistant's home; its address opens it directly.
+  await page.evaluate(() => { location.hash = '#/desk/desk'; });
   await page.locator('.desk-matrix').waitFor();
   await page.getByRole('button', { name: '按进度', exact: true }).click();
   await page.locator('.desk-lanes').waitFor();
@@ -49,7 +50,7 @@ test('the desk loads notes on demand, saves lanes, and returns keyboard focus af
     await page.getByRole('button', { name: '按时间', exact: true }).click();
     await page.reload();
     await page.locator('.desk-lanes.time').waitFor();
-    assert.equal(new URL(page.url()).hash, '#/desk');
+    assert.equal(new URL(page.url()).hash, '#/desk/desk');
     assert.deepEqual(errors, []);
   } finally { await browser.close(); await daemon.stop(); }
 });
@@ -100,8 +101,7 @@ test('by weight is the default view: a matter moves as it is marked and pinned, 
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     const errors = []; page.on('pageerror', error => errors.push(error.message));
     await openUi(page, daemon);
-    await page.evaluate(() => { location.hash = '#/desk'; });
-    await page.locator('.desk-matrix').waitFor();
+    await page.evaluate(() => { location.hash = '#/desk/desk'; });
     await page.locator('#desk-stack-later').click();
     await page.locator(`#desk-pile-${todo.id}`).click();
     await page.locator('.desk-source-card a[href="https://example.test/m1"]').waitFor();
@@ -130,7 +130,7 @@ test('private settings: Cancel keeps Lark and brief changes out, Save puts them 
     await json(daemon, '/api/personal/channels/lark', 'PUT', { ...before, enabled: true });
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     await openUi(page, daemon);
-    await page.evaluate(() => { location.hash = '#/desk'; });
+    await page.evaluate(() => { location.hash = '#/desk/desk'; });
     const open = async () => { await page.locator('.desk-lark button').click(); await page.locator('.brief-settings').waitFor(); };
     await open();
     const brief = page.getByRole('switch', { name: '早晚报' });
@@ -161,7 +161,7 @@ test('what I care about: written by hand from the private settings, and a change
     assert.equal(first.isTemplate, true);
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     await openUi(page, daemon);
-    await page.evaluate(() => { location.hash = '#/desk'; });
+    await page.evaluate(() => { location.hash = '#/desk/desk'; });
     await page.locator('.desk-lark button').click();
     await page.locator('.profile-open', { hasText: '写下' }).click();
     const field = page.locator('.profile-field');

@@ -615,7 +615,14 @@ export interface ProactiveRun {
   matterId: string;
   /** The session's title, for a card that has no matter to name it. */
   threadTitle?: string;
-  kind: 'prepare' | 'sandbox' | 'advance';
+  kind: 'prepare' | 'sandbox' | 'advance' | 'dispatch';
+  /** Dispatch only: the agent, directory and task proposed, as the card shows them. */
+  agent?: string;
+  cwd?: string;
+  task?: string;
+  /** Dispatch only: defaults to the task's first line, for a card with no matter to name it. */
+  title?: string;
+  model?: string;
   variant?: 'deadline' | 'plan';
   needsRepo?: true;
   turnId?: string;
@@ -642,7 +649,7 @@ export interface ProactiveRun {
   discardReason?: string;
 }
 
-export type ProactiveAction = 'merge' | 'discard' | 'revert' | 'approve' | 'answer' | 'close-matter' | 'dismiss' | 'allow-repo';
+export type ProactiveAction = 'merge' | 'discard' | 'revert' | 'approve' | 'answer' | 'close-matter' | 'dismiss' | 'allow-repo' | 'start';
 
 /** Where a matter stands, derived by the daemon. Null when nothing is going on with it. */
 export type TodoStage = 'answer' | 'review' | 'blocked' | 'working' | 'idle';
