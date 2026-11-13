@@ -1,3 +1,4 @@
+import type { PreviewNote, PreviewPick } from './preview-notes';
 import type { ContextReference } from './context-references';
 import type { GitStatus, GitLog, GitCommitFiles, GitDiff, GitOperation } from '../../daemon/src/git';
 export type { GitStatus, GitLog, GitCommitFiles, GitDiff, GitOperation, GitFile, GitCommit } from '../../daemon/src/git';
@@ -10,14 +11,8 @@ export interface GeneralSettings {
   /** Shared automatic archive window. Null means conversations stay in the sidebar. */
   autoArchiveDays: AutoArchiveDays;
 }
-export interface DraftModelPreference {
-  /** Null leaves the agent's own default model in charge. */
-  model: string | null;
-  /** Null leaves the agent's own/default thinking effort in charge. */
-  effort: string | null;
-  /** Null leaves the agent's own/default speed in charge. */
-  speed: string | null;
-}
+import type { DraftModelPreference, ModelPreferencePatch } from '../../daemon/src/model-preferences';
+export type { DraftModelPreference } from '../../daemon/src/model-preferences';
 export interface UserQuestion { id: string; question: string; header?: string; options: Array<{ value: string; label: string; description?: string }>; multiple?: boolean; freeText?: boolean; required?: boolean }
 export type UserInputAnswer = { answers: Record<string, string[]> } | { cancelled: true };
 import type { UsageReport, AgentDiagnostic, CostReport, DailyUsage } from './observability';
@@ -1248,7 +1243,7 @@ export class Api {
   exploreStatus(): Promise<ExploreStatus | null> { return this.request('GET', '/api/personal/explore'); }
   cancelExplore(): Promise<{ cancelled: boolean }> { return this.request('DELETE', '/api/personal/explore'); }
   draftModelPreferences(): Promise<Record<string, DraftModelPreference>> { return this.request('GET', '/api/draft-model-preferences'); }
-  saveDraftModelPreferences(value: Record<string, DraftModelPreference>, opts: { keepalive?: boolean } = {}): Promise<Record<string, DraftModelPreference>> { return this.request('PUT', '/api/draft-model-preferences', value, opts); }
+  patchDraftModelPreference(agent: string, patch: ModelPreferencePatch): Promise<DraftModelPreference> { return this.request('PATCH', '/api/draft-model-preferences', { agent, ...patch }, { keepalive: true }); }
   personalSettings(): Promise<PersonalSettings> { return this.request('GET', '/api/personal/settings'); }
   savePersonalSettings(value: PersonalSettings): Promise<PersonalSettings> { return this.request('PUT', '/api/personal/settings', value); }
   personalBrief(kind: 'morning' | 'evening'): Promise<PersonalBrief | null> { return this.request('GET', `/api/personal/brief?kind=${kind}`); }
@@ -1701,6 +1696,7 @@ export class Api {
   updateThread(
     threadId: string,
     updates: {
+      rememberModelChoice?: boolean;
       workMode?: WorkMode;
       speed?: string | null;
       title?: string;
@@ -1781,6 +1777,11 @@ export class Api {
   previewLink(threadId: string, path: string): Promise<{ url: string }> {
     return this.request('GET', `/api/threads/${threadId}/preview-link?path=${encodeURIComponent(path)}`);
   }
+
+  previewNotes(threadId: string, page: string): Promise<PreviewNote[]> { return this.request('GET', `/api/threads/${threadId}/preview-notes?page=${encodeURIComponent(page)}`); }
+  addPreviewNote(threadId: string, page: string, pick: PreviewPick, comment: string): Promise<PreviewNote> { return this.request('POST', `/api/threads/${threadId}/preview-notes`, { page, ...pick, comment }); }
+  removePreviewNote(threadId: string, id: string): Promise<void> { return this.request('DELETE', `/api/threads/${threadId}/preview-notes/${id}`); }
+  sendPreviewNotes(threadId: string, page: string, ids: string[]): Promise<{ turnId: string } | { queued: true; id: string }> { return this.request('POST', `/api/threads/${threadId}/preview-notes/send`, { page, ids }); }
 
   /** Creates an empty successor in the same directory and worktree, without starting an agent turn. */
   handoverSettings(): Promise<HandoverSettings> { return this.request('GET', '/api/handover-settings'); }

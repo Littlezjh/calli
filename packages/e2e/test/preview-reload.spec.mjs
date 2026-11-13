@@ -19,7 +19,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const idle = async (id) => {
   for (let i = 0; i < 200; i++) {
     const t = await (await api(daemon, `/api/threads/${id}`)).json();
-    if (t.status !== 'running') return t;
+    if (t.status !== 'running' && !['checking', 'preparing', 'countdown'].includes(t.autoHandover?.state) && !t.queued?.length) return t;
     await sleep(100);
   }
   throw new Error(`thread ${id} is still running`);
@@ -53,7 +53,7 @@ test('the preview keeps its frame while the thread streams events; refresh alone
 
     // A thread that keeps talking to the page: every turn re-renders the app under the dialog.
     for (let i = 1; i <= 5; i++) {
-      await post(`/api/threads/${thread.id}/turns`, { text: `第 ${i} 轮` });
+      await post(`/api/threads/${thread.id}/turns`, { text: `第 ${i} 轮`, queue: true });
       await idle(thread.id);
     }
     await page.waitForFunction(() => document.body.innerText.includes('echo:第 5 轮'));

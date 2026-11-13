@@ -40,7 +40,7 @@ export function AutoHandoverNotice({ api, thread, agents }: { api: Api; thread: 
   // A circle for work under way; once the move has begun it can no longer be called off.
   const calloff = busy && (state.state === 'countdown' || !state.step || state.step === 'summary');
   const text = state.state === 'countdown' ? t('auto.countdown', label, Math.max(0, Math.ceil((Date.parse(state.deadline!) - now) / 1000)))
-    : state.state === 'preparing' ? t(state.step ? `auto.step.${state.step}` : 'auto.preparing') : state.state === 'stopped' ? t('auto.stopped') : t('auto.failed');
+    : state.state === 'preparing' ? t(state.step ? `auto.step.${state.step}` : 'auto.preparing') : state.state === 'stopped' ? (label ? t('auto.targetGone', label) : t('auto.stopped')) : t('auto.failed');
   return <div className={`auto-notice${danger ? ' is-danger' : ''}`} role={danger ? 'alert' : 'status'}>
     <span className="rule" />
     {busy ? <span className="spinner" aria-hidden="true" /> : <IconFork size={14} />}

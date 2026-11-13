@@ -20,13 +20,16 @@ test('the merged list shows every machine, opens a thread on its own machine, an
   let browser;
   let nodeUp = true;
   try {
-    await (await api(node, '/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: node.workdir, title: 'devbox上的线程' }) })).json();
+    const remoteThread = await (await api(node, '/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: node.workdir, title: 'devbox上的线程' }) })).json();
+    await api(node, `/api/threads/${remoteThread.id}/turns`, { method: 'POST', body: JSON.stringify({ text: 'unread answer' }) });
+    await new Promise(resolve => setTimeout(resolve, 1500));
     await api(hub, '/api/threads', { method: 'POST', body: JSON.stringify({ agent: 'pi', cwd: hub.workdir, title: '本机的线程' }) });
     await linkDaemon(hub, node);
     const devboxId = (await (await api(hub, '/api/hosts')).json())[0].id;
     browser = await launchBrowser();
-    const open = async (mobile, colorScheme) => {
-      const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 1000 }, isMobile: mobile, hasTouch: mobile, colorScheme });
+    let savedState;
+    const open = async (mobile, colorScheme, storageState) => {
+      const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 1000 }, isMobile: mobile, hasTouch: mobile, colorScheme, storageState });
       const page = await context.newPage();
       const errors = [];
       page.on('pageerror', error => errors.push(String(error)));
@@ -52,6 +55,11 @@ test('the merged list shows every machine, opens a thread on its own machine, an
         assert.equal(await row(page, '本机的线程').locator('.thread-host').count(), 0, 'the hub\'s own machine carries no mark');
         assert.equal(await row(page, 'devbox上的线程').locator('.row-more').count(), 1, 'remote actions are available through their own machine proxy');
         if (shots) await page.screenshot({ path: join(shots, `merged-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`), animations: 'disabled' });
+
+        if (!savedState) {
+          assert.equal(await row(page, 'devbox上的线程').locator('.dot.unread').count(), 1);
+          savedState = await context.storageState();
+        }
 
         // Opening a thread elsewhere goes to that machine, the list still merged.
         await row(page, 'devbox上的线程').locator('.thread-item').click();
@@ -81,14 +89,19 @@ test('the merged list shows every machine, opens a thread on its own machine, an
     // devbox goes away: its threads stay listed from the last read, and the list says so.
     await node.stop();
     nodeUp = false;
-    for (const mobile of [false, true]) {
-      const { context, page } = await open(mobile, 'light');
+    for (const mobile of [false, true]) for (const colorScheme of ['light', 'dark']) {
+      const { context, page } = await open(mobile, colorScheme, savedState);
       try {
         await page.getByRole('tab', { name: '全部' }).click();
-        const note = page.locator('.merged-note');
-        await note.filter({ hasText: /devbox (连不上|读取失败)/ }).waitFor({ timeout: 60_000 });
+        const remote = row(page, 'devbox上的线程');
+        await remote.locator('.dot.offline').waitFor({ timeout: 60_000 });
+        assert.equal(await remote.locator('.dot').count(), 1, 'offline and unread share exactly one right-side slot');
+        assert.equal(await remote.locator('.dot.unread').count(), 0);
+        assert.equal(await page.locator('.merged-note.offline').count(), 0);
+        assert.ok((await remote.locator('.dot.offline').getAttribute('aria-label')).includes('devbox'));
+        assert.ok((await remote.getAttribute('class')).includes('attention'), 'offline does not erase unread state');
         await row(page, '本机的线程').waitFor();
-        if (shots) await page.screenshot({ path: join(shots, `merged-down-${mobile ? 'phone' : 'desktop'}-light.png`), animations: 'disabled' });
+        if (shots) await page.screenshot({ path: join(shots, `merged-down-${mobile ? 'phone' : 'desktop'}-${colorScheme}.png`), animations: 'disabled' });
       } finally { await context.close(); }
     }
   } finally {

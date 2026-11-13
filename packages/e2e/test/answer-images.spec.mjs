@@ -36,10 +36,11 @@ test('an answer\'s pictures sit right after the passage that names them, desktop
         const answer = page.locator('.row.assistant');
         await answer.locator('.file-image img').nth(1).waitFor();
         // Each picture is in the list item that names it, and the closing line comes after both.
-        for (const [name, path] of [['亮色', light], ['深色', dark]]) {
+        for (const name of ['亮色', '深色']) {
           const item = answer.locator('li', { hasText: name });
           assert.equal(await item.locator('.file-image').count(), 1);
-          assert.equal(await item.locator('.file-image figcaption').getAttribute('title'), path);
+          assert.equal(await item.locator('.file-image figcaption').count(), 0, 'no path below the picture');
+          assert.ok(await item.locator('.file-image img').evaluate(img => img.complete && img.naturalWidth > 0));
         }
         assert.equal(await answer.locator('.markdown > .file-images').count(), 0, 'nothing is left over at the bottom');
         const order = await answer.evaluate(el => [...el.querySelectorAll('.file-image, p')].map(n => n.matches('.file-image') ? 'image' : n.textContent.includes('看完') ? 'end' : 'text'));

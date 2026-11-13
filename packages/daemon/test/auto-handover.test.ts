@@ -10,7 +10,7 @@ import { ThreadManager } from '../src/threads.js';
 import { AttachmentStore } from '../src/attachments.js';
 import { AgyAdapter } from '../src/adapters/agy.js';
 import { TraexAcpAdapter } from '../src/adapters/traex.js';
-import type { AgentAdapter } from '../src/adapters/types.js';
+import type { AgentAdapter, PlanQuota } from '../src/adapters/types.js';
 import { CoordinationManager } from '../src/coordination.js';
 import { createHttpServer } from '../src/http.js';
 import { freshQuota, modelWindows } from '../src/auto-handover.js';
@@ -286,6 +286,32 @@ test('the default order skips a bridge without a plan; an order that names it st
     h.manager.autoHandover.configure({ enabled: true, threshold: 90, orders: { agy: [{ agent: 'bridge' }] } });
     assert.deepEqual((await h.manager.autoHandover.targets(h.thread.id)).map(t => t.agent), ['bridge']);
   } finally { await h.close(); }
+});
+
+test('a stale self-report is read again, and an account whose usage cannot be read is not ruled out', async () => {
+  const h = await setup();
+  try {
+    h.manager.autoHandover.configure({ enabled: true, threshold: 90, orders: {} });
+    writeFileSync(join(h.dir, 'agy2.json'), JSON.stringify({ 'Gemini Models': 95 }));
+    const observe = (agent: string, usedPercent: number) => (h.manager as unknown as { observeQuota(agent: string, quota: PlanQuota): void })
+      .observeQuota(agent, { checkedAt: new Date(Date.now() - 60_000).toISOString(), windows: [{ label: '7D', usedPercent }] });
+    // agy3 told its usage a minute ago while answering: too old to decide on, too recent to be probed
+    // unasked. The handover reads it again instead of passing it over.
+    observe('agy3', 50);
+    assert.deepEqual((await h.manager.autoHandover.targets(h.thread.id)).map(t => t.agent), ['agy3']);
+    // Its usage endpoint fails now: the last reading stands, and only a real limit rules it out.
+    h.adapters.get('agy3')!.fetchQuota = async () => { throw new Error('usage endpoint down'); };
+    assert.deepEqual((await h.manager.autoHandover.targets(h.thread.id)).map(t => t.agent), ['agy3']);
+    observe('agy3', 95);
+    assert.deepEqual(await h.manager.autoHandover.targets(h.thread.id), []);
+  } finally { await h.close(); }
+  const fresh = await setup();
+  try {
+    fresh.manager.autoHandover.configure({ enabled: true, threshold: 90, orders: {} });
+    // Never read at all: an account that cannot be read is not taken for a bridge without a plan.
+    fresh.adapters.get('agy2')!.fetchQuota = async () => { throw new Error('usage endpoint down'); };
+    assert.deepEqual((await fresh.manager.autoHandover.targets(fresh.thread.id)).map(t => t.agent), ['agy2']);
+  } finally { await fresh.close(); }
 });
 
 test('a hub that never saved the setting starts with it on, and a choice made later stays', async () => {

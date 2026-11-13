@@ -3,7 +3,8 @@ import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 
-export const help = `calli references ID [--before CURSOR --turns N | --turn TURN_ID --offset N [--tool TOOL_ID] | --tools TURN_ID --offset N]
+export const help = `calli preview-note ID
+calli references ID [--before CURSOR --turns N | --turn TURN_ID --offset N [--tool TOOL_ID] | --tools TURN_ID --offset N]
 calli notify --text-file FILE|-
 calli tools search [QUERY] [--json]
 calli tools skill
@@ -161,4 +162,9 @@ export async function referencesMain(args) {
     input[key] = rest[i + 1];
   }
   console.log(JSON.stringify(await transport('/command', input)));
+}
+
+export async function previewNoteMain(args) {
+  if (args.length !== 1) throw new Error('usage: calli preview-note ID');
+  console.log(JSON.stringify(await transport('/command', { op: 'preview.note', id: args[0] })));
 }

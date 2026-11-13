@@ -81,6 +81,9 @@ export const PDF_FILE = /\.pdf$/i;
 export type LinkTarget =
   /** An address on the web: opens in a tab of its own, so the hub stays where it is. */
   | { kind: 'web'; url: string }
+  /** Another thread of this hub, written as `thread://<id>`. The id may be a short prefix; where
+   *  the whole thread is found is decided where it is opened, so an archived thread links too. */
+  | { kind: 'thread'; id: string }
   /** A file on the agent's host. The browser cannot go there; `path` is what the daemon is asked for. */
   | { kind: 'file'; path: string }
   /** A place on this page, such as a footnote. */
@@ -98,6 +101,12 @@ export function linkTarget(href: string): LinkTarget {
   if (!raw) return { kind: 'none' };
   if (raw.startsWith('#')) return { kind: 'anchor' };
   if (/^(?:https?:\/\/|mailto:|tel:)/i.test(raw)) return { kind: 'web', url: raw };
+  if (/^thread:\/\//i.test(raw)) {
+    // An agent names another conversation like this; an empty or bare-slash rest is not a thread.
+    const id = raw.slice('thread://'.length).replace(/\/+$/, '').trim();
+    if (id) return { kind: 'thread', id };
+    return { kind: 'none' };
+  }
   const isFileUrl = /^file:\/\//i.test(raw);
   // Anything else with a scheme is not ours to follow. `a.ts:12` is a path with a line number, not a scheme.
   if (!isFileUrl && /^(?:[a-z][a-z0-9+.-]*:\/\/|(?:javascript|vbscript|data|blob):)/i.test(raw)) return { kind: 'none' };

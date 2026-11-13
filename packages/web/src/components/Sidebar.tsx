@@ -121,7 +121,7 @@ interface Props {
 
 /** In the merged list, the machine a row's thread is on when that is not the hub's own, and how to open it if it is not the one on screen. */
 /** `agents`: that machine's, by id, when the row is another machine's; null while not known. */
-interface Elsewhere { label?: string; open?: () => void; agents?: Map<string, AgentMarkInfo> | null }
+interface Elsewhere { label?: string; offline?: string; open?: () => void; agents?: Map<string, AgentMarkInfo> | null }
 
 /** Where a menu opened from a "more" button should appear: just under the button. */
 function below(e: MouseEvent<HTMLElement>): [number, number] {
@@ -249,6 +249,7 @@ export function Sidebar({
   const row = (thread: Thread, title = thread.title, preview = thread.preview, chain?: Thread[], on?: Elsewhere) => {
     const open = on?.open;
     const mark = threadMark(thread, thread.id === selectedId);
+    const offline = on?.offline ?? (!on && hostDown ? t('sidebar.hostDown') : undefined);
     // A row of another machine is marked by that machine's agents, not by the ones on screen.
     const theirs = on && on.agents !== undefined;
     const known = theirs ? on.agents !== null : agents !== null;
@@ -303,7 +304,7 @@ export function Sidebar({
             // An agent without a mark, or one this machine no longer has: its name, as before.
             <span className="agent-tag">{thread.agent}</span>
           ) : null}
-          {mark && <span className={`dot ${mark}`} role="img" aria-label={mark === 'waiting' ? waitingLabel(thread) : MARK_LABELS[mark]} title={mark === 'waiting' ? waitingLabel(thread) : MARK_LABELS[mark]} />}
+          {offline ? <span className="dot offline" role="img" aria-label={offline} title={offline} /> : mark && <span className={`dot ${mark}`} role="img" aria-label={mark === 'waiting' ? waitingLabel(thread) : MARK_LABELS[mark]} title={mark === 'waiting' ? waitingLabel(thread) : MARK_LABELS[mark]} />}
         </span>
       </button>
       {(
@@ -499,15 +500,16 @@ export function Sidebar({
     return sameDay ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
   };
   const labelOf = new Map((merged ?? []).map((s) => [s.hostId, s.label]));
+  const offlineOf = new Map((merged ?? []).filter(s => s.state === 'offline').map(s => [s.hostId, t('sidebar.merged.offline', s.label, clock(s.at))]));
   const agentsOf = new Map((merged ?? []).map((s) => [s.hostId, s.agents ? new Map(s.agents.map((a) => [a.id, a])) : null]));
   const groups = mergedModel ? (
     <nav className="thread-groups activity merged" aria-label={t('sidebar.merged.label')}>
-      {mergedModel.notes.map((n) => (
+      {mergedModel.notes.filter(n => n.state !== 'offline').map((n) => (
         <p key={n.hostId ?? ''} className={`merged-note ${n.state}`} role={n.state === 'loading' ? 'status' : undefined}>
-          {n.state === 'loading' ? t('sidebar.merged.loading', n.label) : n.state === 'offline' ? t('sidebar.merged.offline', n.label, clock(n.at)) : t('sidebar.merged.failed', n.label, clock(n.at))}
+          {n.state === 'loading' ? t('sidebar.merged.loading', n.label) : t('sidebar.merged.failed', n.label, clock(n.at))}
         </p>
       ))}
-      {mergedModel.count === 0 && !mergedModel.notes.some((n) => n.state === 'loading') && empty}
+      {mergedModel.count === 0 && !mergedModel.notes.some((n) => n.state === 'loading') && (offlineOf.size ? <p className="group-empty">{t('sidebar.hostDown')}</p> : empty)}
       {mergedModel.groups.map((g) => (
         <section key={g.key} className="thread-group" aria-label={g.label}>
           <div className="group-label">{g.label}</div>
@@ -516,6 +518,7 @@ export function Sidebar({
               {entry(thread, {
                 // The hub's own machine is the usual one; only threads elsewhere are named.
                 label: on === null ? undefined : labelOf.get(on),
+                offline: offlineOf.get(on),
                 open: on === hostId ? undefined : () => onOpenElsewhere?.(on, thread.id),
                 agents: on === hostId ? undefined : agentsOf.get(on) ?? null,
               })}

@@ -1274,7 +1274,7 @@ html.list-open body {
   padding: 0 5px;
   border-radius: var(--radius-xs);
   background: var(--hover);
-  color: var(--muted);
+  color: color-mix(in srgb, var(--text) 72%, var(--muted));
   font-size: 11px;
   font-weight: 400;
   line-height: 16px;
@@ -1607,13 +1607,16 @@ html.list-open body {
   text-underline-offset: 3px;
 }
 
-/* A link to a file on the agent's host: a click opens the picture or copies the path, it goes nowhere. */
-.markdown a.file-link {
+/* A link to a file on the agent's host: a click opens the picture or copies the path, it goes nowhere.
+   A link to another thread of this hub is the same kind of non-address: a click opens the thread. */
+.markdown a.file-link,
+.markdown a.thread-link {
   position: relative;
   cursor: pointer;
 }
 
-.markdown a.file-link:focus-visible {
+.markdown a.file-link:focus-visible,
+.markdown a.thread-link:focus-visible {
   outline: 2px solid var(--border-strong);
   outline-offset: 2px;
   border-radius: 3px;
@@ -13262,7 +13265,7 @@ body:has(.app.drawer-open) .pet { visibility: hidden; }
    z-index inside .app's stacking context, below her in the page's root context — so she steps
    away instead. A desk spread pile is modal too, but portaled out and below her on purpose. */
 /* Selection controls need the same clear space, including the inline note's submit button. */
-body:has(.app .dialog-scrim, .app .selection-menu) .pet { visibility: hidden; }
+body:has(.dialog-scrim, .preview-scrim, .app .selection-menu) .pet { visibility: hidden; }
 .pet-back { --pet-w: 68px; }
 /* Where she stands, as her own left edge and how high her feet ride above the visual viewport bottom:
    outside .app, so with a phone keyboard up she rides above it too. */
@@ -14802,3 +14805,31 @@ body:has(.settings-page, .action-sheet) .pet { display: none; }
 .git-spinning svg { animation: git-spin 1s linear infinite; }
 @keyframes git-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .git-spinning svg { animation: none; } }
+
+/* Connection and unread share the same slot; the unread bit stays on the thread. */
+.thread-meta .dot.offline {
+  background: transparent;
+  border: 1px solid var(--muted);
+  box-shadow: none;
+  animation: none;
+}
+
+.preview-annotation-bar { display: flex; flex: none; align-items: center; gap: 8px; min-height: 48px; padding: 8px 12px; border-top: 1px solid var(--border); }
+.preview-annotation-bar .ghost { display: inline-flex; align-items: center; justify-content: center; gap: 5px; white-space: nowrap; font-size: 13px; }
+.preview-annotation-bar .active { background: var(--active); color: var(--text); }
+.preview-annotation-status { flex: 1; min-width: 0; color: var(--muted); font-size: 12px; }
+.preview-annotation-status.error, .preview-note-editor [role='alert'] { color: var(--danger); }
+.preview-send-notes { white-space: nowrap; font-size: 13px; }
+.preview-notes-list { width: min(380px, calc(100vw - 24px)); padding: 12px; }
+.preview-note { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.preview-note small { display: block; color: var(--muted); font-size: 12px; }
+.preview-note p { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+.preview-note blockquote, .preview-note-editor blockquote { margin: 10px 0; padding: 10px; background: var(--hover); border-radius: var(--radius-sm); overflow-wrap: anywhere; font-size: 13px; }
+.preview-note-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.preview-note-editor textarea { width: 100%; min-height: 120px; padding: 12px; resize: vertical; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); color: var(--text); font: inherit; font-size: 16px; }
+@media (max-width: 700px) {
+  .preview-annotation-bar { flex-wrap: wrap; gap: 6px; }
+  .preview-annotation-status { order: 4; flex-basis: 100%; min-height: 18px; }
+  .preview-send-notes { margin-left: auto; }
+  .preview-actions .ghost { padding: 0 5px; }
+}

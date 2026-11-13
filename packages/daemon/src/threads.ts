@@ -1,3 +1,5 @@
+import { applyModelPreference, readModelPreferences, type DraftModelPreference, type DraftModelPreferences, type ModelPreferencePatch } from './model-preferences.js';
+import { PreviewNotes } from './preview-notes.js';
 import { ContextReferences } from './context-references.js';
 import { GitManager, gitWorktreeRoot } from './git.js';
 import { PersonalBriefSchedule } from './personal-brief-schedule.js';
@@ -80,17 +82,6 @@ export interface GeneralSettings {
   autoArchiveDays: AutoArchiveDays;
 }
 
-export interface DraftModelPreference {
-  /** Null means the agent should use its own default model. */
-  model: string | null;
-  /** Null means the agent should use its own/default thinking effort. */
-  effort: EffortLevel | null;
-  /** Null means the agent should use its own/default speed. */
-  speed: string | null;
-}
-
-export type DraftModelPreferences = Record<string, DraftModelPreference>;
-
 function storedAutoArchiveDays(value: unknown): AutoArchiveDays {
   return AUTO_ARCHIVE_DAY_OPTIONS.includes(value as never) ? value as AutoArchiveDays : null;
 }
@@ -102,10 +93,6 @@ function parseAutoArchiveDays(value: unknown): AutoArchiveDays {
 }
 
 const DRAFT_MODEL_PREFERENCES_KEY = 'draft.model.preferences';
-
-function hasDraftModelPreference(value: DraftModelPreference): boolean {
-  return Boolean(value.model || value.effort || value.speed);
-}
 
 /** What forking a thread can offer besides a copy in the same directory. */
 export interface ForkOptions {
@@ -382,6 +369,7 @@ export class ThreadManager {
   /** Where threads may work; directories can be added from the page while the hub runs. */
   readonly dirs: Workdirs;
   readonly references: ContextReferences;
+  readonly previewNotes: PreviewNotes;
   readonly autoHandover: AutoHandover;
   readonly autoCompact: AutoCompact;
   readonly personal: PersonalService;
@@ -400,6 +388,7 @@ export class ThreadManager {
   ) {
     this.dirs = Array.isArray(workdirs) ? new Workdirs(workdirs) : workdirs;
     this.references = new ContextReferences(store, this);
+    this.previewNotes = new PreviewNotes(store, this);
     this.injections = new Injections(store);
     this.autoHandover = new AutoHandover(store, this);
     this.quotaResume = new QuotaResume(store, this, this.autoHandover);
@@ -495,7 +484,7 @@ export class ThreadManager {
    * Plan usage of an agent instance. The probe costs a CLI run (claude's takes seconds), so the
    * answer is reused for a minute and concurrent callers share one run.
    */
-  agentQuota(agent: string, refresh = false): Promise<PlanQuota> {
+  agentQuota(agent: string, refresh = false, force = false): Promise<PlanQuota> {
     const adapter = this.adapters.get(agent);
     if (!adapter) throw new HttpError(404, `unknown agent: ${agent}`);
     if (!adapter.capabilities.quota || !adapter.fetchQuota) throw new HttpError(400, `${agent} has no plan usage to read`);
@@ -504,7 +493,7 @@ export class ThreadManager {
     // Even a refresh does not probe right after the agent said it: the usage endpoint can turn a
     // probe away, and it would not know more.
     const observed = this.observedQuotaAt.get(agent);
-    if (refresh && hit && observed !== undefined && Date.now() - observed < OBSERVED_FRESH_MS) return hit.value;
+    if (refresh && !force && hit && observed !== undefined && Date.now() - observed < OBSERVED_FRESH_MS) return hit.value;
     const value = adapter.fetchQuota().catch((err) => {
       // A failed probe is not worth caching; the next caller can try again right away.
       if (this.quotaCache.get(agent)?.value === value) this.quotaCache.delete(agent);
@@ -514,6 +503,15 @@ export class ThreadManager {
     void value.then(q => { this.lastGoodQuota.set(agent, { at: Date.now(), quota: q }); this.publishQuota(agent, q); }).catch(() => undefined);
     return value;
   }
+
+  /** Whether this instance has plan usage to read at all; a bridge to a third-party model has none. */
+  readsQuota(agent: string): boolean {
+    const adapter = this.adapters.get(agent);
+    return !!adapter?.capabilities.quota && !!adapter.fetchQuota;
+  }
+
+  /** The last reading that came through, however old; null when none ever did. */
+  lastQuota(agent: string): PlanQuota | null { return this.lastGoodQuota.get(agent)?.quota ?? null; }
 
   /** What the agent itself said while answering beats any probe: it feeds the same cache the
    *  probes fill, so decisions and the dashboard read one truth. */
@@ -1159,37 +1157,48 @@ export class ThreadManager {
   }
 
   async draftModelPreferences(): Promise<DraftModelPreferences> {
-    const stored = this.store.hubSetting<unknown>(DRAFT_MODEL_PREFERENCES_KEY, {});
-    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return {};
-    const out: DraftModelPreferences = {};
-    for (const [agent, value] of Object.entries(stored)) {
-      const preference = await this.sanitizeDraftModelPreference(agent, value);
-      if (preference) out[agent] = preference;
-    }
-    if (JSON.stringify(out) !== JSON.stringify(stored)) this.store.saveHubSetting(DRAFT_MODEL_PREFERENCES_KEY, out);
-    return out;
+    return readModelPreferences(this.store.hubSetting<unknown>(DRAFT_MODEL_PREFERENCES_KEY, {}));
   }
 
+  /** Legacy clients send a map; merge its entries without deleting another device's choices. */
   async saveDraftModelPreferences(input: unknown): Promise<DraftModelPreferences> {
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new HttpError(400, 'invalid draft model preferences');
-    const out: DraftModelPreferences = {};
     for (const [agent, value] of Object.entries(input)) {
-      const preference = await this.sanitizeDraftModelPreference(agent, value);
-      if (preference) out[agent] = preference;
+      if (!this.adapters.has(agent) || !value || typeof value !== 'object') continue;
+      const raw = value as DraftModelPreference;
+      const model = typeof raw.model === 'string' ? await this.validateModelOrNull(agent, raw.model) : null;
+      const effort = typeof raw.effort === 'string' ? await this.validateEffortOrNull(agent, model, raw.effort) : null;
+      const speed = typeof raw.speed === 'string' ? await this.validateSpeedOrNull(agent, model, raw.speed) : null;
+      this.rememberModelPreference(agent, { model, effort, speed });
     }
-    this.store.saveHubSetting(DRAFT_MODEL_PREFERENCES_KEY, out);
-    return out;
+    return this.draftModelPreferences();
   }
 
-  private async sanitizeDraftModelPreference(agent: string, value: unknown): Promise<DraftModelPreference | null> {
-    if (!this.adapters.has(agent)) return null;
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-    const source = value as { model?: unknown; effort?: unknown; speed?: unknown };
-    const model = typeof source.model === 'string' ? await this.validateModelOrNull(agent, source.model) : null;
-    const effort = typeof source.effort === 'string' ? await this.validateEffortOrNull(agent, model, source.effort) : null;
-    const speed = typeof source.speed === 'string' ? await this.validateSpeedOrNull(agent, model, source.speed) : null;
-    const preference = { model, effort, speed };
-    return hasDraftModelPreference(preference) ? preference : null;
+  async patchDraftModelPreference(input: unknown): Promise<DraftModelPreference> {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new HttpError(400, 'invalid model preference');
+    const { agent, ...raw } = input as { agent: string } & ModelPreferencePatch;
+    if (!this.adapters.has(agent)) throw new HttpError(400, 'unknown agent');
+    const patch: ModelPreferencePatch = {};
+    for (const key of ['model', 'effort', 'speed'] as const) {
+      if (raw[key] === undefined) continue;
+      if (raw[key] !== null && (typeof raw[key] !== 'string' || !raw[key])) throw new HttpError(400, 'invalid model preference');
+      patch[key] = raw[key];
+    }
+    if (!Object.keys(patch).length) throw new HttpError(400, 'empty model preference');
+    const current = (await this.draftModelPreferences())[agent];
+    const model = patch.model === undefined ? current?.model ?? null : patch.model;
+    if (patch.model != null) await this.validateModel(agent, patch.model);
+    if (patch.effort != null) await this.validateEffort(agent, model, patch.effort);
+    if (patch.speed != null) await this.validateSpeed(agent, model, patch.speed);
+    // Re-read after asynchronous validation; concurrent edits to other fields/instances survive.
+    return this.rememberModelPreference(agent, patch);
+  }
+
+  private rememberModelPreference(agent: string, patch: ModelPreferencePatch): DraftModelPreference {
+    const all = readModelPreferences(this.store.hubSetting<unknown>(DRAFT_MODEL_PREFERENCES_KEY, {}));
+    const preference = applyModelPreference(all[agent], patch);
+    this.store.saveHubSetting(DRAFT_MODEL_PREFERENCES_KEY, { ...all, [agent]: preference });
+    return preference;
   }
 
   private async validateModelOrNull(agent: string, model: string): Promise<string | null> {
@@ -1672,6 +1681,8 @@ export class ThreadManager {
   async updateThread(
     id: string,
     updates: {
+      /** Only an explicit composer edit changes defaults for future threads. */
+      rememberModelChoice?: boolean;
       title?: string;
       pinned?: boolean;
       workMode?: WorkMode;
@@ -1688,6 +1699,16 @@ export class ThreadManager {
     },
   ): Promise<ThreadView> {
     const thread = this.getThread(id);
+    const rememberChoice = updates.rememberModelChoice === true &&
+      (updates.model !== undefined || updates.effort !== undefined || updates.speed !== undefined);
+    if (rememberChoice && updates.model !== undefined) {
+      const saved = applyModelPreference((await this.draftModelPreferences())[thread.agent], { model: updates.model });
+      updates = {
+        ...updates,
+        effort: updates.effort !== undefined ? updates.effort : saved.effort === null ? null : await this.validateEffortOrNull(thread.agent, updates.model, saved.effort),
+        speed: updates.speed !== undefined ? updates.speed : saved.speed === null ? null : await this.validateSpeedOrNull(thread.agent, updates.model, saved.speed),
+      };
+    }
     const patch: Record<string, unknown> = {};
     if (updates.done !== undefined) {
       if (typeof updates.done !== 'boolean') throw new HttpError(400, 'done must be true or false');
@@ -1780,6 +1801,10 @@ export class ThreadManager {
       await this.applyLive(thread, 'speed', s => s.setSpeed?.(patch.speed as string | null) ?? Promise.resolve(false));
     }
     this.store.updateThread(id, patch as any);
+    if (rememberChoice) {
+      const chosen = this.getThread(id);
+      this.rememberModelPreference(thread.agent, { model: chosen.model, effort: chosen.effort, speed: chosen.speed ?? null });
+    }
     // The person named it: nothing renames it for them again.
     if (patch.title !== undefined && patch.title !== thread.title) this.store.setTitleBy(id, 'user');
     this.emitThreadEvent(id, null, 'thread.updated', {});

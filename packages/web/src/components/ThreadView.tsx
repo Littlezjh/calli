@@ -7,11 +7,13 @@ import { hydrateWork, HistoryClient, type HistoryDetail, type HistoryWork, type 
 import { Children, createContext, Fragment, isValidElement, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type KeyboardEvent, type ReactNode } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { trimAutolinkJunk } from '../markdown-links';
+import { threadLinkIndex, threadMentions, trimAutolinkJunk, type ThreadLinkIndex } from '../markdown-links';
 import { placeImages, stripPaths } from '../image-places';
 import { highlightLanguage, languageName } from '../code-language';
 import { enlargeMermaidDiagram, renderMermaidDiagram } from '../mermaid';
-import { copyText } from '../clipboard';
+import { copyRich, copyText, quoteMarkdown } from '../clipboard';
+import { flushSync } from 'react-dom';
+import { createRoot } from 'react-dom/client';
 import { diffLines, numberLines } from '../diff';
 import { pictureUrl, svgPicture } from '../images';
 import { SentVideo } from './VideoPreview';
@@ -55,7 +57,7 @@ import {
 import { VoiceCloud } from './VoiceOrb';
 import { Lightbox } from './Lightbox';
 import { PlanCopyButton, PlanDownloadButton } from './plan-tools';
-import { IconBell, ActivityIcon, IconArrowRight, IconCheck, IconChevron, IconClose, IconCompact, IconCopy, IconEdit, IconExternal, IconFile, IconFork, IconHand, IconHandover, IconPaperclip, IconQuote, IconRead, IconSparkle, IconTray, IconWorktree } from './icons';
+import { IconBell, ActivityIcon, IconArrowRight, IconCheck, IconChevron, IconClipboard, IconClose, IconCompact, IconCopy, IconEdit, IconExternal, IconFile, IconFork, IconHand, IconHandover, IconPaperclip, IconQuote, IconRead, IconSparkle, IconTray, IconWorktree } from './icons';
 import { t } from '../i18n';
 
 // The daemon's confirmation marker is replaced by the localized notice label.
@@ -118,6 +120,14 @@ interface Props {
   memberThreadId?: (name: string) => string | null;
   /** Opens a member's thread, resolved above, as the person's own navigation would. */
   onOpenMemberThread?: (threadId: string) => void;
+  /**
+   * The threads a message may name in passing (a corner-bracketed title with a short id after
+   * it, or a whole id): enough to turn such mentions into jump links. Absent where nothing can
+   * be opened (a peek, a panel).
+   */
+  threads?: Array<{ id: string; title: string }>;
+  /** Opens the thread such a mention names, as the person's own navigation would. */
+  onOpenThread?: (threadId: string) => void;
   /** The history this view was built from; an edit is sent against it. */
   revision?: number;
 }
@@ -130,12 +140,13 @@ const RECENT_TURNS = 30;
 /** Scrolling up to within this distance of the top unfolds or fetches the earlier turns. */
 const NEAR_TOP_PX = 600;
 
-export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, beforeItems, olderLabel, olderError, revealTurnId, historyApi, historyThreadId, items: originalItems, roots, loadImage, loadFile, onOpenFile, onPreview, hasOlder, loadingOlder, onLoadOlder, onFork, onQuote, onMessageContext, onHandToAssistant, forkAnyTurn, onEdit, revision = 0, takeover, resume, memberThreadId, onOpenMemberThread }: Props) {
+export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, beforeItems, olderLabel, olderError, revealTurnId, historyApi, historyThreadId, items: originalItems, roots, loadImage, loadFile, onOpenFile, onPreview, hasOlder, loadingOlder, onLoadOlder, onFork, onQuote, onMessageContext, onHandToAssistant, forkAnyTurn, onEdit, revision = 0, takeover, resume, memberThreadId, onOpenMemberThread, threads, onOpenThread }: Props) {
   const [selection, setSelection] = useState<{ text: string; turnId: string } | null>(null);
   const [contextMenu, setContextMenu] = useState<{ text: string; turnId: string; element: HTMLElement; x: number; y: number; nonce: number } | null>(null);
   useEffect(() => { setSelection(null); setContextMenu(null); }, [historyThreadId]);
   const actionsFor = (text: string, turnId: string, element?: HTMLElement): MessageAction[] => [
     { key: 'copy', label: t('view.copyAnswer'), icon: IconCopy, run: async () => { if (!await copyText(text)) throw new Error(t('view.copyFailed')); } },
+    { key: 'copyQuote', label: t('view.copyQuote'), icon: IconClipboard, run: async () => { if (!await copyRich(quoteMarkdown(text), quoteHtml(text))) throw new Error(t('view.copyFailed')); } },
     ...(onQuote ? [{ key: 'quote', label: t('references.quote'), icon: IconQuote, run: () => onQuote(text, turnId, historyThreadId) }] : []),
     ...(onHandToAssistant ? [{ key: 'assistant', label: t('messageActions.assistant'), icon: IconSparkle, run: () => onHandToAssistant(text, turnId, historyThreadId) }] : []),
     ...(onMessageContext ? [{ key: 'context', label: t('messageActions.context'), icon: IconPaperclip, run: () => onMessageContext(text, turnId, historyThreadId) }] : []),
@@ -150,6 +161,10 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
     setContextMenu({ text, turnId: item.turnId, element, x, y, nonce: Date.now() });
   });
   const [loadedFiles, setLoadedFiles] = useState<{ client?: HistoryClient; files: Map<string, WorkFiles> }>({ files: new Map() });
+  // The thread list changes as threads come and go; the index built from it keeps a stable shape,
+  // so parsed messages are not parsed again for every unrelated refresh.
+  const threadLinks = useMemo(() => (threads?.length ? threadLinkIndex(threads) : null), [threads]);
+  const jump = useMemo(() => (onOpenThread ? { open: onOpenThread } : null), [onOpenThread]);
   const historyClient = useMemo(() => {
     if (!historyApi || !historyThreadId) return undefined;
     const client = new HistoryClient(historyApi, historyThreadId, (ref, work) => {
@@ -375,7 +390,7 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
           return <ProposalCard key={item.key} text={item.text} streaming={!item.done} />;
         case 'assistant':
           if (!item.text) return null;
-          return <AssistantMessage key={item.key} messageKey={item.key} text={item.text} done={item.done} roots={roots} loadFile={loadFile} onOpen={show} />;
+          return <AssistantMessage key={item.key} messageKey={item.key} text={item.text} done={item.done} roots={roots} loadFile={loadFile} onOpen={show} threadLinks={threadLinks} />;
         case 'plan':
           return <PlanCard key={item.key} item={item} />;
         case 'work':
@@ -466,6 +481,7 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
   return (
     <div className="thread" ref={threadRef} {...gestures}>
       <HistoryContext.Provider key={historyClient?.identity ?? historyThreadId} value={historyClient}>
+      <ThreadJump.Provider value={jump}>
       <Pictures.Provider value={pictures}>
         {/* Scrolling up loads these on its own; the buttons stay for keyboards and screen readers. */}
         {folded && (
@@ -490,6 +506,7 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
         {beforeItems}
         {shown.map((g) => renderItems(g.items))}
       </Pictures.Provider>
+      </ThreadJump.Provider>
       </HistoryContext.Provider>
       {lightbox && <Lightbox url={lightbox.url} name={lightbox.name} onClose={closeLightbox} />}
       {contextMenu && <PointMessageMenu key={contextMenu.nonce} point={contextMenu} actions={actionsFor(contextMenu.text, contextMenu.turnId, contextMenu.element)} />}
@@ -897,6 +914,13 @@ const Pictures = createContext<{
 } | null>(null);
 
 /**
+ * How a link in an answer opens another thread: the person's own navigation, the same as picking
+ * it in the list. Reaches `MarkdownLink` through context for the same reason `Pictures` does.
+ * Where nothing was wired (a peek, a panel), a thread link shows as its plain text.
+ */
+const ThreadJump = createContext<{ open: (threadId: string) => void } | null>(null);
+
+/**
  * A link in an answer. One to the web opens in a tab of its own, so the hub stays where it is.
  * One to a file is on the agent's host, where the browser cannot follow: a picture opens at full
  * size, anything else in the file viewer. A file the thread cannot show gives its path to the
@@ -904,6 +928,7 @@ const Pictures = createContext<{
  */
 function MarkdownLink({ href, title, children }: { href?: string; title?: string; children?: ReactNode }) {
   const pictures = useContext(Pictures);
+  const jump = useContext(ThreadJump);
   const [note, setNote] = useState<string | null>(null);
   useEffect(() => {
     if (!note) return;
@@ -920,6 +945,26 @@ function MarkdownLink({ href, title, children }: { href?: string; title?: string
     );
   }
   if (target.kind === 'anchor') return <a href={href}>{children}</a>;
+  if (target.kind === 'thread') {
+    if (!jump) return <>{children}</>;
+    const open = () => jump.open(target.id);
+    return (
+      <a
+        className="thread-link"
+        role="button"
+        tabIndex={0}
+        title={title ?? t('view.openThread')}
+        onClick={open}
+        onKeyDown={(e: KeyboardEvent) => {
+          if (e.key !== 'Enter' && e.key !== ' ') return;
+          e.preventDefault();
+          open();
+        }}
+      >
+        {children}
+      </a>
+    );
+  }
   if (target.kind === 'none') return <>{children}</>;
 
   const { path } = target;
@@ -994,6 +1039,19 @@ function BreakableCode({ children, ...props }: ComponentProps<'code'>) {
 
 const MARKDOWN_COMPONENTS = { pre: CodeBlock, img: MarkdownImage, a: MarkdownLink, div: MarkdownDiv, code: BreakableCode };
 const MARKDOWN_PLUGINS = [remarkGfm, trimAutolinkJunk];
+
+/**
+ * A message as a block quote for another app's editor. Plain Markdown, none of this page's own
+ * blocks (copy buttons, highlighting, previews), drawn synchronously so the copy keeps the click.
+ */
+function quoteHtml(text: string): string {
+  const box = document.createElement('div');
+  const root = createRoot(box);
+  flushSync(() => root.render(<Markdown remarkPlugins={[remarkGfm]}>{text.trim()}</Markdown>));
+  const html = box.innerHTML;
+  root.unmount();
+  return `<blockquote style="margin:0;padding-left:12px;border-left:3px solid #d0d7de">${html}</blockquote>`;
+}
 /**
  * Markdown drops addresses it does not know, `file://` among them, leaving a link that reloads
  * the page. Every address is kept instead: links and images are drawn by the components above,
@@ -1008,18 +1066,22 @@ interface AssistantProps {
   roots: string[];
   loadFile: (path: string) => Promise<Blob>;
   onOpen: (url: string, name?: string) => void;
+  /** Names of the other threads this message may cite; `null` where none can be linked. */
+  threadLinks?: ThreadLinkIndex | null;
 }
 
 /**
  * Parsing Markdown is the costly part of rendering a thread, and every streamed event re-renders
  * the list. Memoising on the props means only the message being written is parsed again.
  */
-const AssistantMessage = memo(function AssistantMessage({ text, done, roots, loadFile, onOpen, messageKey }: AssistantProps) {
+const AssistantMessage = memo(function AssistantMessage({ text, done, roots, loadFile, onOpen, messageKey, threadLinks }: AssistantProps) {
   // Looked for once the message is complete: a path that is still being typed would not be found.
   const plugins = useMemo(() => {
+    const mentions = threadLinks ? threadMentions(threadLinks) : null;
     const places = done ? imagePlaces(text, roots) : [];
-    return places.length ? [...MARKDOWN_PLUGINS, placeImages(places)] : MARKDOWN_PLUGINS;
-  }, [done, text, roots]);
+    const list = mentions ? [...MARKDOWN_PLUGINS, mentions] : MARKDOWN_PLUGINS;
+    return places.length ? [...list, placeImages(places)] : list;
+  }, [done, text, roots, threadLinks]);
   const images = useMemo(() => ({ roots, load: loadFile, onOpen }), [roots, loadFile, onOpen]);
   return (
     <div className="row assistant" data-message-key={messageKey}>
@@ -1128,7 +1190,6 @@ function FileImage({ path, roots, load, onOpen }: { path: string; roots: string[
       <button type="button" onClick={() => onOpen(url, path)} aria-label={t('view.enlargePath', path)}>
         <img src={url} alt={path} />
       </button>
-      <figcaption title={path}>{relativePath(path, roots)}</figcaption>
     </figure>
   );
 }
