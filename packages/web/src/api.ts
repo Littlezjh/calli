@@ -858,9 +858,17 @@ export interface QuotaWindow {
   loadPercent?: number;
 }
 
+/** Money left on a pay-as-you-go key, as the vendor states it, such as "¥60.52". */
+export interface QuotaBalance {
+  scope: string;
+  amount: string;
+}
+
 /** Plan usage of an agent instance, read outside any session. */
 export interface PlanQuota {
   windows: QuotaWindow[];
+  /** Balances of keys billed per use, next to the plans' windows. */
+  balances?: QuotaBalance[];
   note?: string;
   /** The subscription the account is on, as the agent reports it (`id`) and as shown (`label`). */
   plan?: { id: string; label: string };

@@ -1,7 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import type { Api, PlanQuota, QuotaWindow } from '../api';
 import { formatDateTime, t } from '../i18n';
-import { formatReset, quotaLeft, quotaLevel } from '../quota';
+import { balanceEmpty, formatReset, quotaLeft, quotaLevel } from '../quota';
 import { useAgentQuota, useQuotaNavigation } from '../quota-reading';
 import { quotaStale } from './QuotaReadout';
 import { createPortal } from 'react-dom';
@@ -21,6 +21,8 @@ type Window = {
   remaining: number;
   low: boolean;
   reset: string;
+  /** Set on a pay-as-you-go balance, which has an amount instead of a share left. */
+  amount?: string;
 };
 
 function periodNames(label: string): { period: string; short: string } {
@@ -41,7 +43,10 @@ function windowsOf(quota: PlanQuota): Window[] {
     remaining: quotaLeft(w),
     low: quotaLevel(w.usedPercent) === 'danger',
     reset: formatReset(w),
-  }));
+  })).concat((quota.balances ?? []).map((b, index) => ({
+    key: `balance-${b.scope}-${index}`, period: t('quota.balance'), short: b.scope, scope: b.scope,
+    remaining: 100, low: balanceEmpty(b), reset: '', amount: b.amount,
+  })));
 }
 
 /**
@@ -77,7 +82,7 @@ export function AgentQuota({ api, agent }: { api: Api; agent: string }) {
   const [preview, setPreview] = useState(false);
   useEffect(() => { setPinned(false); setPreview(false); }, [api, agent]);
 
-  if (!quota?.windows.length) return <QuotaEmpty reading={reading} agent={agent} pinned={pinned} setPinned={setPinned} />;
+  if (!quota?.windows.length && !quota?.balances?.length) return <QuotaEmpty reading={reading} agent={agent} pinned={pinned} setPinned={setPinned} />;
 
   const windows = windowsOf(quota);
   const stale = quotaStale(reading);
@@ -132,7 +137,7 @@ function QuotaView({ windows, stale, status, pinned, setPinned, preview, setPrev
   for (const w of windows) counts.set(w.short, (counts.get(w.short) ?? 0) + 1);
   const mainPool = windows[0]?.scope;
   const ambiguous = (w: Window) => (counts.get(w.short) ?? 0) > 1 && !!w.scope && w.scope !== mainPool;
-  const signature = windows.map((w) => `${w.short}|${ambiguous(w) ? w.scope : ''}|${w.remaining}|${w.low}`).join(';');
+  const signature = windows.map((w) => `${w.short}|${ambiguous(w) ? w.scope : ''}|${w.amount ?? w.remaining}|${w.low}`).join(';');
 
   // Measure every chip once per content, off-screen, then fit whole chips into the line.
   useLayoutEffect(() => {
@@ -162,12 +167,15 @@ function QuotaView({ windows, stale, status, pinned, setPinned, preview, setPrev
   const hidden = windows.length - visible.length;
 
   const label = [
-    ...windows.map((w) => [w.period, w.scope, t('quota.remaining', w.remaining)].filter(Boolean).join(' ')),
+    ...windows.map((w) => w.amount ? `${w.scope} ${w.period} ${w.amount}` : [w.period, w.scope, t('quota.remaining', w.remaining)].filter(Boolean).join(' ')),
     stale ? t('quota.cachedReading') : '',
     t('quota.showDetails'),
   ].filter(Boolean).join(' · ');
 
-  const chip = (w: Window) => <span key={w.key} className={`agent-quota-chip${w.low ? ' low' : ''}`}>
+  const chip = (w: Window) => w.amount ? <span key={w.key} className={`agent-quota-chip${w.low ? ' low' : ''}`}>
+    <span className="agent-quota-label">{w.short}</span>
+    <span className="agent-quota-percent">{w.amount}</span>
+  </span> : <span key={w.key} className={`agent-quota-chip${w.low ? ' low' : ''}`}>
     <QuotaRing remaining={w.remaining} size={14} />
     <span className="agent-quota-label">{w.short}</span>
     {ambiguous(w) && <span className="agent-quota-scope">{w.scope}</span>}
@@ -210,7 +218,11 @@ function QuotaDetails({ id, windows, status }: { id?: string; windows: Window[];
   return <div className="agent-quota-details" id={id}>
     {pools.map((pool) => <div className="agent-quota-pool" key={pool}>
       {pool && <div className="agent-quota-pool-name">{pool}</div>}
-      {windows.filter((w) => (w.scope ?? '') === pool).map((w) => <div key={w.key} className={`agent-quota-row${w.low ? ' low' : ''}`}
+      {windows.filter((w) => (w.scope ?? '') === pool).map((w) => w.amount ? <div key={w.key} className={`agent-quota-row${w.low ? ' low' : ''}`}>
+        <span aria-hidden="true" />
+        <span className="agent-quota-period">{w.period}</span>
+        <span className="agent-quota-left">{w.amount}</span>
+      </div> : <div key={w.key} className={`agent-quota-row${w.low ? ' low' : ''}`}
         role="meter" aria-label={[w.period, w.scope].filter(Boolean).join(' · ')}
         aria-valuemin={0} aria-valuemax={100} aria-valuenow={w.remaining} aria-valuetext={t('quota.remaining', w.remaining)}>
         <QuotaRing remaining={w.remaining} size={14} />

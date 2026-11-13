@@ -93,6 +93,7 @@ export const zh = {
   'quota.menuCached': '刷新失败 · 旧值',
   'quota.percent': (percent: number) => `${percent}%`,
   'quota.notReported': '未提供',
+  'quota.balance': '余额',
   'quota.morePools': (count: number) => `另 ${count} 个模型池`,
   'quota.query': '额度查询',
   'pickers.permissionIs': (mode: string) => `权限：${mode}`,

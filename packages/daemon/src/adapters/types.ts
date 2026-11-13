@@ -174,9 +174,21 @@ export interface QuotaWindow {
   loadPercent?: number;
 }
 
+/** Money left on a pay-as-you-go key, as the vendor states it; never turned into a percentage. */
+export interface QuotaBalance {
+  /** Whose balance: the provider or account behind it. */
+  scope: string;
+  /** The amount with its currency, as reported, such as "¥60.52". */
+  amount: string;
+  /** Exact model IDs billed from this balance; absent means unmapped. */
+  modelIds?: string[];
+}
+
 /** Plan usage of an agent instance, read outside any session so nothing is left behind. */
 export interface PlanQuota {
   windows: QuotaWindow[];
+  /** Balances of keys billed per use, next to the plans' windows. */
+  balances?: QuotaBalance[];
   /** An adapter's explanation of missing or limited quota data. */
   note?: string;
   /**
