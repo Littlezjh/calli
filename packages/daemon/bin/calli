@@ -47,7 +47,7 @@ ${personalHelp}`);
 }
 try {
   if (args[0] === 'agents' && !process.env.CALLI_TEAM_SOCKET && (process.env.CALLI_TODO_SOCKET || process.env.CALLI_TODO_KEY)) { await personalMain(args); process.exit(0); }
-  if (['todo', 'threads', 'wish', 'quiet', 'review', 'profile', 'settings', 'signals', 'dispatch'].includes(args[0])) { await personalMain(args); process.exit(0); }
+  if (['todo', 'threads', 'wish', 'quiet', 'review', 'profile', 'settings', 'signals', 'dispatch', 'plan', 'prep'].includes(args[0])) { await personalMain(args); process.exit(0); }
   if (args[0] === 'preview-note') { await previewNoteMain(args.slice(1)); process.exit(0); }
   if (args[0] === 'references') { await referencesMain(args.slice(1)); process.exit(0); }
   if (args[0] === 'notify') { await notifyMain(args.slice(1)); process.exit(0); }

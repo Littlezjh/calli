@@ -12990,6 +12990,11 @@ button.trace-step-head:hover { background: var(--hover); }
 .chat-badge.danger { background: var(--danger); color: var(--on-color); }
 
 /* The one line of globe kept on the home: quiet, clickable, never hiding a number. */
+/* In the app bar: the strip's words, then the entries in the bar's own glass pill. */
+.topbar-desk { display: flex; align-items: center; gap: 6px; min-width: 0; margin-left: auto; }
+.topbar-desk .chat-strip { width: auto; margin: 0; padding: 0; justify-content: flex-end; min-width: 0; overflow: hidden; }
+.topbar-desk .chat-entries { flex: none; }
+.topbar-desk .chat-entry { min-height: 32px; }
 .chat-strip { flex: none; display: flex; align-items: center; justify-content: center; gap: 2px; width: min(760px, 100%); margin: 0 auto; padding: 2px 8px; color: var(--muted); font-size: 12px; }
 .chat-strip button { flex: none; display: inline-flex; align-items: center; min-height: 28px; padding: 0 10px; border: 0; border-radius: var(--radius-pill); background: none; color: var(--muted); font-size: 12px; white-space: nowrap; }
 .chat-strip button:hover { background: var(--hover); color: var(--text); }
@@ -13011,24 +13016,64 @@ button.trace-step-head:hover { background: var(--hover); }
 .chat-starter::before { content: ''; width: 5px; height: 5px; border-radius: var(--radius-pill); background: var(--faint); }
 .chat-starter:hover { background: var(--hover); }
 
-/* What cannot wait rides in the conversation, the last thing in it. */
-.chat-asks { display: flex; flex-direction: column; gap: 8px; padding: 8px 8px 2px; }
-.chat-ask { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); padding: 10px 12px; }
-.chat-ask.dispatch { background: var(--surface); }
-.chat-ask-kind { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; color: var(--muted); font-size: 11px; font-weight: 600; }
+/* What cannot wait sits folded above the composer: one line with the count, one row per ask,
+   one row open at a time, so the talk keeps the screen. */
+.chat-asks { flex: none; display: flex; flex-direction: column; gap: 6px; width: min(760px, 100%); margin: 0 auto; padding: 4px 16px 0; }
+.chat-asks:empty { display: none; }
+.chat-tray { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-card); overflow: hidden; }
+.chat-tray-head { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 38px; padding: 0 12px; border: 0; background: none; color: var(--text); font-size: 12.5px; text-align: left; }
+.chat-tray-head:hover { background: var(--hover); }
+.chat-tray-head svg { flex: none; color: var(--muted); }
+.chat-tray-count { flex: none; color: var(--warn); font-weight: 600; }
+.chat-tray-line { min-width: 0; overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
+.chat-tray-head .sp { flex: 1; }
+.chat-tray-list { max-height: min(52vh, 420px); margin: 0; padding: 0; overflow-y: auto; list-style: none; overscroll-behavior: contain; }
+.chat-tray-head + .chat-tray-list { border-top: 1px solid var(--border); }
+.chat-ask + .chat-ask { border-top: 1px solid var(--border); }
+.chat-ask-row { display: flex; align-items: baseline; gap: 10px; width: 100%; min-height: 38px; padding: 9px 12px; border: 0; background: none; color: var(--text); text-align: left; }
+.chat-ask-row:not(:disabled):hover { background: var(--hover); }
+.chat-ask-row:disabled { cursor: default; opacity: 1; }
+.chat-ask-kind { flex: none; display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; font-weight: 600; }
 .chat-ask-kind.personal-warning { color: var(--warn); }
-.chat-ask-kind svg { flex: none; }
+.chat-ask-kind svg { flex: none; align-self: center; }
+.chat-ask-line { min-width: 0; overflow: hidden; font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
+.chat-ask.open .chat-ask-line { white-space: normal; overflow-wrap: anywhere; line-height: 1.6; }
+.chat-ask-detail { padding: 0 12px 11px; }
 .chat-ask-body { margin: 0; font-size: 12.5px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
 .chat-ask-cwd { margin: 6px 0 0; }
 .chat-ask-cwd code { font-family: var(--mono); font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; }
 .chat-ask-acts { display: flex; gap: 8px; margin-top: 9px; }
 .chat-ask-acts .primary, .chat-ask-acts .ghost { min-height: 28px; padding: 0 13px; font-size: 12px; }
 .chat-ask-error { margin: 0; color: var(--warn); font-size: 12.5px; }
-.chat-ask .chat-ask-error { margin: 8px 0 0; }
+.chat-ask .chat-ask-error { margin: 0; padding: 0 12px 10px; }
 .chat-ask .proactive-answer p { font-size: 12.5px; }
 .chat-ask .proactive-answer-form input { font-size: 12.5px; }
 .chat-ask .desk-card-actions { margin-top: 6px; }
+.chat-ask-detail > .proactive-answer:first-child .desk-card-actions:first-child { margin-top: 0; }
 .chat-ask .desk-card-actions .ghost { min-height: 28px; font-size: 12px; }
+.desk-card-actions .ghost.quiet { border-color: transparent; background: none; color: var(--muted); }
+.desk-card-actions .ghost.quiet:hover { background: var(--hover); color: var(--text); }
+.chat-drawer-sub { margin: 0 0 6px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .02em; }
+
+/* Hours, today, this week, this month: one switch, then short sections. */
+.plan-view { display: flex; flex-direction: column; gap: 12px; margin-bottom: 18px; }
+.plan-ranges { display: flex; gap: 2px; padding: 2px; border-radius: var(--radius-pill); background: var(--active); align-self: flex-start; }
+.plan-ranges button { min-height: 28px; padding: 0 12px; border: 0; border-radius: var(--radius-pill); background: none; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.plan-ranges button[aria-pressed='true'] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-card); font-weight: 600; }
+.plan-group h4 { margin: 0 0 6px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .02em; }
+.plan-group h4.warn, .plan-state.warn, .plan-meta .warn { color: var(--warn); }
+.plan-list { margin: 0; padding: 0; list-style: none; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); overflow: hidden; }
+.plan-list li + li { border-top: 1px solid var(--border); }
+.plan-list button, .plan-list a, .plan-row { display: flex; align-items: baseline; gap: 10px; width: 100%; min-height: 36px; padding: 8px 12px; border: 0; background: none; color: var(--text); font-size: 12.5px; text-align: left; text-decoration: none; }
+.plan-list button:hover, .plan-list a:hover { background: var(--hover); }
+.plan-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.plan-meta { flex: none; display: inline-flex; gap: 8px; max-width: 45%; overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.plan-list .plan-more { justify-content: center; min-height: 32px; color: var(--muted); font-size: 11.5px; }
+.plan-state { margin: 0; color: var(--muted); font-size: 12.5px; }
+.plan-skeleton li { height: 36px; padding: 13px 12px; }
+.plan-skeleton li span { display: block; width: 60%; height: 10px; border-radius: var(--radius-xs); background: var(--active); }
+.plan-skeleton li:nth-child(2) span { width: 42%; }
+.plan-view[aria-busy='true'] .plan-ranges button[aria-pressed='true'] { opacity: .75; }
 
 /* The drawer. Beside the talk when there is room — real width, nothing covered; over the
    page when there is not; the whole screen on a phone. Its content mounts only when asked. */
@@ -13083,7 +13128,10 @@ body:has(.chat-home) .pet { visibility: hidden; }
   /* Only the icon fits; the label stays, folded away, so the button keeps its name. */
   .chat-entry-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .chat-strip { justify-content: flex-start; }
-  .chat-strip button, .chat-ask-acts .primary, .chat-ask-acts .ghost, .chat-drawer-tabs button { min-height: 40px; }
+  .topbar-desk .chat-entry { min-width: 40px; min-height: 42px; }
+  .topbar-desk .chat-badge { position: absolute; top: 4px; right: 2px; min-width: 15px; height: 15px; padding: 0 3px; font-size: 9.5px; line-height: 15px; }
+  .chat-strip button, .chat-ask-acts .primary, .chat-ask-acts .ghost, .chat-drawer-tabs button, .chat-tray-head, .chat-ask-row, .plan-ranges button { min-height: 40px; }
+  .chat-asks { padding: 4px 12px 0; }
   .chat-composer { padding-bottom: calc(8px + var(--safe-bottom)); }
   .chat-drawer.over { top: 0; left: 0; width: auto; padding-top: var(--safe-top); padding-bottom: var(--safe-bottom); border: 0; border-radius: 0; animation: chat-drawer-up .3s cubic-bezier(.2,.8,.2,1); }
 }

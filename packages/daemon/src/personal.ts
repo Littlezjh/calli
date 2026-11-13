@@ -11,6 +11,8 @@ import { isWithinWorkdirs } from './workdirs.js';
 import { HttpError } from './errors.js';
 import { PROFILE_TEMPLATE, PersonalFiles } from './personal-files.js';
 import { PersonalExplore } from './personal-explore.js';
+import { PersonalPlanService, horizonDeadline } from './personal-plan.js';
+import { PersonalPrep } from './personal-prep.js';
 import { PersonalReview } from './personal-review.js';
 import { PersonalRouter } from './personal-router.js';
 import { ProactiveService } from './proactive.js';
@@ -88,6 +90,8 @@ export class PersonalService {
   /** The plan page's file mirror under the personal directory; the database stays the source of truth. */
   private readonly files = new PersonalFiles(() => this.directory());
   socket = '';
+  readonly plan: PersonalPlanService;
+  readonly prep: PersonalPrep;
   readonly summary: SummaryService;
   readonly review: PersonalReview;
   readonly router: PersonalRouter;
@@ -95,6 +99,8 @@ export class PersonalService {
   /** The one-shot onboarding explore; mutable so tests can substitute a fixture-backed instance. */
   explore: PersonalExplore;
   constructor(readonly store: Store, readonly manager: ThreadManager, private readonly adapters: Map<string, AgentAdapter>) {
+    this.plan = new PersonalPlanService(manager);
+    this.prep = new PersonalPrep(this);
     this.summary = new SummaryService(store, manager, this, adapters);
     this.review = new PersonalReview(store);
     this.router = new PersonalRouter(store, manager, this, adapters);
@@ -391,6 +397,11 @@ export class PersonalService {
       if (input.importance !== null && !TODO_IMPORTANCES.includes(String(input.importance) as TodoImportance)) throw new HttpError(400, 'importance must be high, normal, low or null');
       patch.importance = input.importance === null ? null : String(input.importance) as TodoImportance;
     }
+    if (input.horizon !== undefined) {
+      if (input.horizon !== null && input.horizon !== 'week' && input.horizon !== 'month') throw new HttpError(400, 'horizon must be week, month or null');
+      patch.horizon = input.horizon;
+      if (input.horizon && input.dueAt === undefined) patch.dueAt = horizonDeadline(input.horizon);
+    }
     if (input.urgentUntil !== undefined) patch.urgentUntil = time(input.urgentUntil);
     if (input.source !== undefined) patch.source = input.source === null ? null : this.source(input.source);
     if (input.subscribe !== undefined || input.unsubscribe !== undefined || patch.source?.thread) {
@@ -450,7 +461,7 @@ export class PersonalService {
       // External provenance never inherits the summary/recorded-thread acceptance shortcuts.
       const recorded = !signal && (links.some(id => id !== actor) || Boolean(actor && this.store.summaryThreadIds().has(actor)));
       const proposed = Boolean(signal || (actor && (patch.owner ?? 'me') === 'me' && !recorded));
-      const todo = this.store.createTodo(randomUUID(), text, parentId, { owner: patch.owner, dueAt: patch.dueAt, lane: patch.lane, importance: patch.importance, urgentUntil: patch.urgentUntil, source: patch.source, subscriptions: patch.subscriptions, proposed });
+      const todo = this.store.createTodo(randomUUID(), text, parentId, { horizon: patch.horizon, owner: patch.owner, dueAt: patch.dueAt, lane: patch.lane, importance: patch.importance, urgentUntil: patch.urgentUntil, source: patch.source, subscriptions: patch.subscriptions, proposed });
       if (this.recordsSelf(actor, links)) this.store.linkTodoThread(todo.id, actor!);
       for (const id of links) this.store.linkTodoThread(todo.id, id);
       // Provenance lands in the archive's matter links; the source alone is not a delivery.
@@ -594,6 +605,9 @@ export class PersonalService {
         return { ...withUrgency(todo), note: this.note(todo.id), threads: linkedThreads(todo.id), proposals: this.store.todoProposals(todo.id) };
       }
       case 'agents': return (await this.manager.listAgents()).map(({ id, label, available }) => ({ id, label, available }));
+      case 'plan': this.requireAssistant(owner); return this.plan.get(input.range);
+      case 'prep.add': this.requireAssistant(owner); return this.prep.add(input.id);
+      case 'threads.say': case 'threads.stop': return this.controlThread(owner, input);
       case 'dispatch': return this.dispatch(owner, input);
       case 'todo.delegate': this.review.assertCanDelegate(owner); return this.delegate(String(input.id));
       case 'todo.add': return this.create(input, owner);
@@ -610,6 +624,26 @@ export class PersonalService {
     }
   }
 
+  private requireAssistant(owner: string): void {
+    if (this.router.status().threadId !== owner) throw new HttpError(403, 'only available to the assistant');
+  }
+  private async controlThread(owner: string, input: Record<string, unknown>) {
+    this.requireAssistant(owner);
+    const turnId = this.router.humanTurn(owner);
+    const id = personalText(input.id, 200).trim();
+    const check = () => {
+      if (!turnId || this.router.humanTurn(owner) !== turnId) throw new HttpError(403, 'requires the current human-initiated turn; 请在对话里问人');
+      const thread = this.store.getThread(id);
+      if (!thread) throw new HttpError(404, 'thread not found');
+      if (id === owner) throw new HttpError(403, 'cannot control the assistant itself');
+      if (thread.archivedAt) throw new HttpError(409, 'thread is archived');
+    };
+    check();
+    if (input.op === 'threads.stop') return this.manager.cancelTurn(id, { authorize: check });
+    const text = personalText(input.text, 32_000).trim();
+    return this.manager.startTurn(id, { text: `${text}\n\n由助手转达人的当前任务。只执行上述任务；不推远端、不给别人发消息、不删除、不付款。停下时说明结果和需要人处理的事。`, displayText: text, queue: true }, undefined, false, undefined, undefined, { assistantSay: randomUUID(), authorize: check });
+  }
+
   /** Every personal domain at a glance; watch IDs are masked — this text goes through the agent's reply. */
   private settingsSummary(): Record<string, Record<string, unknown>> {
     const mask = (id: string) => (id.length > 11 ? `${id.slice(0, 3)}…${id.slice(-4)}` : id);
@@ -622,6 +656,7 @@ export class PersonalService {
       lark: { enabled: lark.enabled, intervalMin: lark.intervalMin,
         people: lark.people.map(person => ({ name: person.name, id: mask(person.id) })),
         chats: lark.chats.map(chat => ({ name: chat.name, id: mask(chat.id) })) },
+      prep: this.prep.settings(),
       brief: { ...brief }, push: { enabled: push.enabled, waiting: push.waiting, failure: push.failure, notice: push.notice,
         recipientSet: Boolean(push.recipient), addressSet: Boolean(push.baseUrl) },
       proactive: { mode: proactive.mode, repos: proactive.repos },
@@ -682,6 +717,8 @@ export class PersonalService {
       }
       case 'lark.people': case 'lark.chats':
         this.manager.lark.save({ [field]: this.watchList(value, key) }); return echo();
+      case 'prep.enabled': this.prep.save({ enabled: this.boolean(value, key) }); return echo();
+      case 'prep.leadMin': this.prep.save({ leadMin: Number(value) }); return echo();
       case 'brief.enabled':
         this.manager.briefs.save({ enabled: this.boolean(value, key) }); return echo();
       case 'brief.morning': case 'brief.evening': {

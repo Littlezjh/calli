@@ -335,6 +335,7 @@ export function createHttpServer(deps: HttpDeps): Server {
       if (method === 'PUT') return sendJson(res, 200, await manager.saveDraftModelPreferences(await readJson(req)));
       if (method === 'PATCH') return sendJson(res, 200, await manager.patchDraftModelPreference(await readJson(req)));
     }
+    if (path === '/api/personal/plan' && method === 'GET') return sendJson(res, 200, await manager.personal.plan.get(url.searchParams.get('range') ?? 'day'));
     if (path === '/api/personal/settings') {
       if (method === 'GET') return sendJson(res, 200, await manager.personal.settingsView());
       if (method === 'PUT') { manager.personal.putSettings(await readJson(req)); return sendJson(res, 200, await manager.personal.settingsView()); }

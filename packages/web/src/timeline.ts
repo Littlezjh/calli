@@ -205,7 +205,7 @@ function turnPart(raw: unknown): TurnPart | null {
   if (!raw || typeof raw !== 'object') return null;
   const { kind, text, count } = raw as Record<string, unknown>;
   if (kind === 'person') return typeof text === 'string' ? { kind, text } : null;
-  if (kind === 'lark' || kind === 'worker') return { kind, count: typeof count === 'number' && Number.isFinite(count) ? count : 0 };
+  if (kind === 'lark' || kind === 'worker' || kind === 'meeting-prep') return { kind, count: typeof count === 'number' && Number.isFinite(count) ? count : 0 };
   return null;
 }
 
@@ -223,6 +223,7 @@ export function turnChannel(raw: unknown): TurnChannel | null {
 export function channelLabel(kind: string, count: number): string | null {
   if (kind === 'lark') return t('view.channelLark', count);
   if (kind === 'worker') return t('view.channelWorker', count);
+  if (kind === 'meeting-prep') return t('view.channelMeetingPrep', count);
   return null;
 }
 

@@ -47,6 +47,7 @@ for (const width of [1440, 390]) for (const colorScheme of ['light', 'dark']) {
         await screenshot(page, `${runId}-${width}-${colorScheme}`);
         if (runId === 'question') {
           await card.getByText('先部署到预发还是生产？', { exact: true }).waitFor();
+          await card.getByRole('button', { name: '其他回答', exact: true }).click();
           const sizes = await card.evaluate(card => {
             const input = card.querySelector('input');
             const send = card.querySelector('form button');
@@ -105,6 +106,9 @@ test('attention entry supports free answers, declining completion and declining 
     await list.locator('li').first().waitFor();
     assert.equal(await list.locator('li').count(), 2, 'only matters waiting for the person');
     const question = list.locator(`[data-matter="${data.todos[0].id}"]`);
+    // With options offered, writing one's own answer is one tap away.
+    assert.equal(await question.getByRole('textbox').count(), 0);
+    await question.getByRole('button', { name: '其他回答', exact: true }).click();
     await question.getByRole('textbox', { name: '其他回答', exact: true }).fill('  先补灰度验证  ');
     data.failNext.answer = '暂时无法发送';
     await question.getByRole('button', { name: '发送回答', exact: true }).click();
@@ -141,11 +145,12 @@ test('attention total sums cards and reveals the next question on the same matte
     assert.equal(await list.locator('li').count(), 2, 'three cards belong to two matters');
     await screenshot(page, 'multiple-asking-390-observe');
     const question = list.locator(`[data-matter="${data.todos[0].id}"]`);
+    await question.getByRole('button', { name: '其他回答', exact: true }).click();
     await question.getByRole('textbox', { name: '其他回答', exact: true }).fill('这份草稿只属于发布时间');
     await question.getByRole('button', { name: '明早发布', exact: true }).click();
     await question.getByText('先部署到预发还是生产？', { exact: true }).waitFor();
     await page.getByRole('button', { name: '2 个问题等你回答', exact: true }).waitFor();
-    assert.equal(await question.getByRole('textbox').inputValue(), '', 'a different question never inherits the previous draft');
+    assert.equal(await question.getByRole('textbox').count(), 0, 'a different question starts folded, never with the previous draft');
     assert.deepEqual(data.requests.answers.at(-1), { answer: '明早发布' });
     await question.getByRole('button', { name: '先到预发', exact: true }).click();
     await question.waitFor({ state: 'detached' });

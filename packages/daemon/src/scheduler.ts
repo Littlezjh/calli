@@ -207,6 +207,7 @@ export class Scheduler {
     await this.reviews();
     await this.autoArchive(now);
     this.manager.briefs.tick(now, this.push);
+    void this.manager.personal.prep.tick(now).catch(error => console.error('meeting prep failed:', error));
     await this.manager.personal.proactive.tick(now);
     this.sweep();
     this.changed();

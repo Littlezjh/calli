@@ -154,6 +154,7 @@ export type ThreadView = Omit<ThreadRecord, 'worktree' | 'handover' | 'writing'>
 };
 
 interface QueuedTurn {
+  assistantSay?: string;
   displayText?: string;
   channel?: TurnChannel;
   /** Later sends carrying a batch fold into this one instead of queueing behind it. */
@@ -2435,10 +2436,11 @@ export class ThreadManager {
     /** Sends this exact turn id, reserved by an edit; the edit's steps all use it. */
     reservedTurnId?: string,
     beforeStart?: (turnId: string) => void,
+    personalControl?: { assistantSay: string; authorize?: () => void },
   ): Promise<{ turnId: string } | { queued: true; id: string }> {
     // Setup may await discovery or an idle runtime refresh. Keep competing sends in order.
     const previous = this.startingTurns.get(threadId) ?? Promise.resolve();
-    const next = previous.catch(() => undefined).then(() => this.startTurnReady(threadId, input, delivery, fromQueue, reservedTurnId, beforeStart));
+    const next = previous.catch(() => undefined).then(() => this.startTurnReady(threadId, input, delivery, fromQueue, reservedTurnId, beforeStart, personalControl));
     this.startingTurns.set(threadId, next);
     const clean = () => {
       if (this.startingTurns.get(threadId) === next) this.startingTurns.delete(threadId);
@@ -2455,6 +2457,7 @@ export class ThreadManager {
     fromQueue = false,
     reservedTurnId?: string,
     beforeStart?: (turnId: string) => void,
+    personalControl?: { assistantSay: string; authorize?: () => void },
   ): Promise<{ turnId: string } | { queued: true; id: string }> {
     const thread = this.getThread(threadId);
     if (this.changingModes.has(threadId)) throw new HttpError(409, '模式正在切换，请稍后发送');
@@ -2470,6 +2473,7 @@ export class ThreadManager {
     const videoIds = storedVideos.map(v => v.id);
     if (storedVideos.length && /^\/\S+/.test(rawText)) throw new HttpError(400, '视频和文件请随普通消息发送，不能附在斜杠命令后');
     if (!rawText && rawImages.length === 0 && !storedVideos.length) throw new HttpError(400, 'text is empty');
+    personalControl?.authorize?.();
     if (thread.archivedAt && !this.backgroundThreads.has(threadId)) throw new HttpError(409, 'this thread is archived; restore it first');
     if (this.running.has(threadId) || this.autoHandover.held(threadId) && !input.handover && !input.autoContinuation || !fromQueue && this.queues.get(threadId)?.some(q => !q.error)) {
       const goalAction = originalText === '/goal' ? 'show' : originalText === '/goal pause' ? 'pause' : originalText === '/goal clear' ? 'clear' : null;
@@ -2506,7 +2510,7 @@ export class ThreadManager {
       }
       if (queue.length >= MAX_QUEUED) throw new HttpError(409, `at most ${MAX_QUEUED} messages can wait in a thread`);
       this.attachments.check(rawImages); // a bad image is refused now, not when its turn comes
-      const queued: QueuedTurn = { voiceSummary: input.voiceSummary, workMode: thread.workMode ?? 'execute', id: randomUUID(), text: originalText, displayText: input.displayText, channel: input.channel, ...(input.coalesce ? { coalesce: input.coalesce } : {}), images: rawImages, videos: videoIds, ...(mentions ? { mentions } : {}), ...(input.collaboration ? { collaboration: input.collaboration } : {}), ...(input.fromUser ? { fromUser: true } : {}) };
+      const queued: QueuedTurn = { ...(personalControl ? { assistantSay: personalControl.assistantSay } : {}), voiceSummary: input.voiceSummary, workMode: thread.workMode ?? 'execute', id: randomUUID(), text: originalText, displayText: input.displayText, channel: input.channel, ...(input.coalesce ? { coalesce: input.coalesce } : {}), images: rawImages, videos: videoIds, ...(mentions ? { mentions } : {}), ...(input.collaboration ? { collaboration: input.collaboration } : {}), ...(input.fromUser ? { fromUser: true } : {}) };
       this.references.grant(threadId, reference.references);
       this.queues.set(threadId, [...queue, queued]);
       this.emitThreadEvent(threadId, null, 'thread.updated', {});
@@ -2549,7 +2553,7 @@ export class ThreadManager {
     const { stored, images } = this.attachments.save(threadId, rawImages);
     const personalHuman = this.personal.router.status().threadId === threadId && input.fromUser === true
       && !delivery && !input.scheduled && !input.review && !input.proactive && !input.autoContinuation;
-    const context = personalHuman && !slashCommand ? this.personal.router.context(threadId) : null;
+    const context = personalHuman && !slashCommand ? await this.personal.router.context(threadId) : null;
     const promptText = (context?.text ?? '') + text + this.attachments.videoNote(threadId, storedVideos);
     // Internal callers may attach protocol context. Only the person's words (or a channel
     // summary) belong in the conversation, its queue, and later replay/continuation views.
@@ -2561,6 +2565,7 @@ export class ThreadManager {
       this.store.transaction(() => {
         delivery?.claim();
         this.references.grant(threadId, reference.references);
+        personalControl?.authorize?.();
         beforeStart?.(turnId);
         context?.commit();
         // New work reopens a thread the person had marked done.
@@ -2588,6 +2593,7 @@ export class ThreadManager {
           ...(delivery ? { coordination: delivery.source } : {}),
           ...(fromUser ? { fromUser: true } : {}),
           ...(personalHuman ? { personalOrigin: 'person' } : {}),
+          ...(personalControl ? { assistantSay: personalControl.assistantSay } : {}),
           ...(promptText !== displayText ? { displayText } : {}),
           ...(stored.length ? { images: stored } : {}),
           ...(storedVideos.length ? { videos: storedVideos } : {}),
@@ -2918,7 +2924,7 @@ export class ThreadManager {
     this.dispatchingQueues.add(threadId);
     if (rest.length) this.queues.set(threadId, rest);
     else this.queues.delete(threadId);
-    this.startTurn(threadId, { workMode: next.workMode, text: next.text, displayText: next.displayText, channel: next.channel, voiceSummary: next.voiceSummary, images: next.images, videos: next.videos, mentions: next.mentions, collaboration: next.collaboration, fromUser: next.fromUser }, undefined, true).catch((err) => {
+    this.startTurn(threadId, { workMode: next.workMode, text: next.text, displayText: next.displayText, channel: next.channel, voiceSummary: next.voiceSummary, images: next.images, videos: next.videos, mentions: next.mentions, collaboration: next.collaboration, fromUser: next.fromUser }, undefined, true, undefined, undefined, next.assistantSay ? { assistantSay: next.assistantSay } : undefined).catch((err) => {
       // The thread was archived or deleted in the meantime, or the message is no longer acceptable.
       console.error(`could not send a queued message: ${err instanceof Error ? err.message : err}`);
       if (this.store.getThread(threadId)) this.setQueue(threadId, [
@@ -2940,9 +2946,10 @@ export class ThreadManager {
    * Stops the running turn. Stopping means stopping: messages waiting behind it are not sent, they
    * are handed back (their text) so the caller can put them in front of the user again.
    */
-  async cancelTurn(threadId: string, opts: { keepQueue?: boolean } = {}): Promise<{ dropped: string[]; mentions?: unknown[] }> {
+  async cancelTurn(threadId: string, opts: { keepQueue?: boolean; authorize?: () => void } = {}): Promise<{ dropped: string[]; mentions?: unknown[] }> {
     this.getThread(threadId);
     if (!opts.keepQueue) await this.coordination?.beforeStop(threadId);
+    opts.authorize?.();
     const mentions = opts.keepQueue ? [] : (this.queues.get(threadId) ?? []).flatMap(q => q.mentions ?? []);
     const dropped = opts.keepQueue ? [] : (this.queues.get(threadId) ?? []).map((q) => q.displayText ?? q.text).filter(Boolean);
     if (!opts.keepQueue && this.queues.has(threadId)) this.setQueue(threadId, []);

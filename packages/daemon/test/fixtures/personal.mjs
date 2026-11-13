@@ -77,6 +77,11 @@ export function personalFixture(text) {
     if (process.env.FAKE_PERSONAL_BOARD_LINKS === '1' && text.includes('#/thread/')) return [...text.matchAll(/\[[^\]]+\]\(#\/thread\/[^)]+\)/g)].map(match => match[0]).join('\n');
     if (command === '<calli-worker-report>') { const report = JSON.parse(text.split('\n').find(line => line.startsWith('{"matterId"'))); if (report.stage !== 'progress' && !report.notified && !report.pushed) cli(['notify', '--text-file', '-'], `「${report.title}」要你看一下`); return `「${report.title}」要你看一下`; }
     if (command === 'router-fixture-context') return JSON.stringify({ context: context?.[1] ?? null });
+    if (command.startsWith('router-fixture-plan')) return JSON.stringify(cli(['plan', '--range', command.split(' ')[1] || 'day']));
+    if (command.startsWith('router-fixture-say ')) {
+      const input = JSON.parse(command.slice('router-fixture-say '.length));
+      return JSON.stringify(cli(['threads', 'say', input.id, '--text-file', '-'], input.text));
+    }
     if (command.startsWith('router-fixture-dispatch ')) {
       const input = JSON.parse(command.slice('router-fixture-dispatch '.length));
       const flags = ['dispatch', '--agent', input.agent, '--cwd', input.cwd, '--task-file', '-'];

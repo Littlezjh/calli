@@ -35,6 +35,11 @@ export function startConflict(details: Record<string, unknown>): StartConflict |
 }
 
 /** The runs a conversation panel pins at its top: only what asks the person, newest first. */
+/** The one line a waiting decision is known by while folded: what is asked, else what is proposed. */
+export const askLine = (run: ProactiveRun): string =>
+  (run.kind === 'dispatch' ? run.title || run.task || run.summary : run.question?.text || run.line || run.summary || run.threadTitle || '')
+    ?.split('\n').map(line => line.trim()).find(Boolean) ?? '';
+
 export const askingPins = (runs: ProactiveRun[] | null): ProactiveRun[] =>
   (runs ?? []).filter(run => run.status === 'asking').sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
 

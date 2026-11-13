@@ -142,7 +142,6 @@ test('a dispatch card rides in the conversation; starting it lands in its thread
     await card.waitFor();
     await card.getByText('派活给 pi').waitFor();
     await card.getByText('对照清单检查发布结果').waitFor();
-    await page.locator('.chat-entries').getByRole('button', { name: /需要你/ }).locator('.chat-badge').getByText('1').waitFor();
 
     await card.getByRole('button', { name: '开始', exact: true }).click();
     await page.locator('.chat-home').waitFor({ state: 'detached' });
@@ -156,7 +155,7 @@ test('a dispatch card rides in the conversation; starting it lands in its thread
   } finally { await browser.close(); await daemon.stop(); }
 });
 
-test('the overview opens its tab, preserves unknown counts and fits a phone without clipping', async () => {
+test('a phone keeps one bar: the entries sit in the app bar and their badges carry the counts', async () => {
   const daemon = await startDaemon();
   const browser = await launchBrowser();
   try {
@@ -168,28 +167,33 @@ test('the overview opens its tab, preserves unknown counts and fits a phone with
     await page.route(/\/api\/todos$/, async route => { await gate; await route.continue(); });
     await openUi(page, daemon);
     await page.evaluate(() => { location.hash = '#/desk'; });
-    await page.locator('.chat-strip').getByRole('button', { name: '需要你 —', exact: true }).waitFor();
+    const entries = page.locator('.topbar .topbar-desk .chat-entries');
+    await entries.waitFor();
+    assert.equal(await page.locator('.chat-top').count(), 0, 'no second bar under the app bar');
+    assert.equal(await page.locator('.chat-strip').count(), 0, 'no strip row on a phone');
+    assert.equal(await entries.locator('.chat-badge').count(), 0, 'an unknown count shows no badge, never a zero');
     release();
-    await page.locator('.chat-strip').getByRole('button', { name: '需要你 1', exact: true }).waitFor();
-    for (const [label, tab] of [['需要你 1', 'matters'], ['出错 0', 'sessions']]) {
-      await page.locator('.chat-strip').getByRole('button', { name: label, exact: true }).tap();
+    const matters = entries.getByRole('button', { name: /事项/ });
+    await matters.locator('.chat-badge').getByText('1', { exact: true }).waitFor();
+    for (const [name, tab] of [[/事项/, 'matters'], [/会话/, 'sessions']]) {
+      await entries.getByRole('button', { name }).tap();
       await page.locator('.chat-drawer.over').waitFor();
       assert.equal(new URL(page.url()).hash, `#/desk/${tab}`);
       await page.keyboard.press('Escape');
       await page.locator('.chat-drawer').waitFor({ state: 'detached' });
     }
+    const flowTop = await page.locator('.chat-flow, .chat-fresh').first().evaluate(element => element.getBoundingClientRect().top);
+    const barBottom = await page.locator('.topbar').evaluate(element => element.getBoundingClientRect().bottom);
+    assert.ok(flowTop <= barBottom + 1, `the conversation starts right under the bar (${flowTop} vs ${barBottom})`);
     for (const locale of ['zh', 'en', 'ja']) {
       await page.evaluate(locale => localStorage.setItem('calli.locale', locale), locale);
       await page.reload();
-      await page.locator('.chat-strip button').first().waitFor();
-      const fit = await page.locator('.chat-strip').evaluate(strip => {
-        const bounds = strip.getBoundingClientRect();
-        return [...strip.querySelectorAll('button')].every(button => {
-          const rect = button.getBoundingClientRect();
-          return button.scrollWidth <= button.clientWidth && rect.left >= bounds.left && rect.right <= bounds.right && rect.right <= innerWidth;
-        });
+      await entries.waitFor();
+      const fit = await page.locator('.topbar').evaluate(bar => {
+        const bounds = bar.getBoundingClientRect();
+        return [...bar.querySelectorAll('button')].every(button => { const rect = button.getBoundingClientRect(); return rect.left >= bounds.left && rect.right <= bounds.right && rect.right <= innerWidth; });
       });
-      assert.ok(fit, `${locale}: all overview labels fit without truncation or horizontal scrolling`);
+      assert.ok(fit, `${locale}: the bar fits a phone without clipping`);
     }
   } finally { await browser.close(); await daemon.stop(); }
 });
@@ -209,7 +213,11 @@ test('dispatch can be declined without creating work, and a rejected start remai
     const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
     await openUi(page, daemon);
     await page.evaluate(() => { location.hash = '#/desk'; });
+    // Two asks fold into one tray line: open it, then open the one ask to act on.
+    await page.locator('.chat-tray-head').getByText('2 个等你回答').tap();
     const rejected = page.locator(`.chat-ask[data-run="${declined.id}"]`);
+    assert.equal(await page.locator('.chat-ask-detail').count(), 0, 'no ask opens by itself while several wait');
+    await rejected.locator('.chat-ask-row').tap();
     await rejected.getByRole('button', { name: '不用', exact: true }).tap();
     await rejected.waitFor({ state: 'detached' });
     assert.equal((await json(daemon, '/api/threads')).length, count, 'declining starts no work thread');
@@ -217,7 +225,9 @@ test('dispatch can be declined without creating work, and a rejected start remai
     let attempt = 0;
     await page.route(`**/api/personal/proactive/runs/${retry.id}/start`, route => ++attempt === 1
       ? route.fulfill({ status: 409, json: { error: 'Agent 暂时不可用', run: retry } }) : route.continue());
+    // The last ask left stands open on its own.
     const card = page.locator(`.chat-ask[data-run="${retry.id}"]`);
+    assert.equal(await page.locator('.chat-tray-head').count(), 0);
     await card.getByRole('button', { name: '开始', exact: true }).tap();
     await card.getByRole('alert').getByText('Agent 暂时不可用', { exact: true }).waitFor();
     assert.equal(await card.getByRole('button', { name: '开始', exact: true }).isEnabled(), true);
@@ -247,7 +257,8 @@ if (process.env.CALLI_ASSISTANT_SHOTS) test('assistant chat screenshot matrix', 
         await openUi(page, daemon);
         await page.evaluate(() => { location.hash = '#/desk'; });
         await page.locator(conversation === 'fresh' ? '.chat-fresh' : '.chat-flow .row').first().waitFor();
-        await page.locator('.chat-strip').getByRole('button', { name: '需要你 1', exact: true }).waitFor();
+        if (width === 390) await page.locator('.chat-entries .chat-badge').getByText('1', { exact: true }).waitFor();
+        else await page.locator('.chat-strip').getByRole('button', { name: '需要你 1', exact: true }).waitFor();
         await page.locator('.chat-composer textarea').waitFor();
         for (const drawer of ['closed', 'open']) {
           if (drawer === 'open') {

@@ -1111,6 +1111,8 @@ test('a turn a channel started is marked by its source, never by its words', () 
   const user = (data: Record<string, any>) => buildTimeline([ev('turn.started', data)]).items.find(i => i.kind === 'user') as any;
   assert.deepEqual(user({ text: 'raw', displayText: '飞书 · 3 条新信号', channel: { kind: 'lark', count: 3 } }).channel, { kind: 'lark', count: 3 });
   assert.equal(user({ text: '飞书 · 3 条新信号' }).channel, undefined);
+  const prep = user({ text: 'raw', displayText: '会前准备 · 2 场会议', channel: { kind: 'mixed', count: 2, parts: [{ kind: 'meeting-prep', count: 2 }, { kind: 'person', text: '顺便看下周报' }] } }).channel;
+  assert.deepEqual(channelRows(prep, 'raw'), [{ kind: 'note', text: '会前准备 · 2 场会议' }, { kind: 'person', text: '顺便看下周报' }], 'a meeting-prep part is a quiet line, not dropped');
   assert.equal(user({ text: 'x', channel: { count: 2 } }).channel, undefined);
 });
 

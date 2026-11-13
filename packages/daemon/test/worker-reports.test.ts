@@ -294,3 +294,24 @@ test('dispatch results reach the Router with or without a matter, with progress 
     }
   } finally { await h.close(); }
 });
+
+test('threads say from fixture CLI queues and reports exactly the requested round once', async () => {
+  const h = await setup(); try {
+    const target = await h.manager.createThread({ agent: 'pi', cwd: h.cwd, title: 'Existing work' });
+    await h.manager.startTurn(target.id, { text: 'slow' });
+    const first = h.store.recentLifecycle(target.id, 1)[0].turnId;
+    await h.personal.router.say({ text: `router-fixture-say ${JSON.stringify({ id: target.id, text: 'inspect existing work' })}` });
+    await settle(() => h.manager.threadView(target.id).queued.length === 1);
+    assert.equal(h.routerTurns().filter(turn => turn.data.channel).length, 0, 'the preceding round has not reported');
+    await h.manager.cancelTurn(target.id, { keepQueue: true });
+    await settle(() => h.routerTurns().some(turn => (turn.data.channel as { kind?: string })?.kind === 'worker'));
+    const starts = h.store.listEventsOfType(target.id, 'turn.started');
+    assert.equal(starts.length, 2); assert.equal(starts[0].turnId, first);
+    assert.equal(starts[0].data.assistantSay, undefined); assert.equal(typeof starts[1].data.assistantSay, 'string');
+    const report = h.routerTurns().find(turn => (turn.data.channel as { kind?: string })?.kind === 'worker')!;
+    assert.equal(reported(report.data.text).threadId, target.id);
+    assert.equal(reported(report.data.text).stage, 'progress');
+    await h.turn(target.id, 'ordinary later round'); await h.quiet();
+    assert.equal(h.routerTurns().filter(turn => (turn.data.channel as { kind?: string })?.kind === 'worker').length, 1);
+  } finally { await h.close(); }
+});

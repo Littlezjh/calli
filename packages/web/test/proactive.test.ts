@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { ProactiveRun, Todo } from '../src/api.js';
-import { addRepo, askingPins, diffTotals, fileName, isDecision, matterRuns, settingsPayload, proactiveCount, proactiveMatters, removeRepo, replaceRun, runControls, startConflict } from '../src/proactive.js';
+import { addRepo, askLine, askingPins, diffTotals, fileName, isDecision, matterRuns, settingsPayload, proactiveCount, proactiveMatters, removeRepo, replaceRun, runControls, startConflict } from '../src/proactive.js';
 
 let n = 0;
 function run(over: Partial<ProactiveRun> = {}): ProactiveRun {
@@ -154,4 +154,11 @@ test('open questions, waits and repository permissions survive newer records', (
   const plan = run({ kind: 'prepare', variant: 'plan', status: 'ready' });
   assert.deepEqual(runControls(plan), []);
   assert.equal(isDecision(plan), false);
+});
+
+test('a folded ask is known by its first meaningful line', () => {
+  assert.equal(askLine(run({ kind: 'advance', status: 'asking', question: { text: '\n  确认要不要替换周报\n细节', options: [] } })), '确认要不要替换周报');
+  assert.equal(askLine(run({ kind: 'dispatch', status: 'asking', title: '', task: '修登录\n步骤…' })), '修登录', 'a dispatch without a title falls back to its task');
+  assert.equal(askLine(run({ kind: 'advance', status: 'asking', line: '等你决定目录' })), '等你决定目录');
+  assert.equal(askLine(run({ kind: 'advance', status: 'asking' })), '');
 });

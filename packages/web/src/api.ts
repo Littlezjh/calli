@@ -430,7 +430,7 @@ export class ApiError extends Error {
 export const MAX_QUEUED = 5;
 
 /** One arrival in a batch the Router took in a single turn. */
-export type TurnPart = { kind: 'person'; text: string } | { kind: 'lark' | 'worker'; count: number };
+export type TurnPart = { kind: 'person'; text: string } | { kind: 'lark' | 'worker' | 'meeting-prep'; count: number };
 /** A turn a channel started on the person's behalf (a batch of Lark signals), not words they wrote. */
 export interface TurnChannel { kind: string; count: number; parts?: TurnPart[] }
 
@@ -503,6 +503,23 @@ export interface ExploreSource { id: ExploreSourceId; available: boolean; reason
 
 export interface PersonalSettings { routerThreadId?: string | null; directoryIsDefault?: boolean; defaultDirectory?: string; defaultDirectoryDisplay?: string; directoryDisplay?: string | null; directory: string | null; agent: string | null; model: string | null }
 export interface PersonalBrief { title: string; lines: string[]; text: string }
+export type PlanRange = 'hour' | 'day' | 'week' | 'month';
+export interface PlanMeeting { id: string; title: string; start: string; end: string; recurring: boolean; url?: string }
+export interface PlanTodo { id: string; text: string; dueAt: string | null; importance: string | null; horizon: 'week' | 'month' | null; parentId: string | null; stage: TodoStage | null }
+export interface PlanThread { id: string; title: string; line: string; at: string }
+/** What lies ahead in one range, put together by the hub without a model. */
+export interface PersonalPlan {
+  range: PlanRange;
+  from: string;
+  to: string;
+  /** `off`: no calendar to read; `unavailable`: reading failed. Neither is the same as no meetings. */
+  meetings: { state: 'ok' | 'unavailable' | 'off'; error?: string; items: PlanMeeting[] };
+  urgent: PlanTodo[];
+  due: PlanTodo[];
+  goals: PlanTodo[];
+  needsYou: PlanThread[];
+  running: PlanThread[];
+}
 export interface LastPersonalBrief { text: string; sentAt: string }
 export interface BriefSettings { enabled: boolean; morning: string; evening: string }
 export interface LarkChannelSettings {
@@ -1254,6 +1271,7 @@ export class Api {
   patchDraftModelPreference(agent: string, patch: ModelPreferencePatch): Promise<DraftModelPreference> { return this.request('PATCH', '/api/draft-model-preferences', { agent, ...patch }, { keepalive: true }); }
   personalSettings(): Promise<PersonalSettings> { return this.request('GET', '/api/personal/settings'); }
   savePersonalSettings(value: PersonalSettings): Promise<PersonalSettings> { return this.request('PUT', '/api/personal/settings', value); }
+  personalPlan(range: PlanRange, signal?: AbortSignal): Promise<PersonalPlan> { return this.request('GET', `/api/personal/plan?range=${range}`, undefined, { signal }); }
   personalBrief(kind: 'morning' | 'evening'): Promise<PersonalBrief | null> { return this.request('GET', `/api/personal/brief?kind=${kind}`); }
   lastPersonalBrief(kind: 'morning' | 'evening'): Promise<LastPersonalBrief | null> { return this.request('GET', `/api/personal/brief/last?kind=${kind}`); }
   briefSettings(): Promise<BriefSettings> { return this.request('GET', '/api/personal/brief/settings'); }

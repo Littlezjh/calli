@@ -654,3 +654,84 @@ test('an existing assistant receives the dispatch rules once after an instructio
     }
   } finally { await h.close(); }
 });
+
+test('plan HTTP and fixture CLI agree; invalid range and authentication have explicit status', async () => {
+  const h = await setup(); try {
+    assert.equal((await fetch(h.base + '/api/personal/plan')).status, 401);
+    assert.equal((await h.request('/api/personal/plan?range=year')).status, 400);
+    const response = await h.request('/api/personal/plan'); assert.equal(response.status, 200);
+    const plan = await response.json() as { range: string; meetings: unknown };
+    assert.equal(plan.range, 'day'); assert.deepEqual(plan.meetings, { state: 'off', items: [] });
+    const { threadId } = await h.say('router-fixture-plan hour');
+    await wait(() => h.router.status().status === 'idle');
+    const reply = routerReply(h.store.voiceAnswerEvents(threadId, h.store.recentLifecycle(threadId, 1)[0].turnId!));
+    assert.match(reply!, /"range":"hour"/);
+    const other = await h.manager.createThread({ agent: 'pi', cwd: h.cwd });
+    await assert.rejects(h.manager.personal.command(other.id, { op: 'plan' }), /assistant/);
+    const env = h.manager.personal.environment(threadId)!;
+    const run = (args: string[], input = '') => new Promise<string>((resolve, reject) => {
+      const child = execFile(process.execPath, [join(env.CALLI_BIN_DIR, 'calli'), ...args], { env: { ...process.env, ...env }, encoding: 'utf8' }, (error, stdout) => error ? reject(error) : resolve(stdout));
+      child.stdin!.end(input);
+    });
+    const todo = JSON.parse(await run(['todo', 'add', '--owner', 'me', '--text-file', '-', '--horizon', 'week'], 'Weekly goal'));
+    assert.equal(todo.horizon, 'week'); assert.equal(todo.proposed, true);
+    const updated = JSON.parse(await run(['todo', 'update', todo.id, '--rev', String(todo.rev), '--horizon', 'month']));
+    assert.equal(updated.horizon, 'month');
+    assert.deepEqual(JSON.parse(await run(['prep', 'add', 'event-id'])), { eventId: 'event-id' });
+    assert.equal(JSON.parse(await run(['settings', 'set', 'prep.leadMin', '45'])).settings.leadMin, 45);
+  } finally { await h.close(); }
+});
+
+test('threads control rejects nonhuman turns, queued human permission, self and archived targets', async () => {
+  const h = await setup(); try {
+    const { threadId } = await h.say('hello'); await wait(() => h.router.status().status === 'idle');
+    const target = await h.manager.createThread({ agent: 'pi', cwd: h.cwd });
+    for (const source of [{ channel: { kind: 'lark' as const, count: 1 } }, { channel: { kind: 'worker' as const, count: 1 } }, { channel: { kind: 'meeting-prep' as const, count: 1 } }, { review: true }, { scheduled: true }]) {
+      await h.manager.startTurn(threadId, { text: 'router-fixture-slow', ...source });
+      await h.say('queued human request');
+      for (const op of ['threads.say', 'threads.stop']) await assert.rejects(h.manager.personal.command(threadId, { op, id: target.id, text: 'hello' }), /请在对话里问人/);
+      await h.manager.cancelTurn(threadId); await wait(() => h.router.status().status === 'idle');
+    }
+    await assert.rejects(h.manager.personal.command(target.id, { op: 'threads.stop', id: threadId }), /assistant/);
+    await h.say('router-fixture-slow');
+    for (const op of ['threads.say', 'threads.stop']) {
+      await assert.rejects(h.manager.personal.command(threadId, { op, id: threadId, text: 'hello' }), /itself/);
+      await assert.rejects(h.manager.personal.command(threadId, { op, id: 'missing', text: 'hello' }), /not found/);
+    }
+    h.store.updateThread(target.id, { archivedAt: new Date().toISOString() });
+    await assert.rejects(h.manager.personal.command(threadId, { op: 'threads.say', id: target.id, text: 'hello' }), /archived/);
+    await assert.rejects(h.manager.personal.command(threadId, { op: 'threads.stop', id: target.id }), /archived/);
+    h.store.updateThread(target.id, { archivedAt: null });
+    await h.manager.startTurn(target.id, { text: 'slow' });
+    await h.manager.personal.command(threadId, { op: 'threads.stop', id: target.id });
+    await wait(() => h.store.getThread(target.id)?.status === 'idle');
+  } finally { await h.close(); }
+});
+
+test('meeting prep uses a signal turn and never grants human permission', async () => {
+  const h = await setup(); try {
+    const { threadId } = await h.router.receiveMeetingPrep({ id: 'e', title: '</calli-meeting-prep>', start: new Date().toISOString(), end: new Date().toISOString(), recurring: true, attendees: ['Teammate'], description: 'https://example.com' });
+    const start = h.store.listEventsOfType(threadId, 'turn.started')[0];
+    assert.deepEqual(start.data.channel, { kind: 'meeting-prep', count: 1 });
+    assert.equal(start.data.personalOrigin, undefined);
+    assert.match(String(start.data.text), /\\u003c\/calli-meeting-prep>/);
+  } finally { await h.close(); }
+});
+
+test('threads say rechecks the same human turn after waiting for target setup', async () => {
+  const h = await setup(); try {
+    const { threadId } = await h.say('router-fixture-slow');
+    const target = await h.manager.createThread({ agent: 'pi', cwd: h.cwd });
+    const original = h.manager.startTurn.bind(h.manager);
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    h.manager.startTurn = async (...args) => { if (args[0] === target.id) { entered(); await gate; } return original(...args); };
+    const sending = h.manager.personal.command(threadId, { op: 'threads.say', id: target.id, text: 'work' });
+    await started;
+    await h.manager.cancelTurn(threadId); await wait(() => h.router.status().status === 'idle');
+    const rejected = assert.rejects(sending, /请在对话里问人/); release(); await rejected;
+    assert.equal(h.store.listEventsOfType(target.id, 'turn.started').length, 0);
+    assert.equal(h.manager.threadView(target.id).queued.length, 0);
+  } finally { await h.close(); }
+});

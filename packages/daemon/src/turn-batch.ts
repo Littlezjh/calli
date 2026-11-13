@@ -11,7 +11,7 @@ export interface TurnBatch {
 /** A larger batch starts a new queued turn rather than sending one prompt without bound. */
 export const MAX_BATCH_TEXT = 64_000;
 const SEPARATOR = '\n\n---\n\n';
-const LABELS = { lark: (count: number) => `飞书 · ${count} 条新信号`, worker: (count: number) => `工作 · ${count} 条进展` };
+const LABELS = { 'meeting-prep': (count: number) => `会前准备 · ${count} 场会议`, lark: (count: number) => `飞书 · ${count} 条新信号`, worker: (count: number) => `工作 · ${count} 条进展` };
 
 /** Null when the merged text would be too long. Neighbouring channel parts add up; a person's words stay separate. */
 export function mergeBatches(older: TurnBatch, newer: TurnBatch): TurnBatch | null {

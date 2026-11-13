@@ -514,6 +514,8 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const [schedulePath, setSchedulePath] = useState(() => window.location.hash.startsWith('#/schedules/') ? window.location.hash.slice('#/schedules/'.length) : '');
   const [machinePath, setMachinePath] = useState(() => window.location.hash.startsWith('#/machines/') ? window.location.hash.slice('#/machines/'.length) : '');
   /** The desk drawer's tab in the address, so a reload lands with the drawer as it was left. */
+  // The assistant home puts its entries in this bar rather than a second bar of its own.
+  const [deskSlot, setDeskSlot] = useState<HTMLDivElement | null>(null);
   const [deskPath, setDeskPath] = useState(() => /^#\/desk\/(desk|sessions|matters)$/.test(window.location.hash) ? window.location.hash.slice('#/desk/'.length) : '');
   const [settingsPath, setSettingsPath] = useState(() => start === 'machines' ? 'machines' : window.location.hash.replace(/^#\/settings\/?/, ''));
   // `list`: the phone's thread list was open, so closing settings goes back to it.
@@ -3016,6 +3018,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
               </button>
             )}
           </div>
+          {onDesk && !selected && <div className="topbar-desk" ref={setDeskSlot} />}
           {selected && (
             <div className="topbar-actions">
               {/* The thread at a glance: one panel for the team, the plan, the changes, the pictures
@@ -3233,7 +3236,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
               openFinds={deskFinds} onFindsOpened={() => setDeskFinds(false)}
               onSpreadChange={setDeskSpread} revealTodoId={revealTodo} onRevealTodo={() => setRevealTodo(null)}
               path={deskPath} onPathChange={setDeskPath}
-              focusSignal={chatFocus} />
+              focusSignal={chatFocus} headerSlot={deskSlot} />
           </div>
         ) : onTodos ? (
           // A scroller of its own: the thread's one pins itself to the bottom, a document starts at the top.
