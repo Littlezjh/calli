@@ -106,6 +106,17 @@
   --content-w: 780px;
   /* The home-indicator inset; App.tsx sets it to 0 while a phone keyboard covers that edge. */
   --safe-bottom: env(safe-area-inset-bottom);
+  /* The remote desktop on a touch screen: a dark viewer in either theme, like a photo, with
+     translucent controls floating over the picture. */
+  --viewer-bg: #000000;
+  --viewer-fg: #ffffff;
+  --viewer-muted: rgba(255, 255, 255, 0.6);
+  --viewer-dim: rgba(255, 255, 255, 0.36);
+  --viewer-control: #121212;
+  --viewer-control-active: #2a2a2a;
+  --viewer-rim: rgba(255, 255, 255, 0.12);
+  --viewer-glass: rgba(12, 12, 12, 0.65);
+  --viewer-glass-rim: rgba(255, 255, 255, 0.18);
   /* Below the app on a phone: the browser's own bottom-bar area. A clear step deeper than the
      page so the strip reads as the screen's edge, not empty space under the composer. */
   --below: #e9e6dd;
@@ -8018,6 +8029,355 @@ div.file-card:hover { background: var(--surface); }
     margin: 0;
     border-radius: 0;
   }
+}
+
+/* ---------- Remote desktop on a touch screen ----------
+   Laid out as Codex's: black from edge to edge, the picture between a row of round controls at the
+   top and two pills at the bottom. The app box follows the phone's keyboard, so the pills rise
+   with it; the picture keeps its height (set inline) and the keyboard covers its lower part. */
+.term-scrim.desktop-scrim-touch,
+.desktop-panel.touch {
+  background: var(--viewer-bg);
+  color: var(--viewer-fg);
+}
+
+.desktop-panel.touch {
+  overflow: hidden;
+}
+
+.desktop-touch-head {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 3;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px 0;
+}
+
+.desktop-round,
+.desktop-machine {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 44px;
+  border: 1px solid var(--viewer-rim);
+  background: var(--viewer-control);
+  color: var(--viewer-fg);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.desktop-round {
+  width: 44px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.desktop-round:disabled {
+  opacity: 0.45;
+}
+
+.desktop-touch-head .pop {
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+}
+
+.desktop-machine {
+  gap: 8px;
+  max-width: 100%;
+  padding: 0 18px 0 16px;
+  border-radius: var(--radius-pill);
+  font-size: 16px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.desktop-machine svg {
+  flex: none;
+}
+
+.desktop-machine-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.desktop-touch-mode {
+  flex: none;
+  color: var(--viewer-muted);
+  font-weight: 400;
+}
+
+.desktop-round:active,
+.desktop-machine:active,
+.desktop-machine[aria-expanded='true'] {
+  background: var(--viewer-control-active);
+}
+
+/* The stage fills the panel; the picture is fitted between the head and the pills. */
+.desktop-stage.touch {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100%;
+  margin: 0;
+  border-radius: 0;
+  background: var(--viewer-bg);
+}
+
+.desktop-stage.touch .desktop-viewport {
+  top: 64px;
+  bottom: calc(max(16px, env(safe-area-inset-bottom) + 2px) + 64px);
+}
+
+.desktop-panel.touch .term-note p {
+  color: var(--viewer-muted);
+}
+
+.desktop-panel.touch .term-note button {
+  border-color: var(--viewer-rim);
+  background: var(--viewer-control);
+  color: var(--viewer-fg);
+}
+
+/* The field the phone keyboard types into: focusable, never seen. */
+.desktop-ime {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  resize: none;
+  overflow: hidden;
+  color: transparent;
+  caret-color: transparent;
+  background: transparent;
+  font-size: 16px;
+  pointer-events: none;
+}
+
+.desktop-dock {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: max(16px, calc(var(--safe-bottom) + 2px));
+  z-index: 3;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 12px;
+  pointer-events: none;
+}
+
+.desktop-pill {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  height: 52px;
+  padding: 0 6px;
+  border: 1px solid var(--viewer-rim);
+  border-radius: var(--radius-pill);
+  background: var(--viewer-control);
+  pointer-events: auto;
+}
+
+/* With the keyboard up the pills sit over the picture: frosted, so it shows through. */
+.desktop-dock.over .desktop-pill {
+  border-color: var(--viewer-glass-rim);
+  background: var(--viewer-glass);
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
+}
+
+.desktop-pill button {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 58px;
+  height: 46px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--viewer-fg);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+/* Codex's line weight on the floating controls; dots drawn heavier keep their own. */
+.desktop-touch-head svg,
+.desktop-dock svg {
+  stroke-width: 2;
+}
+
+/* The keys a phone keyboard lacks, opened from the menu: a strip floating over the pills, frosted,
+   scrolling sideways when it does not fit. */
+.desktop-keys {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 10px);
+  display: flex;
+  gap: 2px;
+  width: max-content;
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 4px;
+  overflow-x: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  border: 1px solid var(--viewer-glass-rim);
+  border-radius: var(--radius-pill);
+  background: var(--viewer-glass);
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
+  pointer-events: auto;
+}
+
+.desktop-keys::-webkit-scrollbar {
+  display: none;
+}
+
+.desktop-keys button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  height: 40px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--viewer-fg);
+  font-size: 14px;
+  font-weight: 500;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.desktop-keys button:active,
+.desktop-keys button.on {
+  background: var(--viewer-control-active);
+}
+
+.desktop-dock:has(.desktop-keys) .desktop-toast {
+  bottom: calc(100% + 64px);
+}
+
+.desktop-pill button:active {
+  background: var(--viewer-control-active);
+}
+
+/* Copy waiting for the desktop's answer: dimmed until it comes. */
+.desktop-pill button:disabled {
+  color: var(--viewer-dim);
+}
+
+/* Something new copied on the desktop: a dot on the copy button, as on the computer's clipboard button. */
+.desktop-copy-btn.fresh::after {
+  content: '';
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--viewer-fg);
+}
+
+.desktop-toast {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  max-width: 100%;
+  padding: 9px 16px;
+  border: 1px solid var(--viewer-rim);
+  border-radius: var(--radius-pill);
+  background: var(--viewer-control);
+  color: var(--viewer-fg);
+  font-size: 13.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  animation: fade-in 0.14s ease-out;
+}
+
+.desktop-menu .pop-item {
+  color: var(--viewer-fg);
+}
+
+.desktop-menu .pop-item:hover:not(:disabled),
+.desktop-menu .pop-item:focus-visible {
+  background: var(--viewer-control-active);
+}
+
+.desktop-menu .pop-item:disabled {
+  opacity: 0.4;
+}
+
+.desktop-menu .pop-item-icon,
+.desktop-menu .pop-item-hint {
+  color: var(--viewer-muted);
+}
+
+.desktop-menu .pop-divider {
+  background: var(--viewer-rim);
+}
+
+/* The machine's menu and the clipboard sheet on a touch screen: the viewer's own dark glass in
+   either theme, rounded like the pills; the computer's menus keep the app's look. */
+.pop-panel.anchored-pop.desktop-menu,
+.pop-panel.anchored-pop.desktop-clip.viewer {
+  border-color: var(--viewer-glass-rim);
+  border-radius: 22px;
+  background: var(--viewer-glass);
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
+  box-shadow: none;
+  color: var(--viewer-fg);
+}
+
+.desktop-clip.viewer .desktop-clip-body h3,
+.desktop-clip.viewer .desktop-clip-empty,
+.desktop-clip.viewer .desktop-clip-note {
+  color: var(--viewer-muted);
+}
+
+.desktop-clip.viewer .desktop-clip-text,
+.desktop-clip.viewer .desktop-clip-body textarea {
+  border: 1px solid var(--viewer-rim);
+  background: var(--viewer-control);
+  color: var(--viewer-fg);
+}
+
+.desktop-clip.viewer .desktop-clip-body textarea::placeholder {
+  color: var(--viewer-dim);
+}
+
+.desktop-clip.viewer .desktop-clip-body .ghost {
+  border-color: var(--viewer-rim);
+  background: transparent;
+  color: var(--viewer-fg);
+}
+
+.desktop-clip.viewer .desktop-clip-body .ghost:hover:not(:disabled),
+.desktop-clip.viewer .desktop-clip-body .ghost:active:not(:disabled) {
+  background: var(--viewer-control-active);
+}
+
+.desktop-clip.viewer .desktop-clip-body .ghost:disabled {
+  color: var(--viewer-dim);
 }
 
 /* Touch screens: a row of the keys a phone keyboard lacks, and a field a line is typed into. */

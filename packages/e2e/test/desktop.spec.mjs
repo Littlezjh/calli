@@ -1,5 +1,6 @@
 // The remote desktop, opened from the sidebar: a real Xvnc started for the test, seen through the daemon's WebSocket and
-// noVNC. View only until Control is pressed; the VNC password is asked once and kept on the device.
+// noVNC. On a computer it is view only until Control is pressed; on a phone it opens ready to touch, type, copy and
+// paste. The VNC password is asked once and kept on the device.
 // Skipped where Xvnc is not installed.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -37,8 +38,11 @@ let blocked; // a desktop with a password that has turned this address away
 let daemonBlocked;
 let touchy; // a bare desktop whose clicks xev reports, for the touch gestures
 let daemonTouchy;
-/** What xev saw on the bare desktop's root window, as it comes. */
+let phone; // a desktop with an xterm that keeps every line typed, for the phone's keyboard and clipboard
+let daemonPhone;
+/** What xev saw on the bare desktop's root window, as it comes: buttons, and separately keys. */
 let xevOut = '';
+let xevKeys = '';
 let browser;
 
 /** A display number nobody uses, so the test never touches a real desktop. */
@@ -76,7 +80,19 @@ before(async () => {
     const watcher = spawn('stdbuf', ['-oL', xev, '-root', '-event', 'button'], { env: { ...process.env, DISPLAY: `:${touchy.display}` }, stdio: ['ignore', 'pipe', 'ignore'] });
     children.push(watcher);
     watcher.stdout.on('data', (d) => (xevOut += d));
+    // Without a window manager, keys go to the window under the pointer: on a bare desktop, the root.
+    const keys = spawn('stdbuf', ['-oL', xev, '-root', '-event', 'keyboard'], { env: { ...process.env, DISPLAY: `:${touchy.display}` }, stdio: ['ignore', 'pipe', 'ignore'] });
+    children.push(keys);
+    keys.stdout.on('data', (d) => (xevKeys += d));
     daemonTouchy = await startDaemon({ CALLI_DESKTOP_VNC: `127.0.0.1:${touchy.port}` });
+  }
+  if (xclip) {
+    phone = await startXvnc(freeDisplay((touchy?.display ?? blocked.display) + 1), ['-SecurityTypes', 'None']);
+    phone.out = join(dir, 'phone.txt');
+    // A word to select at the top left; Ctrl+C from the copy button must not end the loop.
+    const script = `printf 'copyme\\n'; trap '' INT; while IFS= read -r line; do printf '%s\\n' "$line" >> ${phone.out}; done`;
+    children.push(spawn(xterm, ['-geometry', '200x60+0+0', '-e', 'sh', '-c', script], { env: { ...process.env, DISPLAY: `:${phone.display}` }, stdio: 'ignore' }));
+    daemonPhone = await startDaemon({ CALLI_DESKTOP_VNC: `127.0.0.1:${phone.port}` });
   }
   browser = await launchBrowser();
 });
@@ -88,6 +104,7 @@ after(async () => {
   await daemonNone?.stop();
   await daemonBlocked?.stop();
   await daemonTouchy?.stop();
+  await daemonPhone?.stop();
   for (const child of children) child.kill('SIGTERM');
   if (dir) rmSync(dir, { recursive: true, force: true });
 });
@@ -99,10 +116,19 @@ async function openThread(page, daemon, title) {
   await page.locator('.thread-item', { hasText: title }).click();
 }
 
-/** The desktop is the machine's, not a thread's: it opens from the sidebar, behind the menu on a phone. */
+/**
+ * The desktop is the machine's, not a thread's: it opens from the sidebar, behind the menu on a phone. Its row waits
+ * behind the nav's "more" button, and has one of its own only while minimized and still connected.
+ */
 async function openDesktop(page) {
   if (await page.locator('.menu-btn').isVisible()) await page.locator('.menu-btn').click();
-  await page.locator('.side-desktop').click();
+  await page.locator('.side-more').waitFor();
+  const row = page.locator('.side-nav .side-link', { hasText: '桌面' });
+  if (await row.count()) await row.click();
+  else {
+    await page.locator('.side-more').click();
+    await page.getByRole('menuitem', { name: '桌面', exact: true }).click();
+  }
 }
 
 const connected = (page) => page.locator('.desktop-screen canvas').waitFor({ timeout: 15_000 }).then(() => page.locator('.desktop-panel .term-note').waitFor({ state: 'detached', timeout: 15_000 }));
@@ -111,8 +137,9 @@ test('a machine without a desktop offers none', { skip }, async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   try {
     await openThread(page, daemonNone, '没有桌面');
-    await page.locator('.side-link').first().waitFor();
-    assert.equal(await page.locator('.side-desktop').count(), 0);
+    await page.locator('.side-more').click();
+    await page.getByRole('menuitem').first().waitFor();
+    assert.equal(await page.getByRole('menuitem', { name: '桌面', exact: true }).count(), 0);
   } finally {
     await page.close();
   }
@@ -127,6 +154,8 @@ test('the desktop opens view only; keys reach it only after Control', { skip }, 
     await connected(page);
     const control = page.locator('.desktop-control');
     assert.equal(await control.getAttribute('aria-pressed'), 'false');
+    // The machine as the hub names it, not the VNC server's user@host.
+    assert.equal((await page.locator('.desktop-name').innerText()).trim(), '这台电脑');
     const box = await page.locator('.desktop-screen canvas').boundingBox();
     assert.ok(box && box.width > 300 && box.height > 150, 'the picture is scaled into the panel');
 
@@ -340,32 +369,61 @@ test('a VNC server that turns this address away says so, and the panel still clo
   }
 });
 
-test('on a phone the desktop opens from the sidebar, with a typing bar under Control', { skip }, async () => {
+test('on a phone the desktop opens from the sidebar ready to use: no Control switch, two floating pills', { skip }, async () => {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
   const page = await ctx.newPage();
   try {
-    await openThread(page, daemonOpen, '手机桌面');
+    await openThread(page, daemonPhone ?? daemonOpen, '手机桌面');
     await page.locator('.menu-btn').click();
-    await page.locator('.side-desktop').waitFor();
+    await page.locator('.side-more').click();
+    await page.getByRole('menuitem', { name: '桌面', exact: true }).waitFor();
     await page.emulateMedia({ colorScheme: 'dark' });
     await page.waitForTimeout(500); // past the drawer sliding in
     await page.screenshot({ path: shot('desktop-phone-sidebar-dark') });
     await page.emulateMedia({ colorScheme: 'light' });
-    await page.locator('.side-desktop').click();
+    await page.getByRole('menuitem', { name: '桌面', exact: true }).click();
     await connected(page);
-    assert.equal(await page.locator('.desktop-input').count(), 0, 'no typing while view only');
-    await page.locator('.desktop-control').click();
-    await page.getByLabel('键盘').click();
-    await page.locator('.desktop-input').waitFor();
+    assert.equal(await page.locator('.desktop-control').count(), 0, 'no Control switch on a phone');
+    assert.equal(await page.locator('.desktop-input').count(), 0, 'no typing bar');
+    await page.locator('.desktop-pad').waitFor();
+    assert.equal(await page.locator('.desktop-cursor').count(), 0, 'the finger is the pointer: none drawn');
+    // The machine as the hub names it, never the desktop's own user@host.
+    assert.equal((await page.locator('.desktop-machine-name').innerText()).trim(), '这台电脑');
+    assert.equal(await page.locator('.desktop-panel').getByText(/@/).count(), 0, 'no user@host in the panel');
+    assert.equal(await page.locator('.desktop-rotate').count(), 0, 'no turn-your-phone hint');
+    for (const name of ['后退', '前进', '键盘', '复制桌面上选中的内容', '粘贴本机剪贴板']) await page.getByRole('button', { name, exact: true }).waitFor();
+    await page.waitForTimeout(300); // past the panel fading in
     for (const dark of [false, true]) {
       await page.emulateMedia({ colorScheme: dark ? 'dark' : 'light' });
       await page.screenshot({ path: shot(`desktop-phone-${dark ? 'dark' : 'light'}`) });
     }
-    await page.locator('.desktop-clip-btn').click();
+    await page.emulateMedia({ colorScheme: 'light' });
+
+    // The rest is in the menu: touchpad, view only, the clipboard sheet, minimize.
+    await page.locator('.desktop-more').click();
+    await page.getByRole('menuitemcheckbox', { name: /触控板/ }).waitFor();
+    await page.waitForTimeout(300);
+    for (const dark of [false, true]) {
+      await page.emulateMedia({ colorScheme: dark ? 'dark' : 'light' });
+      await page.screenshot({ path: shot(`desktop-phone-menu-${dark ? 'dark' : 'light'}`) });
+    }
+    await page.emulateMedia({ colorScheme: 'light' });
+    await page.getByRole('menuitem', { name: '剪贴板' }).click();
     await page.getByLabel('把本机的文字粘贴到这里').waitFor();
     assert.equal(await page.locator('.desktop-clip-hint').count(), 0, 'no keyboard shortcuts to mention on a phone');
+    await page.getByLabel('把本机的文字粘贴到这里').fill('发到桌面的文字');
     await page.waitForTimeout(300);
-    await page.screenshot({ path: shot('desktop-phone-clipboard') });
+    for (const dark of [false, true]) {
+      await page.emulateMedia({ colorScheme: dark ? 'dark' : 'light' });
+      await page.screenshot({ path: shot(`desktop-phone-clipboard-${dark ? 'dark' : 'light'}`) });
+    }
+    await page.emulateMedia({ colorScheme: 'light' });
+    await page.keyboard.press('Escape');
+
+    // Minimized from the menu, still connected.
+    await page.locator('.desktop-more').click();
+    await page.getByRole('menuitem', { name: '最小化' }).click();
+    await page.locator('.desktop-panel').waitFor({ state: 'hidden' });
   } finally {
     await ctx.close();
   }
@@ -385,6 +443,20 @@ async function touches(cdp, steps, gap = 16) {
   }
 }
 
+/** A menu item behind the phone's ⋯ button. */
+async function chooseFromMenu(page, name) {
+  await page.locator('.desktop-more').click();
+  await page.getByRole('menuitemcheckbox', { name }).click();
+}
+
+/** Where a point of the 1024x640 desktop is on the screen. */
+async function onScreen(page, x, y) {
+  const box = await page.locator('.desktop-screen canvas').boundingBox();
+  return [box.x + ((x + 0.5) / 1024) * box.width, box.y + ((y + 0.5) / 640) * box.height];
+}
+
+const near = (p, x, y) => Math.abs(p.x - x) <= 2 && Math.abs(p.y - y) <= 2;
+
 const contentWidth = (page) => page.locator('.desktop-content').evaluate((el) => el.getBoundingClientRect().width);
 
 test('on a phone, view only: pinch and double tap zoom the picture, and nothing reaches the desktop', { skip: skipTouch }, async () => {
@@ -395,6 +467,9 @@ test('on a phone, view only: pinch and double tap zoom the picture, and nothing 
     await openUi(page, daemonTouchy);
     await openDesktop(page);
     await connected(page);
+    await chooseFromMenu(page, /只看/);
+    await page.locator('.desktop-pad').waitFor({ state: 'detached' });
+    await page.locator('.desktop-touch-mode').waitFor();
     const from = xevOut.length;
     const fit = await contentWidth(page);
     assert.ok(fit > 300 && fit <= 390, 'the whole desktop fits the width');
@@ -427,7 +502,7 @@ test('on a phone, view only: pinch and double tap zoom the picture, and nothing 
   }
 });
 
-test('on a phone, in control the screen is a touchpad: move, tap, two-finger tap, scroll, long-press drag', { skip: skipTouch }, async () => {
+test('on a phone, the touchpad from the menu: move, tap, two-finger tap, scroll, long-press drag', { skip: skipTouch }, async () => {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
   const page = await ctx.newPage();
   const cdp = await ctx.newCDPSession(page);
@@ -435,10 +510,8 @@ test('on a phone, in control the screen is a touchpad: move, tap, two-finger tap
     await openUi(page, daemonTouchy);
     await openDesktop(page);
     await connected(page);
-    await page.locator('.desktop-control').click();
-    await page.locator('.desktop-pad').waitFor();
-    assert.equal(await page.locator('.desktop-touchpad-btn').getAttribute('aria-pressed'), 'true', 'the touchpad is the default');
-    assert.equal(await page.locator('.desktop-input').count(), 0, 'the typing bar waits to be asked for');
+    await chooseFromMenu(page, /触控板/);
+    await page.locator('.desktop-pad.touchpad').waitFor();
 
     const pad = await page.locator('.desktop-pad').boundingBox();
     // Anywhere on the pad: the pointer starts in the middle of the desktop (1024x640).
@@ -490,6 +563,296 @@ test('on a phone, in control the screen is a touchpad: move, tap, two-finger tap
       await page.emulateMedia({ colorScheme: dark ? 'dark' : 'light' });
       await page.screenshot({ path: shot(`desktop-phone-touchpad-${dark ? 'dark' : 'light'}`) });
     }
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('on a phone the finger is the pointer: tap clicks there, long press right-clicks, long press and drag holds, two fingers scroll, one finger pans the picture', { skip: skipTouch }, async () => {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const page = await ctx.newPage();
+  const cdp = await ctx.newCDPSession(page);
+  const sent = (from) => /Button(Press|Release) event/.test(xevOut.slice(from));
+  try {
+    await openUi(page, daemonTouchy);
+    await openDesktop(page);
+    await connected(page);
+    await page.locator('.desktop-pad').waitFor();
+
+    // A tap: a left click on the spot under the finger.
+    let from = xevOut.length;
+    const [x, y] = await onScreen(page, 200, 150);
+    await touches(cdp, [[[x, y]], []]);
+    await waitUntil(() => pressed(from).length === 1);
+    let p = pressed(from)[0];
+    assert.ok(p.button === 1 && near(p, 200, 150), `left click at 200,150: ${JSON.stringify(p)}`);
+
+    // Two taps in a row land on the same spot: a double click.
+    await page.waitForTimeout(400);
+    from = xevOut.length;
+    const [dx, dy] = await onScreen(page, 600, 400);
+    await touches(cdp, [[[dx, dy]], []]);
+    await touches(cdp, [[[dx + 3, dy + 2]], []]);
+    await waitUntil(() => pressed(from).length === 2);
+    const [first, second] = pressed(from);
+    assert.ok(first.button === 1 && second.button === 1 && near(first, 600, 400), `two left clicks at 600,400: ${JSON.stringify([first, second])}`);
+    assert.deepEqual([second.x, second.y], [first.x, first.y], 'on the same spot');
+
+    // A long press: a right click there.
+    await page.waitForTimeout(400);
+    from = xevOut.length;
+    const [rx, ry] = await onScreen(page, 300, 300);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: rx, y: ry }] });
+    await page.waitForTimeout(650);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await waitUntil(() => pressed(from).length === 1);
+    p = pressed(from)[0];
+    assert.ok(p.button === 3 && near(p, 300, 300), `right click at 300,300: ${JSON.stringify(p)}`);
+
+    // A long press, then a drag: the left button held down from where it started, through the move.
+    from = xevOut.length;
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+    await page.waitForTimeout(650);
+    for (let i = 1; i <= 6; i++) {
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x + i * 8, y }] });
+      await page.waitForTimeout(30);
+    }
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await waitUntil(() => /ButtonRelease event/.test(xevOut.slice(from)));
+    p = pressed(from);
+    assert.equal(p.length, 1, 'one press for the whole drag');
+    assert.ok(p[0].button === 1 && near(p[0], 200, 150), `held from the start: ${JSON.stringify(p[0])}`);
+
+    // Two fingers moving up together: the wheel, scrolling down (button 5); down: up (button 4).
+    from = xevOut.length;
+    const scroll = [];
+    for (let i = 0; i <= 12; i++) scroll.push([[x, y + 150 - i * 12], [x + 60, y + 150 - i * 12]]);
+    await touches(cdp, [...scroll, []]);
+    await waitUntil(() => pressed(from).some((q) => q.button === 5));
+    assert.ok(pressed(from).every((q) => q.button === 5), `only wheel down: ${JSON.stringify(pressed(from))}`);
+    from = xevOut.length;
+    await touches(cdp, [...[...scroll].reverse(), []]);
+    await waitUntil(() => pressed(from).some((q) => q.button === 4));
+    assert.ok(pressed(from).every((q) => q.button === 4));
+
+    // One finger dragged across the whole picture: nothing reaches the desktop.
+    await page.waitForTimeout(300);
+    from = xevOut.length;
+    const drag = (x0, y0, ddx, ddy) => {
+      const steps = [];
+      for (let i = 0; i <= 10; i++) steps.push([[x0 + (ddx * i) / 10, y0 + (ddy * i) / 10]]);
+      return touches(cdp, [...steps, []]);
+    };
+    await drag(x, y, 0, -120);
+    await page.waitForTimeout(400);
+    assert.equal(sent(from), false, 'a one-finger drag sends nothing');
+
+    // Two fingers spread: the picture zooms here, and nothing reaches the desktop.
+    const fit = await contentWidth(page);
+    const box = await page.locator('.desktop-viewport').boundingBox();
+    const cx = box.x + box.width / 2;
+    const cy = box.y + box.height / 2;
+    const spread = [];
+    for (let d = 40; d <= 140; d += 20) spread.push([[cx - d, cy], [cx + d, cy]]);
+    await touches(cdp, [...spread, []]);
+    assert.ok((await contentWidth(page)) > fit * 2, 'pinched out');
+
+    // Zoomed in, one finger moves the picture to look elsewhere, still sending nothing.
+    const scrolled = () => page.locator('.desktop-viewport').evaluate((el) => ({ left: el.scrollLeft, top: el.scrollTop }));
+    const before = await scrolled();
+    await drag(cx, cy, 120, 160);
+    const after = await scrolled();
+    // A wide desktop zoomed on an upright phone has little room up and down: the sideways move is the clear one.
+    assert.ok(before.left - after.left > 80 && after.top <= before.top, `the picture followed the finger: ${JSON.stringify([before, after])}`);
+    await page.waitForTimeout(400);
+    assert.equal(sent(from), false, 'pinching and panning send nothing');
+  } finally {
+    await ctx.close();
+  }
+});
+
+/** The keys xev saw pressed since `from`: keysym name and modifier state. */
+function keysPressed(from = 0) {
+  return [...xevKeys.slice(from).matchAll(/KeyPress event[\s\S]*?state (0x[0-9a-f]+), keycode \d+ \(keysym 0x[0-9a-f]+, (\w+)\)/g)].map((m) => ({ key: m[2], state: parseInt(m[1], 16) }));
+}
+
+test('on a phone the special keys, from the machine menu, reach the desktop and stay out on this device', { skip: skipTouch }, async () => {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const page = await ctx.newPage();
+  try {
+    await openUi(page, daemonTouchy);
+    await openDesktop(page);
+    await connected(page);
+    assert.equal(await page.getByRole('toolbar', { name: '特殊键' }).count(), 0, 'closed by default');
+    await page.locator('.desktop-more').click();
+    await page.getByRole('menuitemcheckbox', { name: '特殊键' }).click();
+    await page.getByRole('toolbar', { name: '特殊键' }).waitFor();
+
+    // Esc: one key.
+    let from = xevKeys.length;
+    await page.getByRole('button', { name: 'Esc', exact: true }).tap();
+    await waitUntil(() => keysPressed(from).some((k) => k.key === 'Escape'));
+
+    // Ctrl, then c from the phone's keyboard: Ctrl+C.
+    from = xevKeys.length;
+    await page.getByRole('button', { name: 'Ctrl', exact: true }).tap();
+    await page.getByRole('button', { name: '键盘', exact: true }).tap();
+    await page.waitForFunction(() => document.activeElement?.classList.contains('desktop-ime'));
+    await page.keyboard.type('c');
+    await waitUntil(() => keysPressed(from).some((k) => k.key === 'c'));
+    const pressedKeys = keysPressed(from);
+    assert.equal(pressedKeys[0].key, 'Control_L');
+    assert.ok(pressedKeys.find((k) => k.key === 'c').state & 0x4, `c with Control held: ${JSON.stringify(pressedKeys)}`);
+    assert.equal(await page.getByRole('button', { name: 'Ctrl', exact: true }).getAttribute('aria-pressed'), 'false', 'let go after one key');
+
+    // Kept on the device: open again after a reload.
+    await page.reload();
+    await openDesktop(page);
+    await connected(page);
+    await page.getByRole('toolbar', { name: '特殊键' }).waitFor();
+    await page.getByRole('button', { name: '收起特殊键' }).tap();
+    await page.reload();
+    await openDesktop(page);
+    await connected(page);
+    await page.waitForTimeout(300);
+    assert.equal(await page.getByRole('toolbar', { name: '特殊键' }).count(), 0, 'closed stays closed');
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('on a phone the system keyboard types on the desktop, Chinese through the input method included', { skip: skipClip }, async () => {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const page = await ctx.newPage();
+  const cdp = await ctx.newCDPSession(page);
+  try {
+    await openUi(page, daemonPhone);
+    await openDesktop(page);
+    await connected(page);
+    // The special keys come from the menu as a strip over the pills, which stay as they are.
+    await page.locator('.desktop-more').click();
+    await page.getByRole('menuitemcheckbox', { name: '特殊键' }).click();
+    await page.getByRole('toolbar', { name: '特殊键' }).waitFor();
+    const ctrl = page.getByRole('button', { name: 'Ctrl', exact: true });
+    await ctrl.tap();
+    assert.equal(await ctrl.getAttribute('aria-pressed'), 'true', 'Ctrl latched for the next key');
+    await ctrl.tap();
+    assert.equal(await ctrl.getAttribute('aria-pressed'), 'false');
+    await page.getByRole('button', { name: '后退' }).waitFor();
+
+    await page.getByRole('button', { name: '键盘', exact: true }).tap();
+    await page.waitForFunction(() => document.activeElement?.classList.contains('desktop-ime'));
+    // The keyboard up: its button puts it away; the same two pills stay, frosted over the picture.
+    await page.getByRole('button', { name: '收起键盘' }).waitFor();
+    await page.locator('.desktop-dock.over').waitFor();
+    await page.getByRole('button', { name: '后退' }).waitFor();
+
+    await page.keyboard.type('hello ');
+    // Pinyin being composed is not sent; the characters it becomes are.
+    await cdp.send('Input.imeSetComposition', { text: 'ni', selectionStart: 2, selectionEnd: 2 });
+    await cdp.send('Input.imeSetComposition', { text: 'nihao', selectionStart: 5, selectionEnd: 5 });
+    await cdp.send('Input.insertText', { text: '你好' });
+    // Backspace rubs out on the desktop: a stray letter, then gone.
+    await page.keyboard.type('x');
+    await page.keyboard.press('Backspace');
+    await page.keyboard.press('Enter');
+    await waitForFile(phone.out);
+    assert.equal(readFileSync(phone.out, 'utf8'), 'hello 你好\n');
+    assert.equal(await page.locator('.desktop-ime').inputValue(), '_'.repeat(32), 'the field is back to its fill');
+
+    // A phone keyboard shown: the app box shrinks to what is left and the pills ride above it, while the
+    // picture stays where it was, neither shrunk nor moved.
+    const picture = await page.locator('.desktop-screen canvas').boundingBox();
+    await page.setViewportSize({ width: 390, height: 508 });
+    await page.waitForTimeout(300);
+    const dock = await page.locator('.desktop-dock').boundingBox();
+    assert.ok(dock.y + dock.height <= 508 - 12, 'the pills stay in sight, above the keyboard');
+    assert.deepEqual(await page.locator('.desktop-screen canvas').boundingBox(), picture, 'the picture does not move');
+    for (const dark of [false, true]) {
+      await page.emulateMedia({ colorScheme: dark ? 'dark' : 'light' });
+      await page.screenshot({ path: shot(`desktop-phone-keyboard-keys-${dark ? 'dark' : 'light'}`) });
+    }
+    await page.getByRole('button', { name: '收起特殊键' }).tap();
+    await page.getByRole('toolbar', { name: '特殊键' }).waitFor({ state: 'detached' });
+    for (const dark of [false, true]) {
+      await page.emulateMedia({ colorScheme: dark ? 'dark' : 'light' });
+      await page.screenshot({ path: shot(`desktop-phone-keyboard-${dark ? 'dark' : 'light'}`) });
+    }
+    await page.getByRole('button', { name: '收起键盘' }).tap();
+    await page.getByRole('button', { name: '键盘', exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => document.activeElement?.classList.contains('desktop-ime')), false);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('on a phone, copy brings the desktop selection here and paste sends this clipboard there, one tap each', { skip: skipClip }, async () => {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, permissions: ['clipboard-read', 'clipboard-write'] });
+  const page = await ctx.newPage();
+  const cdp = await ctx.newCDPSession(page);
+  const env = { ...process.env, DISPLAY: `:${phone.display}` };
+  const remoteClip = () => {
+    try {
+      return execFileSync(xclip, ['-o', '-selection', 'clipboard'], { env, encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] });
+    } catch {
+      return '';
+    }
+  };
+  try {
+    await openUi(page, daemonPhone);
+    await openDesktop(page);
+    await connected(page);
+
+    // Paste: this device's clipboard becomes the desktop's, and Ctrl+V follows.
+    await page.evaluate(() => navigator.clipboard.writeText('手机粘贴 pasted'));
+    await page.getByRole('button', { name: '粘贴本机剪贴板' }).tap();
+    await page.getByRole('button', { name: '已粘贴到桌面' }).waitFor();
+    await waitUntil(() => remoteClip() === '手机粘贴 pasted');
+
+    // Copy: a double tap selects the word in the terminal; the copy button brings it here.
+    await page.evaluate(() => navigator.clipboard.writeText('stale'));
+    const [x, y] = await onScreen(page, 16, 8);
+    await touches(cdp, [[[x, y]], []]);
+    await touches(cdp, [[[x, y]], []]);
+    await page.locator('.desktop-copy-btn.fresh').waitFor({ timeout: 10_000 });
+    await page.getByRole('button', { name: '复制桌面上选中的内容' }).tap();
+    await page.getByRole('button', { name: '已复制到本机' }).waitFor();
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'copyme');
+    assert.equal(await page.locator('.desktop-copy-btn.fresh').count(), 0, 'seen once copied');
+
+    // Nothing new on the desktop: copy says so, in a line over the buttons, and copies nothing.
+    await page.waitForTimeout(1500);
+    await page.getByRole('button', { name: '复制桌面上选中的内容' }).tap();
+    await page.getByRole('status').filter({ hasText: '桌面上没有新复制的内容' }).waitFor();
+    for (const dark of [false, true]) {
+      await page.emulateMedia({ colorScheme: dark ? 'dark' : 'light' });
+      await page.screenshot({ path: shot(`desktop-phone-toast-${dark ? 'dark' : 'light'}`) });
+    }
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('on a phone over plain http, paste falls back to the clipboard sheet', { skip: skipClip }, async () => {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  await ctx.addInitScript(() => Object.defineProperty(window, 'isSecureContext', { get: () => false }));
+  const page = await ctx.newPage();
+  const env = { ...process.env, DISPLAY: `:${phone.display}` };
+  try {
+    await openUi(page, daemonPhone);
+    await openDesktop(page);
+    await connected(page);
+    await page.getByRole('button', { name: '粘贴本机剪贴板' }).tap();
+    await page.getByLabel('把本机的文字粘贴到这里').fill('手动粘贴 by hand');
+    await page.locator('.desktop-clip').getByRole('button', { name: '粘贴到桌面' }).click();
+    await page.locator('.desktop-clip').getByText('已粘贴到桌面').waitFor();
+    await waitUntil(() => {
+      try {
+        return execFileSync(xclip, ['-o', '-selection', 'clipboard'], { env, encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] }) === '手动粘贴 by hand';
+      } catch {
+        return false;
+      }
+    });
   } finally {
     await ctx.close();
   }

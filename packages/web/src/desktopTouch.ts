@@ -58,3 +58,21 @@ export function twoFingerKind(startDistance: number, distance: number, midMoved:
   if (midMoved > 12) return 'scroll';
   return null;
 }
+
+/**
+ * What changed in the hidden field the phone keyboard types into: how many characters were rubbed
+ * out before the caret, and what was put in their place. Matched from both ends, so text put in
+ * the middle (the caret moved with the space bar) is still only what was added.
+ */
+export function textEdit(before: string, after: string): { erased: number; typed: string } {
+  let head = 0;
+  while (head < before.length && head < after.length && before[head] === after[head]) head++;
+  let tail = 0;
+  while (tail < before.length - head && tail < after.length - head && before[before.length - 1 - tail] === after[after.length - 1 - tail]) tail++;
+  return { erased: before.length - head - tail, typed: after.slice(head, after.length - tail) };
+}
+
+/** Which way two fingers scroll, decided by their first clear move, so a slight slant does not scroll sideways too. */
+export function scrollAxis(dx: number, dy: number): 'x' | 'y' {
+  return Math.abs(dx) > Math.abs(dy) * 1.5 ? 'x' : 'y';
+}
