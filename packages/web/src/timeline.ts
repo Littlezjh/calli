@@ -238,6 +238,7 @@ export type Item =
   | { kind: 'notice'; key: string; turnId: string; text: string; confirmation: boolean }
   | { kind: 'model-switch'; key: string; turnId: string; model: string; previous: string; reason: string }
   | { kind: 'quota-resume'; key: string; turnId: string | null; resetsAt?: string }
+  | { kind: 'turn-retry'; key: string; turnId: string | null; attempt: number; max: number }
   | { kind: 'proposal'; key: string; turnId: string; id: string; text: string; done: boolean }
   /**
    * A question or plan approval the agent asked. `ended` on a cancelled answer means the turn ran
@@ -296,7 +297,7 @@ export type Item =
   /** The row under a finished answer. `text` is what "copy" copies; `at` is when the turn ended, where the hub saw it end. */
   | { kind: 'actions'; key: string; turnId: string; text: string; at?: string }
   /** `planExhausted`: the agent's account ran out of usage, so another agent can be asked to take over. */
-  | { kind: 'error'; key: string; turnId: string | null; message: string; planExhausted?: boolean; /** The raw agent text of a plan-exhausted failure, shown as the quiet card's second line. */ detail?: string }
+  | { kind: 'error'; key: string; turnId: string | null; message: string; summary?: string; planExhausted?: boolean; /** Raw provider text, rendered only when details are opened. */ detail?: string }
   /** Where a fork begins: above it is the conversation it was copied from, below it its own. `branch` when it got a worktree. */
   | { kind: 'fork'; key: string; turnId: null; branch?: string };
 
@@ -311,6 +312,26 @@ export function errorText(data: Record<string, any>): string {
     return t('timeline.error.permissionRefused', Array.isArray(data.refused) && data.refused.length ? formatList(data.refused.map(String)) : '');
   }
   return String(data.message ?? 'error');
+}
+
+/** Presentation only: provider-neutral hints never decide whether a turn should be retried. */
+export function errorSummary(data: Record<string, any>): string {
+  if (data.code === 'plan_exhausted') return t('timeline.error.planExhaustedTitle');
+  if (data.code === 'permission_refused') return t('timeline.error.permissionTitle');
+  if (data.code === 'interrupted') return t('timeline.error.interruptedTitle');
+  const text = String(data.message ?? '');
+  // Require a status label or a leading status, rather than mistaking a path or model number for HTTP.
+  const status = text.match(/\b(?:http|status|code|error)(?:\s+code)?["':=\s(]*([45]\d{2})\b/i)?.[1]
+    ?? text.match(/^\s*([45]\d{2})\b/)?.[1];
+  let summary = t('timeline.error.failedTitle');
+  if (!/\b(?:disk|storage)\b/i.test(text) && /insufficient_quota|quota (?:exceeded|exhausted)|exhausted your quota|usage limit|insufficient (?:credits|balance)|credit balance.*too low/i.test(text)) summary = t('timeline.error.planExhaustedTitle');
+  else if (status === '401' || status === '403' || /unauthorized|invalid[_ ]api[_ ]key|authentication[_ ](?:error|failed)/i.test(text)) summary = t('timeline.error.authTitle');
+  else if (/context_length_exceeded|maximum context length|context (?:window|length).*(?:exceed|limit)/i.test(text)) summary = t('timeline.error.contextTitle');
+  else if (status === '429' || /rate[_ -]?limit|too many requests/i.test(text)) summary = t('timeline.error.rateTitle');
+  else if (status === '503' || status === '529' || /no capacity|overloaded|service unavailable/i.test(text)) summary = t('timeline.error.busyTitle');
+  else if (status?.startsWith('5')) summary = t('timeline.error.serviceTitle');
+  else if (/timed? ?out|timeout|ECONNRESET|ECONNREFUSED|fetch failed|socket hang up|connection (?:reset|lost)|network error/i.test(text)) summary = t('timeline.error.connectionTitle');
+  return status ? t('timeline.error.withStatus', summary, status) : summary;
 }
 
 export interface Timeline {
@@ -595,6 +616,7 @@ export function buildTimeline(events: StoredEvent[], speech: readonly VoiceTrans
     if (ev.type === 'agent.notice') { items.push({ kind: 'notice', key, turnId: turn, text: String(ev.data.text ?? ''), confirmation: Boolean(ev.data.confirmation) }); continue; }
     if (ev.type === 'handover.model') { items.push({ kind: 'model-switch', key, turnId: turn, model: String(ev.data.model ?? ''), previous: String(ev.data.previous ?? ''), reason: String(ev.data.reason ?? 'near') }); continue; }
     if (ev.type === 'handover.resume') { items.push({ kind: 'quota-resume', key, turnId: turn, ...(ev.data.resetsAt ? { resetsAt: String(ev.data.resetsAt) } : {}) }); continue; }
+    if (ev.type === 'turn.retry') { items.push({ kind: 'turn-retry', key, turnId: turn, attempt: Number(ev.data.attempt ?? 1) || 1, max: Number(ev.data.max ?? 1) || 1 }); continue; }
     // Keep complete events received after a historical snapshot. They also hydrate deferred
     // entries when expanded, including updates for tools whose starts predate this connection.
     if (ev.type === 'tool.update' || ev.type === 'tool.end') {
@@ -904,7 +926,7 @@ export function buildTimeline(events: StoredEvent[], speech: readonly VoiceTrans
 
       case 'turn.error':
         closeTurn(ev.ts);
-        items.push({ kind: 'error', key, turnId: turn, message: errorText(ev.data), ...(ev.data.code === 'plan_exhausted' ? { planExhausted: true, detail: String(ev.data.message ?? '').replace(/^Internal error:\s*/, '') } : {}) });
+        items.push({ kind: 'error', key, turnId: turn, message: errorText(ev.data), summary: errorSummary(ev.data), detail: String(ev.data.message ?? ''), ...(ev.data.code === 'plan_exhausted' ? { planExhausted: true } : {}) });
         running = false;
         break;
 

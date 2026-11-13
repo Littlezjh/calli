@@ -93,6 +93,7 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
   const [events, setEvents] = useState<StoredEvent[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error_, setError] = useState('');
+  const [retryBusy, setRetryBusy] = useState(false);
   const [cursor, setCursor] = useState<number | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [needsSetup, setNeedsSetup] = useState(false);
@@ -117,7 +118,7 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
       page: page => { setEvents(page.events); setCursor(page.hasOlder ? page.nextCursor : null); setLoaded(true); setError(''); },
       events: batch => {
         setEvents(previous => mergeHistory(previous, batch));
-        if (batch.some(e => e.type.startsWith('turn.') || e.type === 'history.reset')) {
+        if (batch.some(e => e.type.startsWith('turn.') || e.type === 'history.reset' || e.type === 'thread.updated')) {
           clearTimeout(timer);
           timer = setTimeout(() => { if (!ctrl.signal.aborted) void api.thread(threadId).then(value => { if (live) setThread(value); }).catch(() => undefined); }, 200);
         }
@@ -383,6 +384,14 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
           {!loaded && !threadError && <div className="loading-note">{t('common.loading')}</div>}
           {loaded && <ThreadView historyApi={api} historyThreadId={threadId!}
             items={timeline.items} roots={thread ? [thread.cwd, thread.cwdReal] : []} loadImage={loadImage} loadFile={loadFile}
+            autoRetry={!api.demo && thread?.autoRetry ? {
+              ...thread.autoRetry, busy: retryBusy,
+              onCancel: () => {
+                setRetryBusy(true);
+                void api.cancelAutoRetry(thread.id).then(value => setThread(current => current?.id === value.id ? value : current))
+                  .catch(e => setError(message(e))).finally(() => setRetryBusy(false));
+              },
+            } : null}
             observeOlder={false} hasOlder={cursor !== null} loadingOlder={loadingOlder} onLoadOlder={() => void loadOlder()} />}
           {error_ && <p className="chat-error" role="alert">{error_}</p>}
         </div>

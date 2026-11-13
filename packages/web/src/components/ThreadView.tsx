@@ -4,7 +4,7 @@ import { MessageActionButton, MessageMore, PointMessageMenu, SelectMessage, useM
 import { channelRows, hydrateHistoryFiles } from '../timeline';
 import { ApiError, type Api } from '../api';
 import { hydrateWork, HistoryClient, type HistoryDetail, type HistoryWork, type ResourceKind, type WorkFiles } from '../history';
-import { Children, createContext, Fragment, isValidElement, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type KeyboardEvent, type ReactNode } from 'react';
+import { Children, createContext, Fragment, isValidElement, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type KeyboardEvent, type ReactNode } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { threadLinkIndex, threadMentions, trimAutolinkJunk, type ThreadLinkIndex } from '../markdown-links';
@@ -104,6 +104,12 @@ interface Props {
    * continue with the same agent. `armed` mirrors the daemon's watch; `onArm`/`onCancel` toggle it.
    */
   resume?: { armed: boolean; resetsAt?: string | null; onArm: () => void; onCancel: () => void; busy?: boolean; error?: string } | null;
+  /**
+   * When the last turn failed on a transient provider error: the daemon resends the ask by
+   * itself, a few times with spacing. `attempts` counts the ones made, `nextAt` when the next
+   * one is due; `onCancel` is the person's stop on the error card.
+   */
+  autoRetry?: { attempts: number; max: number; nextAt: string; onCancel: () => void; busy?: boolean } | null;
   /** The agent can end a copy at any finished turn, so every answer gets the button, not only the last. */
   forkAnyTurn?: boolean;
   /**
@@ -140,7 +146,7 @@ const RECENT_TURNS = 30;
 /** Scrolling up to within this distance of the top unfolds or fetches the earlier turns. */
 const NEAR_TOP_PX = 600;
 
-export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, beforeItems, olderLabel, olderError, revealTurnId, historyApi, historyThreadId, items: originalItems, roots, loadImage, loadFile, onOpenFile, onPreview, hasOlder, loadingOlder, onLoadOlder, onFork, onQuote, onMessageContext, onHandToAssistant, forkAnyTurn, onEdit, revision = 0, takeover, resume, memberThreadId, onOpenMemberThread, threads, onOpenThread }: Props) {
+export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, beforeItems, olderLabel, olderError, revealTurnId, historyApi, historyThreadId, items: originalItems, roots, loadImage, loadFile, onOpenFile, onPreview, hasOlder, loadingOlder, onLoadOlder, onFork, onQuote, onMessageContext, onHandToAssistant, forkAnyTurn, onEdit, revision = 0, takeover, resume, autoRetry, memberThreadId, onOpenMemberThread, threads, onOpenThread }: Props) {
   const [selection, setSelection] = useState<{ text: string; turnId: string } | null>(null);
   const [contextMenu, setContextMenu] = useState<{ text: string; turnId: string; element: HTMLElement; x: number; y: number; nonce: number } | null>(null);
   useEffect(() => { setSelection(null); setContextMenu(null); }, [historyThreadId]);
@@ -309,6 +315,7 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
         }
         case 'model-switch': return <div key={item.key} className="context-compaction handover-divider">{t('auto.switched', item.model, item.previous, t(item.reason === 'exhausted' ? 'auto.exhausted' : 'auto.near'))}</div>;
         case 'quota-resume': return <div key={item.key} className="context-compaction handover-divider">{t('auto.resumed')}</div>;
+        case 'turn-retry': return <div key={item.key} className="context-compaction handover-divider">{t('auto.retried', item.attempt, item.max)}</div>;
         case 'user': {
           if (item.handoverCollapsed) return null;
           // Nobody wrote this turn: the agent picked up work on its own, e.g. a finished background task.
@@ -434,37 +441,27 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
               )}
             </div>
           );
-        case 'error': {
-          // A plan that ran out is a system line, like the fork mark: centered between hairlines,
-          // no box. The conclusion leads, the agent's raw words shrink to one faint line, and every
-          // way on is a text link.
-          if (item.planExhausted) return (
-            <div key={item.key} className="row exhausted-note" role="alert">
-              <div className="exhausted-line">{t('timeline.error.planExhaustedTitle')}</div>
-              {item.detail && <div className="exhausted-sub" title={item.detail}>{item.detail}</div>}
-              {item === items[items.length - 1] && (takeover || resume) && <div className="exhausted-actions">
-                  {takeover?.go && takeover.label && <button className="exhausted-hand" onClick={takeover.go} disabled={takeover.busy}>
-                    {takeover.busy ? t('view.handingOver') : t('view.handTo', takeover.label)}
-                    <IconArrowRight size={14} />
-                  </button>}
-                  {takeover && <button className="exhausted-quiet" onClick={takeover.choose} disabled={takeover.busy}>{t('view.chooseOtherShort')}</button>}
-                  {resume && !resume.armed && <button className="exhausted-quiet" onClick={resume.onArm} disabled={resume.busy}>{t('view.resumeArm')}</button>}
-                  {resume?.armed && <>
-                    <span role="status">{resume.resetsAt ? t('view.resumeArmedAt', resetClock(resume.resetsAt)) : t('view.resumeArmedAny')}</span>
-                    <button className="exhausted-quiet" onClick={resume.onCancel} disabled={resume.busy}>{t('view.resumeCancel')}</button>
-                  </>}
-                  {resume?.error && <small className="exhausted-error">{resume.error}</small>}
-                </div>}
-            </div>
-          );
-          return (
-            <div key={item.key} className="row">
-              <div className="error-box">
-                {item.message}
-              </div>
-            </div>
-          );
-        }
+        case 'error': return (
+          <ErrorNotice key={item.key} item={item}>
+            {item.planExhausted && item === items[items.length - 1] && (takeover || resume) && <div className="exhausted-actions">
+              {takeover?.go && takeover.label && <button className="exhausted-hand" onClick={takeover.go} disabled={takeover.busy}>
+                {takeover.busy ? t('view.handingOver') : t('view.handTo', takeover.label)}
+                <IconArrowRight size={14} />
+              </button>}
+              {takeover && <button className="exhausted-quiet" onClick={takeover.choose} disabled={takeover.busy}>{t('view.chooseOtherShort')}</button>}
+              {resume && !resume.armed && <button className="exhausted-quiet" onClick={resume.onArm} disabled={resume.busy}>{t('view.resumeArm')}</button>}
+              {resume?.armed && <>
+                <span role="status">{resume.resetsAt ? t('view.resumeArmedAt', resetClock(resume.resetsAt)) : t('view.resumeArmedAny')}</span>
+                <button className="exhausted-quiet" onClick={resume.onCancel} disabled={resume.busy}>{t('view.resumeCancel')}</button>
+              </>}
+              {resume?.error && <small className="exhausted-error">{resume.error}</small>}
+            </div>}
+            {autoRetry && item === items[items.length - 1] && <div className="error-retry">
+              <span role="status">{t('view.autoRetryStatus', autoRetry.attempts + 1, autoRetry.max, resetClock(autoRetry.nextAt))}</span>
+              <button onClick={autoRetry.onCancel} disabled={autoRetry.busy}>{t('view.autoRetryCancel')}</button>
+            </div>}
+          </ErrorNotice>
+        );
         case 'fork':
           return (
             <div key={item.key} className="row fork-mark" role="separator" aria-label={item.branch ? t('view.forkedInWorktree', item.branch) : t('view.forkedHere')}>
@@ -516,6 +513,27 @@ export function ThreadView({ onOpenFinds, chain = false, observeOlder = true, be
 }
 
 const HistoryContext = createContext<HistoryClient | undefined>(undefined);
+
+/** The same quiet failure notice in threads, assistant chats and collaboration history. */
+function ErrorNotice({ item, children }: { item: Extract<Item, { kind: 'error' }>; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  return <div className={`row${item.planExhausted ? ' exhausted-note' : ''}`}>
+    <div className="error-box">
+      <div className="error-heading">
+        <span role="alert">{item.summary ?? t(item.planExhausted ? 'timeline.error.planExhaustedTitle' : 'timeline.error.failedTitle')}</span>
+        <button className="error-toggle" aria-expanded={open} aria-controls={id} onClick={() => setOpen(value => !value)}>
+          {t(open ? 'timeline.error.hideDetails' : 'timeline.error.showDetails')}
+        </button>
+      </div>
+      <div id={id} hidden={!open} className="error-detail">{open && <>
+        <div>{item.message}</div>
+        {item.detail && !item.message.includes(item.detail) && <div>{item.detail}</div>}
+      </>}</div>
+      {children}
+    </div>
+  </div>;
+}
 
 /** A quota reset time as a short local note: "17:00" today, "10/12 17:00" later. Empty when unknown. */
 function resetClock(iso: string | null | undefined, now = new Date()): string {

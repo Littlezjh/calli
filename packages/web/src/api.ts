@@ -235,6 +235,8 @@ export interface AutoCompactSettings { enabled: boolean; threshold: number; agen
 export interface AutoCompactStatus { last?: { threadId: string; successorId?: string; native: boolean; chars: number; chunks: number; at: string }; error?: { threadId: string; message: string; at: string }; skipped?: { threadId: string; reason: string; chars: number; at: string } }
 /** A watch waiting for the thread's agent quota to reset; the daemon then resends the failed turn. */
 export interface ResumeView { origin: 'user' | 'global'; resetsAt: string | null; nextCheckAt: string; lastError?: string }
+/** A transient failure the daemon is retrying by itself (`turn.retry` marks each attempt). */
+export interface AutoRetryView { attempts: number; max: number; nextAt: string }
 export interface AutoHandoverView {
   enabled: boolean; source: 'thread' | 'collaboration' | 'global'; override: boolean | null;
   state?: 'checking' | 'preparing' | 'countdown' | 'stopped' | 'failed';
@@ -256,6 +258,8 @@ export interface ThreadBrief {
 
 export interface Thread {
   autoHandover?: AutoHandoverView;
+  /** Present when the daemon retries this thread's transient failure; absent on older daemons. */
+  autoRetry?: AutoRetryView | null;
   /** `doing`, on a member: its latest task while it works, the opening of its answer once it has returned. */
   coordination?: { retired?: boolean; rootId: string; children: number; paused: boolean; doing?: string; team?: { name: string; status: TeamStatus; role: string; error?: string } };
   id: string;
@@ -1819,6 +1823,8 @@ export class Api {
   threadGoal(id: string): Promise<{ goal: GoalView | null }> { return this.request('GET', `/api/threads/${id}/goal`); }
   setAutoHandover(id: string, enabled: boolean | null): Promise<AutoHandoverView> { return this.request('PATCH', `/api/threads/${id}/auto-handover`, { enabled }); }
   setResume(id: string, armed: boolean): Promise<AutoHandoverView> { return this.request('PATCH', `/api/threads/${id}/auto-handover`, { resume: armed }); }
+  /** Cancels the daemon's automatic retry of a transient failure; arming itself is automatic. */
+  cancelAutoRetry(id: string): Promise<Thread> { return this.request('PATCH', `/api/threads/${id}/auto-retry`, { enabled: false }); }
   cancelAutoHandover(id: string): Promise<AutoHandoverView> { return this.request('DELETE', `/api/threads/${id}/auto-handover`); }
   setCollaborationHandover(id: string, enabled: boolean): Promise<Coordination> { return this.request('PATCH', `/api/threads/${id}/collaboration-handover`, { enabled }); }
 

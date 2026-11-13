@@ -99,7 +99,7 @@ test('a turn stopped by a plan that ran out offers another account of the same t
       await page.locator('.thread-item').filter({ hasText: '额度用完的任务' }).first().click();
       const go = page.locator('.exhausted-note .exhausted-hand');
       await go.waitFor();
-      assert.match(await page.locator('.exhausted-note').innerText(), /额度用完了/);
+      assert.match(await page.locator('.exhausted-note').innerText(), /额度用尽/);
       assert.match(await go.innerText(), /交给 .+ 接手/);
       await page.waitForTimeout(400);
       await page.screenshot({ path: `/tmp/calli-handover-shots/${phone ? 'phone' : 'desktop'}-${theme}-exhausted.png` });

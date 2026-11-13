@@ -2190,31 +2190,50 @@ html.list-open body {
   color: var(--faint);
 }
 
+/* Provider failures stay visible without overpowering the conversation. */
 .error-box {
-  padding: 11px 14px;
-  border-radius: var(--radius);
-  background: var(--danger-bg);
-  color: var(--danger);
-  font-size: 14px;
-  white-space: pre-wrap;
+  padding: 3px 12px;
+  border-left: 2px solid var(--border-strong);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
   overflow-wrap: anywhere;
 }
+.error-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; }
+.error-toggle {
+  padding: 3px 0; border: 0; background: none; color: var(--muted);
+  font: inherit; font-size: 12px; cursor: pointer; text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.error-toggle:hover { color: var(--text); }
+.error-detail { margin-top: 8px; white-space: pre-wrap; }
+.error-detail > div + div { margin-top: 8px; }
 
-/* A plan that ran out is a system line, like the fork mark: a quiet word centered between
- * hairlines, no box. The agent's raw words shrink to one faint line under it, and every way on
- * is a text link. */
-.exhausted-note { display: flex; flex-direction: column; align-items: center; margin: 6px 0; }
-.exhausted-line {
-  display: flex; align-items: center; gap: 14px; align-self: stretch;
-  color: color-mix(in srgb, var(--warn) 70%, var(--muted)); font-size: 13.5px; font-weight: 550;
+/* The daemon's own plan for this failure: one quiet line under the message, the stop beside it. */
+.error-retry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--muted);
 }
-.exhausted-line::before,
-.exhausted-line::after { content: ''; flex: 1; height: 1px; background: var(--border); }
-.exhausted-sub {
-  max-width: 100%; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: var(--faint); font-size: 12px;
+
+.error-retry button {
+  border: 0;
+  background: none;
+  padding: 0;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
 }
-.exhausted-actions { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; white-space: normal; }
+
+.error-retry button:hover:not(:disabled) { color: var(--text); }
+.error-retry button:disabled { opacity: 0.6; }
+
+.exhausted-actions { display: flex; align-items: center; justify-content: flex-start; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; white-space: normal; }
 .exhausted-actions > button { min-height: 30px; padding: 0; border: 0; background: none; font: inherit; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; }
 .exhausted-hand { color: var(--accent); font-weight: 600; }
 .exhausted-hand:hover:not(:disabled) { text-decoration: underline; text-underline-offset: 3px; }
