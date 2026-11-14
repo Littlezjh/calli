@@ -43,6 +43,19 @@ export const askLine = (run: ProactiveRun): string =>
 export const askingPins = (runs: ProactiveRun[] | null): ProactiveRun[] =>
   (runs ?? []).filter(run => run.status === 'asking').sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
 
+/** Where a「需要你」row from the plan leads. A session's own entry opens as itself; one of her asks
+ *  (`run:<id>` in the plan, an id no thread answers) opens as the ask in the tray above the composer,
+ *  where its answer controls live; an ask already over opens the session it became, and one gone
+ *  entirely leads nowhere, so the caller refreshes the list rather than open what does not exist. */
+export type NeedTarget = { kind: 'thread'; id: string } | { kind: 'ask'; run: ProactiveRun } | { kind: 'gone' };
+export function needTarget(id: string, runs: ProactiveRun[] | null): NeedTarget {
+  if (!id.startsWith('run:')) return { kind: 'thread', id };
+  const run = runs?.find(item => item.id === id.slice(4));
+  if (run?.status === 'asking') return { kind: 'ask', run };
+  if (run?.threadId) return { kind: 'thread', id: run.threadId };
+  return { kind: 'gone' };
+}
+
 /** Sandbox work in hand or waiting for a decision comes before the note; materials and observations sit quietly after it. */
 export const isDecision = (run: ProactiveRun): boolean => run.status === 'asking' || run.status === 'waiting' || (run.status === 'observed' && Boolean(run.needsRepo)) || (run.kind === 'sandbox' && run.status !== 'observed' && run.status !== 'approved');
 
