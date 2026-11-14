@@ -1305,6 +1305,7 @@ export const zh = {
   'sheet.question.defaultTitle': '智能体想问点什么',
   'sheet.question.otherAnswer': '请描述其他答案',
   'sheet.question.typeAnswer': '输入回答',
+  'sheet.question.note': '补充或自己的回答（可选）',
   'sheet.plan.aria': '计划审批',
   'sheet.plan.label': '方案',
   'sheet.plan.title': '是否执行该方案？',

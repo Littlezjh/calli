@@ -13,7 +13,7 @@ export interface GeneralSettings {
 }
 import type { DraftModelPreference, ModelPreferencePatch } from '../../daemon/src/model-preferences';
 export type { DraftModelPreference } from '../../daemon/src/model-preferences';
-export interface UserQuestion { id: string; question: string; header?: string; options: Array<{ value: string; label: string; description?: string }>; multiple?: boolean; freeText?: boolean; required?: boolean }
+export interface UserQuestion { id: string; question: string; header?: string; options: Array<{ value: string; label: string; description?: string }>; multiple?: boolean; freeText?: boolean; required?: boolean; note?: { id: string } }
 export type UserInputAnswer = { answers: Record<string, string[]> } | { cancelled: true };
 import type { UsageReport, AgentDiagnostic, CostReport, DailyUsage } from './observability';
 import type { StoredEvent } from './timeline';
