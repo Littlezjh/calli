@@ -74,6 +74,7 @@ export function personalFixture(text) {
     return '## 改动摘要\n补好沙盒示例。\n## 测试结果\nfixture check: passed';
   }
   if (router) {
+    if (command.startsWith('router-fixture-markdown ')) return JSON.parse(command.slice('router-fixture-markdown '.length));
     if (process.env.FAKE_PERSONAL_BOARD_LINKS === '1' && text.includes('#/thread/')) return [...text.matchAll(/\[[^\]]+\]\(#\/thread\/[^)]+\)/g)].map(match => match[0]).join('\n');
     if (command === '<calli-worker-report>') { const report = JSON.parse(text.split('\n').find(line => line.startsWith('{"matterId"'))); if (report.stage !== 'progress' && !report.notified && !report.pushed) cli(['notify', '--text-file', '-'], `「${report.title}」要你看一下`); return `「${report.title}」要你看一下`; }
     if (command === 'router-fixture-context') return JSON.stringify({ context: context?.[1] ?? null });

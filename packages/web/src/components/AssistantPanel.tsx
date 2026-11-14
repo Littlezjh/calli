@@ -421,6 +421,7 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
           {/* After an agent switch the earlier talk is one tap away, at the top where it would have been. */}
           {loaded && cursor === null && thread?.handover?.sourceId && <button className="chat-earlier" onClick={() => onOpenThread(thread.handover!.sourceId)}>{t('desk.earlierWith', agentLabel(thread.handover.agent))}</button>}
           {loaded && <ThreadView historyApi={api} historyThreadId={threadId!}
+            threads={threads} onOpenThread={onOpenThread}
             items={timeline.items} roots={thread ? [thread.cwd, thread.cwdReal] : []} loadImage={loadImage} loadFile={loadFile}
             autoRetry={!api.demo && thread?.autoRetry ? {
               ...thread.autoRetry, busy: retryBusy,

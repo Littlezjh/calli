@@ -27,6 +27,61 @@ const configurePersonal = async (daemon, text = '先记一件事') => {
   return threadId;
 };
 
+test('assistant thread links navigate from paragraphs, tables and inferred references on desktop and phone', async () => {
+  const daemon = await startDaemon();
+  const browser = await launchBrowser();
+  try {
+    const target = await json(daemon, '/api/threads', 'POST', { agent: 'pi', cwd: daemon.workdir, title: '助手链接目标' });
+    await json(daemon, `/api/threads/${target.id}/turns`, 'POST', { text: '目标会话正文' });
+    await waitFor(async () => (await json(daemon, `/api/threads/${target.id}`)).status === 'idle', 'target reply');
+    const markdown = [
+      `普通段落：[打开目标会话](thread://${target.id})。`,
+      '',
+      '| 会话 | 操作 |',
+      '| --- | --- |',
+      `| 目标 | [查看会话](thread://${target.id}) |`,
+      '',
+      `已知引用：「${target.title}」（${target.id.slice(0, 8)}）。`,
+      '',
+      `完整 ID：${target.id}`,
+    ].join('\n');
+    await configurePersonal(daemon, `router-fixture-markdown ${JSON.stringify(markdown)}`);
+    const shots = join(import.meta.dirname, '../shots/assistant-thread-links');
+    mkdirSync(shots, { recursive: true });
+    for (const phone of [false, true]) for (const theme of ['light', 'dark']) {
+      const context = await browser.newContext({
+        viewport: phone ? { width: 390, height: 844 } : { width: 1440, height: 900 },
+        isMobile: phone, hasTouch: phone, colorScheme: theme,
+      });
+      try {
+        const page = await context.newPage();
+        page.setDefaultTimeout(10000);
+        const errors = []; page.on('pageerror', error => errors.push(error.message));
+        await openUi(page, daemon);
+        for (const kind of ['paragraph', 'table', 'title', 'id', 'keyboard']) {
+          await page.evaluate(() => { location.hash = '#/desk'; });
+          const answer = page.locator('.chat-flow .row.assistant');
+          const link = kind === 'table' ? answer.locator('td a.thread-link')
+            : kind === 'title' ? answer.locator('p', { hasText: '已知引用：' }).locator('a.thread-link')
+            : kind === 'id' ? answer.locator('p', { hasText: '完整 ID：' }).locator('a.thread-link')
+            : answer.locator('p a.thread-link', { hasText: '打开目标会话' });
+          await link.waitFor();
+          assert.equal(await link.count(), 1, `${kind} renders one actionable link`);
+          if (kind === 'paragraph') await page.screenshot({ path: join(shots, `${phone ? 'phone' : 'desktop'}-${theme}.png`) });
+          if (kind === 'keyboard') { await link.focus(); await page.keyboard.press('Enter'); }
+          else if (phone) await link.tap();
+          else await link.click();
+          await page.locator('.chat-home').waitFor({ state: 'detached' });
+          await page.locator('.topbar-title', { hasText: target.title }).waitFor();
+          await page.locator('.row.user', { hasText: '目标会话正文' }).waitFor();
+          assert.equal(await page.locator('.thread-row.active .thread-title').textContent(), target.title);
+        }
+        assert.deepEqual(errors, []);
+      } finally { await context.close(); }
+    }
+  } finally { await browser.close(); await daemon.stop(); }
+});
+
 test('the desk drawer rides beside the conversation on a wide screen and never moves its reading', async () => {
   const daemon = await startDaemon();
   const browser = await launchBrowser();
