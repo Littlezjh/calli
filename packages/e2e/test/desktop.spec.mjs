@@ -1,5 +1,6 @@
 // The remote desktop, opened from the sidebar: a real Xvnc started for the test, seen through the daemon's WebSocket and
-// noVNC. On a computer it is view only until Control is pressed; on a phone it opens ready to touch, type, copy and
+// noVNC. It opens ready to control: on a computer a hover moves the machine's cursor and typing goes
+// straight in, on a phone it opens ready to touch, type, copy and
 // paste. The VNC password is asked once and kept on the device.
 // Skipped where Xvnc is not installed.
 import { test, before, after } from 'node:test';
@@ -145,7 +146,7 @@ test('a machine without a desktop offers none', { skip }, async () => {
   }
 });
 
-test('the desktop opens view only; keys reach it only after Control', { skip }, async () => {
+test('the desktop opens ready to control; Control steps back to just watching', { skip }, async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   try {
     await openThread(page, daemonOpen, '桌面');
@@ -153,29 +154,31 @@ test('the desktop opens view only; keys reach it only after Control', { skip }, 
     await openDesktop(page);
     await connected(page);
     const control = page.locator('.desktop-control');
-    assert.equal(await control.getAttribute('aria-pressed'), 'false');
+    assert.equal(await control.getAttribute('aria-pressed'), 'true');
     // The machine as the hub names it, not the VNC server's user@host.
     assert.equal((await page.locator('.desktop-name').innerText()).trim(), '这台电脑');
     const box = await page.locator('.desktop-screen canvas').boundingBox();
     assert.ok(box && box.width > 300 && box.height > 150, 'the picture is scaled into the panel');
 
-    // View only: clicking and typing on the picture send nothing.
-    await page.locator('.desktop-screen').click();
-    await page.keyboard.type('nope');
-    await page.keyboard.press('Enter');
-    await page.waitForTimeout(500);
-    assert.equal(existsSync(open.out), false);
-
-    await control.click();
-    assert.equal(await control.getAttribute('aria-pressed'), 'true');
-    // A real keyboard types straight onto the desktop: no typing bar, no keyboard button.
+    // Control: a real keyboard types straight onto the desktop, without a click into it first:
+    // no typing bar, no keyboard button.
     assert.equal(await page.locator('.desktop-input').count(), 0);
     assert.equal(await page.getByLabel('键盘').count(), 0);
-    await page.locator('.desktop-screen canvas').click();
     await page.keyboard.type('hello-desktop');
     await page.keyboard.press('Enter');
     await waitForFile(open.out);
     assert.equal(readFileSync(open.out, 'utf8'), 'hello-desktop');
+
+    // Control off: clicking and typing on the picture send nothing.
+    await control.click();
+    assert.equal(await control.getAttribute('aria-pressed'), 'false');
+    await page.locator('.desktop-screen').click();
+    await page.keyboard.type('nope');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(500);
+    assert.equal(readFileSync(open.out, 'utf8'), 'hello-desktop');
+    await control.click();
+    assert.equal(await control.getAttribute('aria-pressed'), 'true');
     for (const dark of [false, true]) {
       await page.emulateMedia({ colorScheme: dark ? 'dark' : 'light' });
       await page.screenshot({ path: shot(`desktop-${dark ? 'dark' : 'light'}`) });
@@ -193,7 +196,6 @@ test('minimizing keeps the connection: back from the sidebar without reconnectin
     await openUi(page, daemonOpen);
     await openDesktop(page);
     await connected(page);
-    await page.locator('.desktop-control').click();
 
     await page.getByLabel('最小化').click();
     await page.locator('.desktop-panel').waitFor({ state: 'hidden' });
@@ -246,6 +248,9 @@ test('the clipboard goes both ways: through the sheet, and Ctrl+V / Ctrl+C on a 
     await openUi(page, daemonOpen);
     await openDesktop(page);
     await connected(page);
+    // Control, the state the desktop opens in, carries the clipboard; view only does not.
+    await page.locator('.desktop-clip-btn').waitFor();
+    await page.locator('.desktop-control').click();
     assert.equal(await page.locator('.desktop-clip-btn').count(), 0, 'no clipboard while view only');
     await page.locator('.desktop-control').click();
 
@@ -301,7 +306,6 @@ test('on plain http (no secure context) copying here still works, from the butto
     await openUi(page, daemonOpen);
     await openDesktop(page);
     await connected(page);
-    await page.locator('.desktop-control').click();
     await page.locator('.desktop-screen canvas').click();
     await page.keyboard.press('Control+C');
     copyOnDesktop('http copied back');

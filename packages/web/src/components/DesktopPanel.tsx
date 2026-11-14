@@ -192,8 +192,10 @@ export function DesktopPanel({ api, hidden = false, onMinimize, onClose }: Props
   const [failure, setFailure] = useState('');
   const [asking, setAsking] = useState<null | 'first' | 'wrong'>(null);
   const touch = useIsTouch();
-  // A touch screen opens in control: the reason to open the desktop on a phone is to use it.
-  const [control, setControl] = useState(touch);
+  // The desktop opens ready to use, as Chrome Remote Desktop does: a hover moves the machine's
+  // cursor, a click lands there, typing goes straight in; the Control button steps back to
+  // just watching.
+  const [control, setControl] = useState(true);
   const [fit, setFit] = useState(true);
   // On a touch screen: the picture's zoom (1 fits it whole), the desktop's own size, the room it
   // is shown in, and in control whether the finger points (the default) or the screen is a touchpad.
@@ -289,6 +291,8 @@ export function DesktopPanel({ api, hidden = false, onMinimize, onClose }: Props
           wrongRef.current = false;
           savePassword(api.host, pendingRef.current);
           phaseNow('connected');
+          // The keyboard lands in the desktop right away, without a click into it first.
+          if (viewRef.current.control) rfb?.focus();
         });
         rfb.addEventListener('clipboard', (e) => {
           const text = (e as CustomEvent<{ text: string }>).detail.text;
@@ -1176,7 +1180,8 @@ export function DesktopPanel({ api, hidden = false, onMinimize, onClose }: Props
                 onClick={() => setControl((c) => !c)}
               >
                 <IconPointer size={16} />
-                <span>{t('desktop.control')}</span>
+                {/* The pill filled shows the machine is being driven; the label is where it goes. */}
+                <span>{control ? t('desktop.viewOnly') : t('desktop.control')}</span>
               </button>
               <button
                 className={`icon-btn${fit ? '' : ' on'}`}
