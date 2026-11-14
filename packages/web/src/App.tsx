@@ -3232,7 +3232,10 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
           <div key="desk" className="scroller">
             <AssistantHome key={setupNotice?.at} setupNeeded={setupNeeded} onExplore={openExplore} api={api} todos={todos} loading={todosLoading} error={todosError} threads={threads} agents={agents}
               personal={personal} personalError={personalError} refreshKey={todosKey} onReload={reloadTodos}
-              onPersonalChange={setPersonal} onPersonalRetry={reloadPersonal} onOpenThread={pick} onOpenPlans={openTodos}
+              // Not `pick`: the assistant home's rows and links can name a thread this list no longer
+              // holds (archived since it was read); openThreadById still opens it, and says so
+              // honestly when nothing answers, instead of the empty new-thread page.
+              onPersonalChange={setPersonal} onPersonalRetry={reloadPersonal} onOpenThread={openThreadById} onOpenPlans={openTodos}
               onConfigure={() => openSettings('assistant')} threadsKnown={threadsKnown}
               openFinds={deskFinds} onFindsOpened={() => setDeskFinds(false)}
               onSpreadChange={setDeskSpread} revealTodoId={revealTodo} onRevealTodo={() => setRevealTodo(null)}
