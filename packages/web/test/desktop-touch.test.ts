@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { clampZoom, fillZoom, fitSize, isTap, pointerDelta, scrollAxis, scrollForZoom, textEdit, twoFingerKind } from '../src/desktopTouch';
+import { clampZoom, fillZoom, fitSize, isTap, pointerDelta, scrollAxis, scrollForZoom, softwareKeyboardUp, textEdit, twoFingerKind } from '../src/desktopTouch';
 
 test('a wide desktop fits an upright phone by its width, and fills it by its height at a zoom', () => {
   const desktop = { w: 1920, h: 1200 };
@@ -57,4 +57,11 @@ test('two fingers scroll along the way they first moved; a slant stays vertical'
   assert.equal(scrollAxis(20, 16), 'y');
   assert.equal(scrollAxis(30, 4), 'x');
   assert.equal(scrollAxis(-30, -10), 'x');
+});
+
+test('the software keyboard is what shrinks the window, not a toolbar', () => {
+  assert.equal(softwareKeyboardUp(844, 844), false, 'nothing covers the window');
+  assert.equal(softwareKeyboardUp(844, 400), true, 'a keyboard covers nearly half of it');
+  assert.equal(softwareKeyboardUp(844, 780), false, 'a toolbar shrinks it only a little');
+  assert.equal(softwareKeyboardUp(844, null), false, 'no visual viewport reported');
 });

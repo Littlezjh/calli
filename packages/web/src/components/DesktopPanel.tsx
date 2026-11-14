@@ -9,7 +9,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as Reac
 import type RFB from '@novnc/novnc';
 import type { Api } from '../api';
 import { copyText } from '../clipboard';
-import { clampZoom, fillZoom, fitSize, isTap, LONG_PRESS_MS, pointerDelta, scrollAxis, scrollForZoom, TAP_SLOP_PX, textEdit, twoFingerKind, type Size } from '../desktopTouch';
+import { clampZoom, fillZoom, fitSize, isTap, LONG_PRESS_MS, pointerDelta, scrollAxis, scrollForZoom, softwareKeyboardUp, TAP_SLOP_PX, textEdit, twoFingerKind, type Size } from '../desktopTouch';
 import { useIsTouch } from '../hooks';
 import { t } from '../i18n';
 import { Dialog } from './Dialog';
@@ -466,6 +466,14 @@ export function DesktopPanel({ api, hidden = false, onMinimize, onClose }: Props
     };
   }, [touch, control, phase, hidden]);
 
+  // iOS keeps a focused field's keyboard over the page and, while it is up, hands the picture
+  // neither touches nor scrolls. A finger put on the picture or the pad takes the field's focus
+  // away, the way any iOS app dismisses its keyboard on a touch outside the text; the keyboard
+  // button brings it back. Where no software keyboard covers the window the focus is left alone.
+  const dismissKeyboardWithTouch = () => {
+    if (softwareKeyboardUp(window.innerHeight, window.visualViewport?.height ?? null)) imeRef.current?.blur();
+  };
+
   // The touchpad, chosen from the menu: a finger moves the pointer (drawn
   // here, the desktop's own cursor is not shown on touch), a tap clicks, two fingers tapped
   // right-click, two moving scroll, two spreading zoom, and a long press starts a drag. The
@@ -529,6 +537,7 @@ export function DesktopPanel({ api, hidden = false, onMinimize, onClose }: Props
 
     const onStart = (e: TouchEvent) => {
       e.preventDefault();
+      dismissKeyboardWithTouch();
       if (e.touches.length === 1 && mode === 'idle') {
         mode = 'one';
         started = Date.now();
@@ -645,6 +654,7 @@ export function DesktopPanel({ api, hidden = false, onMinimize, onClose }: Props
     };
     const onStart = (e: TouchEvent) => {
       e.preventDefault();
+      dismissKeyboardWithTouch();
       if (e.touches.length === 1 && mode === 'idle') {
         mode = 'one';
         start = { x: e.touches[0].clientX, y: e.touches[0].clientY };

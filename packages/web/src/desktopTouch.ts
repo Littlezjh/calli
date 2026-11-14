@@ -76,3 +76,13 @@ export function textEdit(before: string, after: string): { erased: number; typed
 export function scrollAxis(dx: number, dy: number): 'x' | 'y' {
   return Math.abs(dx) > Math.abs(dy) * 1.5 ? 'x' : 'y';
 }
+
+/**
+ * Whether the on-screen keyboard covers the window: while a text field keeps focus on iOS, the
+ * system hands neither touches nor scrolls to the rest of the page, so gestures on the desktop
+ * picture die until the field gives up focus. Toolbars shrink the visual viewport by far less
+ * than a keyboard does, so only a gap this deep counts as the keyboard being up.
+ */
+export function softwareKeyboardUp(layoutHeight: number, visualHeight: number | null): boolean {
+  return visualHeight !== null && layoutHeight - visualHeight > 200;
+}
