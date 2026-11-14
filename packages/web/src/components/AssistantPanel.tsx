@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ApiError, type AgentInfo, type ModelOption, type Api, type PersonalSettings, type ProactiveAction, type ProactiveRun, type Thread, type Todo } from '../api';
 import { historyPage, mergeHistory, mergeHistoryPage, watchHistory } from '../history';
-import { replaceRun, startConflict, askingPins, askLine } from '../proactive';
+import { replaceRun, startConflict, askingPins, askLine, needTarget } from '../proactive';
 import { buildDesk, briefStatus, type BriefStatus } from '../desk';
 import { buildTimeline, type StoredEvent } from '../timeline';
 import { restoreVideos } from '../videos';
@@ -313,6 +313,14 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
   </div>;
   // The tray already says these wait for an answer; a row names its kind only when it is something else.
   const askKind = (run: ProactiveRun) => run.kind === 'dispatch' ? t('desk.chatDispatch', run.agent ?? '') : run.reason === 'done' ? t('proactive.looksDone') : null;
+  // A「需要你」row names either a session or one of her asks (`run:<id>`): the ask lands in the tray
+  // above the composer, where its answer controls are — never as a thread id nothing answers.
+  const openNeed = (id: string) => {
+    const target = needTarget(id, runs);
+    if (target.kind === 'thread') { onOpenThread(target.id); return; }
+    if (target.kind === 'ask') { openDrawer(null); setTrayOpen(true); setOpenAsk(target.run.id); return; }
+    loadRuns(); onReload(); // the ask is over and gone; the refreshed list drops the row
+  };
   const askCards = <div className="chat-asks" aria-label={t('desk.chatPins')}>
     {needsSetup && <p className="chat-ask-error" role="alert">{t('pet.needsSetup')} <button className="ghost" onClick={onConfigure}>{t('desk.configure')}</button></p>}
     {runsError && <p className="chat-ask-error" role="alert">{runsError} <button className="ghost" onClick={loadRuns}>{t('common.retry')}</button></p>}
@@ -487,7 +495,7 @@ export function AssistantHome({ api, todos, loading, error, threads, threadsKnow
           </button></li>)}
           {!sessions.length && <li className="chat-drawer-empty">{t('desk.sessionsEmpty')}</li>}
         </ul>}
-        {drawer === 'matters' && <PlanView api={api} refreshKey={refreshKey} onOpenThread={onOpenThread} onOpenTodo={id => { setRevealTodo(id); openDrawer('desk'); }} />}
+        {drawer === 'matters' && <PlanView api={api} refreshKey={refreshKey} onOpenThread={openNeed} onOpenTodo={id => { setRevealTodo(id); openDrawer('desk'); }} />}
         {drawer === 'matters' && <h4 className="chat-drawer-sub">{t('horizon.allMatters')}</h4>}
         {drawer === 'matters' && <ul className="chat-sessions">
           {(todos.filter(todo => !todo.done)).map(todo => <li key={todo.id}><button onClick={() => { setRevealTodo(todo.id); openDrawer('desk'); }}>

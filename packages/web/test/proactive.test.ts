@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { ProactiveRun, Todo } from '../src/api.js';
-import { addRepo, askLine, askingPins, diffTotals, fileName, isDecision, matterRuns, settingsPayload, proactiveCount, proactiveMatters, removeRepo, replaceRun, runControls, startConflict } from '../src/proactive.js';
+import { addRepo, askLine, askingPins, diffTotals, fileName, isDecision, matterRuns, needTarget, settingsPayload, proactiveCount, proactiveMatters, removeRepo, replaceRun, runControls, startConflict } from '../src/proactive.js';
 
 let n = 0;
 function run(over: Partial<ProactiveRun> = {}): ProactiveRun {
@@ -161,4 +161,17 @@ test('a folded ask is known by its first meaningful line', () => {
   assert.equal(askLine(run({ kind: 'dispatch', status: 'asking', title: '', task: '修登录\n步骤…' })), '修登录', 'a dispatch without a title falls back to its task');
   assert.equal(askLine(run({ kind: 'advance', status: 'asking', line: '等你决定目录' })), '等你决定目录');
   assert.equal(askLine(run({ kind: 'advance', status: 'asking' })), '');
+});
+
+test('a needs-you row leads somewhere real, never a thread id nothing answers', () => {
+  const asking = run({ id: 'a1', kind: 'advance', status: 'asking' });
+  const answered = run({ id: 'a2', kind: 'advance', status: 'answered', threadId: 't9' });
+  const dismissed = run({ id: 'a3', kind: 'dispatch', status: 'discarded', threadId: '' });
+  const runs = [asking, answered, dismissed];
+  assert.deepEqual(needTarget('t123', runs), { kind: 'thread', id: 't123' }, "a session's own entry opens as itself");
+  assert.deepEqual(needTarget('run:a1', runs), { kind: 'ask', run: asking }, 'an ask opens as the tray, where it is answered');
+  assert.deepEqual(needTarget('run:a2', runs), { kind: 'thread', id: 't9' }, 'an ask already over opens the session it became');
+  assert.deepEqual(needTarget('run:a3', runs), { kind: 'gone' }, 'a dismissed dispatch that began no session opens nothing');
+  assert.deepEqual(needTarget('run:nope', runs), { kind: 'gone' }, 'an id no run answers opens nothing');
+  assert.deepEqual(needTarget('run:a1', null), { kind: 'gone' }, 'before the runs load, nothing is opened on a guess');
 });
