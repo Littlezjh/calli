@@ -443,6 +443,17 @@ async function touches(cdp, steps, gap = 16) {
   }
 }
 
+/** A phone opens filled to the height; a pinch in takes the picture back to the whole of it. */
+async function fitWhole(page, cdp) {
+  const box = await page.locator('.desktop-viewport').boundingBox();
+  const cx = box.x + box.width / 2;
+  const cy = box.y + box.height / 2;
+  const steps = [];
+  for (let d = 0; d <= 6; d++) steps.push([[cx - 140 + d * 19, cy], [cx + 140 - d * 19, cy]]);
+  await touches(cdp, [...steps, []], 30);
+  await page.waitForFunction((w) => Math.abs(document.querySelector('.desktop-content').getBoundingClientRect().width - w) < 3, box.width);
+}
+
 /** A menu item behind the phone's ⋯ button. */
 async function chooseFromMenu(page, name) {
   await page.locator('.desktop-more').click();
@@ -471,12 +482,30 @@ test('on a phone, view only: pinch and double tap zoom the picture, and nothing 
     await page.locator('.desktop-pad').waitFor({ state: 'detached' });
     await page.locator('.desktop-touch-mode').waitFor();
     const from = xevOut.length;
-    const fit = await contentWidth(page);
-    assert.ok(fit > 300 && fit <= 390, 'the whole desktop fits the width');
-
     const box = await page.locator('.desktop-viewport').boundingBox();
     const cx = box.x + box.width / 2;
     const cy = box.y + box.height / 2;
+
+    // A phone opens filled to the height, not the whole picture squeezed into the width.
+    const opened = await contentWidth(page);
+    assert.ok(opened > box.width * 2, `opened filled to the height: ${opened}`);
+    // A double tap goes back to the whole picture ...
+    await page.touchscreen.tap(cx, cy);
+    await page.waitForTimeout(80);
+    await page.touchscreen.tap(cx, cy);
+    await page.waitForFunction((w) => Math.abs(document.querySelector('.desktop-content').getBoundingClientRect().width - w) < 2, box.width);
+    const fit = box.width;
+    // ... and another fills the height again.
+    await page.touchscreen.tap(cx, cy);
+    await page.waitForTimeout(80);
+    await page.touchscreen.tap(cx, cy);
+    await page.waitForFunction((w) => document.querySelector('.desktop-content').getBoundingClientRect().width > w * 1.5, fit);
+
+    // From the whole picture a pinch zooms in on the spot.
+    await page.touchscreen.tap(cx, cy);
+    await page.waitForTimeout(80);
+    await page.touchscreen.tap(cx, cy);
+    await page.waitForFunction((w) => Math.abs(document.querySelector('.desktop-content').getBoundingClientRect().width - w) < 2, fit);
     const spread = [];
     for (let d = 40; d <= 160; d += 20) spread.push([[cx - d, cy], [cx + d, cy]]);
     await touches(cdp, [...spread, []]);
@@ -485,12 +514,11 @@ test('on a phone, view only: pinch and double tap zoom the picture, and nothing 
     await page.waitForTimeout(300);
     await page.screenshot({ path: shot('desktop-phone-zoomed') });
 
-    // A double tap goes back to the whole picture.
+    // A double tap goes back to the whole picture, and another fills the height again.
     await page.touchscreen.tap(cx, cy);
     await page.waitForTimeout(80);
     await page.touchscreen.tap(cx, cy);
     await page.waitForFunction((w) => Math.abs(document.querySelector('.desktop-content').getBoundingClientRect().width - w) < 2, fit);
-    // ...and another zooms in to fill the height.
     await page.touchscreen.tap(cx, cy);
     await page.waitForTimeout(80);
     await page.touchscreen.tap(cx, cy);
@@ -578,6 +606,8 @@ test('on a phone the finger is the pointer: tap clicks there, long press right-c
     await openDesktop(page);
     await connected(page);
     await page.locator('.desktop-pad').waitFor();
+    // A phone opens filled to the height; back to the whole picture so every spot below is on screen.
+    await fitWhole(page, cdp);
 
     // A tap: a left click on the spot under the finger.
     let from = xevOut.length;
@@ -802,6 +832,8 @@ test('on a phone, copy brings the desktop selection here and paste sends this cl
     await openUi(page, daemonPhone);
     await openDesktop(page);
     await connected(page);
+    // A phone opens filled to the height; the word to select sits at the terminal's top left.
+    await fitWhole(page, cdp);
 
     // Paste: this device's clipboard becomes the desktop's, and Ctrl+V follows.
     await page.evaluate(() => navigator.clipboard.writeText('手机粘贴 pasted'));

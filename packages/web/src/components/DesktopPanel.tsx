@@ -421,6 +421,21 @@ export function DesktopPanel({ api, hidden = false, onMinimize, onClose }: Props
   const toggleZoomRef = useRef(toggleZoom);
   toggleZoomRef.current = toggleZoom;
 
+  // A phone opens with the picture big enough to work on: filled to the height, the rest of its
+  // width under a finger's pan. Chosen once, when the desktop's size is first known, and only if
+  // no hand has zoomed already; a double tap still finds the whole picture, and a pinch's zoom
+  // stays. On a computer screen the whole picture remains the fit.
+  const openedRef = useRef(false);
+  useEffect(() => {
+    if (!touch || openedRef.current || phase !== 'connected' || !fb.w || !fitted.w) return;
+    openedRef.current = true;
+    const fill = fillZoom(fb, box);
+    if (fill <= 1.05 || zoomRef.current !== 1) return;
+    pendingScrollRef.current = { left: (fitted.w * fill - box.w) / 2, top: 0 };
+    zoomRef.current = fill;
+    setZoom(fill);
+  }, [touch, phase, fb, fitted.w, box]);
+
   // View only on a touch screen: one finger scrolls the view (the browser's own), two pinch to
   // zoom it, a double tap zooms in on a spot or back out. Nothing reaches the desktop.
   useEffect(() => {
