@@ -2218,14 +2218,22 @@ export class ThreadManager {
     // the successor falls back to the target account's default (opus, say) and the swap quietly
     // multiplies the burn and the cache rewrite. Across agent kinds the names mean different
     // things, so the target keeps its own default.
+    // Accounts of one agent can still serve different catalogs (a gateway's GLM means nothing to a
+    // subscription), so only what the target lists is carried; the rest falls back to its default.
     const kind = (id: string) => this.adapters.get(id)?.id;
     const sameKind = kind(agent) !== undefined && kind(agent) === kind(source.agent);
+    const offers = async (pick: () => Promise<boolean>) => { try { return await pick(); } catch { return false; } };
+    const target = this.adapters.get(agent);
+    const chosen = model ?? (sameKind && source.model && target
+      && await offers(async () => (await this.adapterModels(target)).some(o => o.id === source.model)) ? source.model : undefined);
+    const effort = sameKind && source.effort
+      && await offers(async () => (await this.effortsFor(agent, chosen ?? null) as readonly string[]).includes(source.effort!)) ? source.effort : undefined;
     const successor = await this.createThread({
       agent,
       cwd: source.cwd,
       title: `${source.title}（接手）`,
-      model: model ?? (sameKind ? source.model ?? undefined : undefined),
-      effort: sameKind ? source.effort ?? undefined : undefined,
+      model: chosen,
+      effort,
       sectionId: source.sectionId,
     }, source.worktree, { sourceId: source.id, title: source.title, agent: source.agent, mode: selected,
       sourceSeq: this.store.history.latest(source.id), ...(method ? { method } : {}) });

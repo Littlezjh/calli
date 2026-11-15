@@ -332,9 +332,14 @@ test('a relay between accounts of the same agent keeps model and effort; across 
     { id: 'claude-1', adapter: 'claude', label: 'Claude Code', command: [process.execPath, fixture], env: { CLAUDE_CONFIG_DIR: one, FAKE_SESSION_ROOT: one } },
     { id: 'claude-2', adapter: 'claude', label: 'Claude Code', command: [process.execPath, fixture], env: { CLAUDE_CONFIG_DIR: two, FAKE_SESSION_ROOT: two } },
     { id: 'agy-x', adapter: 'agy', label: 'Antigravity', command: [process.execPath, fakeAgy], env: {} },
+    { id: 'claude-gw', adapter: 'claude', label: 'Claude Code', command: [process.execPath, fixture], env: { CLAUDE_CONFIG_DIR: two, FAKE_SESSION_ROOT: two } },
   ], null);
   const store = new Store(join(root, 'data'));
   const manager = new ThreadManager(store, registry.adapters, new Workdirs([cwd], null), new AttachmentStore(join(root, 'data')));
+  // A gateway account of the same agent serves a model the subscription accounts do not have.
+  const gateway = registry.adapters.get('claude-gw')!;
+  const own = gateway.models.bind(gateway);
+  gateway.models = async (refresh) => [...await own(refresh), { id: 'zcode/GLM-5.3', label: 'GLM-5.3' }];
   try {
     const source = await manager.createThread({ agent: 'claude-1', cwd, model: 'big', effort: 'high' });
     // Same agent, another account: the relay keeps what the thread was running.
@@ -348,5 +353,9 @@ test('a relay between accounts of the same agent keeps model and effort; across 
     // An explicit choice still wins over the inheritance.
     const pinned = await manager.createHandoverThread(source.id, 'claude-2', 'small');
     assert.equal(pinned.model, 'small');
+    // Same agent, but the target does not offer the model: it starts on its own default instead of failing.
+    const routed = await manager.createThread({ agent: 'claude-gw', cwd, model: 'zcode/GLM-5.3' });
+    const toPlan = await manager.createHandoverThread(routed.id, 'claude-1');
+    assert.equal(toPlan.model, null);
   } finally { await manager.shutdown(); store.close(); rmSync(root, { recursive: true, force: true }); }
 });
