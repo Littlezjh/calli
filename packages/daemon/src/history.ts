@@ -123,6 +123,19 @@ export function compactHistory(events: HistoryEvent[]): HistoryEvent[] {
   return compactDeltas(out as StoredEvent[]);
 }
 
+const PAGE_TURNS = 8;
+const FIRST_PAGE_TURNS = 2;
+
+/**
+ * Usage readings keep only their latest value (the meter and the request composition show one reading),
+ * yet they are most of a long turn's events: a page carries the last of each kind and drops the rest.
+ */
+export function thinUsage<T extends { type: string }>(events: T[]): T[] {
+  const last = new Map<string, number>();
+  events.forEach((e, i) => { if (e.type === 'usage.updated' || e.type === 'usage.sample') last.set(e.type, i); });
+  return events.filter((e, i) => (e.type !== 'usage.updated' && e.type !== 'usage.sample') || last.get(e.type) === i);
+}
+
 /** SQLite-backed projections. Raw payloads are referenced, never copied into the read model. */
 export class HistoryStore {
   private summaryTargets = new Map<string, string | null>();
@@ -149,6 +162,8 @@ export class HistoryStore {
       CREATE TABLE IF NOT EXISTS history_coverage (
         thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
         start_seq INTEGER NOT NULL, end_seq INTEGER NOT NULL, PRIMARY KEY(thread_id, start_seq));
+      CREATE TABLE IF NOT EXISTS history_tools_through (
+        thread_id TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE, through INTEGER NOT NULL);
     `);
   }
   close() { this.closed = true; }
@@ -243,6 +258,9 @@ export class HistoryStore {
     if (existing) return existing;
     const run = async () => {
       let after = start - 1;
+      // A tools-only pass is the outputs overview's, repeated on every open: the tool rows it already
+      // projected are not looked for again (events written since go through record() as they arrive).
+      if (toolsOnly) after = Math.max(after, Number((this.db.prepare('SELECT through FROM history_tools_through WHERE thread_id=?').get(thread) as any)?.through ?? 0));
       while (!this.closed) {
         const missing = this.db.prepare(`SELECT e.* FROM events e LEFT JOIN history_rows h ON h.thread_id=e.thread_id AND h.seq=e.seq
           WHERE e.thread_id=? AND e.seq>? AND e.seq<? AND h.seq IS NULL
@@ -256,7 +274,11 @@ export class HistoryStore {
           this.record(eventOf(row) as StoredEvent); after = row.seq; count++; bytes += row.data.length;
           if (bytes > 1024 * 1024 || performance.now() - began > 8) break;
         }
-        if (!count) { if (!toolsOnly) this.cover(thread, start, end - 1); break; }
+        if (!count) {
+          if (!toolsOnly) this.cover(thread, start, end - 1);
+          else if (start <= 1) this.db.prepare('INSERT INTO history_tools_through VALUES (?, ?) ON CONFLICT(thread_id) DO UPDATE SET through=MAX(through, excluded.through)').run(thread, end - 1);
+          break;
+        }
         await new Promise<void>(resolve => setImmediate(resolve));
       }
     };
@@ -286,7 +308,7 @@ export class HistoryStore {
     const read = this.db.prepare('SELECT data FROM events WHERE thread_id=? AND seq=?');
     const readStart = this.db.prepare("SELECT CASE WHEN json_extract(data, '$.voiceSummary') IS NOT NULL THEN json_set(data, '$.text', '', '$.displayText', '') ELSE data END AS data FROM events WHERE thread_id=? AND seq=?");
     const readApproval = this.db.prepare("SELECT json_remove(data, '$.toolCall') AS data FROM events WHERE thread_id=? AND seq=?");
-    const skeleton = spans.map(row => {
+    const skeleton = thinUsage(spans).map(row => {
       let type = row.type;
       let data: Record<string, any> = {};
       if (type === 'tool.start') { type = 'history.tool.start'; data.id = String(row.seq); if (row.end_ts) data.endedAt = row.end_ts; }
@@ -332,7 +354,7 @@ export class HistoryStore {
     // Existing projections are optional. Missing ones must never delay the first response.
     const covered = this.db.prepare('SELECT 1 FROM history_coverage WHERE thread_id=? AND start_seq<=? AND end_seq>=?').get(thread, start, end - 1);
     if (!covered) return this.directSummary(thread, start, end, hiddenStart);
-    const rows = compactHistory(this.rows(thread, start, end, hiddenStart));
+    const rows = compactHistory(thinUsage(this.rows(thread, start, end, hiddenStart)));
     const done = rows.some(e => e.type === 'turn.done' || e.type === 'turn.error');
     if (!done) {
       const resolved = new Set(rows.filter(e => e.type === 'approval.resolved').map(e => e.data.approvalId));
@@ -353,10 +375,11 @@ export class HistoryStore {
           SELECT b.type FROM events b WHERE b.thread_id=e.thread_id AND b.seq<e.seq
           AND b.type IN ('turn.started', 'turn.done', 'turn.error') ORDER BY b.seq DESC LIMIT 1
         ), '')<>'turn.started')
-      ORDER BY e.seq ${order} LIMIT 9`).all(thread, end, after) as { seq: number; turn_id: string | null }[];
+      ORDER BY e.seq ${order} LIMIT ${PAGE_TURNS + 1}`).all(thread, end, after) as { seq: number; turn_id: string | null }[];
   }
   /**
-   * The newest eight turns before `before`, or with `forward` the eight right after `after`, so a
+   * The newest turns before `before` (the first page of a thread opening is just the last two, as the
+   * conversation's older turns load when scrolled to; later ones are eight each), or with `forward` the eight right after `after`, so a
    * conversation read from its beginning (the next segment of a handover chain) is paged the way it
    * happened. A forward page that is not the last gives the `after` of the next one as `nextCursor`.
    */
@@ -368,11 +391,13 @@ export class HistoryStore {
     let hasNewer = false;
     if (forward) {
       const ahead = this.starts(thread, end, after, 'ASC');
-      if (ahead.length > 8) { end = ahead[8].seq; hasNewer = true; }
+      if (ahead.length > PAGE_TURNS) { end = ahead[PAGE_TURNS].seq; hasNewer = true; }
     }
     const starts = this.starts(thread, end, after, 'DESC');
-    const selected = starts.slice(0, 8).reverse();
-    const hasOlder = starts.length > 8;
+    // Voice utterances are short: only task turns get the smaller first page.
+    const take = before === undefined && !after && !forward && starts[0]?.turn_id ? FIRST_PAGE_TURNS : PAGE_TURNS;
+    const selected = starts.slice(0, take).reverse();
+    const hasOlder = starts.length > take;
     const start = hasOlder ? selected[0].seq : after + 1;
     const events: HistoryEvent[] = [];
     // A usage reading can precede all eight visible turns; paging must not erase the meter.
@@ -387,8 +412,8 @@ export class HistoryStore {
     // the initial index; live turn.started events extend it in the client.
     const turnIds = before === undefined ? (this.db.prepare("SELECT turn_id FROM events WHERE thread_id=? AND type='turn.started' AND seq<=? ORDER BY seq")
       .all(thread, snapshotSeq) as { turn_id: string }[]).map(row => row.turn_id) : undefined;
-    if (forward) return { events, snapshotSeq, nextCursor: hasNewer ? end - 1 : null, hasOlder: false, hasNewer, turnIds };
-    return { events, snapshotSeq, nextCursor: hasOlder ? start : null, hasOlder, turnIds };
+    if (forward) return { events: thinUsage(events), snapshotSeq, nextCursor: hasNewer ? end - 1 : null, hasOlder: false, hasNewer, turnIds };
+    return { events: thinUsage(events), snapshotSeq, nextCursor: hasOlder ? start : null, hasOlder, turnIds };
   }
   voiceStats(thread: string, start: number) {
     const row = this.db.prepare(`WITH latest AS (

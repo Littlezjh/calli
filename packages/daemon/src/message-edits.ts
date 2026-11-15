@@ -66,6 +66,7 @@ export class MessageEdits {
     this.db.prepare('DELETE FROM history_details WHERE thread_id=? AND end_seq>=?').run(thread, from);
     this.db.prepare('DELETE FROM history_turns WHERE thread_id=?').run(thread);
     this.db.prepare('DELETE FROM history_coverage WHERE thread_id=?').run(thread);
+    this.db.prepare('DELETE FROM history_tools_through WHERE thread_id=?').run(thread);
   }
   /** Retired native sessions stay associated with this thread and cannot be imported as new ones. */
   owner(agent: string, session: string): string | null {
