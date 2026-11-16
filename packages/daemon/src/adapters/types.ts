@@ -94,6 +94,8 @@ export interface TurnResult {
 
 /** A live agent session bound to one thread. */
 export interface AgentSession {
+  /** A speculative process may have exited since it became ready. */
+  isAlive?(): boolean;
   /** Stable id on the agent side, used to resume the session after a restart. */
   readonly agentSessionId: string;
   /** Changes the permission level of a live session. Only called when the adapter lists modes. */
@@ -286,6 +288,8 @@ export interface DiscoveredAccount {
 }
 
 export interface StartOptions {
+  /** Cancels a speculative startup and closes its owned process. */
+  signal?: AbortSignal;
   /** Internal metadata probes must not take the shortcuts used to create a real conversation. */
   probe?: boolean;
   /** Native capability requested for an isolated Calli tool job, absent on ordinary threads. */
@@ -323,6 +327,8 @@ export interface StreamBridgeCapability {
 }
 
 export interface AgentAdapter {
+  /** Starting without a prompt is cancellable and can prepare a new draft. */
+  readonly prewarm?: boolean;
   /** Optional task capabilities exposed through Calli's on-demand CLI. */
   readonly borrowedTools?: readonly import('./borrowed-tools.js').BorrowedTool[];
   readonly id: string;
@@ -332,6 +338,8 @@ export interface AgentAdapter {
   /** Command or guide to install this agent when it is not yet on PATH. */
   readonly installGuide?: string;
   readonly capabilities: {
+    /** The adapter can prepare a cancellable session before the first message. */
+    prewarm?: boolean;
     /** The adapter can inspect existing generated memory; this does not imply generation is enabled. */
     memory?: boolean;
     workModes?: readonly WorkMode[];
@@ -561,4 +569,11 @@ export function sessionStoreKey(instance: { adapter: string; env?: Record<string
     default:
       return instance.adapter;
   }
+}
+
+/** A cancelled speculative start must not leave a child waiting on its protocol handshake. */
+export function cancelSessionOnAbort(signal: AbortSignal | undefined, close: () => void): void {
+  if (!signal) return;
+  if (signal.aborted) close();
+  else signal.addEventListener('abort', close, { once: true });
 }

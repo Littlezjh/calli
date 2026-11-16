@@ -1,3 +1,5 @@
+import type { DraftSessionInput } from '../../daemon/src/threads';
+export type { DraftSessionInput } from '../../daemon/src/threads';
 import type { PreviewNote, PreviewPick } from './preview-notes';
 import type { ContextReference } from './context-references';
 import type { GitStatus, GitLog, GitCommitFiles, GitDiff, GitOperation } from '../../daemon/src/git';
@@ -821,6 +823,7 @@ export interface AgentInfo {
   login?: 'terminal' | 'wizard';
   streamBridgeEnabled?: boolean;
   capabilities: {
+    prewarm?: boolean;
     workModes?: WorkMode[];
     speed?: boolean;
     coordination?: boolean;
@@ -1469,7 +1472,15 @@ export class Api {
     return this.request('GET', `/api/threads/${id}/events?before=${before}`);
   }
 
+  warmDraft(input: DraftSessionInput): Promise<{ id: string | null }> {
+    return this.request('POST', '/api/thread-warmups', input);
+  }
+  cancelWarmDraft(id: string): Promise<void> {
+    return this.request('DELETE', `/api/thread-warmups/${encodeURIComponent(id)}`, undefined, { keepalive: true });
+  }
+
   createThread(input: {
+    warmupId?: string;
     workMode?: WorkMode;
     speed?: string | null;
     agent: string;

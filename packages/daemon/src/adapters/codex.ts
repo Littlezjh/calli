@@ -7,7 +7,7 @@ import { CodexUsage } from './usage.js';
 import { cliDiagnostic } from './diagnostics.js';
 import { trackCompaction } from './compaction.js';
 import { goalSnapshot, goalSummary, parseGoalCommand, type GoalControl, type GoalCommand, type GoalSnapshot } from './native-goal.js';
-import { sessionEnvironment } from './types.js';
+import { cancelSessionOnAbort, sessionEnvironment } from './types.js';
 import { codexReadTool, codexSearchTool } from './codex-tools.js';
 import { codexComputerTool, computerDynamicTool } from './codex-computer.js';
 import { BrowserComputer } from '../browser-computer.js';
@@ -811,6 +811,8 @@ class CodexSession implements AgentSession {
     this.collaboration = preset ?? null;
   }
 
+  isAlive(): boolean { return !this.peer.isClosed; }
+
   async prompt(input: TurnInput, hooks: TurnHooks): Promise<TurnResult> {
     if (this.turn) throw new Error('a turn is already running');
     this.hooks = hooks;
@@ -1077,6 +1079,7 @@ export const CODEX_METADATA = {
 
 /** How long a model probe is reused, so several threads opening at once start one process. */
 export class CodexAppServerAdapter implements AgentAdapter {
+  readonly prewarm = true;
   readonly borrowedTools = [codexSearchTool, codexReadTool, codexComputerTool];
   readonly id = 'codex';
   readonly label = CODEX_METADATA.label;
@@ -1384,6 +1387,8 @@ export class CodexAppServerAdapter implements AgentAdapter {
       },
       this.name,
     );
+
+    cancelSessionOnAbort(opts.signal, () => peer.close());
 
     try {
       await peer.request('initialize', { clientInfo: { name: 'calli', title: 'Calli', version: '0.1.0' }, capabilities: { experimentalApi: true } });

@@ -892,6 +892,15 @@ export function createHttpServer(deps: HttpDeps): Server {
       return sendJson(res, 200, await manager.worktreeOptions(url.searchParams.get('cwd')));
     }
 
+    if (path === '/api/thread-warmups' && method === 'POST') {
+      return sendJson(res, 202, await manager.warmDraft(await readJson(req)));
+    }
+    if (parts[1] === 'thread-warmups' && parts[2] && !parts[3] && method === 'DELETE') {
+      await manager.cancelWarmDraft(parts[2]);
+      res.writeHead(204).end();
+      return;
+    }
+
     // GET /api/threads, POST /api/threads
     if (path === '/api/threads') {
       if (method === 'GET') {
@@ -905,6 +914,7 @@ export function createHttpServer(deps: HttpDeps): Server {
           await manager.createThread({
             agent: body.agent,
             cwd: body.cwd,
+            warmupId: typeof body.warmupId === 'string' ? body.warmupId : undefined,
             title: body.title,
             workMode: body.workMode,
             permissionMode: body.permissionMode,

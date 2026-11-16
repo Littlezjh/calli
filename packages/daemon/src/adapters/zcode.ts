@@ -19,7 +19,7 @@ import type { UsageSample } from '../telemetry.js';
 import { quoteArg } from './session-location.js';
 import { expandEnvTemplate, probeMcpToolNames, type ConfiguredMcpServer } from './mcp-probe.js';
 import { ZcodeWire } from './zcode-wire.js';
-import { EFFORT_LEVELS, sessionEnvironment, type AgentAdapter, type AgentSession, type EffortLevel, type ModelOption, type StartOptions, type TurnHooks, type TurnInput, type TurnResult } from './types.js';
+import { EFFORT_LEVELS, cancelSessionOnAbort, sessionEnvironment, type AgentAdapter, type AgentSession, type EffortLevel, type ModelOption, type StartOptions, type TurnHooks, type TurnInput, type TurnResult } from './types.js';
 
 export const ZCODE_BASIC_TOOLS = ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'AskUserQuestion', 'EnterPlanMode', 'ExitPlanMode'];
 const DELIVERY = 'desktop-continuous';
@@ -158,6 +158,7 @@ export const ZCODE_METADATA = {
 };
 
 export class ZcodeAdapter implements AgentAdapter {
+  readonly prewarm = true;
   readonly id = 'zcode';
   readonly label = ZCODE_METADATA.label;
   readonly icon = ZCODE_METADATA.icon;
@@ -208,6 +209,7 @@ export class ZcodeAdapter implements AgentAdapter {
     const accounts = await loadZcodeAccounts(env, opts.cwd);
     const wire = new ZcodeWire(this.command, opts.cwd, { ...env, ...accounts?.environment });
     const session = new ZcodeSession(wire, probe, accounts, env, opts.cwd);
+    cancelSessionOnAbort(opts.signal, () => wire.close());
     try {
       if (accounts) {
         const result = await wire.request('provider/updateAccountConfig', accounts.overlay);
@@ -307,6 +309,8 @@ class ZcodeSession implements AgentSession {
   async setEffort(effort: EffortLevel): Promise<boolean> {
     await this.wire.request('session/setThoughtLevel', { sessionId: this.agentSessionId, thoughtLevel: effort, persistAsWorkspaceLastUsed: false }); return true;
   }
+  isAlive(): boolean { return !this.wire.isClosed; }
+
   async prompt(input: TurnInput, hooks: TurnHooks): Promise<TurnResult> {
     let prepared!: () => void;
     this.preparing = new Promise(resolve => { prepared = resolve; });

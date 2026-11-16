@@ -1,3 +1,4 @@
+import { useDraftWarmup } from './draft-warmup';
 import { GitPanel } from './components/GitPanel';
 import { SettingsPage, type SettingsGroup } from './components/SettingsPage';
 import { AssistantSettingsPage, assistantTitle } from './components/AssistantSettingsPage';
@@ -752,6 +753,13 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   const draftChoice = fitDraftModelPreference(modelPreferences.preferences[draftAgent] ?? EMPTY_MODEL_PREFERENCE,
     modelsByAgent[draftAgent] ?? [], draftCaps?.effortLevels ?? [], Boolean(draftCaps?.speed));
   const { model: draftModel, effort: draftEffort, speed: draftSpeed } = draftChoice;
+  const consumeDraftWarmup = useDraftWarmup(api, !selectedId && view === 'thread' && !draftTeam && !draftWorktree
+    && !draftCollaboration && !draftWriting && draftAgent && draftCaps?.prewarm && modelPreferences.status === 'ready'
+    && (draftCwd || draftScratch) ? {
+      agent: draftAgent, cwd: draftScratch ? '' : draftCwd, scratch: draftScratch,
+      permissionMode: draftPermission, workMode: draftWorkMode,
+      model: draftModel, effort: draftEffort, speed: draftSpeed,
+    } : null);
   const modelVersions = useRef<Record<string, number>>({});
   const [commandsByKey, setCommandsByKey] = useState<Record<string, SlashCommand[]>>({});
   const [drawer, setDrawer] = useState(start === 'list');
@@ -1991,6 +1999,7 @@ function Hub({ token, onToken, connect, hostId = null, onHost, start, showcase }
   // A new thread is created by its first message, or by starting voice on the draft.
   const createDraftThread = async (isNewThread: boolean) => {
     const t = await api.createThread({
+      warmupId: consumeDraftWarmup(),
       agent: draftAgent,
       cwd: draftCwd,
       permissionMode: draftPermission,

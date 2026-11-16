@@ -164,7 +164,7 @@ const lifecyclePermission = (promptId, scenario) => {
   });
 };
 
-rl.on('line', (line) => {
+rl.on('line', async (line) => {
   const msg = JSON.parse(line);
 
   // Responses to our permission request.
@@ -202,8 +202,11 @@ rl.on('line', (line) => {
     return;
   }
 
+  if (process.env.FAKE_ACP_RPC_LOG) appendFileSync(process.env.FAKE_ACP_RPC_LOG, JSON.stringify({ method: msg.method, pid: process.pid }) + '\n');
   switch (msg.method) {
     case 'initialize':
+      if (process.env.FAKE_ACP_INIT_DELAY_MS) await new Promise(resolve => setTimeout(resolve, Number(process.env.FAKE_ACP_INIT_DELAY_MS)));
+      if (process.env.FAKE_ACP_INIT_FAIL_ONCE && !existsSync(process.env.FAKE_ACP_INIT_FAIL_ONCE)) { writeFileSync(process.env.FAKE_ACP_INIT_FAIL_ONCE, 'failed'); process.exit(2); }
       return out({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1, agentCapabilities: {} } });
     case 'session/new':
       if (process.env.FAKE_ACP_START_ERROR) return out({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: process.env.FAKE_ACP_START_ERROR } });

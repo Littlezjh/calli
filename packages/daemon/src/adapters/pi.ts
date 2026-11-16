@@ -3,7 +3,7 @@ import { glmQuotaExhausted } from './quota-errors.js';
 import { cliDiagnostic, probeWithDeadline } from './diagnostics.js';
 import { isCompaction, trackCompaction } from './compaction.js';
 import { PlanReply } from './plan-reply.js';
-import { sessionEnvironment } from './types.js';
+import { cancelSessionOnAbort, sessionEnvironment } from './types.js';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -453,7 +453,9 @@ class PiSession implements AgentSession {
     sessionArgs: string[] = opts.resumeId ? ['--session', opts.resumeId] : [],
   ): Promise<PiSession> {
     const session = PiSession.spawn(command, sessionArgs, opts.cwd, label, sessionEnvironment(env, opts.coordinationEnv) as Record<string, string>);
+    cancelSessionOnAbort(opts.signal, () => { void session.close(); });
     try {
+      opts.signal?.throwIfAborted();
       const state = await session.request('get_state', {});
       const sessionId = String(state?.sessionId ?? '');
       if (!sessionId) throw new Error('pi did not report a session id');
@@ -488,7 +490,7 @@ class PiSession implements AgentSession {
   }
 
   request(type: string, payload: Record<string, unknown>): Promise<any> {
-    if (this.exited) return Promise.reject(new Error(`${this.label} is not running`));
+    if (this.exited || this.closing) return Promise.reject(new Error(`${this.label} is not running`));
     const id = `req-${this.nextId++}`;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
@@ -634,6 +636,8 @@ class PiSession implements AgentSession {
   private compacting = false;
   private compactCancelRequested = false;
 
+  isAlive(): boolean { return !this.exited && !this.closing; }
+
   async prompt(input: TurnInput, hooks: TurnHooks): Promise<TurnResult> {
     if (this.turn || this.compacting) throw new Error('a turn is already running');
     if (input.images.length === 0) {
@@ -745,6 +749,7 @@ export const PI_METADATA = {
 };
 
 export class PiRpcAdapter implements AgentAdapter {
+  readonly prewarm = true;
   readonly id = 'pi';
   readonly label = PI_METADATA.label;
   readonly icon = PI_METADATA.icon;

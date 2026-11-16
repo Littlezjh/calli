@@ -89,7 +89,8 @@ test('Doubao lazily announces a native id and later -p processes resume it with 
     const c = collecting();
     assert.deepEqual(await session.prompt(turn(text), c.hooks), { stopReason: 'end_turn' });
     assert.equal(c.answer(), `doubao:${text}\n`);
-    assert.ok(c.events.every(event => event.type === 'message.delta'), 'no synthetic tools, reasoning or usage');
+    assert.ok(c.events.every(event => event.type === 'message.delta' || event.type === 'session.lifecycle'), 'no synthetic tools, reasoning or usage');
+    assert.ok(c.events.some(event => event.type === 'session.lifecycle' && event.data.reason === 'per_turn_process'));
   }
   assert.deepEqual(ids, ['38450000000000001']);
   assert.equal(session.agentSessionId, ids[0]);

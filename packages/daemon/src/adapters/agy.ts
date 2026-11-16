@@ -2,7 +2,7 @@ import type { WorkMode } from './types.js';
 import { cliDiagnostic } from './diagnostics.js';
 import { individualQuotaExhausted } from './quota-errors.js';
 import { PlanReply } from './plan-reply.js';
-import { sessionEnvironment } from './types.js';
+import { cancelSessionOnAbort, sessionEnvironment } from './types.js';
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -277,6 +277,7 @@ class AgySession implements AgentSession {
   private turn: Turn | null = null;
   /** A setting changed: the next turn needs a fresh process. */
   private stale = false;
+  private restartReason = 'process_exited';
   private permissionMode: PermissionMode | undefined;
 
   constructor(
@@ -317,6 +318,7 @@ class AgySession implements AgentSession {
       await new Promise<void>((resolve, reject) => {
         this.ready = { resolve, reject };
         timer = setTimeout(() => reject(new Error('agy did not start in time')), INIT_TIMEOUT_MS);
+        cancelSessionOnAbort(this.opts.signal, () => { reject(new Error('agy startup cancelled')); void this.close(); });
       });
     } catch (err) {
       await this.close();
@@ -360,7 +362,7 @@ class AgySession implements AgentSession {
       }
     } else if (record.event === 'result' && this.turn) {
       // After an interrupted or failed turn the process is on its way out; the next turn gets a new one.
-      if (record.result?.status !== 'SUCCESS') this.stale = true;
+      if (record.result?.status !== 'SUCCESS') { this.stale = true; this.restartReason = 'turn_interrupted_or_failed'; }
       this.finishTurn(agyTurnResult(record.result, this.turn.cancelled));
     }
   }
@@ -381,6 +383,8 @@ class AgySession implements AgentSession {
     this.ready?.reject(new Error(message));
     if (this.turn) this.finishTurn(this.turn.cancelled ? { stopReason: 'cancelled' } : { stopReason: 'error', error: message });
   }
+
+  isAlive(): boolean { return this.child !== null; }
 
   async prompt(input: TurnInput, hooks: TurnHooks): Promise<TurnResult> {
     let prepared!: () => void;
@@ -405,7 +409,12 @@ class AgySession implements AgentSession {
     }
     // The process is gone after a cancel, and out of date after a settings change.
     if (this.child && this.stale) await this.close();
-    if (!this.child) await this.launch();
+    if (!this.child) {
+      hooks.emit({ type: 'session.lifecycle', data: { action: 'start', reason: this.restartReason } });
+      await this.launch();
+      hooks.emit({ type: 'session.lifecycle', data: { action: 'ready', reason: this.restartReason } });
+      this.restartReason = 'process_exited';
+    }
     const child = this.child!;
     const live = agyLiveUsage(this.agentSessionId, this.opts.cwd, this.env, sample => hooks.emit({ type: 'usage.sample', data: { ...sample } }));
     await live.start();
@@ -424,12 +433,14 @@ class AgySession implements AgentSession {
     if ((this.opts.workMode ?? 'execute') === mode) return;
     this.opts.workMode = mode;
     this.stale = true;
+    this.restartReason = 'work_mode_changed';
   }
 
   async setPermissionMode(mode: PermissionMode): Promise<void> {
     if (mode === this.permissionMode) return;
     this.permissionMode = mode;
     this.stale = true;
+    this.restartReason = 'permission_changed';
   }
 
   /** agy stops a turn on SIGINT, reports it as interrupted and exits; the conversation stays usable. */
@@ -478,6 +489,7 @@ export const AGY_METADATA = {
 
 /** Adapter for the Antigravity CLI. `command` is the argv prefix, normally just the executable. */
 export class AgyAdapter implements AgentAdapter {
+  readonly prewarm = true;
   readonly borrowedTools = [agyImageTool, agySearchTool, agyBrowserTool];
   readonly id = 'agy';
   readonly label = AGY_METADATA.label;

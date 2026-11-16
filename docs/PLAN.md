@@ -73,6 +73,8 @@ Plan 交互参考了 [Cline 的 Plan / Act](https://docs.cline.bot/core-workflow
 - **手机键盘。** 键盘不改变页面大小，只是盖住下半部分，浏览器再把剩下的可视区平移到输入框那里。所以 app 整个画在可视区所在的位置：高度取 `visualViewport.height`，位置取 `visualViewport.pageTop`；弹层都在 app 这个盒子里定位，跟着一起到可视区。只跟高度不跟位置，输入框会被顶到屏幕顶部、下面空一片。不要再加 `interactive-widget=resizes-content`。
 - **daemon 重启时收尾。** 启动时把还标着"运行中"的线程里没结束的那一轮记为 `turn.error`（`code: interrupted`）。
 - **同一个会话，两个入口。** 线程保存 agent 侧的会话 ID。网页和终端操作的是同一份会话；daemon 重启后用这个 ID 恢复。只有实际发送后才创建原生会话的 CLI，通过 `StartOptions.onSessionId` 在收到原生标识时立即保存，不用假 ID 或额外提示词预建会话。
+- **新对话预启动。** 新对话页的账号、目录、权限、模型、强度和速度稳定 400 毫秒后，通过 `POST /api/thread-warmups` 预备一个可取消的原生会话；不发提示词、不调用模型，也不创建 Calli 线程。首次创建线程时携带 `warmupId`，服务端再次核对完整配置和适配器实例，接用已就绪或仍在启动的同一进程；失效或失败则正常启动。临时目录使用预留线程 ID，接用时连同凭据一并归属真实线程。每台 daemon 最多保留两个未使用的预热会话，10 分钟过期，启动最多等待 30 秒；离开页面或改配置时取消，daemon 退出时清理。新 worktree、协作、写作及不支持预启动的适配器沿用发送时启动，示例模式不发预热请求。参考 [Persona 的备用进程](https://github.com/nwverse/persona/blob/main/server/internal/node/assistant_spare.go) 与 [Happy 的持续输入流](https://github.com/slopus/happy/blob/main/packages/happy-cli/src/claude/claudeRemote.ts)：提前做本机启动工作，已有线程继续复用，不额外调用模型保温。
+- **进程原因留痕。** `session.lifecycle` 记录启动、就绪、失败和关闭的原因及就绪耗时，不记录提示词、凭据或本机路径。原因区分新线程、恢复、预热接用／失败、模型／强度／速度变更或重置、启用协作、账号适配器变化、个人目录作用域变化、编辑消息、归档、删除、轮次异常和 daemon 退出；agy 内部重启与豆包每轮起进程也记录。事件可从线程原始事件接口读取；不把进程准备耗时当成上游首 token 延迟。
 - **不在 agent 那边留痕迹。** 探测模型和命令用临时进程（pi 加 `--no-session`；Claude 不发消息就不会落盘）。
 - **设置按线程保存：** 权限、模型、思考强度。运行中修改会直接作用到会话上，做不到时重启会话并恢复。
   - **Claude 新会话的模型在启动前对齐。** 显式选择的模型同时作为 SDK 启动参数和该子进程的 `ANTHROPIC_MODEL`，避免 ACP 初始化时又按原生 `settings.model` 校验另一个模型，或把同一模型的别名当成切换，再发一次有超时限制的校验请求。只覆盖本次进程，不写原生配置；未指定模型仍使用原生默认值，恢复会话沿用原有加载与设置流程。ACP 错误保留 `data.details` 中的文字原因和原生错误码，不把任意结构化载荷拼进错误提示。

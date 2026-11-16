@@ -175,7 +175,7 @@ test('an enabled bridge on an incompatible install reports why and falls back to
   const events: EmittedEvent[] = [];
   const hooks = { emit: (event: EmittedEvent) => events.push(event), requestApproval: async () => { throw new Error('not supported'); } };
   assert.deepEqual(await session.prompt({ text: 'plain reply', images: [] }, hooks), { stopReason: 'end_turn' }, 'the turn completes without the bridge');
-  assert.ok(events.length >= 1 && events.every(event => event.type === 'message.delta'), 'the reply arrives as plain text output');
+  assert.ok(events.length >= 1 && events.every(event => event.type === 'message.delta' || event.type === 'session.lifecycle'), 'the reply arrives as plain text output');
   const calls = readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line));
   assert.equal(calls[0].runtime, h.bin, 'the original unpatched CLI ran');
   assert.equal(adapter.streamBridgeEnabled, true, 'the saved preference itself stays on');

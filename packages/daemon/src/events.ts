@@ -15,6 +15,8 @@ export type EventType =
   | 'turn.started'
   /** Request milestones, with elapsedMs and sincePreviousPhaseMs assigned by the hub. */
   | 'turn.phase'
+  /** Process starts and closes, with machine-readable causes; no prompt or credentials. */
+  | 'session.lifecycle'
   | 'turn.done'
   | 'turn.error'
   /** The daemon resent the last failed turn by itself after a transient provider error. */

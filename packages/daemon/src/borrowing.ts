@@ -68,6 +68,8 @@ export class BorrowingService {
   /** Whether the thread runs a borrowed task for another thread. */
   owns(threadId: string): boolean { return this.byThread.has(threadId); }
 
+  forgetEnvironment(threadId: string): void { this.credentials.delete(threadId); }
+
   environment(threadId: string): Record<string, string> | undefined {
     // A provider task must not recursively borrow another provider.
     if (this.byThread.has(threadId)) return undefined;

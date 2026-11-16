@@ -1,3 +1,4 @@
+import { SessionWarmups, type WarmSession } from './session-warmups.js';
 import { applyModelPreference, readModelPreferences, type DraftModelPreference, type DraftModelPreferences, type ModelPreferencePatch } from './model-preferences.js';
 import { PreviewNotes } from './preview-notes.js';
 import { ContextReferences } from './context-references.js';
@@ -42,6 +43,7 @@ import {
   type SlashCommand,
   type TurnHooks,
   type TurnInput,
+  type StartOptions,
 } from './adapters/types.js';
 import type { GoalSnapshot } from './adapters/native-goal.js';
 import { findFiles, listDir, readText, type Listing, type TextFile } from './browse.js';
@@ -64,6 +66,18 @@ import { askedText } from './util.js';
 import { MessageEdits } from './message-edits.js';
 import { addWorktree, countChanges, findCheckout, initRepository, removeWorktree, samePath, worktreeLeftovers, type Checkout, type Worktree } from './worktrees.js';
 import { isProbeSession } from './local-sessions.js';
+
+type SessionContext = Pick<ThreadRecord, 'id' | 'agent' | 'cwd' | 'permissionMode' | 'workMode' | 'model' | 'effort' | 'speed'> & { agentSessionId?: string | null };
+export interface DraftSessionInput {
+  agent: string;
+  cwd: string;
+  permissionMode?: string;
+  workMode?: WorkMode;
+  model?: string | null;
+  effort?: string | null;
+  speed?: string | null;
+  scratch?: boolean;
+}
 
 /** Why a copy cannot get a worktree of its own, said to whoever asked for one anyway. */
 const WORKTREE_REFUSALS = {
@@ -310,7 +324,7 @@ export class ThreadManager {
   /** Drop an idle process so runtime-only connection context takes effect on resume. */
   async refreshRuntime(id: string): Promise<void> {
     if (this.running.has(id)) throw new HttpError(409, '请等待当前轮结束后启用协作');
-    await this.dropSession(id);
+    await this.dropSession(id, 'coordination_enabled');
   }
 
   notifyCoordination(id: string): void {
@@ -325,9 +339,13 @@ export class ThreadManager {
   private readonly nativeTurns = new Map<string, Map<string, string>>();
   private readonly voiceThreads = new Set<string>();
   private readonly sessions = new Map<string, AgentSession>();
+  private readonly warmups = new SessionWarmups();
+  private readonly prewarmed = new Map<string, WarmSession>();
+  private readonly sessionReasons = new Map<string, string>();
+  private stopping = false;
   /** Threads whose model/effort/speed was changed mid-turn: the setting is stored, the session that
    *  turn still runs in is stale. It is dropped when the turn ends, never interrupted mid-turn. */
-  private readonly refreshAfterTurn = new Set<string>();
+  private readonly refreshAfterTurn = new Map<string, string>();
   readonly git = new GitManager(
     id => this.getThread(id).cwd,
     (id, path) => { this.resolveInThread(id, path, new HttpError(403, 'Git repository is outside the readable roots')); },
@@ -500,7 +518,7 @@ export class ThreadManager {
         ...(m?.hidden !== undefined ? { hidden: m.hidden } : {}),
         available: await a.available(),
         ...(a.startLogin ? { login: 'wizard' as const } : a.loginCommand ? { login: 'terminal' as const } : {}),
-        capabilities: a.capabilities,
+        capabilities: { ...a.capabilities, prewarm: a.prewarm === true },
         ...(a.capabilities.streamBridge ? { streamBridgeEnabled: a.streamBridgeEnabled ?? false } : {}),
       });
     }
@@ -1181,7 +1199,7 @@ export class ThreadManager {
       this.backgroundThreads.delete(thread.id);
       // The answer is read from the store: the agent process and its scratch folder can go now, so
       // one question does not leave a resident process behind.
-      await this.dropSession(thread.id);
+      await this.dropSession(thread.id, 'background_question_done');
       if (this.dirs.scratchRoot && thread.cwd.startsWith(this.dirs.scratchRoot + sep)) rmSync(thread.cwd, { recursive: true, force: true });
     }
   }
@@ -1809,7 +1827,7 @@ export class ThreadManager {
         throw new HttpError(409, 'stop the running turn before archiving this thread');
       }
       // Archiving stops the agent process. The record and the agent's session stay, so it can come back.
-      if (updates.archived) await this.dropSession(id);
+      if (updates.archived) await this.dropSession(id, 'archived');
       patch.archivedAt = updates.archived ? (thread.archivedAt ?? new Date().toISOString()) : null;
     }
     if (updates.unread !== undefined) {
@@ -1824,7 +1842,7 @@ export class ThreadManager {
       try {
         const session = this.sessions.get(id);
         if (session?.setWorkMode) await session.setWorkMode(mode);
-        else if (session) await this.dropSession(id);
+        else if (session) await this.dropSession(id, 'work_mode_changed');
         this.store.updateThread(id, { workMode: mode });
       } finally { this.changingModes.delete(id); }
       patch.workMode = mode;
@@ -1896,19 +1914,19 @@ export class ThreadManager {
     const inPlace = await apply(session).catch(() => false);
     if (inPlace) return;
     if (this.running.has(thread.id)) {
-      this.refreshAfterTurn.add(thread.id);
+      this.refreshAfterTurn.set(thread.id, `${what}_changed`);
       return;
     }
-    await this.dropSession(thread.id);
+    await this.dropSession(thread.id, `${what}_changed`);
   }
 
   private async restartForChange(thread: ThreadRecord, what: 'model' | 'effort'): Promise<void> {
     if (!this.sessions.has(thread.id)) return;
     if (this.running.has(thread.id)) {
-      this.refreshAfterTurn.add(thread.id);
+      this.refreshAfterTurn.set(thread.id, `${what}_reset`);
       return;
     }
-    await this.dropSession(thread.id);
+    await this.dropSession(thread.id, `${what}_reset`);
   }
 
   /**
@@ -1940,7 +1958,8 @@ export class ThreadManager {
       }
       doomed = { main, tree };
     }
-    await this.dropSession(id);
+    await this.dropSession(id, 'deleted');
+    this.sessionReasons.delete(id);
     this.quotaResume.drop(id);
     this.autoRetry.drop(id);
     this.autoAdvance.drop(id);
@@ -2163,7 +2182,60 @@ export class ThreadManager {
     return value;
   }
 
+  private draftSessionKey(input: DraftSessionInput): string {
+    return JSON.stringify([input.agent, input.scratch ? null : realpathSync(resolve(input.cwd)), Boolean(input.scratch),
+      input.permissionMode, input.workMode, input.model, input.effort, input.speed, this.personal.directory()]);
+  }
+
+  /** Prepare one unsent draft without creating a Calli thread or submitting a model request. */
+  async warmDraft(input: DraftSessionInput): Promise<{ id: string | null }> {
+    if (this.stopping) throw new HttpError(503, 'Calli is stopping');
+    if (!input || typeof input.agent !== 'string' || (input.scratch !== true && typeof input.cwd !== 'string')) throw new HttpError(400, 'invalid draft settings');
+    const adapter = this.adapters.get(input.agent);
+    if (!adapter) throw new HttpError(400, 'unknown agent');
+    if (!adapter.prewarm) return { id: null };
+    const settings = await this.draftSessionSettings(input);
+    const threadId = randomUUID();
+    const cwd = input.scratch === true ? this.scratchDirectory(threadId) : resolve(input.cwd);
+    this.checkThreadDirectory(cwd);
+    const context = { id: threadId, agent: input.agent, cwd, ...settings };
+    const entry = this.warmups.start({ threadId, cwd, adapter, key: this.draftSessionKey({ ...input, cwd, ...settings }) },
+      signal => adapter.start(this.sessionOptions(context, signal)), () => {
+        this.borrowing?.forgetEnvironment(threadId);
+        this.personal.forgetEnvironment(threadId);
+        if (input.scratch) rmSync(cwd, { recursive: true, force: true });
+      });
+    return { id: entry.id };
+  }
+
+  cancelWarmDraft(id: string): Promise<void> { return this.warmups.remove(id); }
+
+  private scratchDirectory(id: string): string {
+    if (!this.dirs.scratchRoot) throw new HttpError(400, 'this hub has no scratch area for threads outside a project');
+    const cwd = join(this.dirs.scratchRoot, `${new Date().toISOString().slice(0, 10)}-${id.slice(0, 8)}`);
+    mkdirSync(cwd, { recursive: true });
+    return cwd;
+  }
+
+  private checkThreadDirectory(cwd: string): void {
+    if (!isWithinWorkdirs(cwd, this.workdirs)) throw new HttpError(400, 'cwd is not in the allowed workdirs');
+    if (!existsSync(cwd) || !statSync(cwd).isDirectory()) throw new HttpError(400, 'cwd does not exist');
+  }
+
+  private async draftSessionSettings(input: DraftSessionInput) {
+    const adapter = this.adapters.get(input.agent);
+    if (!adapter) throw new HttpError(400, `unknown agent: ${input.agent}`);
+    const permissionMode = adapter.capabilities.permissionModes.length === 0 ? 'auto_edit'
+      : this.validatePermissionMode(input.agent, input.permissionMode ?? adapter.capabilities.defaultPermissionMode ?? 'auto_edit');
+    const workMode = this.validateWorkMode(input.agent, input.workMode ?? 'execute');
+    const model = input.model ? await this.validateModel(input.agent, input.model) : null;
+    const effort = input.effort ? await this.validateEffort(input.agent, model, input.effort) : null;
+    const speed = input.speed == null ? null : await this.validateSpeed(input.agent, model, input.speed);
+    return { permissionMode, workMode, model, effort, speed };
+  }
+
   async createThread(input: {
+    warmupId?: string;
     workMode?: WorkMode;
     speed?: string | null;
     agent: string;
@@ -2182,30 +2254,20 @@ export class ThreadManager {
   }, inheritedWorktree?: ThreadWorktree | null, handover?: ThreadRecord['handover']): Promise<ThreadView> {
     const adapter = this.adapters.get(input.agent);
     if (!adapter) throw new HttpError(400, `unknown agent: ${input.agent}`);
-    const id = randomUUID();
-    let cwd: string;
-    if (input.scratch === true) {
-      if (!this.dirs.scratchRoot) throw new HttpError(400, 'this hub has no scratch area for threads outside a project');
-      cwd = join(this.dirs.scratchRoot, `${new Date().toISOString().slice(0, 10)}-${id.slice(0, 8)}`);
-      mkdirSync(cwd, { recursive: true });
-    } else {
-      cwd = resolve(input.cwd);
-    }
-    // An allowed directory or anything inside one. The directory picker offers subdirectories.
-    if (!isWithinWorkdirs(cwd, this.workdirs)) throw new HttpError(400, 'cwd is not in the allowed workdirs');
-    if (!existsSync(cwd) || !statSync(cwd).isDirectory()) throw new HttpError(400, 'cwd does not exist');
+    let id: string = randomUUID();
+    let cwd = input.scratch === true ? this.scratchDirectory(id) : resolve(input.cwd);
+    this.checkThreadDirectory(cwd);
     if (input.sectionId !== undefined && input.sectionId !== null && !this.store.getSection(input.sectionId)) {
       throw new HttpError(400, 'section not found');
     }
-    // Default for new threads: the agent's own, else auto-approve edits and still ask before other actions.
-    const permissionMode =
-      adapter.capabilities.permissionModes.length === 0
-        ? 'auto_edit'
-        : this.validatePermissionMode(input.agent, input.permissionMode ?? adapter.capabilities.defaultPermissionMode ?? 'auto_edit');
-    const workMode = this.validateWorkMode(input.agent, input.workMode ?? 'execute');
-    const model = input.model ? await this.validateModel(input.agent, input.model) : null;
-    const effort = input.effort ? await this.validateEffort(input.agent, model, input.effort) : null;
-    const speed = input.speed == null ? null : await this.validateSpeed(input.agent, model, input.speed);
+    const { permissionMode, workMode, model, effort, speed } = await this.draftSessionSettings(input);
+    const warm = !input.worktree && !handover && !inheritedWorktree && !input.schedule
+      ? this.warmups.take(input.warmupId, this.draftSessionKey({ ...input, cwd, permissionMode, workMode, model, effort, speed }), adapter) : null;
+    if (warm) {
+      if (input.scratch) rmSync(cwd, { recursive: true, force: true });
+      id = warm.threadId;
+      cwd = warm.cwd;
+    }
     const title = (input.title ?? '').trim() || 'New thread';
     // A new thread has no conversation to move, so any agent can start in a worktree.
     let added: { main: string; tree: Worktree; cwd: string } | null = null;
@@ -2240,9 +2302,11 @@ export class ThreadManager {
         ...(added ? { worktree: { root: added.tree.root, branch: added.tree.branch, of: cwd } } : inheritedWorktree ? { worktree: inheritedWorktree } : {}),
       });
     } catch (err) {
+      if (warm) { await warm.dispose(); if (input.scratch) rmSync(cwd, { recursive: true, force: true }); }
       if (added) await removeWorktree(added.main, added.tree).catch(() => undefined);
       throw err;
     }
+    if (warm) this.prewarmed.set(thread.id, warm);
     this.emitThreadEvent(thread.id, null, 'thread.created', { agent: thread.agent, cwd: thread.cwd });
     return this.view(thread);
   }
@@ -2497,7 +2561,7 @@ export class ThreadManager {
     }
 
     const newTurnId = randomUUID();
-    await this.dropSession(threadId);
+    await this.dropSession(threadId, 'message_edited');
     this.store.transaction(() => {
       this.store.messageEdits.archive(threadId, requestId, starts[hubIndex].seq);
       this.store.updateThread(threadId, { agentSessionId: branchSession, status: 'idle' }, { touch: true });
@@ -3171,6 +3235,10 @@ export class ThreadManager {
 
   /** Closes live agent processes. Threads and events stay in the store. */
   async shutdown(): Promise<void> {
+    this.stopping = true;
+    await this.warmups.shutdown();
+    await Promise.all([...this.prewarmed.values()].map(warm => warm.dispose()));
+    this.prewarmed.clear();
     await this.personal.explore.dispose();
     await this.lark.dispose();
     this.autoHandover.close();
@@ -3185,7 +3253,7 @@ export class ThreadManager {
     const deadline = Date.now() + 3000;
     while (this.running.size > 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 25));
     await Promise.allSettled([...this.settlingHandovers]);
-    for (const [, s] of this.sessions) await s.close().catch(() => undefined);
+    for (const id of [...this.sessions.keys()]) await this.dropSession(id, 'shutdown');
     this.sessions.clear();
     this.sessionAdapters.clear();
   }
@@ -3232,7 +3300,7 @@ export class ThreadManager {
       const message = err instanceof Error ? err.message : String(err);
       const exhausted = this.adapters.get(thread.agent)?.planExhausted?.(message);
       this.emitThreadEvent(thread.id, turnId, 'turn.error', { message, ...(exhausted ? { code: 'plan_exhausted' } : {}) });
-      await this.dropSession(thread.id);
+      await this.dropSession(thread.id, 'turn_error');
     } finally {
       this.cancelApprovals(thread.id, turnId);
       this.quietTurns.delete(turnId);
@@ -3248,8 +3316,10 @@ export class ThreadManager {
       // A model/effort/speed change arrived while this turn ran: now that nothing runs in the
       // session (a native takeover keeps it busy, and its own finish hook retries), drop it so
       // the next turn resumes the agent session with the new setting.
-      if (!this.running.has(thread.id) && this.refreshAfterTurn.delete(thread.id)) {
-        await this.dropSession(thread.id).catch(() => undefined);
+      const refreshReason = this.refreshAfterTurn.get(thread.id);
+      if (!this.running.has(thread.id) && refreshReason) {
+        this.refreshAfterTurn.delete(thread.id);
+        await this.dropSession(thread.id, refreshReason).catch(() => undefined);
       }
       // The thread may have been deleted while its last turn was winding down.
       if (this.store.getThread(thread.id)) {
@@ -3386,7 +3456,7 @@ export class ThreadManager {
         authorize();
         if (this.sessions.has(nativeThreadId) && this.sessionAdapters.get(nativeThreadId) !== adapter) {
           if (this.running.has(nativeThreadId)) throw new Error('voice_provider_changed');
-          await this.dropSession(nativeThreadId);
+          await this.dropSession(nativeThreadId, 'adapter_changed');
         }
         const session = await this.ensureSession(this.getThread(nativeThreadId));
         if (ended) throw new Error('voice_session_ended');
@@ -3486,19 +3556,11 @@ export class ThreadManager {
     finally { if (this.sessionStarts.get(thread.id) === task) this.sessionStarts.delete(thread.id); }
   }
 
-  private async createSession(thread: ThreadRecord): Promise<AgentSession> {
-    const personalScope = Boolean(this.personal.environment(thread.id));
-    const adapter = this.adapters.get(thread.agent);
-    if (!adapter) throw new Error(`unknown agent: ${thread.agent}`);
-    if (this.sessions.has(thread.id) && (this.personalScopes.get(thread.id) !== personalScope || this.sessionAdapters.get(thread.id) !== adapter)) await this.dropSession(thread.id);
-    const existing = this.sessions.get(thread.id);
-    if (existing) {
-      if (existing.setWorkMode) await existing.setWorkMode(thread.workMode ?? 'execute');
-      return existing;
-    }
-    const session = await adapter.start({
+  private sessionOptions(thread: SessionContext, signal?: AbortSignal): StartOptions {
+    return {
+      signal,
       borrowedTool: this.borrowing?.toolForThread(thread.id),
-      coordinationEnv: this.backgroundThreads.has(thread.id) ? {} : { ...this.coordination?.environment(thread.id), ...this.borrowing?.environment(thread.id), ...this.personal.environment(thread.id) },
+      coordinationEnv: this.backgroundThreads.has(thread.id) ? {} : { ...this.coordination?.environment(thread.id), ...this.borrowing?.environment(thread.id), ...this.personal.environment(thread.id, thread.cwd) },
       cwd: thread.cwd,
       resumeId: thread.agentSessionId ?? undefined,
       onSessionId: (id) => {
@@ -3509,7 +3571,7 @@ export class ThreadManager {
       permissionMode: thread.permissionMode as PermissionMode,
       speed: thread.speed,
       workMode: thread.workMode ?? 'execute',
-      onGoal: (goal) => this.applyGoal(thread.id, goal),
+      onGoal: (goal) => { if (this.store.getThread(thread.id)) this.applyGoal(thread.id, goal); },
       onSpeed: (speed) => {
         if (!this.store.getThread(thread.id)) return;
         this.store.updateThread(thread.id, { speed });
@@ -3522,7 +3584,50 @@ export class ThreadManager {
       },
       model: thread.model ?? undefined,
       effort: (thread.effort ?? undefined) as EffortLevel | undefined,
-    });
+    };
+  }
+
+  private async createSession(thread: ThreadRecord): Promise<AgentSession> {
+    const personalScope = Boolean(this.personal.environment(thread.id));
+    const adapter = this.adapters.get(thread.agent);
+    if (!adapter) throw new Error(`unknown agent: ${thread.agent}`);
+    if (this.sessions.has(thread.id) && (this.personalScopes.get(thread.id) !== personalScope || this.sessionAdapters.get(thread.id) !== adapter)) await this.dropSession(thread.id, this.sessionAdapters.get(thread.id) !== adapter ? 'adapter_changed' : 'personal_scope_changed');
+    let existing = this.sessions.get(thread.id);
+    if (existing?.isAlive && !existing.isAlive()) {
+      await this.dropSession(thread.id, 'process_exited');
+      existing = undefined;
+    }
+    if (existing) {
+      if (existing.setWorkMode) await existing.setWorkMode(thread.workMode ?? 'execute');
+      return existing;
+    }
+    let warm = this.prewarmed.get(thread.id);
+    this.prewarmed.delete(thread.id);
+    if (warm && (warm.adapter !== adapter || warm.key !== this.draftSessionKey({ ...thread,
+      scratch: Boolean(this.dirs.scratchRoot && thread.cwd.startsWith(this.dirs.scratchRoot + sep)),
+    }))) {
+      await warm.dispose();
+      warm = undefined;
+      this.sessionReasons.set(thread.id, 'draft_settings_changed');
+    }
+    const reason = warm ? 'prewarmed' : this.sessionReasons.get(thread.id) ?? (thread.agentSessionId ? 'resume' : 'new_thread');
+    this.sessionReasons.delete(thread.id);
+    this.emitThreadEvent(thread.id, null, 'session.lifecycle', { action: 'start', reason });
+    const began = Date.now();
+    let session = warm ? await warm.ready : null;
+    if (session?.isAlive && !session.isAlive()) { await session.close(); session = null; }
+    const prewarmed = Boolean(session);
+    if (!session) {
+      if (warm) this.emitThreadEvent(thread.id, null, 'session.lifecycle', { action: 'fallback', reason: 'prewarm_failed' });
+      if (this.stopping) throw new Error('Calli is stopping');
+      try { session = await adapter.start(this.sessionOptions(thread)); }
+      catch (error) {
+        this.emitThreadEvent(thread.id, null, 'session.lifecycle', { action: 'failed', reason: 'startup_failed' });
+        throw error;
+      }
+    }
+    if (this.stopping) { await session.close(); throw new Error('Calli is stopping'); }
+    this.emitThreadEvent(thread.id, null, 'session.lifecycle', { action: 'ready', reason: warm && !prewarmed ? 'prewarm_failed' : reason, prewarmed, elapsedMs: Date.now() - began });
     session.setSessionHooks?.({
       turnStarted: (nativeId, opts) => {
         // An upstream delegation is a real user task; captions alone never resume collaboration.
@@ -3562,7 +3667,9 @@ export class ThreadManager {
           this.quietTurns.delete(turnId);
           this.emitThreadEvent(thread.id, null, 'thread.updated', {});
           // Same end-of-turn refresh as a hub turn: a setting changed mid-turn waits for this moment.
-          if (this.refreshAfterTurn.delete(thread.id)) await this.dropSession(thread.id).catch(() => undefined);
+          const reason = this.refreshAfterTurn.get(thread.id);
+          this.refreshAfterTurn.delete(thread.id);
+          if (reason) await this.dropSession(thread.id, reason).catch(() => undefined);
           this.startNextQueued(thread.id);
         }
       },
@@ -3576,10 +3683,17 @@ export class ThreadManager {
     return session;
   }
 
-  private async dropSession(threadId: string): Promise<void> {
+  private async dropSession(threadId: string, reason: string): Promise<void> {
     const pending = this.sessionStarts.get(threadId);
     if (pending) await pending.catch(() => undefined);
+    const warm = this.prewarmed.get(threadId);
+    this.prewarmed.delete(threadId);
+    await warm?.dispose();
     const s = this.sessions.get(threadId);
+    if (s || warm) {
+      this.sessionReasons.set(threadId, reason);
+      if (this.store.getThread(threadId)) this.emitThreadEvent(threadId, null, 'session.lifecycle', { action: 'close', reason });
+    }
     this.personalScopes.delete(threadId);
     this.sessions.delete(threadId);
     this.sessionAdapters.delete(threadId);

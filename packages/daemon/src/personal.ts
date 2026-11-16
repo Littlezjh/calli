@@ -288,8 +288,9 @@ export class PersonalService {
     return Boolean(thread && root && this.within(thread.cwd, root));
   }
   require(threadId: string) { if (!this.allowed(threadId)) throw new HttpError(403, 'personal commands require a thread in the personal directory'); }
-  environment(threadId: string): Record<string, string> | undefined {
-    if (!this.socket || !this.allowed(threadId)) return undefined;
+  forgetEnvironment(threadId: string): void { this.credentials.delete(threadId); }
+  environment(threadId: string, draftCwd?: string): Record<string, string> | undefined {
+    if (!this.socket || !(draftCwd ? this.within(draftCwd, this.directory()) : this.allowed(threadId))) return undefined;
     let key = this.credentials.get(threadId);
     if (!key) { key = randomUUID(); this.credentials.set(threadId, key); }
     return { CALLI_TODO_SOCKET: this.socket, CALLI_TODO_KEY: key, CALLI_BIN_DIR: resolve(dirname(fileURLToPath(import.meta.url)), '../bin') };

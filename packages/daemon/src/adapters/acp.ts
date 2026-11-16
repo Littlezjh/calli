@@ -5,7 +5,7 @@ import { timedUsage, type LiveUsage } from './live-usage.js';
 import type { UsageSample } from '../telemetry.js';
 import { cliDiagnostic, probeWithDeadline } from './diagnostics.js';
 import { isCompaction, trackCompaction } from './compaction.js';
-import { sessionEnvironment } from './types.js';
+import { cancelSessionOnAbort, sessionEnvironment } from './types.js';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -492,6 +492,8 @@ export class AcpSession implements AgentSession {
     return true;
   }
 
+  isAlive(): boolean { return !this.peer.isClosed; }
+
   async prompt(input: TurnInput, hooks: TurnHooks): Promise<TurnResult> {
     this.manualCompaction = isCompaction(input.text);
     try {
@@ -555,6 +557,7 @@ export class AcpSession implements AgentSession {
 
 /** Everything an ACP agent has in common. The agent-specific parts are the abstract members. */
 export abstract class AcpAdapter implements AgentAdapter {
+  readonly prewarm = true;
   protected liveUsage(_id: string, _cwd: string, _emit: (sample: UsageSample) => void): LiveUsage | undefined { return undefined; }
   /** Plan usage observed in-band, as the agent answers; wired by whoever owns the adapter. */
   onQuotaObserved?: (quota: PlanQuota) => void;
@@ -759,6 +762,8 @@ export abstract class AcpAdapter implements AgentAdapter {
       },
       `${this.id}-acp`,
     );
+
+    cancelSessionOnAbort(opts.signal, () => peer.close());
 
     let timedOut = false;
     const timer = probe ? setTimeout(() => { timedOut = true; peer.close(); }, 30000) : undefined;
