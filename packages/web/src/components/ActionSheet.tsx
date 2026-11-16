@@ -35,7 +35,7 @@ interface Props {
 function OptionRow({ name, description, checked, emphasised, disabled, title, role, ariaChecked, trailing, onClick }: {
   name: string;
   description?: string;
-  /** Given (even false) only where a mark belongs: a choice that can sit beside others. */
+  /** Given (even false) wherever a pick can linger on the card: beside other picks, or while a note may still come. */
   checked?: boolean;
   emphasised?: boolean;
   disabled?: boolean;
@@ -254,17 +254,23 @@ function QuestionSheet({ item, index, total, onAnswer }: {
       title={q.question}
     >
       <div className="sheet-options" role={q.multiple ? 'group' : 'radiogroup'} aria-label={q.question}>
-        {q.options.map((o) => (
-          <OptionRow
-            key={o.value}
-            name={o.label}
-            description={o.description}
-            role={q.multiple ? 'checkbox' : 'radio'}
-            ariaChecked={q.multiple ? (picked[q.id] ?? []).includes(o.value) : (picked[q.id] ?? [])[0] === o.value && !typed.trim()}
-            checked={q.multiple ? (picked[q.id] ?? []).includes(o.value) : undefined}
-            onClick={() => pick(o.value)}
-          />
-        ))}
+        {q.options.map((o) => {
+          // A single choice that waits for its note no longer settles on click: the mark must show the pick.
+          const on = q.multiple
+            ? (picked[q.id] ?? []).includes(o.value)
+            : (picked[q.id] ?? [])[0] === o.value && !typed.trim();
+          return (
+            <OptionRow
+              key={o.value}
+              name={o.label}
+              description={o.description}
+              role={q.multiple ? 'checkbox' : 'radio'}
+              ariaChecked={on}
+              checked={on}
+              onClick={() => pick(o.value)}
+            />
+          );
+        })}
       </div>
       {(q.multiple || !q.options.length || q.note) && (
         <div className="sheet-next">
